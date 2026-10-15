@@ -6963,7 +6963,11 @@ impl TerminalView {
     pub fn nudge_size(&mut self, key: theme::GradeKey, notches: f32, cx: &mut Context<Self>) {
         let outer = theme::outer_choice(cx);
         let mut grade = self.appearance.effective(&outer).grade;
-        let from = grade.get(key);
+        // A size dial always holds its own position; a dial left to the theme
+        // has no position here to step from, so the turn does nothing.
+        let Some(from) = grade.get(key) else {
+            return;
+        };
         let next = key.nudged(from, notches);
         if (next - from).abs() < f32::EPSILON {
             return;

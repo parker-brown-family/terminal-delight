@@ -346,6 +346,12 @@ pub enum GradeKey {
     /// but it rides the grade group so each pane curves by its OWN amount (own
     /// override else inherited outer), instead of one global dial bending all.
     Warp,
+    /// The glass glare: how strongly the top-left reflection shines on the
+    /// tube, `0..=1` (`0` = clear glass). Not a paint grade — the CRT pass
+    /// adds it over the warped sample — and, like warp, it rides the grade
+    /// group so each pane shines by its own amount. Until somebody turns it,
+    /// it is *unset* and the theme's own glare shows — see [`Grade::glare`].
+    Glare,
     /// Crawl convergence angle in degrees (`2..=59`). Not a paint grade — it
     /// drives the per-pane crawl perspective the renderer warps by — but it
     /// rides the grade group for the per-pane override + "follow outer".
@@ -369,6 +375,8 @@ impl GradeKey {
             GradeKey::Scale => (0.7, 1.6, 1.0),
             GradeKey::TextSize | GradeKey::BenchSize => (0.6, 2.0, 1.0),
             GradeKey::Warp => (0.0, WARP_MAX, 0.0),
+            // The CRT pass clamps a tube's glare to `0..1` (`warp::register_tube`).
+            GradeKey::Glare => (0.0, 1.0, 0.0),
             GradeKey::CrawlAngle => (CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX, CRAWL_ANGLE_DEFAULT),
             GradeKey::CrawlDepth => (CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX, CRAWL_DEPTH_DEFAULT),
             GradeKey::Phosphor => (0.0, PHOSPHOR_MAX, 1.0),
@@ -484,6 +492,17 @@ pub struct Grade {
     /// pane's tube by it, so warp is per-pane (override else inherited outer) —
     /// not the old global dial that curved every pane at once.
     pub warp: f32,
+    /// Glass-glare strength (`0..=1`, `0` = clear glass), or `None` for **the
+    /// theme's own glare**.
+    ///
+    /// `None` is not `0`. Glare is authored per theme — `hacker` shines at
+    /// 0.42, `gamba` at 0.50, most themes not at all — and every grade written
+    /// before this dial existed was showing exactly that. Reading the absent
+    /// key as zero would wipe the reflection off every hacker pane the first
+    /// time this build opened its session. Turning the GAUGES slider writes
+    /// `Some`, and from then on it holds whatever theme the pane wears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glare: Option<f32>,
     /// CRT tracking-band dials `[intensity, speed, size]` in `0..1`, or `None` to
     /// use whatever the resolved theme authored. Per-pane via the grade group.
     pub tracking: Option<[f32; 3]>,
@@ -532,6 +551,7 @@ pub enum GradeChannel {
     TextSize,
     BenchSize,
     Warp,
+    Glare,
     CrawlAngle,
     CrawlDepth,
     Crawl,
@@ -546,9 +566,9 @@ impl GradeChannel {
     /// travels as channel NAMES, never as the bitmask, so the discriminants are
     /// an in-memory detail and a new dial can sit beside its sibling.
     ///
-    /// Sixteen is also the most the bitmask holds — [`GradePins`] is a `u16` —
-    /// so a seventeenth channel widens that first.
-    pub const ALL: [GradeChannel; 16] = [
+    /// Thirty-two is the most the bitmask holds — [`GradePins`] is a `u32`,
+    /// widened from `u16` when glare became the seventeenth channel.
+    pub const ALL: [GradeChannel; 17] = [
         Self::Brightness,
         Self::Contrast,
         Self::Colour,
@@ -559,6 +579,7 @@ impl GradeChannel {
         Self::TextSize,
         Self::BenchSize,
         Self::Warp,
+        Self::Glare,
         Self::CrawlAngle,
         Self::CrawlDepth,
         Self::Crawl,
@@ -581,6 +602,7 @@ impl GradeChannel {
             Self::TextSize => "text_size",
             Self::BenchSize => "bench_size",
             Self::Warp => "warp",
+            Self::Glare => "glare",
             Self::CrawlAngle => "crawl_angle",
             Self::CrawlDepth => "crawl_depth",
             Self::Crawl => "crawl",
@@ -597,8 +619,8 @@ impl GradeChannel {
         Self::ALL.into_iter().find(|c| c.name() == name)
     }
 
-    const fn bit(self) -> u16 {
-        1 << (self as u16)
+    const fn bit(self) -> u32 {
+        1 << (self as u32)
     }
 
     /// True when `a` and `b` carry the same value for this channel.
@@ -624,6 +646,13 @@ impl GradeChannel {
                 _ => false,
             },
             Self::Warp => close(a.warp, b.warp),
+            // Option equality, as for the bench: unset follows the theme, and
+            // a glare dialled to exactly the theme's is still this pane's own.
+            Self::Glare => match (a.glare, b.glare) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
             Self::CrawlAngle => close(a.crawl_angle, b.crawl_angle),
             Self::CrawlDepth => close(a.crawl_depth, b.crawl_depth),
             Self::Crawl => a.crawl == b.crawl,
@@ -650,6 +679,7 @@ impl GradeChannel {
             Self::TextSize => dst.text_size = src.text_size,
             Self::BenchSize => dst.bench_size = src.bench_size,
             Self::Warp => dst.warp = src.warp,
+            Self::Glare => dst.glare = src.glare,
             Self::CrawlAngle => dst.crawl_angle = src.crawl_angle,
             Self::CrawlDepth => dst.crawl_depth = src.crawl_depth,
             Self::Crawl => dst.crawl = src.crawl,
@@ -673,6 +703,7 @@ impl From<GradeKey> for GradeChannel {
             GradeKey::TextSize => Self::TextSize,
             GradeKey::BenchSize => Self::BenchSize,
             GradeKey::Warp => Self::Warp,
+            GradeKey::Glare => Self::Glare,
             GradeKey::CrawlAngle => Self::CrawlAngle,
             GradeKey::CrawlDepth => Self::CrawlDepth,
             GradeKey::Phosphor => Self::Phosphor,
@@ -689,7 +720,7 @@ impl From<GradeKey> for GradeChannel {
 /// fresh pane, a split, a restored layout all start empty and therefore track
 /// the outer scope live, so changing outer moves every pane nobody has dressed.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub struct GradePins(u16);
+pub struct GradePins(u32);
 
 impl GradePins {
     /// Own nothing — follow outer for every channel. A fresh pane's state.
@@ -824,6 +855,7 @@ impl Default for Grade {
             text_size: 1.0,     // terminal grid at config size
             bench_size: None,   // unset: the bench follows the grid's dial
             warp: WARP_DEFAULT, // the house near-fishbowl bend
+            glare: None,        // defer to the theme's authored glass
             tracking: None,     // defer to the theme's authored roll bar
             crawl: false,       // crawl mode off until toggled
             crawl_angle: CRAWL_ANGLE_DEFAULT,
@@ -900,6 +932,7 @@ impl Grade {
             // pinning a 1.0 that would outlive the next text-size change.
             bench_size: None,
             warp: 0.0,      // reset = dead flat
+            glare: None,    // reset = defer to the theme's glass
             tracking: None, // reset = defer to the theme's roll bar
             crawl: false,   // reset = crawl off
             crawl_angle: CRAWL_ANGLE_DEFAULT,
@@ -978,6 +1011,7 @@ impl Grade {
             && (self.text_size - d.text_size).abs() < EPS
             && self.bench_size == d.bench_size
             && (self.warp - d.warp).abs() < EPS
+            && self.glare == d.glare
             && self.tracking == d.tracking
             && self.crawl == d.crawl
             && (self.crawl_angle - d.crawl_angle).abs() < EPS
@@ -998,8 +1032,21 @@ impl Grade {
         self.bench_size.unwrap_or(self.text_size)
     }
 
-    pub fn get(&self, k: GradeKey) -> f32 {
-        match k {
+    /// The glare this grade shines with on a theme that authored `authored`.
+    ///
+    /// The only place [`Self::glare`]'s unset state is allowed to collapse,
+    /// and it collapses onto the theme's glass, never onto zero: a pane whose
+    /// glare dial nobody has turned shows what its theme shows.
+    pub fn glare_over(&self, authored: f32) -> f32 {
+        self.glare.unwrap_or(authored)
+    }
+
+    /// Where channel `k` sits, or `None` for a channel this grade leaves to
+    /// the theme — today only an unset [`Self::glare`], whose position the
+    /// grade alone cannot know (see [`Self::glare_over`]). Every other channel
+    /// always answers.
+    pub fn get(&self, k: GradeKey) -> Option<f32> {
+        Some(match k {
             GradeKey::Brightness => self.brightness,
             GradeKey::Contrast => self.contrast,
             GradeKey::Colour => self.colour,
@@ -1010,10 +1057,11 @@ impl Grade {
             GradeKey::TextSize => self.text_size,
             GradeKey::BenchSize => self.bench_gauge(),
             GradeKey::Warp => self.warp,
+            GradeKey::Glare => return self.glare,
             GradeKey::CrawlAngle => self.crawl_angle,
             GradeKey::CrawlDepth => self.crawl_depth,
             GradeKey::Phosphor => self.phosphor,
-        }
+        })
     }
 
     pub fn set(&mut self, k: GradeKey, v: f32) {
@@ -1030,6 +1078,7 @@ impl Grade {
             GradeKey::TextSize => self.text_size = v,
             GradeKey::BenchSize => self.bench_size = Some(v),
             GradeKey::Warp => self.warp = v,
+            GradeKey::Glare => self.glare = Some(v),
             GradeKey::CrawlAngle => self.crawl_angle = v,
             GradeKey::CrawlDepth => self.crawl_depth = v,
             GradeKey::Phosphor => self.phosphor = v,
@@ -1145,6 +1194,7 @@ pub fn house_outer() -> ThemeChoice {
             // Off on a fresh install; the two dials below are what it turns on.
             crt: false,
             warp: WARP_MAX,
+            glare: None, // the `custom` theme's glass, seeded from `hacker`
             tracking: Some(HOUSE_ROLL),
             crawl: false,
             crawl_angle: CRAWL_ANGLE_DEFAULT,
@@ -2342,6 +2392,7 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         && !choice.syntax
         && choice.grade.is_neutral()
         && choice.grade.warp.abs() < 1e-3
+        && choice.grade.glare.is_none()
         && choice.grade.tracking.is_none()
         && !choice.grade.crawl
         && choice.grade.crt
@@ -2390,10 +2441,12 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     th.syntax = choice.syntax;
     th.syntax_scheme = choice.syntax_scheme;
     th.grade = choice.grade;
-    // Warp + tracking ride the grade group, so they resolve per-pane (own
-    // override else inherited outer) — each pane bends by its own curvature
-    // instead of one global dial bending every pane.
+    // Warp, glare and tracking ride the grade group, so they resolve per-pane
+    // (own override else inherited outer) — each pane bends by its own
+    // curvature instead of one global dial bending every pane. An unset glare
+    // or tracking leaves the theme's authored value standing.
     th.warp = choice.grade.warp.clamp(0.0, WARP_MAX);
+    th.screen_glare = choice.grade.glare_over(th.screen_glare).clamp(0.0, 1.0);
     if let Some(dial) = choice.grade.tracking {
         apply_tracking(&mut th, dial);
     }
@@ -3379,8 +3432,8 @@ mod tests {
 
         // `get` reports the size the bench is DRAWN at, so the tray slider and
         // the MCP percent read the same number a person is looking at.
-        assert!((g.get(GradeKey::BenchSize) - 0.9).abs() < 1e-6);
-        assert!((stored.get(GradeKey::BenchSize) - 1.6).abs() < 1e-6);
+        assert!((g.get(GradeKey::BenchSize).unwrap() - 0.9).abs() < 1e-6);
+        assert!((stored.get(GradeKey::BenchSize).unwrap() - 1.6).abs() < 1e-6);
 
         // Unset and "set to exactly what unset resolves to" are different
         // states, and nothing in the grade may confuse them.
@@ -3415,7 +3468,7 @@ mod tests {
 
         let turn = |p: &mut PaneTheme, outer: &ThemeChoice, key: GradeKey, notches: f32| {
             let mut g = p.effective(outer).grade;
-            let next = key.nudged(g.get(key), notches);
+            let next = key.nudged(g.get(key).unwrap(), notches);
             g.set(key, next);
             p.pin_grade(g, GradePins::only(key.into()));
         };
@@ -3684,6 +3737,8 @@ mod tests {
             // other one's value.
             bench_size: Some(1.4),
             warp: 2.0,
+            // neutral() leaves glare to the theme, so the walk needs one set.
+            glare: Some(0.6),
             crawl_angle: 40.0,
             crawl_depth: 9.0,
             crawl: true,
@@ -4240,11 +4295,118 @@ warp = 1.5
         });
     }
 
+    /// The glare slider. Unset shows the theme's glass, so a hacker pane keeps
+    /// its reflection on a build that has never seen the dial; a dialled value
+    /// wins over the theme, zero included; and the CRT switch still has the
+    /// last word.
+    #[gpui::test]
+    fn glare_follows_the_theme_until_dialled_and_the_switch_still_wins(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            crate::palette::init_shipped(cx);
+            init_embedded(cx, house_outer());
+            let hacker = parse(DEFAULT_THEME_TOML).unwrap();
+            assert!(
+                hacker.screen_glare > 0.0,
+                "the fixture needs a theme with glass"
+            );
+            let mut on = house_outer();
+            on.grade.crt = true;
+            assert_eq!(on.grade.glare, None);
+            assert_eq!(
+                resolve(cx, &on).screen_glare,
+                hacker.screen_glare,
+                "unset is the theme's glass"
+            );
+            on.grade.set(GradeKey::Glare, 0.9);
+            assert!(
+                (resolve(cx, &on).screen_glare - 0.9).abs() < 1e-6,
+                "the dial wins"
+            );
+            on.grade.set(GradeKey::Glare, 0.0);
+            assert_eq!(
+                resolve(cx, &on).screen_glare,
+                0.0,
+                "dialled to clear glass is clear, not the theme's"
+            );
+            on.grade.glare = Some(0.9);
+            on.grade.crt = false;
+            assert_eq!(resolve(cx, &on).screen_glare, 0.0, "off is a flat screen");
+
+            // A stock theme with nothing else to restate takes resolve's fast
+            // path, which hands back the authored theme untouched — a dialled
+            // glare has to knock it off that path or it never draws.
+            let mut plain = ThemeChoice {
+                syntax: false,
+                grade: Grade::neutral(),
+                ..ThemeChoice::default()
+            };
+            plain.grade.glare = Some(0.1);
+            assert!(
+                (resolve(cx, &plain).screen_glare - 0.1).abs() < 1e-6,
+                "a glare alone still resolves"
+            );
+        });
+    }
+
+    /// Glare is the seventeenth channel, one past what the old `u16` pin mask
+    /// held, and it pins, inherits and persists like every other.
+    #[test]
+    fn glare_is_a_channel_that_pins_and_persists() {
+        // The last channel's bit is the seventeenth, and still its own.
+        let last = *GradeChannel::ALL.last().unwrap();
+        assert_eq!(GradeChannel::ALL.len(), 17);
+        assert_eq!(GradePins::all().iter().count(), GradeChannel::ALL.len());
+        assert!(!GradePins::only(last).has(GradeChannel::Brightness));
+        assert_eq!(GradeChannel::parse("glare"), Some(GradeChannel::Glare));
+
+        // A grade written before the dial existed reads as the theme's glass,
+        // and writing it back invents no key.
+        let old: Grade = toml::from_str("warp = 1.5").unwrap();
+        assert_eq!(old.glare, None);
+        assert!(!toml::to_string(&old).unwrap().contains("glare"));
+
+        // A dialled glare survives the file.
+        let outer = Grade::default();
+        let mut own = outer;
+        own.set(GradeKey::Glare, 0.3);
+        let back: Grade = toml::from_str(&toml::to_string(&own).unwrap()).unwrap();
+        assert_eq!(back.glare, Some(0.3));
+
+        // One drag pins glare and nothing else; the rest follows outer.
+        let pins = GradePins::only(GradeKey::Glare.into());
+        assert_eq!(GradePins::differing(&own, &outer), pins);
+        let mut moved = outer;
+        moved.warp = 0.2;
+        let pane = pins.merge(moved, own);
+        assert_eq!((pane.glare, pane.warp), (Some(0.3), 0.2));
+    }
+
+    /// The GAUGES tray draws a main gauge only when it has a position, so every
+    /// one of them must always have one — only a dial left to the theme may
+    /// answer `None`.
+    #[test]
+    fn main_gauges_always_hold_a_position() {
+        for g in [
+            Grade::default(),
+            Grade::neutral(),
+            house_outer().grade,
+            house_terminal().grade,
+        ] {
+            for (k, _) in Grade::CHANNELS {
+                assert!(g.get(k).is_some(), "{k:?} has a position");
+            }
+            assert_eq!(g.get(GradeKey::Glare), None, "unset glare is the theme's");
+        }
+    }
+
     #[test]
     fn reset_clears_the_main_gauges_and_leaves_the_tube_and_the_crawl() {
         let mut g = house_outer().grade;
         g.crawl = true;
         g.crawl_angle = 40.0;
+        g.glare = Some(0.7);
         let r = g.reset_gauges();
         let n = Grade::neutral();
         for (k, _) in Grade::CHANNELS {
@@ -4252,8 +4414,8 @@ warp = 1.5
         }
         assert_eq!(r.bench_size, None, "the bench follows the grid again");
         assert_eq!(
-            (r.crt, r.warp, r.tracking, r.crawl, r.crawl_angle),
-            (g.crt, g.warp, g.tracking, g.crawl, g.crawl_angle),
+            (r.crt, r.warp, r.glare, r.tracking, r.crawl, r.crawl_angle),
+            (g.crt, g.warp, g.glare, g.tracking, g.crawl, g.crawl_angle),
             "the collapsed sections keep what they hold"
         );
         // The pins a pane's reset takes are the same list, and nothing else.
@@ -4479,6 +4641,7 @@ warp = 1.5
             GradeKey::Scale,
             GradeKey::TextSize,
             GradeKey::Warp,
+            GradeKey::Glare,
             GradeKey::CrawlAngle,
             GradeKey::CrawlDepth,
             GradeKey::Phosphor,
@@ -4556,7 +4719,7 @@ warp = 1.5
         // Stored in real units, clamped to 0.7..1.6 (not the colour 0..1).
         let mut g = Grade::neutral();
         g.set(GradeKey::Scale, 1.3);
-        assert!((g.get(GradeKey::Scale) - 1.3).abs() < 1e-6);
+        assert!((g.get(GradeKey::Scale).unwrap() - 1.3).abs() < 1e-6);
         assert!(!g.is_neutral(), "a non-1.0 scale breaks neutrality");
         g.set(GradeKey::Scale, 9.0);
         assert!((g.scale - 1.6).abs() < 1e-6, "clamps to the 1.6 ceiling");
