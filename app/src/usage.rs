@@ -664,6 +664,109 @@ fn compact_duration(secs: i64) -> String {
     }
 }
 
+// ----------------------------------------------------------------------------
+// pace — on track, banked, behind, or way over, for one limit window
+// ----------------------------------------------------------------------------
+
+/// Where a limit window stands against an even spend across it. Derived, not
+/// collected — the one exception to this module's "nothing on this side is
+/// estimated" rule, because "on pace" is a relationship between two numbers
+/// (percent spent, percent of the window elapsed) neither collector reports on
+/// its own, and Parker asked for it directly: the burndown and the pace state,
+/// under the top bars, 2026-10-14.
+///
+/// Deliberately NOT a burn-rate countdown ("back in 8h 36m"). That needs two
+/// samples over time to get a real rate; a single snapshot only has `percent`
+/// *now*, and a rate guessed from one point is a number nobody measured.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pace {
+    /// 0.0..=1.0 — how far through the window the clock is, right now.
+    pub elapsed: f32,
+    /// `percent - elapsed`. Positive: spending faster than the clock. Negative:
+    /// slower — banked.
+    pub delta: f32,
+    pub verdict: PaceVerdict,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaceVerdict {
+    /// Within 5 points of an even spend either side — Burn Bar's own line for
+    /// where "over" starts, applied symmetrically.
+    OnPace,
+    /// More than 5 points under an even spend.
+    Banked,
+    /// 5 to 20 points over.
+    Behind,
+    /// More than 20 points over. The 20 is a judgment call, not a vendor's
+    /// number — nothing observed fixes where "behind" becomes "way over".
+    WayOver,
+}
+
+impl PaceVerdict {
+    fn from_delta(delta: f32) -> Self {
+        if delta > 0.20 {
+            PaceVerdict::WayOver
+        } else if delta > 0.05 {
+            PaceVerdict::Behind
+        } else if delta < -0.05 {
+            PaceVerdict::Banked
+        } else {
+            PaceVerdict::OnPace
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PaceVerdict::OnPace => "ON PACE",
+            PaceVerdict::Banked => "BANKED",
+            PaceVerdict::Behind => "BEHIND",
+            PaceVerdict::WayOver => "WAY OVER",
+        }
+    }
+}
+
+/// The window length a label names, in seconds — parsed from its own
+/// parenthesized "(N-hour)"/"(N-day)" where one is given (Claude's and
+/// Codex's labels both carry it), else a fallback read off the word "Weekly"
+/// or "Session" (Grok's "Weekly" limit has no parenthetical). `None` for a
+/// label naming neither — a window whose length cannot be known cannot have a
+/// pace computed for it, and should not be guessed.
+fn window_seconds(label: &str) -> Option<i64> {
+    if let Some(open) = label.find('(') {
+        let inner = &label[open + 1..label.find(')').unwrap_or(label.len())];
+        let (num, unit) = inner.split_once('-')?;
+        let n: i64 = num.trim().parse().ok()?;
+        return match unit.trim().trim_end_matches('s') {
+            "hour" => Some(n * 3600),
+            "day" => Some(n * 86_400),
+            _ => None,
+        };
+    }
+    if label.contains("Weekly") {
+        return Some(7 * 86_400);
+    }
+    if label.contains("Session") {
+        return Some(5 * 3600);
+    }
+    None
+}
+
+/// `None` when the window's length or reset instant cannot be read — a limit
+/// a collector published without a `resetsAt`, for instance — rather than a
+/// pace computed against a guess.
+pub fn pace(limit: &Limit, now: i64) -> Option<Pace> {
+    let secs = window_seconds(&limit.label)?;
+    let reset = parse_epoch(&limit.resets_at)?;
+    let start = reset - secs;
+    let elapsed = ((now - start) as f32 / secs as f32).clamp(0.0, 1.0);
+    let delta = limit.percent - elapsed;
+    Some(Pace {
+        elapsed,
+        delta,
+        verdict: PaceVerdict::from_delta(delta),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -866,5 +969,106 @@ mod tests {
             since("2026-09-02T11:59:50Z", now).as_deref(),
             Some("just now")
         );
+    }
+
+    fn week(percent: f32, hours_into_week: i64) -> Limit {
+        let now = 1_800_000_000i64; // fixed instant, so the math is reproducible
+        let reset = now + (7 * 86_400 - hours_into_week * 3600);
+        Limit {
+            label: "Weekly (7-day)".into(),
+            percent,
+            resets_at: fmt_rfc3339(reset),
+        }
+    }
+
+    /// Civil date from days-since-epoch — Hinnant's `civil_from_days`, the
+    /// exact inverse of `days_from_civil` above.
+    fn civil_from_days(z: i64) -> (i64, i64, i64) {
+        let z = z + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        (if m <= 2 { y + 1 } else { y }, m, d)
+    }
+
+    /// A real, calendar-correct RFC3339 instant for a given epoch — the test
+    /// fixture's own round trip through `parse_epoch`/`days_from_civil`, so a
+    /// multi-day offset (a week-long window, a stale reset) advances the date
+    /// instead of only wrapping the time of day.
+    fn fmt_rfc3339(epoch: i64) -> String {
+        let days = epoch.div_euclid(86_400);
+        let secs = epoch.rem_euclid(86_400);
+        let (y, mo, d) = civil_from_days(days);
+        let (h, mi, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+        format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}+00:00")
+    }
+
+    #[test]
+    fn pace_is_none_without_a_parseable_window() {
+        let now = 1_800_000_000i64;
+        let l = Limit {
+            label: "Mystery".into(),
+            percent: 0.5,
+            resets_at: fmt_rfc3339(now + 3600),
+        };
+        assert_eq!(pace(&l, now), None, "no window length can be read from the label");
+
+        let l2 = Limit {
+            label: "Weekly (7-day)".into(),
+            percent: 0.5,
+            resets_at: String::new(),
+        };
+        assert_eq!(pace(&l2, now), None, "no resetsAt to anchor the window to");
+    }
+
+    #[test]
+    fn pace_reads_on_pace_banked_behind_and_way_over() {
+        let now = 1_800_000_000i64;
+        // Exactly half the week elapsed, exactly half spent: dead on pace.
+        let p = pace(&week(0.50, 7 * 24 / 2), now).unwrap();
+        assert!((p.elapsed - 0.5).abs() < 0.01, "elapsed = {}", p.elapsed);
+        assert!((p.delta).abs() < 0.01, "delta = {}", p.delta);
+        assert_eq!(p.verdict, PaceVerdict::OnPace);
+
+        // Half the week gone, a quarter spent: comfortably banked.
+        let p = pace(&week(0.25, 7 * 24 / 2), now).unwrap();
+        assert_eq!(p.verdict, PaceVerdict::Banked);
+        assert!(p.delta < -0.05);
+
+        // Half the week gone, 68% spent (today's real Claude reading): behind.
+        let p = pace(&week(0.68, 7 * 24 / 2), now).unwrap();
+        assert_eq!(p.verdict, PaceVerdict::Behind);
+
+        // Ten percent of the week gone, 90% spent: way over.
+        let p = pace(&week(0.90, 7 * 24 / 10), now).unwrap();
+        assert_eq!(p.verdict, PaceVerdict::WayOver);
+    }
+
+    #[test]
+    fn pace_elapsed_clamps_to_the_window_even_past_reset() {
+        // A reset in the past (a stale record) must not read as elapsed > 1.0
+        // or < 0.0 — the clamp is the guard against a confident nonsense number.
+        let now = 1_800_000_000i64;
+        let l = Limit {
+            label: "Weekly (7-day)".into(),
+            percent: 0.3,
+            resets_at: fmt_rfc3339(now - 86_400), // reset already happened
+        };
+        let p = pace(&l, now).unwrap();
+        assert!((0.0..=1.0).contains(&p.elapsed));
+    }
+
+    #[test]
+    fn window_seconds_reads_both_label_shapes() {
+        assert_eq!(window_seconds("Session (5-hour)"), Some(5 * 3600));
+        assert_eq!(window_seconds("Weekly (7-day)"), Some(7 * 86_400));
+        assert_eq!(window_seconds("Weekly"), Some(7 * 86_400)); // Grok's shape
+        assert_eq!(window_seconds("Fable Weekly"), Some(7 * 86_400));
+        assert_eq!(window_seconds("Prepaid"), None);
     }
 }
