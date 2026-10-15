@@ -21458,21 +21458,20 @@ impl Workspace {
             let deg = slot::Degrade::resolve(self.left_bar_w, rail_w, row.session_ticks);
 
             // The same pace math the usage panel's TOKEN USAGE PACE line uses
-            // — same weekly limit, same margin, same three-colour banding —
-            // just small, and overlaid on the two rails rather than its own
-            // row: nothing in this slot has 20px of height to spare. Parker,
-            // 2026-10-14: "just the torch — emitting a glow against the
-            // surface, colour coded for what the state is."
-            let pace_glow = rec
+            // — same weekly limit, same margin. Shades the provider's own
+            // mark now, not a separate torch: Parker, 2026-10-14, on the
+            // torch sitting over the rails, "doesn't quite work… we just
+            // SHADE the LOGO of the provider… lose the torch icon, but keep
+            // the surface glow." `None` when there's no weekly-shaped limit
+            // or no resetsAt to anchor it to — a badge with nothing measured
+            // keeps its plain neutral colour and no glow, never a grey
+            // standing in for a band nobody read.
+            let badge_tint = rec
                 .limits
                 .iter()
                 .find(|l| l.label.contains("7-day") || l.label == "Weekly")
                 .and_then(|l| usage::pace(l, now))
-                // The band's own colour, at full strength. It used to be
-                // brightened 1.7×, which put all three bands within a few
-                // points of white (lightness 0.88–0.92), so the torch read as
-                // "vaguely red" whatever the week was doing.
-                .map(|p| pace_band(p.delta));
+                .map(|p| pace_ramp(p.delta));
 
             // The long window, as one solid rail.
             let week = match lit_colour(&row.week) {
@@ -21588,24 +21587,40 @@ impl Workspace {
                     // mark and some will not, and a column that changes shape
                     // per row loses the rhythm that lets the eye find the rail
                     // it wants without reading anything.
-                    div()
-                        .flex_none()
-                        .w(px(mark_w * s))
-                        .h(px(mark_w * s))
-                        .rounded(rad)
-                        .border_1()
-                        .border_color(text.alpha(0.18))
-                        .bg(text.alpha(0.06))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_size(px(7.5 * SLOT_RAIL_GROWTH * s))
-                        .text_color(text.alpha(0.75))
-                        .map(|d| match self.provider_marks.get(&row.id) {
+                    {
+                        let mark_col = badge_tint.unwrap_or(text.alpha(0.85));
+                        let mut badge = div()
+                            .flex_none()
+                            .w(px(mark_w * s))
+                            .h(px(mark_w * s))
+                            .rounded(rad)
+                            .border_1()
+                            .border_color(text.alpha(0.18))
+                            .bg(text.alpha(0.06))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_size(px(7.5 * SLOT_RAIL_GROWTH * s))
+                            .text_color(mark_col);
+                        // The glow the torch used to carry, moved onto the
+                        // badge it now shades — absent along with the tint
+                        // when there is nothing measured to colour it with.
+                        if let Some(col) = badge_tint {
+                            badge = badge.shadow(vec![BoxShadow {
+                                color: col.alpha(0.55),
+                                offset: point(px(0.), px(0.)),
+                                blur_radius: px(mark_w * s * 0.5),
+                                spread_radius: px(0.),
+                                inset: false,
+                            }]);
+                        }
+                        badge.map(|d| match self.provider_marks.get(&row.id) {
                             // gpui draws an SVG as a MASK tinted by
-                            // `text_color`, so the mark follows the theme
-                            // instead of dragging a brand palette into a
-                            // window whose whole point is being re-coloured.
+                            // `text_color`, so the mark follows the pace
+                            // tint the same way it already followed the
+                            // theme, rather than dragging a brand palette
+                            // into a window whose whole point is being
+                            // re-coloured.
                             Some(path) => d.child(
                                 gpui::svg()
                                     .external_path(SharedString::from(
@@ -21613,72 +21628,22 @@ impl Workspace {
                                     ))
                                     .w(px(mark_w * s * 0.7))
                                     .h(px(mark_w * s * 0.7))
-                                    .text_color(text.alpha(0.85)),
+                                    .text_color(mark_col),
                             ),
                             None => d.child(row.initials.clone()),
-                        }),
+                        })
+                    },
                 )
-                .child({
-                    let mut rails = div()
-                        .relative()
+                .child(
+                    div()
                         .flex_1()
                         .min_w(px(0.))
                         .flex()
                         .flex_col()
                         .gap(px(3.0 * s))
                         .child(week)
-                        .child(session);
-                    // The torch, centred over the seam between the two rails
-                    // — a glow against the surface, not a third row, because
-                    // this slot has no height to give one.
-                    if let Some(col) = pace_glow {
-                        let torch = (row_h * 0.6).clamp(7., 13.);
-                        // A full-strength flame can sit on a rail of its own
-                        // colour (green on green pips), so it rides on a disc of
-                        // the bar's ground, and the disc carries the glow. gpui
-                        // draws a shadow only outside its element's box, so a
-                        // glow on the bare svg could never have separated the
-                        // flame from what is under it.
-                        let disc = torch + 4.0 * s;
-                        rails = rails.child(
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(
-                                    div()
-                                        .w(px(disc))
-                                        .h(px(disc))
-                                        .rounded(pill)
-                                        .bg(th.bg.alpha(0.85))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .shadow(vec![BoxShadow {
-                                            color: col.alpha(0.6),
-                                            offset: point(px(0.), px(0.)),
-                                            blur_radius: px(torch * 0.8),
-                                            spread_radius: px(1.),
-                                            inset: false,
-                                        }])
-                                        .child(
-                                            gpui::svg()
-                                                .external_path(SharedString::from(
-                                                    art::pace_flame_svg()
-                                                        .to_string_lossy()
-                                                        .into_owned(),
-                                                ))
-                                                .w(px(torch))
-                                                .h(px(torch))
-                                                .text_color(col),
-                                        ),
-                                ),
-                        );
-                    }
-                    rails
-                });
+                        .child(session),
+                );
             if deg.show_pct {
                 line = line.child(
                     div()
@@ -25242,6 +25207,41 @@ fn pace_band(delta: f32) -> Hsla {
     } else {
         hsla(0.38, 0.52, 0.52, 1.) // on pace — green, the ramp's Calm
     }
+}
+
+/// The left bar's badge tint — a continuous ramp, not a three-way band, across
+/// red/yellow/green/blue-green/blue. The torch sitting on the rails "doesn't
+/// quite work," Parker said 2026-10-14: shade the provider's own mark instead,
+/// losing the separate icon but keeping the glow it carried. `None` for no
+/// pace data — a badge nobody has a reading for stays its plain neutral
+/// colour, never a confident grey standing in for a band.
+fn pace_ramp(delta: f32) -> Hsla {
+    // Hue-only interpolation between five fixed anchors, so saturation and
+    // lightness never muddy on the way between stops the way mixing two
+    // arbitrary RGBs can.
+    const STOPS: [(f32, f32); 5] = [
+        (0.30, 0.00),  // hot — red
+        (0.15, 0.14),  // yellow
+        (0.00, 0.33),  // on pace — green
+        (-0.15, 0.48), // blue-green
+        (-0.30, 0.60), // cool — blue
+    ];
+    let d = delta.clamp(STOPS[4].0, STOPS[0].0);
+    let hue = STOPS
+        .windows(2)
+        .find(|w| d <= w[0].0 && d >= w[1].0)
+        .map(|w| {
+            let (d0, h0) = w[0];
+            let (d1, h1) = w[1];
+            let t = if (d0 - d1).abs() < f32::EPSILON {
+                0.0
+            } else {
+                (d0 - d) / (d0 - d1)
+            };
+            h0 + (h1 - h0) * t
+        })
+        .unwrap_or(STOPS[2].1);
+    hsla(hue, 0.60, 0.56, 1.)
 }
 
 fn agent_state_glow(th: &theme::Theme, idle: Hsla, state: hud::AgentState) -> Hsla {
@@ -35410,15 +35410,15 @@ mod tests {
         );
     }
 
-    /// The left bar's pace torch is as red, green or blue as the pips under it.
+    /// `pace_band` — the usage card's TOKEN USAGE PACE line — is as red, green
+    /// or blue as the pips under it.
     ///
-    /// It was brightened 1.7× to stand out, which lifted every band to within a
-    /// few points of white, and Parker read a WAY OVER week as "vaguely red"
-    /// (2026-10-14). The torch is now the band itself: red and green ARE the
-    /// pips' pressure colours, so this fails if either is washed again or the
-    /// slot starts brightening its torch.
+    /// It was brightened 1.7× to stand out once, which lifted every band to
+    /// within a few points of white, and Parker read a WAY OVER week as
+    /// "vaguely red" (2026-10-14). Red and green ARE the pips' pressure
+    /// colours, so this fails if either is washed again.
     #[test]
-    fn the_pace_torch_is_as_saturated_as_the_pips() {
+    fn pace_band_is_as_saturated_as_the_pips() {
         assert_eq!(pace_band(0.41), pressure(0.99), "way over is the pips' red");
         assert_eq!(pace_band(0.0), pressure(0.10), "on pace is the pips' green");
         let blue = pace_band(-0.30);
@@ -35428,6 +35428,37 @@ mod tests {
         assert_eq!(pace_band(-0.15), pressure(0.10));
         assert_eq!(pace_band(0.16), pressure(0.99));
         assert_ne!(pace_band(-0.16), pressure(0.10));
+    }
+
+    /// The left bar lost its torch (2026-10-14: "doesn't quite work… we just
+    /// SHADE the LOGO of the provider… lose the torch icon, but keep the
+    /// surface glow") in favour of tinting the provider's own mark with
+    /// `pace_ramp`, a continuous red/yellow/green/blue-green/blue sweep
+    /// rather than `pace_band`'s three-way split. This pins both halves of
+    /// that swap in the shipped source: no flame SVG drawn inside the slot,
+    /// and the badge's colour actually comes from the ramp.
+    #[test]
+    fn pace_ramp_sweeps_red_through_blue_and_has_replaced_the_slot_torch() {
+        // five named anchors, in order
+        let hues: Vec<f32> = [0.30, 0.15, 0.0, -0.15, -0.30]
+            .iter()
+            .map(|&d| pace_ramp(d).h)
+            .collect();
+        for w in hues.windows(2) {
+            assert!(w[0] < w[1], "the ramp must climb red(0) toward blue(.6): {hues:?}");
+        }
+        assert!((pace_ramp(0.30).h - 0.0).abs() < 0.01, "hot anchors on red");
+        assert!((pace_ramp(-0.30).h - 0.60).abs() < 0.01, "cool anchors on blue");
+        // a point halfway between two anchors lands halfway between their
+        // hues: 0.075 is halfway between the 0.15 anchor (yellow, .14) and
+        // the 0.0 anchor (green, .33), so the hue should land at their
+        // midpoint, (.14+.33)/2 = .235, not at either anchor outright.
+        let mid = pace_ramp(0.075).h;
+        assert!((mid - 0.235).abs() < 0.01, "midpoint interpolates, not steps: {mid}");
+        // beyond the ends, the ramp clamps rather than extrapolating past blue/red
+        assert_eq!(pace_ramp(5.0), pace_ramp(0.30));
+        assert_eq!(pace_ramp(-5.0), pace_ramp(-0.30));
+
         let src = shipped_src();
         let slot = {
             let at = src.find("fn render_bar_slot").expect("the slot");
@@ -35435,8 +35466,12 @@ mod tests {
             &src[at..at + end]
         };
         assert!(
-            slot.contains(".map(|p| pace_band(p.delta))") && !slot.contains("brighten("),
-            "the slot's torch is drawn in its band colour, unbrightened"
+            slot.contains(".map(|p| pace_ramp(p.delta))"),
+            "the badge's tint comes from the ramp, not the three-way band"
+        );
+        assert!(
+            !slot.contains("pace_flame_svg"),
+            "the torch is gone — the slot shades the mark, it doesn't draw a flame"
         );
     }
 
