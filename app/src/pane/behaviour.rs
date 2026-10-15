@@ -140,6 +140,149 @@ fn codex_relative_html_reference_opens_the_panes_file(cx: &mut TestAppContext) {
     assert_eq!(desktop_launches(), Vec::<String>::new());
 }
 
+/// A shell command that prints `name` with `uri` behind it, the way eza and
+/// `ls --hyperlink` do: OSC 8 and the address, ST, the name as shown, then the
+/// link closed. The address goes in as an argument, so a `%20` in it is never
+/// read as a printf directive.
+fn hyperlinked(uri: &str, name: &str) -> String {
+    format!(r#"printf '\033]8;;%s\033\\%s\033]8;;\033\\\n' "{uri}" "{name}""#)
+}
+
+/// A folder holding a `README.md` of its own and a `docs/` with another: the
+/// shape that makes a bare name from a listing ambiguous.
+fn a_folder_with_two_readmes(tag: &str) -> Scratch {
+    let dir = Scratch::new(tag);
+    std::fs::create_dir_all(dir.join("docs")).expect("docs/");
+    std::fs::write(dir.join("README.md"), "# The folder's own\n").expect("README.md");
+    std::fs::write(dir.join("docs/README.md"), "# The one listed\n").expect("docs/README.md");
+    dir
+}
+
+/// A shell script that runs `then` from inside `dir`, as a person's shell sits
+/// in a folder, then says it is ready.
+fn in_folder(dir: &Scratch, then: &str) -> String {
+    format!(
+        "cd '{}' && {then}; echo ready; exec cat",
+        dir.join("").display()
+    )
+}
+
+/// GNU `ls --hyperlink` puts each name's absolute path behind it, naming this
+/// machine (`file://<hostname>/…`). An Alt+click on a name it listed opens the
+/// file that was listed, even with a file of the same name in the pane's own
+/// folder.
+///
+/// Parker, 2026-10-15: *"We would love to get an LS from the raw terminal to
+/// be alt clickable and open a glow pane in Terminal Delight."* Asked what
+/// that pane should be, he chose Terminal Delight's own view over the glow
+/// program.
+#[gpui::test]
+fn alt_click_on_a_name_ls_hyperlinked_opens_the_file_it_listed(cx: &mut TestAppContext) {
+    let dir = a_folder_with_two_readmes("ls-hyperlink");
+    let mut pane = Pane::running(cx, &in_folder(&dir, "ls --hyperlink=always docs"));
+    pane.wait_for("ready");
+    let at = pane.point_at("README.md");
+    pane.click(at, Pane::alt());
+    let listed = std::fs::canonicalize(dir.join("docs/README.md")).expect("docs/README.md");
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(listed.as_path()),
+        "the listed file opens, never the folder's own README.md"
+    );
+    assert_eq!(desktop_launches(), Vec::<String>::new());
+}
+
+/// eza quotes a name with a space and puts the path behind it with no machine
+/// named (`file:///…/my%20notes.md`). Either word of the name opens the one
+/// file, and a name the pane's edge breaks over two rows opens from either
+/// row.
+#[gpui::test]
+fn alt_click_on_a_name_eza_hyperlinked_opens_it_whole(cx: &mut TestAppContext) {
+    let dir = Scratch::new("eza-hyperlink");
+    let spaced = dir.join("my notes.md");
+    let long = dir.join("a-name-long-enough-to-wrap.md");
+    for file in [&spaced, &long] {
+        std::fs::write(file, "# A note\n").expect("a note");
+    }
+    let uri = |p: &std::path::Path| super::path_to_file_uri(p.to_str().expect("UTF-8"));
+    // Eighty columns of a hundred are taken before the long name starts, so
+    // its last nine characters wrap onto the next row.
+    let listing = format!(
+        "{} && printf '%80s' '' && {}",
+        hyperlinked(&uri(&spaced), "'my notes.md'"),
+        hyperlinked(&uri(&long), "a-name-long-enough-to-wrap.md"),
+    );
+    let mut pane = Pane::running(cx, &in_folder(&dir, &listing));
+    pane.wait_for("ready");
+    for (word, file) in [
+        ("'my", &spaced),
+        ("notes.md'", &spaced),
+        ("a-name-long", &long),
+        ("o-wrap.md", &long),
+    ] {
+        let at = pane.point_at(word);
+        pane.click(at, Pane::alt());
+        assert_eq!(pane.float_path().as_deref(), Some(file.as_path()), "{word}");
+        pane.keys("escape");
+    }
+    assert_eq!(desktop_launches(), Vec::<String>::new());
+}
+
+/// A name printed with no hyperlink, as plain `ls` and an agent's tool output
+/// print them, is tried in the pane's own folder. There it opens, and a name
+/// the folder does not hold opens nothing.
+#[gpui::test]
+fn alt_click_on_a_bare_name_opens_it_from_the_panes_folder(cx: &mut TestAppContext) {
+    let dir = a_folder_with_two_readmes("ls-bare");
+    let mut pane = Pane::running(
+        cx,
+        &in_folder(&dir, "printf '%s\\n' 'docs  README.md  missing.md'"),
+    );
+    pane.wait_for("ready");
+    let at = pane.point_at("README.md");
+    pane.click(at, Pane::alt());
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(dir.join("README.md").as_path())
+    );
+    pane.keys("escape");
+    let at = pane.point_at("missing.md");
+    pane.click(at, Pane::alt());
+    assert_eq!(
+        pane.float_path(),
+        None,
+        "a name the folder does not hold opens nothing"
+    );
+    assert_eq!(desktop_launches(), Vec::<String>::new());
+}
+
+/// A hyperlink the click does not follow is never swapped for a guess from the
+/// name it sits on. A link to a file that has gone, a web address behind a
+/// file's name, and another machine's file each sit on `README.md`, in a
+/// folder whose own `README.md` is right there. None of them opens it, by Alt
+/// or by Ctrl.
+#[gpui::test]
+fn a_hyperlinked_name_is_never_replaced_by_a_guess(cx: &mut TestAppContext) {
+    let dir = a_folder_with_two_readmes("ls-no-guess");
+    let gone = super::path_to_file_uri(dir.join("gone/README.md").to_str().expect("UTF-8"));
+    let listing = [
+        hyperlinked(&gone, "README.md"),
+        hyperlinked("https://example.com/README.md", "README.md"),
+        hyperlinked("file://elsewhere.invalid/README.md", "README.md"),
+    ]
+    .join(" && ");
+    let mut pane = Pane::running(cx, &in_folder(&dir, &listing));
+    pane.wait_for("ready");
+    let names = pane.points_at_all("README.md");
+    assert_eq!(names.len(), 3, "three names, one to a row");
+    for at in names {
+        pane.click(at, Pane::alt());
+        assert_eq!(pane.float_path(), None, "nothing opens in the square");
+        let got = launched_by(&mut pane, at, held(false, true, false, false));
+        assert_eq!(got, Vec::<String>::new(), "nothing goes to the desktop");
+    }
+}
+
 /// The square's strip moves it with the hand, and its edge resizes it with the
 /// far side pinned. Neither leaves a selection in the grid behind it.
 #[gpui::test]
