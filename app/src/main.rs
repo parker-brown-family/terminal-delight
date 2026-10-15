@@ -30456,6 +30456,7 @@ impl Render for Workspace {
                         row("Ctrl+Shift+D", s.themes_wheel),
                         row(&format!("⛭ {}", s.k_display_tray), s.display_tray),
                         row("Ctrl+Shift+G", s.display_tray),
+                        row("Ctrl+wheel ↑ / ↓", s.outer_size),
                         row(s.k_text_size_key, s.text_size),
                         row(s.k_warp_dial, s.warp),
                     ],
@@ -30601,10 +30602,11 @@ impl Render for Workspace {
                     }),
                 );
             let panel = div()
+                .id("help-panel")
                 .w(gpui::relative(0.94))
                 .max_w(px(940.))
-                .max_h(gpui::relative(0.88))
-                .overflow_hidden()
+                .max_h(px(help_vh * 0.88))
+                .overflow_y_scroll()
                 .p_5()
                 .rounded(sk.rad_raw(8.))
                 .border_2()
@@ -30653,12 +30655,11 @@ impl Render for Workspace {
                         ),
                 )
                 .child(
-                    // The body SCROLLS. It is capped against the viewport, and the
-                    // panel clips (overflow_hidden) — without this the last rows
-                    // were simply cut off with no way to reach them, which is how
-                    // "right-click a tab" went missing on a short window.
+                    // Scroll the whole card: reserving a fixed 150px for the
+                    // header and footer clips rows when those controls wrap.
                     div()
                         .id("help-body")
+                        .flex_none()
                         .flex()
                         .map(|d| {
                             if help_narrow {
@@ -30668,9 +30669,6 @@ impl Render for Workspace {
                             }
                         })
                         .w_full()
-                        .min_h(px(0.))
-                        .max_h(px((help_vh * 0.88 - 150.).max(120.)))
-                        .overflow_y_scroll()
                         .child(if help_features { feat_a } else { col_a })
                         .child(if help_features { feat_b } else { col_b }),
                 )
