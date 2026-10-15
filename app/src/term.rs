@@ -1756,6 +1756,31 @@ mod correctness {
         assert!(term.hyperlink(Point::new(Line(0), Column(0))).is_none());
     }
 
+    /// A link longer than the row wraps, and the half on the next row is the
+    /// same link, id and all: the pane reads one file from either half and
+    /// frames both rows. A long name `ls --hyperlink` prints in a narrow pane
+    /// is this, and the link carries no id of its own, as eza's and ls's do not.
+    #[test]
+    fn osc8_link_wrapped_across_rows_is_one_link_on_both() {
+        let (mut term, _) = harness(10, 4);
+        feed(
+            &mut term,
+            b"\x1b]8;;file:///tmp/a-long-name.md\x1b\\a-long-name.md\x1b]8;;\x1b\\",
+        );
+        let head = term
+            .hyperlink(Point::new(Line(0), Column(9)))
+            .expect("the first row carries it");
+        let tail = term
+            .hyperlink(Point::new(Line(1), Column(0)))
+            .expect("the wrapped row carries it");
+        assert_eq!(head, tail, "one link on both rows");
+        assert_eq!(tail.uri(), "file:///tmp/a-long-name.md");
+        assert!(
+            term.hyperlink(Point::new(Line(1), Column(4))).is_none(),
+            "the link closes after the name"
+        );
+    }
+
     // ----------------------------------------------------------------------
     // (i) OSC 52 — clipboard store. Default Config osc52 == OnlyCopy, so a
     //     copy ('c') sequence emits Event::ClipboardStore with the decoded text.

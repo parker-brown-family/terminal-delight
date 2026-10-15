@@ -98,7 +98,6 @@ trait Backend: Send + Sized {
     fn selection_to_string(&self) -> Option<String>;
     fn semantic_search_left(&self, point: Point) -> Point;
     fn semantic_search_right(&self, point: Point) -> Point;
-    #[cfg(test)]
     fn hyperlink(&self, point: Point) -> Option<Hyperlink>;
     fn pictures(&self) -> Vec<Picture>;
     fn picture_data(&self, key: PictureKey) -> Option<PictureData>;
@@ -391,8 +390,8 @@ impl Term {
         self.core.forget_pictures();
     }
 
-    /// The OSC 8 hyperlink on a cell, which only the tests read.
-    #[cfg(test)]
+    /// The OSC 8 hyperlink on a cell. Alt+click reads it, so a listing that
+    /// links each name to its file opens that file rather than a guess.
     pub fn hyperlink(&self, point: Point) -> Option<Hyperlink> {
         self.core.hyperlink(self.clamp_point(point))
     }

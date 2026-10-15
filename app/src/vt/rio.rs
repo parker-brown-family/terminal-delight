@@ -30,7 +30,6 @@ use rio_vt::event::{EventListener, RioEvent, WindowId};
 use rio_vt::performer::handler::Processor;
 use rio_vt::selection::{Selection, SelectionType as RType};
 
-#[cfg(test)]
 use super::Hyperlink;
 use super::{
     Backend, Cell, ClipboardType, Color, Column, Cursor, CursorShape, Event, Flags, Line, Listener,
@@ -629,7 +628,6 @@ impl Backend for Core {
         graphics.total_bytes = graphics.total_bytes.saturating_sub(on_show);
     }
 
-    #[cfg(test)]
     fn hyperlink(&self, at: Point) -> Option<Hyperlink> {
         let link = self
             .term

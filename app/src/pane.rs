@@ -928,6 +928,81 @@ fn pick_link(
     }
 }
 
+/// A bare file name under a click, such as `README.md` in a listing `ls`
+/// printed. It has no slash, so [`link_of_token`] passes it by, and it names a
+/// file only relative to some folder the screen does not say. It is offered
+/// last, so [`pick_link`] takes it only when no other reading held and the
+/// pane's own folder holds a file by that name.
+///
+/// Read at a click and never for colour: every word on the screen is a
+/// possible file name, and only the disk can say which ones are.
+fn bare_name_reading(rows: &[Vec<char>], vrow: usize, vcol: usize) -> Option<LinkSpan> {
+    let row = rows.get(vrow)?;
+    let (start, end) = token_span(row, vcol)?;
+    let tok = trim_link_delims(&row[start..end].iter().collect::<String>());
+    let bare = !matches!(tok.as_str(), "" | "." | "..")
+        && !tok.contains('/')
+        && !tok.starts_with('~')
+        && link_of_token(&tok).is_none();
+    bare.then_some(LinkSpan {
+        link: Link::Path(tok),
+        first: vrow,
+        last: vrow,
+    })
+}
+
+/// What the cell under a click links to by OSC 8, the escape a program uses
+/// to put a target behind the text it prints.
+#[derive(Debug, Clone, PartialEq)]
+enum CellLink {
+    /// No hyperlink: the text on the screen is all there is to read.
+    Text,
+    /// A link TD does not follow: a web address, which its label may
+    /// misstate, or a file on another machine. The text decides, as before.
+    Unfollowed,
+    /// A file on this machine, as the one reading a click takes.
+    File(LinkSpan),
+}
+
+/// What an OSC 8 link `uri` on grid rows `first..=last` gives a click: the file
+/// it names, when it is a `file://` link on this machine (`host` is this
+/// machine's name), and otherwise [`CellLink::Unfollowed`].
+///
+/// `eza --hyperlink` writes `file:///home/…/my%20notes.md` behind
+/// `'my notes.md'`, and GNU `ls --hyperlink` writes `file://legion/home/…`
+/// behind a name: an exact path whichever folder was listed and wherever the
+/// shell has been since, which the bare name alone cannot give.
+fn hyperlink_reading(uri: &str, host: Option<&str>, first: usize, last: usize) -> CellLink {
+    match uri
+        .starts_with("file://")
+        .then(|| reveal_target_on(uri, host))
+        .flatten()
+    {
+        Some(path) => CellLink::File(LinkSpan {
+            link: Link::Path(path),
+            first,
+            last,
+        }),
+        None => CellLink::Unfollowed,
+    }
+}
+
+/// The grid rows a hyperlink on row `row` covers: that row, and every row
+/// above and below it that `holds` the same link without a break. A name
+/// wrapped at the pane's edge is one link on two rows, and the Alt frame takes
+/// in both.
+fn hyperlink_rows(row: usize, rows: usize, holds: impl Fn(usize) -> bool) -> (usize, usize) {
+    let mut first = row;
+    while first > 0 && holds(first - 1) {
+        first -= 1;
+    }
+    let mut last = row;
+    while last + 1 < rows && holds(last + 1) {
+        last += 1;
+    }
+    (first, last)
+}
+
 /// Paint the rest of a link the width broke in the colour of its first half.
 ///
 /// The overlay classifies one row at a time, so a fragment on the row below
@@ -1302,23 +1377,43 @@ pub(crate) fn open_with_system(target: &str) {
 /// The filesystem item a clicked link points at, or None when there is nothing
 /// on this disk to show — an `http(s)` link, or a `file://` URI naming another
 /// host. Accepts what `link_under` hands back: an already-absolute path, or a
-/// URL. Pure, so the tricky half (percent-decoding, the `localhost` authority)
-/// is testable without a file manager.
+/// URL. The tricky half (percent-decoding, which authorities mean this
+/// machine) is [`reveal_target_on`], testable without a file manager.
 fn reveal_target(target: &str) -> Option<String> {
+    reveal_target_on(target, this_host())
+}
+
+/// [`reveal_target`], told the name this machine goes by. Pure.
+///
+/// `file://<authority>/path`: an empty authority or `localhost` means this
+/// machine, and so does this machine's own name, which GNU `ls --hyperlink`
+/// writes into every link it prints (`file://legion/home/…`). Any other
+/// authority is someone else's disk and there is nothing here to reveal.
+fn reveal_target_on(target: &str, host: Option<&str>) -> Option<String> {
     if target.starts_with('/') {
         return Some(target.to_string());
     }
     let rest = target.strip_prefix("file://")?;
-    // file://<authority>/path — empty or "localhost" means this machine; any
-    // other authority is someone else's disk and we have nothing to reveal.
-    let path = if let Some(p) = rest.strip_prefix("localhost/") {
-        format!("/{p}")
-    } else if rest.starts_with('/') {
-        rest.to_string()
-    } else {
-        return None;
-    };
-    Some(percent_decode(&path))
+    let (authority, path) = rest.split_at(rest.find('/')?);
+    let here = authority.is_empty()
+        || authority.eq_ignore_ascii_case("localhost")
+        || host.is_some_and(|h| authority.eq_ignore_ascii_case(h));
+    here.then(|| percent_decode(path))
+}
+
+/// The name this machine goes by, read once: the kernel's, which is what
+/// `gethostname` answers and so what `ls --hyperlink` writes into its links.
+/// `None` where it cannot be read, and then only an empty or `localhost`
+/// authority counts as this machine.
+fn this_host() -> Option<&'static str> {
+    static HOST: OnceLock<Option<String>> = OnceLock::new();
+    HOST.get_or_init(|| {
+        std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .ok()
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
+    })
+    .as_deref()
 }
 
 /// Decode `%XX` escapes in a URI path. Leaves a malformed escape as written —
@@ -5657,16 +5752,48 @@ impl TerminalView {
     }
 
     /// Every reading of the link under the pointer, the most-joined first.
+    ///
+    /// A cell carrying an OSC 8 link to a file on this machine is read as that
+    /// file and nothing else. The program said which file it meant, so when
+    /// that file is gone the click opens nothing rather than a guess from the
+    /// text. Any other hyperlink leaves the text to speak, as before. With no
+    /// hyperlink at all, a bare name is offered last, against the pane's
+    /// folder.
     fn link_readings_under(&self, pos: gpui::Point<Pixels>) -> Vec<LinkSpan> {
         let (vrow, vcol, _) = self.viewport_cell(pos);
         // Map the painted/visual row back to the grid viewport row it shows
         // (identity in the default un-anchored path; inverts the anchor-to-top
         // flip + any bottom-anchor offset otherwise).
         let vrow = self.paint_row_to_grid_row(vrow);
+        let cell = self.cell_link_at(vrow, vcol);
+        if let CellLink::File(file) = cell {
+            return vec![file];
+        }
         // Read the whole visible grid plus per-row soft-wrap flags, so a
         // URL/path broken across rows is read as one token.
         let (grid, wraps) = self.grid_snapshot();
-        wrapped_link_candidates(&grid, &wraps, vrow, vcol)
+        let mut readings = wrapped_link_candidates(&grid, &wraps, vrow, vcol);
+        if cell == CellLink::Text {
+            readings.extend(bare_name_reading(&grid, vrow, vcol));
+        }
+        readings
+    }
+
+    /// The OSC 8 link on grid row `vrow`, column `vcol`, and the rows it
+    /// runs across. One term lock, held only while the cells are asked.
+    fn cell_link_at(&self, vrow: usize, vcol: usize) -> CellLink {
+        let term = self.session.term.lock();
+        let offset = term.display_offset() as i32;
+        let cols = self.grid.cols;
+        let at =
+            |r: usize, c: usize| term.hyperlink(TermPoint::new(Line(r as i32 - offset), Column(c)));
+        let Some(link) = at(vrow, vcol) else {
+            return CellLink::Text;
+        };
+        let (first, last) = hyperlink_rows(vrow, self.grid.rows, |r| {
+            (0..cols).any(|c| at(r, c).as_ref() == Some(&link))
+        });
+        hyperlink_reading(link.uri(), this_host(), first, last)
     }
 
     /// Alt+click on a chip armed for a copy: the command line goes to both
@@ -12596,6 +12723,126 @@ mod tests {
         assert_eq!(reveal_target("mailto:a@b.c"), None);
         // someone else's disk
         assert_eq!(reveal_target("file://otherhost/home/x"), None);
+    }
+
+    /// GNU `ls --hyperlink` names this machine in every link it prints, so the
+    /// machine's own name is as local as `localhost`, in any case. Any other
+    /// name is still someone else's disk, and with no name known only the
+    /// empty and `localhost` authorities are here.
+    #[test]
+    fn this_machines_own_name_is_a_local_authority() {
+        let here = Some("legion");
+        assert_eq!(
+            reveal_target_on("file://legion/home/parker/notes.md", here),
+            Some("/home/parker/notes.md".into())
+        );
+        assert_eq!(
+            reveal_target_on("file://LEGION/home/parker/my%20notes.md", here),
+            Some("/home/parker/my notes.md".into())
+        );
+        assert_eq!(reveal_target_on("file://otherhost/home/x", here), None);
+        assert_eq!(reveal_target_on("file://legion/home/x", None), None);
+        assert_eq!(
+            reveal_target_on("file:///home/x", None),
+            Some("/home/x".into())
+        );
+        // An authority with no path after it names no file.
+        assert_eq!(reveal_target_on("file://legion", here), None);
+    }
+
+    /// A hyperlink is followed only to a file on this machine, read as that
+    /// file's decoded path over the rows it runs across. A web address behind
+    /// a label, another machine's file, and anything that is not a `file://`
+    /// link at all are left to the text.
+    #[test]
+    fn a_hyperlink_is_read_as_its_file_only_when_the_file_is_here() {
+        let here = Some("legion");
+        assert_eq!(
+            hyperlink_reading("file:///tmp/ls/my%20notes.md", here, 3, 4),
+            CellLink::File(LinkSpan {
+                link: Link::Path("/tmp/ls/my notes.md".into()),
+                first: 3,
+                last: 4,
+            })
+        );
+        assert_eq!(
+            hyperlink_reading("file://legion/tmp/ls/docs/README.md", here, 2, 2),
+            CellLink::File(LinkSpan {
+                link: Link::Path("/tmp/ls/docs/README.md".into()),
+                first: 2,
+                last: 2,
+            })
+        );
+        for unfollowed in [
+            "https://example.com/README.md",
+            "file://elsewhere/tmp/ls/README.md",
+            "/tmp/ls/README.md",
+            "mailto:a@b.c",
+        ] {
+            assert_eq!(
+                hyperlink_reading(unfollowed, here, 0, 0),
+                CellLink::Unfollowed,
+                "{unfollowed}"
+            );
+        }
+    }
+
+    /// A link runs across every unbroken row that holds it, up and down from
+    /// the clicked one, and stops at the first row that does not or at the
+    /// screen's edge.
+    #[test]
+    fn a_hyperlink_spans_the_unbroken_rows_that_hold_it() {
+        let holds = |set: &'static [usize]| move |r: usize| set.contains(&r);
+        assert_eq!(hyperlink_rows(3, 10, holds(&[3])), (3, 3));
+        assert_eq!(hyperlink_rows(3, 10, holds(&[2, 3, 4])), (2, 4));
+        // Row 0 holds the same link, but row 1 does not.
+        assert_eq!(hyperlink_rows(3, 10, holds(&[0, 2, 3])), (2, 3));
+        assert_eq!(hyperlink_rows(0, 2, holds(&[0, 1, 2])), (0, 1));
+    }
+
+    /// A bare name is offered from the token under the click, trimmed as any
+    /// link is, and only where nothing else reads it: a name with a slash is
+    /// already a path, a web address is a URL, and `~`, `.` and `..` are
+    /// places rather than names.
+    #[test]
+    fn a_bare_name_is_offered_from_the_token_under_the_click() {
+        let rows = padded_grid(
+            60,
+            &[
+                ".rw-r--r-- 1.2k parker 15 Oct 10:00 \u{f48a} README.md",
+                "docs  'notes.md'  ~  ..  docs/plan.md  www.example.com",
+            ],
+        );
+        let bare = |row: usize, needle: &str| {
+            let text: String = rows[row].iter().collect();
+            let col = text[..text.find(needle).expect(needle)].chars().count();
+            bare_name_reading(&rows, row, col).map(|s| s.link)
+        };
+        assert_eq!(bare(0, "README.md"), Some(Link::Path("README.md".into())));
+        assert_eq!(bare(1, "docs "), Some(Link::Path("docs".into())));
+        assert_eq!(bare(1, "'notes.md'"), Some(Link::Path("notes.md".into())));
+        assert_eq!(bare(1, "~ "), None);
+        assert_eq!(bare(1, ".. "), None);
+        assert_eq!(bare(1, "docs/plan.md"), None);
+        assert_eq!(bare(1, "www.example.com"), None);
+        // A press between two names is on no name at all.
+        assert_eq!(bare_name_reading(&rows, 1, 4), None);
+    }
+
+    /// A bare name is a file only in the pane's folder, only when the folder
+    /// holds it, and never when there is no folder to ask.
+    #[test]
+    fn a_bare_name_resolves_against_the_panes_folder_or_not_at_all() {
+        let rows = padded_grid(20, &["docs  README.md"]);
+        let mut readings = wrapped_link_candidates(&rows, &[false], 0, 8);
+        assert_eq!(readings, Vec::new(), "no slash, so no path reading");
+        readings.extend(bare_name_reading(&rows, 0, 8));
+        assert_eq!(
+            pick_link(&readings, Some("/tmp/ls"), |p| p == "/tmp/ls/README.md"),
+            Some(("/tmp/ls/README.md".to_string(), 0, 0))
+        );
+        assert_eq!(pick_link(&readings, Some("/tmp/ls"), |_| false), None);
+        assert_eq!(pick_link(&readings, None, |_| true), None);
     }
 
     #[test]
