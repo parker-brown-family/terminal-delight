@@ -90,13 +90,15 @@ impl Fav {
 ///
 /// A curated default rather than an empty shelf: an empty FAVOURITES shelf
 /// teaches nothing about what the shelf is for, and the first `⇧F` overwrites
-/// this anyway. Six desktop palettes and four colour sets, and — by luck rather
-/// than by design — ten distinct first letters, so every one is a single press.
+/// this anyway. Ten Omarchy themes with ten distinct first letters, so every one
+/// is a single press. The last four were colour sets until 2026-10-16, when
+/// Omarchy's themes replaced the sets on every shelf.
 ///
-/// Most of the palette entries are stock Omarchy themes; `bright-future` is
-/// not, and on a desktop without it that line simply does not draw a tile. That
-/// is the unresolvable case working as intended, and it is here on purpose as
-/// the shipped example of it.
+/// Every entry but one is a stock Omarchy theme, which TD also carries, so the
+/// shelf draws on a machine with no Omarchy. `bright-future` is not, and on a
+/// desktop without it that line simply does not draw a tile. That is the
+/// unresolvable case working as intended, and it is here on purpose as the
+/// shipped example of it.
 const SEED: &[&str] = &[
     "palette:retro-82",
     "palette:matte-black",
@@ -104,10 +106,10 @@ const SEED: &[&str] = &[
     "palette:hackerman",
     "palette:bright-future",
     "palette:ethereal",
-    "set:army",
-    "set:violet",
-    "set:wood",
-    "set:tide",
+    "palette:tokyo-night",
+    "palette:gruvbox",
+    "palette:nord",
+    "palette:kanagawa",
 ];
 
 /// The favourites list as loaded, in shelf order. Entries may be unresolvable.
@@ -144,10 +146,14 @@ pub fn any_visible(cx: &App) -> bool {
     all(cx).iter().any(|f| resolvable(cx, f))
 }
 
+/// Can this favourite draw a tile? A palette can when the desktop OFFERS it —
+/// a theme hidden in Omarchy leaves this shelf too, and its star stays in the
+/// file, so un-hiding it brings the tile back. A colour set never can: no shelf
+/// offers the sets any more, and the line is kept rather than dropped.
 fn resolvable(cx: &App, f: &Fav) -> bool {
     match f {
-        Fav::Set(_) => true,
-        Fav::Palette(id) => crate::palette::find(cx, id).is_some(),
+        Fav::Set(_) => false,
+        Fav::Palette(id) => crate::palette::find_offered(cx, id).is_some(),
     }
 }
 
@@ -188,15 +194,8 @@ pub fn tiles(cx: &App) -> Vec<Tile> {
         .filter_map(|f| {
             let letter = f.letter();
             match f {
-                Fav::Set(d) => Some(Tile {
-                    fav: f.clone(),
-                    face: Face::Glyph(d.glyph()),
-                    letter,
-                    rest: d.label()[1..].to_uppercase(),
-                    second: String::new(),
-                    swatch: d.swatch(),
-                }),
-                Fav::Palette(id) => crate::palette::find(cx, id).map(|p| Tile {
+                Fav::Set(_) => None,
+                Fav::Palette(id) => crate::palette::find_offered(cx, id).map(|p| Tile {
                     fav: f.clone(),
                     face: Face::Screen {
                         bg: p.bg,
