@@ -284,6 +284,34 @@ const SAID_FOR: Duration = Duration::from_secs(8);
 /// can perceive.
 pub const OFFSCREEN_REFRESH: Duration = Duration::from_secs(5);
 
+/// The shortest gap between frames a shown pane's OUTPUT asks for: about 30 a
+/// second (#964). Parker: drawing within ~30 ms is not something a person can
+/// perceive. Keystroke echoes skip it (`TerminalView::frame_now`).
+pub const OUTPUT_FRAME_GAP: Duration = Duration::from_millis(33);
+
+/// What a shown pane's output does about a frame.
+#[derive(Debug, PartialEq, Eq)]
+enum FrameAsk {
+    /// The gap has passed: ask now.
+    Now,
+    /// Inside the gap, nothing scheduled: ask when it ends.
+    After(Duration),
+    /// Inside the gap, and the end of it is already booked.
+    AlreadyScheduled,
+}
+
+/// The cap, pure: `since` the pane last asked, and whether a frame is already
+/// scheduled for the end of the gap.
+fn frame_ask(since: Duration, pending: bool) -> FrameAsk {
+    if since >= OUTPUT_FRAME_GAP {
+        FrameAsk::Now
+    } else if pending {
+        FrameAsk::AlreadyScheduled
+    } else {
+        FrameAsk::After(OUTPUT_FRAME_GAP - since)
+    }
+}
+
 /// A live-screen copy, keyed by the content generation, rows and columns it
 /// was read at. See `TerminalView::live_rows`.
 type LiveRowsMemo = ((u64, usize, usize), std::rc::Rc<Vec<String>>);
@@ -2768,6 +2796,10 @@ pub struct TerminalView {
     /// The last live-screen copy and the content generation and size it was
     /// read at. See [`Self::live_rows`].
     live_rows_memo: std::cell::RefCell<Option<LiveRowsMemo>>,
+    /// When this pane last asked for a frame, and whether one is already
+    /// scheduled for the end of the gap. See [`Self::repaint`].
+    last_frame_ask: Instant,
+    frame_pending: bool,
     /// The ask this pane's agent has made through `request_access`, waiting
     /// on the rail for a person's Yes or No. One at a time: a second ask
     /// replaces the first, so one agent cannot fill the rail. Never saved — an
@@ -4956,6 +4988,8 @@ impl TerminalView {
             offscreen_dirty: false,
             offscreen_flushed: Instant::now(),
             live_rows_memo: std::cell::RefCell::new(None),
+            last_frame_ask: Instant::now(),
+            frame_pending: false,
             deliverable: None,
             access_ask: None,
             handovers: crate::handover::Ledger::default(),
@@ -5465,12 +5499,43 @@ impl TerminalView {
     /// core busy redrawing the tab somebody was (#964). Edges — a mode change,
     /// a bell, an agent starting or stopping — still notify at once from their
     /// own sites; only the stream of screen updates waits.
+    ///
+    /// A shown pane asks for at most one frame per [`OUTPUT_FRAME_GAP`]: a
+    /// frame redraws the whole window, and an agent streaming into the tab
+    /// being watched asked for every one the panel could show. What arrives
+    /// inside the gap is drawn when it ends, so nothing is lost and nothing
+    /// waits longer than one gap. Output answering a keystroke does not come
+    /// through here — see [`Self::frame_now`].
     pub(crate) fn repaint(&mut self, cx: &mut Context<Self>) {
-        if self.shown.load(std::sync::atomic::Ordering::Relaxed) {
-            cx.notify();
-        } else {
+        if !self.shown.load(std::sync::atomic::Ordering::Relaxed) {
             self.offscreen_dirty = true;
+            return;
         }
+        let wait = match frame_ask(self.last_frame_ask.elapsed(), self.frame_pending) {
+            FrameAsk::Now => {
+                self.frame_now(cx);
+                return;
+            }
+            FrameAsk::AlreadyScheduled => return,
+            FrameAsk::After(wait) => wait,
+        };
+        self.frame_pending = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            let _ = this.update(cx, |view: &mut TerminalView, cx| {
+                if view.frame_pending {
+                    view.frame_now(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Ask for a frame now, and start the next [`OUTPUT_FRAME_GAP`] from here.
+    fn frame_now(&mut self, cx: &mut Context<Self>) {
+        self.frame_pending = false;
+        self.last_frame_ask = Instant::now();
+        cx.notify();
     }
 
     /// The hidden half of [`Self::repaint`]: draw what changed while hidden,
@@ -5486,12 +5551,20 @@ impl TerminalView {
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
         match event {
             TermEvent::Wakeup => {
-                if let Some(t) = self.pending_input.take() {
+                let typed = self.pending_input.take();
+                if let Some(t) = typed {
                     if self.latency_log {
                         eprintln!("td_latency_us={}", t.elapsed().as_micros());
                     }
                 }
-                self.repaint(cx);
+                // The echo of a keystroke is drawn at once — typing is the one
+                // thing a person feels a frame late. Everything else streams
+                // through the capped path.
+                if typed.is_some() && self.shown.load(std::sync::atomic::Ordering::Relaxed) {
+                    self.frame_now(cx);
+                } else {
+                    self.repaint(cx);
+                }
             }
             TermEvent::PtyWrite(text) => self.session.notifier.notify(text.into_bytes()),
             // A program asking for the text area in pixels (`CSI 14 t`). Only a
@@ -15856,6 +15929,32 @@ mod tests {
         // once per reader: the copy was 30% of the main thread under perf.
         let rows = method(code, "fn live_rows(&self)");
         assert!(rows.contains("live_rows_memo") && rows.contains("content_generation"));
+        // A shown pane's output is capped at one frame per OUTPUT_FRAME_GAP,
+        // with what arrives inside the gap drawn when it ends; the echo of a
+        // keystroke is not (the window redraws whole, so an uncapped stream
+        // asked for every frame the panel could show).
+        let repaint = method(code, "pub(crate) fn repaint(");
+        assert!(
+            repaint.contains("frame_ask(") && repaint.contains("frame_pending"),
+            "a shown pane's output asks for every frame: {repaint}"
+        );
+        assert!(arm.contains("typed.is_some()") && arm.contains("self.frame_now(cx)"));
+        assert_eq!(OUTPUT_FRAME_GAP, Duration::from_millis(33));
+    }
+
+    /// The cap itself: one frame per gap, the rest booked for the gap's end,
+    /// and never two bookings for one gap.
+    ///
+    /// Mutation-tested: `>=` turned to `>` in `frame_ask` fails the boundary
+    /// case, and returning `Now` always fails the rest.
+    #[test]
+    fn a_shown_panes_output_asks_for_at_most_one_frame_per_gap() {
+        let ms = Duration::from_millis;
+        assert_eq!(frame_ask(ms(40), false), FrameAsk::Now);
+        assert_eq!(frame_ask(OUTPUT_FRAME_GAP, true), FrameAsk::Now);
+        assert_eq!(frame_ask(ms(10), false), FrameAsk::After(ms(23)));
+        assert_eq!(frame_ask(ms(10), true), FrameAsk::AlreadyScheduled);
+        assert_eq!(frame_ask(ms(0), false), FrameAsk::After(OUTPUT_FRAME_GAP));
         let main = include_str!("main.rs");
         let render = &main[main.find("impl Render for Workspace").expect("render")..];
         assert!(
