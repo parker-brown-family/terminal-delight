@@ -6354,6 +6354,21 @@ impl Workspace {
             }
         })
         .detach();
+        // The badge clock (#964): one frame per BADGE_STEP while a pulsing or
+        // blinking badge was drawn, and none once they have all stopped.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(BADGE_STEP).await;
+            let moving = BADGES_MOVING.swap(false, std::sync::atomic::Ordering::Relaxed);
+            let alive = this.update(cx, |_: &mut Workspace, cx| {
+                if moving {
+                    cx.notify();
+                }
+            });
+            if alive.is_err() {
+                break;
+            }
+        })
+        .detach();
         // WORKBENCH: the surface feed.
         //
         // One second, because this is a person waiting to see the thing they
@@ -20481,12 +20496,12 @@ impl Workspace {
     /// - DONE / BLOCKED — ✅ or ❌, steady rather than pulsing: the past needs a
     ///   glance, not a heartbeat. Cleared by visiting the pane.
     ///
-    /// The animation keys carry `(tab, slot)` so each agent animates on its own
-    /// element — share a key across a tab's badges and gpui reuses one
-    /// animation for all of them.
+    /// The pulse and the blink step on the shared badge clock (`BADGE_STEP`),
+    /// so every badge moves together and the window draws a few frames a
+    /// second for them instead of every frame (#964).
     fn agent_badge_el(badge: AgentBadge, tab: usize, slot: usize, s: f32) -> AnyElement {
         let side = px(15. * s);
-        let key = tab * MAX_TAB_BADGES + slot;
+        let _ = (tab, slot);
         match badge {
             AgentBadge::NeedsInput => div()
                 .relative()
@@ -20503,24 +20518,20 @@ impl Workspace {
                         .absolute()
                         .inset_0()
                         .size_full()
-                        .with_animation(
-                            ("tab-hey-blinker", key),
-                            Animation::new(Duration::from_millis(700)).repeat(),
-                            |el, t| el.opacity(blink_alpha(t)),
-                        ),
+                        // Stepped by the badge clock, not animated per frame:
+                        // see BADGE_STEP.
+                        .opacity(blink_alpha(badge_phase(Duration::from_millis(700)))),
                 )
                 .into_any_element(),
-            AgentBadge::Working => gpui::img(crate::art::robot_png())
-                .w(side)
-                .h(side)
-                .with_animation(
-                    ("tab-agent-pulse", key),
-                    Animation::new(Duration::from_millis(1400))
-                        .repeat()
-                        .with_easing(gpui::bounce(gpui::ease_in_out)),
-                    |el, t| el.opacity(pulse_alpha(t)),
-                )
-                .into_any_element(),
+            AgentBadge::Working => {
+                let eased =
+                    gpui::bounce(gpui::ease_in_out)(badge_phase(Duration::from_millis(1400)));
+                gpui::img(crate::art::robot_png())
+                    .w(side)
+                    .h(side)
+                    .opacity(pulse_alpha(eased))
+                    .into_any_element()
+            }
             AgentBadge::Done => div().text_size(px(11. * s)).child("✅").into_any_element(),
             AgentBadge::Blocked => div().text_size(px(11. * s)).child("❌").into_any_element(),
         }
@@ -37370,6 +37381,31 @@ mod tests {
         }
     }
 
+    /// The tab badges step on the badge clock instead of animating per frame
+    /// (#964): a repeating gpui animation asks for every frame while on screen,
+    /// which with an agent working somewhere is always, and the whole window
+    /// redrew sixty times a second for a 15-pixel robot.
+    ///
+    /// Mutation-tested: the pulse's `.with_animation(` put back fails this.
+    #[test]
+    fn tab_badges_step_on_the_badge_clock_instead_of_every_frame() {
+        let ms = Duration::from_millis;
+        let blink = ms(700);
+        // Held still inside a step, moved at the next one.
+        assert_eq!(stepped_phase(ms(0), blink), stepped_phase(ms(174), blink));
+        assert_ne!(stepped_phase(ms(174), blink), stepped_phase(ms(175), blink));
+        // A blink cycle is four steps and comes back round.
+        let steps: Vec<f32> = (0..5)
+            .map(|i| stepped_phase(BADGE_STEP * i, blink))
+            .collect();
+        assert_eq!(steps[0], steps[4]);
+        assert!(steps.iter().take(4).all(|p| (0.0..1.0).contains(p)));
+        // And nothing in the badges asks gpui for per-frame frames.
+        let badge = live_fn("fn agent_badge_el(");
+        assert!(!badge.contains(".with_animation("), "{badge}");
+        assert!(badge.contains("badge_phase("));
+    }
+
     /// This file's own code, cut at its test module, and the body of one
     /// function in it — for the rules a `Workspace` cannot be built to test,
     /// since it needs a live gpui `Window`.
@@ -41777,6 +41813,36 @@ fn blink_alpha(t: f32) -> f32 {
     } else {
         0.0
     }
+}
+
+/// How often the tab badges' pulse and blink move (#964). They used to be
+/// per-frame gpui animations, and a repeating animation asks for EVERY frame
+/// while it is on screen — with an agent working somewhere, always — so the
+/// whole window redrew sixty times a second to breathe a 15-pixel robot. perf
+/// on Parker's window: drawing was over half its main thread. Stepped at this
+/// rate the pulse has eight steps and the blink four, and the window draws
+/// about six frames a second for them.
+const BADGE_STEP: Duration = Duration::from_millis(175);
+
+/// When the badge clock started, so every badge steps together.
+static BADGE_EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+/// A moving badge was drawn since the badge timer last looked.
+static BADGES_MOVING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Where a `period`-long badge cycle is, `elapsed` after the epoch, held still
+/// for each [`BADGE_STEP`]. Pure, for the test.
+fn stepped_phase(elapsed: Duration, period: Duration) -> f32 {
+    let step = BADGE_STEP.as_millis().max(1);
+    let held = elapsed.as_millis() / step * step;
+    let period = period.as_millis().max(1);
+    (held % period) as f32 / period as f32
+}
+
+/// The badge clock's current phase for a `period`-long cycle, and a note to
+/// the badge timer that something on screen is moving.
+fn badge_phase(period: Duration) -> f32 {
+    BADGES_MOVING.store(true, std::sync::atomic::Ordering::Relaxed);
+    stepped_phase(BADGE_EPOCH.get_or_init(Instant::now).elapsed(), period)
 }
 
 /// What ONE agent pane is saying on the mother bar. Every agent in a tab earns
