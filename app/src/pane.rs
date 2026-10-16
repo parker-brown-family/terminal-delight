@@ -2740,11 +2740,17 @@ pub struct TerminalView {
     /// A person marked this pane off-limits to agents: no agent reads it or
     /// writes to it through MCP, except the one running inside it acting on
     /// its own pane (see `mcp::may_write`), and the control socket's bench
-    /// verbs never pick it. Set and cleared ONLY by the terminal's right-click
-    /// menu — no control-socket or MCP verb reaches it, because both answer
+    /// verbs never pick it. Set and cleared ONLY by a person: the terminal's
+    /// right-click menu, or a Yes on the rail to an agent's `request_access`
+    /// — no control-socket or MCP verb reaches it, because both answer
     /// agents, and a lock an agent can lift is decoration. Persisted per leaf
     /// in the state file.
     pub off_limits: bool,
+    /// The ask this pane's agent has made through `request_access`, waiting
+    /// on the rail for a person's Yes or No. One at a time: a second ask
+    /// replaces the first, so one agent cannot fill the rail. Never saved — an
+    /// ask lives as long as the window that drew it, and dies with its pane.
+    pub access_ask: Option<crate::access::Ask>,
     /// The OSC-driven shell title (apps overwrite it via the title sequence).
     pub title: String,
     /// A user-set name (right-click the header to rename). Wins over `title`
@@ -4451,6 +4457,16 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// The same mark, set to a value rather than flipped: a person's Yes on
+    /// the rail to an agent that asked for this pane to be opened or closed
+    /// (`Workspace::rail_answer`). A person's press either way, which is the
+    /// whole rule of the field. Emits nothing when the mark is already so.
+    pub(crate) fn set_off_limits(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.off_limits != on {
+            self.toggle_off_limits(cx);
+        }
+    }
+
     /// Plain spawn (no restore context); kept for `cx.new(TerminalView::new)`.
     #[allow(dead_code)]
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -4903,6 +4919,7 @@ impl TerminalView {
             bell_line: None,
             needs_input_line: None,
             deliverable: None,
+            access_ask: None,
             handovers: crate::handover::Ledger::default(),
             bell_player: crate::bell::BellPlayer::default(),
             hdr_overflow: None,

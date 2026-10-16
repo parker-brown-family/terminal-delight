@@ -90,6 +90,63 @@ own pointer, and a pointer cannot be told from a hand. The gate is
 `mcp::should_expose(cfg, is_agent, off_limits)` and its write half
 `mcp::may_write`; the idea is Splinterm's per-pane grant, with TD's own shape.
 
+### An agent asks, a person answers
+
+A refusal about access used to be the end of it. Now an agent can **ask**:
+`request_access` puts its ask on the attention rail, in its own lane, **ACCESS**,
+drawn in amber and sorted above every other lane (only a row a person has
+promoted sits higher). The row says what is being asked in plain
+words ("Let agents see “prod-db”"), quotes the agent's reason, and carries two
+buttons, **Yes** and **No**; with the queue open, `y` and `n` answer the row under
+the cursor.
+
+There are five things to ask for, all of them about who agents can see and what
+agents may do:
+
+| `change` | Yes does | The person's own control for it |
+|---|---|---|
+| `open_pane` + `pid` | lifts off-limits from that pane | right-click → Let agents see this pane |
+| `close_pane` + `pid` | marks that pane off-limits | right-click → Off-limits to agents |
+| `writes_on` | turns MCP writes on | MCP panel, Writes |
+| `expose_shells` | shows plain shells as well as agents | MCP panel, Expose |
+| `events_on` | shows other agents' tool calls | MCP panel, Events |
+
+Appearance is not on the list. With writes on, `set_pane_config` restyles a pane
+and asks nobody — Parker's line was that agents should not be *"blocked by human
+decision for simple things like themeing"*.
+
+How it behaves:
+
+- **Nothing changes until a person presses Yes.** No answers on a timer, no
+  answer by default. An unanswered ask is a row waiting, like any other.
+- **One ask per pane.** A second ask from the same pane replaces the first, so
+  one agent cannot fill the rail, and an ask dies with its pane. Asks are not
+  saved; a window restart drops them.
+- **An ask for what is already so is refused** before it reaches the rail
+  ("pane 4412 is not off-limits, so there is nothing to ask"), so a Yes always
+  does something.
+- **The answer reaches the agent as one signed line** typed into its own
+  terminal: `[workbench:<tag>] request_access open_pane 4412: yes, pane 4412 is
+  open to agents`. It goes through the bench's own path, so it is typed when that
+  pane is on screen and held until then. The setting does not wait for the line:
+  it changes the moment the person answers, so an agent that retries sees it.
+- **It works with writes off**, because `writes_on` is one of the things an agent
+  may need to ask for.
+
+What can answer an ask is the rail's two buttons and its two keys, and nothing
+else. No MCP verb carries an answer (the ask rides `ConfigPatch` as a
+`serde(skip)` field, so no agent JSON can put one in either), and no `ctl` verb
+reaches the rail: `ctl bench click|hover` drives a pane's bench through that
+pane's own handlers. `access::tests::no_agent_facing_surface_can_answer_an_ask`
+keeps `mcp.rs` and `ctl.rs` from naming the answering code, and
+`an_ask_is_answered_only_by_the_rails_buttons_and_keys` keeps the rest of the
+window to those two callers.
+
+**What it does not stop.** An agent with a shell runs as you. It can edit TD's
+state file, or put keystrokes into the window through the compositor. This is the
+front door: the one TD offers, labels and answers, so that an agent which behaves
+has a way to ask and a person has one place to say yes.
+
 ## Tools
 
 | Tool | Arguments | Returns |
@@ -98,6 +155,7 @@ own pointer, and a pointer cannot be told from a hand. The gate is
 | `pane_events` | `pid` (from `list_panes`), `limit` (default 20, max 200) | Recent structured tool calls for that agent pane — `{ts, tool, summary}` — tailed from the agent's **own transcript**, not the rendered screen. |
 | `get_pane_config` | `targets?` — array of pids and/or `"outer"`; omit for every exposed pane + `outer` | Each target's **appearance**: the monitor grade as uniform `0..100` percents (`brightness`, `contrast`, `colour`, `text`, `background`, `gamma`, `menu_bar`, `text_size`, `warp`, `crawl_angle`, `crawl_depth`) plus a `crawl` boolean. A bad pid is a per-target `error` row, not a failed call. Read-only. |
 | `set_pane_config` | `updates` — array of `{ target, config }` where `target` is a pid or `"outer"` and `config` is a partial grade | Applies each partial: only the channels you include change (others untouched, PATCH semantics); out-of-range values clamp. Returns the resulting grade per target. Requires the **Writes** toggle. Setting `outer` re-grades every pane that inherits it — change the whole wall in one call. |
+| `request_access` | `change` (`open_pane`, `close_pane`, `writes_on`, `expose_shells`, `events_on`), `pid` (for the two pane changes only), `why` (one sentence, at most 40 words) | Puts an ask on the person's attention rail with Yes and No, on the calling pane's own row. Changes nothing itself. Needs the master switch and a pane to call from; does **not** need Writes. See *An agent asks, a person answers* above. |
 | `grep` | `query` (exact, case-insensitive substring), `scrollback?` (recent lines/pane, default 2000, max 50000) | Searches every **exposed** pane's recent scrollback. Returns, per matching pane, its identity (`pid`/`tab`/`title`/`mode`) and the matching lines as `{line, col, text}` (capped 50/pane). Read-only — it reads on-screen text, never writes. Use it to find *where* something is across the whole wall (an error, a path, a value). |
 
 `list_panes`/`pane_events`/`get_pane_config`/`grep` honour the master switch;
