@@ -18482,6 +18482,30 @@ impl Workspace {
             self.new_tab(window, cx);
             return;
         }
+        // The size chords that are the window's. ctrl+shift+= / ctrl+shift+-
+        // step the outer scale a ctrl+wheel notch, the step the wheel takes over
+        // the chrome; with the FOCUS reader up, ctrl+= / ctrl+- step the reader's
+        // own zoom, as ctrl+wheel over the reader does. A focused pane declines
+        // exactly these (`TerminalView::size_key`), so they bubble here whether
+        // or not a pane holds the keyboard. The unshifted pair with no reader up
+        // is the highlighted pane's, and with no pane focused there is none.
+        if let Some(size) = keylayer::size_chord(&pane::keylayer_key(ks)) {
+            match size {
+                keylayer::Size::Outer(notches) => {
+                    let cur = theme::outer_choice(cx).grade.scale;
+                    self.set_scale(theme::GradeKey::Scale.nudged(cur, notches), cx);
+                }
+                keylayer::Size::Pane(notches) if self.focus_read.is_some() => {
+                    let next = Self::focus_zoom_step(self.focus_zoom, notches);
+                    if (next - self.focus_zoom).abs() > f32::EPSILON {
+                        self.focus_zoom = next;
+                        cx.notify();
+                    }
+                }
+                keylayer::Size::Pane(_) => {}
+            }
+            return;
+        }
         // Ctrl+Shift+U is NOT handled here — it is a pane chord that arrives as
         // `OpenUsagePanel` (see the subscription above), exactly like
         // Ctrl+Shift+A. It sat in this function first and did nothing at all: a
@@ -31518,7 +31542,9 @@ impl Render for Workspace {
                         row(&format!("⛭ {}", s.k_display_tray), s.display_tray),
                         row("Ctrl+Shift+G", s.display_tray),
                         row("Ctrl+wheel ↑ / ↓", s.outer_size),
+                        row("Ctrl+Shift+= / -", s.outer_size_key),
                         row(s.k_text_size_key, s.text_size),
+                        row("Ctrl+= / -", s.text_size),
                         row(s.k_warp_dial, s.warp),
                     ],
                 ))
@@ -34896,6 +34922,47 @@ mod tests {
             pane_src[at..at + end].contains("cx.stop_propagation();"),
             "a pane that sized itself must halt the wheel, or this handler \
              sizes the menu bar off the same notch"
+        );
+    }
+
+    /// The window's half of the size chords steps as its wheel does.
+    ///
+    /// ctrl+shift+= / ctrl+shift+- is ctrl+wheel over the chrome from the
+    /// keyboard, and with the FOCUS reader up ctrl+= / ctrl+- is ctrl+wheel
+    /// over the reader. The pane declines exactly those two cases
+    /// (`TerminalView::size_key`, held by its behaviour tests), so this branch
+    /// is where they land. Asked of the one table, stepped by the wheels' own
+    /// steps, and never sizing a pane's text, which is the pane's to do.
+    ///
+    /// Mutation-tested: an open-coded outer step, an open-coded reader step,
+    /// and a branch that turns the pane's text dial each fail this test.
+    #[test]
+    fn the_windows_size_chords_step_as_its_wheels_do() {
+        let code = shipped_code();
+        let at = code
+            .find("    fn on_key(&mut self, ev: &KeyDownEvent")
+            .expect("Workspace::on_key");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let body = &code[at..at + end];
+        let chord = body
+            .find("keylayer::size_chord(&pane::keylayer_key(ks))")
+            .expect("the window must ask the one table which chord this is");
+        let branch = &body[chord..];
+        let branch = &branch[..branch
+            .find("\n            return;\n        }")
+            .expect("the branch ends by keeping the key")];
+
+        assert!(
+            branch.contains("theme::GradeKey::Scale.nudged(cur, notches)"),
+            "the outer pair steps the menu-bar dial by the wheel's own notch"
+        );
+        assert!(
+            branch.contains("Self::focus_zoom_step(self.focus_zoom, notches)"),
+            "with the reader up, the plain pair steps the reader as its wheel does"
+        );
+        assert!(
+            !branch.contains("GradeKey::TextSize") && !branch.contains("nudge_size"),
+            "the window never sizes a pane's text: the pane answers that pair itself"
         );
     }
 

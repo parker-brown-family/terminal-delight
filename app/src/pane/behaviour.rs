@@ -1934,6 +1934,183 @@ fn the_wheel_on_the_document_face_moves_the_document(cx: &mut TestAppContext) {
     assert_eq!(pane.scrolled_back(), 0, "the hidden scrollback does not");
 }
 
+/// One of the four size chords as the desktop hands it to a pane: ctrl held,
+/// the shifted pair named by what it types with its shift dropped, and the
+/// character each would type carried along, as Linux carries it. `^_` is a
+/// control character, so ctrl+shift+- carries none.
+fn size_chord_as_typed(key: &str) -> gpui::Keystroke {
+    gpui::Keystroke {
+        modifiers: gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        },
+        key: key.into(),
+        key_char: (key != "_").then(|| key.to_string()),
+    }
+}
+
+/// The pane's own dial, wherever the pane keeps it: `TextSize` for the grid,
+/// `BenchSize` for the workbench's type.
+fn dial(pane: &mut Pane, key: crate::theme::GradeKey) -> f32 {
+    pane.view.read_with(pane.cx, |v, cx| {
+        v.appearance
+            .effective(&crate::theme::outer_choice(cx))
+            .grade
+            .get(key)
+            .expect("a size dial always has a position")
+    })
+}
+
+/// Parker, 2026-10-16: *"highlighted window will now use ctrl + = and ctrl + -
+/// to zoom in increase and decrease text size ... ctrl+shift+= and
+/// ctrl+shift+- to increase decrease OUTTER scale (tracks to ctrl + scroll
+/// wheel up or down)"*.
+///
+/// On the terminal face the unshifted pair steps the highlighted pane's text
+/// one ctrl+wheel notch a press. The shifted pair is the outer scale, the
+/// window's to act on, so this pane's text stays where it is. And none of the
+/// four types into the shell, which is where each went before: ctrl+= typed a
+/// bare `=`.
+#[gpui::test]
+fn the_size_chords_step_the_text_and_never_type(cx: &mut TestAppContext) {
+    use crate::theme::GradeKey;
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    // Settled first: a terminal still being born refuses every key, and
+    // "nothing typed" would then pass on a pane that took nothing at all.
+    pane.settle();
+    let notch = GradeKey::WHEEL_STEP;
+    let was = dial(&mut pane, GradeKey::TextSize);
+
+    pane.keystroke(size_chord_as_typed("="));
+    let up = dial(&mut pane, GradeKey::TextSize);
+    assert!(
+        (up - (was + notch)).abs() < 1e-4,
+        "ctrl+= is a notch up: {was} → {up}"
+    );
+    pane.keystroke(size_chord_as_typed("-"));
+    pane.keystroke(size_chord_as_typed("-"));
+    let down = dial(&mut pane, GradeKey::TextSize);
+    assert!(
+        (down - (was - notch)).abs() < 1e-4,
+        "ctrl+- is a notch down a press: {was} → {down}"
+    );
+
+    pane.keystroke(size_chord_as_typed("+"));
+    pane.keystroke(size_chord_as_typed("_"));
+    pane.keys("ctrl-shift-= ctrl-shift--");
+    assert_eq!(
+        dial(&mut pane, GradeKey::TextSize),
+        down,
+        "the shifted pair sizes the outer chrome, never this pane's text"
+    );
+
+    pane.keys("o k enter");
+    pane.wait_for("ok");
+    let rows = pane.rows();
+    assert!(
+        !rows.iter().any(|r| r.contains(['=', '-', '+', '_', '^'])),
+        "no size chord typed into the shell:\n{}",
+        rows.join("\n")
+    );
+}
+
+/// On the workbench the unshifted pair turns the bench's own type, the dial
+/// ctrl+wheel over the bench turns, and leaves the grid's text alone.
+#[gpui::test]
+fn the_size_chords_on_the_workbench_size_its_type(cx: &mut TestAppContext) {
+    use crate::theme::GradeKey;
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    pane.view
+        .update(pane.cx, |v, cx| v.set_face(Face::Workbench, cx));
+    pane.redraw();
+    let text = dial(&mut pane, GradeKey::TextSize);
+    let bench = dial(&mut pane, GradeKey::BenchSize);
+
+    pane.keystroke(size_chord_as_typed("="));
+    let now = dial(&mut pane, GradeKey::BenchSize);
+    assert!(
+        (now - (bench + GradeKey::WHEEL_STEP)).abs() < 1e-4,
+        "ctrl+= is a notch up on the bench: {bench} → {now}"
+    );
+    assert_eq!(
+        dial(&mut pane, GradeKey::TextSize),
+        text,
+        "and the grid's text stays"
+    );
+}
+
+/// On the Document face the unshifted pair zooms the document a step each
+/// way, as ctrl+wheel there does, and leaves the pane's text dial alone.
+#[gpui::test]
+fn the_size_chords_on_the_document_face_zoom_the_document(cx: &mut TestAppContext) {
+    use crate::theme::GradeKey;
+    let (mut pane, _dir, _md) = pane_on_its_document_face(cx, "face-size-chords");
+    let view = pane.face_view().expect("the face's view");
+    let zoom = |pane: &mut Pane| view.read_with(pane.cx, |v, _| v.zoom_now());
+    let text = dial(&mut pane, GradeKey::TextSize);
+    assert_eq!(
+        zoom(&mut pane),
+        Some(crate::docview::ImageZoom::Scale(1.0)),
+        "a Markdown document opens at 100%"
+    );
+
+    pane.keystroke(size_chord_as_typed("="));
+    pane.redraw();
+    assert_eq!(
+        zoom(&mut pane),
+        Some(crate::docview::ImageZoom::Scale(1.1)),
+        "ctrl+= zooms the document in a step"
+    );
+    pane.keystroke(size_chord_as_typed("-"));
+    pane.keystroke(size_chord_as_typed("-"));
+    pane.redraw();
+    assert_eq!(
+        zoom(&mut pane),
+        Some(crate::docview::ImageZoom::Scale(0.9)),
+        "ctrl+- zooms it out a step a press"
+    );
+    assert_eq!(
+        dial(&mut pane, GradeKey::TextSize),
+        text,
+        "and the text dial stays"
+    );
+}
+
+/// While the pane is open in the FOCUS reader the unshifted pair is not the
+/// pane's, as ctrl+wheel over the reader is not: the pane declines it, so its
+/// letters stay and nothing reaches its shell. The window takes it from there
+/// and steps the reader's own zoom (`Workspace::on_key`).
+#[gpui::test]
+fn the_size_chords_leave_a_pane_being_read_to_the_reader(cx: &mut TestAppContext) {
+    use crate::theme::GradeKey;
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    pane.settle();
+    let text = dial(&mut pane, GradeKey::TextSize);
+    let reader = pane.open_reader((900.0, 700.0));
+
+    // Read after each press: a step up and a step down would cancel, and
+    // the pane would look untouched after both even if each had sized it.
+    for key in ["=", "-"] {
+        pane.keystroke(size_chord_as_typed(key));
+        assert_eq!(
+            dial(&mut pane, GradeKey::TextSize),
+            text,
+            "ctrl+{key} leaves the pane behind the reader its letters"
+        );
+    }
+    reader.close(&mut pane);
+
+    pane.keys("o k enter");
+    pane.wait_for("ok");
+    assert!(
+        !pane.rows().iter().any(|r| r.contains(['=', '-'])),
+        "and nothing reached its shell"
+    );
+}
+
 /// The Document face comes only with a document: asked for without one, the
 /// pane stays on its terminal; `show_document` puts both up together; and a
 /// square's view carried onto the face is that same view, seated on the face,
