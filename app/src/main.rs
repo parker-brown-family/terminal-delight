@@ -30463,6 +30463,7 @@ impl Render for Workspace {
                         row("Alt+V / H · Ctrl+Alt+D", s.split),
                         row("Alt+W", s.close_pane),
                         row("Alt+K", s.toggle_bench),
+                        row("Alt+A", s.launch_agent),
                         row("Ctrl+W", s.close_tab),
                         row("Ctrl+Alt+↑↓←→", s.walk_tree),
                         row("Ctrl+Alt+1…9", s.jump_branch),
