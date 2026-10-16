@@ -39,6 +39,7 @@
     <tr><td><code>expose:</code> <code>agents only</code> · <code>all panes</code></td><td>agents only</td><td>Which panes the server can see. An agent pane runs Claude Code or Codex.</td></tr>
     <tr><td><code>stream tool-call events</code></td><td>on</td><td>Whether <code>pane_events</code> and the push feed work.</td></tr>
     <tr><td><code>writes on · agents can restyle</code></td><td>off</td><td>Whether any tool that changes something is allowed.</td></tr>
+    <tr><td><code>Off-limits to agents</code> (right-click in a pane)</td><td>off</td><td>That one pane is gone from every tool and every pushed event, whatever the switches above say, and wears <code>OFF-LIMITS</code> in its header. The agent running inside it can still present its own work. Only a person sets or lifts it: no <code>ctl</code> or MCP verb reaches it.</td></tr>
   </tbody>
 </table>
 <p>They live in the MCP control panel: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> in a pane, or <code>AGENTS · MCP</code> in the footer's <code>…</code> menu. From a script: <code>ctl mcp on|off</code>, <code>ctl mcp writes on|off</code>, <code>ctl mcp expose agents|all</code>. Each change is saved with the session. <code>TD_MCP</code> starts the in-process transport but does not turn the server on, and <code>TD_MCP_WRITE</code> turns writes on only alongside <code>TD_MCP</code>.</p>
