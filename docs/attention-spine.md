@@ -142,7 +142,8 @@ broken.
 12. **The projection is built once per frame.** →
     `the_projection_is_computed_once_per_frame`
 13. **An ask comes first and is counted, from any kind of pane.** A script in a
-    plain shell that asked is still asking. →
+    plain shell that asked is still asking (it can ask only while shells are
+    exposed, the same policy that lets it call anything). →
     `an_ask_sorts_above_every_other_lane_and_is_counted`,
     `an_ask_from_a_plain_shell_still_gets_its_row`
 14. **Only a person answers an ask.** The row's two buttons and the queue's `y`

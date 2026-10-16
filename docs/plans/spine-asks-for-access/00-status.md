@@ -22,4 +22,5 @@ still "one switch moved") and the test was tightened.
 - [x] Slice 2 — docs and refusal text: `docs/mcp.md`, `docs/attention-spine.md` (its first
   rule amended for this one case), the docsite MCP page; the five "writes are disabled"
   refusals name `request_access`.
-- [ ] Slice 3 — land: PR, CI, a photograph of the row.
+- [x] Slice 3 — PR 957, and the row photographed from this branch in a hidden window
+  (`TD_SPINE_DEMO=1`, whose demo now includes an ask). Merging is Parker's.
