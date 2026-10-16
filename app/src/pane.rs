@@ -284,6 +284,10 @@ const SAID_FOR: Duration = Duration::from_secs(8);
 /// can perceive.
 pub const OFFSCREEN_REFRESH: Duration = Duration::from_secs(5);
 
+/// A live-screen copy, keyed by the content generation, rows and columns it
+/// was read at. See `TerminalView::live_rows`.
+type LiveRowsMemo = ((u64, usize, usize), std::rc::Rc<Vec<String>>);
+
 /// The pane header's shadows: the bright inner edge that makes it read as
 /// solid, and, on a tube, its bloom.
 ///
@@ -2761,6 +2765,9 @@ pub struct TerminalView {
     offscreen_dirty: bool,
     /// When a hidden pane last asked for a frame.
     offscreen_flushed: Instant,
+    /// The last live-screen copy and the content generation and size it was
+    /// read at. See [`Self::live_rows`].
+    live_rows_memo: std::cell::RefCell<Option<LiveRowsMemo>>,
     /// The ask this pane's agent has made through `request_access`, waiting
     /// on the rail for a person's Yes or No. One at a time: a second ask
     /// replaces the first, so one agent cannot fill the rail. Never saved — an
@@ -4651,7 +4658,15 @@ impl TerminalView {
                     view.flush_offscreen(cx);
                     // 🎰 GAMBA: poll the grid (throttled) for the agent
                     // spinner, then advance the reel stack while it rolls.
-                    if view.last_think_scan.elapsed() > std::time::Duration::from_millis(120) {
+                    // A hidden pane is checked once a second: its badge and its
+                    // bell stay timely well inside OFFSCREEN_REFRESH, and the
+                    // checks read the screen (#964).
+                    let every = if view.shown.load(std::sync::atomic::Ordering::Relaxed) {
+                        std::time::Duration::from_millis(120)
+                    } else {
+                        std::time::Duration::from_millis(1000)
+                    };
+                    if view.last_think_scan.elapsed() > every {
                         view.last_think_scan = Instant::now();
                         // Agent-wall HUD: accrue per-turn → session token totals off
                         // the live status line every tick (independent of the bell's
@@ -4940,6 +4955,7 @@ impl TerminalView {
             shown: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             offscreen_dirty: false,
             offscreen_flushed: Instant::now(),
+            live_rows_memo: std::cell::RefCell::new(None),
             deliverable: None,
             access_ask: None,
             handovers: crate::handover::Ledger::default(),
@@ -5059,7 +5075,34 @@ impl TerminalView {
 
     /// Snapshot the live bottom screen as plain-text rows (top→bottom) — the same
     /// region [`TerminalView::agent_is_thinking`] scans. Feeds the HUD parser.
-    fn live_rows(&self) -> Vec<String> {
+    ///
+    /// Copied once per change and shared after (#964). Seventeen readers ask
+    /// for this — the thinking check, the status line, the prompt watch, the
+    /// bench — several of them on every tick of every pane's clock, and perf
+    /// on Parker's window found the copy itself (`Term::row_into`, `live_rows`)
+    /// taking about 30% of the main thread, nearly all of it re-reading screens
+    /// that had not changed since the last read.
+    fn live_rows(&self) -> std::rc::Rc<Vec<String>> {
+        let key = {
+            let term = self.session.term.lock();
+            (
+                self.session.content_generation(),
+                term.screen_lines(),
+                term.columns(),
+            )
+        };
+        if let Some((k, rows)) = self.live_rows_memo.borrow().as_ref() {
+            if *k == key {
+                return rows.clone();
+            }
+        }
+        let rows = std::rc::Rc::new(self.read_live_rows());
+        *self.live_rows_memo.borrow_mut() = Some((key, rows.clone()));
+        rows
+    }
+
+    /// The copy [`Self::live_rows`] shares: every cell of the live screen.
+    fn read_live_rows(&self) -> Vec<String> {
         let term = self.session.term.lock();
         let grid = &*term;
         let rows = grid.screen_lines();
@@ -5086,7 +5129,7 @@ impl TerminalView {
     pub fn recent_lines(&self, n: usize) -> Vec<String> {
         let mut lines: Vec<String> = self
             .live_rows()
-            .into_iter()
+            .iter()
             .map(|r| r.trim_end().to_string())
             .filter(|r| !r.trim().is_empty())
             .collect();
@@ -7671,7 +7714,7 @@ impl TerminalView {
     fn screen_signature(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        for row in self.live_rows() {
+        for row in self.live_rows().iter() {
             row.hash(&mut h);
         }
         h.finish()
@@ -15793,7 +15836,15 @@ mod tests {
             clock.contains("view.shown.load("),
             "a hidden pane ticks at frame rate"
         );
+        assert!(
+            clock.contains("from_millis(1000)"),
+            "a hidden pane's screen checks run as often as a shown pane's"
+        );
         assert_eq!(OFFSCREEN_REFRESH, Duration::from_secs(5));
+        // And the screen those checks read is copied once per change, not
+        // once per reader: the copy was 30% of the main thread under perf.
+        let rows = method(code, "fn live_rows(&self)");
+        assert!(rows.contains("live_rows_memo") && rows.contains("content_generation"));
         let main = include_str!("main.rs");
         let render = &main[main.find("impl Render for Workspace").expect("render")..];
         assert!(
