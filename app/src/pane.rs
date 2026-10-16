@@ -278,6 +278,12 @@ struct Said {
 /// How long a [`Said`] chip stays up.
 const SAID_FOR: Duration = Duration::from_secs(8);
 
+/// How often a pane in a tab that is not being shown asks for a frame for
+/// what changed on its screen (#964). Parker: panes not on screen only need to
+/// refresh every few seconds, and showing one draws it at once, which nobody
+/// can perceive.
+pub const OFFSCREEN_REFRESH: Duration = Duration::from_secs(5);
+
 /// The pane header's shadows: the bright inner edge that makes it read as
 /// solid, and, on a tube, its bloom.
 ///
@@ -2746,6 +2752,15 @@ pub struct TerminalView {
     /// agents, and a lock an agent can lift is decoration. Persisted per leaf
     /// in the state file.
     pub off_limits: bool,
+    /// Whether this pane is in the tab being shown, written by the workspace
+    /// on every draw (`Workspace::render`). An atomic so the workspace can set
+    /// it while only reading the pane, and so it is never a frame stale.
+    pub shown: Arc<std::sync::atomic::AtomicBool>,
+    /// Something changed while the pane was not shown, not yet drawn. See
+    /// [`Self::repaint`].
+    offscreen_dirty: bool,
+    /// When a hidden pane last asked for a frame.
+    offscreen_flushed: Instant,
     /// The ask this pane's agent has made through `request_access`, waiting
     /// on the rail for a person's Yes or No. One at a time: a second ask
     /// replaces the first, so one agent cannot fill the rail. Never saved — an
@@ -4631,8 +4646,9 @@ impl TerminalView {
                 let active = this.update(cx, |view: &mut TerminalView, cx| {
                     let th = theme::theme(cx);
                     if view.fx.tick(&th) {
-                        cx.notify();
+                        view.repaint(cx);
                     }
+                    view.flush_offscreen(cx);
                     // 🎰 GAMBA: poll the grid (throttled) for the agent
                     // spinner, then advance the reel stack while it rolls.
                     if view.last_think_scan.elapsed() > std::time::Duration::from_millis(120) {
@@ -4840,7 +4856,12 @@ impl TerminalView {
                     // moving — CRT fx, or GAMBA reels/FX/rumble in motion.
                     // A landed-but-thinking board falls through to the idle
                     // cadence (no 30fps repaint of a static slot grid).
-                    view.fx.active() || view.gamba.is_animating()
+                    // And never for a pane whose tab is not being shown: its
+                    // frames are not drawn, so thirty a second is all cost
+                    // (#964). The scans below still run at the idle cadence,
+                    // which is what keeps its badge and its bell timely.
+                    view.shown.load(std::sync::atomic::Ordering::Relaxed)
+                        && (view.fx.active() || view.gamba.is_animating())
                 });
                 // `this` is weak: once this pane's TerminalView is dropped (close
                 // a pane / tab / window) the update errors — break so the ticker
@@ -4916,6 +4937,9 @@ impl TerminalView {
             bell_blocked: false,
             bell_line: None,
             needs_input_line: None,
+            shown: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            offscreen_dirty: false,
+            offscreen_flushed: Instant::now(),
             deliverable: None,
             access_ask: None,
             handovers: crate::handover::Ledger::default(),
@@ -5389,6 +5413,33 @@ impl TerminalView {
         }
     }
 
+    /// Ask for a frame for something that changed on this pane's screen —
+    /// now if the pane is shown, otherwise at most every [`OFFSCREEN_REFRESH`].
+    ///
+    /// The workspace reads every pane while it draws (tab badges, the rail),
+    /// so gpui redraws the WHOLE window whenever any pane notifies, shown or
+    /// not. Twenty-five agents' spinners in tabs nobody was looking at kept one
+    /// core busy redrawing the tab somebody was (#964). Edges — a mode change,
+    /// a bell, an agent starting or stopping — still notify at once from their
+    /// own sites; only the stream of screen updates waits.
+    pub(crate) fn repaint(&mut self, cx: &mut Context<Self>) {
+        if self.shown.load(std::sync::atomic::Ordering::Relaxed) {
+            cx.notify();
+        } else {
+            self.offscreen_dirty = true;
+        }
+    }
+
+    /// The hidden half of [`Self::repaint`]: draw what changed while hidden,
+    /// once [`OFFSCREEN_REFRESH`] has passed. Called by the pane's own clock.
+    fn flush_offscreen(&mut self, cx: &mut Context<Self>) {
+        if self.offscreen_dirty && self.offscreen_flushed.elapsed() >= OFFSCREEN_REFRESH {
+            self.offscreen_dirty = false;
+            self.offscreen_flushed = Instant::now();
+            cx.notify();
+        }
+    }
+
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
         match event {
             TermEvent::Wakeup => {
@@ -5397,7 +5448,7 @@ impl TerminalView {
                         eprintln!("td_latency_us={}", t.elapsed().as_micros());
                     }
                 }
-                cx.notify();
+                self.repaint(cx);
             }
             TermEvent::PtyWrite(text) => self.session.notifier.notify(text.into_bytes()),
             // A program asking for the text area in pixels (`CSI 14 t`). Only a
@@ -15715,6 +15766,40 @@ mod tests {
         let rest = &code[at + signature.len()..];
         let end = rest.find(" fn ").unwrap_or(rest.len());
         rest[..end].to_string()
+    }
+
+    /// A pane's screen updates and its effects ticks ask for a frame through
+    /// `repaint`, which waits while the pane is not shown, and the clock
+    /// flushes what waited (#964). The workspace reads every pane while it
+    /// draws, so one stray `cx.notify()` on these paths repaints the whole
+    /// window for a tab nobody is looking at — at the rate a spinner prints.
+    ///
+    /// Mutation-tested: `cx.notify()` back in the Wakeup arm fails this.
+    #[test]
+    fn hidden_panes_stream_their_updates_through_repaint() {
+        let src = include_str!("pane.rs");
+        let code = &src[..src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len())];
+        let at = code.find("TermEvent::Wakeup => {").expect("the Wakeup arm");
+        let arm = &code[at..at + code[at..].find("\n            }\n").expect("end of arm")];
+        assert!(arm.contains("self.repaint(cx)"), "{arm}");
+        assert!(
+            !arm.contains("cx.notify()"),
+            "screen updates notify directly: {arm}"
+        );
+        let clock = &code[code.find("// per-pane effects clock").expect("the clock")..];
+        let clock = &clock[..clock.find(".detach();").expect("end of clock")];
+        assert!(clock.contains("view.repaint(cx)") && clock.contains("view.flush_offscreen(cx)"));
+        assert!(
+            clock.contains("view.shown.load("),
+            "a hidden pane ticks at frame rate"
+        );
+        assert_eq!(OFFSCREEN_REFRESH, Duration::from_secs(5));
+        let main = include_str!("main.rs");
+        let render = &main[main.find("impl Render for Workspace").expect("render")..];
+        assert!(
+            render[..2000].contains("self.mark_shown_panes(cx);"),
+            "nothing tells the panes which tab is on screen"
+        );
     }
 
     /// What a program asking for a colour is told is the colour the pane
