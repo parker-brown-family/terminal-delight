@@ -45,7 +45,7 @@ while [ $# -gt 0 ]; do
     --settle) SETTLE=$2; shift 2 ;;
     --no-foot) FOOT=0; shift ;;
     --empty-gpui) EMPTY=1; shift ;;
-    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
     *) echo "unknown argument $1"; exit 2 ;;
   esac
 done
