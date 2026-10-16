@@ -27,20 +27,21 @@ audited 2026-09-08:
 
 | # | Site | Enclosing function | What initiates it | Class |
 |---|---|---|---|---|
-| 1 | `pane.rs` | `send` | `on_key` — **its only caller** | keystroke |
+| 1 | `pane.rs` | `send` | the key handler, `terminal_key`, for the key pressed — or, for Backspace or Delete over a selection on the line being typed, the arrow keys and DELs that erase it (`erase_selection_keys`); the cut keybinding, `cut_selection`, the same erase; and `run_line`, the launch panel's recipe line | keystroke + pointer |
 | 2 | `pane.rs` | `handle_term_event` → `TermEvent::PtyWrite` and `TermEvent::ColorRequest` | the program in the pane asking the terminal a question (cursor reports, device attributes, the colour of a palette slot) | protocol reply |
 | 3 | `pane.rs` | `render` | focus in/out, `\x1b[I` / `\x1b[O`, only when the program set `FOCUS_IN_OUT` | protocol reply |
 | 4 | `pane.rs` | `scroll_by_wheel` ×2 | mouse wheel over an alt-screen program, translated to arrow keys | pointer |
-| 5 | `pane.rs` | `cut_selection` | the cut keybinding — sends DEL for the removed characters | keystroke |
+| 5 | `pane.rs` | `cut_selection` | the cut keybinding — since 2026-10-16 its erase goes through `send` (#1), and it has no write of its own | keystroke |
 | 6 | `pane.rs` | `paste_text` | the paste keybinding and the right-click context menu's *Paste* row, through `paste_clipboard`; and a file dropped on the terminal face, whose path it pastes (`bench_drop`). The bytes are `paste_bytes`'s: every control character but newline, carriage return and tab is taken out first, so a clipboard carrying `ESC[201~` cannot close the bracket and have what follows read as keys | keystroke + pointer |
 | 7 | `pane.rs` | `seek_agent_prompt` | `alt+↑` / `alt+↓` **and the ▲/▼ header buttons** — walks an alt-screen agent's own scrollback with synthetic wheel notches, or PageUp/PageDown when the program has not asked for mouse reports; a bounded async walk, see below | keystroke + pointer |
 | 8 | `pane.rs:2471` | `new_restored` | a **freshly spawned** shell is handed its recorded command line — session restore, the dead-agent *resurrect* menu, `ctl adopt --run`, or `TD_SEED_RESUME` at launch | see below |
 | 9 | `pane.rs` | `send_notes` | a press on **↪** in a brief's notes bar, or its chord **ctrl+shift+enter** over the square while the button is drawn — the brief's notes map, pasted into the prompt of the agent pane the brief sits beside, bracketed and **never followed by Enter**; on the bench face it goes into the composer instead and writes nothing here; see below | pointer + keystroke |
 
 `send` is the only site that composes bytes from a keystroke, and it is reachable only from the key
-handler. That is the invariant. Everything else is the terminal answering its own program (#2, #3),
-a pointer gesture the person made (#4, #6, #7, #9), or site #8 handing a command line to a shell it
-just spawned — and #8 is the only one of the three that something other than a person can start.
+handler, the cut keybinding and the launch panel's `run_line`. That is the invariant. Everything
+else is the terminal answering its own program (#2, #3), a pointer gesture the person made (#4, #6,
+#7, #9), or site #8 handing a command line to a shell it just spawned — and #8 is the only one of
+the three that something other than a person can start.
 
 **`mcp.rs` and `plugins.rs` reach none of them.** The MCP tool surface changes appearance —
 brightness, contrast, warp, text size — reads pane state, posts a sticky note, declares a
@@ -200,8 +201,8 @@ The audit is a grep, and it should stay one. Each line below states the count it
 check whose expectation is wrong on the day it ships is a check somebody switches off:
 
 ```
-rg -c 'self\.send\(' app/src/pane.rs        # expect: 1  — pane.rs:4099, inside on_key
-sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'notifier\.notify\('  # expect: 11 — the nine rows above, #2 and #4 twice each; code only, since the tests quote the call
+sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'self\.send\('  # expect: 4 — run_line, terminal_key twice (the erase and the key), cut_selection
+sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'notifier\.notify\('  # expect: 10 — the nine rows above but #5, which writes through send, with #2 and #4 twice each; code only, since the tests quote the call
 rg -c 'keepalive' app/src/main.rs           # expect: 2  — the module doc, and the header-glyph count comment
 rg -n 'Msg::Input|notifier\.0|notifier:' app/src   # expect: the type in vt/pump.rs and vt/socket.rs's test, the field in term.rs, and host.rs's own three writes (the recipe, write_to, a test) — nothing in pane.rs or main.rs
 ```
