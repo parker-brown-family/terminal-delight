@@ -3341,13 +3341,10 @@ impl gpui::EventEmitter<StickyChanged> for TerminalView {}
 pub struct OffLimitsChanged;
 impl gpui::EventEmitter<OffLimitsChanged> for TerminalView {}
 
-/// The ⌁ LAUNCH AGENT button on an empty workbench — the workspace opens the
-/// launcher, scoped to this pane's own directory.
-///
-/// A pane with no agent in it is the one place the offer belongs: it is where
-/// a person is already looking when they discover the bench has nothing on it,
-/// and it answers the question that state raises instead of leaving them to
-/// find a keybinding.
+/// Alt+A, the pane header's ⌁ AGENT button, and the empty workbench's launch
+/// offer all open the same workspace launcher, scoped to this pane's directory.
+/// The workspace decides whether a known shell prompt can receive the command
+/// or the launch needs a new tab; the entry point never writes to the PTY.
 pub struct OpenAgentLauncher;
 impl gpui::EventEmitter<OpenAgentLauncher> for TerminalView {}
 
@@ -6904,6 +6901,7 @@ impl TerminalView {
     ) -> Handled {
         if k.alt {
             match k.key {
+                "a" => cx.emit(OpenAgentLauncher),
                 // Alt+S sticks a note to this pane, picks the pen back up on the
                 // one already there, and — pressed again while writing — posts
                 // it. Taken in the pane because the note belongs to the pane: at
@@ -10191,16 +10189,18 @@ impl Render for TerminalView {
             .unwrap()
             .map(|b| f32::from(b.size.width))
             .unwrap_or(f32::MAX);
-        let show_human = SHOW_HUMAN_NAV_GLYPH && pane_w >= 470.; // 1st: 👤 ▲▼ nav
-        let show_eq = pane_w >= 410.; //    2nd: EQ / display
-        let show_theme = pane_w >= 360.; //  3rd: 🎨 theme
-        let show_focus = SHOW_FOCUS_GLYPH && pane_w >= 264.; // 4th & last: 👓 FOCUS
-                                                             // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
-                                                             // The handover chip shrinks before anything tucks: its name above
-                                                             // 470, the word for its list down to 264, and below that it is a row
-                                                             // in the ⋯ menu like every other control here.
-        let handover_name = pane_w >= 470.;
-        let show_handover = pane_w >= 264. && self.has_handovers();
+        // Reserve the launch button before deciding which optional controls fit.
+        let controls_w = pane_w - 64. * scale;
+        let show_human = SHOW_HUMAN_NAV_GLYPH && controls_w >= 470.; // 1st: 👤 ▲▼ nav
+        let show_eq = controls_w >= 410.; //    2nd: EQ / display
+        let show_theme = controls_w >= 360.; //  3rd: 🎨 theme
+        let show_focus = SHOW_FOCUS_GLYPH && controls_w >= 264.; // 4th & last: 👓 FOCUS
+                                                                 // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
+                                                                 // The handover chip shrinks before anything tucks: its name above
+                                                                 // 470, the word for its list down to 264, and below that it is a row
+                                                                 // in the ⋯ menu like every other control here.
+        let handover_name = controls_w >= 470.;
+        let show_handover = controls_w >= 264. && self.has_handovers();
         let overflow = (SHOW_FOCUS_GLYPH && !show_focus)
             || !show_theme
             || !show_eq
@@ -10695,6 +10695,22 @@ impl Render for TerminalView {
                     // roomier spacing between the header glyphs — scales with the bar
                     .gap(hpad)
                     .child(face_toggle)
+                    .child(
+                        sk.chip(false)
+                            .id("launch-agent")
+                            .debug_selector(|| "launch-agent".into())
+                            .cursor_pointer()
+                            .text_size(px((hicon * 0.42).max(8.5)))
+                            .whitespace_nowrap()
+                            .child(if pane_w >= 470. { "⌁ AGENT" } else { "⌁" })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    cx.emit(OpenAgentLauncher);
+                                }),
+                            ),
+                    )
                     // What this pane's agent handed over: the newest one's
                     // name, and the list behind ▾. See `pane/handed.rs`.
                     .children(

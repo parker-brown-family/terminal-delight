@@ -4864,8 +4864,8 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         },
     )
     .detach();
-    // ⌁ LAUNCH AGENT on an empty workbench → the launcher, seeded with the
-    // directory that pane is already sitting in.
+    // Alt+A, the header button and the empty workbench share this launcher,
+    // seeded with the emitting pane's directory.
     cx.subscribe_in(
         pane,
         window,
@@ -14198,6 +14198,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A header button can belong to a pane that did not hold focus. Record
+        // its seat before the popup takes focus, so Escape and a successful
+        // in-place launch both return the keyboard to the pane that opened it.
+        if let Some((id, tab)) = from.and_then(|id| self.tab_with_leaf(id).map(|tab| (id, tab))) {
+            self.tabs[tab].focused = Some(id);
+            self.active = tab;
+        }
         let home = session::home_dir();
         // The scan keeps the newest N and this box has 257 project-shaped
         // directories under the five roots. At 60 a repository nobody had
@@ -30729,6 +30736,7 @@ impl Render for Workspace {
                         row("Alt+V / H · Ctrl+Alt+D", s.split),
                         row("Alt+W", s.close_pane),
                         row("Alt+K", s.toggle_bench),
+                        row("Alt+A", s.launch_agent),
                         row("Ctrl+W", s.close_tab),
                         row("Ctrl+Alt+↑↓←→", s.walk_tree),
                         row("Ctrl+Alt+1…9", s.jump_branch),

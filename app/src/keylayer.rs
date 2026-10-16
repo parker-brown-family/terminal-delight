@@ -361,7 +361,7 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
     }
     if k.alt && !k.control && !k.shift {
         return match k.key {
-            "s" => true,
+            "a" | "s" => true,
             "backspace" => up.note,
             _ => false,
         };
@@ -636,6 +636,41 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn terminal_launcher_chord_belongs_to_the_pane_on_every_face() {
+        for up in [
+            Up::default(),
+            Up {
+                bench: true,
+                ..Up::default()
+            },
+            Up {
+                document: true,
+                ..Up::default()
+            },
+            Up {
+                sticky: true,
+                ..Up::default()
+            },
+            Up {
+                rename: true,
+                ..Up::default()
+            },
+        ] {
+            assert_eq!(route(&alt("a"), &up), Layer::PaneChord);
+        }
+        assert_eq!(route(&ctrl("a"), &Up::default()), Layer::Terminal);
+        assert_eq!(route(&ch("a"), &Up::default()), Layer::Terminal);
+        assert_eq!(route(&ctrl_shift("a"), &Up::default()), Layer::PaneChord);
+        assert!(!pane_chord(
+            &Key {
+                shift: true,
+                ..alt("a")
+            },
+            &Up::default()
+        ));
     }
 
     // ── the floating document ───────────────────────────────────────────────
