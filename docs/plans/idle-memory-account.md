@@ -143,6 +143,8 @@ about, or reaches past Terminal Delight, so each is Parker's to decide.
   less PSS and 3 MiB less GPU memory. Trying Vulkan alone first and GL only when
   no Vulkan adapter passes would keep the fallback, but it changes adapter
   selection on hybrid machines, and this has only been run on one NVIDIA box.
+  Filed with the next item as #959 (an idle window on an NVIDIA-only machine
+  loads EGL, Mesa and LLVM it never draws with).
 - **Mesa and LLVM on an NVIDIA-only laptop.** 22.7 MiB of PSS and about 26 of RSS
   come from drivers for hardware this machine does not have, loaded twice over:
   by the GL backend through Mesa's EGL vendor, and by the Vulkan loader through
@@ -160,7 +162,8 @@ about, or reaches past Terminal Delight, so each is Parker's to decide.
   texture the first time the pass runs and keeps it after the effect is switched
   off. Dropping it whenever the pass is idle would reallocate 14.6 MiB every time
   a hover card flattens the glass for a frame, so it needs a delay before it lets
-  go.
+  go. Filed as #960 (the CRT pass keeps its surface-sized texture after the CRT
+  is switched off).
 - **Whole families.** gpui loads every face of a family it resolves, so the grid's
   italic and bold-italic faces and Adwaita Sans Italic are mapped though nothing
   idle draws them, about 0.6 MiB.
