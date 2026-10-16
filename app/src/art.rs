@@ -19,6 +19,13 @@ const BLINKER: &[u8] = include_bytes!("../assets/img/blinker-only.png");
 /// writes these bytes beside the config it seeds.
 pub(crate) const MARK: &[u8] = include_bytes!("../assets/img/logo-mark.png");
 
+/// The pace glyph — a flame over a bowl, drawn once in `assets/img/pace-flame.svg`
+/// and tinted per subscription by the band its pace falls in (cool, on pace, hot).
+/// An SVG rather than a raster, unlike `MARK`: gpui paints an SVG as a
+/// single-colour mask, which is exactly the point here — one shape, three
+/// meanings, carried entirely by `text_color`.
+pub(crate) const PACE_FLAME: &[u8] = include_bytes!("../assets/img/pace-flame.svg");
+
 /// Write an embedded asset to the runtime dir once (size-checked, so a
 /// truncated write from a crashed run heals) and hand back the path.
 ///
@@ -57,6 +64,12 @@ pub fn mark_png() -> PathBuf {
 /// the robot at identical bounds and hard-BLINKED, never throbbed.
 pub fn blinker_png() -> PathBuf {
     runtime_asset("terminal-delight-blinker.png", BLINKER)
+}
+
+/// The pace flame, materialised. See [`PACE_FLAME`]'s own doc for why it's an
+/// SVG, not a PNG like the rest of this file.
+pub fn pace_flame_svg() -> PathBuf {
+    runtime_asset("terminal-delight-pace-flame.svg", PACE_FLAME)
 }
 
 #[cfg(test)]
