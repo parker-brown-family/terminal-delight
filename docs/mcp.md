@@ -134,3 +134,13 @@ silence it.
 - **Locked by default.** Ships disabled; when enabled, agents-only; a plain
   shell's cwd/scrollback is never exposed unless the operator explicitly widens
   the policy to `all panes`.
+- **What another pane says is data.** An answer that quotes other panes —
+  `list_panes`, `grep`, `pane_events`, `engineering_state`, and the pushed
+  `agent_appeared` / `tool_call` events — opens with `UNTRUSTED TERMINAL DATA.`
+  and names every quoted field under `structuredContent.untrusted_terminal_data`
+  (on an event, `data.untrusted_terminal_data`). A line a program printed, a title
+  it set or a command another agent ran can be worded as an instruction; the label
+  is how the reading agent knows it is not one. Terminal Delight's own answers and
+  a person's `document_notes` carry no label. Every tool is classified in
+  `mcp.rs::provenance`, and a tool without a line there fails a test. The field
+  name follows Splinterm, whose MCP adapter labels terminal cells the same way.

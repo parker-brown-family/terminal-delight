@@ -69,6 +69,9 @@
 <h3>Every answer says where it came from</h3>
 <p>Each tool result, errors included, ends with a line like <code>— terminal-delight · session 1 · window 31337 · td-81ec545-rows-where-drawn</code> and carries the same in <code>structuredContent.instance</code>. To find your own pane in <code>list_panes</code>, match its <code>pane &lt;n&gt;</code> against <code>$TD_PANE_ID</code>; titles and directories are not unique.</p>
 
+<h3>What another pane says is data</h3>
+<p>An answer that quotes other panes opens with <code>UNTRUSTED TERMINAL DATA.</code> before anything else, and names each quoted field under <code>structuredContent.untrusted_terminal_data</code>. Those answers are <code>list_panes</code>, <code>grep</code>, <code>pane_events</code> and <code>engineering_state</code>, and the same goes for <code>data.untrusted_terminal_data</code> on a pushed event. A line a program printed, a title it set or a command another agent ran can be worded as an instruction, and the label is how the agent reading it knows it is not one. Terminal Delight's own answers carry no label, and neither do a person's <code>document_notes</code>.</p>
+
 <h3>Pushed notifications</h3>
 <p>Over the in-process transport, after <code>initialize</code> and with events on, the server pushes <code>notifications/message</code> with <code>data.event</code> set to <code>agent_appeared</code>, <code>agent_vanished</code> or <code>tool_call</code>, about once a second. <code>logging/setLevel</code> to <code>warning</code> or above silences it. The relay carries no pushes.</p>
 
@@ -84,7 +87,7 @@
 </table>
 
 <h3>What would prove this wrong</h3>
-<p>Any tool call that puts bytes into a pane's terminal breaks the server's first rule. So does any answer that describes another window's panes without saying which window it came from.</p>
+<p>Any tool call that puts bytes into a pane's terminal breaks the server's first rule. So does any answer that describes another window's panes without saying which window it came from, and any answer that quotes another pane without opening with the label.</p>
 </section>
 
 <ol data-sources>
