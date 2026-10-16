@@ -19,7 +19,10 @@ dependencies:
   flutter_riverpod: ^2.6.1
   flutter_secure_storage: ^9.2.4
   go_router: ^14.8.1
-  xterm: ^4.0.0
+  # Vendored with one change: the keyboard can hand the terminal a picture.
+  # See third_party/xterm/TD.md.
+  xterm:
+    path: third_party/xterm
 
 dev_dependencies:
   flutter_test:
