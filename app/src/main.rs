@@ -27,6 +27,7 @@
 //!
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
+mod access;
 mod art;
 mod attention;
 mod bell;
@@ -7783,9 +7784,52 @@ impl Workspace {
                                         }
                                     }
                                 };
+                            // An ask, checked against what this window knows
+                            // before anything is stored: the pane it names is
+                            // here, and what it asks for is not already so. A
+                            // row whose Yes would do nothing teaches a person
+                            // the buttons are decoration. The pane's name is
+                            // read now, for the person — the agent named it by
+                            // pid, and a pid is not how anyone thinks of a pane.
+                            let ask_change: Result<Option<access::Ask>, String> = match &patch.ask {
+                                None => Ok(None),
+                                Some(ask) => {
+                                    let named = ask.pid.and_then(|p| self.leaf_by_shell_pid(p, cx));
+                                    let (off, title) = match &named {
+                                        Some(t) => {
+                                            let v = t.read(cx);
+                                            let title = v
+                                                .name
+                                                .clone()
+                                                .filter(|n| !n.is_empty())
+                                                .or_else(|| {
+                                                    (!v.title.is_empty()).then(|| v.title.clone())
+                                                })
+                                                .unwrap_or_else(|| v.mode.label().to_string());
+                                            (Some(v.off_limits), Some(title))
+                                        }
+                                        None => (None, None),
+                                    };
+                                    let now = access::Now {
+                                        pane_off_limits: off,
+                                        mcp: &self.mcp,
+                                    };
+                                    match access::nothing_to_ask(ask.change, ask.pid, &now) {
+                                        Some(why) => Err(why),
+                                        None => Ok(Some(access::Ask {
+                                            title,
+                                            ..ask.clone()
+                                        })),
+                                    }
+                                }
+                            };
+                            let logo_change = match ask_change {
+                                Err(e) => Err(e),
+                                Ok(ask) => logo_change.map(|l| (l, ask)),
+                            };
                             match logo_change {
                                 Err(e) => out.push((target.clone(), Err(e))),
-                                Ok(logo_change) => {
+                                Ok((logo_change, ask)) => {
                                     let outer = theme::outer_choice(cx);
                                     let report = leaf.update(cx, |view, cx| {
                                         let mut g = view.appearance.effective(&outer).grade;
@@ -7846,6 +7890,11 @@ impl Workspace {
                                         // is a pane mutation like any other.
                                         if let Some(post) = patch.surface.clone() {
                                             view.present(post, cx);
+                                        }
+                                        // And an ask, onto the pane that made
+                                        // it, replacing any it made before.
+                                        if let Some(ask) = ask {
+                                            view.access_ask = Some(ask);
                                         }
                                         cx.notify();
                                         Self::grade_report(&g)
@@ -21773,6 +21822,20 @@ impl Workspace {
                     PaneKind::Unknown => Some(attention::AttentionKind::Unknown),
                     _ => rail_kind(badge, view.rail_state()),
                 };
+                // An ask outranks whatever the screen says, on any kind of
+                // pane. It is not a reading of the screen — the agent said it,
+                // through `request_access` — so it is not a second classifier
+                // of the badge's signals either, and the badge stays the one
+                // ranking of those.
+                let ask = view.access_ask.as_ref().map(|a| attention::AskRow {
+                    what: a.change.ask_words(a.title.as_deref()),
+                    why: a.why.clone(),
+                });
+                let kind = if ask.is_some() {
+                    Some(attention::AttentionKind::Access)
+                } else {
+                    kind
+                };
                 // The words and the instrument used to be chosen here, by a
                 // `match` on the very value above, and stored on the row. They
                 // are `AttentionKind::reason()` and `::source()` now — a caption
@@ -21798,7 +21861,11 @@ impl Workspace {
                     origin: origin.clone(),
                     // None until this pane's lane has been SEEN to change. The
                     // row draws a dash, and never an age it did not measure.
-                    observed_at: view.attention_since(),
+                    // An ask's age is the ask's own: when it arrived.
+                    observed_at: match &view.access_ask {
+                        Some(a) => Some(a.at),
+                        None => view.attention_since(),
+                    },
                     // The line behind the lane, quoted by the pane at the scan
                     // that classified it. Unknown and clean-finish rows have
                     // none, and say so by being absent.
@@ -21808,6 +21875,7 @@ impl Workspace {
                     // file this code picked out, which is a document we chose
                     // rather than one a turn produced.
                     deliverable: view.deliverable(),
+                    ask,
                 });
                 panes.insert(key, leaf.entity_id());
             }
@@ -21926,6 +21994,17 @@ impl Workspace {
                 None,
                 None,
             ),
+            // An ask: no quoted line, because nothing was read off a screen —
+            // the agent's reason is the ask's own, below.
+            (
+                8,
+                Priority::Neutral,
+                AttentionKind::Access,
+                origin("atlas", Some("ingest")),
+                ago(20),
+                None,
+                None,
+            ),
         ];
 
         let obs: Vec<attention::Observation> = rows
@@ -21941,6 +22020,12 @@ impl Workspace {
                         observed_at,
                         evidence: evidence.map(str::to_string),
                         deliverable,
+                        ask: (kind == AttentionKind::Access).then(|| attention::AskRow {
+                            what: access::Change::OpenPane.ask_words(Some("staging db")),
+                            why: "the migration failed there and I need its last 50 lines to \
+                                  say why"
+                                .into(),
+                        }),
                     }
                 },
             )
@@ -22059,6 +22144,87 @@ impl Workspace {
         true
     }
 
+    /// A person's answer to the ask waiting on one pane.
+    ///
+    /// **Reached from two places and no others: the row's Yes and No buttons
+    /// and the rail's `y` and `n`.** Both are a person's hand on this window.
+    /// Nothing in `mcp.rs` or `ctl.rs` may name this function, and
+    /// `access::tests::no_agent_facing_surface_can_answer_an_ask` keeps it so —
+    /// an agent that could reach it could answer its own ask, and that would
+    /// look exactly like a person saying yes.
+    ///
+    /// The ask is taken off its pane first, so a second press finds nothing.
+    /// Yes changes the setting the way the person's own control would — the
+    /// right-click mark on a pane, the MCP panel's switch — and saves. No
+    /// changes nothing. Either way the asking agent is told, in one signed line
+    /// typed through the bench's own path, which holds it until that pane is on
+    /// screen like every other line the bench types. The change does not wait
+    /// for that: an agent that retries sees it at once.
+    ///
+    /// `key` is the asking pane's row key (its entity id). Returns whether
+    /// there was an ask there to answer.
+    fn rail_answer(&mut self, key: u64, answer: access::Answer, cx: &mut Context<Self>) -> bool {
+        let Some(asker) = self.leaf_by_key(key) else {
+            return false;
+        };
+        let Some(ask) = asker.update(cx, |v, cx| {
+            cx.notify();
+            v.access_ask.take()
+        }) else {
+            return false;
+        };
+        let outcome = match answer {
+            access::Answer::No => access::Outcome::Kept,
+            access::Answer::Yes => match access::grant_config(ask.change, &mut self.mcp) {
+                Some(outcome) => outcome,
+                None => {
+                    // A pane change: the pane is found by the pid the agent
+                    // named, as it is everywhere an agent names a pane.
+                    match ask.pid.and_then(|pid| self.leaf_by_shell_pid(pid, cx)) {
+                        None => access::Outcome::Gone,
+                        Some(target) => target.update(cx, |v, cx| {
+                            let (mark, outcome) = access::pane_mark(ask.change, v.off_limits);
+                            v.set_off_limits(mark, cx);
+                            outcome
+                        }),
+                    }
+                }
+            },
+        };
+        let line = access::answer_line(surfacefeed::tag(), &ask, answer, outcome);
+        asker.update(cx, |v, cx| v.tell_agent(line, cx));
+        self.save(cx);
+        cx.notify();
+        true
+    }
+
+    /// The live pane whose row key (entity id) is `key`.
+    fn leaf_by_key(&self, key: u64) -> Option<Entity<TerminalView>> {
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            if let Some(l) = leaves.into_iter().find(|l| l.entity_id().as_u64() == key) {
+                return Some(l.clone());
+            }
+        }
+        None
+    }
+
+    /// The live pane whose shell has this pid — the number agents name panes by.
+    fn leaf_by_shell_pid(&self, pid: u32, cx: &App) -> Option<Entity<TerminalView>> {
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            if let Some(l) = leaves
+                .into_iter()
+                .find(|l| l.read(cx).shell_pid() == Some(pid))
+            {
+                return Some(l.clone());
+            }
+        }
+        None
+    }
+
     /// Open a deliverable from the rail the way Alt+click opens a document:
     /// a file TD can draw floats over the pane the person is looking at — the
     /// focused pane when it shows its terminal or its bench, else the first
@@ -22158,6 +22324,22 @@ impl Workspace {
             "o" => self.rail_activate(true, cx),
             // And the third: that same document beside the agent that made it.
             "b" => self.rail_open_beside(cx),
+            // An ask under the cursor, answered. On any other row the key is
+            // declined, so it falls through rather than being eaten.
+            "y" | "n" => {
+                let (items, _) = self.rail_waiting(cx);
+                match items.get(self.rail_cursor).filter(|it| it.ask.is_some()) {
+                    Some(it) => {
+                        let answer = if key == "y" {
+                            access::Answer::Yes
+                        } else {
+                            access::Answer::No
+                        };
+                        self.rail_answer(it.pane, answer, cx)
+                    }
+                    None => false,
+                }
+            }
             // Dock or undock. Refused rather than silently ignored on a window
             // with no room: the press answers false, so it falls through to the
             // pane instead of being eaten by a control that is not on offer.
@@ -22411,6 +22593,10 @@ impl Workspace {
 
     fn rail_ink(kind: attention::AttentionKind, sk: &skin::Skin) -> Hsla {
         match kind {
+            // Amber: the one lane whose answer is a person's to give and the
+            // row's own buttons to take. Not the decision red, which sends a
+            // person to a terminal; this keeps them on the rail.
+            attention::AttentionKind::Access => hsla(0.12, 0.88, 0.58, 1.),
             attention::AttentionKind::Decision => hsla(0., 0.72, 0.60, 1.),
             attention::AttentionKind::Failure => hsla(0.06, 0.74, 0.62, 1.),
             attention::AttentionKind::ReviewReady => hsla(0.40, 0.60, 0.50, 1.),
@@ -22839,6 +23025,33 @@ impl Workspace {
                         .text_color(sk.ink.ink)
                         .child(it.reason()),
                 )
+                // What an ask is for: the setting in our words, then the
+                // agent's reason in its own, quoted the way the classifier's
+                // line is — because it is the agent's text, and the person is
+                // judging it.
+                .children(it.ask.as_ref().map(|a| {
+                    div()
+                        .mt(px(2. * s))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2. * s))
+                        .child(
+                            div()
+                                .text_size(px(10.5 * s))
+                                .text_color(ink)
+                                .child(a.what.clone()),
+                        )
+                        .child(
+                            div()
+                                .px(px(4. * s))
+                                .py(px(2. * s))
+                                .rounded(px(2. * s))
+                                .bg(sk.ink.ink.alpha(0.06))
+                                .text_size(px(9.5 * s))
+                                .text_color(sk.ink.ink_dim)
+                                .child(format!("\u{201c}{}\u{201d}", a.why)),
+                        )
+                }))
                 // The line the classifier read, quoted. `reason` is our words
                 // for what happened; this is the agent's own, and it is what
                 // turns a row somebody has to trust into a row somebody can
@@ -22882,7 +23095,11 @@ impl Workspace {
                 // changed files and checks need an authoritative source that
                 // does not exist yet. Shown missing, so nobody mistakes an empty
                 // tray for a clean one.
-                .when(on_cursor, |row| {
+                //
+                // Not on an ask. Its fields are about a finished turn, and an
+                // ask is not one; four lines of `unavailable` between the reason
+                // and the buttons would push the answer off the glance.
+                .when(on_cursor && it.ask.is_none(), |row| {
                     row.child(
                         div()
                             .mt(px(4. * s))
@@ -23006,6 +23223,47 @@ impl Workspace {
                                 cx.notify();
                             }),
                         )
+                }))
+                // Yes and No, on the row. The only two controls in the window
+                // that answer an ask, and each stops its press here so the row
+                // underneath does not also go to the pane: answering is not
+                // visiting. `y` and `n` do the same for the cursor's row.
+                .children(it.ask.as_ref().map(|_| {
+                    let key = it.pane;
+                    let button = |label: &'static str, yes: bool| {
+                        let answer = if yes {
+                            access::Answer::Yes
+                        } else {
+                            access::Answer::No
+                        };
+                        div()
+                            .px(px(9. * s))
+                            .py(px(2. * s))
+                            .rounded(px(3. * s))
+                            .border_1()
+                            .border_color(if yes { ink } else { sk.ink.ink_dim })
+                            .text_size(px(10. * s))
+                            .text_color(if yes { ink } else { sk.ink.ink })
+                            .cursor_pointer()
+                            .hover(move |st| st.bg(sk.ink.ink.alpha(0.14)))
+                            .child(SharedString::from(label))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.rail_answer(key, answer, cx);
+                                    cx.notify();
+                                }),
+                            )
+                    };
+                    div()
+                        .mt(px(5. * s))
+                        .flex()
+                        .flex_row()
+                        .gap(px(6. * s))
+                        .items_center()
+                        .child(button("Yes  y", true))
+                        .child(button("No  n", false))
                 }));
             // No per-row click handler. The panel takes one click and resolves it
             // through the inverse barrel map, because these boxes are where the
@@ -36018,9 +36276,6 @@ mod tests {
         const _: () = assert!(LEGACY_PANE_CEILING == 8, "the CRT warp draws eight tubes");
     }
 
-    /// This file's own code, cut at its test module, and the body of one
-    /// function in it — for the rules a `Workspace` cannot be built to test,
-    /// since it needs a live gpui `Window`.
     // ── off-limits to agents ───────────────────────────────────────────────
 
     /// The mark survives a restart, is written only when set, and every file
@@ -36113,6 +36368,7 @@ mod tests {
         ];
         let mut writes = Vec::new();
         let mut toggles = Vec::new();
+        let mut sets = Vec::new();
         for (file, code) in files {
             let mut owner = "<file>";
             for line in code.lines() {
@@ -36132,8 +36388,20 @@ mod tests {
                 if t.contains("toggle_off_limits(") && !t.contains("fn toggle_off_limits(") {
                     toggles.push(format!("{file} {owner}: {t}"));
                 }
+                if t.contains("set_off_limits(") && !t.contains("fn set_off_limits(") {
+                    sets.push(format!("{file} {owner}: {t}"));
+                }
             }
         }
+        // The second person's path: a Yes on the rail to an agent's ask. It sets
+        // the mark through the same toggle, and it is reached from the rail's
+        // answer and nowhere else — `access::tests` keeps the two agent-facing
+        // files from naming that answer.
+        assert_eq!(
+            sets,
+            vec!["main.rs rail_answer: v.set_off_limits(mark, cx);"],
+            "the mark is set from somewhere other than a person's answer on the rail"
+        );
         writes.sort();
         assert_eq!(
             writes,
@@ -36144,10 +36412,54 @@ mod tests {
             ],
             "something other than a person's gesture or a restore writes the mark"
         );
+        toggles.sort();
         assert_eq!(
             toggles,
-            vec!["pane.rs render: v.toggle_off_limits(cx);"],
-            "the toggle is reached from somewhere other than the right-click menu"
+            vec![
+                "pane.rs render: v.toggle_off_limits(cx);",
+                "pane.rs set_off_limits: self.toggle_off_limits(cx);",
+            ],
+            "the toggle is reached from somewhere other than the right-click menu or \
+             a person's answer on the rail"
+        );
+    }
+
+    /// An ask is answered from the rail's two person-facing handlers and from
+    /// nowhere else in the window: the Yes and No buttons on the row, and the
+    /// `y` / `n` keys while the queue is open. `access::tests` keeps the
+    /// agent-facing files out; this keeps the rest of the window honest, so a
+    /// later convenience — answering from a menu, a timer, a restore — has to
+    /// come through here and be argued for.
+    ///
+    /// Mutation-tested: a call from `rail_activate` fails this.
+    #[test]
+    fn an_ask_is_answered_only_by_the_rails_buttons_and_keys() {
+        let src = include_str!("main.rs");
+        let code = &src[..src
+            .find("\n#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests")
+            .unwrap_or(src.len())];
+        let mut owner = "<file>";
+        let mut callers = Vec::new();
+        for line in code.lines() {
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            if let Some(rest) = ["fn ", "pub fn ", "pub(crate) fn ", "pub(super) fn "]
+                .iter()
+                .find_map(|p| t.strip_prefix(p))
+            {
+                owner = rest.split(['(', '<']).next().unwrap_or(rest);
+            }
+            if t.contains("rail_answer(") && !t.contains("fn rail_answer(") {
+                callers.push(owner);
+            }
+        }
+        callers.sort_unstable();
+        assert_eq!(
+            callers,
+            vec!["rail_key", "rail_panel"],
+            "an ask is answered from somewhere other than the rail's keys and buttons"
         );
     }
 
@@ -36239,6 +36551,9 @@ mod tests {
         }
     }
 
+    /// This file's own code, cut at its test module, and the body of one
+    /// function in it — for the rules a `Workspace` cannot be built to test,
+    /// since it needs a live gpui `Window`.
     fn live_fn(sig: &str) -> &'static str {
         let src = include_str!("main.rs");
         let code = &src[..src
@@ -37329,6 +37644,7 @@ mod tests {
         let doc = include_str!("../../docs/attention-spine.md");
         let src = concat!(
             include_str!("attention.rs"),
+            include_str!("access.rs"),
             include_str!("pane.rs"),
             include_str!("screenread.rs"),
             include_str!("mcp.rs"),
@@ -37355,8 +37671,11 @@ mod tests {
         let missing: Vec<&str> = cited
             .into_iter()
             .filter(|name| {
-                let needle = format!("fn {name}(");
-                !src.contains(&needle) && !here.contains(&needle)
+                // A generic function is still the function: `fn request_access<G>(`.
+                let needles = [format!("fn {name}("), format!("fn {name}<")];
+                !needles
+                    .iter()
+                    .any(|n| src.contains(n.as_str()) || here.contains(n.as_str()))
             })
             .collect();
         assert!(
