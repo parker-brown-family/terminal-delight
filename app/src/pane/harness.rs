@@ -439,6 +439,17 @@ impl Pane {
         self.cx.simulate_keystrokes(keys);
     }
 
+    /// One keystroke exactly as the desktop hands it over, the character it
+    /// types included. [`Self::keys`] cannot spell that for a ctrl chord:
+    /// gpui's parser leaves the character empty under ctrl, where Linux fills
+    /// it in, so ctrl+= arrives carrying the `=` it would type.
+    pub(super) fn keystroke(&mut self, ks: gpui::Keystroke) {
+        self.cx.update(|window, cx| {
+            window.dispatch_keystroke(ks, cx);
+        });
+        self.cx.run_until_parked();
+    }
+
     /// The file the floating square is showing, if one is up.
     pub(super) fn float_path(&mut self) -> Option<PathBuf> {
         self.view.read_with(self.cx, |v, cx| v.float_path(cx))

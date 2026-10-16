@@ -357,9 +357,18 @@ pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
 /// `a_header_being_renamed_takes_every_paste_chord`). The pane's other chords
 /// still work over any of those boxes: they close, find and open panels, and
 /// none of them writes into the terminal.
+///
+/// The four size chords ([`size_chord`]) are claimed over every box too, and
+/// the shifted pair for the same reason as `ctrl+shift+t`: the window is what
+/// acts on it, but only the pane can keep it out of the shell on its way up.
 pub fn pane_chord(k: &Key, up: &Up) -> bool {
     if k.platform || k.function {
         return false;
+    }
+    // Ahead of the shift arm below, which would refuse the shifted pair: on the
+    // desktop it arrives with its shift already dropped.
+    if size_chord(k).is_some() {
+        return true;
     }
     if k.alt && !k.control && !k.shift {
         return match k.key {
@@ -387,6 +396,47 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
         );
     }
     false
+}
+
+/// A size step from the keyboard, and what it sizes.
+///
+/// ctrl+wheel sizes whatever the pointer is standing on. A key has no pointer,
+/// so the keyboard names the two places instead, one notch per press so that
+/// both hands travel alike.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Size {
+    /// `ctrl+=` / `ctrl+-`: the highlighted pane's own content, as ctrl+wheel
+    /// over its screen turns it.
+    Pane(f32),
+    /// `ctrl+shift+=` / `ctrl+shift+-`: the outer scale, as ctrl+wheel over the
+    /// chrome turns it.
+    Outer(f32),
+}
+
+/// Which size chord this keystroke is, if any, in signed wheel notches.
+///
+/// The shifted pair arrives spelled two ways, and both are the same press. The
+/// desktop names a shifted symbol by what it types and drops the shift
+/// (gpui keeps shift only on letters), so ctrl+shift+= reaches a pane as ctrl
+/// and `+`, and ctrl+shift+- as ctrl and `_`. gpui's parser, which is how a
+/// test or a keymap writes a chord, keeps the shift and the unshifted key. A
+/// table that knew one spelling would pass its tests and do nothing on the
+/// desktop, or the other way round.
+///
+/// Nothing a program could ask for is taken. With no keyboard protocol, ctrl+=
+/// and ctrl+- reached the shell as a bare `=` and `-`, and the `^_` of
+/// ctrl+shift+- carries no character, so the encoder sent nothing for it.
+pub fn size_chord(k: &Key) -> Option<Size> {
+    if !k.control || k.alt || k.platform || k.function {
+        return None;
+    }
+    Some(match (k.key, k.shift) {
+        ("=", false) => Size::Pane(1.0),
+        ("-", false) => Size::Pane(-1.0),
+        ("+", _) | ("=", true) => Size::Outer(1.0),
+        ("_", _) | ("-", true) => Size::Outer(-1.0),
+        _ => return None,
+    })
 }
 
 /// The plain named keys that TYPE into a program — the overlay swallows them
@@ -726,6 +776,101 @@ mod tests {
             Layer::Terminal,
             "ctrl+l clears"
         );
+    }
+
+    // ── the size chords ─────────────────────────────────────────────────────
+
+    /// ctrl with `=` or `-` is a size step, in both spellings of the shifted
+    /// pair, and nothing that merely shares a key with one is.
+    #[test]
+    fn the_size_chords_are_ctrl_with_equals_or_minus() {
+        // As the desktop reports them: the shifted pair by what it types.
+        assert_eq!(size_chord(&ctrl("=")), Some(Size::Pane(1.0)));
+        assert_eq!(size_chord(&ctrl("-")), Some(Size::Pane(-1.0)));
+        assert_eq!(size_chord(&ctrl("+")), Some(Size::Outer(1.0)));
+        assert_eq!(size_chord(&ctrl("_")), Some(Size::Outer(-1.0)));
+        // As gpui's parser spells the same two presses.
+        assert_eq!(size_chord(&ctrl_shift("=")), Some(Size::Outer(1.0)));
+        assert_eq!(size_chord(&ctrl_shift("-")), Some(Size::Outer(-1.0)));
+
+        let ctrl_and = |key, alt, platform| Key {
+            key,
+            control: true,
+            alt,
+            platform,
+            ..Key::default()
+        };
+        for k in [
+            ch("="),
+            ch("-"),
+            ch("+"),
+            ch("_"),
+            alt("="),
+            alt("-"),
+            // ctrl+alt is the window's, and super is the desktop's.
+            ctrl_and("=", true, false),
+            ctrl_and("-", false, true),
+        ] {
+            assert_eq!(size_chord(&k), None, "{k:?} is not a size chord");
+        }
+    }
+
+    /// A size chord is the pane's whatever is stacked on it. A box with a
+    /// caret, a document, the bench and the paint overlay all let it past, so
+    /// it types into neither the thing on top nor the shell underneath, and
+    /// the keys it is made of still type.
+    #[test]
+    fn the_size_chords_are_the_panes_over_everything_it_stacks() {
+        let stacks = [
+            Up::default(),
+            on_bench(),
+            floating(),
+            Up {
+                float: true,
+                float_caret: true,
+                ..Up::default()
+            },
+            Up {
+                document: true,
+                doc_caret: true,
+                ..Up::default()
+            },
+            Up {
+                sticky: true,
+                ..Up::default()
+            },
+            Up {
+                rename: true,
+                ..Up::default()
+            },
+            Up {
+                paint: true,
+                ..Up::default()
+            },
+            Up {
+                reader: true,
+                ..Up::default()
+            },
+        ];
+        for up in stacks {
+            for k in [
+                ctrl("="),
+                ctrl("-"),
+                ctrl("+"),
+                ctrl("_"),
+                ctrl_shift("="),
+                ctrl_shift("-"),
+            ] {
+                assert_eq!(route(&k, &up), Layer::PaneChord, "{k:?} over {up:?}");
+            }
+            for k in [ch("="), ch("-"), ch("+"), ch("_")] {
+                assert_ne!(
+                    route(&k, &up),
+                    Layer::PaneChord,
+                    "{k:?} still types, over {up:?}"
+                );
+            }
+        }
     }
 
     // ── the floating document ───────────────────────────────────────────────

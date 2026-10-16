@@ -7079,6 +7079,9 @@ impl TerminalView {
         ks: &Keystroke,
         cx: &mut Context<Self>,
     ) -> Handled {
+        if let Some(size) = crate::keylayer::size_chord(k) {
+            return self.size_key(size, cx);
+        }
         if k.alt {
             match k.key {
                 "a" => cx.emit(OpenAgentLauncher),
@@ -7374,6 +7377,46 @@ impl TerminalView {
         // workspace just writes the layout down so the size survives a restart.
         cx.emit(PaintApplied);
         cx.notify();
+    }
+
+    /// ctrl+= / ctrl+- and the shifted pair: ctrl+wheel, from the keyboard.
+    ///
+    /// A key has no pointer, so the pane it sizes is the highlighted one, the
+    /// pane holding the keyboard, and the dial is the one ctrl+wheel over its
+    /// screen turns: the grid's text on the terminal face, the bench's type on
+    /// the workbench, the document's zoom on the Document face.
+    ///
+    /// Two presses go up to the window instead, declined so they bubble: the
+    /// shifted pair, because the outer scale is the window's, and any press
+    /// while this pane is open in the FOCUS reader. The reader has a size of
+    /// its own, and ctrl+wheel over it already steps that rather than this
+    /// pane's text, which nobody can see behind the scrim.
+    fn size_key(&mut self, size: crate::keylayer::Size, cx: &mut Context<Self>) -> Handled {
+        let crate::keylayer::Size::Pane(notches) = size else {
+            return Handled::Declined;
+        };
+        if self.being_read {
+            return Handled::Declined;
+        }
+        match self.bench.face() {
+            crate::workbench::Face::Terminal => {
+                self.nudge_size(theme::GradeKey::TextSize, notches, cx);
+            }
+            crate::workbench::Face::Workbench => {
+                self.nudge_size(theme::GradeKey::BenchSize, notches, cx);
+            }
+            crate::workbench::Face::Document => {
+                if let Some(view) = self.doc_on_face().map(|d| d.view.clone()) {
+                    let step = if notches > 0.0 {
+                        crate::docview::ZoomStep::In
+                    } else {
+                        crate::docview::ZoomStep::Out
+                    };
+                    view.update(cx, |v, cx| v.zoom(step, cx));
+                }
+            }
+        }
+        Handled::Consumed
     }
 
     /// Which of this pane's size dials sits under `pos`, if the pane has been
@@ -9627,7 +9670,7 @@ fn wheel_step_bytes(up: bool, sgr: bool) -> Vec<u8> {
 /// keystroke type a character* is answered once. gpui fills `key_char` for
 /// `alt+r` with `"r"`, which is how a chord came to read as a letter in two
 /// different surfaces before [`crate::workbench::types_a_character`] existed.
-fn keylayer_key(ks: &Keystroke) -> crate::keylayer::Key<'_> {
+pub(crate) fn keylayer_key(ks: &Keystroke) -> crate::keylayer::Key<'_> {
     let m = &ks.modifiers;
     crate::keylayer::Key {
         key: ks.key.as_str(),
