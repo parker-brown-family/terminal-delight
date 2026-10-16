@@ -139,7 +139,7 @@ about, or reaches past Terminal Delight, so each is Parker's to decide.
 
 - **wgpu's GL backend.** gpui creates its wgpu instance with both Vulkan and GL,
   so on a Vulkan machine it still opens EGL, loads every EGL vendor and holds a GL
-  context. With the EGL vendors hidden from the process the window held 18.6 MiB
+  context. With the EGL vendors hidden from the process the window held 18.2 MiB
   less PSS and 3 MiB less GPU memory. Trying Vulkan alone first and GL only when
   no Vulkan adapter passes would keep the fallback, but it changes adapter
   selection on hybrid machines, and this has only been run on one NVIDIA box.
