@@ -314,9 +314,11 @@ pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
     if !alt {
         return false;
     }
+    // `l` is the LOOKUP. It costs readline's downcase-word, which nothing in
+    // this window's composer mirrors.
     matches!(
         key,
-        "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w" | "k"
+        "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w" | "k" | "l"
     )
 }
 
@@ -673,6 +675,46 @@ mod tests {
         ));
     }
 
+    /// Alt+L searches the whole window, so no surface a pane can stack — a
+    /// bench, a document, a note being written, a rename box — may keep it.
+    /// The shell never sees it either: `keystroke_bytes` refuses every window
+    /// chord, which is what keeps `ESC l` out of the PTY.
+    #[test]
+    fn the_lookup_chord_belongs_to_the_window_on_every_face() {
+        for up in [
+            Up::default(),
+            Up {
+                bench: true,
+                ..Up::default()
+            },
+            Up {
+                document: true,
+                ..Up::default()
+            },
+            Up {
+                sticky: true,
+                ..Up::default()
+            },
+            Up {
+                rename: true,
+                ..Up::default()
+            },
+            Up {
+                float: true,
+                float_caret: true,
+                ..Up::default()
+            },
+        ] {
+            assert_eq!(route(&alt("l"), &up), Layer::Window, "{up:?}");
+        }
+        assert_eq!(route(&ch("l"), &Up::default()), Layer::Terminal);
+        assert_eq!(
+            route(&ctrl("l"), &Up::default()),
+            Layer::Terminal,
+            "ctrl+l clears"
+        );
+    }
+
     // ── the floating document ───────────────────────────────────────────────
 
     fn floating() -> Up {
@@ -1014,10 +1056,10 @@ mod tests {
 
     #[test]
     fn the_windows_chords_are_never_a_panes_to_take() {
-        for key in ["left", "right", "up", "down", "r", "v", "h", "w"] {
+        for key in ["left", "right", "up", "down", "r", "v", "h", "w", "l"] {
             assert!(
                 window_chord(key, true, false),
-                "alt+{key} is the window's: focus, split, close, FOCUS"
+                "alt+{key} is the window's: focus, split, close, FOCUS, LOOKUP"
             );
         }
         assert!(window_chord("up", true, true));
