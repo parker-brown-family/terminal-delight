@@ -481,6 +481,9 @@ impl Voice {
 
 /// Legal-pad yellow, for a theme with no colour anywhere in it.
 const PAD_YELLOW: f32 = 0.128;
+/// Every paper's saturation and lightness: a pad, not a pastel.
+const PAD_S: f32 = 0.88;
+const PAD_L: f32 = 0.63;
 
 /// A colour's hue, if it has enough of one to count. Below a tenth saturation
 /// the hue is rounding noise on a grey, and paper dyed with it reads as a dialog.
@@ -500,7 +503,9 @@ fn complement_hue(v: &Voice) -> f32 {
 }
 
 /// The hue nothing on the screen is already wearing: the middle of the widest
-/// arc of the colour wheel left empty by the four pips AND the other two papers.
+/// arc of the colour wheel left empty by the four pips AND the other two papers
+/// (arcs within ten degrees of the widest count as widest, and the brightest
+/// paper among them wins — see [`widest_gap_middle`]).
 ///
 /// Counting the other two papers is what keeps the three buttons three different
 /// notes. A colourless theme has no pips to avoid, and without them the widest
@@ -519,42 +524,64 @@ fn contrast_hue(v: &Voice) -> f32 {
 }
 
 /// Distance between two hues around the wheel, `0..=0.5`.
+#[cfg(test)]
 fn hue_dist(a: f32, b: f32) -> f32 {
     let d = (a - b).rem_euclid(1.0);
     d.min(1.0 - d)
 }
 
-/// The middle of the widest gap between `sorted` hues, wrapping past red. Two
-/// gaps equally wide — every two-hue theme has them — go to whichever middle is
-/// nearer legal-pad yellow: when a theme leaves the choice open, the note leans
-/// towards the colour notes are. A tie on that too (yellow and its opposite are
-/// the two hues) keeps the first, so the answer never rests on float noise.
-fn widest_gap_middle(sorted: &[f32]) -> f32 {
-    const EPS: f32 = 1e-3;
-    let n = sorted.len();
-    let mut best: Option<(f32, f32)> = None; // (width, middle)
-    for i in 0..n {
-        let from = sorted[i];
-        let to = if i + 1 < n {
-            sorted[i + 1]
+/// How bright a sheet of hue `h` is to the eye: the WCAG relative luminance of
+/// the pad colour. Black ink reads by this number, and at one HSL lightness a
+/// blue sheet is about a third as bright as a yellow one.
+fn pad_luminance(h: f32) -> f32 {
+    fn lin(v: f32) -> f32 {
+        if v <= 0.04045 {
+            v / 12.92
         } else {
-            sorted[0] + 1.0
-        };
-        let width = to - from;
-        let middle = (from + width / 2.0).rem_euclid(1.0);
-        let wins = match best {
-            None => true,
-            Some((w, m)) => {
-                width > w + EPS
-                    || ((width - w).abs() <= EPS
-                        && hue_dist(middle, PAD_YELLOW) < hue_dist(m, PAD_YELLOW) - EPS)
-            }
-        };
-        if wins {
-            best = Some((width, middle));
+            ((v + 0.055) / 1.055).powf(2.4)
         }
     }
-    best.map_or(PAD_YELLOW, |(_, m)| m)
+    let c = gpui::Rgba::from(hsla(h, PAD_S, PAD_L, 1.0));
+    0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+}
+
+/// Arcs this close in width are the same width. A theme's text and accent are
+/// often two shades of one hue a degree apart, and that degree is not a reason
+/// to prefer one side of the wheel. Measured on hacker: its two empty arcs are
+/// 180.0° and 179.6°, and a strict "widest" put the note on blue by 0.4°.
+const SAME_WIDTH: f32 = 10.0 / 360.0;
+
+/// The middle of the widest gap between `sorted` hues, wrapping past red.
+///
+/// Every gap within [`SAME_WIDTH`] of the widest is a candidate, and the
+/// candidate whose middle makes the BRIGHTEST paper wins. That is the common
+/// case rather than an edge: a theme in one hue with its complement opposite
+/// leaves two equal arcs, a quarter-turn either side, and which one the note
+/// takes is decided here. Brightest is what black ink needs, so a green theme
+/// gets a yellow note rather than a blue one. An exact tie keeps the first.
+fn widest_gap_middle(sorted: &[f32]) -> f32 {
+    let n = sorted.len();
+    let gaps: Vec<(f32, f32)> = (0..n)
+        .map(|i| {
+            let from = sorted[i];
+            let to = if i + 1 < n {
+                sorted[i + 1]
+            } else {
+                sorted[0] + 1.0
+            };
+            let width = to - from;
+            (width, (from + width / 2.0).rem_euclid(1.0))
+        })
+        .collect();
+    let widest = gaps.iter().map(|g| g.0).fold(0.0, f32::max);
+    gaps.into_iter()
+        .filter(|(w, _)| *w >= widest - SAME_WIDTH)
+        .map(|(_, middle)| middle)
+        .fold(None, |best: Option<f32>, m| match best {
+            Some(b) if pad_luminance(m) <= pad_luminance(b) + 1e-4 => Some(b),
+            _ => Some(m),
+        })
+        .unwrap_or(PAD_YELLOW)
 }
 
 /// The hue a note takes in `mode` — the paper's colour before it is driven to
@@ -588,7 +615,7 @@ pub fn paper_for(th: &crate::theme::Theme) -> Paper {
 pub fn paper(mode: crate::theme::NotePaper, v: &Voice) -> Paper {
     let hue = paper_hue(mode, v);
     Paper {
-        base: hsla(hue, 0.88, 0.63, PAPER_ALPHA),
+        base: hsla(hue, PAD_S, PAD_L, PAPER_ALPHA),
         ink: hsla(hue, 0.24, 0.085, 0.95),
         pin: hsla((hue + 0.5).fract(), 0.86, 0.52, 1.0),
     }
@@ -1960,7 +1987,7 @@ mod tests {
     /// Contrast is the middle of the widest arc no colour on the screen sits
     /// in. An amber theme whose complement and human colour are both its
     /// opposite blue leaves two equal quarter-turn gaps, one green and one
-    /// magenta, and the tie goes to the one nearer the pad: green.
+    /// magenta, and the tie goes to the brighter paper: green.
     #[test]
     fn contrast_paper_sits_in_the_widest_empty_arc() {
         let v = voice(0.11, 0.11, 0.61, 0.61);
@@ -1975,6 +2002,43 @@ mod tests {
             (h - 0.58).abs() < 1e-3,
             "expected the middle of the empty cool arc 0.58, got {h}"
         );
+    }
+
+    /// The shipped hacker theme, from its file: text `#86efac` (141.7°) and
+    /// accent `#22c55e` (142.1°), so its complement and human colour are both
+    /// at 322.1°. The two empty arcs are 180.0° and 179.6°. A strict "widest"
+    /// took the first by 0.4° and gave a blue note; those arcs are the same
+    /// width, and the brighter of their two middles is a yellow-orange.
+    #[test]
+    fn two_arcs_a_shade_apart_are_one_width_and_the_brighter_paper_wins() {
+        let (text, accent) = (141.7 / 360.0, 142.1 / 360.0);
+        let opposite = accent + 0.5;
+        let v = Voice {
+            text: hsla(text, 0.76, 0.73, 1.0),
+            accent: hsla(accent, 0.71, 0.45, 1.0),
+            complement: hsla(opposite, 0.71, 0.45, 1.0),
+            human: hsla(opposite, 0.57, 0.76, 1.0),
+        };
+        let h = paper_hue(NotePaper::Contrast, &v);
+        assert!(
+            (h - 0.1442).abs() < 2e-3,
+            "expected the yellow-orange middle at 52°, got {:.1}°",
+            h * 360.0
+        );
+        assert!(pad_luminance(h) > 2.0 * pad_luminance(0.6447));
+    }
+
+    /// Brightness is what the tie-break measures, so it must order the hues the
+    /// way an eye does: yellow over green over red over blue.
+    #[test]
+    fn pad_luminance_orders_hues_as_an_eye_does() {
+        let (yellow, green, red, blue) = (
+            pad_luminance(1.0 / 6.0),
+            pad_luminance(1.0 / 3.0),
+            pad_luminance(0.0),
+            pad_luminance(2.0 / 3.0),
+        );
+        assert!(yellow > green && green > red && red > blue);
     }
 
     /// The gap is measured around the wheel, so an arc that runs past red is
