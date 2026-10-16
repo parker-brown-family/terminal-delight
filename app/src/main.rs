@@ -49,6 +49,7 @@ mod emphasis;
 mod engstate;
 mod fav;
 mod gamba;
+mod glyph;
 mod gridwire;
 mod handover;
 mod hold;
@@ -1577,8 +1578,10 @@ const TRAY_SEP: f32 = 1.; // a hairline, h or v
 /// the whole reason the tray fits: at this width DESIGN wraps 3+3+1 instead of
 /// the 2+2+2+1 it wrapped at in the old single strip.
 const TRAY_PICKER_W: f32 = 3. * TRAY_BTN_W + 2. * TRAY_GAP + TRAY_FIT_SLACK;
-/// The WHEEL column — the 132px wheel with room for its lightness bar.
-const TRAY_WHEEL_COL_W: f32 = 150.;
+/// The WHEEL column — the 132px wheel with room for its lightness bar, and the
+/// three STICKY NOTE buttons under it, which are what set the width now: at 150
+/// the last caption read "complemen".
+const TRAY_WHEEL_COL_W: f32 = 156.;
 /// The glyph column — the INVERT bar sets it (a heading plus a mode button),
 /// which is wider than the two 40px colour-set columns beneath it.
 const TRAY_GLYPH_COL_W: f32 = 110.;
@@ -1594,6 +1597,12 @@ const TRAY_LBAR_H: f32 = 14.; // lightness_bar
 const TRAY_PIPS_H: f32 = 24.; // the four wheel-target pips
 const TRAY_RESET_H: f32 = 14.; // the ↺ reset row under them
 const TRAY_PILL_H: f32 = 22.; // a bezel button: 2px py, 11px text, a border
+/// The STICKY NOTE row's buttons, three abreast under the wheel. Narrower than
+/// a PROGRAM COLOUR button because three of those would not fit the column,
+/// and captioned half a point smaller so "complement" fits inside one.
+const TRAY_NOTE_BTN_W: f32 = 48.;
+const TRAY_NOTE_GAP: f32 = 3.;
+const TRAY_NOTE_CAPTION: f32 = 7.5;
 
 /// The shortest render band the tray promises to open inside WITHOUT scrolling
 /// — a 768-tall screen with the window's own chrome taken off it.
@@ -1649,11 +1658,12 @@ fn tray_pickers_h(themes: usize, skins: usize, modes: usize, schemes: usize) -> 
     h + 2. * TRAY_PAD
 }
 
-/// Estimated height of the WHEEL column: the fixed wheel stack, then one block
-/// per window RULE (a hairline, a heading and a pill — AGENT THEME, ANCHOR) plus
-/// any bare pills under them (pass-down on the outer tray, follow-outer on a
-/// pane's). This is the column AGENT THEME grew, so it is the one that has to be
-/// counted rather than assumed short.
+/// Estimated height of the WHEEL column: the fixed wheel stack and the STICKY
+/// NOTE row under it (both trays have both), then one block per window RULE (a
+/// hairline, a heading and a pill — AGENT THEME, ANCHOR) plus any bare pills
+/// under them (pass-down on the outer tray, follow-outer on a pane's). This is
+/// the column AGENT THEME grew, so it is the one that has to be counted rather
+/// than assumed short.
 fn tray_wheel_col_h(rules: usize, bare_pills: usize) -> f32 {
     let mut h = TRAY_LABEL_H
         + TRAY_GAP
@@ -1665,7 +1675,14 @@ fn tray_wheel_col_h(rules: usize, bare_pills: usize) -> f32 {
         + 4. // pt_1 over the pips
         + TRAY_PIPS_H
         + TRAY_GAP
-        + TRAY_RESET_H;
+        + TRAY_RESET_H
+        // STICKY NOTE: a hairline, its heading, one row of buttons.
+        + TRAY_GAP
+        + TRAY_SEP
+        + TRAY_GAP
+        + TRAY_LABEL_H
+        + TRAY_GAP
+        + TRAY_MODE_BTN_H;
     for _ in 0..rules {
         h += TRAY_GAP + TRAY_SEP + TRAY_GAP + TRAY_LABEL_H + TRAY_GAP + TRAY_PILL_H;
     }
@@ -18185,6 +18202,17 @@ impl Workspace {
         // pane is behind a modal and cannot be typed into.
         if theme::paint_mode(cx) && !m.control && !m.alt && !m.shift {
             let key = ks.key.as_str();
+            // DONE, with no pane holding focus to say it (a focused pane folds
+            // the overlay itself and this branch never sees the key). Return
+            // stops here; escape goes on to close anything else that is open.
+            if key == "enter" || key == "escape" {
+                theme::set_paint_mode(cx, false);
+                ctl::fold_paint_on_my_workspace();
+                cx.notify();
+                if key == "enter" {
+                    return;
+                }
+            }
             if matches!(key, "left" | "right" | "up" | "down") {
                 match paint::arrow(theme::paint_target(cx), key) {
                     paint::Arrow::Walk => {
@@ -20349,9 +20377,15 @@ impl Workspace {
     /// radius) carrying FOUR draggable markers — ◉ seed, T text, C complement,
     /// 👤 human (your-input). You grab whichever marker is nearest the press and
     /// drag it around to set that colour. Drives the same scope as the breakout.
+    /// `note` is the sticky note's paper, drawn on the wheel as a small square
+    /// where its hue and saturation put it. It is not a pip and cannot be
+    /// grabbed: the note has no colour of its own to drag, only a choice of
+    /// which pips it follows, and the square is there so that choice can be
+    /// seen — contrast visibly lands in the arc the pips leave empty.
     fn color_wheel(
         &self,
         markers: [(WheelTarget, &'static str, Hsla); 4],
+        note: Hsla,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         const D: f32 = 132.0;
@@ -20386,6 +20420,31 @@ impl Workspace {
                 )
                 .size_full(),
             );
+        // The note's square goes under the pips, so a pip on the same spot is
+        // still the thing a press grabs.
+        {
+            let ang = note.h.rem_euclid(1.0) * std::f32::consts::TAU;
+            let sat = note.s.clamp(0.0, 1.0);
+            let (dx, dy) = (r + ang.cos() * sat * r, r + ang.sin() * sat * r);
+            wheel = wheel.child(
+                div()
+                    .absolute()
+                    .left(px(dx - 6.0))
+                    .top(px(dy - 6.0))
+                    .w(px(12.))
+                    .h(px(12.))
+                    .border_1()
+                    .border_color(hsla(0., 0., 0.08, 0.9))
+                    .bg(note.alpha(1.0))
+                    .shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.6),
+                        offset: point(px(1.), px(1.)),
+                        blur_radius: px(2.),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }]),
+            );
+        }
         // Paint the active (selected) marker LAST so it sits on top of any pile —
         // when a greyscale palette stacks every pip at the centre, the one the
         // PICK row promoted is the visible, grabbable one.
@@ -24263,30 +24322,10 @@ impl Workspace {
         // where "menu bar" sits opposite "85%". Here the value is what the
         // cabinet has on, which is the one thing a person cannot read off the
         // tiles when the worn look is scrolled onto a shelf they are not looking
-        // at.
-        let head = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(10. * scale))
-            .w_full()
-            .child(
-                div()
-                    .text_size(px(10.5 * scale))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(if aimed { th.complement } else { th.faint })
-                    // "OUTER" is the theme tray's own word for this scope
-                    // (`lang::Strings::scope_outer`); the overlay says it in the
-                    // same English the wall's card does.
-                    .child("PAINT THE OUTER"),
-            )
-            .child(
-                div()
-                    .text_size(px(10. * scale))
-                    .text_color(th.accent)
-                    .child(paint::worn_label(&worn)),
-            );
+        // at. "OUTER" is the theme tray's own word for this scope
+        // (`lang::Strings::scope_outer`); the overlay says it in the same English
+        // the wall's cards do.
+        let head = paint::card_head(&th, scale, aimed, "PAINT THE OUTER", &worn);
         // The shelf pills — the visible half of `z`, on their own row so the
         // header keeps the label/value shape it borrowed.
         let pills = (shelves.len() > 1).then(|| {
@@ -24321,31 +24360,7 @@ impl Workspace {
         } else {
             (None, None)
         };
-        let card = div()
-            .occlude()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(8. * scale))
-            .p(px(12. * scale))
-            .rounded(sk.rad_raw(8.))
-            .border_2()
-            .border_color(if aimed {
-                th.accent.alpha(0.85)
-            } else {
-                th.accent.alpha(0.3)
-            })
-            .bg(darken(th.surface, 0.45))
-            .text_color(th.text)
-            .font_family(th.font_family.clone())
-            .shadow(float_shadows(
-                if aimed {
-                    th.accent
-                } else {
-                    th.accent.alpha(0.35)
-                },
-                th.grade.phosphor,
-            ))
+        let card = paint::card(&th, &sk, scale, aimed)
             .child(head)
             .children(pills)
             .children(grid)
@@ -26018,6 +26033,88 @@ fn color_mode_btn(th: &theme::Theme, icon: &str, caption: &str, active: bool) ->
         .flex()
         .items_center()
         .justify_center()
+        .rounded_md()
+        .border_1()
+        .cursor_pointer();
+    if active {
+        b.bg(linear_gradient(
+            135.,
+            linear_color_stop(th.accent.alpha(0.45), 0.),
+            linear_color_stop(th.accent.alpha(0.15), 1.),
+        ))
+        .border_color(th.accent)
+        .text_color(white().alpha(0.95))
+        .child(inner)
+    } else {
+        b.bg(darken(th.surface, 0.8))
+            .border_color(th.accent.alpha(0.35))
+            .text_color(th.text)
+            .child(inner)
+    }
+}
+
+/// A STICKY NOTE button: the paper that mode would give, drawn as a tiny note
+/// with its pin and two lines of ink, over a caption. The button IS the preview,
+/// so the three can be compared before any is pressed, and they recolour as a
+/// wheel pip is dragged.
+fn note_paper_btn(
+    th: &theme::Theme,
+    paper: &sticky::Paper,
+    caption: &str,
+    active: bool,
+) -> gpui::Div {
+    let ink = |w: f32| div().w(px(w)).h(px(1.5)).bg(paper.ink.alpha(0.7));
+    let sheet = div()
+        .relative()
+        .w(px(26.))
+        .h(px(18.))
+        .bg(paper.base)
+        .border_b_1()
+        .border_color(darken(paper.base, 0.7))
+        .shadow(vec![BoxShadow {
+            color: hsla(0., 0., 0., 0.55),
+            offset: point(px(1.), px(1.5)),
+            blur_radius: px(2.),
+            spread_radius: px(0.),
+            inset: false,
+        }])
+        .flex()
+        .flex_col()
+        .justify_end()
+        .gap(px(2.5))
+        .px(px(4.))
+        .pb(px(3.))
+        .child(ink(15.))
+        .child(ink(10.))
+        .child(
+            div()
+                .absolute()
+                .top(px(1.5))
+                .left(px(11.))
+                .w(px(4.))
+                .h(px(4.))
+                .rounded_full()
+                .bg(paper.pin),
+        );
+    let inner = div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(3.))
+        .child(sheet)
+        .child(
+            div()
+                .text_size(px(TRAY_NOTE_CAPTION))
+                .whitespace_nowrap()
+                .child(caption.to_string()),
+        );
+    let b = div()
+        .w(px(TRAY_NOTE_BTN_W))
+        .h(px(TRAY_MODE_BTN_H))
+        .flex()
+        .items_center()
+        .justify_center()
+        .overflow_hidden()
         .rounded_md()
         .border_1()
         .cursor_pointer();
@@ -27954,7 +28051,14 @@ impl Render for Workspace {
 
             // The three colours live as draggable markers ON the wheel — ◉ seed,
             // T text, C complement. Grab one and drag it around to set it.
-            let wheel = self.color_wheel(self.wheel_markers(cx), cx);
+            //
+            // The sticky note's three possible papers, from the same resolved
+            // theme the pips are read off, so the square on the wheel and the
+            // three buttons under it agree with the pips beside them.
+            let note_voice = sticky::Voice::of(&theme::resolve(cx, &cur));
+            let papers = theme::NotePaper::ALL.map(|m| (m, sticky::paper(m, &note_voice)));
+            let note_now = sticky::paper(cur.note, &note_voice).base;
+            let wheel = self.color_wheel(self.wheel_markers(cx), note_now, cx);
             let lbar = self.lightness_bar(cx);
             // PICK row — promote a pip to the front. With a greyscale palette every
             // marker stacks at the wheel's centre, so the same one always grabs;
@@ -28039,6 +28143,37 @@ impl Render for Workspace {
                                 ws.set_wheel_color_for(target, None, cx);
                             }),
                         ),
+                );
+            }
+            // STICKY NOTE: which of the pips above a note's paper follows. Three
+            // little notes in the colours they would be, so the row previews
+            // itself; the pressed one is also the square on the wheel.
+            let mut note_row = div()
+                .flex()
+                .flex_row()
+                .justify_center()
+                .gap(px(TRAY_NOTE_GAP));
+            for (mode, paper) in papers {
+                let cur_c = cur.clone();
+                let cap = match mode {
+                    theme::NotePaper::Primary => t.np_primary,
+                    theme::NotePaper::Contrast => t.np_contrast,
+                    theme::NotePaper::Complement => t.np_complement,
+                };
+                note_row = note_row.child(
+                    note_paper_btn(&th, &paper, cap, cur.note == mode).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.set_menu_choice(
+                                ThemeChoice {
+                                    note: mode,
+                                    ..cur_c.clone()
+                                },
+                                cx,
+                            );
+                        }),
+                    ),
                 );
             }
             let mut color_row = div().flex().flex_row().gap_2();
@@ -28175,29 +28310,37 @@ impl Render for Workspace {
                         .bg(th.faint.alpha(0.22)),
                 )
             };
-            // ---- dynamics glyph column: the theme tray is a vertical box of
-            // dynamics (glyph only — no caption, no hover). The seed wheel below
-            // stays the colour knob; the dynamic decides how that seed becomes the
-            // palette. Overflow wraps into more columns to the right.
+            // ---- the theme column: the desktop's own themes, as Omarchy's
+            // picker lists them ([`palette::offered`]), glyph only — no caption,
+            // no hover. Each tile is its theme's own background with the theme's
+            // glyph in the theme's accent ([`glyph`]), so the colour of a theme is
+            // on its tile before anyone reads a name. The custom wheel's cog
+            // closes the column. Overflow wraps into more columns to the right.
             //
-            // The column opens on 📺, the Terminal Delight palette: the look a
-            // fresh install wears, pulled from the same Omarchy theme the
-            // desktop uses (TD ships a copy, see `palette::SHIPPED`). A tile is
-            // a `paint::Pick`, so a set and a palette replace each other here
-            // exactly as they do in the paint overlay, and one tile is lit.
-            let wearing_td =
-                cur.palette.as_deref() == Some(palette::TERMINAL_DELIGHT) && cur.dynamic.is_plain();
-            let mut dyn_entries: Vec<(paint::Pick, bool)> = vec![(
-                paint::Pick::Palette(palette::TERMINAL_DELIGHT.into()),
-                wearing_td,
-            )];
-            dyn_entries.extend(theme::Dynamic::NAMED.iter().cloned().map(|d| {
-                let active = cur.dynamic.same_kind(&d);
-                (paint::Pick::Set(d), active)
-            }));
+            // Until 2026-10-16 this column was TD's eleven colour sets. Parker:
+            // *"TD themes suck! Omarchy themes are GOLD"*. The Terminal Delight
+            // palette, the look a fresh install wears, still leads: it is a
+            // desktop theme like the others, and TD carries a copy of it.
+            //
+            // A tile is a `paint::Pick`, so a theme and the custom set replace
+            // each other here exactly as they do in the paint overlay, and one
+            // tile is lit.
+            let mut chips = palette::chips(cx);
+            if let Some(i) = chips.iter().position(|c| c.id == palette::TERMINAL_DELIGHT) {
+                let td = chips.remove(i);
+                chips.insert(0, td);
+            }
+            let mut dyn_entries: Vec<(paint::Pick, bool, Option<palette::Chip>)> = chips
+                .into_iter()
+                .map(|c| {
+                    let active = cur.palette.as_deref() == Some(c.id.as_str());
+                    (paint::Pick::Palette(c.id.clone()), active, Some(c))
+                })
+                .collect();
             dyn_entries.push((
                 paint::Pick::Set(theme::Dynamic::Custom(Box::default())),
                 matches!(cur.dynamic, theme::Dynamic::Custom(_)),
+                None,
             ));
             const PER_COL: usize = 10; // fill a column vertically before wrapping
             let mut dyn_cols = div().flex().flex_row().gap_2();
@@ -28206,30 +28349,39 @@ impl Render for Workspace {
                     dyn_cols = dyn_cols.child(vsep());
                 }
                 let mut col = div().flex().flex_col().gap_2();
-                for (pick, active) in chunk {
+                for (pick, active, chip) in chunk {
                     let active = *active;
-                    // A per-set swatch tints the plain symbol glyphs (❖ ⚡ ☼ …) to
-                    // their palette colour so the tray reads at a glance; colour
-                    // emoji ignore the tint and keep their own hues.
-                    let (glyph, swatch, name) = match pick {
-                        paint::Pick::Set(d) => (d.glyph(), d.swatch(), d.label()),
-                        // A CRT monitor: the house look, and the one tile that
-                        // is a palette rather than a colour set.
-                        _ => ("📺", None, palette::TERMINAL_DELIGHT),
-                    };
-                    let glyph = glyph.to_string();
-                    let box_id = SharedString::from(format!("dyn-{name}"));
+                    let box_id = SharedString::from(match chip {
+                        Some(c) => format!("dyn-{}", c.id),
+                        None => "dyn-custom".to_string(),
+                    });
                     let pick_click = pick.clone();
                     let cur_c = cur.clone();
-                    col = col.child(
-                        div()
-                            .id(box_id)
-                            .w(px(40.))
-                            .h(px(40.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(sk.rad_raw(6.))
+                    let tile = div()
+                        .id(box_id)
+                        .w(px(40.))
+                        .h(px(40.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(sk.rad_raw(6.))
+                        .cursor_pointer();
+                    let tile = match chip {
+                        // The theme in miniature: its screen colour, ringed in
+                        // its accent, its glyph in its accent. The lit ring is
+                        // the scope's own text colour, which is this theme's
+                        // when it is the one worn.
+                        Some(c) => {
+                            let tile = tile.bg(c.bg);
+                            let tile = if active {
+                                tile.border_2().border_color(th.text)
+                            } else {
+                                tile.border_1().border_color(c.chips[0].alpha(0.55))
+                            };
+                            tile.child(glyph::element(&c.id, c.chips[0], 20.))
+                        }
+                        // The custom wheel's cog, in the tray's own ink.
+                        None => tile
                             .border_1()
                             .border_color(if active {
                                 th.accent
@@ -28242,29 +28394,23 @@ impl Render for Workspace {
                                 darken(th.surface, 0.3)
                             })
                             .text_size(px(18.))
-                            .text_color(match (swatch, active) {
-                                (Some(c), true) => c,
-                                (Some(c), false) => c.alpha(0.85),
-                                (None, true) => th.text,
-                                (None, false) => th.text.alpha(0.7),
-                            })
-                            .cursor_pointer()
-                            .child(glyph)
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    // Picking a tile clears the wheel overrides
-                                    // so its signature colours show, and a set
-                                    // and a palette replace each other — the
-                                    // paint overlay's own stamp, so the two
-                                    // pickers cannot disagree about a pick.
-                                    let mut g = theme::ThemeGroup::of(&cur_c);
-                                    paint::stamp(&mut g, &pick_click);
-                                    ws.set_menu_choice(cur_c.clone().with_group(g), cx);
-                                }),
-                            ),
-                    );
+                            .text_color(if active { th.text } else { th.text.alpha(0.7) })
+                            .child(theme::Dynamic::Custom(Box::default()).glyph()),
+                    };
+                    col = col.child(tile.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            // Picking a tile clears the wheel overrides
+                            // so its signature colours show, and a set
+                            // and a palette replace each other — the
+                            // paint overlay's own stamp, so the two
+                            // pickers cannot disagree about a pick.
+                            let mut g = theme::ThemeGroup::of(&cur_c);
+                            paint::stamp(&mut g, &pick_click);
+                            ws.set_menu_choice(cur_c.clone().with_group(g), cx);
+                        }),
+                    ));
                 }
                 dyn_cols = dyn_cols.child(col);
             }
@@ -28334,7 +28480,12 @@ impl Render for Workspace {
                 .child(div().flex().justify_center().py_1().child(wheel))
                 .child(div().flex().justify_center().child(lbar))
                 .child(div().flex().justify_center().pt_1().child(pick_row))
-                .child(seed_row);
+                .child(seed_row)
+                // Under the pips because the pips are its inputs: drag T or C
+                // and the papers below move with them.
+                .child(hsep())
+                .child(label(t.t_note))
+                .child(note_row);
             // The anchor toggle is GLOBAL (not per-pane), so it shows only in the
             // OUTER design panel. A short ANCHOR label + the ⚓ TOP/BOTTOM ▲▼ pill.
             if !is_pane {
@@ -41391,6 +41542,15 @@ node = "Leaf"
         assert!(
             TRAY_GLYPH_COL_W >= TRAY_MODE_BTN_W + TRAY_GAP + 40.,
             "…and the INVERT bar above them: a heading plus a mode button"
+        );
+        assert!(
+            3. * TRAY_NOTE_BTN_W + 2. * TRAY_NOTE_GAP + TRAY_FIT_SLACK <= TRAY_WHEEL_COL_W,
+            "the WHEEL column holds the three STICKY NOTE papers on one row"
+        );
+        assert_eq!(
+            theme::NotePaper::ALL.len(),
+            3,
+            "a fourth paper does not fit that row — give it a second one"
         );
     }
 
