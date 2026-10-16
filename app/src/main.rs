@@ -61,6 +61,7 @@ mod keylayer;
 mod lang;
 mod launcher;
 mod launchpref;
+mod lookup;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
@@ -3573,6 +3574,19 @@ struct FindState {
     selected: usize,
 }
 
+/// The Alt+L LOOKUP panel: every project, group, tab, pane and sticky note in
+/// the window, found by typing part of its name. See [`lookup`].
+///
+/// The rows are read once, when the panel opens. It owns the keyboard while it
+/// is up, so nothing a person does can rename anything under it, and a pane
+/// that goes away meanwhile is re-found at the jump rather than trusted.
+struct Lookup {
+    query: EditBuffer,
+    entries: Vec<lookup::Entry<EntityId>>,
+    hits: Vec<lookup::Hit>,
+    selected: usize,
+}
+
 /// The language dropdown (click the 🌐 pill in the help header). A fuzzy-search box
 /// over the 9 languages — owns the keyboard while up, like the find panel: typing
 /// filters, ↑/↓ move the selection, ↵ applies, esc closes. Replaces the old
@@ -4249,6 +4263,8 @@ struct Workspace {
     /// up, like the rename editors — typing edits the query, ↑/↓ move the
     /// selection, ↵ jumps to the hit, esc closes.
     find: Option<FindState>,
+    /// The Alt+L LOOKUP panel, if open. Owns the keyboard while up, like find.
+    lookup: Option<Lookup>,
     /// The language dropdown (🌐 in the help header), if open. Owns the keyboard
     /// while up, like `find`.
     lang_picker: Option<LangPicker>,
@@ -5873,6 +5889,7 @@ impl Workspace {
             active: 0,
             focus_handle: cx.focus_handle(),
             find: None,
+            lookup: None,
             lang_picker: None,
             logo_picker: None,
             agent_launcher: None,
@@ -12354,12 +12371,20 @@ impl Workspace {
     /// have drifted the first time either grew a rule, and the symptom would
     /// have been a cursor landing on a row that is not drawn.
     fn bar_rows(&self, cx: &App) -> Vec<tree::Row> {
+        self.tree_rows(true, cx)
+    }
+
+    /// The tree's rows, obeying every fold when `folds` is set and none of
+    /// them when it is not. The lookup lists the whole session in the bar's
+    /// order, and a branch folded away is exactly the one a person can no
+    /// longer find by eye.
+    fn tree_rows(&self, folds: bool, cx: &App) -> Vec<tree::Row> {
         let projects: Vec<tree::ProjectRef> = self
             .projects
             .iter()
             .map(|p| tree::ProjectRef {
                 id: p.id,
-                collapsed: p.collapsed,
+                collapsed: folds && p.collapsed,
             })
             .collect();
         // Initiatives are listed in the order their tasks appear on the strip,
@@ -12373,7 +12398,7 @@ impl Workspace {
             .map(|g| tree::InitiativeRef {
                 id: g.id,
                 project: g.project,
-                collapsed: g.collapsed,
+                collapsed: folds && g.collapsed,
             })
             .collect();
         let first_task_of = |gid: u32| {
@@ -14886,6 +14911,474 @@ impl Workspace {
         )
     }
 
+    /// Alt+L: open the LOOKUP panel over every name in the window, centred on
+    /// it. The workspace root takes the keyboard, as it does for find and for
+    /// the same reason: a focused pane would send the query to its shell.
+    fn open_lookup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let entries = self.lookup_entries(cx);
+        let hits = lookup::rank(&entries, "");
+        self.lookup = Some(Lookup {
+            query: EditBuffer::seeded(""),
+            entries,
+            hits,
+            selected: 0,
+        });
+        cx.defer_in(window, |ws, window, cx| {
+            window.focus(&ws.focus_handle, cx);
+        });
+        cx.notify();
+    }
+
+    /// Every name a thing in this window can be found by, in the left bar's
+    /// order with every fold opened: each branch, each tab under it, and under
+    /// each tab its panes, each followed by the note stuck on its glass.
+    ///
+    /// Each name is read the way the surface that draws it reads it — a
+    /// project in capitals as the bar draws it, an unnamed tab by its number as
+    /// the strip does, a pane by the name a person gave it, else the title its
+    /// program set, else its mode — so what is typed is what was seen.
+    fn lookup_entries(&self, cx: &App) -> Vec<lookup::Entry<EntityId>> {
+        use lookup::{count, place, Entry, Kind, Target};
+        let project = |id: Option<u32>| {
+            id.and_then(|id| self.project_at(id))
+                .map(|p| p.label().to_uppercase())
+                .unwrap_or_default()
+        };
+        let group = |id: Option<u32>| {
+            id.and_then(|id| self.groups.iter().find(|g| g.id == id))
+                .map(|g| g.label())
+                .unwrap_or_default()
+        };
+        let places = self.places();
+        let mut out = vec![];
+        for row in self.tree_rows(false, cx) {
+            match row {
+                tree::Row::Project { id, .. } => {
+                    let tabs = places.iter().filter(|p| p.project == Some(id)).count();
+                    out.push(Entry {
+                        kind: Kind::Project,
+                        text: project(Some(id)),
+                        place: place(&[], &count(tabs, "tab")),
+                        target: Target::Project(id),
+                    });
+                }
+                tree::Row::Initiative { id, .. } => {
+                    let parent = self
+                        .groups
+                        .iter()
+                        .find(|g| g.id == id)
+                        .and_then(|g| g.project);
+                    let tabs = places.iter().filter(|p| p.initiative == Some(id)).count();
+                    out.push(Entry {
+                        kind: Kind::Group,
+                        text: group(Some(id)),
+                        place: place(&[&project(parent)], &count(tabs, "tab")),
+                        target: Target::Group(id),
+                    });
+                }
+                tree::Row::Task { index, .. } => {
+                    let Some(tab) = self.tabs.get(index) else {
+                        continue;
+                    };
+                    let at = places.get(index).copied().unwrap_or_default();
+                    let (proj, grp) = (project(at.project), group(at.initiative));
+                    let name = tab.name.clone().unwrap_or_else(|| format!("{}", index + 1));
+                    let mut leaves = vec![];
+                    tab.root.leaves(&mut leaves);
+                    out.push(Entry {
+                        kind: Kind::Tab,
+                        text: name.clone(),
+                        place: place(&[&proj, &grp], &count(leaves.len(), "pane")),
+                        target: Target::Tab(index),
+                    });
+                    for leaf in leaves {
+                        let p = leaf.read(cx);
+                        let mode = p.mode.label();
+                        let title = p
+                            .name
+                            .clone()
+                            .filter(|n| !n.is_empty())
+                            .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+                            .unwrap_or_else(|| mode.to_string());
+                        out.push(Entry {
+                            kind: Kind::Pane,
+                            text: title.clone(),
+                            place: place(&[&proj, &grp, &name], mode),
+                            target: Target::Pane(leaf.entity_id()),
+                        });
+                        let Some(note) = p.saved_note() else {
+                            continue;
+                        };
+                        let Some(words) = lookup::note_line(note.title.as_deref(), &note.text)
+                        else {
+                            continue;
+                        };
+                        out.push(Entry {
+                            kind: Kind::Note,
+                            text: words,
+                            place: place(
+                                &[&proj, &grp, &name, &title],
+                                if note.pinned { "pinned" } else { "" },
+                            ),
+                            target: Target::Pane(leaf.entity_id()),
+                        });
+                    }
+                }
+                tree::Row::Unfiled { .. } => {}
+            }
+        }
+        out
+    }
+
+    /// ↵ in the lookup: go to the chosen row, close the panel, and hand the
+    /// keyboard to wherever that left you.
+    ///
+    /// A tab is activated. A pane, or the note on one, activates the pane's tab
+    /// with that pane focused — the tab re-found from the pane, never from the
+    /// number it had when the panel opened. A branch is a click on it in the
+    /// left bar: its first tab, unless you are already standing in it or it
+    /// holds none, and then the bar unfolds it and puts its highlight there,
+    /// so the answer is on screen either way. A row that has gone meanwhile
+    /// just closes the panel.
+    fn jump_to_lookup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(lk) = self.lookup.take() else {
+            return;
+        };
+        let target = lk
+            .hits
+            .get(lk.selected)
+            .and_then(|h| lk.entries.get(h.entry))
+            .map(|e| e.target);
+        let branch = match target {
+            Some(lookup::Target::Project(id)) => Some(BarBranch::Project(id)),
+            Some(lookup::Target::Group(id)) => Some(BarBranch::Initiative(id)),
+            Some(lookup::Target::Tab(i)) if i < self.tabs.len() => {
+                self.activate_tab(i, window, cx);
+                None
+            }
+            Some(lookup::Target::Pane(id)) => {
+                match self.tab_with_leaf(id) {
+                    Some(tab) => {
+                        self.tabs[tab].focused = Some(id);
+                        self.activate_tab(tab, window, cx);
+                    }
+                    None => self.focus_active(window, cx),
+                }
+                None
+            }
+            _ => {
+                self.focus_active(window, cx);
+                None
+            }
+        };
+        if let Some(branch) = branch {
+            match branch_landing(&self.places(), self.active, branch) {
+                Some(i) => self.activate_tab(i, window, cx),
+                None => {
+                    match branch {
+                        BarBranch::Project(id) => {
+                            if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
+                                p.collapsed = false;
+                            }
+                            self.bar_cursor = Some(tree::RowId::Project(id));
+                        }
+                        BarBranch::Initiative(id) => {
+                            if let Some(g) = self.groups.iter_mut().find(|g| g.id == id) {
+                                g.collapsed = false;
+                            }
+                            self.bar_cursor = Some(tree::RowId::Initiative(id));
+                        }
+                        BarBranch::Unfiled => {}
+                    }
+                    self.save(cx);
+                    self.focus_active(window, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// The LOOKUP panel, in find's frame — the same box, border, glow, query
+    /// field and footer, centred on the window as Ctrl+Shift+F is — over names
+    /// instead of lines. Each row says what it is in the left column, in its
+    /// branch's own colour where it has one and beside the same mark the left
+    /// bar draws (a project's dot, a group's rail); then the name with the
+    /// typed letters lit; then where it sits. The row you are standing on says
+    /// so. Only a window of rows around the selection renders, as in find.
+    fn render_lookup(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        use lookup::{Kind, Target};
+        let lk = self.lookup.as_ref()?;
+        let sk = skin::for_theme(cx, th, 1.0);
+        let (ww, wh) = self
+            .last_win
+            .map(|(_, _, w, h)| (w, h))
+            .unwrap_or((1200., 800.));
+        const ROW_H: f32 = 36.;
+        const VISIBLE: usize = 11;
+        let panel_w = 600_f32.min((ww - 16.).max(240.));
+        let n = lk.hits.len();
+        let shown = n.clamp(1, VISIBLE);
+        let panel_h = 72. + shown as f32 * ROW_H + 26.;
+        let left = ((ww - panel_w) * 0.5).max(8.);
+        let top = ((wh - panel_h) * 0.5).clamp(8., (wh - panel_h - 8.).max(8.));
+        let start = if n <= VISIBLE {
+            0
+        } else {
+            lk.selected.saturating_sub(VISIBLE / 2).min(n - VISIBLE)
+        };
+        let end = (start + VISIBLE).min(n);
+        let here_pane = self.tabs.get(self.active).and_then(|t| t.focused);
+        let q = lk.query.text();
+
+        let input = {
+            let eb = render_edit_buffer(&lk.query, 1.0, th.text, th.accent, th.accent.alpha(0.3));
+            if q.is_empty() {
+                eb.child(
+                    div()
+                        .text_color(th.text.alpha(0.35))
+                        .child("a project, group, tab, pane or note\u{2026}"),
+                )
+            } else {
+                eb
+            }
+        };
+        let header = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_2()
+            .pt_2()
+            .pb_1()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.accent)
+                            .child("\u{1f50e}  LOOKUP"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.))
+                            .text_color(th.text.alpha(0.5))
+                            .child(if q.trim().is_empty() {
+                                lookup::count(n, "name")
+                            } else {
+                                format!("{n} match{}", if n == 1 { "" } else { "es" })
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .rounded(sk.radius())
+                    .bg(th.bg.alpha(0.55))
+                    .border_1()
+                    .border_color(th.accent.alpha(0.4))
+                    .text_size(px(13.))
+                    .child(input),
+            );
+
+        let mut list = div().flex().flex_col().gap_0p5().px_1();
+        for i in start..end {
+            let hit = &lk.hits[i];
+            let Some(e) = lk.entries.get(hit.entry) else {
+                continue;
+            };
+            let selected = i == lk.selected;
+            // The branch's own colour where it has one, the same key the left
+            // bar draws beside it; the sticky note in the palette's yellow,
+            // which is the colour of the paper.
+            let colour = match e.target {
+                Target::Project(id) => self.project_at(id).map(|p| p.color),
+                Target::Group(id) => self.groups.iter().find(|g| g.id == id).map(|g| g.color),
+                _ => None,
+            };
+            let kind_col = match e.kind {
+                Kind::Project | Kind::Group => colour.unwrap_or(th.text.alpha(0.5)),
+                Kind::Tab => th.text.alpha(0.6),
+                Kind::Pane => th.accent,
+                Kind::Note => th.ansi[3],
+            };
+            let mark = match (e.kind, colour) {
+                (Kind::Project, Some(c)) => Some(
+                    div()
+                        .flex_none()
+                        .w(px(7.))
+                        .h(px(7.))
+                        .rounded(sk.radius_pill())
+                        .bg(c),
+                ),
+                (Kind::Group, Some(c)) => Some(
+                    div()
+                        .flex_none()
+                        .w(px(3.))
+                        .h(px(12.))
+                        .rounded(sk.radius())
+                        .bg(c),
+                ),
+                _ => None,
+            };
+            let here = match e.target {
+                Target::Tab(t) => t == self.active,
+                Target::Pane(id) => here_pane == Some(id),
+                _ => false,
+            };
+            let name_line = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(
+                    div().min_w(px(0.)).overflow_hidden().child(
+                        Self::find_snippet(&e.text, &hit.positions, th.accent, th.text)
+                            .text_size(px(11.)),
+                    ),
+                )
+                .when(here, |d| {
+                    d.child(
+                        div()
+                            .flex_none()
+                            .text_size(px(8.))
+                            .text_color(th.accent.alpha(0.75))
+                            .child("here"),
+                    )
+                });
+            let row = div()
+                .id(gpui::SharedString::from(format!("lookup-row-{i}")))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .px_2()
+                .h(px(ROW_H))
+                .rounded(sk.radius())
+                .cursor_pointer()
+                .bg(if selected {
+                    th.accent.alpha(0.16)
+                } else {
+                    hsla(0., 0., 0., 0.)
+                })
+                .border_1()
+                .border_color(if selected {
+                    th.accent.alpha(0.55)
+                } else {
+                    hsla(0., 0., 0., 0.)
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        if let Some(lk) = ws.lookup.as_mut() {
+                            lk.selected = i;
+                        }
+                        ws.jump_to_lookup(window, cx);
+                    }),
+                )
+                .child(
+                    div()
+                        .w(px(64.))
+                        .flex_none()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .children(mark)
+                        .child(
+                            div()
+                                .text_size(px(9.))
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(kind_col)
+                                .child(e.kind.label()),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .overflow_hidden()
+                        .flex()
+                        .flex_col()
+                        .child(name_line)
+                        .child(
+                            div()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_size(px(9.))
+                                .text_color(th.text.alpha(0.45))
+                                .child(e.place.clone()),
+                        ),
+                );
+            list = list.child(row);
+        }
+        if n == 0 {
+            list = list.child(
+                div()
+                    .px_2()
+                    .py_2()
+                    .text_size(px(10.))
+                    .text_color(th.text.alpha(0.4))
+                    .child(format!(
+                        "Nothing here is called \u{201c}{}\u{201d}",
+                        q.trim()
+                    )),
+            );
+        }
+
+        let panel = div()
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .w(px(panel_w))
+            .flex()
+            .flex_col()
+            .rounded(sk.radius_lg())
+            .overflow_hidden()
+            .bg(darken(th.surface, 0.35))
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
+            .font_family(th.font_family.clone())
+            .child(header)
+            .child(div().pb_1().flex().flex_col().child(list))
+            .child(
+                div()
+                    .px_2()
+                    .pb_1()
+                    .pt_0p5()
+                    .text_size(px(8.5))
+                    .text_color(th.text.alpha(0.45))
+                    .child("\u{2191}\u{2193} select \u{00b7} \u{21b5} go \u{00b7} esc close"),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            );
+
+        Some(
+            self.over_the_glass(
+                panel,
+                |ws, window, cx| {
+                    ws.lookup = None;
+                    ws.focus_active(window, cx);
+                    cx.notify();
+                },
+                cx,
+            )
+            .bg(hsla(0., 0., 0., 0.28)),
+        )
+    }
+
     /// The languages matching the picker query, best-match first. Empty query →
     /// all languages in canonical order. Matches the autonym, the English name, or
     /// the code (so "de", "german", "deutsch" all find German).
@@ -17261,6 +17754,7 @@ impl Workspace {
     /// terminal, so the focus watchdog must keep its hands off.
     fn overlay_owns_keyboard(&self) -> bool {
         self.find.is_some()
+            || self.lookup.is_some()
             || self.lang_picker.is_some()
             || self.logo_picker.is_some()
             || self.agent_launcher.is_some()
@@ -17413,6 +17907,7 @@ impl Workspace {
             || self.confirm_delete.take().is_some()
             || self.bar_menu.take().is_some()
             || self.find.take().is_some()
+            || self.lookup.take().is_some()
             || self.lang_picker.take().is_some()
             || self.logo_picker.take().is_some()
             || self.agent_launcher.take().is_some()
@@ -17777,6 +18272,52 @@ impl Workspace {
                 }
             }
         }
+        // The LOOKUP panel owns the keyboard while open, on find's terms: esc
+        // closes, ↵ goes to the selected row, ↑/↓ and tab move the selection,
+        // and everything else edits the query and re-ranks. Alt+L again closes
+        // it, so the chord that opened it is the one that puts it away.
+        if let Some(mut lk) = self.lookup.take() {
+            match ks.key.as_str() {
+                "escape" => {
+                    self.focus_active(window, cx);
+                    cx.notify();
+                    return;
+                }
+                "l" if m.alt && !m.control => {
+                    self.focus_active(window, cx);
+                    cx.notify();
+                    return;
+                }
+                "enter" => {
+                    self.lookup = Some(lk);
+                    self.jump_to_lookup(window, cx);
+                    return;
+                }
+                "tab" if m.shift => {
+                    lk.selected = lk.selected.saturating_sub(1);
+                }
+                "down" | "tab" => {
+                    if !lk.hits.is_empty() {
+                        lk.selected = (lk.selected + 1).min(lk.hits.len() - 1);
+                    }
+                }
+                "up" => {
+                    lk.selected = lk.selected.saturating_sub(1);
+                }
+                _ => {
+                    let before = lk.query.text();
+                    lk.query
+                        .apply(ks.key.as_str(), m, ks.key_char.as_deref(), 80);
+                    if lk.query.text() != before {
+                        lk.hits = lookup::rank(&lk.entries, &lk.query.text());
+                        lk.selected = 0;
+                    }
+                }
+            }
+            self.lookup = Some(lk);
+            cx.notify();
+            return;
+        }
         // The find panel owns the keyboard while open: esc closes, ↵ jumps to the
         // selected hit, ↑/↓ move the selection, everything else edits the query and
         // re-runs the fuzzy search.
@@ -18018,6 +18559,13 @@ impl Workspace {
                 }
                 "h" => {
                     self.split(SplitDir::Col, window, cx);
+                    return;
+                }
+                // Alt+L looks a thing up by name: a project, group or tab in
+                // the left bar, a pane by its title, a sticky note by its
+                // words. The window's, because what it searches is the window.
+                "l" => {
+                    self.open_lookup(window, cx);
                     return;
                 }
                 _ => {}
@@ -25997,6 +26545,7 @@ impl Render for Workspace {
                 || self.help_open
                 || self.tab_menu.is_some()
                 || self.find.is_some()
+                || self.lookup.is_some()
                 || self.lang_picker.is_some()
                 || self.logo_picker.is_some()
                 || self.agent_launcher.is_some()
@@ -27919,6 +28468,7 @@ impl Render for Workspace {
 
         // ---- Find: fuzzy search in this pane (Ctrl+F) or every pane (Ctrl+Shift+F) ----
         let find_overlay = self.render_find(&th, cx);
+        let lookup_overlay = self.render_lookup(&th, cx);
         let lang_picker_overlay = self.render_lang_picker(&th, cx);
         let logo_picker_overlay = self.render_logo_picker(&th, cx);
         let agent_launcher_overlay = self.render_agent_launcher(&th, cx);
@@ -30737,6 +31287,7 @@ impl Render for Workspace {
                         row("Alt+W", s.close_pane),
                         row("Alt+K", s.toggle_bench),
                         row("Alt+A", s.launch_agent),
+                        row("Alt+L", s.lookup),
                         row("Ctrl+W", s.close_tab),
                         row("Ctrl+Alt+↑↓←→", s.walk_tree),
                         row("Ctrl+Alt+1…9", s.jump_branch),
@@ -32242,6 +32793,8 @@ impl Render for Workspace {
                     .children(focus_overlay)
                     // the find panel rides on top too (its own scrim locks input)
                     .children(find_overlay)
+                    // and the lookup, which is find's twin over names
+                    .children(lookup_overlay)
                     // the language dropdown rides above even the help modal it opens from
                     .children(lang_picker_overlay)
                     // the per-pane logo picker rides on top too (its scrim locks input)
