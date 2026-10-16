@@ -7403,7 +7403,7 @@ impl Workspace {
             // launch can prefer the session that was last open *here*. A hint
             // for ranking only — never an identity, so a dragged or renamed
             // workspace costs nothing.
-            last_workspace: instance::current_workspace(),
+            last_workspace: instance::window_workspace(),
             undo_hinted: self.undo_hinted,
         }
     }
