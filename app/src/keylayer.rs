@@ -389,13 +389,24 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
     false
 }
 
+/// The plain named keys that TYPE into a program — the overlay swallows them
+/// so they never reach the terminal or the workbench composer behind it.
+/// Enter is not here: it is a verb (done), handled beside escape.
+///
+/// Parker, 2026-10-16: *"RETURN from the active painter interface should not get
+/// consumed by the terminal OR WORKBENCH!"* — Return passed straight through,
+/// because the overlay claimed only single characters, and this table was
+/// written so the next key like it is not found the same way.
+pub const PAINT_SWALLOWS: [&str; 4] = ["tab", "space", "backspace", "delete"];
+
 /// Does the raised paint overlay claim this keystroke?
 ///
-/// Mirrors what `TerminalView::paint_key` would do with it: escape folds the
-/// overlay, a plain arrow walks the wall, and a plain single character is either
-/// a chord on the shelf or a deliberate no-op. Everything else passes, so the
-/// overlay is never a trap — a modified chord still reaches its owner while the
-/// cards are up.
+/// Mirrors what `TerminalView::paint_key` would do with it: escape and enter
+/// fold the overlay, a plain arrow walks the wall, a plain single character is
+/// either a chord on the shelf or a deliberate no-op, and a plain key that would
+/// type ([`PAINT_SWALLOWS`]) is eaten. Everything else passes, so the overlay is
+/// never a trap — a modified chord still reaches its owner while the cards are
+/// up, and so do the function and paging keys.
 fn paints(k: &Key) -> bool {
     if k.key == "escape" {
         return true;
@@ -403,7 +414,9 @@ fn paints(k: &Key) -> bool {
     if k.control || k.alt || k.platform {
         return false;
     }
-    matches!(k.key, "left" | "right" | "up" | "down") || k.key.chars().count() == 1
+    matches!(k.key, "left" | "right" | "up" | "down" | "enter")
+        || PAINT_SWALLOWS.contains(&k.key)
+        || k.key.chars().count() == 1
 }
 
 /// A paging gesture, independent of which view answers it.
@@ -1022,6 +1035,17 @@ mod tests {
             Layer::Paint,
             "the overlay is drawn across every pane, so it outranks one pane's face"
         );
+        assert_eq!(
+            route(
+                &named("enter"),
+                &Up {
+                    paint: true,
+                    ..bench
+                }
+            ),
+            Layer::Paint,
+            "return over the cards never reaches the bench composer"
+        );
     }
 
     /// What the bench is asked for, it is still asked for first.
@@ -1178,10 +1202,24 @@ mod tests {
             Layer::PaneChord,
             "a modified chord passes, so the overlay is never a trap"
         );
+        // Return is the overlay's: it folds it. It used to fall through to the
+        // terminal, and a press meant to finish painting ran a command.
         assert_eq!(
             route(&named("enter"), &up),
+            Layer::Paint,
+            "return finishes painting"
+        );
+        for key in PAINT_SWALLOWS {
+            assert_eq!(
+                route(&named(key), &up),
+                Layer::Paint,
+                "{key} would type into the program behind the overlay"
+            );
+        }
+        assert_eq!(
+            route(&named("pageup"), &up),
             Layer::Terminal,
-            "and so does a named key the overlay has no chord for"
+            "a named key that types nothing still passes"
         );
     }
 
