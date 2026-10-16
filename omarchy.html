@@ -16,7 +16,7 @@
   <meta name="description" content="Terminal Delight on Omarchy: panes that wear the desktop's own colour schemes, a keyboard-first paint overlay over the whole workspace, per-agent status on the tab bar, and SUPER+ALT+T to pull any terminal tile — agents and all — into the wall." />
 
   <meta property="og:title" content="terminal-delight — the Omarchy kiosk" />
-  <meta property="og:description" content="The desktop is agentic. So is the terminal. Wear the desktop's own themes — seven of Omarchy's and one of ours, wallpaper and all — paint the whole workspace from the keyboard, and watch every agent from the tab bar." />
+  <meta property="og:description" content="The desktop is agentic. So is the terminal. Wear the desktop's own themes — seven of Omarchy's and two of ours, wallpaper and all — paint the whole workspace from the keyboard, and watch every agent from the tab bar." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://terminal-delight.brownfamilysports.com/omarchy.html" />
   <meta property="og:image" content="assets/crt-wall.png" />
@@ -71,7 +71,10 @@
        and disappears. Only the hero number moves: the reading scrim already
        holds by the MCP section below, because the backdrop's drift has carried
        the crop off the sun and down into the waves by then. Same lesson as
-       #243, one theme further along. */
+       #243, one theme further along. Praus opens the page now and its plate is
+       nearly black, so it keeps the shared 0.58; this rule still matters to a
+       reader who picks Last Voyage, whose own stop is the notifications
+       section, where the reading scrim holds as well. */
     :root[data-theme="last-voyage"] { --scrim-hero: 0.72; }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
@@ -687,7 +690,7 @@
   <div class="spine-tag" id="spineTag" aria-hidden="true"></div>
 
   <!-- The ride-along picker. Present from the first frame and dispersed; the
-       scroll assembles it. Its chips are the same eight, wired to the same
+       scroll assembles it. Its chips are the same nine, wired to the same
        handler as the rail under the headline. -->
   <div class="rail-dock" id="railDock">
     <div class="rail-head">
@@ -724,7 +727,7 @@
     </div>
   </nav>
 
-  <header class="hero" data-spine="last-voyage">
+  <header class="hero" data-spine="praus">
     <div class="wrap hero-parallax">
       <div class="eyebrow">the omarchy kiosk</div>
       <h1>The desktop is agentic.<br /><span class="u">So is the terminal.</span></h1>
@@ -760,7 +763,7 @@
   </header>
 
   <!-- ============================================================= MCP -->
-  <section id="mcp" data-spine="last-voyage">
+  <section id="mcp" data-spine="praus">
     <div class="wrap">
       <div class="eyebrow">the control surface</div>
       <h2>Every pane is readable by an agent, over MCP</h2>
@@ -837,8 +840,8 @@
         <code>~/.config/omarchy/themes</code>, user themes shadowing stock ones
         by name, the same precedence Omarchy itself applies. This page wears
         seven of them, one per stop, so the argument can be read by scrolling.
-        The one it opens on, <b>Last Voyage</b>, is ours rather than Omarchy's,
-        because the shelf takes both. The overlay on your own box lists
+        The one it opens on, <b>Praus</b>, and <b>Last Voyage</b> under it are
+        ours rather than Omarchy's, because the shelf takes both. The overlay on your own box lists
         whatever you have installed.
       </p>
       <p class="lede dim" style="margin-top:14px">
@@ -1083,7 +1086,7 @@
   </section>
 
   <!-- =========================================================== NOTIFY -->
-  <section id="notify" data-spine="miasma">
+  <section id="notify" data-spine="last-voyage">
     <div class="wrap">
       <div class="eyebrow">notifications, omarchy-shaped</div>
       <h2>A finish you weren't looking at, and one click back to it</h2>
@@ -1222,8 +1225,10 @@
       The backdrop on each Omarchy stop is that theme's own shipped wallpaper,
       from <code>/usr/share/omarchy/themes/&lt;theme&gt;/backgrounds/</code>,
       resized and re-encoded for the web; that art belongs to Omarchy and its
-      theme authors, not to this project. <b>Last Voyage</b>, the theme the page
-      opens in, is the exception: the palette and the plate are both ours.
+      theme authors, not to this project. Two are the exception, with the
+      palette and the plate both ours: <b>Praus</b>, the theme the page opens
+      in (<a href="https://github.com/parker-brown-family/omarchy-praus-theme">omarchy-praus-theme ↗</a>,
+      MIT), and <b>Last Voyage</b>.
     </div>
   </footer>
 

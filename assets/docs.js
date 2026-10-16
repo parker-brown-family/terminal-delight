@@ -31,6 +31,7 @@
   /* One line drawing per theme, stroked in the current ink. */
   var G = function (d) { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>'; };
   var GLYPH = {
+    'praus': G('<circle cx="12" cy="3.4" r="1.1"/><path d="M12 4.5v2.8"/><path d="M7.5 7.5h9"/><path d="M10.6 7.5v10.3L12 21l1.4-3.2V7.5"/>'),
     'last-voyage': G('<path d="M12 3v13"/><path d="M12 4.5 18 15h-6"/><path d="M11 7 6.5 15H11"/><path d="M3 17.5h18l-2.2 3H5.2z"/>'),
     'gruvbox': G('<rect x="3" y="9" width="18" height="11" rx="2"/><path d="M7 9 16.5 3.5"/><circle cx="15.5" cy="14.5" r="3"/><path d="M6 12.5h4M6 15h4M6 17.5h4"/>'),
     'osaka-jade': G('<path d="M2.5 6.5Q12 3.5 21.5 6.5"/><path d="M4.5 9.5h15"/><path d="M7 6v15M17 6v15"/><path d="M12 9.5v-3"/>'),
