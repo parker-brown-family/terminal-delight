@@ -3,6 +3,7 @@
 # own share goes.
 #
 #   scripts/idle-memory.sh [--bin PATH] [--panes N] [--settle SECS] [--no-foot]
+#                          [--empty-gpui]
 #
 # Splinterm publishes its idle footprint beside Foot's; Terminal Delight had no
 # number at all until 2026-10-15, when this was first run by hand (258 MiB RSS
@@ -11,6 +12,13 @@
 # idle for SETTLE seconds with one pane, then with N, then Foot launched the
 # same way as the ruler. Then the window's proportional set size, grouped by
 # what each mapping is, so "the window is heavy" becomes "these parts are".
+#
+# --empty-gpui adds the second ruler #953 asks for: one gpui window holding one
+# line of text (app/examples/empty_window.rs, built with `cargo build --release
+# --example empty_window`), launched hidden the same way on a workspace of its
+# own so it is the size the Terminal Delight window was. What it holds, every
+# gpui application here pays; what Terminal Delight holds beyond it is its own.
+# The breakdown by part is docs/plans/idle-memory-account.md.
 #
 # THE WINDOWS ARE HIDDEN (scripts/lib/hidden-window.sh): a special workspace,
 # render_unfocused, no_initial_focus, its own TD_SESSION. Nothing appears on
@@ -29,13 +37,15 @@ TD="$ROOT/app/target/release/terminal-delight"
 PANES=4
 SETTLE=8
 FOOT=1
+EMPTY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --bin) TD=$2; shift 2 ;;
     --panes) PANES=$2; shift 2 ;;
     --settle) SETTLE=$2; shift 2 ;;
     --no-foot) FOOT=0; shift ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    --empty-gpui) EMPTY=1; shift ;;
+    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
     *) echo "unknown argument $1"; exit 2 ;;
   esac
 done
@@ -119,6 +129,31 @@ awk '
   /^Pss:/ { kb[part] += $2 }
   END { for (p in kb) printf "  %8.1f MiB  %s\n", kb[p] / 1024, p }
 ' "/proc/$WIN/smaps" 2>/dev/null | sort -rn || echo "  unknown: /proc/$WIN/smaps unreadable"
+if [ -r "/proc/$WIN/maps" ]; then
+  FONT_FILES=$(awk '$6 ~ /\.(ttf|otf|ttc|otc)$/ {print $6}' "/proc/$WIN/maps" | sort -u | wc -l)
+else
+  FONT_FILES=unknown
+fi
+echo "  font files mapped: $FONT_FILES"
+
+EMPTY_RSS=unknown; EMPTY_PSS=unknown; EMPTY_GPU=unknown
+if [ "$EMPTY" = 1 ]; then
+  RULER="$ROOT/app/target/release/examples/empty_window"
+  if [ -x "$RULER" ]; then
+    printf 'export TD_SESSION=%s\nexec %s > %s 2>&1\n' "${SESSION}r" "$RULER" "$OUT/ruler.log" > "$OUT/ruler.sh"
+    # hidden_launch pings the window through $TD; the ruler answers a ping and
+    # exits rather than open a window of its own outside the hidden workspace.
+    TD_WINDOW=$WIN; TD_BIN=$TD; TD=$RULER
+    hidden_launch "${SESSION}r" "special:idlemem$$r" "$OUT/ruler.log" "sh $OUT/ruler.sh"
+    TD=$TD_BIN
+    sleep "$SETTLE"
+    EMPTY_RSS=$(rss "$WIN"); EMPTY_PSS=$(pss "$WIN"); EMPTY_GPU=$(gpu "$WIN")
+    WIN=$TD_WINDOW
+  else
+    echo
+    echo "no ruler at $RULER: build it with (cd app && cargo build --release --example empty_window)"
+  fi
+fi
 
 FOOT_RSS=unknown; FOOT_PSS=unknown
 if [ "$FOOT" = 1 ] && command -v foot >/dev/null; then
@@ -141,5 +176,9 @@ if [ "$FOOT" = 1 ] && command -v foot >/dev/null; then
 fi
 echo
 printf '%-22s rss %6s MiB   pss %6s MiB   (the ruler: Splinterm publishes against Foot too)\n' "foot, 1 window" "$FOOT_RSS" "$FOOT_PSS"
+if [ "$EMPTY" = 1 ]; then
+  printf '%-22s rss %6s MiB   pss %6s MiB   gpu %6s MiB   (what any gpui window here pays)\n' \
+    "empty gpui, 1 line" "$EMPTY_RSS" "$EMPTY_PSS" "$EMPTY_GPU"
+fi
 echo
-echo "idle-memory: td_1_rss=$ONE_RSS td_1_pss=$ONE_PSS td_${PANES}_rss=$N_RSS td_${PANES}_pss=$N_PSS td_gpu=$GPU foot_rss=$FOOT_RSS foot_pss=$FOOT_PSS"
+echo "idle-memory: td_1_rss=$ONE_RSS td_1_pss=$ONE_PSS td_${PANES}_rss=$N_RSS td_${PANES}_pss=$N_PSS td_gpu=$GPU td_font_files=$FONT_FILES foot_rss=$FOOT_RSS foot_pss=$FOOT_PSS empty_gpui_rss=$EMPTY_RSS empty_gpui_pss=$EMPTY_PSS empty_gpui_gpu=$EMPTY_GPU"
