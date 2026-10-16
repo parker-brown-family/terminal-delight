@@ -49,6 +49,7 @@ class TerminalView extends StatefulWidget {
     this.readOnly = false,
     this.hardwareKeyboardOnly = false,
     this.simulateScroll = true,
+    this.contentInsertionConfiguration,
   });
 
   /// The underlying terminal that this widget renders.
@@ -141,6 +142,10 @@ class TerminalView extends StatefulWidget {
   /// keys to the application. This is standard behavior for most terminal
   /// emulators. True by default.
   final bool simulateScroll;
+
+  /// TD: what the on-screen keyboard may commit besides text, and where it
+  /// goes. See [CustomTextEdit.contentInsertionConfiguration].
+  final ContentInsertionConfiguration? contentInsertionConfiguration;
 
   @override
   State<TerminalView> createState() => TerminalViewState();
@@ -271,6 +276,7 @@ class TerminalViewState extends State<TerminalView> {
         },
         onKeyEvent: _handleKeyEvent,
         readOnly: widget.readOnly,
+        contentInsertionConfiguration: widget.contentInsertionConfiguration,
         child: child,
       );
     } else if (!widget.readOnly) {

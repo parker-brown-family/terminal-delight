@@ -19,6 +19,7 @@ class CustomTextEdit extends StatefulWidget {
     this.inputAction = TextInputAction.newline,
     this.keyboardAppearance = Brightness.light,
     this.deleteDetection = false,
+    this.contentInsertionConfiguration,
   });
 
   final Widget child;
@@ -46,6 +47,12 @@ class CustomTextEdit extends StatefulWidget {
   final Brightness keyboardAppearance;
 
   final bool deleteDetection;
+
+  /// TD: what the keyboard may commit besides text — a picture from its
+  /// clipboard panel, say — and where it goes. The same type a [TextField]
+  /// takes. Null keeps upstream's behaviour: the keyboard is told this field
+  /// takes text only.
+  final ContentInsertionConfiguration? contentInsertionConfiguration;
 
   @override
   CustomTextEditState createState() => CustomTextEditState();
@@ -166,6 +173,8 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
         autocorrect: false,
         enableSuggestions: false,
         enableIMEPersonalizedLearning: false,
+        allowedMimeTypes:
+            widget.contentInsertionConfiguration?.allowedMimeTypes ?? const [],
       );
 
       _connection = TextInput.attach(this, config);
@@ -242,6 +251,11 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
   void performAction(TextInputAction action) {
     // print('performAction $action');
     widget.onAction(action);
+  }
+
+  @override
+  void insertContent(KeyboardInsertedContent content) {
+    widget.contentInsertionConfiguration?.onContentInserted(content);
   }
 
   @override
