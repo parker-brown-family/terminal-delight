@@ -19,9 +19,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, Request, State};
-use axum::http::{header, StatusCode};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -32,7 +33,7 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::broadcast;
 
-use crate::{host, mailbox, paths, tree};
+use crate::{host, mailbox, paste, paths, tree};
 
 pub struct Gate {
     pub token: String,
@@ -78,6 +79,10 @@ pub fn router(gate: Arc<Gate>) -> Router {
         .route("/v0/sessions/{key}/panes/{pane}/bench", get(bench))
         .route("/v0/sessions/{key}/spawn", post(spawn))
         .route("/v0/sessions/{key}/panes/{pane}/term", get(term))
+        .route(
+            "/v0/sessions/{key}/panes/{pane}/paste",
+            post(paste).layer(DefaultBodyLimit::max(PASTE_MAX)),
+        )
         .layer(middleware::from_fn_with_state(gate.clone(), guard))
         .with_state(gate)
 }
@@ -271,6 +276,53 @@ async fn spawn(Path(key): Path<String>, Json(req): Json<SpawnReq>) -> Response {
     match host::ask(&key, request).await {
         Ok(reply) => Json(reply).into_response(),
         Err(e) => refuse(StatusCode::BAD_GATEWAY, &e),
+    }
+}
+
+/// The largest picture the phone may hand over. A full-size phone photo is a
+/// few megabytes; the body is held in memory, so there is a limit.
+const PASTE_MAX: usize = 32 << 20;
+
+/// A picture from the phone's keyboard, saved beside the pane's other state.
+/// Answers its path, which the phone then pastes into the terminal.
+async fn paste(
+    Path((key, pane)): Path<(String, u64)>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let mime = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    let Some(ext) = paste::ext_of(mime) else {
+        return refuse(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "only a PNG, JPEG, GIF or WebP picture can be pasted",
+        );
+    };
+    if body.is_empty() {
+        return refuse(StatusCode::BAD_REQUEST, "the picture arrived empty");
+    }
+    // The key becomes a directory name, so it is one plain word; and the pane
+    // has to be one the host has, so nothing is written for a pane that
+    // does not exist.
+    if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return refuse(StatusCode::BAD_REQUEST, "not a session key");
+    }
+    let known = host::list_panes(&key)
+        .await
+        .is_ok_and(|ps| ps.iter().any(|p| p["pane"].as_u64() == Some(pane)));
+    if !known {
+        return refuse(StatusCode::NOT_FOUND, &format!("session {key} has no pane {pane}"));
+    }
+    let dir = paths::mailbox(&key, pane).join("pastes");
+    match tokio::task::spawn_blocking(move || paste::save(&dir, &body, ext)).await {
+        Ok(Ok(path)) => Json(json!({"path": path.display().to_string()})).into_response(),
+        Ok(Err(e)) => refuse(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("the picture could not be saved: {e}"),
+        ),
+        Err(e) => refuse(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 

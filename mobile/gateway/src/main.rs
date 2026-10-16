@@ -13,6 +13,7 @@
 
 mod host;
 mod mailbox;
+mod paste;
 mod paths;
 mod tree;
 mod web;

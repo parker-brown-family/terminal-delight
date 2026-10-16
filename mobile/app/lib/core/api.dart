@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -90,6 +91,23 @@ class Api {
       final pane = jInt(jMap(outcome?['ok'])?['pane']);
       if (pane == null) throw const Refused(null, 'The host started nothing.');
       return pane;
+    } on DioException catch (e) {
+      throw _refusal(e);
+    }
+  }
+
+  /// Hand the laptop a picture for this pane. Answers the path it was saved
+  /// at, which is what gets pasted into the terminal.
+  Future<String> paste(String session, int pane, Uint8List bytes, String mime) async {
+    try {
+      final r = await _dio.post<Map<String, dynamic>>(
+        '/v0/sessions/$session/panes/$pane/paste',
+        data: bytes,
+        options: Options(contentType: mime),
+      );
+      final path = jStr(r.data?['path']);
+      if (path == null) throw const Refused(null, 'The laptop kept the picture but did not say where.');
+      return path;
     } on DioException catch (e) {
       throw _refusal(e);
     }

@@ -326,6 +326,45 @@ class _TermViewState extends ConsumerState<TermView> {
     _draft.clear();
   }
 
+  /// The picture types the keyboard is told this terminal takes: the ones
+  /// Claude Code reads from a pasted path. Anything else stays greyed out in
+  /// the keyboard's clipboard rather than arriving as a path nobody can see.
+  static const _pictureTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+
+  late final _pictures = ContentInsertionConfiguration(
+    allowedMimeTypes: _pictureTypes,
+    onContentInserted: (c) => unawaited(_picture(c)),
+  );
+
+  /// A picture the keyboard handed over, from its clipboard panel mostly. A
+  /// terminal carries bytes, not pictures, so it goes to the laptop first and
+  /// what is pasted is its path: Claude Code turns a pasted picture path into
+  /// `[Image #n]`, and a shell gets a path it can use. Pasted the moment it
+  /// arrives, even from the compose box, the way the desk's paste goes straight
+  /// to the agent; whatever is being composed is left as it was.
+  Future<void> _picture(KeyboardInsertedContent c) async {
+    final bytes = c.data;
+    final api = ref.read(apiProvider);
+    final String? trouble;
+    if (bytes == null || bytes.isEmpty) {
+      trouble = 'The keyboard handed over an empty picture.';
+    } else if (api == null || _link != _Link.live) {
+      trouble = 'The terminal is not connected, so the picture was not sent.';
+    } else {
+      unawaited(HapticFeedback.mediumImpact());
+      try {
+        final path = await api.paste(widget.session, widget.pane, bytes, c.mimeType);
+        if (!mounted) return;
+        terminal.paste(path);
+        return;
+      } on Object catch (e) {
+        trouble = 'The picture did not reach the laptop: $e';
+      }
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(trouble)));
+  }
+
   Future<void> _zoom(double by) async {
     setState(() => _font = (_font + by).clamp(7.0, 20.0));
     await ref.read(storeProvider).writeFont(_font);
@@ -368,6 +407,7 @@ class _TermViewState extends ConsumerState<TermView> {
                     padding: const EdgeInsets.all(4),
                     keyboardType: TextInputType.visiblePassword,
                     alwaysShowCursor: true,
+                    contentInsertionConfiguration: _pictures,
                   ),
                 ),
               ),
@@ -462,6 +502,7 @@ class _TermViewState extends ConsumerState<TermView> {
             minLines: 1,
             maxLines: 6,
             textCapitalization: TextCapitalization.sentences,
+            contentInsertionConfiguration: _pictures,
             style: TdType.p(15),
             cursorColor: Td.human,
             decoration: InputDecoration(
