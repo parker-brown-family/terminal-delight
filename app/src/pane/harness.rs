@@ -245,10 +245,20 @@ impl Pane {
     /// Waits on the machine's clock, because the terminal's reader runs on
     /// it, and fails with the screen as it stands after [`PATIENCE`].
     pub(super) fn wait_for(&mut self, needle: &str) {
+        self.wait_until(needle, |row| row.contains(needle));
+    }
+
+    /// Wait for a row that reads exactly `row`, trailing blanks aside: what a
+    /// command printed, told apart from the command line that contains it.
+    pub(super) fn wait_for_row(&mut self, row: &str) {
+        self.wait_until(row, |r| r == row);
+    }
+
+    fn wait_until(&mut self, needle: &str, found: impl Fn(&str) -> bool) {
         let deadline = Instant::now() + PATIENCE;
         loop {
             self.cx.run_until_parked();
-            if self.rows().iter().any(|r| r.contains(needle)) {
+            if self.rows().iter().any(|r| found(r)) {
                 // The grid can hold the text a moment before the pane hears
                 // about it; draw a frame from the grid as it is now, so where
                 // the rows are painted matches what a click will read.

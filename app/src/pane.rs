@@ -7215,6 +7215,23 @@ impl TerminalView {
             self.extend_kbd_selection(k.key == "right", k.control, cx);
             return Handled::Declined;
         }
+        // Backspace or Delete over a selection on the line being typed takes
+        // the whole selection, the way it does in any text box, rather than the
+        // one character beside the caret. The terminal cannot edit that line
+        // itself, so it types the edit (see `erase_selection_keys`). A selection
+        // anywhere else is not text being typed, and the key goes through as it
+        // always has.
+        if !k.control
+            && !k.alt
+            && !k.shift
+            && !k.platform
+            && matches!(k.key, "backspace" | "delete")
+        {
+            if let Some(keys) = self.erase_selection_keys() {
+                self.send(keys, cx);
+                return Handled::Declined;
+            }
+        }
         // Paging the pane itself. PageUp/PageDown page the scrollback in AGENT
         // panes — a Claude/Codex session keeps its whole convo in our history and
         // never binds the keys itself, while a shell keeps them (Arch's inputrc
@@ -8005,16 +8022,12 @@ impl TerminalView {
             }
         }
     }
-    /// Cut: copy the selection to the clipboard, then — only when it's safe to —
-    /// delete it from the live shell input line. Scrollback is read-only, so the
-    /// delete fires *only* when the selection sits on the on-screen input line
-    /// (display at bottom) and ends right at the cursor, i.e. it's the run of
-    /// characters immediately to the cursor's left. In that case `n` DELs erase
-    /// exactly those cells (readline backspaces the chars before the cursor and
-    /// shifts the tail left — a true cut). Anywhere else it's a plain copy, so a
-    /// cut over history or a mid-line non-adjacent selection can never corrupt
-    /// the buffer. Bound to Ctrl+X, and only when something is selected (so a bare
-    /// Ctrl+X still reaches the shell as the readline prefix key).
+    /// Cut: copy the selection to the clipboard, then erase it from the line
+    /// being typed when it lies on that line — the same erase Backspace makes
+    /// over a selection ([`Self::erase_selection_keys`]). Anywhere else it is a
+    /// plain copy, so a cut over history can never touch the buffer. Bound to
+    /// Ctrl+X, and only when something is selected (so a bare Ctrl+X still
+    /// reaches the shell as the readline prefix key).
     fn cut_selection(&mut self, cx: &mut Context<Self>) {
         let text = match self.selection_clipboard_text() {
             Some(t) => t,
@@ -8022,30 +8035,43 @@ impl TerminalView {
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
         cx.write_to_primary(ClipboardItem::new_string(text));
-        // Decide whether the selection is the trailing run on the live input line.
-        let erase = {
-            let term = self.session.term.lock();
-            let content = term.renderable_content();
-            let cur = content.cursor.point;
-            if content.display_offset != 0 {
-                None
-            } else {
-                term.selection_range()
-                    // single row, on the cursor's row, ending immediately left of it
-                    .filter(|r| {
-                        r.start.line == r.end.line
-                            && r.end.line == cur.line
-                            && r.end.column.0 + 1 == cur.column.0
-                    })
-                    .map(|r| r.end.column.0 - r.start.column.0 + 1)
-            }
-        };
-        if let Some(n) = erase {
-            self.session.notifier.notify(vec![0x7f; n]); // n × DEL (erase char left)
-            self.session.term.lock().clear_selection();
-            self.kbd_sel = None;
+        if let Some(keys) = self.erase_selection_keys() {
+            self.send(keys, cx);
         }
         cx.notify();
+    }
+
+    /// The keys that erase the selection from the line being typed, or `None`
+    /// when the selection is not on that line.
+    ///
+    /// On it means: one row, the cursor's row, with the view at the bottom —
+    /// scrollback is history, and a selection there is something to copy. And
+    /// not a full-screen program unless it is an agent: in `less` or `vim` the
+    /// arrow keys scroll or move rather than walk a caret through a line, but
+    /// Claude Code draws its prompt on the alternate screen too, with the
+    /// cursor parked at its caret, and that prompt is exactly where a person
+    /// selects and deletes.
+    fn erase_selection_keys(&self) -> Option<Vec<u8>> {
+        let term = self.session.term.lock();
+        let range = term.selection_range()?;
+        let mode = term.mode();
+        if term.display_offset() != 0
+            || (mode.contains(TermMode::ALT_SCREEN) && !self.mode.is_agent())
+        {
+            return None;
+        }
+        let caret = term.cursor().point;
+        if range.start.line != caret.line || range.end.line != caret.line {
+            return None;
+        }
+        let row = term.row(caret.line).0;
+        erase_run_keys(
+            &row,
+            range.start.column.0,
+            range.end.column.0,
+            caret.column.0,
+            mode.contains(TermMode::APP_CURSOR),
+        )
     }
     /// Paste the clipboard into the PTY, honouring bracketed-paste mode.
     ///
@@ -9647,6 +9673,59 @@ pub(crate) fn cursor_key_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     } else {
         format!("\x1b[1;{code}{}", fin as char).into_bytes()
     })
+}
+
+/// The keys that erase columns `from..=to` of `row` from the line being typed
+/// on it, with the cursor at column `caret`: walk the caret to just past the
+/// run, then rub out each character of it with DEL, which is what Backspace
+/// sends and what readline, zsh and Claude Code all read as "delete the
+/// character before the caret".
+///
+/// The walk and the count are in characters, not cells, so a wide
+/// character's spacer is skipped. Left of the caret every cell is text,
+/// typed spaces included. Right of it, a blank past the row's last printed
+/// character is not text at all — a keyboard selection grown leftwards takes
+/// the blank cell the caret sits on at the end of a line — and counting one
+/// would rub out a real character in its place, so the run stops at the
+/// text. A run that holds no text erases nothing: `None`.
+///
+/// What it cannot see is where the line editor's text begins. A run reaching
+/// back over a prompt sends a DEL for each prompt glyph too, and those land
+/// at the start of the line, where a line editor ignores them.
+fn erase_run_keys(
+    row: &[crate::vt::Cell],
+    from: usize,
+    to: usize,
+    caret: usize,
+    app_cursor: bool,
+) -> Option<Vec<u8>> {
+    let counts = |c: &crate::vt::Cell| {
+        !c.flags
+            .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+    };
+    let printed = row
+        .iter()
+        .rposition(|c| counts(c) && !matches!(c.c, ' ' | '\0'));
+    let text_end = printed.max(caret.checked_sub(1))?;
+    let to = to.min(text_end).min(row.len().checked_sub(1)?);
+    if from > to {
+        return None;
+    }
+    let chars = |cells: std::ops::Range<usize>| row[cells].iter().filter(|c| counts(c)).count();
+    let erase = chars(from..to + 1);
+    if erase == 0 {
+        return None;
+    }
+    let past = to + 1;
+    let (walk, arrow): (usize, &[u8]) = match (caret > past, app_cursor) {
+        (true, false) => (chars(past..caret), b"\x1b[D"),
+        (true, true) => (chars(past..caret), b"\x1bOD"),
+        (false, false) => (chars(caret..past), b"\x1b[C"),
+        (false, true) => (chars(caret..past), b"\x1bOC"),
+    };
+    let mut keys = arrow.repeat(walk);
+    keys.resize(keys.len() + erase, 0x7f);
+    Some(keys)
 }
 
 /// One synthetic wheel notch, encoded the way the running app asked for its
@@ -16043,6 +16122,106 @@ mod tests {
         assert_eq!((white.r, white.g, white.b), (255, 255, 255));
         let black = rgb8(gpui::hsla(0.3, 0.8, 0.0, 1.0));
         assert_eq!((black.r, black.g, black.b), (0, 0, 0));
+    }
+
+    /// A row of cells as a terminal stores `text`, `cols` wide: each wide
+    /// character followed by its spacer, blanks to the end.
+    fn typed_row(text: &str, cols: usize) -> Vec<crate::vt::Cell> {
+        let mut row = Vec::new();
+        for ch in text.chars() {
+            let mut cell = crate::vt::Cell::default();
+            cell.c = ch;
+            let wide = ch == '日' || ch == '本';
+            if wide {
+                cell.flags = Flags::WIDE_CHAR;
+            }
+            row.push(cell);
+            if wide {
+                let mut spacer = crate::vt::Cell::default();
+                spacer.flags = Flags::WIDE_CHAR_SPACER;
+                row.push(spacer);
+            }
+        }
+        row.resize(cols, crate::vt::Cell::default());
+        row
+    }
+
+    /// `n` lefts (or rights, when `n` is negative), then `erase` DELs.
+    fn walk_then_rub(n: isize, erase: usize) -> Vec<u8> {
+        let arrow: &[u8] = if n >= 0 { b"\x1b[D" } else { b"\x1b[C" };
+        let mut keys = arrow.repeat(n.unsigned_abs());
+        keys.resize(keys.len() + erase, 0x7f);
+        keys
+    }
+
+    /// The selection on the line being typed is erased as a person would by
+    /// hand: the caret walked to just past it, a Backspace per character.
+    #[test]
+    fn erase_run_keys_walk_the_caret_past_the_run_then_rub_it_out() {
+        // "world" is cells 8..=12, "foo" 14..=16, the caret at 17.
+        let row = typed_row("$ hello world foo", 40);
+        // "world", caret at the end of the line: 4 lefts over " foo", 5 DELs.
+        assert_eq!(
+            erase_run_keys(&row, 8, 12, 17, false),
+            Some(walk_then_rub(4, 5))
+        );
+        // The same run with the caret before it walks right instead.
+        assert_eq!(
+            erase_run_keys(&row, 8, 12, 2, false),
+            Some(walk_then_rub(-11, 5))
+        );
+        // Ending at the caret, nothing to walk.
+        assert_eq!(
+            erase_run_keys(&row, 14, 16, 17, false),
+            Some(walk_then_rub(0, 3))
+        );
+        // The caret inside the run walks to its far end.
+        assert_eq!(
+            erase_run_keys(&row, 8, 12, 10, false),
+            Some(walk_then_rub(-3, 5))
+        );
+        // An app that asked for application cursor keys gets SS3 arrows.
+        let mut ss3 = b"\x1bOD".repeat(4);
+        ss3.resize(ss3.len() + 5, 0x7f);
+        assert_eq!(erase_run_keys(&row, 8, 12, 17, true), Some(ss3));
+    }
+
+    /// Ctrl+Shift+Left at the end of a line selects the word AND the blank cell
+    /// the caret sits on. That blank is not text: counting it would rub out the
+    /// space before the word too.
+    #[test]
+    fn a_blank_past_the_end_of_the_text_is_not_erased() {
+        let row = typed_row("$ hello world foo", 40);
+        assert_eq!(
+            erase_run_keys(&row, 14, 17, 17, false),
+            Some(walk_then_rub(0, 3))
+        );
+        // A mouse sweep far past the end takes only what was typed.
+        assert_eq!(
+            erase_run_keys(&row, 14, 35, 17, false),
+            Some(walk_then_rub(0, 3))
+        );
+        // Nothing but blanks is nothing to erase.
+        assert_eq!(erase_run_keys(&row, 20, 30, 17, false), None);
+        // A typed trailing space LEFT of the caret is text, and goes.
+        let spaced = typed_row("$ foo  ", 40);
+        assert_eq!(
+            erase_run_keys(&spaced, 5, 6, 7, false),
+            Some(walk_then_rub(0, 2))
+        );
+    }
+
+    /// A wide character is two cells and one character, to walk over and to
+    /// rub out.
+    #[test]
+    fn a_wide_character_is_one_key_not_two() {
+        // `$`, a space, 日 and its spacer, 本 and its spacer, `x`: cells 0..=6.
+        let row = typed_row("$ 日本x", 20);
+        // "日本" is cells 2..=5; the caret past "x" walks over x alone.
+        assert_eq!(
+            erase_run_keys(&row, 2, 5, 7, false),
+            Some(walk_then_rub(1, 2))
+        );
     }
 
     #[test]
