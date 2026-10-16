@@ -15836,7 +15836,15 @@ mod tests {
             clock.contains("view.shown.load("),
             "a hidden pane ticks at frame rate"
         );
+        assert!(
+            clock.contains("from_millis(1000)"),
+            "a hidden pane's screen checks run as often as a shown pane's"
+        );
         assert_eq!(OFFSCREEN_REFRESH, Duration::from_secs(5));
+        // And the screen those checks read is copied once per change, not
+        // once per reader: the copy was 30% of the main thread under perf.
+        let rows = method(code, "fn live_rows(&self)");
+        assert!(rows.contains("live_rows_memo") && rows.contains("content_generation"));
         let main = include_str!("main.rs");
         let render = &main[main.find("impl Render for Workspace").expect("render")..];
         assert!(
