@@ -21,9 +21,9 @@ use std::collections::HashSet;
 use std::io::Read;
 use std::net::{IpAddr, SocketAddr};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 const DEFAULT_PORT: u16 = 7717;
@@ -169,7 +169,6 @@ fn reachable_from_lan(iface: &str) -> bool {
 fn serve(port: u16, lan: bool) -> Result<(), String> {
     let token = ensure_token(false)?;
     let machine = machine_name();
-    let (ts_ip, ts_name) = tailnet();
 
     let mut allowed: HashSet<String> = HashSet::new();
     let mut allow = |h: &str| {
@@ -178,33 +177,23 @@ fn serve(port: u16, lan: bool) -> Result<(), String> {
     allow("127.0.0.1");
     allow("localhost");
     allow(&machine);
-    if let Some(ip) = ts_ip {
-        allow(&ip.to_string());
-    }
-    if let Some(n) = &ts_name {
-        allow(n);
-        if let Some(short) = n.split('.').next() {
-            allow(short);
-        }
-    }
-    let mut binds: Vec<SocketAddr> = vec![SocketAddr::from(([127, 0, 0, 1], port))];
-    if lan {
+    let addr = if lan {
         for (_, ip) in local_ipv4s() {
             allow(&ip.to_string());
         }
         // One wildcard listener covers every interface, loopback and the
         // tailnet included.
-        binds = vec![SocketAddr::from(([0, 0, 0, 0], port))];
-    } else if let Some(ip) = ts_ip {
-        binds.push(SocketAddr::new(ip, port));
-    }
+        SocketAddr::from(([0, 0, 0, 0], port))
+    } else {
+        SocketAddr::from(([127, 0, 0, 1], port))
+    };
 
     let (events, _) = tokio::sync::broadcast::channel(256);
     let gate = Arc::new(web::Gate {
         token,
         machine: machine.clone(),
-        tailnet_name: ts_name.clone(),
-        allowed_hosts: allowed,
+        tailnet_name: RwLock::new(None),
+        allowed_hosts: RwLock::new(allowed),
         events,
         watchers: AtomicUsize::new(0),
     });
@@ -213,49 +202,129 @@ fn serve(port: u16, lan: bool) -> Result<(), String> {
     rt.block_on(async move {
         let app = web::router(gate.clone());
         tokio::spawn(web::poll(gate.clone()));
-        let mut listening = 0;
-        for addr in binds {
-            let app = app.clone();
-            // The tailnet address can be missing at boot and appear later, so
-            // a failed bind there is retried rather than fatal.
-            let first = tokio::net::TcpListener::bind(addr).await;
-            match first {
-                Ok(l) => {
-                    eprintln!("td-mobile-gateway: listening on http://{addr}");
-                    listening += 1;
-                    tokio::spawn(async move {
-                        let _ = axum::serve(l, app).await;
-                    });
-                }
-                Err(e) if addr.ip().is_loopback() => {
-                    return Err(format!("{addr}: {e} — is another gateway already running?"));
-                }
-                Err(e) => {
-                    eprintln!("td-mobile-gateway: {addr}: {e}; retrying every 10s");
-                    tokio::spawn(async move {
-                        loop {
-                            tokio::time::sleep(Duration::from_secs(10)).await;
-                            if let Ok(l) = tokio::net::TcpListener::bind(addr).await {
-                                eprintln!("td-mobile-gateway: listening on http://{addr}");
-                                let _ = axum::serve(l, app).await;
-                                return;
-                            }
-                        }
-                    });
-                }
-            }
-        }
-        if listening == 0 {
-            return Err("nothing to listen on".into());
-        }
+        let l = tokio::net::TcpListener::bind(addr)
+            .await
+            .map_err(|e| format!("{addr}: {e} — is another gateway already running?"))?;
+        eprintln!("td-mobile-gateway: listening on http://{addr}");
+        let loopback = app.clone();
+        tokio::spawn(async move {
+            let _ = axum::serve(l, loopback).await;
+        });
+        tokio::spawn(keep_tailnet(gate, app, port, !lan));
+        std::thread::spawn(move || keep_usb_route(port));
         eprintln!(
-            "td-mobile-gateway: {machine}{} · sessions under {}",
-            ts_name.map(|n| format!(" ({n})")).unwrap_or_default(),
+            "td-mobile-gateway: {machine} · sessions under {}",
             paths::runtime_dir().display()
         );
         std::future::pending::<()>().await;
         Ok(())
     })
+}
+
+/// The tailnet route, which may arrive after the gateway does. At boot the
+/// gateway can start in the same second as tailscaled and ask before it has an
+/// address; on 2026-10-13 both started at 13:04:54 and the address came five
+/// seconds later, so a route read once at startup stayed missing until
+/// somebody restarted the gateway. This asks again every ten seconds until the
+/// address is served, then stops. Under `--lan` the wildcard listener already
+/// covers it and only the `Host` check needs to learn the names.
+async fn keep_tailnet(gate: Arc<web::Gate>, app: axum::Router, port: u16, bind: bool) {
+    let mut said = false;
+    loop {
+        let (ip, name) = tokio::task::spawn_blocking(tailnet)
+            .await
+            .unwrap_or((None, None));
+        if let Some(ip) = ip {
+            gate.allow_tailnet(ip, name.clone(), port);
+            let addr = SocketAddr::new(ip, port);
+            if !bind {
+                return;
+            }
+            match tokio::net::TcpListener::bind(addr).await {
+                Ok(l) => {
+                    let name = name.map(|n| format!(" ({n})")).unwrap_or_default();
+                    eprintln!("td-mobile-gateway: listening on http://{addr}{name}");
+                    let _ = axum::serve(l, app).await;
+                    return;
+                }
+                Err(e) if !said => {
+                    eprintln!("td-mobile-gateway: {addr}: {e}; trying every 10s");
+                    said = true;
+                }
+                Err(_) => {}
+            }
+        } else if !said {
+            eprintln!("td-mobile-gateway: no tailnet address yet; looking every 10s");
+            said = true;
+        }
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
+}
+
+/// The USB route, kept. `adb reverse` lives with the cable's connection, so a
+/// replug, a reboot or an adb restart drops it and the phone finds nothing at
+/// its own 127.0.0.1 until `pair` runs again. This follows adb's device list
+/// — it speaks only when the list changes, so nothing is polled — and carries
+/// the port again for every attached phone that has the app.
+fn keep_usb_route(port: u16) {
+    let want = format!("tcp:{port} tcp:{port}");
+    loop {
+        // Starts the adb server if none is running, which is what lets the
+        // cable work after a reboot without anybody typing `adb`.
+        let Ok(mut child) = Command::new("adb")
+            .arg("track-devices")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            eprintln!("td-mobile-gateway: no adb on PATH, so the USB route needs `pair` after every replug");
+            return;
+        };
+        if let Some(mut out) = child.stdout.take() {
+            let mut len = [0u8; 4];
+            while out.read_exact(&mut len).is_ok() {
+                let Some(n) = std::str::from_utf8(&len)
+                    .ok()
+                    .and_then(|h| usize::from_str_radix(h, 16).ok())
+                else {
+                    break;
+                };
+                let mut frame = vec![0u8; n];
+                if out.read_exact(&mut frame).is_err() {
+                    break;
+                }
+                for phone in attached(&String::from_utf8_lossy(&frame)) {
+                    let serial = Some(phone.clone());
+                    let has_app = adb(&serial, &["shell", "pm", "list", "packages", APP_ID])
+                        .is_ok_and(|o| o.lines().any(|l| l.trim() == format!("package:{APP_ID}")));
+                    let carried = adb(&serial, &["reverse", "--list"]).is_ok_and(|o| o.contains(&want));
+                    if has_app && !carried {
+                        let route = format!("tcp:{port}");
+                        match adb(&serial, &["reverse", &route, &route]) {
+                            Ok(_) => eprintln!("td-mobile-gateway: USB route: {phone} 127.0.0.1:{port} → here"),
+                            Err(e) => eprintln!("td-mobile-gateway: {e}"),
+                        }
+                    }
+                }
+            }
+        }
+        // The adb server went away; ask again shortly, which restarts it.
+        let _ = child.kill();
+        let _ = child.wait();
+        std::thread::sleep(Duration::from_secs(3));
+    }
+}
+
+/// The serials in one `adb track-devices` frame that are ready to use — not
+/// `offline`, not `unauthorized` (the phone has not accepted this computer).
+fn attached(frame: &str) -> Vec<String> {
+    frame
+        .lines()
+        .filter_map(|l| {
+            let (serial, state) = l.split_once('\t')?;
+            (state.trim() == "device").then(|| serial.to_string())
+        })
+        .collect()
 }
 
 fn adb(serial: &Option<String>, args: &[&str]) -> Result<String, String> {
@@ -307,4 +376,16 @@ fn pair(port: u16, serial: Option<String>) -> Result<(), String> {
     println!("USB route: phone 127.0.0.1:{port} → this machine 127.0.0.1:{port}");
     println!("pairing sheet shown on the phone — accept it there");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_phone_that_accepted_this_computer_is_attached() {
+        let frame = "R5CTB0B6W4T\tdevice\nemulator-5554\toffline\nZX1G22\tunauthorized\n";
+        assert_eq!(attached(frame), vec!["R5CTB0B6W4T".to_string()]);
+        assert!(attached("").is_empty());
+    }
 }

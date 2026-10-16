@@ -14,8 +14,9 @@
 //!    the machine is called, which is what the phone needs to find it.
 
 use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -36,10 +37,36 @@ use crate::{host, mailbox, paths, tree};
 pub struct Gate {
     pub token: String,
     pub machine: String,
-    pub tailnet_name: Option<String>,
-    pub allowed_hosts: HashSet<String>,
+    /// Both of these can arrive after the gateway starts: at boot it may come
+    /// up before Tailscale has an address.
+    pub tailnet_name: RwLock<Option<String>>,
+    pub allowed_hosts: RwLock<HashSet<String>>,
     pub events: broadcast::Sender<String>,
     pub watchers: AtomicUsize,
+}
+
+impl Gate {
+    /// Let a request addressed to this machine on the tailnet past the `Host`
+    /// check — by its IP, its MagicDNS name, or the name's first label.
+    pub fn allow_tailnet(&self, ip: IpAddr, name: Option<String>, port: u16) {
+        let mut hosts = vec![ip.to_string()];
+        if let Some(n) = &name {
+            hosts.push(n.clone());
+            if let Some(short) = n.split('.').next() {
+                hosts.push(short.to_string());
+            }
+        }
+        if let Ok(mut allowed) = self.allowed_hosts.write() {
+            for h in hosts {
+                allowed.insert(format!("{}:{port}", h.to_ascii_lowercase()));
+            }
+        }
+        if name.is_some() {
+            if let Ok(mut n) = self.tailnet_name.write() {
+                *n = name;
+            }
+        }
+    }
 }
 
 pub fn router(gate: Arc<Gate>) -> Router {
@@ -69,7 +96,12 @@ async fn guard(State(gate): State<Arc<Gate>>, req: Request, next: Next) -> Respo
         .and_then(|h| h.to_str().ok())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if !gate.allowed_hosts.contains(&host) {
+    let allowed = gate
+        .allowed_hosts
+        .read()
+        .map(|a| a.contains(&host))
+        .unwrap_or(false);
+    if !allowed {
         return refuse(StatusCode::MISDIRECTED_REQUEST, "not an address this gateway serves");
     }
     if req.uri().path() != "/v0/ping" {
@@ -112,7 +144,7 @@ async fn hello(State(gate): State<Arc<Gate>>) -> Json<Value> {
         "gateway": "terminal-delight",
         "v": 0,
         "machine": gate.machine,
-        "tailnet": gate.tailnet_name,
+        "tailnet": gate.tailnet_name.read().ok().and_then(|n| n.clone()),
         "gateway_pid": std::process::id(),
         "server_ms": now_ms(),
         "sessions": sessions,
@@ -506,6 +538,28 @@ mod tests {
         assert!(!same(b"abc", b"abd"));
         assert!(!same(b"abc", b"ab"));
         assert!(!same(b"", b"a"));
+    }
+
+    #[test]
+    fn a_tailnet_that_arrives_late_is_let_in() {
+        let gate = Gate {
+            token: String::new(),
+            machine: "legion".into(),
+            tailnet_name: RwLock::new(None),
+            allowed_hosts: RwLock::new(HashSet::from(["127.0.0.1:7717".to_string()])),
+            events: broadcast::channel(1).0,
+            watchers: AtomicUsize::new(0),
+        };
+        gate.allow_tailnet(
+            "100.122.239.70".parse().unwrap(),
+            Some("Legion.tail1234.ts.net".into()),
+            7717,
+        );
+        let allowed = gate.allowed_hosts.read().unwrap();
+        for h in ["127.0.0.1:7717", "100.122.239.70:7717", "legion.tail1234.ts.net:7717", "legion:7717"] {
+            assert!(allowed.contains(h), "{h}");
+        }
+        assert_eq!(gate.tailnet_name.read().unwrap().as_deref(), Some("Legion.tail1234.ts.net"));
     }
 
     #[test]
