@@ -22768,6 +22768,28 @@ impl Workspace {
         None
     }
 
+    /// Tell every pane, on every draw, whether its tab is the one being shown
+    /// — `TerminalView::shown`, which decides whether its screen updates ask
+    /// for a frame now or every `pane::OFFSCREEN_REFRESH` (#964). Set here
+    /// because the draw is the one place that knows exactly what is on
+    /// screen, so a pane that has just come into view is told in that frame.
+    fn mark_shown_panes(&self, cx: &App) {
+        let mut active = Vec::new();
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.root.leaves(&mut active);
+        }
+        for tab in &self.tabs {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let shown = active.iter().any(|a| a.entity_id() == leaf.entity_id());
+                leaf.read(cx)
+                    .shown
+                    .store(shown, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    }
+
     /// The live pane whose shell has this pid — the number agents name panes by.
     fn leaf_by_shell_pid(&self, pid: u32, cx: &App) -> Option<Entity<TerminalView>> {
         for tab in &self.tabs {
@@ -26375,6 +26397,7 @@ impl Render for Workspace {
         // A new pass, so the attention projection is recomputed once for it and
         // then shared by every surface that asks. See [`Workspace::rail_memo`].
         self.rail_frame = self.rail_frame.wrapping_add(1);
+        self.mark_shown_panes(cx);
         self.reap(window, cx);
         self.forget_pictures_out_of_sight(cx);
         // Holdings past their window, let go of here because the render pass is
