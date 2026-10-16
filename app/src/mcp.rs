@@ -2699,6 +2699,119 @@ mod tests {
         }
     }
 
+    // ── off-limits to agents ───────────────────────────────────────────────
+
+    /// The write rule, whole: an off-limits pane takes an update only when it
+    /// is the caller's own, and the policy still has to expose the pane at all.
+    ///
+    /// Mutation-tested: ignoring `own_pane`, and letting `own_pane` reach a
+    /// pane the policy does not expose, each fail this.
+    #[test]
+    fn an_off_limits_pane_takes_writes_only_from_its_own_agent() {
+        let on = McpConfig {
+            enabled: true,
+            expose: Expose::AgentsOnly,
+            events: true,
+            writable: true,
+        };
+        assert!(!may_write(&on, true, true, false), "another agent's write");
+        assert!(may_write(&on, true, true, true), "its own agent's write");
+        assert!(
+            may_write(&on, true, false, false),
+            "an ordinary pane, as before"
+        );
+        assert!(
+            !may_write(&on, false, true, true),
+            "own pane or not, the policy still decides whether a shell is exposed"
+        );
+        let off = McpConfig::default();
+        assert!(!may_write(&off, true, true, true), "MCP off is off");
+    }
+
+    /// The verbs that act on a pane mark the update as the caller's own exactly
+    /// when the target is the caller's pane — named or defaulted — and never
+    /// when it is somebody else's.
+    ///
+    /// Mutation-tested: setting `own_pane` unconditionally fails this.
+    #[test]
+    fn a_write_is_marked_own_only_when_it_is_the_callers_pane() {
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<ConfigUpdate>>> = Default::default();
+        let seen2 = seen.clone();
+        let apply = move |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            seen2.lock().unwrap().extend(ups.iter().cloned());
+            vec![(ups[0].0.clone(), Ok(GradeReport::default()))]
+        };
+        let mut s = snap_writable(vec![agent_pane(100, true), agent_pane(200, true)]);
+        s.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(u64::from(100u32 % 97)),
+        });
+        let call =
+            |args: Value| json!({ "id": 7, "method": "tools/call", "params": args }).to_string();
+        for line in [
+            call(json!({ "name": "leave_note", "arguments": { "text": "mine" } })),
+            call(json!({ "name": "leave_note", "arguments": { "pid": 100, "text": "mine" } })),
+            call(json!({ "name": "leave_note", "arguments": { "pid": 200, "text": "theirs" } })),
+            call(json!({ "name": "declare_deliverable", "arguments": { "href": "/r/a.html" } })),
+            call(
+                json!({ "name": "present_surface", "arguments": { "pid": 200,
+                "surface": { "td": "0.4", "kind": "response", "title": "t",
+                    "model": { "layman": "x" } } } }),
+            ),
+        ] {
+            let reply = handle_line_with(&line, &s, no_tail, &apply, no_search).unwrap();
+            assert!(!reply.contains("isError"), "{reply}");
+        }
+        let own: Vec<(Target, bool)> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(t, p)| (t.clone(), p.own_pane))
+            .collect();
+        assert_eq!(
+            own,
+            vec![
+                (Target::Pane(100), true),
+                (Target::Pane(100), true),
+                (Target::Pane(200), false),
+                (Target::Pane(100), true),
+                (Target::Pane(200), false),
+            ]
+        );
+    }
+
+    /// An agent cannot claim the exception for itself: `own_pane` is not a
+    /// field a `set_pane_config` caller can send, and the patch refuses it.
+    ///
+    /// Mutation-tested: dropping `#[serde(skip)]` from `own_pane` fails this.
+    #[test]
+    fn an_agent_cannot_claim_its_write_is_its_own() {
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<ConfigUpdate>>> = Default::default();
+        let seen2 = seen.clone();
+        let apply = move |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            seen2.lock().unwrap().extend(ups.iter().cloned());
+            ups.iter()
+                .map(|(t, _)| (t.clone(), Ok(GradeReport::default())))
+                .collect()
+        };
+        let s = snap_writable(vec![agent_pane(200, true)]);
+        let line = json!({ "id": 8, "method": "tools/call", "params": {
+            "name": "set_pane_config",
+            "arguments": { "updates": [ { "target": 200,
+                "config": { "brightness": 10, "own_pane": true } } ] }
+        }})
+        .to_string();
+        let reply = handle_line_with(&line, &s, no_tail, &apply, no_search).unwrap();
+        assert!(
+            seen.lock().unwrap().iter().all(|(_, p)| !p.own_pane),
+            "an agent's JSON set own_pane: {reply}"
+        );
+        assert!(
+            reply.contains("own_pane"),
+            "the refusal names the key: {reply}"
+        );
+    }
+
     #[test]
     fn config_survives_a_toml_round_trip() {
         let c = McpConfig {
@@ -4673,118 +4786,5 @@ mod tests {
         assert_eq!(v["params"]["level"], "info");
         assert_eq!(v["params"]["logger"], SERVER_NAME);
         assert_eq!(v["params"]["data"]["tool"], "Bash");
-    }
-
-    // ── off-limits to agents ───────────────────────────────────────────────
-
-    /// The write rule, whole: an off-limits pane takes an update only when it
-    /// is the caller's own, and the policy still has to expose the pane at all.
-    ///
-    /// Mutation-tested: ignoring `own_pane`, and letting `own_pane` reach a
-    /// pane the policy does not expose, each fail this.
-    #[test]
-    fn an_off_limits_pane_takes_writes_only_from_its_own_agent() {
-        let on = McpConfig {
-            enabled: true,
-            expose: Expose::AgentsOnly,
-            events: true,
-            writable: true,
-        };
-        assert!(!may_write(&on, true, true, false), "another agent's write");
-        assert!(may_write(&on, true, true, true), "its own agent's write");
-        assert!(
-            may_write(&on, true, false, false),
-            "an ordinary pane, as before"
-        );
-        assert!(
-            !may_write(&on, false, true, true),
-            "own pane or not, the policy still decides whether a shell is exposed"
-        );
-        let off = McpConfig::default();
-        assert!(!may_write(&off, true, true, true), "MCP off is off");
-    }
-
-    /// The verbs that act on a pane mark the update as the caller's own exactly
-    /// when the target is the caller's pane — named or defaulted — and never
-    /// when it is somebody else's.
-    ///
-    /// Mutation-tested: setting `own_pane` unconditionally fails this.
-    #[test]
-    fn a_write_is_marked_own_only_when_it_is_the_callers_pane() {
-        let seen: std::sync::Arc<std::sync::Mutex<Vec<ConfigUpdate>>> = Default::default();
-        let seen2 = seen.clone();
-        let apply = move |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
-            seen2.lock().unwrap().extend(ups.iter().cloned());
-            vec![(ups[0].0.clone(), Ok(GradeReport::default()))]
-        };
-        let mut s = snap_writable(vec![agent_pane(100, true), agent_pane(200, true)]);
-        s.caller = Some(Caller {
-            session: "tdclip".into(),
-            pane: Some(u64::from(100u32 % 97)),
-        });
-        let call =
-            |args: Value| json!({ "id": 7, "method": "tools/call", "params": args }).to_string();
-        for line in [
-            call(json!({ "name": "leave_note", "arguments": { "text": "mine" } })),
-            call(json!({ "name": "leave_note", "arguments": { "pid": 100, "text": "mine" } })),
-            call(json!({ "name": "leave_note", "arguments": { "pid": 200, "text": "theirs" } })),
-            call(json!({ "name": "declare_deliverable", "arguments": { "href": "/r/a.html" } })),
-            call(
-                json!({ "name": "present_surface", "arguments": { "pid": 200,
-                "surface": { "td": "0.4", "kind": "response", "title": "t",
-                    "model": { "layman": "x" } } } }),
-            ),
-        ] {
-            let reply = handle_line_with(&line, &s, no_tail, &apply, no_search).unwrap();
-            assert!(!reply.contains("isError"), "{reply}");
-        }
-        let own: Vec<(Target, bool)> = seen
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(t, p)| (t.clone(), p.own_pane))
-            .collect();
-        assert_eq!(
-            own,
-            vec![
-                (Target::Pane(100), true),
-                (Target::Pane(100), true),
-                (Target::Pane(200), false),
-                (Target::Pane(100), true),
-                (Target::Pane(200), false),
-            ]
-        );
-    }
-
-    /// An agent cannot claim the exception for itself: `own_pane` is not a
-    /// field a `set_pane_config` caller can send, and the patch refuses it.
-    ///
-    /// Mutation-tested: dropping `#[serde(skip)]` from `own_pane` fails this.
-    #[test]
-    fn an_agent_cannot_claim_its_write_is_its_own() {
-        let seen: std::sync::Arc<std::sync::Mutex<Vec<ConfigUpdate>>> = Default::default();
-        let seen2 = seen.clone();
-        let apply = move |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
-            seen2.lock().unwrap().extend(ups.iter().cloned());
-            ups.iter()
-                .map(|(t, _)| (t.clone(), Ok(GradeReport::default())))
-                .collect()
-        };
-        let s = snap_writable(vec![agent_pane(200, true)]);
-        let line = json!({ "id": 8, "method": "tools/call", "params": {
-            "name": "set_pane_config",
-            "arguments": { "updates": [ { "target": 200,
-                "config": { "brightness": 10, "own_pane": true } } ] }
-        }})
-        .to_string();
-        let reply = handle_line_with(&line, &s, no_tail, &apply, no_search).unwrap();
-        assert!(
-            seen.lock().unwrap().iter().all(|(_, p)| !p.own_pane),
-            "an agent's JSON set own_pane: {reply}"
-        );
-        assert!(
-            reply.contains("own_pane"),
-            "the refusal names the key: {reply}"
-        );
     }
 }

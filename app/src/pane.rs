@@ -2704,6 +2704,14 @@ pub struct TerminalView {
     /// window is a process away from the terminal, and a reading that comes
     /// back empty is not evidence that the recipe was wrong.
     staged: crate::session::PaneRestore,
+    /// A person marked this pane off-limits to agents: no agent reads it or
+    /// writes to it through MCP, except the one running inside it acting on
+    /// its own pane (see `mcp::may_write`), and the control socket's bench
+    /// verbs never pick it. Set and cleared ONLY by the terminal's right-click
+    /// menu — no control-socket or MCP verb reaches it, because both answer
+    /// agents, and a lock an agent can lift is decoration. Persisted per leaf
+    /// in the state file.
+    pub off_limits: bool,
     /// The OSC-driven shell title (apps overwrite it via the title sequence).
     pub title: String,
     /// A user-set name (right-click the header to rename). Wins over `title`
@@ -2714,13 +2722,6 @@ pub struct TerminalView {
     /// of the program label; click the logo (or the `＋ logo`
     /// placeholder when unset) to pick one. Persisted per leaf in the state file.
     pub logo: Option<String>,
-    /// A person marked this pane off-limits to agents: no agent reads it or
-    /// writes to it through MCP, except the one running inside it acting on
-    /// its own pane (see `mcp::should_expose`). Set and cleared ONLY by the
-    /// header's ⋯ menu — no control-socket or MCP verb reaches it, because
-    /// both answer agents, and a lock an agent can lift is decoration.
-    /// Persisted per leaf in the state file.
-    pub off_limits: bool,
     /// The logo INHERITED from the pane's cwd via the per-directory map
     /// (`dirlogo`), resolved by the workspace's sweep — display state, never
     /// persisted (the map itself is the durable record). Shadowed by `logo`.
@@ -4806,11 +4807,11 @@ impl TerminalView {
             pane_id,
             guard,
             superseded: false,
+            off_limits: false,
             staged: restore.clone(),
             title: "shell".into(),
             name: None,
             logo,
-            off_limits: false,
             dir_logo: None,
             tool_face: None,
             renaming: None,
@@ -10374,20 +10375,6 @@ impl Render for TerminalView {
                     .gap_2()
                     .cursor_pointer()
                     .child(logo_el)
-                    // Off-limits rides before the label, where a narrow pane
-                    // still shows it: it is the one thing on this header that
-                    // changes what an agent may do here.
-                    .children(self.off_limits.then(|| {
-                        div()
-                            .flex_none()
-                            .px(px(5. * scale))
-                            .rounded(sk.rad(4.))
-                            .border_1()
-                            .border_color(bar_fg.alpha(0.75))
-                            .text_color(bar_fg)
-                            .text_size(px(9.5 * scale))
-                            .child("OFF-LIMITS")
-                    }))
                     .child(format!("▸ {} · {label}", self.mode.label_i18n()))
                     .on_mouse_down(
                         MouseButton::Left,
@@ -10569,6 +10556,20 @@ impl Render for TerminalView {
                                 ),
                         )
                     })
+                    // Off-limits sits with the controls on the right, which a
+                    // narrow pane keeps while its title clips: it is the one
+                    // thing on this header that changes what an agent may do.
+                    .children(self.off_limits.then(|| {
+                        div()
+                            .flex_none()
+                            .px(px(5. * scale))
+                            .rounded(sk.rad(4.))
+                            .border_1()
+                            .border_color(bar_fg.alpha(0.75))
+                            .text_color(bar_fg)
+                            .text_size(px(9.5 * scale))
+                            .child("OFF-LIMITS")
+                    }))
                     .child(status)
                     .child(
                         // close just this sub-tab (×): ends this pane's shell.
