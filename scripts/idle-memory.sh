@@ -50,6 +50,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -x "$TD" ] || { echo "no binary at $TD"; exit 2; }
+# Absolute, because Hyprland starts the hidden window from its own directory,
+# not this one: a relative --bin passed the check above and then launched
+# nothing, which read as "no window appeared" with no hint why.
+TD=$(readlink -f "$TD")
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/td-idle-memory.XXXXXX")
 
 . "$ROOT/scripts/lib/hidden-window.sh"
