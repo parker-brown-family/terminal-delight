@@ -518,6 +518,39 @@ pub(crate) fn notes_paste(map: &str, bracketed: bool) -> Option<Vec<u8>> {
     Some([b"\x1b[200~", clean.as_bytes(), b"\x1b[201~"].concat())
 }
 
+/// The bytes a paste writes — the clipboard, the context menu's *Paste*, a
+/// dropped file's path. Pure, so what it lets through is held by a test.
+///
+/// Every control character comes out of the text first except the newline,
+/// the carriage return and the tab, and the reason is ESC. A program that
+/// asked for bracketed paste reads everything between `ESC[200~` and
+/// `ESC[201~` as text, so a clipboard carrying its own `ESC[201~` closes the
+/// bracket early and whatever follows it is read as keys: copy a line off a
+/// web page and the page can type `rm -rf ~` and an Enter into your shell.
+/// The rest of C0 goes for the same reason with or without a bracket — a
+/// `^C` or `^Z` in a paste reaches the line discipline as a signal — and so
+/// do DEL and C1 (U+0080 to U+009F, among them the one-byte CSI), none of
+/// which is text.
+///
+/// Unlike ↪'s `notes_paste`, line endings stay exactly as they came and an
+/// unbracketed program still gets the paste: this is the person pasting, and
+/// a multi-line paste behaves as it always has. Text that is nothing but
+/// control characters writes nothing, not an empty bracket.
+pub(crate) fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
+    let clean: String = text
+        .chars()
+        .filter(|c| matches!(c, '\n' | '\r' | '\t') || !c.is_control())
+        .collect();
+    if clean.is_empty() {
+        return Vec::new();
+    }
+    if bracketed {
+        [b"\x1b[200~", clean.as_bytes(), b"\x1b[201~"].concat()
+    } else {
+        clean.into_bytes()
+    }
+}
+
 /// A flat rectangle in window pixels, `(x, y, w, h)`: where something was
 /// laid out before the barrel pass bent it.
 type FlatRect = (f32, f32, f32, f32);
@@ -7756,6 +7789,7 @@ impl TerminalView {
     /// Bracketed because the far end asked to be told: an editor that turns
     /// paste bracketing on is an editor that will treat these bytes as
     /// content rather than as keys, which is exactly what a dropped path is.
+    /// What the text may carry is `paste_bytes`'s decision, not this one's.
     fn paste_text(&self, text: &str) {
         let bracketed = self
             .session
@@ -7763,11 +7797,10 @@ impl TerminalView {
             .lock()
             .mode()
             .contains(TermMode::BRACKETED_PASTE);
-        let bytes = if bracketed {
-            [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat()
-        } else {
-            text.as_bytes().to_vec()
-        };
+        let bytes = paste_bytes(text, bracketed);
+        if bytes.is_empty() {
+            return;
+        }
         self.session.notifier.notify(bytes);
     }
     fn has_selection(&self) -> bool {
@@ -15579,6 +15612,113 @@ mod tests {
             "unbracketed, a newline is an Enter"
         );
         assert_eq!(notes_paste("\r\n\r\n", true), None, "nothing to send");
+    }
+
+    // ── paste: row #6 of the terminal-input manifest ───────────────────────
+
+    /// A clipboard cannot close its own bracket. The attack is a line copied
+    /// off a web page that carries `ESC[201~` and a command after it: the
+    /// bracket ends where the page said, and the shell reads the rest as keys
+    /// and runs it. ↪ had this test from the day it shipped; the paste the
+    /// person makes with their own hands did not, and sent the clipboard as it
+    /// came.
+    ///
+    /// Mutation-tested: letting ESC through the filter, and passing the text
+    /// unfiltered, each fail this.
+    #[test]
+    fn a_paste_cannot_close_its_own_bracket() {
+        let page = "echo hello\x1b[201~rm -rf ~\r";
+        let out = paste_bytes(page, true);
+        assert!(out.starts_with(b"\x1b[200~"), "{out:?}");
+        assert!(out.ends_with(b"\x1b[201~"), "{out:?}");
+        let closes = out.windows(6).filter(|w| *w == &b"\x1b[201~"[..]).count();
+        assert_eq!(closes, 1, "the bracket closed twice: {out:?}");
+        let escapes = out.iter().filter(|b| **b == 0x1b).count();
+        assert_eq!(escapes, 2, "an escape inside the bracket: {out:?}");
+        let inner = String::from_utf8_lossy(&out[6..out.len() - 6]).into_owned();
+        assert_eq!(
+            inner, "echo hello[201~rm -rf ~\r",
+            "the command stays inside, as text"
+        );
+    }
+
+    /// The rest of C0, DEL and C1 come out whether or not the program asked
+    /// for bracketing. A `^C` or `^Z` in a paste is a signal to the line
+    /// discipline before it is ever a character, and U+009B is CSI in one
+    /// byte's clothing. Unbracketed, ESC itself is a key — in an editor it
+    /// leaves insert mode — so it goes there too.
+    ///
+    /// Mutation-tested: filtering only when bracketed fails the unbracketed
+    /// half.
+    #[test]
+    fn a_paste_takes_out_every_control_but_the_line_breaks_and_tab() {
+        let hostile = "a\x03b\x04c\x1ad\x1ce\x7ff\u{9b}201~g\u{85}h\x1b[2Ji";
+        for bracketed in [true, false] {
+            let out = paste_bytes(hostile, bracketed);
+            let text = if bracketed {
+                &out[6..out.len() - 6]
+            } else {
+                &out[..]
+            };
+            let text = String::from_utf8(text.to_vec()).expect("still UTF-8");
+            assert_eq!(
+                text, "abcdef201~gh[2Ji",
+                "bracketed={bracketed}: every control out, every letter in"
+            );
+        }
+        assert!(
+            !paste_bytes(hostile, false).contains(&0x1b),
+            "an unbracketed escape is a key"
+        );
+    }
+
+    /// What the filter must not touch is everything else: line endings exactly
+    /// as they came (a Windows paste keeps its `\r\n`), tabs, and any text at
+    /// all. Unbracketed, the paste is the text itself — no markers.
+    ///
+    /// Mutation-tested: dropping `\r` from the kept set, and wrapping the
+    /// unbracketed paste, each fail this.
+    #[test]
+    fn a_paste_keeps_its_text_and_its_line_endings() {
+        let ordinary = "line one\r\nline two\n\tindented — café, 東京, 🦀\n";
+        let out = paste_bytes(ordinary, true);
+        assert_eq!(&out[..6], b"\x1b[200~");
+        assert_eq!(&out[6..out.len() - 6], ordinary.as_bytes());
+        assert_eq!(&out[out.len() - 6..], b"\x1b[201~");
+        assert_eq!(paste_bytes(ordinary, false), ordinary.as_bytes());
+    }
+
+    /// A clipboard holding nothing a person could read writes nothing — not
+    /// an empty bracket, which some programs answer with a redraw.
+    #[test]
+    fn a_paste_of_nothing_but_controls_writes_nothing() {
+        assert!(paste_bytes("", true).is_empty());
+        assert!(paste_bytes("\x1b\x03\x7f\u{9b}", true).is_empty());
+        assert!(paste_bytes("\x1b\x03\x7f\u{9b}", false).is_empty());
+    }
+
+    /// `paste_text` decides nothing about the bytes: every paste goes through
+    /// `paste_bytes`, so the filter above is the only one there is. Scanned
+    /// with comments stripped, so a sentence about the markers cannot satisfy
+    /// it, and a literal marker written back into the function fails it.
+    ///
+    /// Mutation-tested: restoring the old inline wrap fails this.
+    #[test]
+    fn every_paste_goes_through_paste_bytes() {
+        let src = include_str!("pane.rs");
+        let code = &src[..src.find("\n#[cfg(test)]").expect("a test module")];
+        let at = code.find("    fn paste_text(").expect("paste_text");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+        let body: String = code[at..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(body.contains("paste_bytes("), "{body}");
+        assert!(
+            !body.contains(r"\x1b[200~") && !body.contains("as_bytes()"),
+            "paste_text builds its own bytes again: {body}"
+        );
     }
 
     /// The manifest is checked, not trusted: its counted `notifier.notify`
