@@ -23,10 +23,14 @@
   'use strict';
 
   /* Every palette is a real Omarchy `colors.toml` reduced to the roles a page
-     can paint with, plus Last Voyage, which is ours. Keep this array in the
-     order the Omarchy kiosk expects: index 0 is what an unthemed page opens
-     wearing, and the rail renders in array order. */
+     can paint with, plus two of ours: Praus, read off the colors.toml in
+     parker-brown-family/omarchy-praus-theme, and Last Voyage. Keep this array
+     in the order the Omarchy kiosk expects: index 0 is what an unthemed page
+     opens wearing, and the rail renders in array order. Praus has bg #000000,
+     so its bg0 is the theme's own darker_background and sits a hair above bg,
+     not below it. */
   var PALETTES = [
+  {"name":"praus","mode":"dark","bg":"#000000","bg2":"#151915","bg0":"#040504","fg":"#D4D0BF","fg2":"#8A8778","fgb":"#EFE8D6","acc":"#86917B","mut":"#536049","sel":"#343C30","red":"#B05F55","grn":"#8A9963","yel":"#A18C60","blu":"#71829A","mag":"#937180","cyn":"#6F8D87"},
   {"name":"last-voyage","mode":"dark","bg":"#14100C","bg2":"#201913","bg0":"#0B0907","fg":"#E2C79A","fg2":"#A07A50","fgb":"#F3D69B","acc":"#DD6D16","mut":"#6C4727","sel":"#54351E","red":"#E2542A","grn":"#93663B","yel":"#D8A55E","blu":"#A1561C","mag":"#B7935E","cyn":"#F58E28"},
   {"name":"gruvbox","mode":"dark","bg":"#282828","bg2":"#3c3836","bg0":"#161616","fg":"#d4be98","fg2":"#7c6f64","fgb":"#d4be98","acc":"#7daea3","mut":"#665c54","sel":"#504945","red":"#ea6962","grn":"#a9b665","yel":"#d8a657","blu":"#7daea3","mag":"#d3869b","cyn":"#89b482"},
   {"name":"osaka-jade","mode":"dark","bg":"#111c18","bg2":"#23372B","bg0":"#090f0d","fg":"#C1C497","fg2":"#81B8A8","fgb":"#F7E8B2","acc":"#509475","mut":"#53685B","sel":"#32473B","red":"#FF5345","grn":"#549e6a","yel":"#459451","blu":"#509475","mag":"#D2689C","cyn":"#2DD5B7"},
