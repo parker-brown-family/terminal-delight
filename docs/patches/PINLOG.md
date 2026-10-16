@@ -48,3 +48,12 @@ bump has to rebase them:
   targets wait for the first frame that draws a path (#953, ~96 MiB of GPU
   memory on an idle window). One call moved in `WgpuRenderer::draw`; applies
   after 0001-0004.
+- 2026-10-16, on `abbe85a`: `0007-path-targets-fit-the-paths` — the same two
+  targets are sized to the largest batch of paths a frame draws (grown in
+  64-pixel steps, never shrunk until a resize) and each batch is rasterised at
+  a whole-pixel offset into them, which the path sprite now carries (#962). A
+  window showing sticky notes stops paying ~96 MiB for them. Touches
+  `WgpuRenderer::{draw, ensure_intermediate_textures, draw_paths_to_intermediate,
+  draw_paths_from_intermediate}`, `PathSprite` and `vs_path` in `shaders.wgsl`;
+  applies after 0006. Edge pixels of a note can differ by 1/255 from the
+  full-surface target (a different divisor in the clip-space conversion).

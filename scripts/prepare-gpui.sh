@@ -24,7 +24,12 @@
 #                             that draws a path instead of the first frame of
 #                             all: ~96 MiB of GPU memory an idle window that
 #                             draws no path never needs (#953). Delta on the
-#                             renderer patches; applies last.
+#                             renderer patches; applies after them.
+#   0007-path-targets-fit-the-paths — sizes those two targets to the largest
+#                             batch of paths a frame draws, rasterised at a
+#                             whole-pixel offset, instead of the surface: a
+#                             sticky note costs ~2 MiB, not ~96 (#962). Delta
+#                             on 0006; applies last.
 # Idempotent; safe to re-run.
 set -euo pipefail
 
@@ -38,9 +43,10 @@ patch_tubes="$repo_root/docs/patches/0004-warp-tube-cap-32.patch"
 patch_glyph="$repo_root/docs/patches/0005-glyph-transform.patch"
 patch_gpl="$repo_root/docs/patches/0002-sever-gpl-crates.patch"
 patch_lazy="$repo_root/docs/patches/0006-lazy-path-targets.patch"
+patch_fit="$repo_root/docs/patches/0007-path-targets-fit-the-paths.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy"; do
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -103,3 +109,8 @@ apply_patch "$patch_gpl" "sever-gpl-crates" \
 # sentinel: its marker comment present means the deferral is already in.
 apply_patch "$patch_lazy" "lazy-path-targets" \
     'grep -rqF "td-lazy-path-targets" crates/gpui_wgpu/src'
+# 0007-path-targets-fit-the-paths rewrites the call 0006 guards, so it applies
+# after 0006.
+# sentinel: its marker comment present means the fitted targets are already in.
+apply_patch "$patch_fit" "path-targets-fit-the-paths" \
+    'grep -rqF "td-path-targets-fit" crates/gpui_wgpu/src'
