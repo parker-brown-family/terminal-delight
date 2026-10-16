@@ -6278,10 +6278,22 @@ impl TerminalView {
         let m = &ks.modifiers;
         let plain = !m.control && !m.alt && !m.platform;
         let key = ks.key.as_str();
-        if key == "escape" {
+        // Escape and Return both mean DONE. Folding here folds every other
+        // window on this workspace too: the hotkey raised the overlay in all of
+        // them, and one left standing beside a closed one is what the second
+        // press of the hotkey could never bring back into step.
+        if key == "escape" || (plain && key == "enter") {
             theme::set_paint_mode(cx, false);
+            crate::ctl::fold_paint_on_my_workspace();
             cx.notify();
-            return PaintKey::Bubble;
+            // Escape bubbles so the workspace closes anything of its own
+            // underneath; Return stops here — it must reach neither the
+            // terminal nor the bench composer behind the cards.
+            return if key == "escape" {
+                PaintKey::Bubble
+            } else {
+                PaintKey::Took
+            };
         }
         if !plain {
             // Modified chords still pass, so the overlay is never a trap.
@@ -6353,8 +6365,9 @@ impl TerminalView {
         }
         // Anything else printable is swallowed rather than typed: the overlay is
         // modal, and a miss should be a no-op, not a keystroke into whatever is
-        // running behind it.
-        if key.chars().count() == 1 {
+        // running behind it. The named keys that type (tab, space, backspace,
+        // delete) are the same miss, and `keylayer` routes them here for it.
+        if key.chars().count() == 1 || crate::keylayer::PAINT_SWALLOWS.contains(&key) {
             return PaintKey::Took;
         }
         PaintKey::Pass

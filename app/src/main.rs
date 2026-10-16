@@ -18017,6 +18017,17 @@ impl Workspace {
         // pane is behind a modal and cannot be typed into.
         if theme::paint_mode(cx) && !m.control && !m.alt && !m.shift {
             let key = ks.key.as_str();
+            // DONE, with no pane holding focus to say it (a focused pane folds
+            // the overlay itself and this branch never sees the key). Return
+            // stops here; escape goes on to close anything else that is open.
+            if key == "enter" || key == "escape" {
+                theme::set_paint_mode(cx, false);
+                ctl::fold_paint_on_my_workspace();
+                cx.notify();
+                if key == "enter" {
+                    return;
+                }
+            }
             if matches!(key, "left" | "right" | "up" | "down") {
                 match paint::arrow(theme::paint_target(cx), key) {
                     paint::Arrow::Walk => {

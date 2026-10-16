@@ -365,7 +365,7 @@ pub fn legend(cx: &App, walk: &[&str], lead_verb: &str, worn: &Wearing) -> Strin
         });
     }
     parts.push(lead_verb);
-    parts.push("esc done");
+    parts.push("↵ esc done");
     parts.join(" · ")
 }
 
