@@ -3634,6 +3634,64 @@ fn a_header_being_renamed_takes_a_paste_instead_of_the_shell(cx: &mut TestAppCon
     );
 }
 
+/// The terminal and bench ask the workspace for the same launcher. The key
+/// never reaches the running program and opening it does not flip the face.
+#[gpui::test]
+fn terminal_launcher_alt_a_and_header_share_the_bench_event(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    pane.settle();
+    let launches = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log = launches.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&pane.view, move |view, _: &super::OpenAgentLauncher, cx| {
+            log.borrow_mut()
+                .push((view.entity_id(), view.read(cx).bench.face()));
+        })
+        .detach();
+    });
+    let id = pane.view.entity_id();
+    for face in [Face::Terminal, Face::Workbench] {
+        pane.view.update(pane.cx, |v, cx| v.set_face(face, cx));
+        pane.redraw();
+        pane.keys("alt-a");
+        assert_eq!(pane.face(), face);
+        let bounds = pane
+            .cx
+            .debug_bounds("launch-agent")
+            .expect("header button is drawn");
+        pane.click(bounds.center(), gpui::Modifiers::default());
+        assert_eq!(pane.face(), face);
+    }
+    assert_eq!(
+        *launches.borrow(),
+        vec![
+            (id, Face::Terminal),
+            (id, Face::Terminal),
+            (id, Face::Workbench),
+            (id, Face::Workbench)
+        ],
+        "each gesture emits exactly once, naming its own pane and face"
+    );
+    pane.view
+        .update(pane.cx, |v, cx| v.set_face(Face::Terminal, cx));
+    // The workspace returns focus after closing its popup. This harness only
+    // records the launch event, so return it explicitly before checking PTY input.
+    pane.cx.update(|window, cx| {
+        let focus = pane.view.read(cx).focus_handle.clone();
+        window.focus(&focus, cx);
+    });
+    pane.redraw();
+    pane.keys("z enter");
+    pane.wait_for("z");
+    let rows = pane.rows().join("\n");
+    assert!(!rows.contains("^[a"), "Alt+A leaked into the PTY: {rows}");
+    assert!(
+        !pane.read(|v| v.wb_compose.is_some()),
+        "the launcher leaves no composer draft"
+    );
+}
+
 /// The strip stops saying an agent is reading an answer once that agent has
 /// left, and the next agent in the pane does not inherit the stamp.
 ///
