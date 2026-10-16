@@ -21615,6 +21615,9 @@ impl Workspace {
                     .flex_none()
                     .text_size(px(11.0 * s))
                     .text_color(text.alpha(0.55))
+                    .when_some(pane::chrome_glyph_font('\u{f06a9}', th), |d, family| {
+                        d.font_family(family)
+                    })
                     .child("\u{f06a9}"),
             );
         for (state, n, glyph) in cells {
@@ -30262,7 +30265,19 @@ impl Render for Workspace {
                     .text_size(px(11.5))
                     .text_color(th.text)
                     .hover(|s| s.bg(th.accent.alpha(0.2)))
-                    .child(div().w(px(18.)).flex_none().child(glyph.to_string()))
+                    .child(
+                        div()
+                            .w(px(18.))
+                            .flex_none()
+                            .when_some(
+                                glyph
+                                    .chars()
+                                    .next()
+                                    .and_then(|c| pane::chrome_glyph_font(c, &th)),
+                                |d, family| d.font_family(family),
+                            )
+                            .child(glyph.to_string()),
+                    )
                     .child(div().flex_1().min_w(px(0.)).child(label.to_string()))
             };
             // Over its own button, which is at the bottom right — see
