@@ -9950,10 +9950,9 @@ impl Render for TerminalView {
         // ctl paint …`, e.g. the Omarchy bar's palette widget). EVERY pane draws
         // its own glyph grid at once, so a wall of terminals recolours like
         // dipping a brush: paint this one, arrow to the next, Esc when the wall
-        // reads right. The tiles are the theme tray's own colour-set vocabulary
-        // (Dynamic::NAMED + signatures) — which is also, deliberately, the
-        // desktop's variant set — so a paint pick produces exactly what the tray
-        // would have, and exactly what the bar would have.
+        // reads right. The tiles are the desktop's own themes — the list
+        // Omarchy's picker shows ([`crate::palette::offered`]) — so a pane can
+        // match every other window on the machine.
         //
         // It plays like Omarchy's own picker, mouse optional: the SELECTED pane
         // is spotlit (everything else keeps the scrim), bare arrows walk the
@@ -9961,16 +9960,13 @@ impl Render for TerminalView {
         // the way it is pressed — bigger, bolder, underlined — so the keyboard
         // is legible from the tile itself instead of a legend somewhere else.
         //
-        // TWO SHELVES of vocabulary, cycled with `z` (`shift+z` back) or by
-        // clicking a pill:
-        //  · COLOUR SETS — `Dynamic::NAMED`, which is also the desktop's variant
-        //    set, so a pick produces what the tray and the bar would have.
-        //  · DESKTOP PALETTES — every Omarchy theme installed on the machine
-        //    ([`crate::palette`]), which replaces the colours outright and leaves
-        //    the theme's texture, so a pane can match every other window.
-        // `z` can be the shelf key precisely because no set and no theme is
-        // spelled with one (guarded by `named_sets_spell_a_unique_paint_alphabet`
-        // and `the_shelf_key_is_not_a_chord_on_either_shelf`).
+        // TWO SHELVES, cycled with `z` (`shift+z` back) or by clicking a pill:
+        // FAVOURITES, and OMARCHY THEMES. A pick replaces the colours outright
+        // and leaves the theme's texture. `z` can be the shelf key because no
+        // theme is spelled with one (`the_shelf_key_is_not_a_chord_on_either_shelf`).
+        //
+        // Each pane's grid sits on the cabinet's own card ([`crate::paint::card`]),
+        // the one recipe both scopes wear.
         let paint_el = theme::paint_mode(cx).then(|| {
             // the spotlight: only the focused pane is lit, and only IT answers
             // the letters — so the keyboard always has one unambiguous target.
@@ -9984,7 +9980,6 @@ impl Render for TerminalView {
             // where a letter-cycle starts, and whether `⇧F` has anything to say.
             let worn = self.worn(cx);
             let txt = th.text;
-            let ff = th.font_family.clone();
             // This pane's own skin: the tiles and pills are chrome, so their
             // corners follow the skin, and a pane wearing its own palette gets
             // a card baked against THAT rather than against the window's.
@@ -10057,42 +10052,45 @@ impl Render for TerminalView {
                     d.border(px(3.)).border_color(txt.alpha(0.9))
                 })
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(8.))
-                        // unselected cards fade back: same layout, quieter ink,
-                        // so the wall still shows what every pane is wearing.
-                        .opacity(if sel { 1.0 } else { 0.34 })
-                        .font_family(ff)
+                    // The tiles' own sizes are unscaled, so the card is too.
+                    crate::paint::card(&th, &card_sk, 1.0, sel)
+                        .child(crate::paint::card_head(
+                            &th,
+                            1.0,
+                            sel,
+                            "PAINT THIS PANE",
+                            &worn,
+                        ))
                         .child(
                             div()
-                                .text_size(px(11.))
-                                .font_weight(if sel {
-                                    gpui::FontWeight::EXTRA_BOLD
-                                } else {
-                                    gpui::FontWeight::NORMAL
-                                })
-                                .text_color(txt)
-                                .child("PAINT THIS PANE"),
-                        )
-                        .children(pills)
-                        .child(grid)
-                        .child(
-                            // The legend is the contract: everything named here
-                            // works, and nothing that works is unnamed. `↑ outer`
-                            // is the whole discovery path for the card hanging
-                            // above the wall, so it is named here rather than
-                            // only on the card nobody has looked up at yet.
-                            div().text_size(px(9.)).text_color(th.faint).child(
-                                crate::paint::legend(
-                                    cx,
-                                    &["↔ select", "↑ outer"],
-                                    "d desktop",
-                                    &worn,
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .gap(px(8.))
+                                // Unselected cards fade back: same layout, quieter
+                                // tiles, so the wall still shows what every pane is
+                                // wearing. The CONTENTS fade and the card stays
+                                // opaque — a card you can see the terminal through
+                                // is the decal the cabinet's card learned not to be.
+                                .opacity(if sel { 1.0 } else { 0.34 })
+                                .children(pills)
+                                .child(grid)
+                                .child(
+                                    // The legend is the contract: everything named
+                                    // here works, and nothing that works is unnamed.
+                                    // `↑ outer` is the whole discovery path for the
+                                    // card hanging above the wall, so it is named
+                                    // here rather than only on the card nobody has
+                                    // looked up at yet.
+                                    div().text_size(px(9.)).text_color(th.faint).child(
+                                        crate::paint::legend(
+                                            cx,
+                                            &["↔ select", "↑ outer"],
+                                            "d desktop",
+                                            &worn,
+                                        ),
+                                    ),
                                 ),
-                            ),
                         ),
                 )
         });
