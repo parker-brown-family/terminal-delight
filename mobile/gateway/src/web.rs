@@ -316,8 +316,17 @@ async fn paste(
         return refuse(StatusCode::NOT_FOUND, &format!("session {key} has no pane {pane}"));
     }
     let dir = paths::mailbox(&key, pane).join("pastes");
+    let size = body.len();
     match tokio::task::spawn_blocking(move || paste::save(&dir, &body, ext)).await {
-        Ok(Ok(path)) => Json(json!({"path": path.display().to_string()})).into_response(),
+        Ok(Ok(path)) => {
+            // One line per request, so a picture that arrived twice shows as
+            // two lines even though the second one answers the first file.
+            eprintln!(
+                "td-mobile-gateway: picture for {key}/{pane}: {} ({size} bytes)",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            );
+            Json(json!({"path": path.display().to_string()})).into_response()
+        }
         Ok(Err(e)) => refuse(
             StatusCode::INTERNAL_SERVER_ERROR,
             &format!("the picture could not be saved: {e}"),

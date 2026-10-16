@@ -342,28 +342,46 @@ class _TermViewState extends ConsumerState<TermView> {
   /// `[Image #n]`, and a shell gets a path it can use. Pasted the moment it
   /// arrives, even from the compose box, the way the desk's paste goes straight
   /// to the agent; whatever is being composed is left as it was.
+  ///
+  /// One at a time. The first try on the phone pasted the path one and a half
+  /// times: a 3 MB picture takes a moment to send, nothing said it was
+  /// sending, and a second one arrived while the first was on its way. So the
+  /// sending is said at once, and a picture that arrives meanwhile is dropped
+  /// rather than pasted again.
   Future<void> _picture(KeyboardInsertedContent c) async {
     final bytes = c.data;
     final api = ref.read(apiProvider);
+    final say = ScaffoldMessenger.maybeOf(context);
     final String? trouble;
-    if (bytes == null || bytes.isEmpty) {
+    if (_sendingPicture) {
+      trouble = 'Still sending the last picture.';
+    } else if (bytes == null || bytes.isEmpty) {
       trouble = 'The keyboard handed over an empty picture.';
     } else if (api == null || _link != _Link.live) {
       trouble = 'The terminal is not connected, so the picture was not sent.';
     } else {
+      _sendingPicture = true;
       unawaited(HapticFeedback.mediumImpact());
+      say?.showSnackBar(const SnackBar(content: Text('Sending the picture to the laptop…')));
       try {
         final path = await api.paste(widget.session, widget.pane, bytes, c.mimeType);
         if (!mounted) return;
+        say?.hideCurrentSnackBar();
         terminal.paste(path);
         return;
       } on Object catch (e) {
         trouble = 'The picture did not reach the laptop: $e';
+      } finally {
+        _sendingPicture = false;
       }
     }
     if (!mounted) return;
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(trouble)));
+    say
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(trouble)));
   }
+
+  bool _sendingPicture = false;
 
   Future<void> _zoom(double by) async {
     setState(() => _font = (_font + by).clamp(7.0, 20.0));
