@@ -132,6 +132,42 @@ The font-cuts row leaves out one run that read 170 / 144 with one pane and
 unknown. The empty gpui window and Foot were the same in every run that measured
 them.
 
+### With a sticky note on screen (#962)
+
+The path cut above reaches only a window that draws no path, and Terminal
+Delight draws exactly one kind: the sticky note, a filled polygon so it can tilt
+and be pre-warped (`sticky::fill`). Parker's working window, which always shows
+notes, still read 182 MiB on the build carrying 0006. Patch
+`0007-path-targets-fit-the-paths` sizes the two targets to the largest batch of
+paths a frame draws (one note) and rasterises each batch at a whole-pixel offset.
+
+One hidden window, one pane with one note (`PLAN READY`, seed 7, pinned), CRT
+off, `nvidia-smi` per process, 2026-10-16:
+
+| Monitor, window, UI scale | Build | GPU with the note | GPU without |
+|---|---|---|---|
+| eDP-1, 2522×1520 px, 0.85 | 0006 only (`td-566fdcc`) | 182 | not measured |
+| eDP-1, 2522×1520 px, 0.85 | 0006 + 0007 | 86 | 86 |
+| DP-2 (portrait), 1056×1870 px, 0.85 | 0006 only | 94 | 86 |
+| DP-2 (portrait), 1056×1870 px, 1.7 | 0006 only | 94 | not measured |
+| DP-2 (portrait), 1056×1870 px, 1.7 | 0006 + 0007 | 62 | not measured |
+| eDP-1, 2522×1520 px, 0.85, CRT on | 0006 only | 246 | not measured |
+| eDP-1, 2522×1520 px, 0.85, CRT on | 0006 + 0007 | 118 | not measured |
+
+The note's pixels against the 0006 build, same monitor and scale: every interior
+pixel identical; 177 edge pixels (2522×1520) and 49 (1056×1870, scale 1.7) differ,
+each by 1/255 in one channel. That is the clip-space conversion dividing by the
+target's size instead of the surface's, and it is the closest to identical a
+smaller target can get. With the CRT on, 201 of the note's 118,800 pixels differ,
+by at most 2/255: the barrel pass resamples the frame and spreads the same edge
+rounding a little (the CRT's moving scan band, which differs between any two
+captures, was cropped out). The other difference in each pair of screenshots is the
+live usage gauge in the left bar, which differs between any two captures.
+
+`nvidia-smi` totals are block-granular: on the portrait window the 0006 build's
+targets should have cost about 40 MB and showed as 8 MiB more than no note at
+first, so read the table as before and after on one monitor, not as exact sizes.
+
 ## What was found and left alone
 
 These would save memory too, and each one changes something a person might care

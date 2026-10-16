@@ -1,0 +1,202 @@
+diff --git i/crates/gpui_wgpu/src/shaders.wgsl w/crates/gpui_wgpu/src/shaders.wgsl
+index 933b88e..2de0f79 100644
+--- i/crates/gpui_wgpu/src/shaders.wgsl
++++ w/crates/gpui_wgpu/src/shaders.wgsl
+@@ -1115,6 +1115,10 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
+ 
+ struct PathSprite {
+     bounds: Bounds,
++    // td-path-targets-fit: this batch's offset in the path target, and the
++    // target's size (terminal-delight#962).
++    atlas_origin: vec2<f32>,
++    atlas_size: vec2<f32>,
+ }
+ @group(1) @binding(0) var<storage, read> b_path_sprites: array<PathSprite>;
+ 
+@@ -1129,9 +1133,10 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
+     let sprite = b_path_sprites[instance_id];
+     // Don't apply content mask because it was already accounted for when rasterizing the path.
+     let device_position = to_device_position(unit_vertex, sprite.bounds);
+-    // For screen-space intermediate texture, convert screen position to texture coordinates
++    // The path target holds this batch at a whole-pixel offset, so its texel
++    // for a screen position is the same texel the full-surface target had.
+     let screen_position = sprite.bounds.origin + unit_vertex * sprite.bounds.size;
+-    let texture_coords = screen_position / globals.viewport_size;
++    let texture_coords = (screen_position - sprite.atlas_origin) / sprite.atlas_size;
+ 
+     var out = PathVarying();
+     out.position = device_position;
+diff --git i/crates/gpui_wgpu/src/wgpu_renderer.rs w/crates/gpui_wgpu/src/wgpu_renderer.rs
+index 57d02d3..d6c5c94 100644
+--- i/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ w/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -58,6 +58,26 @@ struct GammaParams {
+ #[repr(C)]
+ struct PathSprite {
+     bounds: Bounds<ScaledPixels>,
++    // td-path-targets-fit: where this batch sits in the path target, and the
++    // target's size, so the sprite samples its own patch of a texture sized to
++    // the paths rather than the whole surface (terminal-delight#962).
++    atlas_origin: [f32; 2],
++    atlas_size: [f32; 2],
++}
++
++/// td-path-targets-fit: the device-pixel rectangle a batch of paths covers, as
++/// a whole-pixel origin and a size. Rasterising at a whole-pixel offset keeps
++/// every sample where it was, so the composited pixels are unchanged.
++fn path_batch_rect(paths: &[Path<ScaledPixels>]) -> ([f32; 2], [f32; 2]) {
++    let mut bounds = paths[0].clipped_bounds();
++    for path in paths.iter().skip(1) {
++        bounds = bounds.union(&path.clipped_bounds());
++    }
++    let x0 = bounds.origin.x.0.max(0.0).floor();
++    let y0 = bounds.origin.y.0.max(0.0).floor();
++    let x1 = (bounds.origin.x.0 + bounds.size.width.0).ceil();
++    let y1 = (bounds.origin.y.0 + bounds.size.height.0).ceil();
++    ([x0, y0], [(x1 - x0).max(1.0), (y1 - y0).max(1.0)])
+ }
+ 
+ #[derive(Clone, Debug)]
+@@ -1251,14 +1271,29 @@ impl WgpuRenderer {
+         }
+     }
+ 
+-    fn ensure_intermediate_textures(&mut self) {
+-        if self.resources().path_intermediate_texture.is_some() {
+-            return;
++    fn ensure_intermediate_textures(&mut self, need: [f32; 2]) {
++        // td-path-targets-fit: big enough for the largest batch of paths this
++        // frame draws, not the whole surface. Grown in 64-pixel steps and never
++        // shrunk until a resize invalidates it, so a frame whose paths fit what
++        // is there allocates nothing (terminal-delight#962).
++        let (surface_w, surface_h) = (self.surface_config.width, self.surface_config.height);
++        let want_w = (need[0] as u32).clamp(1, surface_w);
++        let want_h = (need[1] as u32).clamp(1, surface_h);
++        if let Some(texture) = self.resources().path_intermediate_texture.as_ref() {
++            if texture.width() >= want_w && texture.height() >= want_h {
++                return;
++            }
+         }
++        let have = self
++            .resources()
++            .path_intermediate_texture
++            .as_ref()
++            .map(|t| (t.width(), t.height()))
++            .unwrap_or((0, 0));
++        let width = want_w.max(have.0).next_multiple_of(64).min(surface_w);
++        let height = want_h.max(have.1).next_multiple_of(64).min(surface_h);
+ 
+         let format = self.surface_config.format;
+-        let width = self.surface_config.width;
+-        let height = self.surface_config.height;
+         let path_sample_count = self.rendering_params.path_sample_count;
+         let resources = self.resources_mut();
+ 
+@@ -1410,7 +1445,19 @@ impl WgpuRenderer {
+         // one, ~73 MiB of GPU memory at 2518x1517, and a window that never draws
+         // a path never needs them (terminal-delight#953).
+         if !scene.paths.is_empty() {
+-            self.ensure_intermediate_textures();
++            // td-path-targets-fit: sized to the largest batch, which is one
++            // sticky note in Terminal Delight rather than the window.
++            let mut need = [1.0f32, 1.0];
++            for batch in scene.batches() {
++                if let PrimitiveBatch::Paths(range) = batch {
++                    let paths = &scene.paths[range];
++                    if !paths.is_empty() {
++                        let (_, size) = path_batch_rect(paths);
++                        need = [need[0].max(size[0]), need[1].max(size[1])];
++                    }
++                }
++            }
++            self.ensure_intermediate_textures(need);
+         }
+ 
+         let frame_view = frame
+@@ -1467,7 +1514,16 @@ impl WgpuRenderer {
+             pad: 0,
+         };
+ 
++        // td-path-targets-fit: paths rasterise into the path target, so their
++        // device positions are relative to its size, not the surface's.
++        let path_viewport = self
++            .resources()
++            .path_intermediate_texture
++            .as_ref()
++            .map(|t| [t.width() as f32, t.height() as f32])
++            .unwrap_or(globals.viewport_size);
+         let path_globals = GlobalParams {
++            viewport_size: path_viewport,
+             premultiplied_alpha: 0,
+             ..globals
+         };
+@@ -1903,12 +1959,25 @@ impl WgpuRenderer {
+         pass: &mut wgpu::RenderPass<'_>,
+     ) -> bool {
+         let first_path = &paths[0];
++        let resources = self.resources();
++        let Some(path_intermediate_view) = resources.path_intermediate_view.as_ref() else {
++            return true;
++        };
++        // td-path-targets-fit: the same offset the batch was rasterised at.
++        let (atlas_origin, _) = path_batch_rect(paths);
++        let atlas_size = resources
++            .path_intermediate_texture
++            .as_ref()
++            .map(|t| [t.width() as f32, t.height() as f32])
++            .unwrap_or([1.0, 1.0]);
+         let sprites: Vec<PathSprite> = if paths.last().map(|p| &p.order) == Some(&first_path.order)
+         {
+             paths
+                 .iter()
+                 .map(|p| PathSprite {
+                     bounds: p.clipped_bounds(),
++                    atlas_origin,
++                    atlas_size,
+                 })
+                 .collect()
+         } else {
+@@ -1916,12 +1985,11 @@ impl WgpuRenderer {
+             for path in paths.iter().skip(1) {
+                 bounds = bounds.union(&path.clipped_bounds());
+             }
+-            vec![PathSprite { bounds }]
+-        };
+-
+-        let resources = self.resources();
+-        let Some(path_intermediate_view) = resources.path_intermediate_view.as_ref() else {
+-            return true;
++            vec![PathSprite {
++                bounds,
++                atlas_origin,
++                atlas_size,
++            }]
+         };
+ 
+         let sprite_data = unsafe { Self::instance_bytes(&sprites) };
+@@ -1941,11 +2009,23 @@ impl WgpuRenderer {
+         paths: &[Path<ScaledPixels>],
+         instance_offset: &mut u64,
+     ) -> bool {
++        // td-path-targets-fit: the batch is drawn at its own whole-pixel offset
++        // in the path target; positions and clip bounds move together, so the
++        // coverage and the gradient each fragment computes are unchanged.
++        let (origin, _) = path_batch_rect(paths);
++        let shift = |p: Point<ScaledPixels>| Point {
++            x: ScaledPixels(p.x.0 - origin[0]),
++            y: ScaledPixels(p.y.0 - origin[1]),
++        };
+         let mut vertices = Vec::new();
+         for path in paths {
+-            let bounds = path.clipped_bounds();
++            let clipped = path.clipped_bounds();
++            let bounds = Bounds {
++                origin: shift(clipped.origin),
++                size: clipped.size,
++            };
+             vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
+-                xy_position: v.xy_position,
++                xy_position: shift(v.xy_position),
+                 st_position: v.st_position,
+                 color: path.color,
+                 bounds,
