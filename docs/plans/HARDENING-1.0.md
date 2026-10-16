@@ -26,7 +26,7 @@ moat work, tracked **outside** the 1.0 milestone so it cannot inflate the 1.0 ba
 | North-Star criterion | 1.0 bar | Status |
 |---|---|---|
 | Snappy like native | key→photon within +2 ms of Alacritty, rigorously instrumented | ⚠ crude only (p50≈121µs, one box, no A/B) → **#137** |
-| 20 terminals, one window | 20 PTYs, focused ≥110 FPS, RAM < Tilix | ❌ never measured → **#138** |
+| 20 terminals, one window | 20 PTYs, focused ≥110 FPS, RAM < Tilix | ⚠ one idle window measured by `scripts/idle-memory.sh` (2026-10-15, RTX 3080 laptop): 182–183 MiB RSS / 153–154 PSS with 1 pane, 215–216 / 174–175 with 4, 86 MiB GPU (was 208–210 / 171–176, 242–244 / 192–198, 182 GPU; Foot 33 / 18). Every part is accounted in [idle-memory-account.md](idle-memory-account.md) → **#953**. 20 panes against Tilix and the FPS bar still unmeasured → **#138** |
 | The look is free | FX ≤1 ms GPU frame time, 0 added latency | ✅ CRT-lite + shaders landed |
 | Polished like a web app | blind A/B reads top-tier | ✅ distinct identity; full bar = polish pass |
 | Modify on the fly | hot-reload from data files | ✅ |

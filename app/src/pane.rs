@@ -3558,7 +3558,7 @@ fn grid_row(cells: &[crate::vt::Cell], th: &Theme) -> GridRow {
             Some(prev) if prev.color == color => prev.len += len,
             _ => runs.push(TextRun {
                 len,
-                font: grid_font(th, FontWeight::default()),
+                font: reader_grid_font(th, FontWeight::default()),
                 color,
                 background_color: None,
                 underline: None,
@@ -3939,6 +3939,7 @@ impl TerminalView {
         let agent_mode = self.mode.is_agent();
         let inverted = should_invert(anchor_top(), th.crawl, alt_screen_active, agent_mode);
         let mut lines = self.styled_lines(&th, inverted);
+        arm_grid_fallbacks(&mut lines, cx.text_system());
         if inverted {
             let wraps = if agent_mode {
                 Vec::new()
@@ -4091,7 +4092,7 @@ impl TerminalView {
     pub fn reader_ink(&self, cx: &App) -> crate::transcript::Ink {
         let th = self.resolved_theme(cx);
         crate::transcript::Ink {
-            font: grid_font(&th, FontWeight::default()),
+            font: reader_grid_font(&th, FontWeight::default()),
             text: th.text,
             human: th.human,
             faint: th.faint,
@@ -5499,7 +5500,9 @@ impl TerminalView {
         // they drift up from the text by half a row by the bottom of a tall pane.
         self.scale = window.scale_factor();
         self.cell_h = laid_out_length(th.cell_h, self.scale);
-        let font = grid_font(th, FontWeight::NORMAL);
+        // The face alone: resolving a font that carries the fallback chain is
+        // what loads every family in it, and 'M' is the primary's own glyph.
+        let font = grid_face(th, FontWeight::NORMAL);
         if let Ok(w) = window.text_system().advance(
             window.text_system().resolve_font(&font),
             px(th.font_size),
@@ -9044,6 +9047,60 @@ pub fn resolve_family(requested: &str) -> String {
     requested.to_string()
 }
 
+/// The family the chrome's fullwidth glyphs are drawn from (see
+/// [`chrome_glyph_family`]).
+///
+/// The font search lands on Noto Sans CJK JP Regular for them, and naming that
+/// family would load all seven of its weights — seven `.ttc` files, 4.3 MiB
+/// mapped on Parker's box — for one glyph. Its monospaced sibling lives in the
+/// same Regular and Bold files only, and carries the same glyph: for U+FF0B the
+/// same glyph id (59057), advance, ascent and descent, and a byte-identical
+/// rasterisation through swash (what gpui rasterises with) at 13 px times every
+/// scale from 1 to 2.5, checked 2026-10-15.
+const CHROME_CJK_FAMILY: &str = "Noto Sans Mono CJK JP";
+
+/// The family a chrome glyph has to be drawn from, named, when the UI font has
+/// no shape for it.
+///
+/// A glyph the element's font lacks goes to cosmic-text's fallback, and when no
+/// preset fallback covers it, cosmic-text tries every installed font in turn —
+/// mapping each file, parsing its tables and keeping it for the life of the
+/// process. Two glyphs on an idle window's chrome did that on Parker's box
+/// (#953): the logo placeholder's FULLWIDTH PLUS SIGN (U+FF0B), which the search
+/// found in Noto Sans CJK JP Regular after 242 fonts, and the agent counter's
+/// robot (U+F06A9, a Nerd Font icon), found in JetBrainsMono Nerd Font Regular
+/// after 233 — between them 236 font files held open, about 8 MiB mapped and
+/// 4 MiB of parsed tables, for two glyphs. Naming the face the search ends on
+/// (or, for the plus, a family carrying the identical glyph — see
+/// [`CHROME_CJK_FAMILY`]) draws the same glyph without the search.
+///
+/// - A Nerd Font icon (the private use areas) comes from the grid's resolved
+///   family, which is the Nerd Font TD dresses the grid in. A grid font without
+///   the glyph searches from there exactly as the UI font would have.
+/// - A fullwidth form comes from [`CHROME_CJK_FAMILY`] when it is installed, and
+///   is left to the search when it is not.
+/// - Anything else is the UI font's to draw: `None`.
+pub(crate) fn chrome_glyph_family(
+    ch: char,
+    grid_family: &str,
+    installed: impl Fn(&str) -> bool,
+) -> Option<String> {
+    match ch {
+        '\u{E000}'..='\u{F8FF}' | '\u{F0000}'..='\u{FFFFD}' | '\u{100000}'..='\u{10FFFD}' => {
+            Some(grid_family.to_string())
+        }
+        '\u{FF01}'..='\u{FF60}' | '\u{FFE0}'..='\u{FFE6}' => {
+            installed(CHROME_CJK_FAMILY).then(|| CHROME_CJK_FAMILY.to_string())
+        }
+        _ => None,
+    }
+}
+
+/// [`chrome_glyph_family`] against this box's fonts and a theme's grid family.
+pub(crate) fn chrome_glyph_font(ch: char, th: &Theme) -> Option<String> {
+    chrome_glyph_family(ch, &resolve_family(&th.font_family), font_available)
+}
+
 /// Startup diagnostic: if the ACTIVE font family isn't installed, describe the
 /// fallback that will be used (so a silent substitution can never hide again).
 /// Returns None when the wanted family is present. Call after
@@ -9104,7 +9161,134 @@ pub(crate) fn script_fallbacks() -> Option<gpui::FontFallbacks> {
     .clone()
 }
 
-fn grid_font(th: &Theme, weight: FontWeight) -> Font {
+/// When the grid starts handing gpui its per-glyph fallback chain.
+///
+/// A font that carries [`script_fallbacks`] makes gpui load every face of every
+/// family in the chain the first time the font is resolved — on Parker's box
+/// seven weights each of the Noto Sans CJK families, six of Noto Sans Mono and
+/// seven of Noto Sans Devanagari, about 5 MiB of mapped font files and parsed
+/// tables in an idle window that has not drawn one CJK glyph (#953). The chain
+/// only ever changes a glyph the run's own font has no shape for: gpui gives
+/// every other character to the primary font, with or without a chain. So the
+/// chain is withheld until the first frame whose rows hold such a glyph, put on
+/// every run of that frame, and carried by every grid font from then on, which
+/// is exactly what the grid did before.
+///
+/// One per process, like the chain itself; the tests build their own.
+pub(crate) struct FallbackLatch(std::sync::atomic::AtomicBool);
+
+static GRID_FALLBACKS: FallbackLatch = FallbackLatch::new();
+
+impl FallbackLatch {
+    pub(crate) const fn new() -> Self {
+        Self(std::sync::atomic::AtomicBool::new(false))
+    }
+
+    fn armed(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The chain a grid font carries right now: none until a row has needed it.
+    fn chain(&self) -> Option<gpui::FontFallbacks> {
+        if self.armed() {
+            script_fallbacks()
+        } else {
+            None
+        }
+    }
+
+    /// Read a frame's rows before they are shaped. If any holds a glyph its own
+    /// run's font does not carry, switch the chain on and hang it on every run
+    /// of the frame, so the row that needed it is drawn with it. Returns whether
+    /// this call is the one that switched it on.
+    ///
+    /// `face` names a run's font as the coverage check knows it, and `covers`
+    /// answers whether that face has a glyph for a character. ASCII is never
+    /// asked about: gpui gives it to the primary font whatever the chain says.
+    fn arm<K: Copy>(
+        &self,
+        lines: &mut [(String, Vec<TextRun>)],
+        face: impl FnMut(&Font) -> K,
+        covers: impl FnMut(K, char) -> bool,
+    ) -> bool {
+        if self.armed() || !rows_need_fallbacks(lines, face, covers) {
+            return false;
+        }
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        let chain = script_fallbacks();
+        for (_, runs) in lines.iter_mut() {
+            for run in runs {
+                run.font.fallbacks = chain.clone();
+            }
+        }
+        true
+    }
+}
+
+/// Whether any run holds a non-ASCII character its own font has no glyph for.
+/// A row whose runs do not tile its text is answered yes, which is the old
+/// behaviour, rather than guessed at.
+fn rows_need_fallbacks<K: Copy>(
+    lines: &[(String, Vec<TextRun>)],
+    mut face: impl FnMut(&Font) -> K,
+    mut covers: impl FnMut(K, char) -> bool,
+) -> bool {
+    for (text, runs) in lines {
+        if text.is_ascii() {
+            continue;
+        }
+        let mut at = 0;
+        for run in runs {
+            let Some(span) = text.get(at..at + run.len) else {
+                return true;
+            };
+            at += run.len;
+            if span.is_ascii() {
+                continue;
+            }
+            let key = face(&run.font);
+            if span.chars().any(|ch| !ch.is_ascii() && !covers(key, ch)) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Whether a font's own face — its fallbacks ignored — has a glyph for `ch`.
+/// The grid asks about the same box-drawing and prompt glyphs every frame until
+/// the chain is armed, so a yes is remembered; a no arms the chain at once and
+/// is never asked again.
+fn face_has_glyph(ts: &gpui::TextSystem, face: gpui::FontId, ch: char) -> bool {
+    thread_local! {
+        static HAS: RefCell<std::collections::HashSet<(gpui::FontId, char)>> =
+            RefCell::default();
+    }
+    if HAS.with(|h| h.borrow().contains(&(face, ch))) {
+        return true;
+    }
+    let yes = ts.advance(face, px(16.), ch).is_ok();
+    if yes {
+        HAS.with(|h| h.borrow_mut().insert((face, ch)));
+    }
+    yes
+}
+
+/// [`FallbackLatch::arm`] for the grid, against gpui's own fonts.
+fn arm_grid_fallbacks(lines: &mut [(String, Vec<TextRun>)], ts: &gpui::TextSystem) {
+    GRID_FALLBACKS.arm(
+        lines,
+        |f| {
+            let mut bare = f.clone();
+            bare.fallbacks = None;
+            ts.resolve_font(&bare)
+        },
+        |id, ch| face_has_glyph(ts, id, ch),
+    );
+}
+
+/// The grid's face for a theme and weight, with no fallback chain at all.
+fn grid_face(th: &Theme, weight: FontWeight) -> Font {
     // Crawl mode swaps the whole grid to the bundled News-Gothic crawl font,
     // italic, for that iconic recede-into-the-distance look. The perspective
     // itself is the renderer's job (the tube's crawl warp); here we only change
@@ -9117,12 +9301,26 @@ fn grid_font(th: &Theme, weight: FontWeight) -> Font {
     };
     let mut f = font(family);
     f.weight = weight;
-    // Per-glyph fallback so CJK / Devanagari content renders real glyphs instead
-    // of tofu boxes; only fires for glyphs the primary mono font is missing.
-    f.fallbacks = script_fallbacks();
     if th.crawl {
         f.style = FontStyle::Italic;
     }
+    f
+}
+
+/// The live grid's font: per-glyph fallback so CJK / Devanagari content renders
+/// real glyphs instead of tofu boxes, once a row has needed it (see
+/// [`FallbackLatch`]); it only fires for glyphs the primary mono font is missing.
+fn grid_font(th: &Theme, weight: FontWeight) -> Font {
+    let mut f = grid_face(th, weight);
+    f.fallbacks = GRID_FALLBACKS.chain();
+    f
+}
+
+/// The grid's font for the FOCUS reader, which draws a transcript the live grid
+/// may never have shown: it carries the chain from the start, as before.
+fn reader_grid_font(th: &Theme, weight: FontWeight) -> Font {
+    let mut f = grid_face(th, weight);
+    f.fallbacks = script_fallbacks();
     f
 }
 
@@ -9895,6 +10093,7 @@ impl Render for TerminalView {
             );
         }
         let mut lines = self.styled_lines(&th, inverted);
+        arm_grid_fallbacks(&mut lines, window.text_system());
         if std::env::var("TD_ANCHORDEBUG").is_ok() {
             // The last few non-blank grid rows + whether each is detected as the
             // human prompt line — reveals a caret we don't recognise or a leading
@@ -10361,7 +10560,14 @@ impl Render for TerminalView {
                         s.text_color(bar_fg.alpha(0.85))
                             .border_color(sk.ink.edge_strong)
                     })
-                    .child(div().text_size(px(13. * scale)).child("\u{ff0b}"))
+                    .child(
+                        div()
+                            .text_size(px(13. * scale))
+                            .when_some(chrome_glyph_font('\u{ff0b}', &th), |d, family| {
+                                d.font_family(family)
+                            })
+                            .child("\u{ff0b}"),
+                    )
                     .child(div().text_size(px(9.5 * scale)).child("logo"))
                     .into_any_element()
             }
@@ -11156,6 +11362,171 @@ impl Render for TerminalView {
 
 #[cfg(test)]
 mod tests {
+    /// A grid run in the font the tests pretend is the grid's, with no chain.
+    fn grid_run(len: usize) -> gpui::TextRun {
+        gpui::TextRun {
+            len,
+            font: gpui::font("JetBrainsMono Nerd Font"),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }
+    }
+
+    /// #953. Resolving a grid font that carries the fallback chain loads every
+    /// face of every family in it, so the chain waits for a row that needs it.
+    /// Unarmed, the grid gets no chain; a frame whose glyphs its font all carries
+    /// leaves it unarmed; the first frame holding one it lacks arms it, and that
+    /// frame's runs carry the chain so the row that needed it is drawn with it.
+    #[test]
+    fn the_grid_fallback_chain_waits_for_a_glyph_its_own_font_lacks() {
+        use super::{script_fallbacks, FallbackLatch};
+        let chain = script_fallbacks();
+        assert!(
+            chain.is_some(),
+            "with no font registry every family counts as installed"
+        );
+        let latch = FallbackLatch::new();
+        assert_eq!(latch.chain(), None, "nothing has needed the chain yet");
+
+        // The primary carries ASCII, box drawing and the prompt's arrow, not 中.
+        let covers = |_: (), ch: char| ch != '中';
+        let prompt = "╭─ ~/Work ❯ ls";
+        let mut quiet = vec![(prompt.to_string(), vec![grid_run(prompt.len())])];
+        assert!(
+            !latch.arm(&mut quiet, |_| (), covers),
+            "every glyph is the font's own"
+        );
+        assert_eq!(latch.chain(), None, "so the grid still carries no chain");
+        assert!(quiet[0].1.iter().all(|r| r.font.fallbacks.is_none()));
+
+        let cjk = "echo 中文";
+        let mut frame = vec![
+            ("ok".to_string(), vec![grid_run(2)]),
+            (cjk.to_string(), vec![grid_run(5), grid_run(cjk.len() - 5)]),
+        ];
+        assert!(
+            latch.arm(&mut frame, |_| (), covers),
+            "中 is not the font's"
+        );
+        assert!(
+            frame
+                .iter()
+                .flat_map(|(_, runs)| runs)
+                .all(|r| r.font.fallbacks == chain),
+            "every run of the frame that armed it carries the chain"
+        );
+        assert_eq!(
+            latch.chain(),
+            chain,
+            "and every grid font after it, as before #953"
+        );
+        assert!(!latch.arm(&mut quiet, |_| (), |_, _| false), "it arms once");
+    }
+
+    /// The coverage check never asks about ASCII, which gpui gives to the
+    /// primary whatever the chain says, and a row whose runs do not tile its
+    /// text is answered "needs it" — the old behaviour — rather than guessed.
+    #[test]
+    fn only_a_missing_non_ascii_glyph_needs_the_chain() {
+        use super::rows_need_fallbacks;
+        let nothing = |_: (), _: char| false;
+        let plain = vec![("cargo build".to_string(), vec![grid_run(11)])];
+        assert!(
+            !rows_need_fallbacks(&plain, |_| (), nothing),
+            "ASCII is never asked about"
+        );
+        let box_row = vec![("│ é │".to_string(), vec![grid_run("│ é │".len())])];
+        assert!(!rows_need_fallbacks(&box_row, |_| (), |_, _| true));
+        assert!(rows_need_fallbacks(&box_row, |_| (), nothing));
+        let torn = vec![("│ é │".to_string(), vec![grid_run(1)])];
+        assert!(
+            rows_need_fallbacks(&torn, |_| (), |_, _| true),
+            "a run that ends inside a character is not trusted"
+        );
+    }
+
+    /// #953: two chrome glyphs the UI font has no shape for sent cosmic-text
+    /// through every installed font. Each is drawn from the face that search
+    /// ended on, named.
+    #[test]
+    fn chrome_glyphs_the_ui_font_lacks_come_from_a_named_face() {
+        use super::chrome_glyph_family as family;
+        let all = |_: &str| true;
+        let none = |_: &str| false;
+        let grid = "JetBrainsMono Nerd Font";
+        assert_eq!(
+            family('\u{f06a9}', grid, all).as_deref(),
+            Some(grid),
+            "the agent counter's robot is the grid's Nerd Font glyph"
+        );
+        assert_eq!(
+            family('\u{e0b0}', grid, none).as_deref(),
+            Some(grid),
+            "a Nerd Font icon does not wait on CJK being installed"
+        );
+        assert_eq!(
+            family('\u{ff0b}', grid, all).as_deref(),
+            Some("Noto Sans Mono CJK JP"),
+            "the logo placeholder's fullwidth plus is the CJK face's"
+        );
+        assert_eq!(
+            family('\u{ff0b}', grid, none),
+            None,
+            "with no CJK face installed it is left to the search, as before"
+        );
+        for ch in ['+', '✕', '☐', '▶', '—', 'é', '🎨'] {
+            assert_eq!(family(ch, grid, all), None, "{ch} is the UI font's to draw");
+        }
+    }
+
+    /// The three places #953 changed only work while they stay wired: the
+    /// glyphs that triggered the search name their face, the per-frame 'M'
+    /// measurement resolves the bare face (resolving the chained font is what
+    /// loads the chain), and both readers of the grid's rows arm the chain
+    /// before shaping them.
+    #[test]
+    fn the_idle_font_cuts_stay_wired() {
+        let cut = |src: &'static str| {
+            src.split_once("\n#[cfg(test)]\nmod tests {")
+                .map_or(src, |(c, _)| c)
+        };
+        // The text in the `n` bytes before `at`, from a character boundary.
+        let before = |src: &'static str, at: usize, n: usize| {
+            let mut from = at.saturating_sub(n);
+            while !src.is_char_boundary(from) {
+                from -= 1;
+            }
+            &src[from..at]
+        };
+        let pane = cut(include_str!("pane.rs"));
+        let main = cut(include_str!("main.rs"));
+        for (src, glyph, file) in [
+            (pane, ".child(\"\\u{ff0b}\")", "pane.rs"),
+            (main, ".child(\"\\u{f06a9}\")", "main.rs"),
+        ] {
+            let at = src
+                .find(glyph)
+                .unwrap_or_else(|| panic!("{glyph} is drawn in {file}"));
+            assert!(
+                before(src, at, 400).contains("chrome_glyph_font("),
+                "{glyph} in {file} names its face with chrome_glyph_font"
+            );
+        }
+        let measure = pane.find("'M',\n").expect("the cell-width measurement");
+        assert!(
+            before(pane, measure, 700).contains("let font = grid_face("),
+            "the 'M' advance is measured on the bare face, not the chained font"
+        );
+        assert_eq!(
+            pane.matches("self.styled_lines(&th, inverted);\n        arm_grid_fallbacks(")
+                .count(),
+            2,
+            "the live grid and the FOCUS mirror both arm the chain before shaping"
+        );
+    }
+
     #[test]
     fn a_flat_screen_gets_no_header_bloom_and_a_tube_keeps_it() {
         let ink = gpui::rgb(0xd070ff).into();
