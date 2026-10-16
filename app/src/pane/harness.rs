@@ -115,24 +115,7 @@ impl Pane {
     /// A pane whose terminal runs `/bin/sh -c script`, focused, in a window of
     /// its own, laid out once.
     pub(super) fn running(cx: &mut TestAppContext, script: &str) -> Pane {
-        take_the_turn();
-        // The pseudoterminal's reader is a real thread, and its events wake
-        // the pane's pump from there. gpui's test scheduler reads a wake from
-        // another thread as nondeterminism unless it is told to expect one.
-        cx.executor().allow_parking();
-        cx.update(|cx| {
-            let mut outer = crate::theme::house_outer();
-            outer.grade.warp = 0.0;
-            // The house sizes, but no colour grading: the house brightness and
-            // contrast take every near-black background to exactly black, and
-            // a test asking which colour a pane draws needs two it can tell
-            // apart.
-            outer.grade.brightness = 0.5;
-            outer.grade.contrast = 0.5;
-            outer.grade.colour = 0.5;
-            crate::theme::init_embedded(cx, outer);
-            crate::skin::init_embedded(cx);
-        });
+        Self::prepare(cx);
         let grid = term::GridSize {
             cols: 100,
             rows: 28,
@@ -159,6 +142,57 @@ impl Pane {
                 cx,
             )
         });
+        Self::shown(window, cx)
+    }
+
+    /// A pane built the way a launch builds one — `TerminalView::new_restored`
+    /// with the restore it is handed, so whatever `restore.program` names is
+    /// what the terminal runs — focused, in a window of its own, laid out once.
+    pub(super) fn launched(cx: &mut TestAppContext, restore: crate::session::PaneRestore) -> Pane {
+        Self::prepare(cx);
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(WINDOW.0), px(WINDOW.1)), move |_, cx| {
+                TerminalView::new_restored(restore, cx)
+            })
+        };
+        // The same reason as `running`: a window-owned terminal is ended by
+        // its child, and the child may never end.
+        let reader = window
+            .root(cx)
+            .expect("the pane is the window's root view")
+            .read_with(cx, |v, _| v.session.notifier.clone());
+        cx.on_quit(move || {
+            reader.shutdown();
+        });
+        Self::shown(window, cx)
+    }
+
+    /// Everything a harness pane needs before its window opens: the turn, a
+    /// scheduler that expects the reader thread, and a flat, ungraded theme.
+    fn prepare(cx: &mut TestAppContext) {
+        take_the_turn();
+        // The pseudoterminal's reader is a real thread, and its events wake
+        // the pane's pump from there. gpui's test scheduler reads a wake from
+        // another thread as nondeterminism unless it is told to expect one.
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            let mut outer = crate::theme::house_outer();
+            outer.grade.warp = 0.0;
+            // The house sizes, but no colour grading: the house brightness and
+            // contrast take every near-black background to exactly black, and
+            // a test asking which colour a pane draws needs two it can tell
+            // apart.
+            outer.grade.brightness = 0.5;
+            outer.grade.contrast = 0.5;
+            outer.grade.colour = 0.5;
+            crate::theme::init_embedded(cx, outer);
+            crate::skin::init_embedded(cx);
+        });
+    }
+
+    /// Focus the pane its window holds, lay it out once, and check it is flat.
+    fn shown(window: gpui::WindowHandle<TerminalView>, cx: &mut TestAppContext) -> Pane {
         let view = window.root(cx).expect("the pane is the window's root view");
         let vcx = VisualTestContext::from_window(window.into(), cx).into_mut();
         vcx.update(|window, cx| {

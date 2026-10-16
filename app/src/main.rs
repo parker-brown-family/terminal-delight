@@ -37,6 +37,7 @@ mod channel;
 mod crt;
 mod csd;
 mod ctl;
+mod defaultterm;
 mod demo;
 mod derive;
 mod dirlogo;
@@ -5220,6 +5221,8 @@ fn plan_attach(saved: &[SavedTab], live: &[hostproto::PaneInfo]) -> AttachPlan {
                 {
                     LeafPlan::Duplicate {
                         restore: session::PaneRestore {
+                            program: None,
+                            mark: None,
                             cwd: cwd.clone(),
                             // No recipe at all, and that is the load-bearing
                             // part rather than a preference. See below.
@@ -5233,6 +5236,8 @@ fn plan_attach(saved: &[SavedTab], live: &[hostproto::PaneInfo]) -> AttachPlan {
                     spoken_for.extend(named_session(resume.as_deref()));
                     LeafPlan::Respawn {
                         restore: session::PaneRestore {
+                            program: None,
+                            mark: None,
                             cwd: cwd.clone(),
                             resume: resume.clone(),
                             logo: logo.clone(),
@@ -5638,6 +5643,8 @@ fn build_node_attached(
             ..
         } => {
             let restore = session::PaneRestore {
+                program: None,
+                mark: None,
                 cwd: cwd.clone(),
                 resume: resume.clone(),
                 logo: logo.clone(),
@@ -5716,6 +5723,8 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
         } => {
             let pane = make_pane_window_owned(
                 session::PaneRestore {
+                    program: None,
+                    mark: None,
                     cwd: cwd.clone(),
                     resume: resume.clone(),
                     logo: logo.clone(),
@@ -8015,6 +8024,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let restore = session::PaneRestore {
+            program: None,
+            mark: None,
             cwd,
             resume: run,
             logo: None,
@@ -10121,6 +10132,8 @@ impl Workspace {
         let cwd = target_pane.read(cx).runtime().cwd;
         let new_pane = self.make_pane_in_mode(
             session::PaneRestore {
+                program: None,
+                mark: None,
                 cwd,
                 resume: None,
                 logo: None,
@@ -35544,6 +35557,8 @@ mod tests {
             plan.tabs,
             vec![vec![LeafPlan::Respawn {
                 restore: session::PaneRestore {
+                    program: None,
+                    mark: None,
                     cwd: Some("/work".into()),
                     resume: Some("codex resume abc".into()),
                     logo: None,
@@ -38297,6 +38312,192 @@ mod tests {
         assert_eq!(window_title(true, "2"), "terminal-delight — scratch");
     }
 
+    // ── the xdg-terminal-exec contract ─────────────────────────────────────
+
+    fn words(w: &[&str]) -> Vec<String> {
+        w.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The four flags are read in any order, and `-e` takes the rest of the
+    /// line as the program and its arguments — a later `--app-id` included,
+    /// because by then it belongs to the program.
+    ///
+    /// Mutation-tested: stopping `-e` at the next flag fails this.
+    #[test]
+    fn a_contract_launch_reads_the_four_flags_in_any_order() {
+        let dir = |p: &str| p == "/work";
+        let want = Contract {
+            app_id: Some("org.td.tracer".into()),
+            title: Some("T".into()),
+            dir: Some("/work".into()),
+            exec: Some(words(&["htop", "-d", "5"])),
+        };
+        for line in [
+            [
+                "--app-id=org.td.tracer",
+                "--title=T",
+                "--working-directory=/work",
+            ],
+            [
+                "--working-directory=/work",
+                "--title=T",
+                "--app-id=org.td.tracer",
+            ],
+        ] {
+            let mut argv = words(&line);
+            argv.extend(words(&["-e", "htop", "-d", "5"]));
+            assert_eq!(parse_contract(&argv, dir), Some(Ok(want.clone())));
+        }
+        let c = parse_contract(&words(&["-e", "sh", "--app-id=not-mine"]), dir)
+            .expect("a contract launch")
+            .expect("accepted");
+        assert_eq!(c.app_id, None, "after -e the words are the program's");
+        assert_eq!(c.exec, Some(words(&["sh", "--app-id=not-mine"])));
+        // No -e at all: a terminal in that directory, as Super+Return asks.
+        let c = parse_contract(&words(&["--working-directory=/work"]), dir)
+            .expect("a contract launch")
+            .expect("accepted");
+        assert_eq!(c.exec, None);
+        assert_eq!(c.dir, Some("/work".into()));
+    }
+
+    /// Anything outside the four is refused with the reason, and refusing
+    /// opens nothing: `--hold` is xdg-terminal-exec's fifth key, which this
+    /// entry does not declare, so a caller sending it is how we learn somebody
+    /// needs it.
+    ///
+    /// Mutation-tested: ignoring an unknown word fails this.
+    #[test]
+    fn a_contract_launch_refuses_what_it_does_not_know() {
+        let dir = |p: &str| p == "/work";
+        for (argv, says) in [
+            (vec!["-e"], "needs a program"),
+            (vec!["--app-id=org.x", "--hold", "-e", "sh"], "`--hold`"),
+            (vec!["--title=T", "--class=x"], "`--class=x`"),
+            (vec!["--working-directory=/nowhere"], "not a directory"),
+            (vec!["--app-id=", "-e", "sh"], "needs an id"),
+        ] {
+            let got = parse_contract(&words(&argv), dir).expect("a contract launch");
+            let why = got.expect_err("refused");
+            assert!(why.contains(says), "{argv:?}: {why}");
+            match classify(&words(&argv), dir) {
+                Launch::Reply { code, .. } => assert_eq!(code, 2, "{argv:?}"),
+                other => panic!("{argv:?} opened something: {other:?}"),
+            }
+        }
+    }
+
+    /// Every word the binary knew before still means what it meant: only the
+    /// contract's own flags, FIRST, start a contract launch.
+    ///
+    /// Mutation-tested: letting any leading `--x=` start a contract fails this.
+    #[test]
+    fn every_word_the_binary_already_knew_still_means_it() {
+        let dir = |p: &str| p == "/work";
+        for argv in [
+            vec![],
+            vec!["--help"],
+            vec!["-V"],
+            vec!["ctl", "ping"],
+            vec!["/work"],
+            vec!["--frobnicate=1"],
+            vec!["default-terminal", "status"],
+        ] {
+            let argv = words(&argv);
+            assert_eq!(parse_contract(&argv, dir), None, "{argv:?}");
+            assert_eq!(
+                classify(&argv, dir),
+                dispatch(argv.first().map(String::as_str), dir),
+                "{argv:?}"
+            );
+        }
+        assert!(matches!(
+            classify(&words(&["--frobnicate=1"]), dir),
+            Launch::Reply { code: 2, .. }
+        ));
+    }
+
+    /// A contract launch is a window: it must not get the printing verbs'
+    /// SIGPIPE disposition, which would let one broken write kill it.
+    #[test]
+    fn a_contract_launch_is_a_window_not_a_printer() {
+        assert!(!prints_and_exits(&Launch::Contract(Contract::default())));
+    }
+
+    /// The first pane runs the program after `-e` directly, in the asked-for
+    /// directory or the caller's own, and wears the app-id's mark; an app-id
+    /// that means nothing to us draws no mark.
+    #[test]
+    fn the_first_pane_of_a_contract_runs_the_program() {
+        let c = Contract {
+            app_id: Some("org.omarchy.local-ai".into()),
+            title: None,
+            dir: Some("/work".into()),
+            exec: Some(words(&["claude", "--model", "local"])),
+        };
+        let seed = contract_seed(&c, Some("/home".into()));
+        assert_eq!(seed.cwd.as_deref(), Some("/work"));
+        assert_eq!(
+            seed.program,
+            Some(("claude".into(), words(&["--model", "local"])))
+        );
+        assert_eq!(seed.mark, Some("LOCAL MODEL"));
+        assert_eq!(seed.resume, None, "nothing is typed");
+        let plain = contract_seed(
+            &Contract {
+                app_id: Some("org.td.tracer".into()),
+                ..Contract::default()
+            },
+            Some("/home".into()),
+        );
+        assert_eq!(
+            plain.cwd.as_deref(),
+            Some("/home"),
+            "the caller's directory"
+        );
+        assert_eq!(plain.program, None, "a shell");
+        assert_eq!(plain.mark, None);
+        assert_eq!(launch_mark("org.omarchy.local-ai"), Some("LOCAL MODEL"));
+        assert_eq!(launch_mark("terminal-delight"), None);
+    }
+
+    /// The packaged desktop entry declares exactly the flags the parser reads.
+    /// Built here the way xdg-terminal-exec builds a command from an entry —
+    /// each key's value with the caller's value joined on, then the Exec key
+    /// and the command — and parsed back, so the entry and the parser cannot
+    /// drift apart.
+    ///
+    /// Mutation-tested: changing the entry's `X-TerminalArgDir` to `--dir=`
+    /// fails this.
+    #[test]
+    fn the_packaged_entry_speaks_the_contract_the_parser_reads() {
+        let entry = include_str!("../../packaging/terminal-delight.desktop");
+        let key = |k: &str| -> String {
+            entry
+                .lines()
+                .find_map(|l| l.strip_prefix(&format!("{k}=")))
+                .unwrap_or_else(|| panic!("the entry has no {k}"))
+                .to_string()
+        };
+        for (k, v) in defaultterm::KEYS {
+            assert_eq!(key(k), v, "{k}");
+        }
+        let mut argv = vec![
+            format!("{}org.omarchy.local-ai", key("X-TerminalArgAppId")),
+            format!("{}Local AI", key("X-TerminalArgTitle")),
+            format!("{}/work", key("X-TerminalArgDir")),
+            key("X-TerminalArgExec"),
+        ];
+        argv.extend(words(&["bash", "-c", "exec \"$@\"", "local-ai", "htop"]));
+        let c = parse_contract(&argv, |p| p == "/work")
+            .expect("a contract launch")
+            .expect("accepted");
+        assert_eq!(c.app_id.as_deref(), Some("org.omarchy.local-ai"));
+        assert_eq!(c.title.as_deref(), Some("Local AI"));
+        assert_eq!(c.dir, Some("/work".into()));
+        assert_eq!(c.exec.map(|e| e.len()), Some(5));
+    }
+
     #[test]
     fn version_and_help_are_answered_without_opening_a_window() {
         let (text, code) = flag_reply(Some("--version")).expect("--version is answered");
@@ -40364,6 +40565,8 @@ fn scratch_decision(
     let seeded = cwd.is_some() || resume.is_some();
     let seed = if seeded {
         Some(session::PaneRestore {
+            program: None,
+            mark: None,
             cwd,
             resume,
             logo: None,
@@ -40577,6 +40780,12 @@ terminal-delight — a CRT terminal built for agent work
 Usage:
   terminal-delight               open a window, restoring this workspace's saved layout
   terminal-delight <dir>         open a window whose first terminal starts in <dir>
+  terminal-delight [--app-id=<id>] [--title=<t>] [--working-directory=<dir>] [-e <program> [args...]]
+                                 open a quick window the way xdg-terminal-exec asks:
+                                 -e runs <program> in it, and the window closes when it ends
+  terminal-delight default-terminal [status|on|off]
+                                 make Terminal Delight the terminal Omarchy opens, or put
+                                 back exactly what was there before
   terminal-delight ctl <cmd>     drive a RUNNING instance over its control socket
   terminal-delight mcp           relay MCP over stdio into a RUNNING instance
   terminal-delight probe <pid>   report a terminal's cwd + resumable agent session, as JSON
@@ -40640,6 +40849,118 @@ fn flag_reply(first: Option<&str>) -> Option<(String, i32)> {
     }
 }
 
+/// What an `xdg-terminal-exec` caller asked for — the Default Terminal
+/// Specification's four keys, spelled the way `packaging/terminal-delight.desktop`
+/// declares them. Those are foot's spellings, which Omarchy already ships:
+/// `X-TerminalArgAppId=--app-id=`, `X-TerminalArgTitle=--title=`,
+/// `X-TerminalArgDir=--working-directory=` and `X-TerminalArgExec=-e`.
+///
+/// `None` everywhere is a contract launch too: `xdg-terminal-exec` with no
+/// arguments asks for a terminal and nothing else.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Contract {
+    app_id: Option<String>,
+    title: Option<String>,
+    dir: Option<PathBuf>,
+    /// The program and its arguments, after `-e`. Never empty when `Some`.
+    exec: Option<Vec<String>>,
+}
+
+/// The contract's four flags. The three that carry a value end in `=`, because
+/// the desktop entry joins the value on rather than passing it as a second word.
+const CONTRACT_FLAGS: [&str; 4] = ["--app-id=", "--title=", "--working-directory=", "-e"];
+
+/// `argv[1..]` → a contract launch, or the refusal it is owed; `None` when the
+/// first word is not one of the contract's flags and [`dispatch`] judges it.
+///
+/// Only a FIRST argument that is a contract flag makes this a contract launch,
+/// so every word the binary already knew — a verb, `--help`, a directory —
+/// means what it meant. After that every argument must be one of the four, in
+/// any order, up to `-e`, which takes the rest of the line as the program and
+/// its arguments, flags and all. Anything else is refused rather than ignored:
+/// a caller sending a fifth key is how we find out it exists, and refusing
+/// costs nothing because no window has opened. A repeated flag takes the last
+/// value, as `getopt` would.
+fn parse_contract(
+    args: &[String],
+    is_dir: impl Fn(&str) -> bool,
+) -> Option<Result<Contract, String>> {
+    let is_flag = |a: &str| {
+        CONTRACT_FLAGS.iter().any(|f| {
+            if f.ends_with('=') {
+                a.starts_with(f)
+            } else {
+                a == *f
+            }
+        })
+    };
+    if !is_flag(args.first()?) {
+        return None;
+    }
+    let mut c = Contract::default();
+    for (i, a) in args.iter().enumerate() {
+        if a == "-e" {
+            let rest = &args[i + 1..];
+            if rest.is_empty() {
+                return Some(Err("`-e` needs a program to run".into()));
+            }
+            c.exec = Some(rest.to_vec());
+            break;
+        } else if let Some(v) = a.strip_prefix("--app-id=") {
+            if v.is_empty() {
+                return Some(Err("`--app-id=` needs an id".into()));
+            }
+            c.app_id = Some(v.to_string());
+        } else if let Some(v) = a.strip_prefix("--title=") {
+            c.title = (!v.is_empty()).then(|| v.to_string());
+        } else if let Some(v) = a.strip_prefix("--working-directory=") {
+            if !is_dir(v) {
+                return Some(Err(format!("`--working-directory={v}` is not a directory")));
+            }
+            c.dir = Some(PathBuf::from(v));
+        } else {
+            return Some(Err(format!(
+                "`{a}` is not one of the launch options \
+                 (--app-id=, --title=, --working-directory=, -e)"
+            )));
+        }
+    }
+    Some(Ok(c))
+}
+
+/// The mark a pane wears for the app-id it was launched under.
+///
+/// What the app-id says, and nothing more. `org.omarchy.local-ai` is Omarchy's
+/// Local AI plugin opening a coding agent on a model running on this machine;
+/// WHICH model is not in the app-id, and finding out would mean reading the
+/// agent's gateway key out of its environment, so the mark does not try.
+fn launch_mark(app_id: &str) -> Option<&'static str> {
+    match app_id {
+        "org.omarchy.local-ai" => Some("LOCAL MODEL"),
+        _ => None,
+    }
+}
+
+/// The first pane of a contract launch: the program after `-e` run directly
+/// (never typed into a shell), in the asked-for directory or the caller's own,
+/// wearing the app-id's mark.
+fn contract_seed(c: &Contract, here: Option<PathBuf>) -> session::PaneRestore {
+    session::PaneRestore {
+        cwd: c
+            .dir
+            .clone()
+            .or(here)
+            .map(|d| d.to_string_lossy().into_owned()),
+        program: c
+            .exec
+            .as_ref()
+            .and_then(|argv| argv.split_first())
+            .map(|(program, args)| (program.clone(), args.to_vec())),
+        mark: c.app_id.as_deref().and_then(launch_mark),
+        ..Default::default()
+    }
+}
+
 /// The subcommands that run headless: no window, no gpui, a plain process exit.
 /// Each one's handler takes `argv[2..]`.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -40700,6 +41021,9 @@ enum Verb {
     /// for the resolver — a record nobody can inspect is a record nobody can
     /// debug, and this one decides what a person sees on a bench.
     Conversation,
+    /// Make Terminal Delight the terminal `xdg-terminal-exec` opens, or put
+    /// back exactly what was there before (see [`defaultterm`]).
+    DefaultTerminal,
 }
 
 /// Whether the broken-pipe gate in `tests/broken_pipe.rs` can run a verb — and
@@ -40810,6 +41134,14 @@ const VERBS: &[VerbSpec] = &[
         // disk, which is what makes `bindings` ungatable.
         piping: Piping::Streams(&["zzz-no-such-conversation"]),
     },
+    VerbSpec {
+        word: "default-terminal",
+        verb: Verb::DefaultTerminal,
+        typed: true,
+        piping: Piping::Ungated(
+            "on and off write the person's ~/.config/xdg-terminals.list, and status reads it — a suite must not depend on that file",
+        ),
+    },
 ];
 
 /// One row of [`VERBS`].
@@ -40851,6 +41183,21 @@ enum Launch {
     /// Open a window. `open_here` is `Some` only for a positional naming a
     /// directory that exists.
     Window { open_here: Option<PathBuf> },
+    /// Open a quick window the way `xdg-terminal-exec` asked: see [`Contract`].
+    Contract(Contract),
+}
+
+/// Classify `argv[1..]`: a contract launch first, because only its own flags
+/// start one, then everything [`dispatch`] already knew.
+fn classify(args: &[String], is_dir: impl Fn(&str) -> bool) -> Launch {
+    match parse_contract(args, &is_dir) {
+        Some(Ok(c)) => Launch::Contract(c),
+        Some(Err(why)) => Launch::Reply {
+            text: format!("terminal-delight: {why}\n\n{USAGE}"),
+            code: 2,
+        },
+        None => dispatch(args.first().map(String::as_str), &is_dir),
+    }
 }
 
 /// Classify `argv[1]`: a known verb, then the flag gate, then a positional
@@ -40895,7 +41242,7 @@ fn dispatch(first: Option<&str>, is_dir: impl Fn(&str) -> bool) -> Launch {
 /// rather than as a list of the two printing arms, so a third printing arm
 /// added later inherits the behaviour instead of quietly missing it.
 fn prints_and_exits(launch: &Launch) -> bool {
-    !matches!(launch, Launch::Window { .. })
+    !matches!(launch, Launch::Window { .. } | Launch::Contract(_))
 }
 
 /// Restore the default SIGPIPE disposition, for a process that is about to
@@ -40930,7 +41277,7 @@ fn main() {
     // verbs are plain subprocesses the desktop and agents shell out to, so they
     // must land ahead of any gpui and any env mutation.
     let argv: Vec<String> = std::env::args().collect();
-    let launch = dispatch(argv.get(1).map(String::as_str), |p| {
+    let launch = classify(argv.get(1..).unwrap_or_default(), |p| {
         std::path::Path::new(p).is_dir()
     });
     // One gate for every printing path, decided structurally rather than per
@@ -40938,7 +41285,7 @@ fn main() {
     if prints_and_exits(&launch) {
         quiet_on_a_closed_pipe();
     }
-    let open_here = match launch {
+    let (open_here, contract) = match launch {
         Launch::Verb(verb) => {
             let code = match verb {
                 Verb::EmitDemo => demo::emit_and_block(),
@@ -40952,6 +41299,7 @@ fn main() {
                 Verb::Skin => skin::run_cli(&argv[2..]),
                 Verb::Surface => surfacefeed::run_cli(&argv[2..]),
                 Verb::Conversation => benchstore::run_cli(&argv[2..]),
+                Verb::DefaultTerminal => defaultterm::run_cli(&argv[2..]),
             };
             std::process::exit(code);
         }
@@ -40963,7 +41311,8 @@ fn main() {
             }
             std::process::exit(code);
         }
-        Launch::Window { open_here } => open_here,
+        Launch::Window { open_here } => (open_here, None),
+        Launch::Contract(c) => (None, Some(c)),
     };
 
     // Give every shell we spawn a real terminal type. gpui launches us from the
@@ -40988,7 +41337,10 @@ fn main() {
     // restorable windows as you actually keep open. The flock (held by exactly
     // one live process per id, released early at quit-start) is the old
     // machine-global MASTER lock, scoped down to one session.
-    let force = std::env::var_os("TD_SCRATCH").is_some();
+    // A contract launch is a quick window too: it never claims or writes a
+    // session and never starts a host, so a program opened through
+    // `xdg-terminal-exec` cannot disturb the window you are working in.
+    let force = std::env::var_os("TD_SCRATCH").is_some() || contract.is_some();
     let seed_cwd = std::env::var("TD_SEED_CWD").ok().filter(|s| !s.is_empty());
     let seed_resume = std::env::var("TD_SEED_RESUME")
         .ok()
@@ -41097,6 +41449,12 @@ fn main() {
         instance::adopt_legacy(&instance::legacy_state_path(), &instance::state_path());
     }
     let (scratch, seed) = scratch_decision(force, owns_session, seed_cwd, seed_resume);
+    // The contract's own pane replaces any seed the environment carried: the
+    // caller named the program and the directory, and they win.
+    let seed = match &contract {
+        Some(c) => Some(contract_seed(c, std::env::current_dir().ok())),
+        None => seed,
+    };
     // `terminal-delight <dir>`: a real, session-owning window whose FIRST
     // terminal starts in that directory. Deliberately not routed through
     // `scratch_decision` — a seeded tear-off is a throwaway, but asking for a
@@ -41108,11 +41466,20 @@ fn main() {
     });
     // A demo window keeps the plain name: it is a faithful twin for screen
     // sharing, not a workspace's scratch terminal.
-    let title = if demo {
+    let title = if let Some(t) = contract.as_ref().and_then(|c| c.title.clone()) {
+        t
+    } else if demo {
         "terminal-delight".to_string()
     } else {
         window_title(scratch, &key)
     };
+    // The app-id the caller asked for, which is how Hyprland's rules and the
+    // dock tell this window apart (Omarchy's Local AI asks for
+    // `org.omarchy.local-ai`). Otherwise the one packaging/ declares.
+    let app_id = contract
+        .as_ref()
+        .and_then(|c| c.app_id.clone())
+        .unwrap_or_else(|| "terminal-delight".to_string());
 
     application().run(move |cx: &mut App| {
         let host = host.clone();
@@ -41191,8 +41558,9 @@ fn main() {
                     ..Default::default()
                 }),
                 // WM_CLASS / Wayland app_id — must match terminal-delight.desktop
-                // (packaging/) for the dock to pick up our icon.
-                app_id: Some("terminal-delight".into()),
+                // (packaging/) for the dock to pick up our icon, unless a
+                // contract launch named its own.
+                app_id: Some(app_id.clone()),
                 // Frameless: no OS titlebar — the cabinet IS the chrome. We draw
                 // our own move handle (the mother bar), resize edges + window
                 // controls (see `csd` + the bezel_top control cluster).

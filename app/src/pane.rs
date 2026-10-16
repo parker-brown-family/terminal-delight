@@ -2747,6 +2747,10 @@ pub struct TerminalView {
     /// of the program label; click the logo (or the `＋ logo`
     /// placeholder when unset) to pick one. Persisted per leaf in the state file.
     pub logo: Option<String>,
+    /// The mark this pane wears beside its mode label for the app-id it was
+    /// launched under — `LOCAL MODEL` for a pane Omarchy's Local AI opened
+    /// (`launch_mark` in main.rs). Display state from the launch, never saved.
+    pub launch_mark: Option<&'static str>,
     /// The logo INHERITED from the pane's cwd via the per-directory map
     /// (`dirlogo`), resolved by the workspace's sweep — display state, never
     /// persisted (the map itself is the durable record). Shadowed by `logo`.
@@ -4433,6 +4437,9 @@ impl TerminalView {
     /// Spawn with session-restore context: shell starts in `restore.cwd`, and
     /// a resumable agent (`claude --resume <id>` / `codex resume <id>`) is
     /// typed into the PTY — the kernel queues it until the first prompt reads.
+    ///
+    /// With `restore.program` the pane runs that program instead of a shell,
+    /// and nothing is typed: a resume line is for a shell, and there is none.
     pub fn new_restored(restore: crate::session::PaneRestore, cx: &mut Context<Self>) -> Self {
         let grid = term::GridSize {
             cols: 100,
@@ -4440,8 +4447,13 @@ impl TerminalView {
         };
         let cwd = restore.cwd.clone().map(std::path::PathBuf::from);
         let (cell_w, cell_h) = BORN_CELL_PX;
-        let session = term::spawn_in(grid, cell_w, cell_h, cwd).expect("spawn shell");
-        if let Some(cmd) = restore.resume.as_deref() {
+        let session = term::spawn_in(grid, cell_w, cell_h, cwd, restore.program.as_ref())
+            .expect("spawn shell");
+        if let Some(cmd) = restore
+            .resume
+            .as_deref()
+            .filter(|_| restore.program.is_none())
+        {
             session.notifier.notify(format!("{cmd}\n").into_bytes());
         }
         Self::around(session, None, None, &restore, grid, BORN_CELL_PX, cx)
@@ -4821,6 +4833,7 @@ impl TerminalView {
             title: "shell".into(),
             name: None,
             logo,
+            launch_mark: restore.mark,
             dir_logo: None,
             tool_face: None,
             renaming: None,
@@ -10361,6 +10374,20 @@ impl Render for TerminalView {
                     .gap_2()
                     .cursor_pointer()
                     .child(logo_el)
+                    // The launch mark rides before the label rather than after
+                    // it: the title clips on a narrow pane, and the mark is the
+                    // part that says how this pane came to be here.
+                    .children(self.launch_mark.map(|mark| {
+                        div()
+                            .flex_none()
+                            .px(px(5. * scale))
+                            .rounded(sk.rad(4.))
+                            .border_1()
+                            .border_color(th.accent.alpha(0.6))
+                            .text_color(th.accent)
+                            .text_size(px(9.5 * scale))
+                            .child(mark)
+                    }))
                     .child(format!("▸ {} · {label}", self.mode.label_i18n()))
                     .on_mouse_down(
                         MouseButton::Left,
