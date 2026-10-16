@@ -446,178 +446,27 @@ pub fn layout(content: Bounds<Pixels>, tilt: f32) -> Option<Layout> {
 pub struct Paper {
     pub base: Hsla,
     pub ink: Hsla,
-    /// The pushpin's head. The paper's OPPOSITE hue, which is the one colour
-    /// guaranteed to survive whatever the sheet turned out to be: a red pin is
-    /// the physical object, but a red pin on the hot-pink paper a pink theme
-    /// produces is a bump, not a flag.
+    /// The pushpin's head: the theme's red, unless the sheet is red-ish, then
+    /// its accent — a red pin on a terracotta note is a bump, not a flag.
     pub pin: Hsla,
 }
 
-/// The colours a theme already puts on the screen — the four pips on the design
-/// tray's wheel. Every paper is worked out from these and nothing else, so a
-/// note moves when a pip is dragged and never picks a colour from nowhere.
-#[derive(Clone, Copy)]
-pub struct Voice {
-    /// `T`, the colour the pane's text is written in.
-    pub text: Hsla,
-    /// `◉`, the seed: the chrome's accent.
-    pub accent: Hsla,
-    /// `C`, the title's complement.
-    pub complement: Hsla,
-    /// `👤`, the colour your own typing wears in an agent pane.
-    pub human: Hsla,
-}
-
-impl Voice {
-    pub fn of(th: &crate::theme::Theme) -> Self {
-        Voice {
-            text: th.text,
-            accent: th.accent,
-            complement: th.complement,
-            human: th.human,
-        }
-    }
-}
-
-/// Legal-pad yellow, for a theme with no colour anywhere in it.
-const PAD_YELLOW: f32 = 0.128;
-/// Every paper's saturation and lightness: a pad, not a pastel.
-const PAD_S: f32 = 0.88;
-const PAD_L: f32 = 0.63;
-
-/// A colour's hue, if it has enough of one to count. Below a tenth saturation
-/// the hue is rounding noise on a grey, and paper dyed with it reads as a dialog.
-fn voiced(c: Hsla) -> Option<f32> {
-    (c.s >= 0.10).then_some(c.h)
-}
-
-/// The theme's own voice: its text, else its accent, else the pad.
-fn primary_hue(v: &Voice) -> f32 {
-    voiced(v.text).or(voiced(v.accent)).unwrap_or(PAD_YELLOW)
-}
-
-/// The theme's `C` pip, else the primary paper's opposite — so a theme with no
-/// complement of its own still gets a second note that is not its first.
-fn complement_hue(v: &Voice) -> f32 {
-    voiced(v.complement).unwrap_or((primary_hue(v) + 0.5).rem_euclid(1.0))
-}
-
-/// The hue nothing on the screen is already wearing: the middle of the widest
-/// arc of the colour wheel left empty by the four pips AND the other two papers
-/// (arcs within ten degrees of the widest count as widest, and the brightest
-/// paper among them wins — see [`widest_gap_middle`]).
-///
-/// Counting the other two papers is what keeps the three buttons three different
-/// notes. A colourless theme has no pips to avoid, and without them the widest
-/// arc is the whole wheel, which would put contrast back on legal-pad yellow
-/// beside primary.
-fn contrast_hue(v: &Voice) -> f32 {
-    let mut taken: Vec<f32> = [v.text, v.accent, v.complement, v.human]
-        .into_iter()
-        .filter_map(voiced)
-        .chain([primary_hue(v), complement_hue(v)])
-        .map(|h| h.rem_euclid(1.0))
-        .collect();
-    taken.sort_by(f32::total_cmp);
-    taken.dedup_by(|a, b| (*a - *b).abs() < 1e-4);
-    widest_gap_middle(&taken)
-}
-
-/// Distance between two hues around the wheel, `0..=0.5`.
-#[cfg(test)]
-fn hue_dist(a: f32, b: f32) -> f32 {
-    let d = (a - b).rem_euclid(1.0);
-    d.min(1.0 - d)
-}
-
-/// How bright a sheet of hue `h` is to the eye: the WCAG relative luminance of
-/// the pad colour. Black ink reads by this number, and at one HSL lightness a
-/// blue sheet is about a third as bright as a yellow one.
-fn pad_luminance(h: f32) -> f32 {
-    fn lin(v: f32) -> f32 {
-        if v <= 0.04045 {
-            v / 12.92
-        } else {
-            ((v + 0.055) / 1.055).powf(2.4)
-        }
-    }
-    let c = gpui::Rgba::from(hsla(h, PAD_S, PAD_L, 1.0));
-    0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
-}
-
-/// Arcs this close in width are the same width. A theme's text and accent are
-/// often two shades of one hue a degree apart, and that degree is not a reason
-/// to prefer one side of the wheel. Measured on hacker: its two empty arcs are
-/// 180.0° and 179.6°, and a strict "widest" put the note on blue by 0.4°.
-const SAME_WIDTH: f32 = 10.0 / 360.0;
-
-/// The middle of the widest gap between `sorted` hues, wrapping past red.
-///
-/// Every gap within [`SAME_WIDTH`] of the widest is a candidate, and the
-/// candidate whose middle makes the BRIGHTEST paper wins. That is the common
-/// case rather than an edge: a theme in one hue with its complement opposite
-/// leaves two equal arcs, a quarter-turn either side, and which one the note
-/// takes is decided here. Brightest is what black ink needs, so a green theme
-/// gets a yellow note rather than a blue one. An exact tie keeps the first.
-fn widest_gap_middle(sorted: &[f32]) -> f32 {
-    let n = sorted.len();
-    let gaps: Vec<(f32, f32)> = (0..n)
-        .map(|i| {
-            let from = sorted[i];
-            let to = if i + 1 < n {
-                sorted[i + 1]
-            } else {
-                sorted[0] + 1.0
-            };
-            let width = to - from;
-            (width, (from + width / 2.0).rem_euclid(1.0))
-        })
-        .collect();
-    let widest = gaps.iter().map(|g| g.0).fold(0.0, f32::max);
-    gaps.into_iter()
-        .filter(|(w, _)| *w >= widest - SAME_WIDTH)
-        .map(|(_, middle)| middle)
-        .fold(None, |best: Option<f32>, m| match best {
-            Some(b) if pad_luminance(m) <= pad_luminance(b) + 1e-4 => Some(b),
-            _ => Some(m),
-        })
-        .unwrap_or(PAD_YELLOW)
-}
-
-/// The hue a note takes in `mode` — the paper's colour before it is driven to
-/// pad saturation. Public so the design tray can preview all three.
-pub fn paper_hue(mode: crate::theme::NotePaper, v: &Voice) -> f32 {
-    use crate::theme::NotePaper;
-    match mode {
-        NotePaper::Primary => primary_hue(v),
-        NotePaper::Contrast => contrast_hue(v),
-        NotePaper::Complement => complement_hue(v),
-    }
-}
-
-/// The paper a pane's note is drawn on, in the mode its theme asks for.
+/// The paper a pane's note is drawn on, in the colour its theme asks for.
 pub fn paper_for(th: &crate::theme::Theme) -> Paper {
-    paper(th.note_paper, &Voice::of(th))
+    paper(th.note_paper, &crate::notepaper::ThemeColours::of(th))
 }
 
-/// The note's palette: a saturated sheet in one of the theme's colours, written
-/// on in black.
-///
-/// The hue comes from [`paper_hue`] — the theme's primary text by default, the
-/// colour that pane is already speaking in — and is then driven to full chroma
-/// at pad lightness. Saturation is the point: a pastel note dissolves into a
-/// dark terminal, and the thing on the desk this imitates is a hot pink or lime
-/// pad, not a cream one. The ink is near-black, holding a trace of the same hue
-/// so it reads as ink on that paper rather than a UI label dropped on top.
-///
-/// A theme whose text has no chroma at all (white on black) falls through to its
-/// accent, and then to a classic sticky yellow. Grey paper reads as a dialog.
-pub fn paper(mode: crate::theme::NotePaper, v: &Voice) -> Paper {
-    let hue = paper_hue(mode, v);
+/// The note's palette, from the theme's OWN colours — see [`crate::notepaper`]
+/// for which colour each mode takes and why. The sheet is that colour, faintly
+/// see-through so it reads as laid ON the glass; the writing is the theme's own
+/// ink (its background or its text), which the rule has already checked reads
+/// on it at 4.5:1.
+pub fn paper(mode: crate::theme::NotePaper, t: &crate::notepaper::ThemeColours) -> Paper {
+    let sheet = crate::notepaper::papers(t).get(mode);
     Paper {
-        base: hsla(hue, PAD_S, PAD_L, PAPER_ALPHA),
-        ink: hsla(hue, 0.24, 0.085, 0.95),
-        pin: hsla((hue + 0.5).fract(), 0.86, 0.52, 1.0),
+        base: sheet.paper.hsla(PAPER_ALPHA),
+        ink: sheet.ink.hsla(0.95),
+        pin: crate::notepaper::pin(t, sheet.paper).hsla(1.0),
     }
 }
 
@@ -1892,233 +1741,21 @@ mod tests {
         }
     }
 
-    /// The paper takes the theme's own voice and is SATURATED — a pastel note
-    /// dissolves into a dark terminal — and it is written on in black. A theme
-    /// with no colour in its text must not yield a grey note: grey reads as a
-    /// dialog box, not as paper.
-    #[test]
-    fn the_paper_is_saturated_theme_colour_written_on_in_black() {
-        let white = hsla(0.0, 0.0, 0.92, 1.0);
-        let amber = hsla(0.11, 0.62, 0.60, 1.0);
-        let cyan = hsla(0.52, 0.70, 0.55, 1.0);
-        // The old two-argument paper: only text and accent were ever read.
-        let paper = |text, accent| {
-            super::paper(
-                NotePaper::Primary,
-                &Voice {
-                    text,
-                    accent,
-                    complement: hsla(0.0, 0.0, 0.5, 1.0),
-                    human: hsla(0.0, 0.0, 0.5, 1.0),
-                },
-            )
-        };
-
-        let p = paper(amber, white);
-        assert!((p.base.h - 0.11).abs() < 1e-4, "hue comes from the text");
-        assert!(p.base.s > 0.8, "the sheet is saturated, got {}", p.base.s);
-        assert!(p.ink.l < 0.15, "the writing is black, got l={}", p.ink.l);
-        assert!(
-            (p.ink.h - p.base.h).abs() < 1e-4,
-            "the ink still belongs to the paper"
-        );
-
-        // white text, coloured accent -> the accent's hue, never grey
-        let p = paper(white, cyan);
-        assert!(
-            (p.base.h - 0.52).abs() < 1e-4,
-            "falls through to the accent"
-        );
-        assert!(p.base.s > 0.8);
-
-        // nothing coloured anywhere -> a sticky yellow, still not grey
-        let p = paper(white, hsla(0.0, 0.0, 0.5, 1.0));
-        assert!(p.base.s > 0.8, "a colourless theme still gets paper");
-        assert!((p.base.h - 0.128).abs() < 1e-4);
-    }
-
     /// You must be able to see the terminal through it, faintly. This is the one
     /// property that makes it read as laid ON the screen rather than cut into it.
+    /// Which colour the sheet is belongs to `notepaper`; how solid it is, here.
     #[test]
     fn the_paper_is_slightly_see_through() {
+        let th = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
+        let t = crate::notepaper::ThemeColours::of(&th);
         for mode in NotePaper::ALL {
-            let p = paper(mode, &voice(0.11, 0.0, 0.61, 0.61));
+            let p = paper(mode, &t);
             assert!(
                 (0.78..0.92).contains(&p.base.a),
                 "{mode:?} paper alpha {} is outside 'faintly see-through'",
                 p.base.a
             );
             assert!(p.ink.a > 0.9, "the writing itself stays legible");
-        }
-    }
-
-    /// A voice from hues. `accent` of 0.0 is still a colour (red), so a test
-    /// that wants a GREY accent builds the voice by hand.
-    fn voice(text: f32, accent: f32, complement: f32, human: f32) -> Voice {
-        let c = |h| hsla(h, 0.7, 0.6, 1.0);
-        Voice {
-            text: c(text),
-            accent: c(accent),
-            complement: c(complement),
-            human: c(human),
-        }
-    }
-
-    /// Complement is the theme's own `C` pip — drag it on the wheel and the
-    /// note follows — and a theme with a grey complement still gets a second
-    /// note, opposite the first, rather than a grey one.
-    #[test]
-    fn complement_paper_is_the_c_pip_else_the_primary_opposite() {
-        let v = voice(0.11, 0.11, 0.70, 0.61);
-        assert!((paper_hue(NotePaper::Complement, &v) - 0.70).abs() < 1e-4);
-        assert!((paper(NotePaper::Complement, &v).base.h - 0.70).abs() < 1e-4);
-
-        let grey = Voice {
-            complement: hsla(0.70, 0.02, 0.6, 1.0),
-            ..v
-        };
-        assert!(
-            (paper_hue(NotePaper::Complement, &grey) - 0.61).abs() < 1e-4,
-            "a grey C falls back to the primary's opposite, got {}",
-            paper_hue(NotePaper::Complement, &grey)
-        );
-    }
-
-    /// Contrast is the middle of the widest arc no colour on the screen sits
-    /// in. An amber theme whose complement and human colour are both its
-    /// opposite blue leaves two equal quarter-turn gaps, one green and one
-    /// magenta, and the tie goes to the brighter paper: green.
-    #[test]
-    fn contrast_paper_sits_in_the_widest_empty_arc() {
-        let v = voice(0.11, 0.11, 0.61, 0.61);
-        let h = paper_hue(NotePaper::Contrast, &v);
-        assert!((h - 0.36).abs() < 1e-3, "expected green 0.36, got {h}");
-
-        // Three colours bunched at the warm end leave the cool half empty, and
-        // the note goes to the middle of it, not to the opposite of any one.
-        let warm = voice(0.02, 0.08, 0.14, 0.14);
-        let h = paper_hue(NotePaper::Contrast, &warm);
-        assert!(
-            (h - 0.58).abs() < 1e-3,
-            "expected the middle of the empty cool arc 0.58, got {h}"
-        );
-    }
-
-    /// The shipped hacker theme, from its file: text `#86efac` (141.7°) and
-    /// accent `#22c55e` (142.1°), so its complement and human colour are both
-    /// at 322.1°. The two empty arcs are 180.0° and 179.6°. A strict "widest"
-    /// took the first by 0.4° and gave a blue note; those arcs are the same
-    /// width, and the brighter of their two middles is a yellow-orange.
-    #[test]
-    fn two_arcs_a_shade_apart_are_one_width_and_the_brighter_paper_wins() {
-        let (text, accent) = (141.7 / 360.0, 142.1 / 360.0);
-        let opposite = accent + 0.5;
-        let v = Voice {
-            text: hsla(text, 0.76, 0.73, 1.0),
-            accent: hsla(accent, 0.71, 0.45, 1.0),
-            complement: hsla(opposite, 0.71, 0.45, 1.0),
-            human: hsla(opposite, 0.57, 0.76, 1.0),
-        };
-        let h = paper_hue(NotePaper::Contrast, &v);
-        assert!(
-            (h - 0.1442).abs() < 2e-3,
-            "expected the yellow-orange middle at 52°, got {:.1}°",
-            h * 360.0
-        );
-        assert!(pad_luminance(h) > 2.0 * pad_luminance(0.6447));
-    }
-
-    /// Brightness is what the tie-break measures, so it must order the hues the
-    /// way an eye does: yellow over green over red over blue.
-    #[test]
-    fn pad_luminance_orders_hues_as_an_eye_does() {
-        let (yellow, green, red, blue) = (
-            pad_luminance(1.0 / 6.0),
-            pad_luminance(1.0 / 3.0),
-            pad_luminance(0.0),
-            pad_luminance(2.0 / 3.0),
-        );
-        assert!(yellow > green && green > red && red > blue);
-    }
-
-    /// The gap is measured around the wheel, so an arc that runs past red is
-    /// one arc and not two halves.
-    #[test]
-    fn the_widest_arc_can_run_through_red() {
-        let v = voice(0.30, 0.30, 0.45, 0.60);
-        let h = paper_hue(NotePaper::Contrast, &v);
-        assert!(
-            hue_dist(h, 0.95) < 1e-3,
-            "the empty arc 0.60 → 1.30 has its middle at 0.95, got {h}"
-        );
-    }
-
-    /// The point of a three-way choice is three different notes. Swept over a
-    /// grid of themes — every text hue against every complement, colourless
-    /// pieces included — no two buttons ever give the same paper, and contrast
-    /// never lands on a colour the theme already shows.
-    #[test]
-    fn the_three_papers_are_always_three_colours() {
-        let grey = hsla(0.0, 0.0, 0.85, 1.0);
-        let hues: Vec<Option<f32>> = std::iter::once(None)
-            .chain((0..24).map(|i| Some(i as f32 / 24.0)))
-            .collect();
-        let c = |h: Option<f32>| h.map_or(grey, |h| hsla(h, 0.7, 0.6, 1.0));
-        for &t in &hues {
-            for &a in &[None, Some(0.0), Some(0.55)] {
-                for &k in &hues {
-                    for &u in &[None, Some(0.33), Some(0.8)] {
-                        let v = Voice {
-                            text: c(t),
-                            accent: c(a),
-                            complement: c(k),
-                            human: c(u),
-                        };
-                        let p = paper_hue(NotePaper::Primary, &v);
-                        let x = paper_hue(NotePaper::Contrast, &v);
-                        let m = paper_hue(NotePaper::Complement, &v);
-                        let ctx = format!("text {t:?} accent {a:?} comp {k:?} human {u:?}");
-                        assert!(hue_dist(x, p) > 0.05, "contrast = primary for {ctx}");
-                        assert!(hue_dist(x, m) > 0.05, "contrast = complement for {ctx}");
-                        for shown in [t, a, k, u].into_iter().flatten() {
-                            assert!(
-                                hue_dist(x, shown) > 0.05,
-                                "contrast {x} sits on a shown hue {shown} for {ctx}"
-                            );
-                        }
-                        // primary and complement may only coincide when the
-                        // theme itself put its C pip on its text colour.
-                        if hue_dist(p, m) < 0.05 {
-                            assert!(
-                                k.is_some_and(|k| hue_dist(k, p) < 0.05),
-                                "complement = primary for {ctx}"
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// A theme with no colour anywhere gets three notes anyway: the pad, its
-    /// opposite blue, and the green between them.
-    #[test]
-    fn a_colourless_theme_still_gets_three_papers() {
-        let g = hsla(0.0, 0.0, 0.8, 1.0);
-        let v = Voice {
-            text: g,
-            accent: g,
-            complement: g,
-            human: g,
-        };
-        let p = paper_hue(NotePaper::Primary, &v);
-        let m = paper_hue(NotePaper::Complement, &v);
-        let x = paper_hue(NotePaper::Contrast, &v);
-        assert!((p - PAD_YELLOW).abs() < 1e-4);
-        assert!((m - (PAD_YELLOW + 0.5)).abs() < 1e-4);
-        assert!((x - (PAD_YELLOW + 0.25)).abs() < 1e-3, "got {x}");
-        for mode in NotePaper::ALL {
-            assert!(paper(mode, &v).base.s > 0.8, "{mode:?} is not grey paper");
         }
     }
 }

@@ -26,7 +26,7 @@ pub const DEFAULT_THEME_TOML: &str = include_str!("../themes/hacker.toml");
 
 /// (id, embedded toml) for every built-in. The user file at
 /// ~/.config/terminal-delight/theme.toml stays hot-reloaded as id "custom".
-const BUILTIN_THEMES: &[(&str, &str)] = &[
+pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
     (
         "quiet-command",
         include_str!("../themes/quiet-command.toml"),
@@ -306,49 +306,44 @@ impl SyntaxScheme {
     }
 }
 
-/// Which of the theme's colours a sticky note's paper takes (the STICKY NOTE
-/// row under the wheel). All three read the wheel's own pips, so dragging a pip
-/// moves the note with it; see [`crate::sticky::paper`] for the arithmetic.
+/// Which of the theme's own colours a sticky note is drawn in (the STICKY NOTE
+/// row under the wheel). Parker named and ordered them: "Contrast Accent Mute".
+/// The arithmetic is [`crate::notepaper::papers`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum NotePaper {
-    /// The theme's own voice: the text colour's hue (`T`), else the accent's,
-    /// else legal-pad yellow. The behaviour every note had before the row
-    /// existed, which is why it is the default and why an old state file,
-    /// having no field at all, reads as this.
+    /// The theme's named hue farthest from its accent, weighted by how vivid it
+    /// is: praus's bruised-wine purple, bright-future's mint. The default,
+    /// because a note is there to be seen first.
     #[default]
-    Primary,
-    /// The hue farthest from every colour already on the screen — the four
-    /// wheel pips and the other two papers — so the note is the one thing in
-    /// the pane that nothing else is coloured like.
     Contrast,
-    /// The theme's complement (`C`), else the primary paper's opposite hue.
-    Complement,
+    /// The theme's accent: praus's sage, bright-future's hot pink.
+    Accent,
+    /// The theme's text colour (its surface, on a light screen): praus's linen.
+    Mute,
 }
 
-/// Lenient on load, like [`ColorMode`]: an unknown value folds to the default,
-/// so a state file from another build keeps deserialising.
+/// Lenient on load, like [`ColorMode`]. The words the first STICKY NOTE row
+/// wrote (2026-10-16, PR 970) map to their nearest successor — `primary` was
+/// the theme's own colour, `complement` its opposite — and anything unknown
+/// folds to the default, so a state file from another build keeps loading.
 impl<'de> Deserialize<'de> for NotePaper {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         Ok(match String::deserialize(d)?.as_str() {
-            "contrast" => NotePaper::Contrast,
-            "complement" => NotePaper::Complement,
-            _ => NotePaper::Primary,
+            "accent" | "primary" => NotePaper::Accent,
+            "mute" => NotePaper::Mute,
+            _ => NotePaper::Contrast,
         })
     }
 }
 
 impl NotePaper {
-    /// Picker order: the theme's colour, the one it lacks, its partner.
-    pub const ALL: [NotePaper; 3] = [
-        NotePaper::Primary,
-        NotePaper::Contrast,
-        NotePaper::Complement,
-    ];
+    /// Picker order, as Parker gave it.
+    pub const ALL: [NotePaper; 3] = [NotePaper::Contrast, NotePaper::Accent, NotePaper::Mute];
 
-    /// `true` for the serde/skip default (primary).
-    pub fn is_primary(&self) -> bool {
-        matches!(self, NotePaper::Primary)
+    /// `true` for the serde/skip default (contrast).
+    pub fn is_default(&self) -> bool {
+        matches!(self, NotePaper::Contrast)
     }
 }
 
@@ -1187,10 +1182,12 @@ pub struct ThemeChoice {
     /// theme group; `false` by default for back-compat.
     #[serde(default, skip_serializing_if = "is_false")]
     pub invert: bool,
-    /// The sticky note's paper: primary, contrast or complement. Part of the
-    /// theme group, so a pane that follows outer wears outer's note colour.
-    /// Absent reads as `Primary`, the colour every note had before the choice.
-    #[serde(default, skip_serializing_if = "NotePaper::is_primary")]
+    /// The sticky note's paper: contrast, accent or mute. Part of the theme
+    /// group, so a pane that follows outer wears outer's note colour. Absent
+    /// reads as `Contrast`, the default Parker chose — every note, old state
+    /// files included, takes the theme's contrast colour until a button says
+    /// otherwise.
+    #[serde(default, skip_serializing_if = "NotePaper::is_default")]
     pub note: NotePaper,
 }
 
@@ -1209,7 +1206,7 @@ impl Default for ThemeChoice {
             complement: None,
             human: None,
             invert: false,
-            note: NotePaper::Primary,
+            note: NotePaper::Contrast,
         }
     }
 }
@@ -1264,7 +1261,7 @@ pub fn house_outer() -> ThemeChoice {
         complement: None,
         human: None,
         invert: false,
-        note: NotePaper::Primary,
+        note: NotePaper::Contrast,
     }
 }
 
@@ -1298,7 +1295,7 @@ pub fn house_terminal() -> ThemeChoice {
         complement: None,
         human: None,
         invert: false,
-        note: NotePaper::Primary,
+        note: NotePaper::Contrast,
     }
 }
 
@@ -1329,7 +1326,7 @@ pub struct ThemeGroup {
     pub human: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub invert: bool,
-    #[serde(default, skip_serializing_if = "NotePaper::is_primary")]
+    #[serde(default, skip_serializing_if = "NotePaper::is_default")]
     pub note: NotePaper,
 }
 
@@ -1347,7 +1344,7 @@ impl Default for ThemeGroup {
             complement: None,
             human: None,
             invert: false,
-            note: NotePaper::Primary,
+            note: NotePaper::Contrast,
         }
     }
 }
@@ -2413,7 +2410,7 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         && !choice.invert
         && mode.is_default()
         && !choice.syntax
-        && choice.note.is_primary()
+        && choice.note.is_default()
         && choice.grade.is_neutral()
         && choice.grade.warp.abs() < 1e-3
         && choice.grade.glare.is_none()
@@ -3006,7 +3003,7 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         color_mode: ColorMode::default(),
         syntax: false,
         syntax_scheme: SyntaxScheme::Code,
-        note_paper: NotePaper::Primary,
+        note_paper: NotePaper::Contrast,
         grade: Grade::default(),
         scanline_opacity: file.effects.scanline_opacity.unwrap_or(0.).clamp(0., 0.6),
         scanline_step: file.effects.scanline_step.unwrap_or(4.).max(2.),
@@ -4256,32 +4253,33 @@ warp = 1.5
         });
     }
 
-    /// The STICKY NOTE choice is part of the theme group: absent is the old
-    /// world (primary), it survives the round trip through the state file and
-    /// through a pane's pinned group, and an unknown word from another build
-    /// folds to the default instead of failing the whole choice.
+    /// The STICKY NOTE choice is part of the theme group: absent is the default
+    /// (contrast), it survives the round trip through the state file and
+    /// through a pane's pinned group, the first row's words still load, and an
+    /// unknown word from another build folds to the default instead of failing
+    /// the whole choice.
     #[test]
-    fn the_note_paper_choice_persists_and_absent_is_primary() {
+    fn the_note_paper_choice_persists_and_absent_is_contrast() {
         let old: ThemeChoice = toml::from_str("id = \"hacker\"\n").unwrap();
-        assert_eq!(old.note, NotePaper::Primary, "a file from before the row");
+        assert_eq!(old.note, NotePaper::Contrast, "a file with no note field");
 
         let c = ThemeChoice {
-            note: NotePaper::Contrast,
+            note: NotePaper::Mute,
             ..Default::default()
         };
         let wire = toml::to_string(&c).unwrap();
-        assert!(wire.contains("note = \"contrast\""), "{wire}");
+        assert!(wire.contains("note = \"mute\""), "{wire}");
         let back: ThemeChoice = toml::from_str(&wire).unwrap();
-        assert_eq!(back.note, NotePaper::Contrast);
+        assert_eq!(back.note, NotePaper::Mute);
 
-        let primary = toml::to_string(&ThemeChoice::default()).unwrap();
-        assert!(!primary.contains("note"), "primary is omitted: {primary}");
+        let dflt = toml::to_string(&ThemeChoice::default()).unwrap();
+        assert!(!dflt.contains("note"), "the default is omitted: {dflt}");
 
         let g = ThemeGroup::of(&ThemeChoice {
-            note: NotePaper::Complement,
+            note: NotePaper::Accent,
             ..Default::default()
         });
-        assert_eq!(g.note, NotePaper::Complement, "lifted into the group");
+        assert_eq!(g.note, NotePaper::Accent, "lifted into the group");
         let pane = PaneTheme {
             theme: Some(g.clone()),
             inherit_theme: false,
@@ -4289,22 +4287,28 @@ warp = 1.5
         };
         assert_eq!(
             pane.effective(&ThemeChoice::default()).note,
-            NotePaper::Complement,
+            NotePaper::Accent,
             "a pane's own group carries its note"
         );
-        assert_eq!(
-            ThemeChoice::default().with_group(g).note,
-            NotePaper::Complement
-        );
+        assert_eq!(ThemeChoice::default().with_group(g).note, NotePaper::Accent);
 
-        let odd: ThemeChoice = toml::from_str("id = \"hacker\"\nnote = \"plaid\"\n").unwrap();
-        assert_eq!(odd.note, NotePaper::Primary);
+        // The words this morning's build (PR 970) wrote.
+        for (word, now) in [
+            ("primary", NotePaper::Accent),
+            ("complement", NotePaper::Contrast),
+            ("contrast", NotePaper::Contrast),
+            ("plaid", NotePaper::Contrast),
+        ] {
+            let c: ThemeChoice =
+                toml::from_str(&format!("id = \"hacker\"\nnote = \"{word}\"\n")).unwrap();
+            assert_eq!(c.note, now, "{word}");
+        }
     }
 
     /// A stock theme with nothing else changed takes resolve's fast path, which
     /// hands back the authored theme untouched — and the authored theme says
-    /// primary. Picking a different paper has to knock it off that path, or the
-    /// button lights and the note stays the colour it was.
+    /// the default. Picking a different paper has to knock it off that path, or
+    /// the button lights and the note stays the colour it was.
     #[gpui::test]
     fn a_note_paper_alone_still_resolves(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
@@ -4315,7 +4319,7 @@ warp = 1.5
                 grade: Grade::neutral(),
                 ..ThemeChoice::default()
             };
-            assert_eq!(resolve(cx, &plain).note_paper, NotePaper::Primary);
+            assert_eq!(resolve(cx, &plain).note_paper, NotePaper::Contrast);
             for mode in NotePaper::ALL {
                 let c = ThemeChoice {
                     note: mode,

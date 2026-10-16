@@ -66,6 +66,7 @@ mod lookup;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
+mod notepaper;
 mod notifpref;
 mod notify;
 mod paint;
@@ -27780,10 +27781,10 @@ impl Render for Workspace {
             //
             // The sticky note's three possible papers, from the same resolved
             // theme the pips are read off, so the square on the wheel and the
-            // three buttons under it agree with the pips beside them.
-            let note_voice = sticky::Voice::of(&theme::resolve(cx, &cur));
-            let papers = theme::NotePaper::ALL.map(|m| (m, sticky::paper(m, &note_voice)));
-            let note_now = sticky::paper(cur.note, &note_voice).base;
+            // three buttons under it agree with the colours the pane wears.
+            let note_colours = notepaper::ThemeColours::of(&theme::resolve(cx, &cur));
+            let papers = theme::NotePaper::ALL.map(|m| (m, sticky::paper(m, &note_colours)));
+            let note_now = sticky::paper(cur.note, &note_colours).base;
             let wheel = self.color_wheel(self.wheel_markers(cx), note_now, cx);
             let lbar = self.lightness_bar(cx);
             // PICK row — promote a pip to the front. With a greyscale palette every
@@ -27871,7 +27872,8 @@ impl Render for Workspace {
                         ),
                 );
             }
-            // STICKY NOTE: which of the pips above a note's paper follows. Three
+            // STICKY NOTE: which of the theme's own colours a note is drawn in —
+            // contrast, accent, mute, in the order Parker gave them. Three
             // little notes in the colours they would be, so the row previews
             // itself; the pressed one is also the square on the wheel.
             let mut note_row = div()
@@ -27882,9 +27884,9 @@ impl Render for Workspace {
             for (mode, paper) in papers {
                 let cur_c = cur.clone();
                 let cap = match mode {
-                    theme::NotePaper::Primary => t.np_primary,
                     theme::NotePaper::Contrast => t.np_contrast,
-                    theme::NotePaper::Complement => t.np_complement,
+                    theme::NotePaper::Accent => t.np_accent,
+                    theme::NotePaper::Mute => t.np_mute,
                 };
                 note_row = note_row.child(
                     note_paper_btn(&th, &paper, cap, cur.note == mode).on_mouse_down(
@@ -28207,8 +28209,8 @@ impl Render for Workspace {
                 .child(div().flex().justify_center().child(lbar))
                 .child(div().flex().justify_center().pt_1().child(pick_row))
                 .child(seed_row)
-                // Under the pips because the pips are its inputs: drag T or C
-                // and the papers below move with them.
+                // Under the pips because they are its inputs: drag the seed or
+                // T and the papers below move with them.
                 .child(hsep())
                 .child(label(t.t_note))
                 .child(note_row);
