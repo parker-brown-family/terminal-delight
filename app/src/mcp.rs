@@ -274,6 +274,15 @@ pub struct ConfigPatch {
     /// cannot, and `deny_unknown_fields` refuses the key outright.
     #[serde(skip)]
     pub own_pane: bool,
+    /// An ask for a person to change an access setting, from
+    /// `request_access`, already validated. Rides the pipeline onto the
+    /// ASKING pane, where it waits on the rail.
+    ///
+    /// `skip`, like the two above: no agent's JSON can carry an ask in, and
+    /// there is no field anywhere in this struct, or in this file, that carries
+    /// an answer out. Answering is the rail's, and only the rail's.
+    #[serde(skip)]
+    pub ask: Option<crate::access::Ask>,
 }
 
 /// A validated deliverable declaration on its way to the GUI thread.
@@ -1238,6 +1247,35 @@ fn tool_defs() -> Value {
             }
         },
         {
+            "name": "request_access",
+            "description":
+                "ASK the person for a setting only they may change: who agents can \
+                 see, and what agents may do. Your ask appears on their attention \
+                 rail with your reason and two buttons, Yes and No; nothing changes \
+                 until a person presses Yes, and no tool can press it for you. The \
+                 answer is typed into your own terminal as one line beginning \
+                 [workbench:<tag>] (your $TD_TAG), once your pane is on screen; the \
+                 setting itself changes the moment they press Yes, so retrying what \
+                 was refused also tells you. Five changes: `open_pane` (a pane a \
+                 person marked off-limits; needs its `pid`), `close_pane` (mark a \
+                 pane off-limits — say so when you see secrets; needs `pid`), \
+                 `writes_on` (notes, deliverables, the bench, appearance), \
+                 `expose_shells` (show plain shells, not only agent panes), \
+                 `events_on` (other agents' tool calls). Appearance needs no ask: \
+                 with writes on, `set_pane_config` restyles a pane directly. One ask \
+                 per pane at a time; a new one replaces yours. Works with writes off.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "change": { "type": "string", "enum": ["open_pane", "close_pane", "writes_on", "expose_shells", "events_on"], "description": "the setting you are asking to have changed" },
+                    "pid": { "type": "integer", "description": "the pane the change is about, for open_pane and close_pane only" },
+                    "why": { "type": "string", "description": "one sentence, at most 40 words, saying what you need it for — the person reads it before answering" }
+                },
+                "required": ["change", "why"],
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "present_surface",
             "description":
                 "Put a WORK OBJECT on this pane's workbench — the pane's second \
@@ -1399,6 +1437,7 @@ where
         "set_pane_config" => set_pane_config(&args, snap, apply),
         "leave_note" => leave_note(&args, snap, apply),
         "declare_deliverable" => declare_deliverable(&args, snap, apply),
+        "request_access" => request_access(&args, snap, apply),
         "present_surface" => present_surface(&args, snap, apply),
         "surface_catalogue" => surface_catalogue(),
         "document_notes" => document_notes(&args, snap),
@@ -1470,6 +1509,7 @@ fn provenance(tool: &str) -> Option<Provenance> {
         | "set_pane_config"
         | "leave_note"
         | "declare_deliverable"
+        | "request_access"
         | "present_surface"
         | "surface_catalogue"
         | "open_document" => Own,
@@ -1914,7 +1954,7 @@ where
         return tool_err(
             "MCP writes are disabled. This server is a read-only watch surface \
              until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
-             TD_MCP_WRITE=1) to let an agent change pane appearance.",
+             TD_MCP_WRITE=1) to let an agent change pane appearance. An agent can ask the person for them with request_access, change writes_on.",
         );
     }
     let Some(updates_v) = args.get("updates").and_then(Value::as_array) else {
@@ -1980,7 +2020,7 @@ where
         return tool_err(
             "MCP writes are disabled. This server is a read-only watch surface \
              until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
-             TD_MCP_WRITE=1) to let an agent leave a note.",
+             TD_MCP_WRITE=1) to let an agent leave a note. An agent can ask the person for them with request_access, change writes_on.",
         );
     }
     let pid = match snap.target_pane(args.get("pid").and_then(Value::as_u64)) {
@@ -2034,7 +2074,7 @@ where
         return tool_err(
             "MCP writes are disabled. This server is a read-only watch surface \
              until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
-             TD_MCP_WRITE=1) to let an agent declare a deliverable.",
+             TD_MCP_WRITE=1) to let an agent declare a deliverable. An agent can ask the person for them with request_access, change writes_on.",
         );
     }
     let pid = match snap.target_pane(args.get("pid").and_then(Value::as_u64)) {
@@ -2076,6 +2116,92 @@ where
     }
 }
 
+/// `request_access` — ask the person for a setting only they may change.
+///
+/// The other half of every refusal in this file that is about access rather
+/// than appearance. It changes nothing: it puts an ask on the CALLER's pane,
+/// where the rail draws it with Yes and No, and returns. What answers it is a
+/// person's press on that row (`Workspace::rail_answer`), and nothing here can
+/// reach that — see `access::tests::no_agent_facing_surface_can_answer_an_ask`.
+///
+/// **Not gated on the writes toggle**, deliberately: `writes_on` is one of the
+/// five things an agent may need to ask for, and a verb that needed writes to
+/// ask for writes would be a door with its key inside. It needs the server on,
+/// and a pane to be calling from, because an ask that cannot say whose it is
+/// cannot be answered to anyone. Whether there is anything to ask — the pane
+/// exists, the switch is not already on — is the window's to say, since it is
+/// the one that knows; it refuses through the same outcome as any write.
+fn request_access<G>(args: &Value, snap: &Snapshot, apply: &G) -> Value
+where
+    G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
+{
+    use crate::access::{validate_why, Ask, Change};
+    if !snap.config.enabled {
+        return tool_err("MCP exposure is disabled. Enable it in the MCP CONTROL panel.");
+    }
+    let named = args.get("change").and_then(Value::as_str).unwrap_or("");
+    let Some(change) = Change::parse(named) else {
+        let all: Vec<&str> = Change::ALL.iter().map(|c| c.wire()).collect();
+        return tool_err(&format!(
+            "`change` must be one of {} — not {named:?}. Appearance needs no ask: \
+             with writes on, set_pane_config changes it directly.",
+            all.join(", ")
+        ));
+    };
+    let pid = match (change.needs_pane(), args.get("pid").and_then(Value::as_u64)) {
+        (true, None) => {
+            return tool_err(&format!(
+                "{} is about one pane: pass its `pid`",
+                change.wire()
+            ))
+        }
+        (true, Some(p)) => match u32::try_from(p) {
+            Ok(p) => Some(p),
+            Err(_) => return tool_err("pid is out of range"),
+        },
+        (false, Some(_)) => {
+            return tool_err(&format!(
+                "{} is about the whole window and takes no `pid`",
+                change.wire()
+            ))
+        }
+        (false, None) => None,
+    };
+    let why = match validate_why(args.get("why").and_then(Value::as_str)) {
+        Ok(w) => w,
+        Err(e) => return tool_err(&e),
+    };
+    let asker = match snap.caller_pane("request_access") {
+        Ok(p) => p.pid,
+        Err(e) => return tool_err(&e),
+    };
+    let patch = ConfigPatch {
+        ask: Some(Ask {
+            change,
+            pid,
+            title: None,
+            why,
+            at: std::time::Instant::now(),
+        }),
+        own_pane: snap.is_callers(asker),
+        ..Default::default()
+    };
+    match apply(&[(Target::Pane(asker), patch)]).into_iter().next() {
+        Some((_, Ok(_))) => tool_ok(
+            format!(
+                "asked — {} is waiting on the person's attention rail with your reason. \
+                 Nothing has changed yet, and nothing will unless a person presses Yes. \
+                 The answer arrives in your terminal as a line beginning [workbench:<tag>] \
+                 once your pane is on screen; the setting changes the moment they answer.",
+                change.wire()
+            ),
+            json!({ "asked": change.wire(), "pid": pid, "from": asker }),
+        ),
+        Some((_, Err(e))) => tool_err(&e),
+        None => tool_err("the window did not answer the ask"),
+    }
+}
+
 /// `present_surface` — put a work object on a pane's workbench.
 ///
 /// The strict half of the protocol. A file dropped in the watched directory is
@@ -2093,7 +2219,7 @@ where
         return tool_err(
             "MCP writes are disabled. This server is a read-only watch surface \
              until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
-             TD_MCP_WRITE=1) to let an agent present a surface.",
+             TD_MCP_WRITE=1) to let an agent present a surface. An agent can ask the person for them with request_access, change writes_on.",
         );
     }
     let Some(pid) = args.get("pid").and_then(Value::as_u64) else {
@@ -2495,7 +2621,7 @@ where
         return tool_err(
             "MCP writes are disabled. This server is a read-only watch surface \
              until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
-             TD_MCP_WRITE=1) to let an agent open a document.",
+             TD_MCP_WRITE=1) to let an agent open a document. An agent can ask the person for them with request_access, change writes_on.",
         );
     }
     if let Some(stray) = args.as_object().and_then(|a| {
@@ -3349,6 +3475,10 @@ mod tests {
             "document_notes advertised"
         );
         assert!(names.contains(&"open_document"), "open_document advertised");
+        assert!(
+            names.contains(&"request_access"),
+            "request_access advertised"
+        );
     }
 
     /// The `present_surface` blurb is the ONLY text about this protocol that
@@ -3553,6 +3683,156 @@ mod tests {
             out["structuredContent"]["pid"],
             100,
             "the deliverable landed on the wrong pane: {}",
+            text_of(&out)
+        );
+    }
+
+    // ---- request_access: an agent asks, and only a person answers ----
+
+    /// A snapshot whose caller is the agent in pane id 9 (shell pid 100), with
+    /// a sibling at pid 200. Writes OFF: asking must not need them.
+    fn asking_snap() -> Snapshot {
+        let mut mine = agent_pane(100, true);
+        mine.pane_id = Some(9);
+        let mut sibling = agent_pane(200, true);
+        sibling.pane_id = Some(4);
+        let mut s = snap(true, true, vec![sibling, mine]);
+        s.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(9),
+        });
+        s
+    }
+
+    /// Call `request_access` and keep every update the apply closure was
+    /// handed, so a test can say what reached the window and what did not.
+    fn ask(s: &Snapshot, args: Value) -> (Value, Vec<ConfigUpdate>) {
+        let seen = std::cell::RefCell::new(Vec::new());
+        let apply = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            seen.borrow_mut().extend(ups.iter().cloned());
+            ups.iter()
+                .map(|(t, _)| (t.clone(), Ok(GradeReport::default())))
+                .collect()
+        };
+        let line = json!({ "id": 9, "method": "tools/call",
+            "params": { "name": "request_access", "arguments": args } })
+        .to_string();
+        let out =
+            resp(&handle_line_with(&line, s, no_tail, apply, no_search).unwrap())["result"].clone();
+        (out, seen.into_inner())
+    }
+
+    /// The ask lands on the pane that made it — never on the pane it is about
+    /// — as an `own_pane` update carrying nothing but the ask, and it needs no
+    /// writes toggle: `writes_on` is one of the things an agent asks for.
+    #[test]
+    fn an_ask_lands_on_the_askers_own_pane_with_writes_off() {
+        let s = asking_snap();
+        assert!(!s.config.writable);
+        let (out, seen) = ask(
+            &s,
+            json!({ "change": "open_pane", "pid": 200, "why": "read the\nfailed build" }),
+        );
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        assert_eq!(seen.len(), 1);
+        let (target, patch) = &seen[0];
+        assert_eq!(
+            *target,
+            Target::Pane(100),
+            "the asker's pane, not the one asked about"
+        );
+        assert!(patch.own_pane);
+        let a = patch.ask.as_ref().expect("the ask rode the patch");
+        assert_eq!(a.change, crate::access::Change::OpenPane);
+        assert_eq!(a.pid, Some(200));
+        assert_eq!(a.why, "read the failed build", "the reason is one line");
+        assert_eq!(
+            ConfigPatch {
+                ask: None,
+                own_pane: false,
+                ..patch.clone()
+            },
+            ConfigPatch::default(),
+            "an ask changes nothing else about the pane it sits on"
+        );
+        assert!(
+            text_of(&out).contains("Nothing has changed yet"),
+            "the agent is told it has asked, not that it was granted: {}",
+            text_of(&out)
+        );
+    }
+
+    /// Each way an ask cannot stand says so, and none of them reaches the
+    /// window.
+    #[test]
+    fn an_ask_that_cannot_stand_is_refused_before_the_window_sees_it() {
+        let cases: Vec<(Snapshot, Value, &str)> = vec![
+            (
+                asking_snap(),
+                json!({ "change": "theme", "why": "x" }),
+                "must be one of",
+            ),
+            (
+                asking_snap(),
+                json!({ "change": "open_pane", "why": "x" }),
+                "pass its `pid`",
+            ),
+            (
+                asking_snap(),
+                json!({ "change": "writes_on", "pid": 200, "why": "x" }),
+                "takes no `pid`",
+            ),
+            (
+                asking_snap(),
+                json!({ "change": "writes_on" }),
+                "`why` is required",
+            ),
+            (
+                {
+                    let mut s = asking_snap();
+                    s.caller = None;
+                    s
+                },
+                json!({ "change": "writes_on", "why": "x" }),
+                "did not say who is calling",
+            ),
+            (
+                {
+                    let mut s = asking_snap();
+                    s.config.enabled = false;
+                    s
+                },
+                json!({ "change": "writes_on", "why": "x" }),
+                "disabled",
+            ),
+        ];
+        for (s, args, says) in cases {
+            let (out, seen) = ask(&s, args.clone());
+            assert_eq!(out["isError"], true, "{args}: {}", text_of(&out));
+            assert!(text_of(&out).contains(says), "{args}: {}", text_of(&out));
+            assert!(seen.is_empty(), "{args} reached the window");
+        }
+    }
+
+    /// No agent's JSON can carry an ask in, or an answer anywhere. The ask is
+    /// a `serde(skip)` field filled by the verb alone, and `deny_unknown_fields`
+    /// turns either key into a loud refusal rather than a silent no-op.
+    #[test]
+    fn no_json_carries_an_ask_in_or_an_answer_out() {
+        for key in ["ask", "answer", "own_pane", "access_ask"] {
+            let parsed: Result<ConfigPatch, _> =
+                serde_json::from_value(json!({ key: { "change": "writes_on" } }));
+            assert!(parsed.is_err(), "`{key}` deserialised into a patch");
+        }
+        let s = snap_writable(vec![agent_pane(100, true)]);
+        let out = call_set(
+            &s,
+            json!([{ "target": 100, "config": { "ask": { "change": "open_pane" } } }]),
+        );
+        assert_eq!(out["isError"], true, "{}", text_of(&out));
+        assert!(
+            text_of(&out).contains("ask"),
+            "set_pane_config said nothing about the key it refused: {}",
             text_of(&out)
         );
     }

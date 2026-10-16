@@ -40,3 +40,11 @@ driver workaround) has to cross a year of drift at the worst moment.
 | Date | zed_rev | Zed state at pin | Patches | Notes |
 |---|---|---|---|---|
 | 2026-06-12 | `abbe85a3321bf6cb7f5b241e623d9c2e16c29187` | post-wgpu Linux renderer (PR #46758), pre-1.0 → Zed 1.0 shipped 2026-04-29 | 5 (td-crt-pass, focus-blur, sever-gpl-crates, text-crawl, warp-tube-cap-32) | The founding pin (G0a day). Known drift banked upstream since: wgpu fork → upstream `wgpu 29.0.4`, taffy `=0.10.1` → `=0.13.0`, accesskit landed, WebGL backend landed 2026-08-04. First bump crosses these — budget accordingly. |
+
+Patches added on a pin, without a bump, are listed here too, because the next
+bump has to rebase them:
+
+- 2026-10-15, on `abbe85a`: `0006-lazy-path-targets` — gpui's two path render
+  targets wait for the first frame that draws a path (#953, ~96 MiB of GPU
+  memory on an idle window). One call moved in `WgpuRenderer::draw`; applies
+  after 0001-0004.

@@ -3272,6 +3272,18 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// One signed line for the agent in this pane, from a person's answer given
+    /// elsewhere in the window: the rail's Yes or No to its `request_access`.
+    ///
+    /// Through [`Self::bench_deliver`] and so under its rules — typed only
+    /// while this pane is on screen and its far end is a line editor, held in
+    /// order until then. The answer is a person's act, but the line still lands
+    /// in a terminal, and the house rule for that does not bend for a good
+    /// reason. The setting itself does not wait for the line.
+    pub(crate) fn tell_agent(&mut self, line: String, cx: &mut Context<Self>) {
+        self.bench_deliver(crate::workbench::typed_line(&line), cx);
+    }
+
     /// The bytes, into the pseudoterminal, stamped. No rules — the callers
     /// above own those, and each of them owns a different set.
     fn write_through(&mut self, bytes: Vec<u8>) {
