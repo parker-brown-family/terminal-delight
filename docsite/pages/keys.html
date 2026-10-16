@@ -157,6 +157,15 @@
 <h3>Paint overlay</h3>
 <p>Raised by <code>terminal-delight ctl paint on</code>. A set's first letter paints it; arrows walk the panes; <kbd>d</kbd> hands the pane back; <kbd>z</kbd> / <kbd>Shift</kbd>+<kbd>Z</kbd> turn the shelf; <kbd>f</kbd> jumps to favourites and <kbd>Shift</kbd>+<kbd>F</kbd> stars; <kbd>Esc</kbd> folds it. Other letters are swallowed, and chords with a modifier pass through. <a href="/themes#technical-paint">Themes</a> has more.</p>
 
+<h3>Size</h3>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd></td><td>the highlighted pane's text a step bigger / smaller; on the workbench, its type; on a document, its zoom; with the <a href="/focus-reader">focus reader</a> open, the reader's</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>-</kbd></td><td>the outer scale a step bigger / smaller: the menu bar, the tabs, the left bar, and every pane header that follows it</td></tr>
+  </tbody>
+</table>
+<p>Each press is one notch of <kbd>Ctrl</kbd>+wheel, the same step the wheel takes over a pane's screen or over the chrome. Both pairs are pane chords: nothing stacked on a pane keeps them, and the shell never receives them.</p>
+
 <h3>Mouse</h3>
 <table class="keys">
   <tbody>

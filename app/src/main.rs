@@ -66,6 +66,7 @@ mod lookup;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
+mod notepaper;
 mod notifpref;
 mod notify;
 mod paint;
@@ -7409,7 +7410,7 @@ impl Workspace {
             // launch can prefer the session that was last open *here*. A hint
             // for ranking only — never an identity, so a dragged or renamed
             // workspace costs nothing.
-            last_workspace: instance::current_workspace(),
+            last_workspace: instance::window_workspace(),
             undo_hinted: self.undo_hinted,
         }
     }
@@ -18666,6 +18667,30 @@ impl Workspace {
             self.new_tab(window, cx);
             return;
         }
+        // The size chords that are the window's. ctrl+shift+= / ctrl+shift+-
+        // step the outer scale a ctrl+wheel notch, the step the wheel takes over
+        // the chrome; with the FOCUS reader up, ctrl+= / ctrl+- step the reader's
+        // own zoom, as ctrl+wheel over the reader does. A focused pane declines
+        // exactly these (`TerminalView::size_key`), so they bubble here whether
+        // or not a pane holds the keyboard. The unshifted pair with no reader up
+        // is the highlighted pane's, and with no pane focused there is none.
+        if let Some(size) = keylayer::size_chord(&pane::keylayer_key(ks)) {
+            match size {
+                keylayer::Size::Outer(notches) => {
+                    let cur = theme::outer_choice(cx).grade.scale;
+                    self.set_scale(theme::GradeKey::Scale.nudged(cur, notches), cx);
+                }
+                keylayer::Size::Pane(notches) if self.focus_read.is_some() => {
+                    let next = Self::focus_zoom_step(self.focus_zoom, notches);
+                    if (next - self.focus_zoom).abs() > f32::EPSILON {
+                        self.focus_zoom = next;
+                        cx.notify();
+                    }
+                }
+                keylayer::Size::Pane(_) => {}
+            }
+            return;
+        }
         // Ctrl+Shift+U is NOT handled here — it is a pane chord that arrives as
         // `OpenUsagePanel` (see the subscription above), exactly like
         // Ctrl+Shift+A. It sat in this function first and did nothing at all: a
@@ -28054,10 +28079,10 @@ impl Render for Workspace {
             //
             // The sticky note's three possible papers, from the same resolved
             // theme the pips are read off, so the square on the wheel and the
-            // three buttons under it agree with the pips beside them.
-            let note_voice = sticky::Voice::of(&theme::resolve(cx, &cur));
-            let papers = theme::NotePaper::ALL.map(|m| (m, sticky::paper(m, &note_voice)));
-            let note_now = sticky::paper(cur.note, &note_voice).base;
+            // three buttons under it agree with the colours the pane wears.
+            let note_colours = notepaper::ThemeColours::of(&theme::resolve(cx, &cur));
+            let papers = theme::NotePaper::ALL.map(|m| (m, sticky::paper(m, &note_colours)));
+            let note_now = sticky::paper(cur.note, &note_colours).base;
             let wheel = self.color_wheel(self.wheel_markers(cx), note_now, cx);
             let lbar = self.lightness_bar(cx);
             // PICK row — promote a pip to the front. With a greyscale palette every
@@ -28145,7 +28170,8 @@ impl Render for Workspace {
                         ),
                 );
             }
-            // STICKY NOTE: which of the pips above a note's paper follows. Three
+            // STICKY NOTE: which of the theme's own colours a note is drawn in —
+            // contrast, accent, mute, in the order Parker gave them. Three
             // little notes in the colours they would be, so the row previews
             // itself; the pressed one is also the square on the wheel.
             let mut note_row = div()
@@ -28156,9 +28182,9 @@ impl Render for Workspace {
             for (mode, paper) in papers {
                 let cur_c = cur.clone();
                 let cap = match mode {
-                    theme::NotePaper::Primary => t.np_primary,
                     theme::NotePaper::Contrast => t.np_contrast,
-                    theme::NotePaper::Complement => t.np_complement,
+                    theme::NotePaper::Accent => t.np_accent,
+                    theme::NotePaper::Mute => t.np_mute,
                 };
                 note_row = note_row.child(
                     note_paper_btn(&th, &paper, cap, cur.note == mode).on_mouse_down(
@@ -28481,8 +28507,8 @@ impl Render for Workspace {
                 .child(div().flex().justify_center().child(lbar))
                 .child(div().flex().justify_center().pt_1().child(pick_row))
                 .child(seed_row)
-                // Under the pips because the pips are its inputs: drag T or C
-                // and the papers below move with them.
+                // Under the pips because they are its inputs: drag the seed or
+                // T and the papers below move with them.
                 .child(hsep())
                 .child(label(t.t_note))
                 .child(note_row);
@@ -31790,7 +31816,9 @@ impl Render for Workspace {
                         row(&format!("⛭ {}", s.k_display_tray), s.display_tray),
                         row("Ctrl+Shift+G", s.display_tray),
                         row("Ctrl+wheel ↑ / ↓", s.outer_size),
+                        row("Ctrl+Shift+= / -", s.outer_size_key),
                         row(s.k_text_size_key, s.text_size),
+                        row("Ctrl+= / -", s.text_size),
                         row(s.k_warp_dial, s.warp),
                     ],
                 ))
@@ -35168,6 +35196,47 @@ mod tests {
             pane_src[at..at + end].contains("cx.stop_propagation();"),
             "a pane that sized itself must halt the wheel, or this handler \
              sizes the menu bar off the same notch"
+        );
+    }
+
+    /// The window's half of the size chords steps as its wheel does.
+    ///
+    /// ctrl+shift+= / ctrl+shift+- is ctrl+wheel over the chrome from the
+    /// keyboard, and with the FOCUS reader up ctrl+= / ctrl+- is ctrl+wheel
+    /// over the reader. The pane declines exactly those two cases
+    /// (`TerminalView::size_key`, held by its behaviour tests), so this branch
+    /// is where they land. Asked of the one table, stepped by the wheels' own
+    /// steps, and never sizing a pane's text, which is the pane's to do.
+    ///
+    /// Mutation-tested: an open-coded outer step, an open-coded reader step,
+    /// and a branch that turns the pane's text dial each fail this test.
+    #[test]
+    fn the_windows_size_chords_step_as_its_wheels_do() {
+        let code = shipped_code();
+        let at = code
+            .find("    fn on_key(&mut self, ev: &KeyDownEvent")
+            .expect("Workspace::on_key");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let body = &code[at..at + end];
+        let chord = body
+            .find("keylayer::size_chord(&pane::keylayer_key(ks))")
+            .expect("the window must ask the one table which chord this is");
+        let branch = &body[chord..];
+        let branch = &branch[..branch
+            .find("\n            return;\n        }")
+            .expect("the branch ends by keeping the key")];
+
+        assert!(
+            branch.contains("theme::GradeKey::Scale.nudged(cur, notches)"),
+            "the outer pair steps the menu-bar dial by the wheel's own notch"
+        );
+        assert!(
+            branch.contains("Self::focus_zoom_step(self.focus_zoom, notches)"),
+            "with the reader up, the plain pair steps the reader as its wheel does"
+        );
+        assert!(
+            !branch.contains("GradeKey::TextSize") && !branch.contains("nudge_size"),
+            "the window never sizes a pane's text: the pane answers that pair itself"
         );
     }
 
