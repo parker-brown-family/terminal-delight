@@ -3915,3 +3915,101 @@ fn a_departed_agent_does_not_leave_the_bar_reading_an_answer(cx: &mut TestAppCon
         "the next agent is not born reading the answer the last one was given"
     );
 }
+
+/// A real line editor at a prompt, on the alternate screen when `alt`:
+/// readline with no rc file and no history file, so what it does with a key
+/// is readline's default and nothing on this machine.
+fn pane_at_a_prompt(cx: &mut TestAppContext, alt: bool) -> Pane {
+    let screen = if alt { "printf '\\033[?1049h'; " } else { "" };
+    let mut pane = Pane::running(
+        cx,
+        &format!(
+            "{screen}INPUTRC=/dev/null HISTFILE= PS1='ready> ' exec bash --norc --noprofile -i"
+        ),
+    );
+    pane.wait_for("ready>");
+    pane.settle();
+    pane
+}
+
+/// Typed at the prompt, one key per character, and echoed back.
+fn type_line(pane: &mut Pane, line: &str) {
+    let keys: Vec<String> = line
+        .chars()
+        .map(|c| {
+            if c == ' ' {
+                "space".to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect();
+    pane.keys(&keys.join(" "));
+    pane.wait_for(&format!("ready> {line}"));
+}
+
+/// Backspace over a word selected with the mouse, in the middle of the line
+/// being typed, takes the whole word — not the one character before the
+/// caret, which is what it took before.
+#[gpui::test]
+fn backspace_over_a_mouse_selection_erases_it_from_the_line(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    type_line(&mut pane, "echo hello world foo");
+
+    // From the left quarter of the w to the right quarter of the d.
+    let cell_w = pane.read(|v| v.cell_w);
+    let w = pane.point_at("w");
+    let d = pane.point_at("ld");
+    pane.press(point(w.x - px(cell_w / 4.0), w.y));
+    pane.drag_to(point(d.x + px(cell_w / 4.0), d.y));
+    pane.release(point(d.x + px(cell_w / 4.0), d.y));
+    assert_eq!(
+        pane.read(|v| v.selection_clipboard_text()).as_deref(),
+        Some("world"),
+        "the drag selects the word"
+    );
+
+    pane.keys("backspace");
+    pane.wait_for("ready> echo hello  foo");
+    assert!(
+        !pane.read(|v| v.has_selection()),
+        "the selection went with the text"
+    );
+    pane.keys("enter");
+    pane.wait_for_row("hello foo");
+}
+
+/// Ctrl+Shift+Left at the end of the line selects the last word and the blank
+/// cell the caret sits on; Delete takes the word and leaves the space before
+/// it.
+#[gpui::test]
+fn delete_over_a_keyboard_selection_takes_the_word_and_not_the_space(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    type_line(&mut pane, "echo abc def");
+    pane.keys("ctrl-shift-left");
+    assert!(pane.read(|v| v.has_selection()), "the word is selected");
+
+    pane.keys("delete");
+    pane.keys("z enter");
+    pane.wait_for("ready> echo abc z");
+    pane.wait_for_row("abc z");
+}
+
+/// Claude Code draws its prompt on the alternate screen, so an agent pane
+/// erases a selection there; a full-screen program that is not an agent —
+/// `less`, `vim` — is not a line being typed, and Backspace stays one key.
+#[gpui::test]
+fn the_alternate_screen_erases_a_selection_only_in_an_agent_pane(cx: &mut TestAppContext) {
+    let mut agent = pane_at_a_prompt(cx, true);
+    agent.running_as(crate::pane::PaneMode::Claude);
+    type_line(&mut agent, "echo abc def");
+    agent.keys("ctrl-shift-left backspace z enter");
+    agent.wait_for("ready> echo abc z");
+    agent.wait_for_row("abc z");
+
+    let mut other = pane_at_a_prompt(cx, true);
+    type_line(&mut other, "echo abc def");
+    other.keys("ctrl-shift-left backspace z enter");
+    other.wait_for("ready> echo abc dez");
+    other.wait_for_row("abc dez");
+}
