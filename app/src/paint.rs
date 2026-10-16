@@ -41,7 +41,8 @@ pub enum Pick {
     /// cabinet has nothing above it to follow. One chord, two honest meanings —
     /// which is why each scope applies this one itself.
     Default,
-    /// One of our own colour sets.
+    /// One of our own colour sets. No shelf offers the named ones any more;
+    /// what still picks a set is the theme tray's custom colour wheel.
     Set(Dynamic),
     /// One of the desktop's palettes, by Omarchy's id.
     Palette(String),
@@ -75,27 +76,20 @@ pub struct Wearing {
 }
 
 impl Wearing {
-    /// The NAMEABLE look actually worn.
+    /// The NAMEABLE look actually worn — the desktop palette, if one is.
     ///
-    /// `None` when nothing is worn — and also when what is worn has no name to
-    /// write down (a hand-seeded tint, a palette this desktop no longer has).
-    /// Absent and unnameable both mean "there is no cursor here", which is the
-    /// honest answer for a cycle and for a star alike.
+    /// `None` when nothing is worn — and also when what is worn has no name a
+    /// shelf offers: a hand-seeded tint, or one of our old colour sets, which no
+    /// shelf has shown since Omarchy's themes replaced them. Absent and
+    /// unnameable both mean "there is no cursor here", which is the honest answer
+    /// for a cycle and for a star alike.
     pub fn fav(&self) -> Option<Fav> {
         if self.unpainted {
             return None;
         }
         // A palette paints OVER a set ([`stamp`] clears the set when one lands),
         // so a scope wearing one is wearing that, whatever else the group holds.
-        if let Some(id) = &self.palette {
-            return Some(Fav::Palette(id.clone()));
-        }
-        let d = self.set.as_ref()?;
-        Dynamic::NAMED
-            .iter()
-            .find(|n| n.same_kind(d))
-            .cloned()
-            .map(Fav::Set)
+        self.palette.clone().map(Fav::Palette)
     }
 
     /// The desktop palette worn, if that is what is worn — the palette cycle's
@@ -211,21 +205,6 @@ pub fn entries(cx: &App, shelf: Shelf, worn: &Wearing, lead: &str) -> Vec<Entry>
                 });
             }
         }
-        Shelf::Sets => {
-            for d in Dynamic::NAMED.iter() {
-                let pick = Pick::Set(d.clone());
-                out.push(Entry {
-                    lit: worn.lights(&pick),
-                    pick,
-                    face: Face::Glyph(d.glyph()),
-                    key: d.paint_letter(),
-                    rest: d.label()[1..].to_uppercase(),
-                    second: String::new(),
-                    swatch: d.swatch(),
-                    star: fav::contains(cx, &Fav::Set(d.clone())),
-                });
-            }
-        }
         Shelf::Palettes => {
             for p in crate::palette::chips(cx) {
                 let pick = Pick::Palette(p.id.clone());
@@ -252,9 +231,8 @@ pub fn entries(cx: &App, shelf: Shelf, worn: &Wearing, lead: &str) -> Vec<Entry>
 /// One letter, resolved against the shelf on show and what the scope wears.
 ///
 /// `d` is answered FIRST, from every shelf, because it is the one entry that
-/// belongs to no shelf's own alphabet. After that each shelf resolves its own
-/// way: our sets from one table of unique letters, the other two by CYCLING
-/// through the entries sharing a letter, which is what makes `catppuccin` and
+/// belongs to no shelf's own alphabet. After that a letter CYCLES through the
+/// shelf's entries sharing it, which is what makes `catppuccin` and
 /// `catppuccin-latte` both reachable from `c`.
 pub fn chord(cx: &App, key: &str, shelf: Shelf, worn: &Wearing) -> Option<Pick> {
     if key.eq_ignore_ascii_case("d") {
@@ -271,10 +249,6 @@ pub fn chord(cx: &App, key: &str, shelf: Shelf, worn: &Wearing) -> Option<Pick> 
         Shelf::Favourites => {
             fav::next_for_letter(cx, one?, worn.fav().as_ref()).map(|f| Pick::of_fav(&f))
         }
-        Shelf::Sets => Dynamic::paint_chord(key).map(|d| match d {
-            Some(d) => Pick::Set(d),
-            None => Pick::Default,
-        }),
         Shelf::Palettes => {
             crate::palette::next_for_letter(cx, one?, worn.worn_palette().as_deref())
                 .map(Pick::Palette)
@@ -403,15 +377,89 @@ pub fn legend(cx: &App, walk: &[&str], lead_verb: &str, worn: &Wearing) -> Strin
 /// name to say — a hand-seeded tint, or a palette this desktop no longer has
 /// installed. Folding that third case into "default" would report a cabinet
 /// somebody hand-tuned in the theme tray as the one we shipped.
+///
+/// The header says what is WORN, not what could be picked, so a named colour
+/// set still answers with its name although no shelf offers the sets now: a
+/// pane still wearing `wood` is wearing wood, not something custom.
 pub fn worn_label(w: &Wearing) -> String {
     if w.unpainted {
         return "DEFAULT".into();
     }
-    match w.fav() {
-        Some(Fav::Palette(id)) => id.to_uppercase(),
-        Some(Fav::Set(d)) => d.label().to_uppercase(),
+    if let Some(id) = &w.palette {
+        return id.to_uppercase();
+    }
+    match w
+        .set
+        .as_ref()
+        .and_then(|d| Dynamic::NAMED.iter().find(|n| n.same_kind(d)))
+    {
+        Some(d) => d.label().to_uppercase(),
         None => "CUSTOM".into(),
     }
+}
+
+/// The card a paint surface floats on — ONE builder for the cabinet's card and
+/// every pane's, so the two cannot disagree about what a paint surface is.
+///
+/// It is the menu recipe: a real border, an opaque darkened fill, a float shadow
+/// and a radius. The cabinet's card wore it first. The panes' grids floated bare
+/// over the terminal text until 2026-10-16, when Parker set the two side by side:
+/// *"the outter already got a glass tray! … the inner guys need the same
+/// treatment! Just use what the OUTTER THEME PICKER ALREADY DOES!"*
+///
+/// Dimmed until it is `aimed`, in its border and its glow — never by going
+/// transparent, because a card you can see through reads as a decal on the tube.
+pub fn card(th: &Theme, sk: &Skin, scale: f32, aimed: bool) -> Div {
+    div()
+        .occlude()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(8. * scale))
+        .p(px(12. * scale))
+        .rounded(sk.rad_raw(8.))
+        .border_2()
+        .border_color(if aimed {
+            th.accent.alpha(0.85)
+        } else {
+            th.accent.alpha(0.3)
+        })
+        .bg(crate::darken(th.surface, 0.45))
+        .text_color(th.text)
+        .font_family(th.font_family.clone())
+        .shadow(crate::float_shadows(
+            if aimed {
+                th.accent
+            } else {
+                th.accent.alpha(0.35)
+            },
+            th.grade.phosphor,
+        ))
+}
+
+/// A card's header: what is being painted on the left, what it has on now on
+/// the right — the scale popup's shape, where "menu bar" sits opposite "85%".
+pub fn card_head(th: &Theme, scale: f32, aimed: bool, label: &'static str, worn: &Wearing) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap(px(10. * scale))
+        .w_full()
+        .child(
+            div()
+                .text_size(px(10.5 * scale))
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(if aimed { th.complement } else { th.faint })
+                .child(label),
+        )
+        .child(
+            div()
+                .text_size(px(10. * scale))
+                .text_color(th.accent)
+                .child(worn_label(worn)),
+        )
 }
 
 /// A tile's face: a colour set's glyph, or a palette's own screen in miniature.
@@ -649,14 +697,16 @@ mod tests {
         assert_eq!(worn.fav(), Some(Fav::Palette("nord".into())));
     }
 
-    /// A worn set lights its own tile and is the thing `⇧F` would star.
+    /// A worn set still lights its own tile (the tray's custom wheel picks
+    /// sets), but no shelf offers the named sets any more, so `⇧F` has nothing
+    /// to star and a letter-cycle starts from the top.
     #[test]
-    fn a_worn_set_lights_its_own_tile() {
+    fn a_worn_set_lights_its_own_tile_but_stars_nothing() {
         let d = Dynamic::NAMED[0].clone();
         let worn = set(d.clone());
-        assert!(worn.lights(&Pick::Set(d.clone())));
+        assert!(worn.lights(&Pick::Set(d)));
         assert!(!worn.lights(&Pick::Default));
-        assert_eq!(worn.fav(), Some(Fav::Set(d)));
+        assert_eq!(worn.fav(), None);
     }
 
     /// A pane that follows the outer wears nothing OF ITS OWN, whatever the

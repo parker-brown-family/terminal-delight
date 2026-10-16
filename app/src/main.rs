@@ -49,6 +49,7 @@ mod emphasis;
 mod engstate;
 mod fav;
 mod gamba;
+mod glyph;
 mod gridwire;
 mod handover;
 mod hold;
@@ -24044,30 +24045,10 @@ impl Workspace {
         // where "menu bar" sits opposite "85%". Here the value is what the
         // cabinet has on, which is the one thing a person cannot read off the
         // tiles when the worn look is scrolled onto a shelf they are not looking
-        // at.
-        let head = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(10. * scale))
-            .w_full()
-            .child(
-                div()
-                    .text_size(px(10.5 * scale))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(if aimed { th.complement } else { th.faint })
-                    // "OUTER" is the theme tray's own word for this scope
-                    // (`lang::Strings::scope_outer`); the overlay says it in the
-                    // same English the wall's card does.
-                    .child("PAINT THE OUTER"),
-            )
-            .child(
-                div()
-                    .text_size(px(10. * scale))
-                    .text_color(th.accent)
-                    .child(paint::worn_label(&worn)),
-            );
+        // at. "OUTER" is the theme tray's own word for this scope
+        // (`lang::Strings::scope_outer`); the overlay says it in the same English
+        // the wall's cards do.
+        let head = paint::card_head(&th, scale, aimed, "PAINT THE OUTER", &worn);
         // The shelf pills — the visible half of `z`, on their own row so the
         // header keeps the label/value shape it borrowed.
         let pills = (shelves.len() > 1).then(|| {
@@ -24102,31 +24083,7 @@ impl Workspace {
         } else {
             (None, None)
         };
-        let card = div()
-            .occlude()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(8. * scale))
-            .p(px(12. * scale))
-            .rounded(sk.rad_raw(8.))
-            .border_2()
-            .border_color(if aimed {
-                th.accent.alpha(0.85)
-            } else {
-                th.accent.alpha(0.3)
-            })
-            .bg(darken(th.surface, 0.45))
-            .text_color(th.text)
-            .font_family(th.font_family.clone())
-            .shadow(float_shadows(
-                if aimed {
-                    th.accent
-                } else {
-                    th.accent.alpha(0.35)
-                },
-                th.grade.phosphor,
-            ))
+        let card = paint::card(&th, &sk, scale, aimed)
             .child(head)
             .children(pills)
             .children(grid)
@@ -27901,29 +27858,37 @@ impl Render for Workspace {
                         .bg(th.faint.alpha(0.22)),
                 )
             };
-            // ---- dynamics glyph column: the theme tray is a vertical box of
-            // dynamics (glyph only — no caption, no hover). The seed wheel below
-            // stays the colour knob; the dynamic decides how that seed becomes the
-            // palette. Overflow wraps into more columns to the right.
+            // ---- the theme column: the desktop's own themes, as Omarchy's
+            // picker lists them ([`palette::offered`]), glyph only — no caption,
+            // no hover. Each tile is its theme's own background with the theme's
+            // glyph in the theme's accent ([`glyph`]), so the colour of a theme is
+            // on its tile before anyone reads a name. The custom wheel's cog
+            // closes the column. Overflow wraps into more columns to the right.
             //
-            // The column opens on 📺, the Terminal Delight palette: the look a
-            // fresh install wears, pulled from the same Omarchy theme the
-            // desktop uses (TD ships a copy, see `palette::SHIPPED`). A tile is
-            // a `paint::Pick`, so a set and a palette replace each other here
-            // exactly as they do in the paint overlay, and one tile is lit.
-            let wearing_td =
-                cur.palette.as_deref() == Some(palette::TERMINAL_DELIGHT) && cur.dynamic.is_plain();
-            let mut dyn_entries: Vec<(paint::Pick, bool)> = vec![(
-                paint::Pick::Palette(palette::TERMINAL_DELIGHT.into()),
-                wearing_td,
-            )];
-            dyn_entries.extend(theme::Dynamic::NAMED.iter().cloned().map(|d| {
-                let active = cur.dynamic.same_kind(&d);
-                (paint::Pick::Set(d), active)
-            }));
+            // Until 2026-10-16 this column was TD's eleven colour sets. Parker:
+            // *"TD themes suck! Omarchy themes are GOLD"*. The Terminal Delight
+            // palette, the look a fresh install wears, still leads: it is a
+            // desktop theme like the others, and TD carries a copy of it.
+            //
+            // A tile is a `paint::Pick`, so a theme and the custom set replace
+            // each other here exactly as they do in the paint overlay, and one
+            // tile is lit.
+            let mut chips = palette::chips(cx);
+            if let Some(i) = chips.iter().position(|c| c.id == palette::TERMINAL_DELIGHT) {
+                let td = chips.remove(i);
+                chips.insert(0, td);
+            }
+            let mut dyn_entries: Vec<(paint::Pick, bool, Option<palette::Chip>)> = chips
+                .into_iter()
+                .map(|c| {
+                    let active = cur.palette.as_deref() == Some(c.id.as_str());
+                    (paint::Pick::Palette(c.id.clone()), active, Some(c))
+                })
+                .collect();
             dyn_entries.push((
                 paint::Pick::Set(theme::Dynamic::Custom(Box::default())),
                 matches!(cur.dynamic, theme::Dynamic::Custom(_)),
+                None,
             ));
             const PER_COL: usize = 10; // fill a column vertically before wrapping
             let mut dyn_cols = div().flex().flex_row().gap_2();
@@ -27932,30 +27897,39 @@ impl Render for Workspace {
                     dyn_cols = dyn_cols.child(vsep());
                 }
                 let mut col = div().flex().flex_col().gap_2();
-                for (pick, active) in chunk {
+                for (pick, active, chip) in chunk {
                     let active = *active;
-                    // A per-set swatch tints the plain symbol glyphs (❖ ⚡ ☼ …) to
-                    // their palette colour so the tray reads at a glance; colour
-                    // emoji ignore the tint and keep their own hues.
-                    let (glyph, swatch, name) = match pick {
-                        paint::Pick::Set(d) => (d.glyph(), d.swatch(), d.label()),
-                        // A CRT monitor: the house look, and the one tile that
-                        // is a palette rather than a colour set.
-                        _ => ("📺", None, palette::TERMINAL_DELIGHT),
-                    };
-                    let glyph = glyph.to_string();
-                    let box_id = SharedString::from(format!("dyn-{name}"));
+                    let box_id = SharedString::from(match chip {
+                        Some(c) => format!("dyn-{}", c.id),
+                        None => "dyn-custom".to_string(),
+                    });
                     let pick_click = pick.clone();
                     let cur_c = cur.clone();
-                    col = col.child(
-                        div()
-                            .id(box_id)
-                            .w(px(40.))
-                            .h(px(40.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(sk.rad_raw(6.))
+                    let tile = div()
+                        .id(box_id)
+                        .w(px(40.))
+                        .h(px(40.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(sk.rad_raw(6.))
+                        .cursor_pointer();
+                    let tile = match chip {
+                        // The theme in miniature: its screen colour, ringed in
+                        // its accent, its glyph in its accent. The lit ring is
+                        // the scope's own text colour, which is this theme's
+                        // when it is the one worn.
+                        Some(c) => {
+                            let tile = tile.bg(c.bg);
+                            let tile = if active {
+                                tile.border_2().border_color(th.text)
+                            } else {
+                                tile.border_1().border_color(c.chips[0].alpha(0.55))
+                            };
+                            tile.child(glyph::element(&c.id, c.chips[0], 20.))
+                        }
+                        // The custom wheel's cog, in the tray's own ink.
+                        None => tile
                             .border_1()
                             .border_color(if active {
                                 th.accent
@@ -27968,29 +27942,23 @@ impl Render for Workspace {
                                 darken(th.surface, 0.3)
                             })
                             .text_size(px(18.))
-                            .text_color(match (swatch, active) {
-                                (Some(c), true) => c,
-                                (Some(c), false) => c.alpha(0.85),
-                                (None, true) => th.text,
-                                (None, false) => th.text.alpha(0.7),
-                            })
-                            .cursor_pointer()
-                            .child(glyph)
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    // Picking a tile clears the wheel overrides
-                                    // so its signature colours show, and a set
-                                    // and a palette replace each other — the
-                                    // paint overlay's own stamp, so the two
-                                    // pickers cannot disagree about a pick.
-                                    let mut g = theme::ThemeGroup::of(&cur_c);
-                                    paint::stamp(&mut g, &pick_click);
-                                    ws.set_menu_choice(cur_c.clone().with_group(g), cx);
-                                }),
-                            ),
-                    );
+                            .text_color(if active { th.text } else { th.text.alpha(0.7) })
+                            .child(theme::Dynamic::Custom(Box::default()).glyph()),
+                    };
+                    col = col.child(tile.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            // Picking a tile clears the wheel overrides
+                            // so its signature colours show, and a set
+                            // and a palette replace each other — the
+                            // paint overlay's own stamp, so the two
+                            // pickers cannot disagree about a pick.
+                            let mut g = theme::ThemeGroup::of(&cur_c);
+                            paint::stamp(&mut g, &pick_click);
+                            ws.set_menu_choice(cur_c.clone().with_group(g), cx);
+                        }),
+                    ));
                 }
                 dyn_cols = dyn_cols.child(col);
             }
