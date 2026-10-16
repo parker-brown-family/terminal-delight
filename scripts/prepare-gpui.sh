@@ -19,6 +19,12 @@
 #   0002-sever-gpl-crates   — drops the GPL crates (ztracing/zlog) that the
 #                             gpui -> sum_tree edge would otherwise link into
 #                             the binary, keeping a *distributed* build MIT-clean
+#   0006-lazy-path-targets  — creates the path renderer's two surface-sized
+#                             targets (one of them 4x MSAA) on the first frame
+#                             that draws a path instead of the first frame of
+#                             all: ~96 MiB of GPU memory an idle window that
+#                             draws no path never needs (#953). Delta on the
+#                             renderer patches; applies last.
 # Idempotent; safe to re-run.
 set -euo pipefail
 
@@ -31,9 +37,10 @@ patch_crawl="$repo_root/docs/patches/0003-text-crawl.patch"
 patch_tubes="$repo_root/docs/patches/0004-warp-tube-cap-32.patch"
 patch_glyph="$repo_root/docs/patches/0005-glyph-transform.patch"
 patch_gpl="$repo_root/docs/patches/0002-sever-gpl-crates.patch"
+patch_lazy="$repo_root/docs/patches/0006-lazy-path-targets.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl"; do
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -91,3 +98,8 @@ apply_patch "$patch_glyph" "glyph-transform" \
 # sentinel: ztracing/zlog gone from sum_tree means the sever is already in the tree
 apply_patch "$patch_gpl" "sever-gpl-crates" \
     '! grep -rqF "ztracing" crates/sum_tree'
+# 0006-lazy-path-targets moves one call in the renderer's draw, which 0001-0004
+# also touch, so it applies after them.
+# sentinel: its marker comment present means the deferral is already in.
+apply_patch "$patch_lazy" "lazy-path-targets" \
+    'grep -rqF "td-lazy-path-targets" crates/gpui_wgpu/src'
