@@ -264,6 +264,16 @@ pub struct ConfigPatch {
     /// *payload* and the verb parses it into this.
     #[serde(skip)]
     pub surface: Option<crate::surface::Post>,
+    /// This update acts on the CALLER's own pane — its own note, its own
+    /// deliverable, its own bench — which is the one case an off-limits pane
+    /// still takes from an agent: off-limits hides a pane from other agents,
+    /// it does not silence the one running inside it.
+    ///
+    /// `skip`, so it can never arrive in an agent's JSON: only the verbs that
+    /// resolved the target as the caller's pane set it. `set_pane_config`
+    /// cannot, and `deny_unknown_fields` refuses the key outright.
+    #[serde(skip)]
+    pub own_pane: bool,
 }
 
 /// A validated deliverable declaration on its way to the GUI thread.
@@ -505,9 +515,24 @@ pub type ApplyOutcome = (Target, Result<GradeReport, String>);
 /// `cfg`? Pure, so the safety rule is unit-tested in isolation.
 ///
 /// Disabled ⇒ nothing. `AgentsOnly` ⇒ agents only. `All` ⇒ every pane — but
-/// still only while the master switch is on.
-pub fn should_expose(cfg: &McpConfig, is_agent: bool) -> bool {
-    cfg.enabled && (matches!(cfg.expose, Expose::All) || is_agent)
+/// still only while the master switch is on. And never a pane a person has
+/// marked off-limits to agents, whatever the policy: that is the person
+/// saying *not this one*, and it outranks the window-wide switches.
+///
+/// `off_limits` is an argument rather than something a caller remembers to
+/// check alongside, so every site that decides exposure has to say what the
+/// pane's mark is — adding it made the compiler name all six.
+pub fn should_expose(cfg: &McpConfig, is_agent: bool, off_limits: bool) -> bool {
+    cfg.enabled && !off_limits && (matches!(cfg.expose, Expose::All) || is_agent)
+}
+
+/// May this update reach that pane? The exposure gate, with the one exception
+/// off-limits makes: an update on the caller's OWN pane (its note, its
+/// deliverable, its bench — [`ConfigPatch::own_pane`]) still lands on a pane
+/// marked off-limits, because the mark hides a pane from other agents and does
+/// not silence the one inside it. Everything else follows [`should_expose`].
+pub fn may_write(cfg: &McpConfig, is_agent: bool, off_limits: bool, own_pane: bool) -> bool {
+    should_expose(cfg, is_agent, off_limits && !own_pane)
 }
 
 // ===========================================================================
@@ -767,6 +792,19 @@ impl Snapshot {
                      window's listing"
                 )
             })
+    }
+
+    /// Whether `pid` is the pane the caller is sitting in — what makes an
+    /// update [`ConfigPatch::own_pane`]. As trustworthy as the caller's pane
+    /// id, which the host puts in the pane's environment: a process that
+    /// forges it is pretending to be another pane, and the most it reaches
+    /// that way is that pane's note, deliverable and bench, never a read.
+    fn is_callers(&self, pid: u32) -> bool {
+        self.caller
+            .as_ref()
+            .and_then(|c| c.pane)
+            .and_then(|pane| self.panes.iter().find(|p| p.pane_id == Some(pane)))
+            .is_some_and(|p| p.pid == pid)
     }
 
     /// A snapshot that exposes nothing — used to answer snapshot-independent
@@ -1846,6 +1884,7 @@ where
     let cleared = matches!(change, NoteChange::Clear);
     let patch = ConfigPatch {
         note: Some(change),
+        own_pane: snap.is_callers(pid as u32),
         ..Default::default()
     };
     let outcomes = apply(&[(Target::Pane(pid as u32), patch)]);
@@ -1903,6 +1942,7 @@ where
     };
     let patch = ConfigPatch {
         deliverable: Some(change),
+        own_pane: snap.is_callers(pid as u32),
         ..Default::default()
     };
     match apply(&[(Target::Pane(pid as u32), patch)])
@@ -2056,6 +2096,7 @@ where
 
     let patch = ConfigPatch {
         surface: Some(post),
+        own_pane: snap.is_callers(pid),
         ..Default::default()
     };
     match apply(&[(Target::Pane(pid), patch)]).into_iter().next() {
@@ -2612,8 +2653,8 @@ mod tests {
     #[test]
     fn disabled_exposes_nothing() {
         let c = McpConfig::default(); // enabled = false
-        assert!(!should_expose(&c, true));
-        assert!(!should_expose(&c, false));
+        assert!(!should_expose(&c, true, false));
+        assert!(!should_expose(&c, false, false));
     }
 
     #[test]
@@ -2624,8 +2665,8 @@ mod tests {
             events: true,
             writable: false,
         };
-        assert!(should_expose(&c, true), "agent pane exposed");
-        assert!(!should_expose(&c, false), "plain shell NOT exposed");
+        assert!(should_expose(&c, true, false), "agent pane exposed");
+        assert!(!should_expose(&c, false, false), "plain shell NOT exposed");
     }
 
     #[test]
@@ -2636,8 +2677,26 @@ mod tests {
             events: false,
             writable: false,
         };
-        assert!(should_expose(&c, true));
-        assert!(should_expose(&c, false), "All exposes shells too");
+        assert!(should_expose(&c, true, false));
+        assert!(should_expose(&c, false, false), "All exposes shells too");
+    }
+
+    /// A pane a person marked off-limits is exposed under no policy at all —
+    /// the person's *not this one* outranks the window-wide switches.
+    ///
+    /// Mutation-tested: dropping `!off_limits` from the gate fails this.
+    #[test]
+    fn an_off_limits_pane_is_exposed_under_no_policy() {
+        for expose in [Expose::AgentsOnly, Expose::All] {
+            let c = McpConfig {
+                enabled: true,
+                expose,
+                events: true,
+                writable: true,
+            };
+            assert!(!should_expose(&c, true, true), "{expose:?}: an agent pane");
+            assert!(!should_expose(&c, false, true), "{expose:?}: a shell");
+        }
     }
 
     #[test]
@@ -4614,5 +4673,118 @@ mod tests {
         assert_eq!(v["params"]["level"], "info");
         assert_eq!(v["params"]["logger"], SERVER_NAME);
         assert_eq!(v["params"]["data"]["tool"], "Bash");
+    }
+
+    // ── off-limits to agents ───────────────────────────────────────────────
+
+    /// The write rule, whole: an off-limits pane takes an update only when it
+    /// is the caller's own, and the policy still has to expose the pane at all.
+    ///
+    /// Mutation-tested: ignoring `own_pane`, and letting `own_pane` reach a
+    /// pane the policy does not expose, each fail this.
+    #[test]
+    fn an_off_limits_pane_takes_writes_only_from_its_own_agent() {
+        let on = McpConfig {
+            enabled: true,
+            expose: Expose::AgentsOnly,
+            events: true,
+            writable: true,
+        };
+        assert!(!may_write(&on, true, true, false), "another agent's write");
+        assert!(may_write(&on, true, true, true), "its own agent's write");
+        assert!(
+            may_write(&on, true, false, false),
+            "an ordinary pane, as before"
+        );
+        assert!(
+            !may_write(&on, false, true, true),
+            "own pane or not, the policy still decides whether a shell is exposed"
+        );
+        let off = McpConfig::default();
+        assert!(!may_write(&off, true, true, true), "MCP off is off");
+    }
+
+    /// The verbs that act on a pane mark the update as the caller's own exactly
+    /// when the target is the caller's pane — named or defaulted — and never
+    /// when it is somebody else's.
+    ///
+    /// Mutation-tested: setting `own_pane` unconditionally fails this.
+    #[test]
+    fn a_write_is_marked_own_only_when_it_is_the_callers_pane() {
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<ConfigUpdate>>> = Default::default();
+        let seen2 = seen.clone();
+        let apply = move |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            seen2.lock().unwrap().extend(ups.iter().cloned());
+            vec![(ups[0].0.clone(), Ok(GradeReport::default()))]
+        };
+        let mut s = snap_writable(vec![agent_pane(100, true), agent_pane(200, true)]);
+        s.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(u64::from(100u32 % 97)),
+        });
+        let call =
+            |args: Value| json!({ "id": 7, "method": "tools/call", "params": args }).to_string();
+        for line in [
+            call(json!({ "name": "leave_note", "arguments": { "text": "mine" } })),
+            call(json!({ "name": "leave_note", "arguments": { "pid": 100, "text": "mine" } })),
+            call(json!({ "name": "leave_note", "arguments": { "pid": 200, "text": "theirs" } })),
+            call(json!({ "name": "declare_deliverable", "arguments": { "href": "/r/a.html" } })),
+            call(
+                json!({ "name": "present_surface", "arguments": { "pid": 200,
+                "surface": { "td": "0.4", "kind": "response", "title": "t",
+                    "model": { "layman": "x" } } } }),
+            ),
+        ] {
+            let reply = handle_line_with(&line, &s, no_tail, &apply, no_search).unwrap();
+            assert!(!reply.contains("isError"), "{reply}");
+        }
+        let own: Vec<(Target, bool)> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(t, p)| (t.clone(), p.own_pane))
+            .collect();
+        assert_eq!(
+            own,
+            vec![
+                (Target::Pane(100), true),
+                (Target::Pane(100), true),
+                (Target::Pane(200), false),
+                (Target::Pane(100), true),
+                (Target::Pane(200), false),
+            ]
+        );
+    }
+
+    /// An agent cannot claim the exception for itself: `own_pane` is not a
+    /// field a `set_pane_config` caller can send, and the patch refuses it.
+    ///
+    /// Mutation-tested: dropping `#[serde(skip)]` from `own_pane` fails this.
+    #[test]
+    fn an_agent_cannot_claim_its_write_is_its_own() {
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<ConfigUpdate>>> = Default::default();
+        let seen2 = seen.clone();
+        let apply = move |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            seen2.lock().unwrap().extend(ups.iter().cloned());
+            ups.iter()
+                .map(|(t, _)| (t.clone(), Ok(GradeReport::default())))
+                .collect()
+        };
+        let s = snap_writable(vec![agent_pane(200, true)]);
+        let line = json!({ "id": 8, "method": "tools/call", "params": {
+            "name": "set_pane_config",
+            "arguments": { "updates": [ { "target": 200,
+                "config": { "brightness": 10, "own_pane": true } } ] }
+        }})
+        .to_string();
+        let reply = handle_line_with(&line, &s, no_tail, &apply, no_search).unwrap();
+        assert!(
+            seen.lock().unwrap().iter().all(|(_, p)| !p.own_pane),
+            "an agent's JSON set own_pane: {reply}"
+        );
+        assert!(
+            reply.contains("own_pane"),
+            "the refusal names the key: {reply}"
+        );
     }
 }

@@ -65,6 +65,18 @@ expressible request that writes into a session already running. The socket itsel
 `0700` directory keyed to the owning pid, so the caller is already this user — and a process running
 as this user can execute commands without asking a terminal emulator to do it.
 
+**Corrected 2026-10-15: the socket also reaches an agent that is already running — through its
+bench.** `ctl bench say`, `ctl bench choose` and `ctl bench submit` are the workbench's own
+gestures driven from outside, and they land in `pane/bench.rs` (`bench_deliver`, `bench_keystroke`,
+`dial_answer`), which this file's audit does not count because it scans `pane.rs` and `pane/doc.rs`.
+Those writes have their own scan, `every_bench_write_goes_through_the_gate`, and their own bounds:
+the pane must be on screen with an agent in it, a picker the dial raised holds them back, and a
+line arrives prefixed `[workbench:<tag>]`, so the agent can tell its own person's line from anyone
+else's. (`ctl bench type` only fills the composer and writes nothing to the terminal.) So the
+sentence above is true of `adopt` and not of the socket: any process running as you can put a line
+in front of an agent on screen, the bench's way. Marking a pane **off-limits** (`docs/mcp.md`) does
+not change that: the mark hides a pane from MCP, and this path is the control socket, not MCP.
+
 **And a plugin this repository ships puts that verb in front of agents.** `plugins/td-send/`
 declares `pull_workspace` and describes itself as "the ⇄ desk-consolidation verbs behind
 SUPER+ALT+T, **exposed to agents**"; it shells out to `scripts/td-send`, which sends the `adopt`

@@ -2923,6 +2923,37 @@ fn the_reader_joins_a_shells_lines_where_the_terminal_wrapped_them(cx: &mut Test
     );
 }
 
+/// The person's toggle marks the pane off-limits and lifts the mark again, and
+/// says so each time — the event the workspace saves the layout on, which is
+/// how the mark outlives the window.
+///
+/// Mutation-tested: a toggle that forgets to emit fails this.
+#[gpui::test]
+fn the_off_limits_toggle_marks_and_unmarks_the_pane_and_says_so(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    let said = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = said.clone();
+    let view = pane.view.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, _: &super::OffLimitsChanged, _| {
+            seen.set(seen.get() + 1)
+        })
+        .detach();
+    });
+    assert!(
+        !pane.read(|v| v.off_limits),
+        "a pane starts visible to agents"
+    );
+    pane.view.update(pane.cx, |v, cx| v.toggle_off_limits(cx));
+    pane.redraw();
+    assert!(pane.read(|v| v.off_limits));
+    pane.view.update(pane.cx, |v, cx| v.toggle_off_limits(cx));
+    pane.redraw();
+    assert!(!pane.read(|v| v.off_limits));
+    assert_eq!(said.get(), 2, "each change is announced, for the save");
+}
+
 /// Every [`super::CloseFocusRead`] the pane raises from now on, counted: the
 /// pane asking the workspace to close the reader, which is what Escape in the
 /// reader does once nothing in the document wants it.

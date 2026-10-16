@@ -744,6 +744,7 @@ impl<L: Clone> Tree<L> {
                     note: s.note,
                     pane_id: s.pane_id,
                     document: s.document,
+                    off_limits: s.off_limits,
                 }
             }
             Tree::Split {
@@ -785,6 +786,7 @@ impl Node {
                 document: view
                     .saved_document(cx)
                     .map(|(path, scroll)| SavedDocument { path, scroll }),
+                off_limits: view.off_limits,
             }
         })
     }
@@ -802,6 +804,7 @@ struct LeafState {
     note: Option<SavedNote>,
     pane_id: Option<u64>,
     document: Option<SavedDocument>,
+    off_limits: bool,
 }
 
 /// The document a pane was showing on its Document face, on its way into the
@@ -876,6 +879,12 @@ enum SavedNode {
         /// back as a terminal, as it was.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         document: Option<SavedDocument>,
+        /// A person marked this pane off-limits to agents (see
+        /// [`mcp::should_expose`]). Written only when set, and absent in every
+        /// file written before the mark existed — which reads back as NOT
+        /// marked, exactly how those panes behaved.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        off_limits: bool,
     },
     Split {
         dir: SplitDir,
@@ -911,6 +920,8 @@ impl<'de> Deserialize<'de> for SavedNode {
             pane_id: Option<u64>,
             #[serde(default)]
             document: Option<SavedDocument>,
+            #[serde(default)]
+            off_limits: bool,
         }
         // A leaf's appearance: the new per-group form if present, else migrate a
         // legacy `theme` override, else pristine (follows outer for everything).
@@ -945,6 +956,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                         note: None,
                         pane_id: None,
                         document: None,
+                        off_limits: false,
                     }),
                     other => Err(E::custom(format!("unknown node: {other}"))),
                 }
@@ -969,6 +981,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                             note: f.note.take(),
                             pane_id: f.pane_id.take(),
                             document: f.document.take(),
+                            off_limits: f.off_limits,
                         })
                     }
                     "Split" => {
@@ -4986,6 +4999,12 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         ws.save(cx);
     })
     .detach();
+    // a person marked the pane off-limits to agents, or lifted it — persist it
+    // like a rename, so the mark outlives the window
+    cx.subscribe(pane, |ws, _pane, _ev: &pane::OffLimitsChanged, cx| {
+        ws.save(cx);
+    })
+    .detach();
     // a paint-overlay pick recoloured this pane — persist it like a rename
     cx.subscribe(pane, |ws, _pane, _ev: &PaintApplied, cx| {
         ws.save(cx);
@@ -5635,6 +5654,7 @@ fn build_node_attached(
             logo,
             note,
             document,
+            off_limits,
             ..
         } => {
             let restore = session::PaneRestore {
@@ -5679,11 +5699,13 @@ fn build_node_attached(
             // pristine one, which means "follow the outer cabinet".
             let appearance = appearance.clone();
             let name = name.clone();
+            let off_limits = *off_limits;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
                 if name.is_some() {
                     view.name = name;
                 }
+                view.off_limits = off_limits;
             });
             // The document it was showing, back on its face over whichever
             // shell the plan gave it, the terminal bound or respawned as ever.
@@ -5713,6 +5735,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             // pane this leaf used to show is not this window's business.
             pane_id: _,
             document,
+            off_limits,
         } => {
             let pane = make_pane_window_owned(
                 session::PaneRestore {
@@ -5735,11 +5758,13 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             // hence this applies unconditionally, not just when non-pristine.
             let appearance = appearance.clone();
             let name = name.clone();
+            let off_limits = *off_limits;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
                 if name.is_some() {
                     view.name = name;
                 }
+                view.off_limits = off_limits;
             });
             restore_document_on(&pane, document.as_ref(), cx);
             Node::Leaf(pane)
@@ -7485,7 +7510,7 @@ impl Workspace {
                         text: n.text,
                         pinned: n.pinned,
                     }),
-                    exposed: mcp::should_expose(&self.mcp, is_agent),
+                    exposed: mcp::should_expose(&self.mcp, is_agent, p.off_limits),
                     // the look the pane actually renders with (own override else
                     // inherited outer), in the config API's 0..100 percents
                     grade: Self::grade_report(&p.appearance.effective(&outer).grade),
@@ -7541,7 +7566,7 @@ impl Workspace {
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
                 let p = leaf.read(cx);
-                if !mcp::should_expose(&self.mcp, p.mode.is_agent()) {
+                if !mcp::should_expose(&self.mcp, p.mode.is_agent(), p.off_limits) {
                     continue;
                 }
                 let hits = p.grep_grid(needle, cap);
@@ -7702,7 +7727,16 @@ impl Workspace {
                         for leaf in leaves {
                             let p = leaf.read(cx);
                             if p.shell_pid() == Some(*pid) {
-                                let exposed = mcp::should_expose(&self.mcp, p.mode.is_agent());
+                                // An off-limits pane still takes an update aimed
+                                // at it by the agent running INSIDE it — its own
+                                // note, deliverable or bench — and nothing from
+                                // anywhere else (see `mcp::may_write`).
+                                let exposed = mcp::may_write(
+                                    &self.mcp,
+                                    p.mode.is_agent(),
+                                    p.off_limits,
+                                    patch.own_pane,
+                                );
                                 hit = Some((leaf.clone(), exposed));
                                 break 'find;
                             }
@@ -8274,10 +8308,13 @@ impl Workspace {
         self.act_on_picked_pane(
             cx,
             |v| {
-                v.bench.face() == workbench::Face::Workbench
+                // An off-limits pane takes nothing from the control socket's
+                // bench verbs: the socket answers agents as readily as people.
+                !v.off_limits
+                    && v.bench.face() == workbench::Face::Workbench
                     && (v.bench.selected().is_some() || v.bench.waiting_question().is_some())
             },
-            "no pane is showing a bench with a question",
+            "no pane is showing a bench with a question (an off-limits pane takes none from here)",
             |view, cx| view.bench_choose(n.saturating_sub(1), cx),
         )
     }
@@ -8298,8 +8335,8 @@ impl Workspace {
     pub(crate) fn bench_submit(&mut self, cx: &mut Context<Self>) -> String {
         self.act_on_picked_pane(
             cx,
-            |v| v.bench.face() == workbench::Face::Workbench && v.bench_can_submit(),
-            "no pane is showing a bench with a round it can send",
+            |v| !v.off_limits && v.bench.face() == workbench::Face::Workbench && v.bench_can_submit(),
+            "no pane is showing a bench with a round it can send (an off-limits pane takes none from here)",
             |view, cx| view.bench_submit_round(cx),
         )
     }
@@ -8505,8 +8542,8 @@ impl Workspace {
     pub(crate) fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) -> String {
         self.act_on_picked_pane(
             cx,
-            |v| v.bench.face() == workbench::Face::Workbench && v.mode.is_agent(),
-            "no agent pane is showing its bench",
+            |v| !v.off_limits && v.bench.face() == workbench::Face::Workbench && v.mode.is_agent(),
+            "no agent pane is showing its bench (an off-limits pane takes nothing from here)",
             |view, cx| view.bench_say(line, cx),
         )
     }
@@ -8523,8 +8560,8 @@ impl Workspace {
     pub(crate) fn bench_type(&mut self, line: &str, cx: &mut Context<Self>) -> String {
         self.act_on_picked_pane(
             cx,
-            |v| v.bench.face() == workbench::Face::Workbench && v.mode.is_agent(),
-            "no agent pane is showing its bench",
+            |v| !v.off_limits && v.bench.face() == workbench::Face::Workbench && v.mode.is_agent(),
+            "no agent pane is showing its bench (an off-limits pane takes nothing from here)",
             |view, cx| view.bench_type(line, cx),
         )
     }
@@ -10484,7 +10521,10 @@ impl Workspace {
             ));
             return;
         };
-        if !mcp::should_expose(&self.mcp, leaf.read(cx).mode.is_agent()) {
+        // Always the caller's own pane (`caller_pane` in mcp.rs resolved it),
+        // so its off-limits mark does not stop the agent inside opening a
+        // document in its own tab.
+        if !mcp::should_expose(&self.mcp, leaf.read(cx).mode.is_agent(), false) {
             let _ = reply.send(format!(
                 "err pane {} is not exposed under the current policy",
                 request.pid
@@ -28251,7 +28291,7 @@ impl Render for Workspace {
                         .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
                         .unwrap_or_else(|| p.mode.label().to_string());
                     let rt = p.runtime();
-                    let exposed = mcp::should_expose(&self.mcp, is_agent);
+                    let exposed = mcp::should_expose(&self.mcp, is_agent, p.off_limits);
                     let status = p.agent_status();
                     // The card's chat-scroller. An IDLE agent's live input box is
                     // wasted space — show the LAST USER PROMPT (what you asked it)
@@ -35158,6 +35198,7 @@ mod tests {
 
     fn leaf_with(pane_id: Option<u64>, cwd: &str, resume: Option<&str>) -> SavedNode {
         SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: Some(cwd.into()),
             resume: resume.map(str::to_string),
@@ -35965,6 +36006,224 @@ mod tests {
     /// This file's own code, cut at its test module, and the body of one
     /// function in it — for the rules a `Workspace` cannot be built to test,
     /// since it needs a live gpui `Window`.
+    // ── off-limits to agents ───────────────────────────────────────────────
+
+    /// The mark survives a restart, is written only when set, and every file
+    /// written before it existed reads back as NOT marked — how those panes
+    /// behaved.
+    ///
+    /// Mutation-tested: dropping `#[serde(default)]` from the reader's field,
+    /// and writing the field when false, each fail this.
+    #[test]
+    fn the_off_limits_mark_survives_a_restart_and_old_files_read_unmarked() {
+        let marked = SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: Some("/work".into()),
+            resume: None,
+            name: None,
+            logo: None,
+            note: None,
+            pane_id: Some(7),
+            document: None,
+            off_limits: true,
+        };
+        let text = toml::to_string(&marked).expect("a leaf serialises");
+        assert!(text.contains("off_limits = true"), "{text}");
+        let back: SavedNode = toml::from_str(&text).expect("and reads back");
+        assert!(matches!(
+            back,
+            SavedNode::Leaf {
+                off_limits: true,
+                ..
+            }
+        ));
+
+        let plain = SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: Some("/work".into()),
+            resume: None,
+            name: None,
+            logo: None,
+            note: None,
+            pane_id: Some(7),
+            document: None,
+            off_limits: false,
+        };
+        let text = toml::to_string(&plain).expect("a leaf serialises");
+        assert!(!text.contains("off_limits"), "false is not written: {text}");
+
+        // A leaf as every file before today wrote it.
+        let old: SavedNode =
+            toml::from_str("[Leaf]\ncwd = \"/work\"\npane_id = 7\n").expect("an old leaf reads");
+        assert!(matches!(
+            old,
+            SavedNode::Leaf {
+                off_limits: false,
+                ..
+            }
+        ));
+    }
+
+    /// Only a person sets or lifts the mark. The one writer of a pane's
+    /// `off_limits` outside the two restores is `toggle_off_limits`, and the
+    /// one caller of that is the right-click menu — no control-socket verb, no
+    /// MCP verb and nothing in the workspace reaches it, because the control
+    /// socket and MCP both answer agents, and a mark an agent could lift would
+    /// be decoration.
+    ///
+    /// Scanned with comments skipped, so a sentence about the field cannot
+    /// pass for a write, and keyed on the owning function, so a new write
+    /// fails here by name rather than by count.
+    ///
+    /// Mutation-tested: a `ctl` verb that sets the mark, and a second call to
+    /// the toggle, each fail this.
+    #[test]
+    fn only_a_person_sets_or_lifts_off_limits() {
+        let cut = |src: &'static str, marker: &str| -> &'static str {
+            &src[..src.find(marker).unwrap_or(src.len())]
+        };
+        let main_code = cut(
+            include_str!("main.rs"),
+            "\n#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests",
+        );
+        let files = [
+            ("main.rs", main_code),
+            ("pane.rs", cut(include_str!("pane.rs"), "\n#[cfg(test)]")),
+            ("ctl.rs", cut(include_str!("ctl.rs"), "\n#[cfg(test)]")),
+            ("mcp.rs", cut(include_str!("mcp.rs"), "\n#[cfg(test)]")),
+            (
+                "mcp_transport.rs",
+                cut(include_str!("mcp_transport.rs"), "\n#[cfg(test)]"),
+            ),
+        ];
+        let mut writes = Vec::new();
+        let mut toggles = Vec::new();
+        for (file, code) in files {
+            let mut owner = "<file>";
+            for line in code.lines() {
+                let t = line.trim_start();
+                if t.starts_with("//") {
+                    continue;
+                }
+                if let Some(rest) = ["fn ", "pub fn ", "pub(crate) fn ", "pub(super) fn "]
+                    .iter()
+                    .find_map(|p| t.strip_prefix(p))
+                {
+                    owner = rest.split(['(', '<']).next().unwrap_or(rest);
+                }
+                if t.contains(".off_limits = ") {
+                    writes.push(format!("{file} {owner}: {t}"));
+                }
+                if t.contains("toggle_off_limits(") && !t.contains("fn toggle_off_limits(") {
+                    toggles.push(format!("{file} {owner}: {t}"));
+                }
+            }
+        }
+        writes.sort();
+        assert_eq!(
+            writes,
+            vec![
+                "main.rs build_node: view.off_limits = off_limits;",
+                "main.rs build_node_attached: view.off_limits = off_limits;",
+                "pane.rs toggle_off_limits: self.off_limits = !self.off_limits;",
+            ],
+            "something other than a person's gesture or a restore writes the mark"
+        );
+        assert_eq!(
+            toggles,
+            vec!["pane.rs render: v.toggle_off_limits(cx);"],
+            "the toggle is reached from somewhere other than the right-click menu"
+        );
+    }
+
+    /// Every place the window decides exposure passes the pane's own mark,
+    /// except the one that is always the caller's own pane. The gate taking
+    /// the mark as an argument made the compiler name every site; this keeps a
+    /// site from answering it with a literal `false` and quietly re-opening an
+    /// off-limits pane.
+    ///
+    /// Mutation-tested: passing `false` from `mcp_snapshot` fails this.
+    #[test]
+    fn every_exposure_decision_reads_the_panes_mark() {
+        let src = include_str!("main.rs");
+        let code = &src[..src
+            .find("\n#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests")
+            .unwrap_or(src.len())];
+        // Each call's arguments, up to its own closing parenthesis.
+        let args_of = |rest: &'static str| -> String {
+            let mut depth = 0usize;
+            let mut out = String::new();
+            for ch in rest.chars() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' if depth == 0 => break,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                out.push(ch);
+            }
+            out.split_whitespace().collect::<Vec<_>>().join(" ")
+        };
+        let calls: Vec<String> = code
+            .split("mcp::should_expose(")
+            .skip(1)
+            .map(args_of)
+            .collect();
+        // The snapshot, the search, the open-document gate and the panel; the
+        // fifth site, the write gate, is `may_write`, checked below.
+        assert_eq!(calls.len(), 4, "{calls:?}");
+        let reads_mark = calls.iter().filter(|c| c.contains("off_limits")).count();
+        let literal_false: Vec<&String> = calls
+            .iter()
+            .filter(|c| c.trim_end().trim_end_matches(',').ends_with("false"))
+            .collect();
+        assert_eq!(reads_mark, 3, "a site stopped reading the mark: {calls:?}");
+        assert_eq!(
+            literal_false.len(),
+            1,
+            "only open_document, always the caller's own pane, may pass false: {calls:?}"
+        );
+        let open = live_fn("fn mcp_open(");
+        assert!(
+            open.contains("mcp::should_expose(&self.mcp, leaf.read(cx).mode.is_agent(), false)")
+        );
+        let writes = live_fn("fn apply_mcp_config(");
+        assert!(
+            writes.contains("mcp::may_write(")
+                && writes.contains("p.off_limits")
+                && writes.contains("patch.own_pane"),
+            "the write gate reads the mark and the own-pane exception: {writes}"
+        );
+    }
+
+    /// The control socket's bench verbs reach a running agent's terminal (`say`,
+    /// `choose`, `submit`) or its composer (`type`), and the socket answers any
+    /// process running as you, agents included — so none of the four may pick
+    /// an off-limits pane, and each says why when that leaves nothing to pick.
+    ///
+    /// Mutation-tested: dropping `!v.off_limits` from `bench_say`'s picker
+    /// fails this.
+    #[test]
+    fn the_sockets_bench_verbs_never_pick_an_off_limits_pane() {
+        for verb in [
+            "pub(crate) fn bench_say(",
+            "pub(crate) fn bench_type(",
+            "pub(crate) fn bench_choose(",
+            "pub(crate) fn bench_submit(",
+        ] {
+            let body: String = live_fn(verb)
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                body.contains("!v.off_limits"),
+                "{verb} can pick an off-limits pane: {body}"
+            );
+            assert!(body.contains("off-limits pane takes"), "{verb} says why");
+        }
+    }
+
     fn live_fn(sig: &str) -> &'static str {
         let src = include_str!("main.rs");
         let code = &src[..src
@@ -38461,6 +38720,7 @@ mod tests {
     #[test]
     fn only_the_first_pane_in_a_directory_keeps_a_shared_resume() {
         let leaf = |resume: Option<&str>| SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: Some("/home/me".into()),
             resume: resume.map(str::to_string),
@@ -38536,6 +38796,7 @@ mod tests {
             pinned: false,
         };
         let claim = |pane: Option<u64>, resume: Option<&str>, text: &str| SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: Some("/home/me".into()),
             resume: resume.map(str::to_string),
@@ -38600,6 +38861,7 @@ mod tests {
     #[test]
     fn a_claim_taken_away_says_so_on_the_glass() {
         let blank = |pane: Option<u64>| SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: Some("claude --resume rm".into()),
@@ -38610,6 +38872,7 @@ mod tests {
             document: None,
         };
         let spoken = |pane: Option<u64>| SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: Some("claude --resume rm".into()),
@@ -38675,6 +38938,7 @@ mod tests {
     #[test]
     fn no_terminal_is_claimed_twice_on_the_way_out() {
         let leaf = |pane: Option<u64>, resume: Option<&str>| SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: resume.map(str::to_string),
@@ -38746,6 +39010,7 @@ mod tests {
     #[test]
     fn count_saved_leaves_walks_the_split_tree() {
         let leaf = || SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: None,
@@ -39259,6 +39524,7 @@ warp = 1.5
                 text_color: None,
                 group: None,
                 node: SavedNode::Leaf {
+                    off_limits: false,
                     appearance: PaneTheme::from_legacy(ThemeChoice {
                         id: "hacker".into(),
                         seed: None,
@@ -39311,6 +39577,7 @@ warp = 1.5
                 text_color: None,
                 group: None,
                 node: SavedNode::Leaf {
+                    off_limits: false,
                     appearance: PaneTheme::default(),
                     cwd: Some("/home/user/proj".into()),
                     resume: Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d".into()),
@@ -39346,6 +39613,7 @@ warp = 1.5
         // a grouped tab with its own fill + text override, plus a group carrying
         // its own colours + collapsed state, must all survive serialize→reload.
         let leaf = || SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: None,
@@ -39845,6 +40113,7 @@ node = "Leaf"
     fn pane_restore_logo_round_trips_through_state_toml() {
         // A leaf with a logo serializes it and reads it back via build_node's DTO.
         let node = SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: None,
@@ -40068,6 +40337,7 @@ node = "Leaf"
     fn nested_layout_round_trips_and_legacy_split_defaults_ratio() {
         // a 3-deep tree: Row( Col(leaf,leaf) @0.7 , leaf ) @0.3
         let leaf = || SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: None,

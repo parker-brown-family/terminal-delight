@@ -69,6 +69,27 @@ Exposure ships **disabled** and the policy is operator-controlled from the
 The policy is persisted in `state.toml` under `[mcp]`. A connected client always
 sees the *current* policy live; flipping a toggle takes effect on the next call.
 
+### One pane, off-limits
+
+Those switches cover the whole window. To say *not this one*, right-click inside
+a pane and choose **Off-limits to agents**: the pane wears `OFF-LIMITS` in its
+header, and no agent reads it or writes to it under any policy — it is gone from
+`list_panes`, `grep`, `pane_events`, the pushed events and the appearance tools,
+and a note, deliverable or surface aimed at it from another pane is refused. The
+agent running *inside* it keeps its own-pane verbs: it can still present its own
+work, declare its own deliverable and post its own note, because the mark hides
+a pane from other agents rather than silencing the one inside it. The same menu
+row lifts it (**Let agents see this pane**). It is saved with the layout.
+
+Only a person sets or lifts it. There is no `ctl` verb and no MCP verb for it,
+because both answer agents. For the same reason the control socket's bench verbs
+— `ctl bench say`, `choose`, `submit` and `type`, which reach an agent's prompt
+from outside — never pick an off-limits pane. One socket path stays open and is
+named rather than pretended away: `ctl bench click|hover` drives the window's
+own pointer, and a pointer cannot be told from a hand. The gate is
+`mcp::should_expose(cfg, is_agent, off_limits)` and its write half
+`mcp::may_write`; the idea is Splinterm's per-pane grant, with TD's own shape.
+
 ## Tools
 
 | Tool | Arguments | Returns |

@@ -2714,6 +2714,13 @@ pub struct TerminalView {
     /// of the program label; click the logo (or the `＋ logo`
     /// placeholder when unset) to pick one. Persisted per leaf in the state file.
     pub logo: Option<String>,
+    /// A person marked this pane off-limits to agents: no agent reads it or
+    /// writes to it through MCP, except the one running inside it acting on
+    /// its own pane (see `mcp::should_expose`). Set and cleared ONLY by the
+    /// header's ⋯ menu — no control-socket or MCP verb reaches it, because
+    /// both answer agents, and a lock an agent can lift is decoration.
+    /// Persisted per leaf in the state file.
+    pub off_limits: bool,
     /// The logo INHERITED from the pane's cwd via the per-directory map
     /// (`dirlogo`), resolved by the workspace's sweep — display state, never
     /// persisted (the map itself is the durable record). Shadowed by `logo`.
@@ -3283,6 +3290,12 @@ impl gpui::EventEmitter<PaneRenamed> for TerminalView {}
 /// state file once, when you press Enter.
 pub struct StickyChanged;
 impl gpui::EventEmitter<StickyChanged> for TerminalView {}
+
+/// A person marked this pane off-limits to agents, or lifted the mark — the
+/// workspace persists the layout so the mark is still there after a restart
+/// (same contract as [`StickyChanged`]).
+pub struct OffLimitsChanged;
+impl gpui::EventEmitter<OffLimitsChanged> for TerminalView {}
 
 /// The ⌁ LAUNCH AGENT button on an empty workbench — the workspace opens the
 /// launcher, scoped to this pane's own directory.
@@ -4391,6 +4404,15 @@ impl TerminalView {
         self.hdr_overflow.is_some() || self.ctx_menu.is_some()
     }
 
+    /// The person's right-click: mark this pane off-limits to agents, or let
+    /// agents see it again. The only writer of [`Self::off_limits`] outside a
+    /// restore, on purpose — see the field.
+    pub(crate) fn toggle_off_limits(&mut self, cx: &mut Context<Self>) {
+        self.off_limits = !self.off_limits;
+        cx.emit(OffLimitsChanged);
+        cx.notify();
+    }
+
     /// Plain spawn (no restore context); kept for `cx.new(TerminalView::new)`.
     #[allow(dead_code)]
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -4788,6 +4810,7 @@ impl TerminalView {
             title: "shell".into(),
             name: None,
             logo,
+            off_limits: false,
             dir_logo: None,
             tool_face: None,
             renaming: None,
@@ -9543,7 +9566,30 @@ impl Render for TerminalView {
                         cx.stop_propagation();
                         cx.notify();
                     }),
-                ));
+                ))
+                // What agents may see of this pane. A pointer gesture on the
+                // pane itself, and deliberately nowhere else: the control socket
+                // and MCP both answer agents, and a mark an agent could lift
+                // would be decoration.
+                .child(div().my(px(3.)).h(px(1.)).bg(faint.alpha(0.35)))
+                .child(
+                    row(
+                        if self.off_limits {
+                            "Let agents see this pane"
+                        } else {
+                            "Off-limits to agents"
+                        },
+                        true,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|v, _, _, cx| {
+                            v.ctx_menu = None;
+                            cx.stop_propagation();
+                            v.toggle_off_limits(cx);
+                        }),
+                    ),
+                );
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
         // PAINT mode — the wall-wide palette overlay (raised by `terminal-delight
@@ -10328,6 +10374,20 @@ impl Render for TerminalView {
                     .gap_2()
                     .cursor_pointer()
                     .child(logo_el)
+                    // Off-limits rides before the label, where a narrow pane
+                    // still shows it: it is the one thing on this header that
+                    // changes what an agent may do here.
+                    .children(self.off_limits.then(|| {
+                        div()
+                            .flex_none()
+                            .px(px(5. * scale))
+                            .rounded(sk.rad(4.))
+                            .border_1()
+                            .border_color(bar_fg.alpha(0.75))
+                            .text_color(bar_fg)
+                            .text_size(px(9.5 * scale))
+                            .child("OFF-LIMITS")
+                    }))
                     .child(format!("▸ {} · {label}", self.mode.label_i18n()))
                     .on_mouse_down(
                         MouseButton::Left,
