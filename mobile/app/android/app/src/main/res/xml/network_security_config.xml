@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The gateway speaks plain HTTP on three routes, and each is either local or
+     already encrypted underneath:
+       USB        127.0.0.1, carried by `adb reverse` over the cable
+       Tailscale  100.64.0.0/10, WireGuard end to end
+       Wi-Fi      the home LAN, only when the gateway was started with `lan`
+     Android cannot scope cleartext to a CIDR, so the base config allows it; the
+     gateway is the one that decides which of these it will answer on. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
