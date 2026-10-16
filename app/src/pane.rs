@@ -11153,7 +11153,7 @@ impl Render for TerminalView {
         // Nothing on the bench face — see [`Self::note_layout`].
         let note_el = self.note.clone().filter(|_| on_terminal).map(|note| {
             let store = self.content_bounds.clone();
-            let pal = crate::sticky::paper(th.text, th.accent);
+            let pal = crate::sticky::paper_for(&th);
             let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
             // The pane's own curvature, and zero while a modal has flattened the
             // whole screen — the note un-bends with everything else that frame
