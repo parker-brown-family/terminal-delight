@@ -18667,14 +18667,17 @@ impl Workspace {
                 }
                 return;
             }
-            // Alt+↑/↓ used to walk YOUR messages inside an agent pane, which
-            // made the vertical half of the pane chord mean something different
-            // depending on what happened to be running in the pane you were
-            // standing in — the one place a navigation key must not be
-            // conditional. All four arrows now move pane focus everywhere; the
-            // ▲/▼ header buttons still jump between messages, and that is the
-            // gesture that gets to be agent-specific because it is drawn ON the
-            // agent pane.
+            // Alt+↑/↓ walks the human's messages in Claude and Codex. Keep
+            // this ahead of pane focus: the pane has already withheld these
+            // chords from the PTY through keylayer::window_chord.
+            if matches!(ks.key.as_str(), "up" | "down") {
+                if let Some(p) = leaves.get(cur).filter(|p| p.read(cx).mode.is_agent()) {
+                    p.update(cx, |view, cx| {
+                        view.scroll_to_human(ks.key.as_str() == "down", cx);
+                    });
+                    return;
+                }
+            }
             // Alt+arrows move focus BY DIRECTION: the highlight goes the way you
             // pressed, resolved against the live pane rects (`focus_dir`) rather
             // than the order the leaves happen to be walked in. This used to be a
@@ -31562,7 +31565,7 @@ impl Render for Workspace {
                 .child(section(
                     s.s_agents,
                     vec![
-                        row("▲ / ▼", s.jump_msg),
+                        row("Alt+↑ / ↓", s.jump_msg),
                         row("Alt+R", s.focus),
                         row(s.k_focus_inherit_key, s.focus_inherit),
                         row("Alt+1 … 4", s.bench_shelf),
@@ -34934,6 +34937,46 @@ mod tests {
             "a pane that sized itself must halt the wheel, or this handler \
              sizes the menu bar off the same notch"
         );
+    }
+
+    /// The pane hands Alt+arrows to the window. Human-message navigation must
+    /// run before directional focus, and use the common Claude/Codex predicate.
+    /// The pane behaviour tests exercise the actual scrollback landings.
+    #[test]
+    fn alt_vertical_arrows_reach_human_prompts_before_pane_focus() {
+        let code = shipped_code();
+        let at = code
+            .find("    fn on_key(&mut self, ev: &KeyDownEvent")
+            .unwrap();
+        let end = code[at..].find("\n    }\n").unwrap();
+        let body = &code[at..at + end];
+        let jump = body
+            .find("view.scroll_to_human(ks.key.as_str() == \"down\", cx)")
+            .expect("Alt+Down is next, Alt+Up previous");
+        let focus = body
+            .rfind("self.focus_dir(ks.key.as_str(), window, cx)")
+            .unwrap();
+        assert!(jump < focus);
+        let branch = &body[body[..jump]
+            .rfind("if matches!(ks.key.as_str(), \"up\" | \"down\")")
+            .unwrap()..focus];
+        assert!(
+            branch.contains("p.read(cx).mode.is_agent()"),
+            "both Claude and Codex use human navigation"
+        );
+        assert!(
+            branch.contains("return;"),
+            "a prompt jump cannot also change pane focus"
+        );
+        for key in ["up", "down"] {
+            assert!(
+                keylayer::window_chord(key, true, false),
+                "the pane must withhold the chord from the PTY"
+            );
+        }
+        assert!(pane::PaneMode::Claude.is_agent());
+        assert!(pane::PaneMode::Codex.is_agent());
+        assert!(!pane::PaneMode::Shell.is_agent());
     }
 
     /// The window's half of the size chords steps as its wheel does.
