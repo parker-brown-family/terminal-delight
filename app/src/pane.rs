@@ -3662,10 +3662,10 @@ fn input_box(rows: &[GridRow]) -> Option<std::ops::Range<usize>> {
         let start = rows
             .iter()
             .rposition(|r| r.line.text.trim_start().starts_with("› "))?;
-        if rows.len() - start > INPUT_ROWS_MAX {
+        let end = rows.iter().rposition(|r| !blank(r)).map(|i| i + 1)?;
+        if end - start > INPUT_ROWS_MAX {
             return None;
         }
-        let end = rows.iter().rposition(|r| !blank(r)).map(|i| i + 1)?;
         return Some(start..end);
     };
     let top = rows[..bottom].iter().rposition(border).unwrap_or(bottom);
@@ -13188,6 +13188,15 @@ mod tests {
             input_box(&codex),
             Some(2..3),
             "Codex's live unboxed composer"
+        );
+        let mut resized_codex = codex.clone();
+        for _ in 0..40 {
+            resized_codex.extend(screen(&[""]));
+        }
+        assert_eq!(
+            input_box(&resized_codex),
+            Some(2..3),
+            "resize padding is not composer content"
         );
         let mut old_prompt = screen(&["› submitted human turn"]);
         for _ in 0..=INPUT_ROWS_MAX {
