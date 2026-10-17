@@ -3656,7 +3656,18 @@ fn input_box(rows: &[GridRow]) -> Option<std::ops::Range<usize>> {
         let t = r.line.text.trim_start();
         t.starts_with(['·', '✢', '✳', '✶', '✻', '✽']) || t.contains("esc to interrupt")
     };
-    let bottom = rows.iter().rposition(border)?;
+    let Some(bottom) = rows.iter().rposition(border) else {
+        // Current Codex has an unboxed composer. This is its live placeholder
+        // captured from the reporting pane: "› Ask Codex to do anything".
+        let start = rows
+            .iter()
+            .rposition(|r| r.line.text.trim_start().starts_with("› "))?;
+        let end = rows.iter().rposition(|r| !blank(r)).map(|i| i + 1)?;
+        if end - start > INPUT_ROWS_MAX {
+            return None;
+        }
+        return Some(start..end);
+    };
     let top = rows[..bottom].iter().rposition(border).unwrap_or(bottom);
     let start = (top.saturating_sub(2)..top)
         .find(|&k| status(&rows[k]))
@@ -6129,7 +6140,7 @@ impl TerminalView {
     }
 
     /// The screen (the warp tube) in window pixels, once it has been laid out.
-    fn tube_rect(&self) -> Option<(f32, f32, f32, f32)> {
+    pub(crate) fn tube_rect(&self) -> Option<(f32, f32, f32, f32)> {
         let b = (*self.content_bounds.lock().ok()?)?;
         Some((
             f32::from(b.origin.x),
@@ -13170,6 +13181,31 @@ mod tests {
             input_box(&rounded),
             Some(0..3),
             "a rounded box is a box too"
+        );
+
+        let codex = screen(&["A final remark", "", "› Ask Codex to do anything", ""]);
+        assert_eq!(
+            input_box(&codex),
+            Some(2..3),
+            "Codex's live unboxed composer"
+        );
+        let mut resized_codex = codex.clone();
+        for _ in 0..40 {
+            resized_codex.extend(screen(&[""]));
+        }
+        assert_eq!(
+            input_box(&resized_codex),
+            Some(2..3),
+            "resize padding is not composer content"
+        );
+        let mut old_prompt = screen(&["› submitted human turn"]);
+        for _ in 0..=INPUT_ROWS_MAX {
+            old_prompt.extend(screen(&["output"]));
+        }
+        assert_eq!(
+            input_box(&old_prompt),
+            None,
+            "an old human turn is not the composer"
         );
 
         let reply_rule = screen(&["Heading", "───", "text", "$ ls"]);

@@ -4204,6 +4204,7 @@ struct TalkDrawn {
     rev: u64,
     doc: Arc<doc::Document>,
     opens: Arc<Vec<Option<usize>>>,
+    turns: Arc<Vec<usize>>,
 }
 
 /// The FOCUS reader's wrapped layout, captured each render so the mouse handlers
@@ -4254,6 +4255,20 @@ struct ReaderGlass {
 }
 
 impl ReaderGlass {
+    fn in_pane(w: f32, h: f32) -> Self {
+        let pad = 6.0;
+        let hdr_h = 24.0;
+        Self {
+            panel_w: w,
+            panel_h: h,
+            pad,
+            pad_x: pad,
+            hdr_h,
+            avail_w: (w - 2.0 * pad).max(1.0),
+            avail_h: (h - hdr_h - 2.0 * pad).max(1.0),
+        }
+    }
+
     fn in_window(win_w: f32, win_h: f32) -> Self {
         let panel_w = (win_w * 0.8).max(320.);
         let panel_h = (win_h * 0.8).max(240.);
@@ -4799,6 +4814,9 @@ struct Workspace {
     /// transcript is bound for certain. Dropped with the reader, which stops
     /// its reading.
     focus_talk: Option<ReaderTalk>,
+    /// Alt+arrows browse the transcript inside the original terminal pane.
+    focus_inline: bool,
+    focus_turn_nav: transcript::TurnNav,
     /// Global, persisted: when on, the FOCUS reader inherits the read pane's CRT
     /// look (barrel curvature + screen glare) instead of the flat default. One
     /// toggle in the modal header; applies to every reader open from then on.
@@ -6086,6 +6104,8 @@ impl Workspace {
             focus_sel_drag: false,
             focus_doc_holding: false,
             focus_talk: None,
+            focus_inline: false,
+            focus_turn_nav: transcript::TurnNav::default(),
             focus_inherit_theme: saved.focus_inherit,
             anchor_top: saved.anchor_top,
             agent_tint: saved.agent_tint,
@@ -13683,6 +13703,8 @@ impl Workspace {
         }
         pane.update(cx, |v, cx| v.set_being_read(true, cx));
         self.focus_read = Some(pane.downgrade());
+        self.focus_inline = false;
+        self.focus_turn_nav = transcript::TurnNav::default();
         // Each FOCUS opens at fit-to-modal; the header slider takes it from there.
         self.focus_zoom = 1.0;
         // A fresh open lands at the NEWEST end, with nothing selected.
@@ -13733,6 +13755,34 @@ impl Workspace {
         self.focus_layout = None;
         // and stop reading the conversation: dropping it ends its task
         self.focus_talk = None;
+        self.focus_inline = false;
+        self.focus_turn_nav = transcript::TurnNav::default();
+        cx.notify();
+    }
+
+    /// One Alt+arrow names one human turn. No wheel events or prompt-history
+    /// keys are sent to either CLI, including while the transcript is loading.
+    fn jump_human_turn(
+        &mut self,
+        pane: Entity<TerminalView>,
+        next: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let same = self
+            .focus_read
+            .as_ref()
+            .and_then(|p| p.upgrade())
+            .is_some_and(|p| p == pane);
+        if !same {
+            if next {
+                return;
+            }
+            self.open_focus_read(pane, window, cx);
+            self.focus_inline = true;
+        }
+        self.focus_turn_nav.queue(next);
+        self.focus_at_bottom = false;
         cx.notify();
     }
 
@@ -13806,6 +13856,7 @@ impl Workspace {
                         rev: drawings,
                         doc: Arc::new(d.doc),
                         opens: Arc::new(d.opens),
+                        turns: Arc::new(d.turns),
                     };
                     // Only into the conversation this task reads: a reader that
                     // moved on to another pane has another.
@@ -17573,6 +17624,9 @@ impl Workspace {
     }
 
     fn activate_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.focus_inline {
+            self.close_focus_read(cx);
+        }
         if i < self.tabs.len() {
             self.active = i;
             // However this activation arrived — a tree click, ctrl+pgup, a ctl
@@ -18672,9 +18726,8 @@ impl Workspace {
             // chords from the PTY through keylayer::window_chord.
             if matches!(ks.key.as_str(), "up" | "down") {
                 if let Some(p) = leaves.get(cur).filter(|p| p.read(cx).mode.is_agent()) {
-                    p.update(cx, |view, cx| {
-                        view.scroll_to_human(ks.key.as_str() == "down", cx);
-                    });
+                    let p = (*p).clone();
+                    self.jump_human_turn(p, ks.key.as_str() == "down", window, cx);
                     return;
                 }
             }
@@ -32337,6 +32390,14 @@ impl Render for Workspace {
                 .last_win
                 .map(|(_, _, w, h)| (w, h))
                 .unwrap_or((1200., 800.));
+            let inline_rect = self
+                .focus_inline
+                .then(|| pane.read(cx).tube_rect())
+                .flatten();
+            let glass = match inline_rect {
+                Some((_, _, w, h)) => ReaderGlass::in_pane(w, h),
+                None => ReaderGlass::in_window(ww, wh),
+            };
             let ReaderGlass {
                 panel_w,
                 panel_h,
@@ -32345,7 +32406,7 @@ impl Render for Workspace {
                 hdr_h,
                 avail_w,
                 avail_h,
-            } = ReaderGlass::in_window(ww, wh);
+            } = glass;
             let content_w = (snap.cols as f32 * snap.cell_w).max(1.);
             let content_h = (snap.rows as f32 * snap.cell_h).max(1.);
             // The reader's size is its own. A flat read draws the pane's letters at
@@ -32383,7 +32444,7 @@ impl Render for Workspace {
             };
             let avail_h = (avail_h - foot_h).max(cell_h);
             // "Inherit theme": bend + glare the panel like the pane it mirrors.
-            let inherit = self.focus_inherit_theme;
+            let inherit = self.focus_inherit_theme && !self.focus_inline;
             let (k1, k2, glare) = (snap.k1, snap.k2, snap.glare);
             // FOCUS inherits crawl: the rows are already in the crawl font (baked
             // into the runs) and, in crawl mode, the modal centres each row exactly
@@ -32440,6 +32501,15 @@ impl Render for Workspace {
             let row_count = if crawl { snap.rows } else { vrows.len() };
             let total_h = row_count as f32 * cell_h;
             self.focus_overflow = (total_h - avail_h).max(0.0);
+            // A selected human turn can sit at the top even near the live end.
+            // Blank space below the newest turn is preferable to a clamp that
+            // makes several different jumps land on the same viewport.
+            if self.focus_turn_nav.active() {
+                if let Some(last) = talk.as_ref().and_then(|d| d.turns.last()) {
+                    let row = vrows.partition_point(|r| r.doc_line < *last);
+                    self.focus_overflow = self.focus_overflow.max(row as f32 * cell_h);
+                }
+            }
             self.focus_line_h = cell_h;
             self.focus_page_h = avail_h;
             // Follow-bottom: a MIRROR keeps the prompt in view. While pinned, new
@@ -32450,6 +32520,23 @@ impl Render for Workspace {
             // bottom by the clamp, which is the only place overflow is known.
             if self.focus_at_bottom {
                 self.focus_scroll_y = f32::MAX;
+            }
+            if let Some(d) = &talk {
+                match self.focus_turn_nav.resolve(&d.turns) {
+                    Some(transcript::TurnTarget::Turn(line)) => {
+                        let row = vrows.partition_point(|r| r.doc_line < line);
+                        self.focus_scroll_y = row as f32 * cell_h;
+                        self.focus_at_bottom = false;
+                    }
+                    Some(transcript::TurnTarget::Live) if self.focus_inline => {
+                        cx.defer_in(window, |ws, _window, cx| ws.close_focus_read(cx));
+                    }
+                    Some(transcript::TurnTarget::Live) => {
+                        self.focus_scroll_y = self.focus_overflow;
+                        self.focus_at_bottom = true;
+                    }
+                    None => {}
+                }
             }
             self.focus_scroll_y = self.focus_scroll_y.clamp(0.0, self.focus_overflow);
             let scroll_y = self.focus_scroll_y;
@@ -32600,13 +32687,36 @@ impl Render for Workspace {
                         .flex_row()
                         .items_center()
                         .gap_3()
-                        .child(format!("👓  FOCUS · {}", snap.title))
+                        .child(format!(
+                            "{} · {}",
+                            if self.focus_inline {
+                                "CHAT HISTORY"
+                            } else {
+                                "👓  FOCUS"
+                            },
+                            snap.title
+                        ))
                         .child(Self::reader_chip(chip, snap.accent, snap.text))
                         .child(self.focus_inherit_toggle(snap.accent, snap.text, cx)),
                 )
                 // text-size slider for the pane under scrutiny (live, per-open)
                 .child(self.focus_zoom_slider(snap.accent, snap.text, cx))
                 .child(div().text_color(snap.text.alpha(0.6)).child("esc to close"));
+            let header = if self.focus_inline {
+                div()
+                    .h(px(hdr_h))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px_2()
+                    .text_size(px(10.0))
+                    .text_color(snap.accent)
+                    .child("CHAT HISTORY")
+                    .child("Alt+↑↓ · Esc")
+            } else {
+                header
+            };
             let panel =
                 Self::reader_panel(panel_w, panel_h, snap.bg, snap.accent, th.grade.phosphor)
                     .child(header)
@@ -32679,17 +32789,28 @@ impl Render for Workspace {
                     // same rect registered as the lone warp tube so the reader bends
                     // and glares like its pane. crawl stays identity: the body
                     // already centres crawl rows for readable mirroring.
-                    .child(Self::reader_frost(
-                        focus_ramp,
-                        inherit.then_some((hdr_h, glare, k1, k2)),
-                    ))
+                    .when(!self.focus_inline, |panel| {
+                        panel.child(Self::reader_frost(
+                            focus_ramp,
+                            inherit.then_some((hdr_h, glare, k1, k2)),
+                        ))
+                    })
                     // clicks inside the panel must not fall through to the scrim
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                     );
-            Some(
+            let reader = if let Some((x, y, _, _)) = inline_rect {
+                div()
+                    .absolute()
+                    .left(px(x))
+                    .top(px(y))
+                    .child(panel.rounded(px(0.)).shadow(Vec::new()))
+            } else {
                 self.reader_scrim(panel, focus_ramp, cx)
+            };
+            Some(
+                reader
                     // The reader wraps, so it only ever overflows VERTICALLY; the
                     // wheel pans it so the off-screen rows are reachable. There is no
                     // horizontal axis to pan. At the top/bottom edge (or when the read
@@ -34951,7 +35072,7 @@ mod tests {
         let end = code[at..].find("\n    }\n").unwrap();
         let body = &code[at..at + end];
         let jump = body
-            .find("view.scroll_to_human(ks.key.as_str() == \"down\", cx)")
+            .find("self.jump_human_turn(p, ks.key.as_str() == \"down\", window, cx)")
             .expect("Alt+Down is next, Alt+Up previous");
         let focus = body
             .rfind("self.focus_dir(ks.key.as_str(), window, cx)")
@@ -35549,7 +35670,7 @@ mod tests {
             .expect("the FOCUS overlay reading the terminal");
         let overlay = terminal
             + code[terminal..]
-                .find("} = ReaderGlass::in_window(ww, wh);")
+                .find("} = glass;")
                 .expect("the FOCUS overlay's glass");
         let at = overlay
             + code[overlay..]
