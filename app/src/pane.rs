@@ -21,6 +21,8 @@ mod doc;
 /// What this pane's agent handed over: the header chip, the history page and
 /// the screen scan. A child module for the same reason; see `pane/handed.rs`.
 mod handed;
+/// Bounded reuse of the viewport's styled text.
+mod styling;
 use crate::term;
 use crate::theme::{self, PaneTheme, Theme};
 use crate::vt::{
@@ -2796,6 +2798,7 @@ pub struct TerminalView {
     /// The last live-screen copy and the content generation and size it was
     /// read at. See [`Self::live_rows`].
     live_rows_memo: std::cell::RefCell<Option<LiveRowsMemo>>,
+    styled_memo: std::cell::RefCell<Option<styling::Memo>>,
     /// When this pane last asked for a frame, and whether one is already
     /// scheduled for the end of the gap. See [`Self::repaint`].
     last_frame_ask: Instant,
@@ -4997,6 +5000,7 @@ impl TerminalView {
             offscreen_dirty: false,
             offscreen_flushed: Instant::now(),
             live_rows_memo: std::cell::RefCell::new(None),
+            styled_memo: std::cell::RefCell::new(None),
             last_frame_ask: Instant::now(),
             frame_pending: false,
             deliverable: None,
@@ -8655,12 +8659,30 @@ impl TerminalView {
     /// caller re-applies it in painted/visual order after the permutation (#149).
     /// In the default path `sel_visual` is false and this is byte-identical.
     fn styled_lines(&self, th: &Theme, sel_visual: bool) -> Vec<(String, Vec<TextRun>)> {
-        let term = self.session.term.lock();
-        let content = term.renderable_content();
+        let content = self.session.term.lock().renderable_content();
         let display_offset = content.display_offset;
         let selection = content.selection;
         let cursor = content.cursor;
         let show_cursor = content.mode.contains(TermMode::SHOW_CURSOR) && display_offset == 0;
+        let key = styling::Key {
+            cells: content.display_iter.collect(),
+            selection,
+            cursor,
+            display_offset,
+            show_cursor,
+            cols: self.grid.cols,
+            rows: self.grid.rows,
+            agent: self.mode.is_agent(),
+            sel_visual,
+            fallbacks_armed: GRID_FALLBACKS.armed(),
+            theme: th.clone(),
+        };
+        if let Some(memo) = self.styled_memo.borrow().as_ref() {
+            if memo.key == key {
+                return (*memo.lines).clone();
+            }
+        }
+        let cells = &key.cells;
 
         // Each row fills toward `cols` chars and at most `cols` style runs, so
         // size both buffers up front — a row never reallocates mid-paint.
@@ -8673,7 +8695,6 @@ impl TerminalView {
         // row up front. Collect the cells once, build per-row colour palettes,
         // then paint cell-by-cell with a per-row cursor that stays in lock-step
         // with pass one (identical row-clamp + spacer skip ⇒ ordinals line up).
-        let cells: Vec<_> = content.display_iter.collect();
         let syntax = th.syntax;
         // In an agent (claude/codex) pane, the user's own input lines are painted
         // in `th.human` so they stand out from the agent's replies (Part 2).
@@ -8683,7 +8704,7 @@ impl TerminalView {
         let mut wraps = vec![false; self.grid.rows];
         let rows_text: Vec<String> = if syntax || agent {
             let mut rows_text = vec![String::new(); self.grid.rows];
-            for indexed in &cells {
+            for indexed in cells {
                 let row = indexed.point.line.0 + display_offset as i32;
                 if row < 0 || row as usize >= self.grid.rows {
                     continue;
@@ -8723,7 +8744,7 @@ impl TerminalView {
         // computes the gamma exponent and channel scalars once, not per cell.
         let grade = GradeCoeffs::new(&th.grade);
 
-        for indexed in &cells {
+        for indexed in cells {
             let row = indexed.point.line.0 + display_offset as i32;
             if row < 0 || row as usize >= self.grid.rows {
                 continue;
@@ -8820,6 +8841,10 @@ impl TerminalView {
                 });
             }
         }
+        *self.styled_memo.borrow_mut() = Some(styling::Memo {
+            key,
+            lines: std::rc::Rc::new(lines.clone()),
+        });
         lines
     }
 }
@@ -10399,7 +10424,14 @@ impl Render for TerminalView {
                 inverted
             );
         }
-        let mut lines = self.styled_lines(&th, inverted);
+        // Covered faces still receive terminal output, but no grid pixels are
+        // drawn there. The next terminal frame snapshots the current viewport.
+        let mut lines =
+            if self.bench.face() == crate::workbench::Face::Workbench || self.has_doc_face() {
+                Vec::new()
+            } else {
+                self.styled_lines(&th, inverted)
+            };
         arm_grid_fallbacks(&mut lines, window.text_system());
         if std::env::var("TD_ANCHORDEBUG").is_ok() {
             // The last few non-blank grid rows + whether each is detected as the
@@ -11845,8 +11877,7 @@ mod tests {
             "the 'M' advance is measured on the bare face, not the chained font"
         );
         assert_eq!(
-            pane.matches("self.styled_lines(&th, inverted);\n        arm_grid_fallbacks(")
-                .count(),
+            pane.matches("arm_grid_fallbacks(&mut lines,").count(),
             2,
             "the live grid and the FOCUS mirror both arm the chain before shaping"
         );

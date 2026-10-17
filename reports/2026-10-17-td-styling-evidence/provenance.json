@@ -1,0 +1,31 @@
+{
+  "source_base": "a5fab2911a6ff8b4759d844ade3512e238ea6edc",
+  "source_sha256": {
+    "app/src/pane.rs": "45ad853b7cf93bea443691033ee70f4a56fb0b3b87b640787a2a0b3ea301c66a",
+    "app/src/pane/styling.rs": "d07bfe91654efdb84f3f92bd9cdae8a02d4ecf3745787e9a7eb98826e2eb5d4e",
+    "app/src/pane/doc.rs": "8f883b666c264df110c70a3bc1c9844aaebc2b2e8aec8632780e189a04fe8c4b",
+    "app/src/docview.rs": "44d832c1b8d5fca7555ca09e3f22a8f2b05b366f167f76eb55d0829c9eb4da22",
+    "app/src/theme.rs": "61c8d00c6263bb4ac9481a58076cd6dff3e3f9b9bceb015e5fb3156910102c5b",
+    "app/Cargo.lock": "116d3cf6fdff2bb042f17dc72a92e88895fce238e5fee30a2b47ebe49e5db753"
+  },
+  "baseline_binary": {
+    "path": "/tmp/td-efficiency-baseline-a5fab29",
+    "sha256": "658cbb9d7d53a422b17235291107d80a07703f916eedf8664c0c2a75f8fe9f8b"
+  },
+  "candidate_binary": {
+    "path": "/tmp/td-efficiency-candidate-production",
+    "sha256": "d6441bc744c95de50a49891f4e38fe70ae7276c00b73bea25534f7cb2ce69d57"
+  },
+  "build": "cargo build --release --locked (both binaries, without GPUI test-support)",
+  "rust": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "kernel": "7.2.5-3-omarchy",
+  "logical_cpus": 16,
+  "grid_cell_dimensions": null,
+  "grid_cell_dimensions_reason": "Not recorded by this runner; equal window geometry and pane layout are retained.",
+  "input_latency_ms": null,
+  "input_latency_reason": "No end-to-end input/presentation instrument in this run.",
+  "output_target_hz": 20,
+  "actual_output_rate_hz": null,
+  "actual_output_rate_reason": "Script readiness is checked, but actual writes per second are not counted.",
+  "installed": false
+}
