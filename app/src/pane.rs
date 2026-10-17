@@ -3729,10 +3729,8 @@ pub(crate) fn fuzzy_match(hay: &str, needle: &str) -> Option<(i64, Vec<usize>)> 
 /// width on the terminal instead of on controls. The pane header now keeps only
 /// 🎨 (theme) and 📊 (display).
 ///
-/// The BEHAVIOUR is untouched in both cases — only the glyph goes. The ▲/▼
-/// header buttons still walk your own messages in an agent pane (Alt+↑/↓ is
-/// pane focus everywhere now), and Alt+R still opens the FOCUS
-/// reader. Flip either back to `true` to restore its glyph and its ⋯ entry.
+/// Alt+↑/↓ walks your own messages in an agent pane, and Alt+R opens the
+/// FOCUS reader. Flip either back to `true` to restore its glyph and its ⋯ entry.
 const SHOW_HUMAN_NAV_GLYPH: bool = false;
 const SHOW_FOCUS_GLYPH: bool = false;
 
@@ -7717,7 +7715,8 @@ impl TerminalView {
                 let ch = row[Column(c)].c;
                 s.push(if ch == '\0' { ' ' } else { ch });
             }
-            if is_human_input_line(&s) {
+            if is_human_input_line(&s) && s.trim_start().chars().skip(1).any(|c| !c.is_whitespace())
+            {
                 out.push(l);
             }
         }
@@ -7728,8 +7727,7 @@ impl TerminalView {
     /// (`next = true`) of *your own* messages. The viewport top is grid line
     /// `-display_offset`; we step to the nearest human line above/below it and
     /// scroll so it lands at the top. Stepping past the newest snaps to live.
-    /// Driven by the ▲/▼ header buttons. NOT by Alt+↑/↓: all four Alt+arrows move
-    /// pane focus, so the only gesture for this is the one drawn on the pane.
+    /// Driven by Alt+↑/↓ and the optional ▲/▼ header buttons in agent panes.
     pub fn scroll_to_human(&mut self, next: bool, cx: &mut Context<Self>) {
         // In the anchor-top INVERTED read the newest message sits at the TOP, so
         // the ▲/▼ directions flip: "up" steps toward NEWER, "down"
@@ -7879,7 +7877,7 @@ impl TerminalView {
                 && !r
                     .trim_start()
                     .trim_start_matches(|c| {
-                        matches!(c, '\u{276f}' | '>' | '\u{258c}' | '\u{00b7}' | ' ')
+                        matches!(c, '\u{276f}' | '›' | '>' | '\u{258c}' | '\u{00b7}' | ' ')
                     })
                     .trim()
                     .is_empty()

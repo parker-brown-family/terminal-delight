@@ -15,6 +15,69 @@ use super::harness::{
 use crate::docopen::{Asker, DocSeat, FloatHit};
 use crate::workbench::Face;
 
+/// Both CLI carets must lead to the human's turns, skipping replies and the
+/// empty composer. The window's key dispatch is held in main.rs beside its
+/// other chord wiring tests.
+#[gpui::test]
+fn human_prompt_navigation_walks_claude_and_codex_turns(cx: &mut TestAppContext) {
+    for (mode, caret) in [
+        (super::PaneMode::Claude, "❯"),
+        (super::PaneMode::Codex, "›"),
+    ] {
+        let mut pane = Pane::running(cx, &format!(
+            "for n in 1 2 3; do printf '%s\\n' '{caret} human turn' 'agent reply'; for i in $(seq 1 40); do echo output; done; done; printf '%s\\n' '{caret} ' 'ready'; exec cat"
+        ));
+        pane.wait_for("ready");
+        pane.running_as(mode);
+        let turns = pane.read(|v| v.human_line_indices());
+        assert_eq!(turns.len(), 3, "{caret}: only submitted human turns");
+        assert!(turns.iter().all(|line| *line < 0));
+        let mut jump = |next, expected| {
+            pane.view
+                .update(pane.cx, |v, cx| v.scroll_to_human(next, cx));
+            assert_eq!(
+                pane.read(|v| v.session.term.lock().display_offset()),
+                expected
+            );
+        };
+        jump(false, -turns[2] as usize);
+        jump(false, -turns[1] as usize);
+        jump(false, -turns[0] as usize);
+        jump(false, -turns[0] as usize); // oldest holds
+        jump(true, -turns[1] as usize);
+        jump(true, -turns[2] as usize);
+        jump(true, 0); // beyond newest returns to live
+    }
+}
+
+/// The full-screen CLI's scroll walk stops on a submitted turn, never on
+/// its blank input box, for both current prompt glyphs.
+#[gpui::test]
+fn human_prompt_navigation_recognises_alternate_screen_turns(cx: &mut TestAppContext) {
+    for caret in ["❯", "›"] {
+        for text in ["", "human turn"] {
+            let mut pane = Pane::running(
+                cx,
+                &format!("printf '\\033[?1049h\\033[H{caret} {text}\\033[5;1Hready'; exec cat"),
+            );
+            pane.wait_for("ready");
+            assert!(pane.read(|v| v
+                .session
+                .term
+                .lock()
+                .mode()
+                .contains(crate::vt::TermMode::ALT_SCREEN)));
+            for coarse in [false, true] {
+                assert_eq!(
+                    pane.read(|v| v.top_is_human(coarse)),
+                    !text.is_empty(),
+                    "{caret} {text}"
+                );
+            }
+        }
+    }
+}
+
 /// A picture of the repository's own, and the words printed around it.
 const PICTURE: &str = "assets/img/logo-mark.png";
 

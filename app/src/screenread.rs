@@ -31,15 +31,16 @@ use crate::surface::{Answered, Choice_, MenuButton, Question, Round, Step, Surfa
 
 /// Does this rendered grid row look like one of *the user's own* input lines in
 /// an agent (claude/codex) TUI? Heuristic: agent TUIs echo the human's submitted
-/// turn behind a prompt caret — `❯ `/`> ` (Claude Code) or `▌ ` (some Codex
-/// builds). We match the first non-blank glyph so indentation/box-drawing around
-/// the prompt doesn't fool it. Pure + cheap so it's unit-testable and runs per
+/// turn behind a prompt caret — `❯ `/`> ` (Claude Code), `› ` (Codex),
+/// or `▌ ` (older Codex builds). We match the first non-blank glyph so
+/// indentation/box-drawing around the prompt doesn't fool it. Pure + cheap so
+/// it's unit-testable and runs per
 /// row per paint only while a pane is in agent mode.
 pub fn is_human_input_line(text: &str) -> bool {
     let mut chars = text.trim_start().chars();
     match chars.next() {
         // The prompt caret glyphs agent CLIs use for the human's turn.
-        Some('❯') | Some('▌') | Some('»') => {
+        Some('❯') | Some('›') | Some('▌') | Some('»') => {
             // Require a space (or end) after the caret so we don't catch e.g. a
             // `❯`-decorated banner with no following text.
             matches!(chars.next(), Some(' ') | None)
@@ -1380,6 +1381,8 @@ mod tests {
         assert!(is_human_input_line("  ❯ tell me the weather"));
         assert!(is_human_input_line("> what is 2+2"));
         assert!(is_human_input_line("▌ codex-style prompt"));
+        // Captured from the live Codex pane that reported this regression.
+        assert!(is_human_input_line("› We lost alt+up or down arros to snap to recent / next HUMAN message prompt! MUST work for claude and codex."));
         assert!(is_human_input_line("» fish-ish caret"));
         // a bare caret with nothing after still counts (the live empty input box)
         assert!(is_human_input_line("❯"));
