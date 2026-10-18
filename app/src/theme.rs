@@ -108,7 +108,7 @@ struct PaletteFile {
     colors: FileColors,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Theme {
     /// Kept for theme-file authors; the UI shows `icon` instead.
     #[allow(dead_code)]
