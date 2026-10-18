@@ -87,6 +87,7 @@ mod surface;
 mod surfacefeed;
 mod tenancy;
 mod term;
+mod terminal_state;
 #[cfg(test)]
 mod testsync;
 mod theme;
@@ -1660,9 +1661,9 @@ fn tray_pickers_h(themes: usize, skins: usize, modes: usize, schemes: usize) -> 
 
 /// Estimated height of the WHEEL column: the fixed wheel stack and the STICKY
 /// NOTE row under it (both trays have both), then one block per window RULE (a
-/// hairline, a heading and a pill — AGENT THEME, ANCHOR) plus any bare pills
+/// hairline, a heading and a pill — TERMINAL STATE, ANCHOR) plus any bare pills
 /// under them (pass-down on the outer tray, follow-outer on a pane's). This is
-/// the column AGENT THEME grew, so it is the one that has to be counted rather
+/// the column TERMINAL STATE grew, so it is the one that has to be counted rather
 /// than assumed short.
 fn tray_wheel_col_h(rules: usize, bare_pills: usize) -> f32 {
     let mut h = TRAY_LABEL_H
@@ -1700,7 +1701,7 @@ fn tray_panel_h_est() -> f32 {
         // SYNTAX draws one button per grammar PLUS the "off" button.
         theme::SyntaxScheme::ALL.len() + 1,
     );
-    // The outer tray's rules: AGENT THEME and ANCHOR, then the pass-down button.
+    // The outer tray's rules: TERMINAL STATE and ANCHOR, then the pass-down button.
     let wheel = tray_wheel_col_h(2, 1);
     pickers.max(wheel)
 }
@@ -2772,7 +2773,7 @@ struct StateFile {
     /// the bottom pad so the prompt/typing area sits near the TOP of the pane.
     #[serde(default)]
     anchor_top: bool,
-    /// Global AGENT THEME preference: whether a pane that FOLLOWS OUTER is
+    /// Global TERMINAL STATE preference: whether a pane that FOLLOWS OUTER is
     /// retinted by the program running in it (claude amber · codex cyan ·
     /// remote violet) instead of wearing the theme it inherited.
     ///
@@ -17579,7 +17580,7 @@ impl Workspace {
         )
     }
 
-    /// Flip the GLOBAL AGENT THEME preference, persist it, and repaint. Off
+    /// Flip the GLOBAL TERMINAL STATE preference, persist it, and repaint. Off
     /// (default) ⇒ a pane that follows outer wears what the window wears; on ⇒
     /// it wears the phosphor of the program inside it. The live value is
     /// published to [`pane::set_agent_tint`] every render frame.
@@ -17598,28 +17599,30 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The OUTER design-panel AGENT THEME control, sibling to the anchor row.
-    ///
-    /// It states the RULE rather than the switch position, because a bare
-    /// on/off cannot say which of two things wins: ✳ OVERRIDES OUTER means an
-    /// agent pane paints itself amber, ✳ FOLLOWS OUTER means it paints like
-    /// every other pane in the window. Only panes that follow outer are
-    /// affected either way — a pane wearing a theme it was given keeps it.
-    fn agent_tint_toggle(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> gpui::Div {
+    /// Global visual-state presets for panes following outer. The legacy
+    /// `agent_tint` saved key also covers remote sessions, editors and consoles.
+    fn terminal_state_toggle(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> impl IntoElement {
         let on = self.agent_tint;
         let label = if on {
-            "\u{2733} OVERRIDES OUTER"
+            "▣ USES PRESETS"
         } else {
-            "\u{2733} FOLLOWS OUTER"
+            "▣ FOLLOWS OUTER"
         };
-        Self::bezel_btn(sk, label, on).on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                // keep the panel/scrim from seeing this (no close)
-                cx.stop_propagation();
-                ws.toggle_agent_tint(cx);
-            }),
-        )
+        Self::bezel_btn(sk, label, on)
+            .id("terminal-state-toggle")
+            .tooltip(|_w, cx| {
+                cx.new(|_| SlotTooltip {
+                    lines: terminal_state::HOVER.iter().map(|s| (*s).into()).collect(),
+                })
+                .into()
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.toggle_agent_tint(cx);
+                }),
+            )
     }
 
     fn activate_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -28310,7 +28313,7 @@ impl Render for Workspace {
             // `tray_max_h` is the terminal band, so the overflow did not spill: it
             // scrolled, and ANCHOR plus the pass-down button sat below the fold
             // where nobody scrolled to find them. A control you cannot see is a
-            // control you do not have, and adding AGENT THEME made it two.
+            // control you do not have, and adding TERMINAL STATE made it two.
             //
             // So the middle column takes the four PICKERS (what you press to
             // choose a look) and the right column takes the WHEEL and the window
@@ -28389,15 +28392,15 @@ impl Render for Workspace {
                     format!("⤓ {} ({})", t.pass_down, stray)
                 };
                 controls = controls
-                    // AGENT THEME sits immediately above the pass-down button
+                    // TERMINAL STATE sits immediately above the pass-down button
                     // because they are the two ends of one question: pass-down
                     // decides which panes follow the window, and this decides
                     // whether following the window actually means wearing it.
                     // Heading is a literal for the same reason ANCHOR/SKIN are
                     // (#406).
                     .child(hsep())
-                    .child(label("AGENT THEME"))
-                    .child(div().flex().child(self.agent_tint_toggle(&sk, cx)))
+                    .child(label("TERMINAL STATE"))
+                    .child(div().flex().child(self.terminal_state_toggle(&sk, cx)))
                     .child(hsep())
                     .child(label("ANCHOR"))
                     .child(div().flex().child(self.anchor_top_toggle(&sk, cx)))
@@ -35505,6 +35508,7 @@ mod tests {
         let known: &[(&str, usize)] = &[
             ("render_savings_overlay", 1),
             ("render_bar_slot", 1),
+            ("terminal_state_toggle", 1),
             // Theme picker tips plus INHERIT’s live Omarchy source status.
             ("render", 3),
             // the corner's two split buttons, both built by this one function
@@ -41351,7 +41355,7 @@ node = "Leaf"
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
-        assert!(back.agent_tint, "the AGENT THEME toggle persists");
+        assert!(back.agent_tint, "the TERMINAL STATE toggle persists");
         // … and every session file written before this existed — which is all of
         // them — loads as FOLLOWS OUTER. That is the behaviour change: the tint
         // used to be unconditional, so absence has to mean off, not "as before".
