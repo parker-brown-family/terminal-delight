@@ -1,0 +1,34 @@
+{
+  "stage": "passed",
+  "window_pid": 939855,
+  "binary": "/home/parker/.local/lib/terminal-delight/td-5db5938-viewport-reuse",
+  "host_pid": 3678,
+  "terminals_preserved": 40,
+  "held_closed_cleaned": [
+    "107"
+  ],
+  "exposed_before": 40,
+  "exposed_after": 40,
+  "before_geometry": [
+    [
+      12,
+      38
+    ],
+    [
+      1576,
+      950
+    ]
+  ],
+  "after_geometry": [
+    [
+      12,
+      38
+    ],
+    [
+      1576,
+      950
+    ]
+  ],
+  "binary_sha256": "d6441bc744c95de50a49891f4e38fe70ae7276c00b73bea25534f7cb2ce69d57",
+  "merged_commit": "5db59383a62e10b738f863af89bdd995fafde6c3"
+}
