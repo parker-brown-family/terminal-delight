@@ -39,7 +39,6 @@ pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
         "tactical-overdrive",
         include_str!("../themes/tactical-overdrive.toml"),
     ),
-    ("gamba", include_str!("../themes/gamba.toml")),
     ("deco", include_str!("../themes/deco.toml")),
     ("hacker", DEFAULT_THEME_TOML),
 ];
@@ -540,7 +539,7 @@ pub struct Grade {
     /// theme's own glare**.
     ///
     /// `None` is not `0`. Glare is authored per theme — `hacker` shines at
-    /// 0.42, `gamba` at 0.50, most themes not at all — and every grade written
+    /// 0.42, most themes not at all — and every grade written
     /// before this dial existed was showing exactly that. Reading the absent
     /// key as zero would wipe the reflection off every hacker pane the first
     /// time this build opened its session. Turning the GAUGES slider writes
@@ -1795,7 +1794,7 @@ pub enum Dynamic {
     Pineapple,
     /// RETRO: a 1970s game-show / slot-machine palette — warm amber-gold anchor,
     /// robin-egg teal complement, vivid game-board greens and cinnabar reds.
-    /// Maximum good vibes; the colour half of the GAMBA look (theme `gamba`).
+    /// Legacy gold palette retained for saved-state compatibility.
     Retro,
     /// BAT: a nocturnal electric-purple monitor — near-black violet field, bright
     /// magenta phosphor letters, pale-orchid title. The flying-mouse, not baseball.
@@ -1914,11 +1913,8 @@ impl Dynamic {
             Dynamic::Bolt => "bolt",
             Dynamic::Amber => "amber",
             Dynamic::Pineapple => "pineapple",
-            // `gamba`, not `retro`: the desktop's `retro` variant is TD's
-            // Cyberpunk set (variants.toml says so), and two sets may not
-            // answer to one name. This one has always been the colour half
-            // of the GAMBA theme.
-            Dynamic::Retro => "gamba",
+            // Retained only for existing saved colour sets.
+            Dynamic::Retro => "gold",
             Dynamic::Bat => "violet",
             Dynamic::Cherry => "cherry",
             Dynamic::CottonClowndy => "cotton-clowndy",
@@ -3101,7 +3097,7 @@ mod tests {
             assert_eq!(&th.name, id, "theme file name must match registry id");
             icons.push(th.icon);
         }
-        assert_eq!(BUILTIN_THEMES.len(), 6);
+        assert_eq!(BUILTIN_THEMES.len(), 5);
         // The tray is glyph-only, so two themes sharing an icon are two themes
         // nobody can tell apart. This test has always collected the icons; it now
         // also reads them, which is what its name has always claimed.

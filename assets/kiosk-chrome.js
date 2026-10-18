@@ -17,7 +17,7 @@
    whole document, for a page built out of roles. "none" leaves painting to
    the page, as the Omarchy kiosk's own scroll spine does. "strip" was for the
    cabinets, whose theme lived on the strip alone so the walnut stayed walnut
-   and GAMBA kept its own `--red`; with no strip there is nothing to paint, so
+   rather than repainting the cabinet; with no strip there is nothing to paint, so
    it now does nothing, which is still the right thing for a cabinet.
    `data-kiosk`, `data-rail` and `data-float` are accepted and ignored, so no
    page has to change.
