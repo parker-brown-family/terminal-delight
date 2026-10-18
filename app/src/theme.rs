@@ -1189,6 +1189,11 @@ pub struct ThemeChoice {
     /// otherwise.
     #[serde(default, skip_serializing_if = "NotePaper::is_default")]
     pub note: NotePaper,
+    /// Persistently follow Omarchy's active palette. Manual colours stay retained.
+    /// None is an undeclared preference in old state; Some(false) is an explicit
+    /// choice to use manual colours. Both retain the manual colour settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_omarchy: Option<bool>,
 }
 
 impl Default for ThemeChoice {
@@ -1207,6 +1212,7 @@ impl Default for ThemeChoice {
             human: None,
             invert: false,
             note: NotePaper::Contrast,
+            follow_omarchy: None,
         }
     }
 }
@@ -1262,6 +1268,7 @@ pub fn house_outer() -> ThemeChoice {
         human: None,
         invert: false,
         note: NotePaper::Contrast,
+        follow_omarchy: None,
     }
 }
 
@@ -1296,6 +1303,7 @@ pub fn house_terminal() -> ThemeChoice {
         human: None,
         invert: false,
         note: NotePaper::Contrast,
+        follow_omarchy: None,
     }
 }
 
@@ -1328,6 +1336,11 @@ pub struct ThemeGroup {
     pub invert: bool,
     #[serde(default, skip_serializing_if = "NotePaper::is_default")]
     pub note: NotePaper,
+    /// Persistently follow Omarchy's active palette. Manual colours stay retained.
+    /// None is an undeclared preference in old state; Some(false) is an explicit
+    /// choice to use manual colours. Both retain the manual colour settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_omarchy: Option<bool>,
 }
 
 impl Default for ThemeGroup {
@@ -1345,11 +1358,23 @@ impl Default for ThemeGroup {
             human: None,
             invert: false,
             note: NotePaper::Contrast,
+            follow_omarchy: None,
         }
     }
 }
 
 impl ThemeChoice {
+    /// The live desktop supplies these roles while manual settings stay parked.
+    fn without_manual_colours(mut self) -> Self {
+        self.palette = None;
+        self.dynamic = Dynamic::Plain;
+        self.seed = None;
+        self.text = None;
+        self.complement = None;
+        self.human = None;
+        self
+    }
+
     /// This choice with its theme group replaced and its `grade` kept — the
     /// inverse of [`ThemeGroup::of`], for the scopes that hold a whole choice
     /// rather than a group beside a grade (the outer is the only one).
@@ -1368,6 +1393,7 @@ impl ThemeChoice {
             human: g.human,
             invert: g.invert,
             note: g.note,
+            follow_omarchy: g.follow_omarchy,
         }
     }
 }
@@ -1388,6 +1414,7 @@ impl ThemeGroup {
             human: c.human.clone(),
             invert: c.invert,
             note: c.note,
+            follow_omarchy: c.follow_omarchy,
         }
     }
 }
@@ -1506,6 +1533,7 @@ impl PaneTheme {
             human: g.human,
             invert: g.invert,
             note: g.note,
+            follow_omarchy: g.follow_omarchy,
         }
     }
 
@@ -2338,6 +2366,18 @@ pub fn apply_seed(base: &Theme, seed: Hsla) -> Theme {
 
 /// Resolve a choice to a concrete theme: registry lookup + seed recolour.
 pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
+    let desktop = (choice.follow_omarchy == Some(true))
+        .then(|| crate::palette::current(cx))
+        .flatten();
+    // Suspend manual colour modifiers only in this resolved copy; switching
+    // INHERIT off restores the exact settings kept in the state file.
+    let inherited;
+    let choice = if desktop.is_some() {
+        inherited = choice.clone().without_manual_colours();
+        &inherited
+    } else {
+        choice
+    };
     let reg = cx.global::<ThemeRegistry>();
     let base = if choice.id == "custom" {
         reg.custom.clone()
@@ -2358,10 +2398,13 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     // A palette id that no longer resolves — the theme was uninstalled since the
     // state file was written — leaves the theme's own colours standing. Losing
     // the borrowed look is the right failure; losing the pane is not.
-    let base = match choice
-        .palette
-        .as_deref()
-        .and_then(|id| crate::palette::find(cx, id))
+    let base = match desktop
+        .or_else(|| {
+            choice
+                .palette
+                .as_deref()
+                .and_then(|id| crate::palette::find(cx, id))
+        })
         .and_then(|p| overlay_palette(&base, &p.toml).ok())
     {
         Some(painted) => Arc::new(painted),

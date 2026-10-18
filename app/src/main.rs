@@ -1583,9 +1583,8 @@ const TRAY_PICKER_W: f32 = 3. * TRAY_BTN_W + 2. * TRAY_GAP + TRAY_FIT_SLACK;
 /// three STICKY NOTE buttons under it, which are what set the width now: at 150
 /// the last caption read "complemen".
 const TRAY_WHEEL_COL_W: f32 = 156.;
-/// The glyph column — the INVERT bar sets it (a heading plus a mode button),
-/// which is wider than the two 40px colour-set columns beneath it.
-const TRAY_GLYPH_COL_W: f32 = 110.;
+/// INVERT and INHERIT each have a heading above their button.
+const TRAY_GLYPH_COL_W: f32 = 2. * TRAY_MODE_BTN_W + TRAY_GAP;
 /// Three columns, two hairlines, four gaps, two paddings.
 const TRAY_PANEL_W: f32 = 2. * TRAY_PAD
     + TRAY_GLYPH_COL_W
@@ -20048,6 +20047,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let mut choice = self.menu_choice(cx);
+        choice.follow_omarchy = Some(false);
         match target {
             WheelTarget::Seed => choice.seed = hex,
             WheelTarget::Text => choice.text = hex,
@@ -20064,7 +20064,11 @@ impl Workspace {
         let choice = self.menu_choice(cx);
         let resolved = theme::resolve(cx, &choice);
         let pick = |o: &Option<String>, derived: Hsla| {
-            o.as_deref().and_then(theme::parse_hex).unwrap_or(derived)
+            if choice.follow_omarchy == Some(true) && palette::current(cx).is_some() {
+                derived
+            } else {
+                o.as_deref().and_then(theme::parse_hex).unwrap_or(derived)
+            }
         };
         [
             (WheelTarget::Seed, "◉", pick(&choice.seed, resolved.accent)),
@@ -28079,30 +28083,89 @@ impl Render for Workspace {
                 } else {
                     ("○", "default")
                 };
+                let heading = |text: &str| {
+                    div()
+                        .text_size(px(9.))
+                        .text_color(th.text.alpha(0.55))
+                        .child(text.to_string())
+                };
                 div()
                     .flex()
                     .flex_row()
-                    .items_center()
+                    .items_start()
                     .gap_2()
                     .child(
                         div()
-                            .text_size(px(9.))
-                            .text_color(th.text.alpha(0.55))
-                            .child("INVERT"),
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(heading("INVERT"))
+                            .child(color_mode_btn(&th, glyph, cap, on).on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.set_menu_choice(
+                                        ThemeChoice {
+                                            invert: !cur_c.invert,
+                                            ..cur_c.clone()
+                                        },
+                                        cx,
+                                    );
+                                }),
+                            )),
                     )
-                    .child(color_mode_btn(&th, glyph, cap, on).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.set_menu_choice(
-                                ThemeChoice {
-                                    invert: !cur_c.invert,
-                                    ..cur_c.clone()
-                                },
-                                cx,
-                            );
-                        }),
-                    ))
+                    .children((!is_pane).then(|| {
+                        let on = cur.follow_omarchy == Some(true);
+                        let (available, name) = palette::current_status(cx);
+                        let cap = if !on {
+                            "off"
+                        } else if available {
+                            "watching"
+                        } else {
+                            "unavailable"
+                        };
+                        let name = name.unwrap_or("name unavailable").replace('-', " ");
+                        let tip = format!("Follow Omarchy live · {name}");
+                        let cur_c = cur.clone();
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(heading("INHERIT"))
+                            .child(
+                                color_mode_btn(&th, "↳", cap, on)
+                                    .id("omarchy-inherit")
+                                    .tooltip(move |_w, cx| {
+                                        cx.new(|_| SlotTooltip {
+                                            lines: vec![tip.clone()],
+                                        })
+                                        .into()
+                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.set_menu_choice(
+                                                ThemeChoice {
+                                                    follow_omarchy: Some(
+                                                        cur_c.follow_omarchy != Some(true),
+                                                    ),
+                                                    ..cur_c.clone()
+                                                },
+                                                cx,
+                                            );
+                                        }),
+                                    ),
+                            )
+                            .children((on && available).then(|| {
+                                div()
+                                    .w(px(TRAY_MODE_BTN_W))
+                                    .truncate()
+                                    .text_size(px(8.))
+                                    .text_color(th.text.alpha(0.7))
+                                    .child(name)
+                            }))
+                    }))
             };
             let label = |s: &str| {
                 div()
@@ -28152,16 +28215,23 @@ impl Render for Workspace {
             let mut dyn_entries: Vec<(paint::Pick, bool, Option<palette::Chip>)> = chips
                 .into_iter()
                 .map(|c| {
-                    let active = cur.palette.as_deref() == Some(c.id.as_str());
+                    let active = cur.follow_omarchy != Some(true)
+                        && cur.palette.as_deref() == Some(c.id.as_str());
                     (paint::Pick::Palette(c.id.clone()), active, Some(c))
                 })
                 .collect();
             dyn_entries.push((
                 paint::Pick::Set(theme::Dynamic::Custom(Box::default())),
-                matches!(cur.dynamic, theme::Dynamic::Custom(_)),
+                cur.follow_omarchy != Some(true)
+                    && matches!(cur.dynamic, theme::Dynamic::Custom(_)),
                 None,
             ));
             const PER_COL: usize = 10; // fill a column vertically before wrapping
+            let columns = dyn_entries.len().div_ceil(PER_COL);
+            let glyph_col_w = TRAY_GLYPH_COL_W.max(
+                columns as f32 * 40.
+                    + columns.saturating_sub(1) as f32 * (2. * TRAY_GAP + TRAY_SEP),
+            );
             let mut dyn_cols = div().flex().flex_row().gap_2();
             for (ci, chunk) in dyn_entries.chunks(PER_COL).enumerate() {
                 if ci > 0 {
@@ -28367,9 +28437,9 @@ impl Render for Workspace {
             // real inventory. The tray no longer matches the DISPLAY (⛭) tray's
             // 300 — that pairing was worth having while both were one stacked
             // strip, and it is not worth a tray whose bottom rows you scroll to.
-            const PANEL_W: f32 = TRAY_PANEL_W;
+            let panel_w = TRAY_PANEL_W + glyph_col_w - TRAY_GLYPH_COL_W;
             let panel_h_est = tray_panel_h_est();
-            let mut panel = div().id("theme-panel").absolute().w(px(PANEL_W));
+            let mut panel = div().id("theme-panel").absolute().w(px(panel_w));
             // Where the tray's top edge lands decides how tall it may be, so
             // the anchor is computed first and kept.
             let tray_top = match self.menu_at {
@@ -28384,7 +28454,7 @@ impl Render for Workspace {
             panel = match self.menu_at {
                 Some(at) => {
                     let vw = f32::from(window.viewport_size().width);
-                    let right = (vw - f32::from(at.x)).clamp(8., (vw - PANEL_W - 8.).max(8.));
+                    let right = (vw - f32::from(at.x)).clamp(8., (vw - panel_w - 8.).max(8.));
                     panel.right(px(right)).top(px(tray_top))
                 }
                 None => over_the_footer(panel, scale),
@@ -28424,6 +28494,7 @@ impl Render for Workspace {
                         .flex_col()
                         .flex_none()
                         .gap_2()
+                        .w(px(glyph_col_w))
                         .child(invert_bar)
                         .child(dyn_cols),
                 )
@@ -35434,7 +35505,8 @@ mod tests {
         let known: &[(&str, usize)] = &[
             ("render_savings_overlay", 1),
             ("render_bar_slot", 1),
-            ("render", 2),
+            // Theme picker tips plus INHERIT’s live Omarchy source status.
+            ("render", 3),
             // the corner's two split buttons, both built by this one function
             ("split_button", 1),
         ];

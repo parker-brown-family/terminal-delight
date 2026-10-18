@@ -30,6 +30,9 @@
 //! with the LIVE AND ACTUAL config from Omarchy!"* It is read live — [`init`]
 //! rescans whenever a theme is installed, removed, retuned or hidden.
 
+mod current;
+pub use current::{current, current_status};
+
 use gpui::{App, Global, Hsla};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -424,6 +427,7 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+    current::init(cx);
 }
 
 /// Where Omarchy keeps themes, in precedence order (later roots win). The env
@@ -625,6 +629,14 @@ fn from_colors(id: &str, c: OmarchyColors) -> Option<Palette> {
         })
     );
     let px = |s: &str| crate::theme::parse_hex(s);
+    // Validate every role, not just the preview chips. A malformed unseen ANSI
+    // colour must not replace a last-good live palette with unusable data.
+    for colour in [&bg, &surface, &fg, &accent, &muted, &bright_fg]
+        .into_iter()
+        .chain(ansi.iter())
+    {
+        px(colour)?;
+    }
     Some(Palette {
         label: split_label(id),
         id: id.to_string(),
