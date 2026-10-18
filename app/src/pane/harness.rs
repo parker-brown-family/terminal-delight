@@ -111,6 +111,12 @@ pub(super) struct Pane {
     pub(super) cx: &'static mut VisualTestContext,
 }
 
+pub(super) struct Attached {
+    pub(super) pane: Pane,
+    pub(super) host: std::os::unix::net::UnixStream,
+    pub(super) resizes: std::sync::Arc<std::sync::Mutex<Vec<crate::vt::WindowSize>>>,
+}
+
 impl Pane {
     /// A pane whose terminal runs `/bin/sh -c script`, focused, in a window of
     /// its own, laid out once.
@@ -143,6 +149,45 @@ impl Pane {
             )
         });
         Self::shown(window, cx)
+    }
+
+    /// A real socket-fed replica, including its byte pump and resize control seam.
+    pub(super) fn attached(cx: &mut TestAppContext) -> Attached {
+        Self::prepare(cx);
+        let (host, client) = std::os::unix::net::UnixStream::pair().unwrap();
+        let resizes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let heard = resizes.clone();
+        let grid = term::GridSize {
+            cols: 100,
+            rows: 28,
+        };
+        let (session, guard) = term::attach_in(
+            grid.with_cell(super::BORN_CELL_PX.0, super::BORN_CELL_PX.1),
+            term::AttachStreams {
+                bytes: client,
+                announce_resize: Box::new(move |size| heard.lock().unwrap().push(size)),
+            },
+            Some(4242),
+        )
+        .unwrap();
+        let reader = session.notifier.clone();
+        cx.on_quit(move || reader.shutdown());
+        let window = cx.open_window(size(px(WINDOW.0), px(WINDOW.1)), move |_, cx| {
+            TerminalView::around(
+                session,
+                Some(guard),
+                Some(99),
+                &crate::session::PaneRestore::default(),
+                grid,
+                super::BORN_CELL_PX,
+                cx,
+            )
+        });
+        Attached {
+            pane: Self::shown(window, cx),
+            host,
+            resizes,
+        }
     }
 
     /// A pane built the way a launch builds one — `TerminalView::new_restored`
