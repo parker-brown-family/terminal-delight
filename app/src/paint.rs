@@ -128,8 +128,10 @@ pub fn pane_wearing(inherit: bool, eff: &ThemeChoice) -> Wearing {
     }
     Wearing {
         unpainted: false,
-        set: Some(eff.dynamic.clone()),
-        palette: eff.palette.clone(),
+        set: (eff.follow_omarchy != Some(true)).then(|| eff.dynamic.clone()),
+        palette: (eff.follow_omarchy != Some(true))
+            .then(|| eff.palette.clone())
+            .flatten(),
     }
 }
 
@@ -143,8 +145,10 @@ pub fn outer_wearing(cx: &App) -> Wearing {
     let c = theme::outer_choice(cx);
     Wearing {
         unpainted: ThemeGroup::of(&c) == ThemeGroup::of(&theme::house_outer()),
-        set: Some(c.dynamic.clone()),
-        palette: c.palette.clone(),
+        set: (c.follow_omarchy != Some(true)).then(|| c.dynamic.clone()),
+        palette: (c.follow_omarchy != Some(true))
+            .then(|| c.palette.clone())
+            .flatten(),
     }
 }
 
@@ -283,6 +287,7 @@ pub fn stamp(g: &mut ThemeGroup, pick: &Pick) {
             g.dynamic = Dynamic::Plain;
         }
     }
+    g.follow_omarchy = Some(false);
     g.seed = None;
     g.text = None;
     g.complement = None;
