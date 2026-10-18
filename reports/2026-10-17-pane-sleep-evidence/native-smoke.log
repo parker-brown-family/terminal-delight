@@ -1,0 +1,8 @@
+ok
+ok
+ok
+ok
+ok pane 1
+ok pane 1
+ok pane 1
+PASS: new GUI with old host, hidden output, real tab activation screenshot, shell input protection, face switching, document scroll, GUI restart, both pane PIDs preserved.

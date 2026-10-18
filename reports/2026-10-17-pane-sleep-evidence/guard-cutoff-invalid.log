@@ -1,0 +1,21 @@
+   Compiling terminal-delight v0.3.0 (/home/parker/Work/terminal-delight/.worktrees/pane-sleep/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 18.37s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (/home/parker/Work/terminal-delight/app/target/debug/deps/terminal_delight-943fb19e4403fece)
+
+running 1 test
+
+thread 'pane::tests::on_key_decides_nothing_it_can_decide_in_the_table' (3001417) panicked at src/pane.rs:13297:14:
+TerminalView::on_key
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test pane::tests::on_key_decides_nothing_it_can_decide_in_the_table ... FAILED
+
+failures:
+
+failures:
+    pane::tests::on_key_decides_nothing_it_can_decide_in_the_table
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2313 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin terminal-delight`

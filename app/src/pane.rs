@@ -21,6 +21,8 @@ mod doc;
 /// What this pane's agent handed over: the header chip, the history page and
 /// the screen scan. A child module for the same reason; see `pane/handed.rs`.
 mod handed;
+/// Visibility-aware housekeeping deadlines and wakeups.
+mod housekeeping;
 /// Bounded reuse of the viewport's styled text.
 mod styling;
 use crate::term;
@@ -29,7 +31,7 @@ use crate::vt::{
     viewport_to_point, Color as AnsiColor, Column, Event as TermEvent, Flags, Line, NamedColor,
     Point as TermPoint, Scroll, SelectionType, Side, TermMode, WindowSize,
 };
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use gpui::{
     anchored, canvas, deferred, div, font, point, prelude::*, px, rgb, Animation, AnimationExt,
     App, Bounds, BoxShadow, ClipboardItem, Context, FocusHandle, Focusable, Font, FontStyle,
@@ -2780,7 +2782,12 @@ pub struct TerminalView {
     /// Whether this pane is in the tab being shown, written by the workspace
     /// on every draw (`Workspace::render`). An atomic so the workspace can set
     /// it while only reading the pane, and so it is never a frame stale.
-    pub shown: Arc<std::sync::atomic::AtomicBool>,
+    shown: Arc<std::sync::atomic::AtomicBool>,
+    housekeeping_wake: RefCell<futures::channel::mpsc::Sender<()>>,
+    #[cfg(test)]
+    housekeeping_ticks: usize,
+    #[cfg(test)]
+    foreground_polls: usize,
     /// Something changed while the pane was not shown, not yet drawn. See
     /// [`Self::repaint`].
     offscreen_dirty: bool,
@@ -4638,53 +4645,66 @@ impl TerminalView {
         // for an answer that already existed in the right process (#336), and
         // the reason it was here at all is that the host had no way to say it.
         // It has one now: `set_host_mode`, fed by the push feed.
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(800))
-                .await;
-            let alive = this
-                .update(cx, |view: &mut TerminalView, cx| {
-                    let detected = match (view.session.master.as_ref(), view.session.shell_pid) {
-                        (Some(master), Some(pid)) => Some(foreground_mode(master, pid)),
-                        // Somebody else's terminal, or nobody's: not this
-                        // window's question to answer.
-                        _ => None,
-                    };
-                    if let Some(detected) = detected {
-                        // Sticky agent detection (spec §4): an agent runs child
-                        // processes (bash/node/rg) as the terminal's foreground group
-                        // while working, momentarily reclassifying the pane as Shell —
-                        // which FLICKERS the anchor-top inversion frame to frame (the
-                        // "sometimes / middle-screen prompt" bug). Keep the agent mode
-                        // through that, but only while the ALTERNATE SCREEN is active
-                        // (the agent's live TUI); when the agent exits and the plain
-                        // shell returns on the normal screen, we correctly demote.
-                        let on_alt = view
-                            .session
-                            .term
-                            .lock()
-                            .mode()
-                            .contains(TermMode::ALT_SCREEN);
-                        let mode = if view.mode.is_agent() && !detected.is_agent() && on_alt {
-                            view.mode.clone()
-                        } else {
-                            detected
+        if session.master.is_some() && session.shell_pid.is_some() {
+            cx.spawn(async move |this, cx| loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(800))
+                    .await;
+                let alive = this
+                    .update(cx, |view: &mut TerminalView, cx| {
+                        #[cfg(test)]
+                        {
+                            view.foreground_polls += 1;
+                        }
+                        let detected = match (view.session.master.as_ref(), view.session.shell_pid)
+                        {
+                            (Some(master), Some(pid)) => Some(foreground_mode(master, pid)),
+                            // Somebody else's terminal, or nobody's: not this
+                            // window's question to answer.
+                            _ => None,
                         };
-                        view.set_mode(mode, cx);
-                    }
-                    !view.exited
-                })
-                .unwrap_or(false);
-            if !alive {
-                break;
-            }
-        })
-        .detach();
+                        if let Some(detected) = detected {
+                            // Sticky agent detection (spec §4): an agent runs child
+                            // processes (bash/node/rg) as the terminal's foreground group
+                            // while working, momentarily reclassifying the pane as Shell —
+                            // which FLICKERS the anchor-top inversion frame to frame (the
+                            // "sometimes / middle-screen prompt" bug). Keep the agent mode
+                            // through that, but only while the ALTERNATE SCREEN is active
+                            // (the agent's live TUI); when the agent exits and the plain
+                            // shell returns on the normal screen, we correctly demote.
+                            let on_alt = view
+                                .session
+                                .term
+                                .lock()
+                                .mode()
+                                .contains(TermMode::ALT_SCREEN);
+                            let mode = if view.mode.is_agent() && !detected.is_agent() && on_alt {
+                                view.mode.clone()
+                            } else {
+                                detected
+                            };
+                            view.set_mode(mode, cx);
+                        }
+                        !view.exited
+                    })
+                    .unwrap_or(false);
+                if !alive {
+                    break;
+                }
+            })
+            .detach();
+        }
 
-        // per-pane effects clock
+        // per-pane effects clock. Visibility and a staged resize may interrupt
+        // its sleep, but output keeps using the independent terminal event pump.
+        let (housekeeping_wake, mut housekeeping_wakes) = futures::channel::mpsc::channel(1);
         cx.spawn(async move |this, cx| {
             loop {
-                let active = this.update(cx, |view: &mut TerminalView, cx| {
+                let delay = this.update(cx, |view: &mut TerminalView, cx| {
+                    #[cfg(test)]
+                    {
+                        view.housekeeping_ticks += 1;
+                    }
                     let th = theme::theme(cx);
                     if view.fx.tick(&th) {
                         view.repaint(cx);
@@ -4698,9 +4718,13 @@ impl TerminalView {
                     let every = if view.shown.load(std::sync::atomic::Ordering::Relaxed) {
                         std::time::Duration::from_millis(120)
                     } else {
-                        std::time::Duration::from_millis(1000)
+                        housekeeping::HIDDEN_INTERVAL
                     };
-                    if view.last_think_scan.elapsed() > every {
+                    if view.last_think_scan.elapsed() >= every
+                        || view
+                            .completion_deadline()
+                            .is_some_and(|at| Instant::now() >= at)
+                    {
                         view.last_think_scan = Instant::now();
                         // Agent-wall HUD: accrue per-turn → session token totals off
                         // the live status line every tick (independent of the bell's
@@ -4817,7 +4841,8 @@ impl TerminalView {
                             // the original thinking period was real (> 1200ms).
                             if !thinking && view.mode.is_agent() {
                                 if let Some(not_since) = view.not_thinking_since {
-                                    if not_since.elapsed() > std::time::Duration::from_millis(300) {
+                                    if not_since.elapsed() >= std::time::Duration::from_millis(300)
+                                    {
                                         // "Real" = the thinking spell itself lasted
                                         // > 1200ms (measure start→end, not start→now,
                                         // so the debounce delay doesn't skew it).
@@ -4890,7 +4915,7 @@ impl TerminalView {
                     // debounced PTY resize: fire once the drag settles. The
                     // cell goes over in device pixels, as `sync_size` staged it.
                     if let Some((size, since)) = view.pending_pty {
-                        if since.elapsed() > std::time::Duration::from_millis(140) {
+                        if since.elapsed() >= housekeeping::RESIZE_SETTLE {
                             view.pending_pty = None;
                             view.grid = size.grid;
                             view.cell_px = size.cell_px;
@@ -4905,18 +4930,18 @@ impl TerminalView {
                     // frames are not drawn, so thirty a second is all cost
                     // (#964). The scans below still run at the idle cadence,
                     // which is what keeps its badge and its bell timely.
-                    view.shown.load(std::sync::atomic::Ordering::Relaxed) && view.fx.active()
+                    view.housekeeping_delay()
                 });
                 // `this` is weak: once this pane's TerminalView is dropped (close
                 // a pane / tab / window) the update errors — break so the ticker
                 // ends instead of waking forever on a dead entity. Without this,
                 // every closed pane leaks a permanent background loop and idle
                 // CPU climbs over a session.
-                let Ok(active) = active else { break };
-                let ms = if active { 33 } else { 150 };
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(ms))
-                    .await;
+                let Ok(delay) = delay else { break };
+                futures::select_biased! {
+                    _ = housekeeping_wakes.next().fuse() => {},
+                    _ = cx.background_executor().timer(delay).fuse() => {},
+                }
             }
         })
         .detach();
@@ -4982,6 +5007,11 @@ impl TerminalView {
             bell_line: None,
             needs_input_line: None,
             shown: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            housekeeping_wake: RefCell::new(housekeeping_wake),
+            #[cfg(test)]
+            housekeeping_ticks: 0,
+            #[cfg(test)]
+            foreground_polls: 0,
             offscreen_dirty: false,
             offscreen_flushed: Instant::now(),
             live_rows_memo: std::cell::RefCell::new(None),
@@ -5697,19 +5727,7 @@ impl TerminalView {
             grid: term::GridSize { cols, rows },
             cell_px: crate::ptyscan::device_cell(self.cell_w, self.cell_h, window.scale_factor()),
         };
-        let told = PtySize {
-            grid: self.grid,
-            cell_px: self.cell_px,
-        };
-        if target != told {
-            // stage it; the effects clock applies once the size stops moving
-            match self.pending_pty {
-                Some((staged, _)) if staged == target => {}
-                _ => self.pending_pty = Some((target, Instant::now())),
-            }
-        } else {
-            self.pending_pty = None;
-        }
+        self.stage_pty_size(target);
     }
 
     /// The size this pane's pseudoterminal was last told, in the shape a size
@@ -12712,7 +12730,7 @@ mod tests {
     fn no_bench_method_is_defined_in_pane_rs() {
         let mut strays: Vec<&str> = Vec::new();
         for here in [include_str!("pane.rs"), include_str!("pane/doc.rs")] {
-            let (code, _tests) = here.split_once("#[cfg(test)]").expect("a test module");
+            let (code, _tests) = here.split_once("\n#[cfg(test)]").expect("a test module");
             strays.extend(code.lines().filter(|l| {
                 let t = l.trim_start();
                 (t.starts_with("fn bench_")
@@ -12745,7 +12763,7 @@ mod tests {
     fn every_bench_write_goes_through_the_gate() {
         let bench = include_str!("pane/bench.rs");
         let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((bench, "no test module yet"));
         // Which function each write sits in, by the nearest `fn` above it.
         let mut owner = "<file>";
@@ -12827,7 +12845,7 @@ mod tests {
     fn the_bench_says_what_it_took_and_never_stops_the_event() {
         let bench = include_str!("pane/bench.rs");
         let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((bench, "no test module yet"));
         let at = code.find("fn bench_key(").expect("bench_key");
         let end = code[at..].find("\n    }\n").expect("end of bench_key") + at;
@@ -12883,7 +12901,7 @@ mod tests {
     fn writing_a_note_sends_nothing_to_the_agent() {
         let bench = include_str!("pane/bench.rs");
         let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((bench, "no test module yet"));
         // Comments stripped first. This file explains at length that a note
         // must not call `bench_keystroke`, and a scan that its own explanation
@@ -12965,7 +12983,7 @@ mod tests {
     fn what_shelf_you_are_on_never_catches_a_keystroke() {
         let bench = include_str!("pane/bench.rs");
         let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((bench, "no test module yet"));
         // Comments stripped, or the paragraph explaining this rule — which
         // names the shelf it used to check — would trip the scan guarding it.
@@ -13025,7 +13043,7 @@ mod tests {
     fn the_shelf_strip_wraps_so_every_shelf_stays_reachable() {
         let bench = include_str!("pane/bench.rs");
         let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((bench, "no test module yet"));
         let stripped: String = code
             .lines()
@@ -13081,7 +13099,7 @@ mod tests {
     fn nothing_in_the_bench_half_flips_the_pane_off_the_bench() {
         let bench = include_str!("pane/bench.rs");
         let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((bench, "no test module yet"));
         let code: String = code
             .lines()
@@ -13271,7 +13289,7 @@ mod tests {
     fn on_key_decides_nothing_it_can_decide_in_the_table() {
         let src = include_str!("pane.rs");
         let (code, _tests) = src
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((src, "no test module yet"));
         let at = code
             .find("fn on_key(&mut self, ev: &KeyDownEvent")
@@ -16073,9 +16091,10 @@ mod tests {
             "a hidden pane ticks at frame rate"
         );
         assert!(
-            clock.contains("from_millis(1000)"),
+            clock.contains("housekeeping::HIDDEN_INTERVAL"),
             "a hidden pane's screen checks run as often as a shown pane's"
         );
+        assert_eq!(housekeeping::HIDDEN_INTERVAL, Duration::from_secs(1));
         assert_eq!(OFFSCREEN_REFRESH, Duration::from_secs(5));
         // And the screen those checks read is copied once per change, not
         // once per reader: the copy was 30% of the main thread under perf.
@@ -16935,3 +16954,5 @@ mod tests {
 mod behaviour;
 #[cfg(test)]
 mod harness;
+#[cfg(test)]
+mod housekeeping_tests;

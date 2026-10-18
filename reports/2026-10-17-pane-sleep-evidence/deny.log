@@ -1,0 +1,175 @@
+warning[unmatched-source]: allowed source was not encountered
+   ┌─ app/deny.toml:84:4
+   │
+84 │   "https://github.com/zed-industries/zed",
+   │    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ no crate source matched these criteria
+
+bug[unresolved-workspace-dependency]: failed to resolve a workspace dependency
+   ┌─ /home/parker/Work/terminal-delight/.worktrees/zed-upstream/crates/gpui/Cargo.toml:63:25
+   │
+63 │ gpui_macros.workspace = true
+   │                         ━━━━
+   │                         │
+   │                         usage of workspace dependency
+   │
+   ├ gpui v0.2.2
+     ├── gpui_linux v0.1.0
+     │   └── gpui_platform v0.1.0
+     │       └── terminal-delight v0.3.0
+     ├── (build) gpui_macos v0.1.0
+     │   └── gpui_platform v0.1.0 (*)
+     ├── gpui_platform v0.1.0 (*)
+     ├── gpui_web v0.1.0
+     │   └── gpui_platform v0.1.0 (*)
+     ├── gpui_wgpu v0.1.0
+     │   ├── gpui_linux v0.1.0 (*)
+     │   ├── gpui_web v0.1.0 (*)
+     │   └── terminal-delight v0.3.0 (*)
+     ├── gpui_windows v0.1.0
+     │   └── gpui_platform v0.1.0 (*)
+     └── (dev) terminal-delight v0.3.0 (*)
+
+bug[unresolved-workspace-dependency]: failed to resolve a workspace dependency
+   ┌─ /home/parker/Work/terminal-delight/.worktrees/zed-upstream/crates/gpui/Cargo.toml:64:32
+   │
+64 │ gpui_shared_string.workspace = true
+   │                                ━━━━
+   │                                │
+   │                                usage of workspace dependency
+   │
+   ├ gpui v0.2.2 (*)
+
+bug[unresolved-workspace-dependency]: failed to resolve a workspace dependency
+    ┌─ /home/parker/Work/terminal-delight/.worktrees/zed-upstream/crates/gpui/Cargo.toml:103:23
+    │
+103 │ gpui_util.workspace = true
+    │                       ━━━━
+    │                       │
+    │                       usage of workspace dependency
+    │
+    ├ gpui v0.2.2 (*)
+
+bug[unresolved-workspace-dependency]: failed to resolve a workspace dependency
+   ┌─ /home/parker/Work/terminal-delight/.worktrees/zed-upstream/crates/gpui/Cargo.toml:65:25
+   │
+65 │ http_client.workspace = true
+   │                         ━━━━
+   │                         │
+   │                         usage of workspace dependency
+   │
+   ├ gpui v0.2.2 (*)
+
+bug[unresolved-workspace-dependency]: failed to resolve a workspace dependency
+   ┌─ /home/parker/Work/terminal-delight/.worktrees/zed-upstream/crates/gpui/Cargo.toml:74:26
+   │
+74 │ proptest = { workspace = true, optional = true }
+   │            ──────────────━━━━───────────────────
+   │                          │
+   │                          usage of workspace dependency
+   │
+   ├ gpui v0.2.2 (*)
+
+bug[unresolved-workspace-dependency]: failed to resolve a workspace dependency
+   ┌─ /home/parker/Work/terminal-delight/.worktrees/zed-upstream/crates/gpui/Cargo.toml:80:24
+   │
+80 │ refineable.workspace = true
+   │                        ━━━━
+   │                        │
+   │                        usage of workspace dependency
+   │
+   ├ gpui v0.2.2 (*)
+
+bug[unresolved-workspace-dependency]: failed to resolve a workspace dependency
+   ┌─ /home/parker/Work/terminal-delight/.worktrees/zed-upstream/crates/gpui/Cargo.toml:81:23
+   │
+81 │ scheduler.workspace = true
+   │                       ━━━━
+   │                       │
+   │                       usage of workspace dependency
+   │
+   ├ gpui v0.2.2 (*)
+
+bug[unresolved-workspace-dependency]: failed to resolve a workspace dependency
+    ┌─ /home/parker/Work/terminal-delight/.worktrees/zed-upstream/crates/gpui/Cargo.toml:100:22
+    │
+100 │ sum_tree.workspace = true
+    │                      ━━━━
+    │                      │
+    │                      usage of workspace dependency
+    │
+    ├ gpui v0.2.2 (*)
+
+bug[unresolved-workspace-dependency]: failed to resolve a workspace dependency
+   ┌─ /home/parker/Work/terminal-delight/.worktrees/zed-upstream/crates/gpui/Cargo.toml:90:25
+   │
+90 │ util_macros.workspace = true
+   │                         ━━━━
+   │                         │
+   │                         usage of workspace dependency
+   │
+   ├ gpui v0.2.2 (*)
+
+bug[unresolved-workspace-dependency]: failed to resolve a workspace dependency
+    ┌─ /home/parker/Work/terminal-delight/.worktrees/zed-upstream/crates/gpui/Cargo.toml:133:19
+    │
+133 │ media.workspace = true
+    │                   ━━━━
+    │                   │
+    │                   usage of workspace dependency
+    │
+    ├ gpui v0.2.2 (*)
+
+warning[wildcard]: found 10 wildcard dependencies for crate 'gpui'. allow-wildcard-paths is enabled, but does not apply to public crates as crates.io disallows path dependencies.
+    ┌─ /home/parker/Work/terminal-delight/.worktrees/zed-upstream/crates/gpui/Cargo.toml:63:25
+    │
+ 63 │ gpui_macros.workspace = true
+    │                         ━━━━ wildcard dependency
+ 64 │ gpui_shared_string.workspace = true
+    │                                ━━━━ wildcard dependency
+ 65 │ http_client.workspace = true
+    │                         ━━━━ wildcard dependency
+    ·
+ 74 │ proptest = { workspace = true, optional = true }
+    │            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ wildcard dependency
+    ·
+ 80 │ refineable.workspace = true
+    │                        ━━━━ wildcard dependency
+ 81 │ scheduler.workspace = true
+    │                       ━━━━ wildcard dependency
+    ·
+ 90 │ util_macros.workspace = true
+    │                         ━━━━ wildcard dependency
+    ·
+100 │ sum_tree.workspace = true
+    │                      ━━━━ wildcard dependency
+    ·
+103 │ gpui_util.workspace = true
+    │                       ━━━━ wildcard dependency
+    ·
+133 │ media.workspace = true
+    │                   ━━━━ wildcard dependency
+    │
+    ├ gpui v0.2.2
+      ├── gpui_linux v0.1.0
+      │   └── gpui_platform v0.1.0
+      │       └── terminal-delight v0.3.0
+      ├── (build) gpui_macos v0.1.0
+      │   └── gpui_platform v0.1.0 (*)
+      ├── gpui_platform v0.1.0 (*)
+      ├── gpui_web v0.1.0
+      │   └── gpui_platform v0.1.0 (*)
+      ├── gpui_wgpu v0.1.0
+      │   ├── gpui_linux v0.1.0 (*)
+      │   ├── gpui_web v0.1.0 (*)
+      │   └── terminal-delight v0.3.0 (*)
+      ├── gpui_windows v0.1.0
+      │   └── gpui_platform v0.1.0 (*)
+      └── (dev) terminal-delight v0.3.0 (*)
+
+warning[license-exception-not-encountered]: license exception was not encountered
+   ┌─ app/deny.toml:35:43
+   │
+35 │   { allow = ["Unicode-DFS-2016"], name = "unicode-ident" },
+   │                                           ━━━━━━━━━━━━━ unmatched license exception
+
+advisories ok, bans ok, licenses ok, sources ok

@@ -22921,9 +22921,7 @@ impl Workspace {
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
                 let shown = active.iter().any(|a| a.entity_id() == leaf.entity_id());
-                leaf.read(cx)
-                    .shown
-                    .store(shown, std::sync::atomic::Ordering::Relaxed);
+                leaf.read(cx).mark_shown(shown);
             }
         }
     }

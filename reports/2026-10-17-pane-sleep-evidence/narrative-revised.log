@@ -1,0 +1,28 @@
+backend  https://openrouter.ai/api  (OPENROUTER_API_KEY from /home/parker/Work/jev-integrations/.env)   model jev-latest
+file     reports/2026-10-18-pane-sleep-preview.html
+5 sections, 1 request each, 5 questions batched per request
+
+ #  unexpl  ident  seam  pulls  role          heading
+    0-3 lo 0-1 lo 0-3lo 0-1 hi
+------------------------------------------------------------------------------------------------
+ 1    1.29   0.03    --   0.84  consequence   Hidden panes wake less often.
+CPU savings re
+ 2    1.65   0.26  0.78   0.33  turn          Hidden panes were checking even when nothing
+ 3    1.81   0.23  0.52   0.15  turn          We gave real events their own wakeups.
+ 4    1.64   0.27  0.93   0.63  consequence   That removed callbacks, but the CPU saving s
+ 5    1.60   0.33  0.65   0.39  resolution    We kept the bounded change after trying to b
+
+Document
+  opens cold to a stranger     0.80   (high is good: a stranger could say what it is about)
+  headings tell the story      0.84   (high is good)
+  arc                        journey
+
+Worst first — repair these
+   3  We gave real events their own wakeups.               ends flat
+   2  Hidden panes were checking even when nothing changed ends flat
+   5  We kept the bounded change after trying to break it. ends flat
+   4  That removed callbacks, but the CPU saving stayed sm ok
+   1  Hidden panes wake less often.
+CPU savings remain unc ok
+
+5 section requests + 1 document request in 578 ms wall, slowest 385 ms

@@ -1,0 +1,82 @@
+   Compiling terminal-delight v0.3.0 (/home/parker/Work/terminal-delight/.worktrees/pane-sleep/app)
+error[E0624]: method `completion_deadline` is private
+    --> src/pane.rs:4737:30
+     |
+4737 | ...                   .completion_deadline()
+     |                        ^^^^^^^^^^^^^^^^^^^ private method
+     |
+    ::: src/pane/housekeeping.rs:37:5
+     |
+  37 |     fn completion_deadline(&self) -> Option<Instant> {
+     |     ------------------------------------------------ private method defined here
+
+error[E0624]: method `housekeeping_delay` is private
+    --> src/pane.rs:4949:26
+     |
+4949 |                     view.housekeeping_delay()
+     |                          ^^^^^^^^^^^^^^^^^^ private method
+     |
+    ::: src/pane/housekeeping.rs:47:5
+     |
+  47 |     fn housekeeping_delay(&self) -> Duration {
+     |     ---------------------------------------- private method defined here
+
+error[E0624]: method `stage_pty_size` is private
+    --> src/pane.rs:5750:14
+     |
+5750 |         self.stage_pty_size(target);
+     |              ^^^^^^^^^^^^^^ private method
+     |
+    ::: src/pane/housekeeping.rs:22:5
+     |
+  22 |     fn stage_pty_size(&mut self, target: PtySize) {
+     |     --------------------------------------------- private method defined here
+
+error[E0624]: method `wake_housekeeping` is private
+   --> src/pane/housekeeping_tests.rs:212:11
+    |
+212 |         v.wake_housekeeping();
+    |           ^^^^^^^^^^^^^^^^^ private method
+    |
+   ::: src/pane/housekeeping.rs:16:5
+    |
+ 16 |     fn wake_housekeeping(&self) {
+    |     --------------------------- private method defined here
+
+error[E0624]: method `completion_deadline` is private
+   --> src/pane/housekeeping_tests.rs:234:15
+    |
+234 |             v.completion_deadline().is_none(),
+    |               ^^^^^^^^^^^^^^^^^^^ private method
+    |
+   ::: src/pane/housekeeping.rs:37:5
+    |
+ 37 |     fn completion_deadline(&self) -> Option<Instant> {
+    |     ------------------------------------------------ private method defined here
+
+error[E0624]: method `housekeeping_delay` is private
+   --> src/pane/housekeeping_tests.rs:240:15
+    |
+240 |             v.housekeeping_delay() >= Duration::from_millis(33),
+    |               ^^^^^^^^^^^^^^^^^^ private method
+    |
+   ::: src/pane/housekeeping.rs:47:5
+    |
+ 47 |     fn housekeeping_delay(&self) -> Duration {
+    |     ---------------------------------------- private method defined here
+
+error[E0624]: method `wake_housekeeping` is private
+   --> src/pane/housekeeping_tests.rs:254:11
+    |
+254 |         v.wake_housekeeping();
+    |           ^^^^^^^^^^^^^^^^^ private method
+    |
+   ::: src/pane/housekeeping.rs:16:5
+    |
+ 16 |     fn wake_housekeeping(&self) {
+    |     --------------------------- private method defined here
+
+For more information about this error, try `rustc --explain E0624`.
+error: could not compile `terminal-delight` (bin "terminal-delight") due to 3 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `terminal-delight` (bin "terminal-delight" test) due to 7 previous errors

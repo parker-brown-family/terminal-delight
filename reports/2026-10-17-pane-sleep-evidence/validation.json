@@ -1,0 +1,26 @@
+{
+  "default": {
+    "passed": 2412,
+    "failed": 0,
+    "ignored": 9,
+    "log_sha256": "c6e27108b955d1ddcec2c72cabf685a346dae158085201e6db8a39a70d89148c"
+  },
+  "clippy_default": true,
+  "fallback": {
+    "passed": 2365,
+    "failed": 0,
+    "ignored": 9,
+    "log_sha256": "c2a56875c6a76b47cfd3b299a4218aa31c288084883fd5aaf843f9fad57a55a6"
+  },
+  "clippy_fallback": true,
+  "format": true,
+  "cargo_deny": true,
+  "javascript_syntax": true,
+  "native_smoke": true,
+  "native_smoke_preflight_used_baseline": true,
+  "initial_full_failures_retained": [
+    "full-first-source-cutoff-and-identity.log",
+    "full-second-indented-cfg-cutoff.log"
+  ],
+  "host_identity_failure_followup": "https://github.com/parker-brown-family/terminal-delight/issues/933#issuecomment-6246691310"
+}
