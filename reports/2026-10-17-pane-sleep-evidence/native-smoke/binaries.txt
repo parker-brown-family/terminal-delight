@@ -1,0 +1,2 @@
+b6633efafc276d6f2f3f15dd70927b746c77deaa0b5a9de3ab384885af7bd353  /home/parker/.local/lib/terminal-delight/td-6736bc7-pane-sleep
+8fb861814633fd13eb006b412c6632cb0a710950ff25380e0773d0d753ce8433  /proc/3678/exe

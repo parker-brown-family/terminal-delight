@@ -1,0 +1,36 @@
+   Compiling terminal-delight v0.3.0 (/home/parker/Work/terminal-delight/.worktrees/pane-sleep/app)
+warning: unused variable: `scroll_settled`
+    --> src/pane.rs:4750:29
+     |
+4750 |                         let scroll_settled = match view.last_scroll_offset {
+     |                             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_scroll_settled`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `terminal-delight` (bin "terminal-delight" test) generated 1 warning (run `cargo fix --bin "terminal-delight" -p terminal-delight --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.13s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (/home/parker/Work/terminal-delight/app/target/debug/deps/terminal_delight-943fb19e4403fece)
+
+running 7 tests
+test pane::housekeeping_tests::hidden_completion_keeps_its_short_debounce_without_a_busy_loop ... ok
+test pane::housekeeping_tests::a_hidden_stream_and_colour_query_do_not_wait_for_housekeeping ... ok
+
+thread 'pane::housekeeping_tests::hidden_completion_waits_for_scroll_settle' (2823629) panicked at src/pane/housekeeping_tests.rs:292:5:
+scrolling manufactured a completion
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test pane::housekeeping_tests::hidden_completion_waits_for_scroll_settle ... FAILED
+test pane::housekeeping_tests::hidden_prompt_is_detected_by_the_one_second_fallback ... ok
+test pane::housekeeping_tests::hidden_resize_interrupts_sleep_and_keeps_the_last_target ... ok
+test pane::housekeeping_tests::hidden_housekeeping_sleeps_and_visibility_edges_wake_it ... ok
+test pane::housekeeping_tests::only_locally_owned_ptys_get_a_foreground_watcher ... ok
+
+failures:
+
+failures:
+    pane::housekeeping_tests::hidden_completion_waits_for_scroll_settle
+
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 2307 filtered out; finished in 3.61s
+
+error: test failed, to rerun pass `--bin terminal-delight`

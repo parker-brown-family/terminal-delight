@@ -4,46 +4,32 @@ Difficulty: 5/10 — removing routine callbacks risks delaying real pane events.
 
 Approved direction: Parker said "do that" after the cost/benefit assessment and explicitly authorized autonomous implementation, adversarial tests, rebuild and installation. No code review or further approval handoff is requested.
 
-- [x] Tracer: remove local foreground watcher from host-owned panes; retain local detection.
-- [x] Hidden housekeeping: one-second fallback, coalesced visibility/resize wakeups, explicit deadlines, hidden visual changes through repaint.
-- [ ] Behavioral and mutation tests; both terminal cores; matched production CPU measurements.
-- [ ] One merged PR, rebuilt production binary, isolated smoke and guarded live GUI reconnect.
-- [ ] Human report with measured savings and limits.
+- [x] Remove the local foreground watcher from hosted replicas; retain local PTY detection.
+- [x] Hidden housekeeping: one-second fallback, bounded/coalesced visibility and resize wakeups, explicit resize and completion deadlines.
+- [x] Seven behavioral tests, five production mutation controls and one qualified routing-guard control.
+- [x] Full suites and strict Clippy on both cores, formatting, cargo-deny and JavaScript syntax.
+- [x] Normal production baseline and candidate built from the same checkout path.
+- [x] Identical-binary control and two complete matched experiments with opposite launch order.
+- [x] Candidate native smoke against the old host executable: output, activation, document, GUI-only restart and both terminal identities.
+- [ ] Merge the single PR and perform a guarded live GUI-only reconnect; never restart host3678.
+- [ ] Deliver the final human report with actual live identity preservation proof.
 
-## Current verification
+## Verification and limits
 
-Initial targeted run: seven real-pane tests passed on the fa88810 application plus the timer changes. The current test source separates the foreground-watcher oracle into an eighth test and adds no new behavior. The branch has since rebased cleanly onto Terminal State merge bfd7a71. Child-module visibility compile errors from the first attempt were fixed; both initial logs are retained.
+Default full suite:2412 passed,0 failed,9 ignored. Fallback:2365 passed,0 failed,9 ignored. validation.json records checks and raw log hashes. Seven real-pane tests cover inactive/hidden cadence, visible and CRT cadence, hosted/local watchers, output/colour replies, prompts, latest-only settled resize, completion deadlines and scroll-settle. Each production fault fails the intended behavioral assertion; source bytes are restored.
 
-Benchmark preflight now passes with two floated1000x700 windows on one private hidden workspace and monitor, each containing one visible quiet pane and thirty host-classified synthetic Codex workers. Failed preflights rejected a missing theme id, exec-replaced shell identity, incomplete startup and unequal monitor geometry before any CPU sample. The production baseline binary is currently td-55545af-terminal-state; use the same baseline binary as both fixture hosts. Old live-host compatibility is tested separately.
+The initial full runs exposed source-reader cutoffs caused by the new test module and indented test counters. The module now follows the established bottom placement; eight readers use the top-level boundary without weakening assertions. A passing unmodified routing guard rejects a deliberately inserted F1 bypass at the specific routing assertion. Its original invalid control is explicitly classified and retained. The unchanged host identity test also failed once, passed alone and in both final full suites; its inferred fork/exec explanation remains unconfirmed.
 
-Quiet samples must precede working samples: pausing output leaves a working footer behind, and synthesizing stop events would play thirty completion bells. Both builds run simultaneously, five10-second pairs per condition, and every interval checks process start times, output counts and unchanged matching compositor geometry. No final CPU observations yet.
+Matched production measurements against main2b4a6b3, which already includes reel removal, INHERIT and Terminal State: quiet CPU medians3.7% and2.8% lower; working0.4% lower then1.8% higher. Identical-binary controls differed by up to3.3 points of one CPU, larger than the1.0–1.4 quiet median savings. All20 A/B pairs plus4 control observations are retained. Each working observation checks fresh parsed output in all30 hidden panes, matched writer rates, executable/process identity and matching1000x700 geometry. No CPU-based exclusions. CPU benefit remains small/uncertain; whole-machine speed, battery and input latency are unmeasured.
 
-Native smoke script exercises a two-tab isolated session with host3678's executable, sends Ctrl+PageUp only to its own hidden GUI, saves the selected-tab proof, photographs the newly activated streaming pane, opens/scrolls a document, then reconnects the GUI and compares both pane identities.
+Normal candidate td-6736bc7-pane-sleep contains the exact tested application. Its separate older-host native smoke passed. Source app bytes remain unchanged after those checks. Human candidate reading: reports/2026-10-18-pane-sleep-preview.html. Final delivery adds actual reconnect proof; the preview does not claim installation.
 
-Follow-up found during fixture validation: exec-replaced agents can retain SHELL classification because their foreground group still equals the original shell PID. Revalidate before fixing: https://github.com/parker-brown-family/terminal-delight/issues/991
+## Independent follow-ups and ownership
 
-Shared build target is currently held by painter pane110/thread01a14d48-9d7f-7170-b360-83ab21001a31 for fallback tests and release. Wait for its release notice; it will also merge its own palette changes before our final full checks. Terminal State owner is done: GUI2385158, host3678 unchanged. Do not touch root usage.rs or restart the host.
+Exec-replaced fixture agents exposed a separate host classification assumption: https://github.com/parker-brown-family/terminal-delight/issues/991
+Existing intermittent identity test record: https://github.com/parker-brown-family/terminal-delight/issues/933#issuecomment-6246691310
+Broader processor investigation remains on issue964; this timer change does not close it.
 
-Next: rebase latest main if palette merged; run all eight current tests, the five production-mutation variants in reports/2026-10-17-pane-sleep-evidence/mutate.py, full required checks on both cores, a normal production build, matched CPU experiment, single PR and safe installation. Mutation script always byte-restores each changed source in finally. Never benchmark a test-feature build.
+All work is in the isolated perf/pane-sleep worktree. Root usage.rs is unrelated and remains untouched. Palette owner released the shared target and GUI slot. Before cutover use a fresh census and the archived guarded reload procedure; host3678 must remain running.
 
-## Palette integration
-
-Current base is painter commit0bbfd51 (its PR992 CI pending at integration time). The palette change removes the Gamba object and clock entirely, replacing its working-state storage with agent_thinking:Option<bool>. Resolved the two clock conflicts by retaining the removal. Our deadline requires Some(false); None remains unobserved. Removed the obsolete reel-repaint test/mutation, replacing that fault control with a bypassed scroll-settle gate. The seven current behavioral tests passed on this combined tree, including visible/unfocused CRT cadence and unknown-state rejection (integrated-targeted.log).
-
-The shared target is now ours. Production mutations are running via background job shell_0a36ec63244a311c; do not edit/stage Rust while it temporarily holds deliberately broken source. Restore is automatic per case. Native smoke script itself passed against the baseline and the old host; rerun against our normal production candidate later. The matched baseline is now immutable td-0bbfd51-palette-rules, so reel removal will not be counted as a gain from this timer change.
-
-## Verified application before matched builds
-
-Default full suite:2412 passed,0 failed,9 ignored. Fallback:2365 passed,0 failed,9 ignored. Strict Clippy on both cores, formatting, cargo-deny and browser-prototype JavaScript syntax passed. validation.json records native_smoke:null until our own production candidate is exercised.
-
-Five production fault variants failed their intended housekeeping assertions and byte-restored their source. A separate F1-routing fault now has a passing unmodified baseline and fails with the specific key-routing assertion. Its first attempt was invalid because the existing source reader was already failing; that rejected control and its classification are retained.
-
-The first full run failed22 source guards because the new external test module was declared at the top, plus the known unchanged host identity test. The second run fixed the top-level module placement and found one remaining guard cutting at an indented cfg attribute. Eight source readers now use the existing top-level-boundary convention; all assertions remain intact. The final two core suites above passed. The unchanged host test also passed alone; no claim is made that its inferred fork/exec cause was confirmed or fixed.
-
-Rebased onto merged main2b4a6b3 with SHA256 equality of all five changed application/test files before and after rebase. Main contains INHERIT, Terminal State and the palette/reel removal. Original autostash5393764 remains a recovery backup from pre-palette integration; do not apply it onto this code.
-
-Next build baseline2b4a6b3 and the committed candidate sequentially in this same worktree path, using normal cargo build --release --locked. Keep both immutable binaries; do not switch the live launcher until measured/tested/merged. Then run two identical-binary control pairs per condition, followed by five baseline/candidate pairs, with no build/profiler active. Working samples also verify each hidden window's parsed output counter, not just its writers.
-
-Current live GUI2866255, host3678, own pane98/shell1253854. Painter has finished and released builds/reconnect; no other shared-target work is planned.
-
-Turned out to be: pending.
+Implementation calibration:5/10. The deadline semantics, source-guard controls, integration with reel removal and uncertain CPU effect justified the original score.

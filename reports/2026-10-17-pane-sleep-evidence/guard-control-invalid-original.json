@@ -1,0 +1,17 @@
+[
+  {
+    "mutation": "key-routing-bypass",
+    "exit": 101,
+    "expected_assertion_failures": [
+      "on_key_decides_nothing_it_can_decide_in_the_table"
+    ],
+    "observed": [
+      "on_key_decides_nothing_it_can_decide_in_the_table"
+    ],
+    "rejected_by_behavior": true,
+    "production_sources_sha256": {
+      "app/src/pane.rs": "514f894f14729b157b8deec36efc9f1d8b965d4cafbda08f7d1bcbc913018ea2"
+    },
+    "log_sha256": "4d070ba806354788006edc9a912f78e793bd41a4c93e4145c196abe26fbd127b"
+  }
+]
