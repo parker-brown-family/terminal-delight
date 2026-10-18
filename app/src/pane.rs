@@ -1588,21 +1588,12 @@ pub(crate) fn warp_screen_to_content(sx: f32, sy: f32, k1: f32, k2: f32) -> (f32
 
 /// Apply the mode's screen colour over the structural theme.
 ///
-/// Agents are two of the three: `Remote` rides the same rule, because "you are
-/// not local" is program identity in exactly the same sense. Gated by
-/// [`maybe_mode_theme`] — nothing here decides *whether* the tint applies.
+/// The catalog includes remote clients, providers, editors, monitors and
+/// consoles. Gated by [`maybe_mode_theme`]; recognition grants no capabilities.
 fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
     let mut th = base.clone();
-    let (accent, text, faint, cursor) = match mode {
-        // A tube nobody has classified keeps the base palette rather than
-        // wearing a phosphor that would claim something about its contents.
-        PaneMode::Shell | PaneMode::Other(_) | PaneMode::Unknown => return th,
-        // amber phosphor — Claude (P3 tube, Anthropic-warm)
-        PaneMode::Claude => (0xf59e0bu32, 0xfbe3b0u32, 0x4a3410u32, 0xfbbf24u32),
-        // ice cyan — Codex
-        PaneMode::Codex => (0x22d3eeu32, 0xc3f4fcu32, 0x0e3a44u32, 0x67e8f9u32),
-        // violet — Remote: you are NOT local
-        PaneMode::Remote => (0xc084fcu32, 0xead9fcu32, 0x3b2354u32, 0xd8b4feu32),
+    let Some([accent, text, faint, cursor]) = crate::terminal_state::colours(mode) else {
+        return th;
     };
     let acc: gpui::Hsla = gpui::rgb(accent).into();
     th.accent = acc;
@@ -1624,7 +1615,7 @@ fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
 }
 
 /// Whether a pane wears the phosphor of the PROGRAM inside it, or the theme it
-/// inherited — the whole of the AGENT THEME decision, as a pure function.
+/// inherited — the whole of the TERMINAL STATE decision, as a pure function.
 ///
 /// Two conditions, and they answer different questions. `inherit` is the pane's:
 /// a pane carrying its own theme chose that look deliberately and the tint must
@@ -2651,7 +2642,7 @@ impl GradeCoeffs {
 }
 
 /// Cached `resolved_theme` result + the inputs it was computed from
-/// (effective choice, mode, inherit_theme, the AGENT THEME preference, theme
+/// (effective choice, mode, inherit_theme, the TERMINAL STATE preference, theme
 /// generation).
 ///
 /// The preference is a memo input and not a generation bump because it is a
@@ -3874,7 +3865,7 @@ fn size_dial_at(
 impl TerminalView {
     /// The theme this pane actually renders with: each appearance group
     /// (theme, grade) resolved to the pane's own override or the live outer
-    /// scope, then — when the window's AGENT THEME preference is on and the
+    /// scope, then — when the window's TERMINAL STATE preference is on and the
     /// theme group follows outer — tinted by what's running (mode).
     pub fn resolved_theme(&self, cx: &App) -> Theme {
         let outer = theme::outer_choice(cx);
@@ -8871,7 +8862,7 @@ pub fn anchor_top() -> bool {
     ANCHOR_TOP.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Global AGENT THEME toggle: whether a pane that FOLLOWS OUTER wears the
+/// Global TERMINAL STATE toggle: whether a pane that FOLLOWS OUTER wears the
 /// phosphor of the program running in it (claude amber · codex cyan · remote
 /// violet) instead of the theme it inherited. Default `false` — inherit.
 ///
@@ -8881,13 +8872,13 @@ pub fn anchor_top() -> bool {
 /// so flipping it repaints quiet panes rather than waiting for their next byte.
 static AGENT_TINT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Publish the live global AGENT THEME preference (called from `Workspace::render`
+/// Publish the live global TERMINAL STATE preference (called from `Workspace::render`
 /// each frame, beside [`set_anchor_top`]).
 pub fn set_agent_tint(on: bool) {
     AGENT_TINT.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Read the global AGENT THEME preference. `true` ⇒ an inheriting pane is tinted
+/// Read the global TERMINAL STATE preference. `true` ⇒ an inheriting pane is tinted
 /// by what is running in it; `false` (default) ⇒ an inherited theme is inherited.
 pub fn agent_tint() -> bool {
     AGENT_TINT.load(std::sync::atomic::Ordering::Relaxed)
@@ -16443,10 +16434,10 @@ mod tests {
     #[test]
     fn mode_theme_per_mode_palette() {
         let base = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
-        // Shell and Other are passthrough — no retint.
+        // Shell and unrecognized programs keep outer.
         assert_eq!(mode_theme(&base, &PaneMode::Shell).accent, base.accent);
         assert_eq!(
-            mode_theme(&base, &PaneMode::Other("vim".into())).accent,
+            mode_theme(&base, &PaneMode::Other("rg".into())).accent,
             base.accent
         );
         // Agent modes retint the tube and keep their identity invariants.
@@ -16458,7 +16449,81 @@ mod tests {
         }
     }
 
-    /// The AGENT THEME gate: three of the four (inherit × tint) corners leave an
+    #[test]
+    fn terminal_state_changes_return_to_live_outer_and_respect_manual_panes() {
+        let base = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
+        let mut outer = base.clone();
+        let modes = [
+            PaneMode::Remote,
+            PaneMode::Claude,
+            PaneMode::Codex,
+            PaneMode::Other(crate::launcher::LOCAL_AGENT_MODE.into()),
+            PaneMode::Other("gemini".into()),
+            PaneMode::Other("nvim".into()),
+            PaneMode::Other("btop".into()),
+            PaneMode::Other("python3".into()),
+        ];
+        for mode in modes {
+            let tinted = maybe_mode_theme(&outer, &mode, true, true);
+            assert_ne!(tinted.accent, outer.accent, "{mode:?}");
+            // The preset changes inks, never geometry, display grade or the
+            // program's explicitly coloured ANSI slots.
+            let mut restored = tinted.clone();
+            restored.accent = outer.accent;
+            restored.text = outer.text;
+            restored.faint = outer.faint;
+            restored.cursor = outer.cursor;
+            restored.bg = outer.bg;
+            restored.surface = outer.surface;
+            restored.ansi[7] = outer.ansi[7];
+            assert_eq!(restored, outer, "{mode:?} changed more than its inks");
+            for (inherit, enabled) in [(false, true), (true, false), (false, false)] {
+                assert_eq!(maybe_mode_theme(&outer, &mode, inherit, enabled), outer);
+            }
+            for exit in [
+                PaneMode::Shell,
+                PaneMode::Unknown,
+                PaneMode::Other("rg".into()),
+            ] {
+                assert_eq!(maybe_mode_theme(&outer, &exit, true, true), outer);
+            }
+            // Stand in for the next outer / Omarchy palette; no previous preset
+            // is saved over the base, so leaving the program reveals this one.
+            outer.bg = gpui::rgb(0x102030).into();
+            outer.accent = gpui::rgb(0x456789).into();
+            assert_eq!(
+                maybe_mode_theme(&outer, &PaneMode::Shell, true, true),
+                outer
+            );
+        }
+        assert_eq!(
+            base,
+            crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap()
+        );
+    }
+
+    #[test]
+    fn terminal_state_uses_the_observed_program_not_a_filename() {
+        let editing = PaneMode::classify("vim", "vim /tmp/gemini /tmp/opencode");
+        assert_eq!(editing, PaneMode::Other("vim".into()));
+        assert_eq!(
+            crate::terminal_state::colours(&editing).unwrap()[0],
+            0xe6cfab
+        );
+        let searching = PaneMode::classify("rg", "rg gemini /tmp/opencode");
+        assert_eq!(crate::terminal_state::colours(&searching), None);
+        let wrapper = PaneMode::classify("node", "node /some/gemini/index.js");
+        assert_eq!(
+            crate::terminal_state::colours(&wrapper).unwrap()[0],
+            0x91baff
+        );
+        for remote in ["ssh", "mosh-client", "et", "telnet"] {
+            let mode = PaneMode::classify(remote, remote);
+            assert_eq!(crate::terminal_state::colours(&mode).unwrap()[0], 0xc084fc);
+        }
+    }
+
+    /// The TERMINAL STATE gate: three of the four (inherit × tint) corners leave an
     /// inherited theme alone, and only the corner a person asked for retints.
     ///
     /// The bug this closes is the `(inherit = true, tint = false)` cell: it was
