@@ -1,0 +1,26 @@
+[
+  {
+    "mutation": "stale-styling",
+    "test": "styled_viewport_reuses_only_identical_cells_and_view_state",
+    "exit": 101,
+    "rejected_by_behavior": true,
+    "source_sha256": "45ad853b7cf93bea443691033ee70f4a56fb0b3b87b640787a2a0b3ea301c66a",
+    "log_sha256": "1982b240d7faa3c7ccc2869128aae97ebae023d8f603a4efad1fc933c62b53a0"
+  },
+  {
+    "mutation": "uncached-documents",
+    "test": "quiet_documents_reuse_paint_and_changes_invalidate_it",
+    "exit": 101,
+    "rejected_by_behavior": true,
+    "source_sha256": "8f883b666c264df110c70a3bc1c9844aaebc2b2e8aec8632780e189a04fe8c4b",
+    "log_sha256": "ba247ab7620e57d285584d88368e3d216720eefd4c85a267260274cb780da5ab"
+  },
+  {
+    "mutation": "covered-grid",
+    "test": "covered_faces_skip_grid_styling_and_terminal_return_catches_up",
+    "exit": 101,
+    "rejected_by_behavior": true,
+    "source_sha256": "45ad853b7cf93bea443691033ee70f4a56fb0b3b87b640787a2a0b3ea301c66a",
+    "log_sha256": "df25c459f08f6b713ba2ef6aac11c65132d9d07d989c7cf323d7542f5d2519a3"
+  }
+]

@@ -29,6 +29,8 @@ No profiling, compilation or test run overlapped the final CPU intervals. Ordina
 - New real-pane tests exercise content, selection, cursor, alternate screen, scroll, theme, font, grid dimensions and caller-copy independence; covered faces skip styling and switching back catches up.
 - The document render-count test proves quiet reuse, a forced GPUI refresh as a cache-bypass control, and invalidation for scroll, palette and bounds. Existing full-suite tests exercise document pointer actions, notes, selection and reloads.
 
+`mutate.py` deliberately disables each production safeguard, one at a time, and restores the exact original bytes in a `finally` block. All three mutations failed their behavioral test: stale viewport reuse, removing document caching, and styling a covered grid. `mutations.json` records source/log hashes and exit results. These were assertion failures in real-pane tests, not compilation failures.
+
 The ignored `styled_viewport_benchmark` reports only the styling path with syntax colouring enabled. It is not a whole-window CPU benchmark and is not used to calculate the reported window savings.
 
 ## Separate desktop investigation
