@@ -1718,7 +1718,7 @@ mod tests {
     #[test]
     fn headings_and_links_take_the_themes_accent() {
         let mut accents = Vec::new();
-        for id in ["hacker", "gamba"] {
+        for id in crate::theme::builtin_ids() {
             let toml = crate::theme::builtin_toml(id).expect("a builtin theme");
             let th = crate::theme::parse(toml).expect("a builtin theme parses");
             let p = MdPalette::from_theme(&th);

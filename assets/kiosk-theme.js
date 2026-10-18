@@ -11,7 +11,7 @@
    What this module does NOT do is impose a look. It sets role variables and
    gets out of the way. A page that is built on those roles repaints whole
    (info, agents, omarchy); a page that is a physical object — the walnut TV
-   cabinet, the GAMBA machine — keeps its cabinet and only wears the theme on
+   cabinet — keeps its cabinet and only wears the theme on
    the shared furniture, because a console television that turns tokyo-night
    is no longer a console television. Colour follows the page's own fiction.
 

@@ -128,8 +128,8 @@ for (const [path, name] of [['/info', 'info'], [DOCS + '/', 'docs-index'], [DOCS
   const paperState = await page.evaluate(glassState);
   ok('paper takes the curve and the glass down', !paperState.shown && !paperState.curved && paperState.tube === null, JSON.stringify(paperState));
   ok('paper paints hero window quiet-command', await page.evaluate(() => document.getElementById('win').dataset.wear === 'quiet-command'));
-  await page.click('.wear button[data-wear="gamba"]');
-  ok('theme chip paints both windows', await page.evaluate(() => [...document.querySelectorAll('#win,[data-wear-follow]')].every(e => e.dataset.wear === 'gamba')));
+  await page.click('.wear button[data-wear="deco"]');
+  ok('theme chip paints both windows', await page.evaluate(() => [...document.querySelectorAll('#win,[data-wear-follow]')].every(e => e.dataset.wear === 'deco')));
   // TERM/BENCH flip
   await page.evaluate(() => document.getElementById('bench').scrollIntoView());
   await page.click('label[for="face-term"]');

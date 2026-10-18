@@ -48,7 +48,6 @@ mod docview;
 mod emphasis;
 mod engstate;
 mod fav;
-mod gamba;
 mod glyph;
 mod gridwire;
 mod handover;
@@ -1468,7 +1467,7 @@ const MARQUEE_SECS: f32 = 6.0;
 /// The in-window marquee: a strip of chasing bulbs around a line of text,
 /// across the top of the window.
 ///
-/// The bulbs are the casino cabinet's ([`gamba`]), which is deliberate — this
+/// The small bulbs follow the window accent — this
 /// is the loud channel, opted into by a switch that says so, and a quiet
 /// version of it would just be the toast we already had.
 fn marquee_banner(text: &str, age: f32, th: &theme::Theme) -> gpui::Div {
@@ -1576,31 +1575,22 @@ const TRAY_PAD: f32 = 12.; // p_3
 const TRAY_LABEL_H: f32 = 12.; // a 9px section heading
 const TRAY_SEP: f32 = 1.; // a hairline, h or v
 
-/// The PICKERS column — exactly three DESIGN buttons plus their gaps, which is
-/// the whole reason the tray fits: at this width DESIGN wraps 3+3+1 instead of
-/// the 2+2+2+1 it wrapped at in the old single strip.
-const TRAY_PICKER_W: f32 = 3. * TRAY_BTN_W + 2. * TRAY_GAP + TRAY_FIT_SLACK;
-/// The WHEEL column — the 132px wheel with room for its lightness bar, and the
-/// three STICKY NOTE buttons under it, which are what set the width now: at 150
-/// the last caption read "complemen".
-const TRAY_WHEEL_COL_W: f32 = 156.;
-/// INVERT and INHERIT each have a heading above their button.
-const TRAY_GLYPH_COL_W: f32 = 2. * TRAY_MODE_BTN_W + TRAY_GAP;
-/// Three columns, two hairlines, four gaps, two paddings.
+/// STYLE fits three program-colour buttons, including rounding slack.
+const TRAY_PICKER_W: f32 = 3. * TRAY_MODE_BTN_W + 2. * TRAY_GAP + TRAY_FIT_SLACK;
+/// RULES holds labelled switches and the window-wide actions.
+const TRAY_RULES_COL_W: f32 = 180.;
+const TRAY_AREA_PAD: f32 = 8.;
+const TRAY_GLYPH_GAP: f32 = 3.;
+/// THEME holds the glyph columns and all three sticky-note papers.
+const TRAY_GLYPH_COL_W: f32 = 156.;
+/// Three boxed areas, their padding, two gaps and the outer padding.
 const TRAY_PANEL_W: f32 = 2. * TRAY_PAD
     + TRAY_GLYPH_COL_W
     + TRAY_PICKER_W
-    + TRAY_WHEEL_COL_W
-    + 2. * TRAY_SEP
-    + 4. * TRAY_COL_GAP;
-const TRAY_WHEEL_H: f32 = 132.; // color_wheel's D
-const TRAY_LBAR_H: f32 = 14.; // lightness_bar
-const TRAY_PIPS_H: f32 = 24.; // the four wheel-target pips
-const TRAY_RESET_H: f32 = 14.; // the ↺ reset row under them
-const TRAY_PILL_H: f32 = 22.; // a bezel button: 2px py, 11px text, a border
-/// The STICKY NOTE row's buttons, three abreast under the wheel. Narrower than
-/// a PROGRAM COLOUR button because three of those would not fit the column,
-/// and captioned half a point smaller so "complement" fits inside one.
+    + TRAY_RULES_COL_W
+    + 6. * TRAY_AREA_PAD
+    + 2. * TRAY_COL_GAP;
+/// The STICKY NOTE buttons sit three abreast beneath the theme glyphs.
 const TRAY_NOTE_BTN_W: f32 = 48.;
 const TRAY_NOTE_GAP: f32 = 3.;
 const TRAY_NOTE_CAPTION: f32 = 7.5;
@@ -1659,51 +1649,28 @@ fn tray_pickers_h(themes: usize, skins: usize, modes: usize, schemes: usize) -> 
     h + 2. * TRAY_PAD
 }
 
-/// Estimated height of the WHEEL column: the fixed wheel stack and the STICKY
-/// NOTE row under it (both trays have both), then one block per window RULE (a
-/// hairline, a heading and a pill — TERMINAL STATE, ANCHOR) plus any bare pills
-/// under them (pass-down on the outer tray, follow-outer on a pane's). This is
-/// the column TERMINAL STATE grew, so it is the one that has to be counted rather
-/// than assumed short.
-fn tray_wheel_col_h(rules: usize, bare_pills: usize) -> f32 {
-    let mut h = TRAY_LABEL_H
-        + TRAY_GAP
-        + 8.  // py_1 above and below the wheel
-        + TRAY_WHEEL_H
-        + TRAY_GAP
-        + TRAY_LBAR_H
-        + TRAY_GAP
-        + 4. // pt_1 over the pips
-        + TRAY_PIPS_H
-        + TRAY_GAP
-        + TRAY_RESET_H
-        // STICKY NOTE: a hairline, its heading, one row of buttons.
-        + TRAY_GAP
-        + TRAY_SEP
-        + TRAY_GAP
-        + TRAY_LABEL_H
-        + TRAY_GAP
-        + TRAY_MODE_BTN_H;
-    for _ in 0..rules {
-        h += TRAY_GAP + TRAY_SEP + TRAY_GAP + TRAY_LABEL_H + TRAY_GAP + TRAY_PILL_H;
-    }
-    h += bare_pills as f32 * (TRAY_GAP + TRAY_PILL_H);
-    h + 2. * TRAY_PAD
+/// Rules are fixed-height rows; Theme is ten glyphs and the paper selector.
+fn tray_rules_h(rules: usize, bare_pills: usize) -> f32 {
+    TRAY_LABEL_H
+        + (rules + bare_pills + 2) as f32 * (TRAY_GAP + 32.)
+        + 2. * (TRAY_PAD + TRAY_AREA_PAD)
 }
 
-/// The tallest COLUMN on the OUTER tray — which is what the split bought, and
-/// what decides where the tray may open so it lands fully on screen.
 fn tray_panel_h_est() -> f32 {
-    let pickers = tray_pickers_h(
+    let style = tray_pickers_h(
         theme::picker_count(),
         skin::picker_max_count(),
         theme::ColorMode::ALL.len(),
-        // SYNTAX draws one button per grammar PLUS the "off" button.
         theme::SyntaxScheme::ALL.len() + 1,
-    );
-    // The outer tray's rules: TERMINAL STATE and ANCHOR, then the pass-down button.
-    let wheel = tray_wheel_col_h(2, 1);
-    pickers.max(wheel)
+    ) + 2. * TRAY_AREA_PAD;
+    let themes = 10. * 40.
+        + 9. * TRAY_GLYPH_GAP
+        + 2. * TRAY_LABEL_H
+        + TRAY_SEP
+        + 4. * TRAY_GAP
+        + TRAY_MODE_BTN_H
+        + 2. * (TRAY_PAD + TRAY_AREA_PAD);
+    style.max(themes).max(tray_rules_h(4, 1))
 }
 
 /// Seconds since the process started, for animations that want a phase rather
@@ -4331,6 +4298,7 @@ struct Workspace {
     lang: lang::Lang,
     /// Open theme breakout menu, if any.
     theme_menu: Option<MenuScope>,
+    palette_help_seen: Option<Instant>,
     /// Window-space point to anchor the open tray at (a sub-tab icon click).
     /// None = the fixed top-right anchor used by the global/outer menu.
     menu_at: Option<Point<Pixels>>,
@@ -5937,6 +5905,7 @@ impl Workspace {
             help_open: false,
             help_features: false,
             theme_menu: None,
+            palette_help_seen: None,
             menu_at: None,
             osd_menu: None,
             osd_at: None,
@@ -17561,7 +17530,7 @@ impl Workspace {
     /// ⚓, the active edge (TOP / BOTTOM), and up/down arrows ▲▼ marking which way
     /// content hugs. Clicking it flips the global toggle. Styled like the panel's
     /// other rows (a bezel button), accent-lit when anchoring to the top.
-    fn anchor_top_toggle(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> gpui::Div {
+    fn anchor_top_toggle(&self, _sk: &skin::Skin, cx: &mut Context<Self>) -> gpui::Div {
         let on = self.anchor_top;
         // ⚓ <edge> <arrow>: ▲ points up when anchoring to the top, ▼ down for the
         // (default) bottom anchor — a glanceable direction cue beside the word.
@@ -17570,7 +17539,7 @@ impl Workspace {
         } else {
             "\u{2693} BOTTOM \u{25bc}"
         };
-        Self::bezel_btn(sk, label, on).on_mouse_down(
+        palette_rule(label, on, &theme::theme(cx)).on_mouse_down(
             MouseButton::Left,
             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                 // keep the panel/scrim from seeing this (no close)
@@ -17601,16 +17570,25 @@ impl Workspace {
 
     /// Global visual-state presets for panes following outer. The legacy
     /// `agent_tint` saved key also covers remote sessions, editors and consoles.
-    fn terminal_state_toggle(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> impl IntoElement {
+    fn terminal_state_toggle(&self, _sk: &skin::Skin, cx: &mut Context<Self>) -> impl IntoElement {
         let on = self.agent_tint;
         let label = if on {
             "▣ USES PRESETS"
         } else {
             "▣ FOLLOWS OUTER"
         };
-        Self::bezel_btn(sk, label, on)
+        let help_owner = cx.entity().downgrade();
+        let delay = palette_help_delay(self.palette_help_seen, Instant::now());
+        palette_rule(label, on, &theme::theme(cx))
             .id("terminal-state-toggle")
-            .tooltip(|_w, cx| {
+            .tooltip_show_delay(delay)
+            .tooltip(move |_w, cx| {
+                if let Some(ws) = help_owner.upgrade() {
+                    ws.update(cx, |ws, cx| {
+                        ws.palette_help_seen = Some(Instant::now());
+                        cx.notify();
+                    });
+                }
                 cx.new(|_| SlotTooltip {
                     lines: terminal_state::HOVER.iter().map(|s| (*s).into()).collect(),
                 })
@@ -20300,6 +20278,7 @@ impl Workspace {
     /// grabbed: the note has no colour of its own to drag, only a choice of
     /// which pips it follows, and the square is there so that choice can be
     /// seen — contrast visibly lands in the arc the pips leave empty.
+    #[allow(dead_code)] // Palette wheel intentionally hidden; saved edits remain valid.
     fn color_wheel(
         &self,
         markers: [(WheelTarget, &'static str, Hsla); 4],
@@ -20419,6 +20398,7 @@ impl Workspace {
     /// hue. Drag it to reach white / grey / black (pair with a low-saturation
     /// marker near the wheel's centre for true neutrals). Industry-standard HSL:
     /// hue + saturation on the disk, lightness here.
+    #[allow(dead_code)] // Companion to the hidden palette wheel.
     fn lightness_bar(&self, cx: &mut Context<Self>) -> gpui::Div {
         const W: f32 = 132.0;
         let store = self.light_bounds.clone();
@@ -25817,6 +25797,7 @@ struct ThemeTooltip {
     name: SharedString,
     /// `Some` only for the custom slot — the file to reveal/open.
     path: Option<PathBuf>,
+    swatches: Option<Vec<Hsla>>,
 }
 
 impl Render for ThemeTooltip {
@@ -25828,8 +25809,21 @@ impl Render for ThemeTooltip {
             div()
                 .text_size(px(12. * s))
                 .text_color(sk.ink.ink)
+                .max_w(px(240. * s))
                 .child(self.name.clone()),
         );
+        if let Some(colours) = &self.swatches {
+            card = card.child(div().flex().flex_row().gap(px(3. * s)).children(
+                colours.iter().map(|c| {
+                    div()
+                        .w(px(11. * s))
+                        .h(px(16. * s))
+                        .border_1()
+                        .border_color(th.text.alpha(0.2))
+                        .bg(*c)
+                }),
+            ));
+        }
         if let Some(path) = self.path.clone() {
             card = card
                 .child(
@@ -25855,6 +25849,90 @@ impl Render for ThemeTooltip {
         }
         card
     }
+}
+
+fn palette_help_delay(last: Option<Instant>, now: Instant) -> Duration {
+    if last.is_some_and(|t| now.saturating_duration_since(t) < Duration::from_millis(1800)) {
+        Duration::from_millis(180)
+    } else {
+        Duration::from_millis(800)
+    }
+}
+
+enum PalettePreview {
+    Omarchy(String),
+    Custom(Box<ThemeChoice>),
+}
+
+impl PalettePreview {
+    /// Resolve only when help opens, rather than parsing every palette per frame.
+    fn colours(&self, cx: &App) -> Option<Vec<Hsla>> {
+        match self {
+            Self::Omarchy(id) => {
+                let palette = palette::find(cx, id)?;
+                let t = theme::overlay_palette(&theme::theme(cx), &palette.toml).ok()?;
+                let mut colours = vec![t.bg, t.text, t.accent];
+                colours.extend_from_slice(&t.ansi[1..7]);
+                Some(colours)
+            }
+            Self::Custom(choice) => {
+                let t = theme::resolve(cx, choice);
+                Some(vec![t.bg, t.text, t.accent, t.complement, t.human])
+            }
+        }
+    }
+}
+
+fn palette_help<E: gpui::StatefulInteractiveElement>(
+    button: E,
+    name: impl Into<SharedString>,
+    preview: Option<PalettePreview>,
+    path: Option<PathBuf>,
+    delay: Duration,
+    owner: gpui::WeakEntity<Workspace>,
+) -> E {
+    let name = name.into();
+    let interactive = path.is_some();
+    let build = move |_w: &mut Window, cx: &mut App| -> gpui::AnyView {
+        if let Some(ws) = owner.upgrade() {
+            ws.update(cx, |ws, cx| {
+                ws.palette_help_seen = Some(Instant::now());
+                cx.notify();
+            });
+        }
+        let swatches = preview.as_ref().and_then(|p| p.colours(cx));
+        let name = if preview.is_some() && swatches.is_none() {
+            format!("{name}\nPalette unavailable").into()
+        } else {
+            name.clone()
+        };
+        cx.new(|_| ThemeTooltip {
+            name,
+            swatches,
+            path: path.clone(),
+        })
+        .into()
+    };
+    let button = button.tooltip_show_delay(delay);
+    if interactive {
+        button.hoverable_tooltip(build)
+    } else {
+        button.tooltip(build)
+    }
+}
+
+fn palette_rule(label: &str, on: bool, th: &theme::Theme) -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .py_1()
+        .text_size(px(10.))
+        .cursor_pointer()
+        .child(label.to_string())
+        .child(slider_switch(on, th))
 }
 
 /// Theme-icon button for the breakout menu: glyph over a tiny caption naming the
@@ -25891,7 +25969,7 @@ fn theme_icon_btn(th: &theme::Theme, icon: &str, label: &str, active: bool) -> g
         .text_color(white().alpha(0.95))
         .child(inner)
     } else {
-        b.bg(darken(th.surface, 0.8))
+        b.bg(darken(th.surface, 0.8).alpha(0.5))
             .border_color(th.accent.alpha(0.35))
             .text_color(th.text)
             .child(inner)
@@ -25926,7 +26004,7 @@ fn color_mode_btn(th: &theme::Theme, icon: &str, caption: &str, active: bool) ->
         .text_color(white().alpha(0.95))
         .child(inner)
     } else {
-        b.bg(darken(th.surface, 0.8))
+        b.bg(darken(th.surface, 0.8).alpha(0.5))
             .border_color(th.accent.alpha(0.35))
             .text_color(th.text)
             .child(inner)
@@ -26008,7 +26086,7 @@ fn note_paper_btn(
         .text_color(white().alpha(0.95))
         .child(inner)
     } else {
-        b.bg(darken(th.surface, 0.8))
+        b.bg(darken(th.surface, 0.8).alpha(0.5))
             .border_color(th.accent.alpha(0.35))
             .text_color(th.text)
             .child(inner)
@@ -27765,6 +27843,8 @@ impl Render for Workspace {
             let is_pane = matches!(scope, MenuScope::Pane(_));
             let cur = self.menu_choice(cx);
             let t = self.lang.strings();
+            let help_owner = cx.entity().downgrade();
+            let help_delay = palette_help_delay(self.palette_help_seen, Instant::now());
             // Theme-group "follow outer" state — only panes can inherit.
             let following = match &scope {
                 MenuScope::Pane(p) => p.read(cx).appearance.inherit_theme,
@@ -27777,34 +27857,23 @@ impl Render for Workspace {
             for (id, icon, lbl) in theme::all_themes(cx) {
                 let active = cur.id == id;
                 let cur_c = cur.clone();
-                let tip_name: SharedString = id.clone().into();
                 let tip_path = (id == "custom").then(theme::theme_path);
-                let mk_tip = move |_w: &mut Window, cx: &mut App| -> gpui::AnyView {
-                    cx.new(|_| ThemeTooltip {
-                        name: tip_name.clone(),
-                        path: tip_path.clone(),
-                    })
-                    .into()
-                };
                 let tlbl = match lbl.as_str() {
-                    "quiet" => t.thm_quiet,
-                    "field" => t.thm_field,
-                    "tactical" => t.thm_tactical,
-                    "hacker" => t.thm_hacker,
-                    "gamba" => t.thm_gamba,
-                    "custom" => t.thm_custom,
-                    _ => lbl.as_str(),
+                    "quiet" => t.thm_quiet, "field" => t.thm_field,
+                    "tactical" => t.thm_tactical, "hacker" => t.thm_hacker,
+                    "custom" => t.thm_custom, _ => lbl.as_str(),
                 };
-                let btn = theme_icon_btn(&th, &icon, tlbl, active)
-                    .id(SharedString::from(format!("theme-btn-{id}")))
-                    .tooltip_show_delay(Duration::from_millis(1500))
-                    .map(|b| {
-                        if id == "custom" {
-                            b.hoverable_tooltip(mk_tip)
-                        } else {
-                            b.tooltip(mk_tip)
-                        }
-                    });
+                let help = match lbl.as_str() {
+                    "quiet" => "Light screen; no scanlines, glow, or flicker.",
+                    "field" => "Matte screen, faint scanlines, low glow.",
+                    "tactical" => "Bright glow, raised bezel, slight flicker.",
+                    "deco" => "Minimal CRT texture; may request matching trim.",
+                    "hacker" => "Green phosphor, scanlines, glow, tracking, flicker, jiggle.",
+                    _ => "Edit the live theme file.",
+                };
+                let btn = palette_help(theme_icon_btn(&th, &icon, tlbl, active)
+                    .id(SharedString::from(format!("theme-btn-{id}"))), help, None,
+                    tip_path, help_delay, help_owner.clone());
                 theme_row = theme_row.child(btn.on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -27843,6 +27912,12 @@ impl Render for Workspace {
                 skin_row = skin_row.child(
                     theme_icon_btn(&th, &icon, &id, lit)
                         .id(SharedString::from(format!("skin-btn-{id}")))
+                        .map(|b| palette_help(b, match id.as_str() {
+                            "default" => "Rounded controls and filled selections.",
+                            "deco" => "Square edges, double rules, spaced capitals, lit edge.",
+                            "console" => "Minimal outlines, open spacing, active leading rail.",
+                            _ => "Custom control styling.",
+                        }, None, None, help_delay, help_owner.clone()))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
@@ -27862,7 +27937,7 @@ impl Render for Workspace {
             if skin_pinned {
                 skin_row = skin_row.child(
                     theme_icon_btn(&th, "\u{25ce}", "theme", false)
-                        .id("skin-btn-follow")
+                        .id("skin-btn-follow").map(|b| palette_help(b, "Let the theme choose the trim.", None, None, help_delay, help_owner.clone()))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|_ws, _: &MouseDownEvent, _w, cx| {
@@ -27874,102 +27949,8 @@ impl Render for Workspace {
                 );
             }
 
-            // The three colours live as draggable markers ON the wheel — ◉ seed,
-            // T text, C complement. Grab one and drag it around to set it.
-            //
-            // The sticky note's three possible papers, from the same resolved
-            // theme the pips are read off, so the square on the wheel and the
-            // three buttons under it agree with the colours the pane wears.
             let note_colours = notepaper::ThemeColours::of(&theme::resolve(cx, &cur));
             let papers = theme::NotePaper::ALL.map(|m| (m, sticky::paper(m, &note_colours)));
-            let note_now = sticky::paper(cur.note, &note_colours).base;
-            let wheel = self.color_wheel(self.wheel_markers(cx), note_now, cx);
-            let lbar = self.lightness_bar(cx);
-            // PICK row — promote a pip to the front. With a greyscale palette every
-            // marker stacks at the wheel's centre, so the same one always grabs;
-            // clicking a chip here makes that pip active (front-most + amber ring)
-            // and a centre-drag then pulls *it* out. Also what the lightness bar
-            // follows. Each chip wears its marker's colour for at-a-glance ID.
-            let active_t = self.wheel_active;
-            let mut pick_row = div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_center()
-                .gap_2()
-                .text_size(px(9.));
-            for (target, glyph, col) in self.wheel_markers(cx) {
-                let on = target == active_t;
-                let gcol = if col.l > 0.55 {
-                    hsla(0., 0., 0.08, 0.95)
-                } else {
-                    white()
-                };
-                let idn = match target {
-                    WheelTarget::Seed => "pick-seed",
-                    WheelTarget::Text => "pick-text",
-                    WheelTarget::Complement => "pick-comp",
-                    WheelTarget::Human => "pick-human",
-                };
-                pick_row = pick_row.child(
-                    div()
-                        .id(idn)
-                        .w(px(18.))
-                        .h(px(18.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(sk.radius_pill())
-                        .border_2()
-                        .border_color(if on {
-                            hsla(0.09, 0.9, 0.6, 1.0)
-                        } else {
-                            th.text.alpha(0.25)
-                        })
-                        .bg(col)
-                        .text_color(gcol)
-                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                        .cursor_pointer()
-                        .child(glyph)
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.wheel_active = target;
-                                cx.notify();
-                            }),
-                        ),
-                );
-            }
-            // Small chips to clear an override back to theme/dynamic-derived.
-            let mut seed_row = div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_center()
-                .gap_2()
-                .text_size(px(9.));
-            for (target, idn, lbl) in [
-                (WheelTarget::Seed, "wr-seed", "↺◉"),
-                (WheelTarget::Text, "wr-text", "↺T"),
-                (WheelTarget::Complement, "wr-comp", "↺C"),
-                (WheelTarget::Human, "wr-human", "↺👤"),
-            ] {
-                seed_row = seed_row.child(
-                    div()
-                        .id(idn)
-                        .text_color(th.text.alpha(0.5))
-                        .cursor_pointer()
-                        .child(lbl)
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.set_wheel_color_for(target, None, cx);
-                            }),
-                        ),
-                );
-            }
             // STICKY NOTE: which of the theme's own colours a note is drawn in —
             // contrast, accent, mute, in the order Parker gave them. Three
             // little notes in the colours they would be, so the row previews
@@ -27987,7 +27968,13 @@ impl Render for Workspace {
                     theme::NotePaper::Mute => t.np_mute,
                 };
                 note_row = note_row.child(
-                    note_paper_btn(&th, &paper, cap, cur.note == mode).on_mouse_down(
+                    note_paper_btn(&th, &paper, cap, cur.note == mode)
+                        .id(SharedString::from(format!("note-paper-{mode:?}")))
+                        .map(|b| palette_help(b, match mode {
+                            theme::NotePaper::Contrast => "Use a vivid hue distinct from the accent.",
+                            theme::NotePaper::Accent => "Use the theme's accent colour.",
+                            theme::NotePaper::Mute => "Neutral paper from text and surface colours.",
+                        }, None, None, help_delay, help_owner.clone())).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -28012,7 +27999,13 @@ impl Render for Workspace {
                     theme::ColorMode::OnTheme => t.cm_theme,
                 };
                 color_row =
-                    color_row.child(color_mode_btn(&th, mode.icon(), cap, active).on_mouse_down(
+                    color_row.child(color_mode_btn(&th, mode.icon(), cap, active)
+                        .id(SharedString::from(format!("program-colour-{mode:?}")))
+                        .map(|b| palette_help(b, match mode {
+                            theme::ColorMode::Default => "Keep colours sent by programs.",
+                            theme::ColorMode::Monochrome => "Use shades of the text colour.",
+                            theme::ColorMode::OnTheme => "Shift program hues around the accent colour.",
+                        }, None, None, help_delay, help_owner.clone())).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -28035,7 +28028,8 @@ impl Render for Workspace {
                 let cur_c = cur.clone();
                 let active = !cur.syntax;
                 syntax_row =
-                    syntax_row.child(color_mode_btn(&th, "○", t.sc_off, active).on_mouse_down(
+                    syntax_row.child(color_mode_btn(&th, "○", t.sc_off, active).id("syntax-off")
+                        .map(|b| palette_help(b, "Leave plain text without added highlights.", None, None, help_delay, help_owner.clone())).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -28059,7 +28053,14 @@ impl Render for Workspace {
                     theme::SyntaxScheme::Markdown => t.sc_mark,
                 };
                 syntax_row = syntax_row.child(
-                    color_mode_btn(&th, scheme.icon(), cap, active).on_mouse_down(
+                    color_mode_btn(&th, scheme.icon(), cap, active)
+                        .id(SharedString::from(format!("syntax-{scheme:?}")))
+                        .map(|b| palette_help(b, match scheme {
+                            theme::SyntaxScheme::Code => "Highlight keywords, strings, numbers, paths, flags, comments.",
+                            theme::SyntaxScheme::Agentic => "Highlight callouts, tool calls, links, and lists.",
+                            theme::SyntaxScheme::Logs => "Highlight levels, timestamps, durations, and paths.",
+                            theme::SyntaxScheme::Markdown => "Highlight headings, emphasis, code, links, quotes, lists.",
+                        }, None, None, help_delay, help_owner.clone())).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -28075,101 +28076,21 @@ impl Render for Workspace {
                     ),
                 );
             }
-            // INVERT lives ABOVE the colour picker (it flips whatever set you pick).
-            // The pill states its mode outright — ○ default / ◐ inverted — so the
-            // toggle reads as on/off at a glance rather than a bare icon.
-            let invert_bar = {
-                let cur_c = cur.clone();
-                let on = cur.invert;
-                let (glyph, cap) = if on {
-                    ("◐", "inverted")
-                } else {
-                    ("○", "default")
-                };
-                let heading = |text: &str| {
-                    div()
-                        .text_size(px(9.))
-                        .text_color(th.text.alpha(0.55))
-                        .child(text.to_string())
-                };
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(heading("INVERT"))
-                            .child(color_mode_btn(&th, glyph, cap, on).on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.set_menu_choice(
-                                        ThemeChoice {
-                                            invert: !cur_c.invert,
-                                            ..cur_c.clone()
-                                        },
-                                        cx,
-                                    );
-                                }),
-                            )),
-                    )
-                    .children((!is_pane).then(|| {
-                        let on = cur.follow_omarchy == Some(true);
-                        let (available, name) = palette::current_status(cx);
-                        let cap = if !on {
-                            "off"
-                        } else if available {
-                            "watching"
-                        } else {
-                            "unavailable"
-                        };
-                        let name = name.unwrap_or("name unavailable").replace('-', " ");
-                        let tip = format!("Follow Omarchy live · {name}");
-                        let cur_c = cur.clone();
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(heading("INHERIT"))
-                            .child(
-                                color_mode_btn(&th, "↳", cap, on)
-                                    .id("omarchy-inherit")
-                                    .tooltip(move |_w, cx| {
-                                        cx.new(|_| SlotTooltip {
-                                            lines: vec![tip.clone()],
-                                        })
-                                        .into()
-                                    })
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            ws.set_menu_choice(
-                                                ThemeChoice {
-                                                    follow_omarchy: Some(
-                                                        cur_c.follow_omarchy != Some(true),
-                                                    ),
-                                                    ..cur_c.clone()
-                                                },
-                                                cx,
-                                            );
-                                        }),
-                                    ),
-                            )
-                            .children((on && available).then(|| {
-                                div()
-                                    .w(px(TRAY_MODE_BTN_W))
-                                    .truncate()
-                                    .text_size(px(8.))
-                                    .text_color(th.text.alpha(0.7))
-                                    .child(name)
-                            }))
-                    }))
-            };
+            let invert_bar = palette_rule("INVERT", cur.invert, &th).id("palette-invert")
+                .map(|b| palette_help(b, "Swap dark and light treatment.", None, None, help_delay, help_owner.clone()))
+                .on_mouse_down(MouseButton::Left, cx.listener({ let cur = cur.clone(); move |ws, _, _, cx| {
+                    cx.stop_propagation(); ws.set_menu_choice(ThemeChoice { invert: !cur.invert, ..cur.clone() }, cx);
+                }}));
+            let inherit_bar = (!is_pane).then(|| {
+                let on = cur.follow_omarchy == Some(true);
+                let (available, _) = palette::current_status(cx);
+                let title = if on && !available { "INHERIT · unavailable" } else { "INHERIT" };
+                palette_rule(title, on, &th).id("palette-inherit")
+                    .map(|b| palette_help(b, "Follow Omarchy's selected theme.", None, None, help_delay, help_owner.clone()))
+                    .on_mouse_down(MouseButton::Left, cx.listener({ let cur = cur.clone(); move |ws, _, _, cx| {
+                        cx.stop_propagation(); let mut c = cur.clone(); c.follow_omarchy = Some(!on); ws.set_menu_choice(c, cx);
+                    }}))
+            });
             let label = |s: &str| {
                 div()
                     .text_size(px(9.))
@@ -28196,8 +28117,8 @@ impl Render for Workspace {
                 )
             };
             // ---- the theme column: the desktop's own themes, as Omarchy's
-            // picker lists them ([`palette::offered`]), glyph only — no caption,
-            // no hover. Each tile is its theme's own background with the theme's
+            // picker lists them ([`palette::offered`]), glyph only. Its hover
+            // holds the name and palette. Each tile has its theme's background and
             // glyph in the theme's accent ([`glyph`]), so the colour of a theme is
             // on its tile before anyone reads a name. The custom wheel's cog
             // closes the column. Overflow wraps into more columns to the right.
@@ -28240,7 +28161,7 @@ impl Render for Workspace {
                 if ci > 0 {
                     dyn_cols = dyn_cols.child(vsep());
                 }
-                let mut col = div().flex().flex_col().gap_2();
+                let mut col = div().flex().flex_col().gap(px(TRAY_GLYPH_GAP));
                 for (pick, active, chip) in chunk {
                     let active = *active;
                     let box_id = SharedString::from(match chip {
@@ -28289,6 +28210,16 @@ impl Render for Workspace {
                             .text_color(if active { th.text } else { th.text.alpha(0.7) })
                             .child(theme::Dynamic::Custom(Box::default()).glyph()),
                     };
+                    let (name, preview) = if let Some(c) = chip {
+                        (c.id.replace('-', " ").to_uppercase(),
+                            Some(PalettePreview::Omarchy(c.id.clone())))
+                    } else {
+                        let mut g = theme::ThemeGroup::of(&cur);
+                        paint::stamp(&mut g, pick);
+                        ("CUSTOM".to_string(),
+                            Some(PalettePreview::Custom(Box::new(cur.clone().with_group(g)))))
+                    };
+                    let tile = palette_help(tile, name, preview, None, help_delay, help_owner.clone());
                     col = col.child(tile.on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -28306,129 +28237,37 @@ impl Render for Workspace {
                 }
                 dyn_cols = dyn_cols.child(col);
             }
-            // THE TRAY IS THREE COLUMNS, and the split is what makes it fit.
-            //
-            // It used to be two — the glyph column, then everything else stacked
-            // in one ~125px strip — and that strip outgrew the screen. The cap in
-            // `tray_max_h` is the terminal band, so the overflow did not spill: it
-            // scrolled, and ANCHOR plus the pass-down button sat below the fold
-            // where nobody scrolled to find them. A control you cannot see is a
-            // control you do not have, and adding TERMINAL STATE made it two.
-            //
-            // So the middle column takes the four PICKERS (what you press to
-            // choose a look) and the right column takes the WHEEL and the window
-            // RULES (what you drag, and what the window does with the result).
-            // Widening is what buys the height back: the same rows in a column
-            // half as tall, because each row now fits three buttons instead of
-            // two. Measured against the 46px DESIGN button: TRAY_PICKER_W is
-            // exactly three of them plus their gaps, so DESIGN wraps 3+3+1
-            // rather than 2+2+2+1, and SYNTAX wraps 3+2 rather than 2+2+1. The
-            // widths live at module scope so `tray_pickers_h` can assert the fit
-            // against the real inventory instead of against a number typed here.
-            let pickers = div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .flex_none()
-                .w(px(TRAY_PICKER_W))
-                .child(
-                    div()
-                        .text_size(px(8.5))
-                        .text_color(th.text.alpha(0.45))
-                        .child(if is_pane { t.scope_pane } else { t.scope_outer }),
-                )
-                .child(hsep())
-                .child(label(t.t_theme))
-                .child(theme_row)
-                // SKIN sits directly under DESIGN because they are the two halves
-                // of the same question — DESIGN is what colour the chrome is,
-                // SKIN is what shape it is — and separating them across the panel
-                // would hide that they are siblings.
-                //
-                // The heading is a literal rather than a `t.` key, matching
-                // ANCHOR below. Both are untranslated and both belong to the
-                // same gap, tracked as #406.
-                .when(!is_pane, |d| {
-                    d.child(hsep()).child(label("SKIN")).child(skin_row)
-                })
-                .child(hsep())
-                .child(label(t.t_program))
-                .child(color_row)
-                .child(hsep())
-                .child(label(t.t_syntax))
-                .child(syntax_row);
-            // The right-hand column: the seed wheel and its text axes, then the
-            // rules the window applies to what you chose (appended below).
-            let mut controls = div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .flex_none()
-                .w(px(TRAY_WHEEL_COL_W))
-                // min-width 0 lets captions wrap inside the column instead of
-                // forcing the panel wider than its frame (the overflow bug).
-                .min_w(px(0.))
-                .child(label(t.t_wheel))
-                .child(div().flex().justify_center().py_1().child(wheel))
-                .child(div().flex().justify_center().child(lbar))
-                .child(div().flex().justify_center().pt_1().child(pick_row))
-                .child(seed_row)
-                // Under the pips because they are its inputs: drag the seed or
-                // T and the papers below move with them.
-                .child(hsep())
-                .child(label(t.t_note))
-                .child(note_row);
-            // The anchor toggle is GLOBAL (not per-pane), so it shows only in the
-            // OUTER design panel. A short ANCHOR label + the ⚓ TOP/BOTTOM ▲▼ pill.
+            let area = |title: &str, width: f32| div().flex().flex_col().gap_2().flex_none()
+                .w(px(width + 2. * TRAY_AREA_PAD)).p(px(TRAY_AREA_PAD))
+                .rounded(sk.rad_raw(6.)).border_1().border_color(th.accent.alpha(0.4))
+                .bg(th.surface.alpha(0.35)).child(label(title));
+            let themes = area("THEME", glyph_col_w).child(dyn_cols)
+                .child(hsep()).child(label(t.t_note)).child(note_row);
+            let pickers = area("STYLE", TRAY_PICKER_W)
+                .child(label(t.t_theme)).child(theme_row)
+                .when(!is_pane, |d| d.child(hsep()).child(label("SKIN")).child(skin_row))
+                .child(hsep()).child(label(t.t_program)).child(color_row)
+                .child(label(t.t_syntax)).child(syntax_row);
+            let mut controls = area("RULES", TRAY_RULES_COL_W)
+                .child(label(if is_pane { t.scope_pane } else { t.scope_outer }))
+                .child(invert_bar).children(inherit_bar);
             if !is_pane {
-                // The outer end of the pane's "follow outer" toggle: one press
-                // puts every pane back on the window's theme. The count is what
-                // would change, so a window already in one theme reads 0 and the
-                // button sits inactive instead of claiming to have done work.
                 let stray = self.panes_off_outer_theme(cx);
-                let lbl = if stray == 0 {
-                    format!("⤓ {}", t.pass_down)
-                } else {
-                    format!("⤓ {} ({})", t.pass_down, stray)
-                };
-                controls = controls
-                    // TERMINAL STATE sits immediately above the pass-down button
-                    // because they are the two ends of one question: pass-down
-                    // decides which panes follow the window, and this decides
-                    // whether following the window actually means wearing it.
-                    // Heading is a literal for the same reason ANCHOR/SKIN are
-                    // (#406).
-                    .child(hsep())
+                let text = if stray == 0 { format!("⤓ {}", t.pass_down) } else { format!("⤓ {} ({stray})", t.pass_down) };
+                controls = controls.child(hsep())
                     .child(label("TERMINAL STATE"))
-                    .child(div().flex().child(self.terminal_state_toggle(&sk, cx)))
-                    .child(hsep())
-                    .child(label("ANCHOR"))
-                    .child(div().flex().child(self.anchor_top_toggle(&sk, cx)))
-                    .child(Self::bezel_btn(&sk, &lbl, stray > 0).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.pass_theme_down(cx);
-                        }),
-                    ));
-            }
-            if is_pane {
-                // Per-group toggle: on = this pane's theme follows the outer scope
-                // live; off = it keeps its own retained theme. Non-destructive.
-                let lbl = if following {
-                    format!("◉ {}", t.follow_outer)
-                } else {
-                    format!("◯ {}", t.follow_outer)
-                };
-                controls = controls.child(Self::bezel_btn(&sk, &lbl, following).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        if let Some(scope) = ws.theme_menu.clone() {
-                            ws.toggle_theme_inherit(&scope, cx);
-                        }
-                    }),
-                ));
+                    .child(self.terminal_state_toggle(&sk, cx))
+                    .child(hsep()).child(label("ANCHOR"))
+                    .child(self.anchor_top_toggle(&sk, cx).id("palette-anchor").map(|b| palette_help(b, "Keep content against the selected edge.", None, None, help_delay, help_owner.clone())))
+                    .child(Self::bezel_btn(&sk, &text, stray > 0).id("palette-pass-down")
+                        .map(|b| palette_help(b, "Reattach panes; preserve saved choices and display overrides.", None, None, help_delay, help_owner.clone()))
+                        .on_mouse_down(MouseButton::Left, cx.listener(|ws, _, _, cx| { cx.stop_propagation(); ws.pass_theme_down(cx); })));
+            } else {
+                controls = controls.child(palette_rule(t.follow_outer, following, &th).id("palette-follow-outer")
+                    .map(|b| palette_help(b, "Use the window theme as it changes.", None, None, help_delay, help_owner.clone()))
+                    .on_mouse_down(MouseButton::Left, cx.listener(|ws, _, _, cx| {
+                        cx.stop_propagation(); if let Some(scope) = ws.theme_menu.clone() { ws.toggle_theme_inherit(&scope, cx); }
+                    })));
             }
             // A sub-tab icon click anchors the tray at the click (right edge at
             // the cursor, opening down-left); clamp it fully on-screen. The
@@ -28467,7 +28306,7 @@ impl Render for Workspace {
                 .rounded(sk.rad_raw(6.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
-                .bg(darken(th.surface, 0.6))
+                .bg(th.surface.alpha(0.82))
                 // never spill past the RENDER: clip horizontally, scroll a
                 // tall tray vertically rather than running down over the
                 // bottom bezel. The cap is the terminal band this tray hangs
@@ -28486,25 +28325,7 @@ impl Render for Workspace {
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
-                // Left: the INVERT mode bar stacked ABOVE the vertical dynamics
-                // glyph column(s). Then the PICKERS (design · skin · program ·
-                // syntax), then the WHEEL and the window rules — each behind its
-                // own hairline. `flex_none` on all three: a column that shrinks
-                // re-wraps its buttons, and re-wrapping is how the tray got tall.
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .flex_none()
-                        .gap_2()
-                        .w(px(glyph_col_w))
-                        .child(invert_bar)
-                        .child(dyn_cols),
-                )
-                .child(vsep())
-                .child(pickers)
-                .child(vsep())
-                .child(controls);
+                .child(themes).child(pickers).child(controls);
             // full-screen scrim: click anywhere outside closes
             div()
                 .absolute()
@@ -31733,7 +31554,6 @@ impl Render for Workspace {
                     vec![
                         row(s.kf_themes, s.f_themes),
                         row(s.kf_perpane, s.f_perpane),
-                        row(s.kf_wheel, s.f_wheel),
                         row(s.kf_grade, s.f_grade),
                     ],
                 ));
@@ -31749,7 +31569,6 @@ impl Render for Workspace {
                         row(s.kf_warp, s.f_warp),
                         row(s.kf_scan, s.f_scan),
                         row(s.kf_crawl, s.f_crawl),
-                        row(&format!("🎰 {}", s.gamba_name), s.f_gamba),
                     ],
                 ))
                 .child(section(
@@ -35509,8 +35328,8 @@ mod tests {
             ("render_savings_overlay", 1),
             ("render_bar_slot", 1),
             ("terminal_state_toggle", 1),
-            // Theme picker tips plus INHERIT’s live Omarchy source status.
-            ("render", 3),
+            // Concise palette help, including Custom's interactive editor link.
+            ("palette_help", 2),
             // the corner's two split buttons, both built by this one function
             ("split_button", 1),
         ];
@@ -41487,6 +41306,20 @@ node = "Leaf"
     /// When this fails, the answer is another column or a wider one — not a
     /// bigger `TRAY_PANEL_H_EST`, which only moves the fold.
     #[test]
+    fn palette_help_waits_then_tracks_neighbouring_options() {
+        let now = Instant::now();
+        assert_eq!(palette_help_delay(None, now), Duration::from_millis(800));
+        assert_eq!(
+            palette_help_delay(Some(now - Duration::from_millis(100)), now),
+            Duration::from_millis(180)
+        );
+        assert_eq!(
+            palette_help_delay(Some(now - Duration::from_secs(3)), now),
+            Duration::from_millis(800)
+        );
+    }
+
+    #[test]
     fn the_design_tray_fits_the_shortest_screen_it_promises() {
         let cap = tray_cap((0., TRAY_FIT_BAND), 36.);
         let tall = tray_panel_h_est();
@@ -41503,7 +41336,7 @@ node = "Leaf"
             skin::picker_max_count(),
             theme::ColorMode::ALL.len(),
             theme::SyntaxScheme::ALL.len() + 1,
-        ) + tray_wheel_col_h(2, 1);
+        ) + tray_rules_h(4, 1);
         assert!(
             stacked > cap,
             "if one column fits again the split is dead weight — delete it deliberately, \
@@ -41525,22 +41358,16 @@ node = "Leaf"
             tray_wrap_rows(theme::picker_count(), TRAY_BTN_W, TRAY_PICKER_W) <= 3,
             "PICKERS must take three DESIGN buttons per row — two is the old tall tray"
         );
-        assert!(
-            TRAY_WHEEL_COL_W >= TRAY_WHEEL_H,
-            "the WHEEL column has to hold the {TRAY_WHEEL_H}px wheel"
-        );
-        assert!(
-            TRAY_GLYPH_COL_W >= 2. * 40. + TRAY_GAP * 2. + TRAY_SEP,
-            "the glyph column holds two 40px colour-set columns and their rule"
-        );
-        assert!(
-            TRAY_GLYPH_COL_W >= TRAY_MODE_BTN_W + TRAY_GAP + 40.,
-            "…and the INVERT bar above them: a heading plus a mode button"
-        );
-        assert!(
-            3. * TRAY_NOTE_BTN_W + 2. * TRAY_NOTE_GAP + TRAY_FIT_SLACK <= TRAY_WHEEL_COL_W,
-            "the WHEEL column holds the three STICKY NOTE papers on one row"
-        );
+        const {
+            assert!(
+                TRAY_GLYPH_COL_W >= 2. * 40. + TRAY_GAP * 2. + TRAY_SEP,
+                "the glyph column holds two 40px colour-set columns and their rule"
+            );
+            assert!(
+                3. * TRAY_NOTE_BTN_W + 2. * TRAY_NOTE_GAP + TRAY_FIT_SLACK <= TRAY_GLYPH_COL_W,
+                "the THEME column holds the three STICKY NOTE papers on one row"
+            );
+        }
         assert_eq!(
             theme::NotePaper::ALL.len(),
             3,

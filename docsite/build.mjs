@@ -169,10 +169,8 @@ function commands(html) {
 const APP_KEY_FIXES = [
   { key: 'Ctrl+Shift+PgUp / PgDn', text: 'Move tab (in / across groups)', to: [null, 'Move tab left / right, within its group'],
     why: 'a tab never crosses a group (main.rs, the tab move)' },
-  { key: 'theme icon (top-right)', text: 'DESIGN — Themes & colour wheel', to: ['🎨 (bottom-right)', null],
+  { key: 'theme icon (top-right)', text: 'PALETTE — Themes, style and rules', to: ['🎨 (bottom-right)', null],
     why: 'the 🎨 sits bottom-right' },
-  { key: '▲ / ▼', text: 'Jump to your previous / next message', drop: true,
-    why: 'the jump glyph is hidden (pane.rs)' },
   { key: '🤖 (mother bar)', text: 'MCP — read-only agent-watch surface', drop: true,
     why: 'the wall has no chrome glyph' },
   { key: 'Ctrl+Shift+A', text: 'MCP — read-only agent-watch surface', to: [null, 'The agent wall: every agent pane as a card'],

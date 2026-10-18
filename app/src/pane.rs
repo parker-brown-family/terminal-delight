@@ -3022,9 +3022,8 @@ pub struct TerminalView {
     doc_holding: bool,
     /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
     was_focused: bool,
-    /// 🎰 GAMBA slot-machine reels — rolled while an agent in this pane is
-    /// "thinking", on the gamba DESIGN texture only (not any colour set). Satire.
-    gamba: crate::gamba::Reels,
+    /// Last observed agent working state; absent until the first settled scan.
+    agent_thinking: Option<bool>,
     /// Throttle for the (cheap) grid scan that detects the agent spinner.
     last_think_scan: Instant,
     /// True while this pane is the one mirrored in the FOCUS modal — a plain Esc
@@ -4497,7 +4496,7 @@ impl TerminalView {
     /// [`crate::warp::set_suppressed`]: a pane popup bows with the barrel warp
     /// while gpui keeps hit-testing its flat layout box, so the glass must read
     /// flat while one is up. Any new pane-owned floating MENU belongs in this OR
-    /// — decoration that carries no click target (the 🎰 reels, the bell toast)
+    /// — decoration that carries no click target (the bell toast)
     /// deliberately does not, since bending costs nothing there.
     pub fn popup_open(&self) -> bool {
         self.hdr_overflow.is_some() || self.ctx_menu.is_some()
@@ -4691,8 +4690,8 @@ impl TerminalView {
                         view.repaint(cx);
                     }
                     view.flush_offscreen(cx);
-                    // 🎰 GAMBA: poll the grid (throttled) for the agent
-                    // spinner, then advance the reel stack while it rolls.
+                    // Poll the grid (throttled) for the agent
+                    // spinner and its working-state transitions.
                     // A hidden pane is checked once a second: its badge and its
                     // bell stay timely well inside OFFSCREEN_REFRESH, and the
                     // checks read the screen (#964).
@@ -4733,8 +4732,9 @@ impl TerminalView {
                         };
                         if scroll_settled {
                             let thinking = view.agent_is_thinking();
-                            if thinking != view.gamba.is_thinking() {
-                                view.gamba.set_thinking(thinking);
+                            let was_thinking = view.agent_thinking == Some(true);
+                            view.agent_thinking = Some(thinking);
+                            if thinking != was_thinking {
                                 // repaint the mother bar: the tab 🤖 pulse
                                 // starts/stops on this edge
                                 cx.emit(AgentWorkingChanged);
@@ -4873,7 +4873,7 @@ impl TerminalView {
                     // anything on screen moving.
                     let badge_now = crate::agent_badge(
                         view.needs_input,
-                        view.gamba.is_thinking(),
+                        view.agent_thinking == Some(true),
                         view.bell,
                         view.bell && view.bell_blocked,
                     );
@@ -4884,9 +4884,6 @@ impl TerminalView {
                         }
                         None => view.last_rail_badge = Some(badge_now),
                         Some(_) => {}
-                    }
-                    if view.gamba.tick() {
-                        cx.notify();
                     }
                     // reap a finished bell clip so ffplay zombies don't pile up
                     view.bell_player.reap();
@@ -4903,15 +4900,12 @@ impl TerminalView {
                         }
                     }
                     // Stay at frame-rate only while something is actually
-                    // moving — CRT fx, or GAMBA reels/FX/rumble in motion.
-                    // A landed-but-thinking board falls through to the idle
-                    // cadence (no 30fps repaint of a static slot grid).
+                    // moving — CRT effects. Agent status uses the idle cadence.
                     // And never for a pane whose tab is not being shown: its
                     // frames are not drawn, so thirty a second is all cost
                     // (#964). The scans below still run at the idle cadence,
                     // which is what keeps its badge and its bell timely.
-                    view.shown.load(std::sync::atomic::Ordering::Relaxed)
-                        && (view.fx.active() || view.gamba.is_animating())
+                    view.shown.load(std::sync::atomic::Ordering::Relaxed) && view.fx.active()
                 });
                 // `this` is weak: once this pane's TerminalView is dropped (close
                 // a pane / tab / window) the update errors — break so the ticker
@@ -5019,7 +5013,7 @@ impl TerminalView {
             theme_cache: RefCell::new(None),
             mirror_doc: RefCell::new(None),
             read_history: RefCell::new(None),
-            gamba: crate::gamba::Reels::new(seed),
+            agent_thinking: None,
             last_think_scan: Instant::now()
                 .checked_sub(std::time::Duration::from_secs(1))
                 .unwrap_or_else(Instant::now),
@@ -5083,7 +5077,6 @@ impl TerminalView {
     /// Is the agent in this pane "thinking" right now? We scan the visible grid
     /// for the furniture Claude/Codex print while a turn runs — the footer's
     /// "esc to interrupt", or the spinner line above it.
-    /// `TD_GAMBA_DEMO=1` forces it on for demos/screenshots.
     ///
     /// The needles themselves live in [`crate::hud::rows_say_working`], which is
     /// also what the rail's parser asks. They were two lists until 2026-09-17,
@@ -5098,9 +5091,6 @@ impl TerminalView {
     /// still working at the buffer bottom, so detection must read the live screen
     /// regardless of how far the user has scrolled up.
     fn agent_is_thinking(&self) -> bool {
-        if std::env::var("TD_GAMBA_DEMO").is_ok() {
-            return true;
-        }
         if !self.mode.is_agent() {
             return false;
         }
@@ -5355,7 +5345,7 @@ impl TerminalView {
 
     /// Is the agent in this pane actively working RIGHT NOW? Reads the cached
     /// thinking state the 120ms effects-clock scan maintains — the same signal
-    /// that rolls the GAMBA reels and arms the bell edge — so the mother-bar 🤖
+    /// that arms the bell edge — so the mother-bar 🤖
     /// pulse can ask every frame for free. Flips are announced via
     /// [`AgentWorkingChanged`].
     /// This pane's screen rect as it was last painted, in window coordinates.
@@ -5366,7 +5356,7 @@ impl TerminalView {
     }
 
     pub fn agent_working(&self) -> bool {
-        self.mode.is_agent() && self.gamba.is_thinking()
+        self.mode.is_agent() && self.agent_thinking == Some(true)
     }
 
     /// Is the agent stopped WAITING ON A HUMAN right now (picker / permission
@@ -11238,19 +11228,7 @@ impl Render for TerminalView {
         header = header.shadow(header_shadows(bar_fg, glow, th.crt, th.grade.phosphor));
 
         let jiggle = self.fx.jiggle_px;
-        // 🎰 GAMBA reels — shown only on the gamba DESIGN texture while the agent
-        // thinks. The colour set (incl. RETRO/🎰) never triggers the reels.
-        let gamba_look = crate::gamba::look_active(&th);
-        let gamba_overlay = gamba_look
-            .then(|| crate::gamba::overlay(&self.gamba, &th))
-            .flatten();
-        // a win rumbles the whole terminal for 3s as the coins spill
-        let (rumble_dx, rumble_dy) = if gamba_look {
-            self.gamba.rumble_offset()
-        } else {
-            (0.0, 0.0)
-        };
-        let shake_y = jiggle + rumble_dy;
+        let shake_y = jiggle;
         // The frame the grid sits in: a 2%/4px breathing border plus a
         // curvature-proportional inset so the bottom prompt clears the barrel
         // overscan. Same `grid_pad` the fit + hit-test use, so they stay locked.
@@ -11510,8 +11488,6 @@ impl Render for TerminalView {
             .text_color(th.text)
             .pt(px(shake_y.max(0.)))
             .pb(px((-shake_y).max(0.)))
-            .pl(px(rumble_dx.max(0.)))
-            .pr(px((-rumble_dx).max(0.)))
             .child(header)
             .child(
                 div()
@@ -11695,8 +11671,6 @@ impl Render for TerminalView {
             })
             // raised bezel frame sits above the glass, framing the whole pane
             .when(th.bezel > 0.001, |el| el.child(crt::bezel(&th)))
-            // 🎰 the slot reels ride above the bezel, below the menus
-            .children(gamba_overlay)
             .children(ctx_menu_el)
             .children(overflow_el)
             // the paint overlay is the topmost surface — painted last, above
