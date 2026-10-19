@@ -1166,6 +1166,7 @@ pub struct View {
     pub selected: usize,
     pub page: usize,
     pub history: Vec<(Depth, usize)>,
+    pub forward: Vec<(Depth, usize)>,
 }
 
 impl View {
@@ -1173,6 +1174,7 @@ impl View {
         if self.depth == depth {
             return;
         }
+        self.forward.clear();
         let tab_switch = matches!((&self.depth,&depth),(Depth::Project(a),Depth::Checkouts(b))|(Depth::Checkouts(a),Depth::Project(b)) if a==b);
         if tab_switch {
             self.depth = depth;
@@ -1187,6 +1189,18 @@ impl View {
     }
     pub fn back(&mut self) -> bool {
         if let Some((depth, selected)) = self.history.pop() {
+            self.forward.push((self.depth.clone(), self.selected));
+            self.depth = depth;
+            self.selected = selected;
+            self.page = selected / PAGE;
+            true
+        } else {
+            false
+        }
+    }
+    pub fn forward(&mut self) -> bool {
+        if let Some((depth, selected)) = self.forward.pop() {
+            self.history.push((self.depth.clone(), self.selected));
             self.depth = depth;
             self.selected = selected;
             self.page = selected / PAGE;

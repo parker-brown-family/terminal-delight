@@ -314,12 +314,12 @@ pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
     if !alt {
         return false;
     }
-    // `l` is the LOOKUP. It costs readline's downcase-word, which nothing in
-    // this window's composer mirrors.
-    matches!(
-        key,
-        "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w" | "k" | "l"
-    )
+    // `l` is LOOKUP; `g` is Git coordination. Neither belongs to a pane.
+    key.eq_ignore_ascii_case("g")
+        || matches!(
+            key,
+            "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w" | "k" | "l"
+        )
 }
 
 /// Chords the PANE owns, on either of its faces.
@@ -738,12 +738,12 @@ mod tests {
         ));
     }
 
-    /// Alt+L searches the whole window, so no surface a pane can stack — a
+    /// Alt+L and Alt+G inspect the whole window, so no surface a pane can stack — a
     /// bench, a document, a note being written, a rename box — may keep it.
     /// The shell never sees it either: `keystroke_bytes` refuses every window
     /// chord, which is what keeps `ESC l` out of the PTY.
     #[test]
-    fn the_lookup_chord_belongs_to_the_window_on_every_face() {
+    fn the_window_inspection_chords_belong_to_the_window_on_every_face() {
         for up in [
             Up::default(),
             Up {
@@ -768,9 +768,13 @@ mod tests {
                 ..Up::default()
             },
         ] {
-            assert_eq!(route(&alt("l"), &up), Layer::Window, "{up:?}");
+            for key in ["l", "g"] {
+                assert_eq!(route(&alt(key), &up), Layer::Window, "alt+{key}: {up:?}");
+            }
+            assert_eq!(route(&alt("G"), &up), Layer::Window, "alt+G: {up:?}");
         }
         assert_eq!(route(&ch("l"), &Up::default()), Layer::Terminal);
+        assert_eq!(route(&ch("g"), &Up::default()), Layer::Terminal);
         assert_eq!(
             route(&ctrl("l"), &Up::default()),
             Layer::Terminal,
@@ -1225,7 +1229,7 @@ mod tests {
 
     #[test]
     fn the_windows_chords_are_never_a_panes_to_take() {
-        for key in ["left", "right", "up", "down", "r", "v", "h", "w", "l"] {
+        for key in ["left", "right", "up", "down", "r", "v", "h", "w", "l", "g"] {
             assert!(
                 window_chord(key, true, false),
                 "alt+{key} is the window's: focus, split, close, FOCUS, LOOKUP"
