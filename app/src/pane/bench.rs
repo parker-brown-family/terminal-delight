@@ -1817,10 +1817,11 @@ impl TerminalView {
         // RESUME takes the primary face, the one the launch wears. It is the
         // only control on this strip that offers rather than takes, and a
         // paused pane should look like it is waiting to be let go.
+        let t = &crate::lang::current().strings().parts;
         if let Some(control) = crate::workbench::turn_control(state, agent_now) {
             let (label, hit) = match control {
-                TurnControl::Pause => ("PAUSE TURN", Hit::PauseTurn),
-                TurnControl::Resume => ("RESUME TURN", Hit::ResumeTurn),
+                TurnControl::Pause => (t.pane_bench_pause_turn, Hit::PauseTurn),
+                TurnControl::Resume => (t.pane_bench_resume_turn, Hit::ResumeTurn),
             };
             out.push(
                 crate::benchdraw::strip_button(label, "", control == TurnControl::Resume, sk, th)
@@ -1856,8 +1857,8 @@ impl TerminalView {
             // No glyph: the stop square rendered as a colour emoji, which put
             // the loudest thing on the strip beside the one control nobody
             // should press by accident. The words say what it does.
-            StripVerb::End => ("END SESSION", "", Hit::EndAgent, false),
-            StripVerb::Launch => ("LAUNCH AGENT", "\u{2301}", Hit::Launch, true),
+            StripVerb::End => (t.pane_bench_end_session, "", Hit::EndAgent, false),
+            StripVerb::Launch => (t.pane_bench_launch_agent, "\u{2301}", Hit::Launch, true),
         };
         out.push(
             crate::benchdraw::strip_button(label, glyph, primary, sk, th)
@@ -2557,9 +2558,12 @@ impl TerminalView {
         // last, and the bench says whichever word the picker is showing —
         // promising "Submit" and delivering "Next" is a small lie that costs
         // a person one wasted press and all of their trust in the button.
+        // Which of the two is decided by the round's state alone; the word is
+        // only how it is drawn, in the reader's language.
+        let t = &crate::lang::current().strings().parts;
         let submit_word = match &q.round {
-            Some(r) if !r.submitting && r.answered() + 1 < r.total() => "NEXT",
-            _ => "SUBMIT",
+            Some(r) if !r.submitting && r.answered() + 1 < r.total() => t.pane_bench_next,
+            _ => t.pane_bench_submit,
         };
         let answered = q.answer != crate::surface::Answered::Waiting;
         // Asked once, before the borrow of `self` the chips take, and read
@@ -4481,7 +4485,7 @@ impl TerminalView {
                                     .text_size(px(sk.pt(Step::Small)))
                                     .text_color(sk.ink.ink_faint)
                                     .font_family(th.font_family.clone())
-                                    .child(format!("No {}", shelf_now.empty_word())),
+                                    .child(empty_sentence(shelf_now)),
                             )
                         },
                     )
@@ -4739,6 +4743,20 @@ impl TerminalView {
                 self.wb_regions.clone(),
             ))
             .into_any_element()
+    }
+}
+
+/// What an empty shelf says, as one whole sentence in the reader's language.
+/// It was `No ` glued onto a per-shelf tail ("artifacts yet"), which no
+/// other language can be built from.
+fn empty_sentence(shelf: crate::surface::Shelf) -> &'static str {
+    use crate::surface::Shelf;
+    let t = &crate::lang::current().strings().parts;
+    match shelf {
+        Shelf::Artifacts => t.surface_shelf_empty_artifacts,
+        Shelf::Decisions => t.surface_shelf_empty_decisions,
+        Shelf::Overview => t.surface_shelf_empty_overview,
+        Shelf::Comments => t.surface_shelf_empty_comments,
     }
 }
 

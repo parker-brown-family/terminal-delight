@@ -362,7 +362,9 @@ pub fn read(store: &Path) -> Result<NoteMap, String> {
 /// write in this module, and it never touches the document.
 pub fn write(store: &Path, doc: &Path, notes: &NoteMap) -> Result<(), String> {
     use std::io::Write;
-    let dir = store.parent().ok_or("the store has no folder")?;
+    // Only the bar says these, after a note was written and not kept.
+    let t = &crate::lang::current().strings().parts;
+    let dir = store.parent().ok_or(t.notes_md_store_no_folder)?;
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut top = Obj::default();
     top.insert("format".into(), Json::Num(f64::from(FORMAT)));
@@ -388,7 +390,7 @@ pub fn write(store: &Path, doc: &Path, notes: &NoteMap) -> Result<(), String> {
     })();
     written.map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
-        format!("the note could not be kept: {e}")
+        crate::lang::fill(t.notes_md_store_keep_failed, &[("error", &e.to_string())])
     })
 }
 
@@ -404,7 +406,8 @@ pub fn keep(
 ) -> Result<NoteMap, String> {
     let mut map = read(store)?;
     let mut concurs = notes::ConcurMap::default();
-    notes::apply(&mut map, &mut concurs, edits, known, false).map_err(|r| r.sentence())?;
+    notes::apply(&mut map, &mut concurs, edits, known, false)
+        .map_err(|r| r.say(crate::lang::current()))?;
     write(store, doc, &map)?;
     Ok(map)
 }

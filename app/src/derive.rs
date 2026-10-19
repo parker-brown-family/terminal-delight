@@ -522,9 +522,13 @@ fn deliverable_post(label: &str, href: &str, now_ms: u64) -> Post {
     // path is what the rest of this window means by a file.
     let target = href.strip_prefix("file://").unwrap_or(href).to_string();
     let id = SurfaceId(format!("{DELIVERABLE_ID}{}", short_hash(&target)));
+    // The card's two lines of provenance are for the person reading it, so
+    // they are written in the reader's language — the one active when the
+    // card was derived, since the card is stored as it was made.
+    let t = &crate::lang::current().strings().parts;
     let kind = Kind::Artifact(Artifact {
         mime: mime_of(&target),
-        summary: Some("declared in the agent's own reply".into()),
+        summary: Some(t.derive_deliverable_summary.into()),
         href: target.clone(),
         notes: Vec::new(),
     });
@@ -541,7 +545,7 @@ fn deliverable_post(label: &str, href: &str, now_ms: u64) -> Post {
             source: Some(Source {
                 files: vec![target],
                 command: None,
-                reference: Some("Deliverable: line".into()),
+                reference: Some(t.derive_deliverable_reference.into()),
             }),
             arrived_ms: now_ms,
             origin: crate::surface::Origin::Derived,

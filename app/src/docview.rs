@@ -537,20 +537,29 @@ fn keep_picture(
                 .map(|(list, one)| (list, vec![one]))
         }
         notes_ui::PastedPicture::Files(paths) => {
+            // Said in the bar, after the paste: the reader's language.
+            let t = &crate::lang::current().strings().parts;
             let mut kept = None;
             let mut each = Vec::new();
             for path in paths {
-                let bytes = std::fs::read(path)
-                    .map_err(|e| format!("{} could not be read: {e}", path.display()))?;
-                let ext = notes_ui::picture_ext(path)
-                    .ok_or_else(|| format!("{} is not a picture", path.display()))?;
+                let shown = path.display().to_string();
+                let bytes = std::fs::read(path).map_err(|e| {
+                    let error = e.to_string();
+                    crate::lang::fill(
+                        t.notes_paste_file_unreadable,
+                        &[("path", &shown), ("error", &error)],
+                    )
+                })?;
+                let ext = notes_ui::picture_ext(path).ok_or_else(|| {
+                    crate::lang::fill(t.notes_paste_not_picture, &[("path", &shown)])
+                })?;
                 let (list, one) =
                     doc_images::attach(&a.folder, &a.doc, &a.nid, &bytes, &ext, &a.ts)?;
                 each.push(one);
                 kept = Some(list);
             }
             kept.map(|list| (list, each))
-                .ok_or_else(|| "no picture was on the clipboard".to_string())
+                .ok_or_else(|| t.notes_paste_no_picture.to_string())
         }
     }
 }

@@ -159,6 +159,43 @@ impl AttentionKind {
             AttentionKind::Unknown => "parser",
         }
     }
+
+    /// [`Self::label`] as a person reads it, in `l`.
+    #[allow(dead_code)] // drawn by main.rs (the rail row's lane, ~23693 / ~23901) once it adopts this
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        let t = &l.strings().parts;
+        match self {
+            AttentionKind::Access => t.attention_kind_access,
+            AttentionKind::Decision => t.attention_kind_decision,
+            AttentionKind::Failure => t.attention_kind_failed,
+            AttentionKind::ReviewReady => t.attention_kind_review,
+            AttentionKind::Unknown => t.attention_kind_unknown,
+        }
+    }
+
+    /// [`Self::reason`] in `l`.
+    pub fn reason_in(self, l: crate::lang::Lang) -> &'static str {
+        let t = &l.strings().parts;
+        match self {
+            AttentionKind::Access => t.attention_reason_access,
+            AttentionKind::Decision => t.attention_reason_decision,
+            AttentionKind::Failure => t.attention_reason_failure,
+            AttentionKind::ReviewReady => t.attention_reason_review,
+            AttentionKind::Unknown => t.attention_reason_unknown,
+        }
+    }
+
+    /// [`Self::source`] in `l`. `request_access` is the MCP verb's own name
+    /// and stays as it is; the instruments are words.
+    pub fn source_in(self, l: crate::lang::Lang) -> &'static str {
+        let t = &l.strings().parts;
+        match self {
+            AttentionKind::Access => "request_access",
+            AttentionKind::Decision => t.attention_source_prompt,
+            AttentionKind::Failure | AttentionKind::ReviewReady => t.attention_source_bell,
+            AttentionKind::Unknown => t.attention_source_parser,
+        }
+    }
 }
 
 /// A thumb on the scale: what the human has said matters today, independent of
@@ -346,6 +383,15 @@ impl DocKind {
             DocKind::Other => "open",
         }
     }
+
+    /// [`Self::label`] in `l`: the format names stay, `open` is a word.
+    #[allow(dead_code)] // drawn by main.rs (the deliverable chip on a rail row) once it adopts this
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        match self {
+            DocKind::Other => l.strings().parts.attention_doc_open,
+            other => other.label(),
+        }
+    }
 }
 
 /// Classify by extension, ignoring any query or fragment.
@@ -473,6 +519,27 @@ impl AttentionItem {
         match (self.kind, self.pane_kind) {
             (AttentionKind::Unknown, PaneKind::Unknown) => "census",
             (kind, _) => kind.source(),
+        }
+    }
+
+    /// [`Self::reason`] in `l`, for the row a person reads.
+    #[allow(dead_code)] // drawn by main.rs (the rail row's reason, ~23741) once it adopts this
+    pub fn reason_in(&self, l: crate::lang::Lang) -> &'static str {
+        match (self.kind, self.pane_kind) {
+            (AttentionKind::Unknown, PaneKind::Unknown) => {
+                l.strings().parts.attention_reason_undescribed
+            }
+            (kind, _) => kind.reason_in(l),
+        }
+    }
+
+    /// [`Self::source`] in `l`, for the row a person reads.
+    pub fn source_in(&self, l: crate::lang::Lang) -> &'static str {
+        match (self.kind, self.pane_kind) {
+            (AttentionKind::Unknown, PaneKind::Unknown) => {
+                l.strings().parts.attention_source_census
+            }
+            (kind, _) => kind.source_in(l),
         }
     }
 
@@ -626,6 +693,15 @@ impl Evidence {
     pub fn text(&self) -> &str {
         self.value.as_deref().unwrap_or("unavailable")
     }
+
+    /// [`Self::text`] in `l`: a known value is the agent's or the
+    /// instrument's own and stays as it is; the admission is a word.
+    #[allow(dead_code)] // drawn by main.rs (the review tray, ~23827) once it adopts this
+    pub fn text_in(&self, l: crate::lang::Lang) -> &str {
+        self.value
+            .as_deref()
+            .unwrap_or(l.strings().parts.attention_evidence_unavailable)
+    }
 }
 
 /// What the review tray can say about a finished row, today.
@@ -653,6 +729,23 @@ pub fn review_evidence(it: &AttentionItem) -> Vec<Evidence> {
         // Never unavailable: a row exists BECAUSE some instrument read
         // something, so there is always an honest answer here.
         Evidence::known("read by", it.source()),
+    ]
+}
+
+/// [`review_evidence`] with its labels, and the instrument named in the last
+/// row, in `l`. The same four rows in the same order; draw each value with
+/// [`Evidence::text_in`] so `unavailable` is in the same language.
+#[allow(dead_code)] // drawn by main.rs (the review tray, ~23827) once it adopts this
+pub fn review_evidence_in(it: &AttentionItem, l: crate::lang::Lang) -> Vec<Evidence> {
+    let t = &l.strings().parts;
+    vec![
+        match it.deliverable.as_ref() {
+            Some(d) => Evidence::known(t.attention_evidence_deliverable, d.label.clone()),
+            None => Evidence::unavailable(t.attention_evidence_deliverable),
+        },
+        Evidence::unavailable(t.attention_evidence_changes),
+        Evidence::unavailable(t.attention_evidence_checks),
+        Evidence::known(t.attention_evidence_read_by, it.source_in(l)),
     ]
 }
 
@@ -820,6 +913,27 @@ pub fn age_label(d: Option<Duration>) -> String {
             } else {
                 format!("{}h", secs / 3600)
             }
+        }
+    }
+}
+
+/// [`age_label`] in `l`: the same buckets and the same dash for an absence,
+/// with each language's own unit abbreviation.
+#[allow(dead_code)] // drawn by main.rs (~23715, ~23797) and benchdraw.rs (~2653) once they adopt this
+pub fn age_label_in(l: crate::lang::Lang, d: Option<Duration>) -> String {
+    let t = &l.strings().parts;
+    match d {
+        None => "\u{2014}".to_string(),
+        Some(d) => {
+            let secs = d.as_secs();
+            let (template, name, n) = if secs < 60 {
+                (t.attention_age_seconds, "secs", secs)
+            } else if secs < 3600 {
+                (t.attention_age_minutes, "mins", secs / 60)
+            } else {
+                (t.attention_age_hours, "hours", secs / 3600)
+            };
+            crate::lang::fill(template, &[(name, &n.to_string())])
         }
     }
 }
@@ -1283,6 +1397,48 @@ mod tests {
         assert_eq!(age_label(Some(Duration::from_secs(3600))), "1h");
         // And the absence stays an absence at every scale.
         assert_eq!(age_label(None), "\u{2014}");
+    }
+
+    /// Every display accessor says exactly what its English twin says, in
+    /// English — so a person reading English sees no change — while the twins
+    /// themselves stay English for the element ids and payloads that use them.
+    #[test]
+    fn the_display_words_match_the_english_ones_in_english() {
+        use crate::lang::Lang;
+        let en = Lang::En;
+        for kind in [
+            AttentionKind::Access,
+            AttentionKind::Decision,
+            AttentionKind::Failure,
+            AttentionKind::ReviewReady,
+            AttentionKind::Unknown,
+        ] {
+            assert_eq!(kind.label_in(en), kind.label());
+            assert_eq!(kind.reason_in(en), kind.reason());
+            assert_eq!(kind.source_in(en), kind.source());
+            for pane_kind in [PaneKind::Agent, PaneKind::Unknown] {
+                let it = AttentionItem {
+                    pane_kind,
+                    ..row(1, kind)
+                };
+                assert_eq!(it.reason_in(en), it.reason());
+                assert_eq!(it.source_in(en), it.source());
+                let (a, b) = (review_evidence_in(&it, en), review_evidence(&it));
+                assert_eq!(a, b);
+                for (x, y) in a.iter().zip(&b) {
+                    assert_eq!(x.text_in(en), y.text());
+                }
+            }
+        }
+        for d in [DocKind::Html, DocKind::Markdown, DocKind::Other] {
+            assert_eq!(d.label_in(en), d.label());
+        }
+        for secs in [None, Some(59), Some(60), Some(3599), Some(3600)] {
+            let d = secs.map(Duration::from_secs);
+            assert_eq!(age_label_in(en, d), age_label(d));
+        }
+        // The MCP verb's name is never a word to translate.
+        assert_eq!(AttentionKind::Access.source_in(Lang::Ja), "request_access");
     }
 
     #[test]

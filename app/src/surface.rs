@@ -63,6 +63,8 @@
 
 use serde_json::{json, Map, Value};
 
+use crate::lang::Lang;
+
 /// The protocol version this build speaks, `major.minor`.
 ///
 /// A payload naming a **newer major** is refused: the envelope may have been
@@ -205,12 +207,19 @@ impl Confidence {
         })
     }
 
+    /// The tag beside a doubt, in the reader's language. Display only: the
+    /// wire words are [`Self::parse`]'s, and they never change.
     pub fn label(self) -> &'static str {
+        self.label_in(crate::lang::current())
+    }
+
+    pub fn label_in(self, l: Lang) -> &'static str {
+        let t = &l.strings().parts;
         match self {
-            Confidence::Measured => "measured",
-            Confidence::Inferred => "inferred",
-            Confidence::Hunch => "hunch",
-            Confidence::Unknown => "unknown",
+            Confidence::Measured => t.surface_confidence_measured,
+            Confidence::Inferred => t.surface_confidence_inferred,
+            Confidence::Hunch => t.surface_confidence_hunch,
+            Confidence::Unknown => t.surface_confidence_unknown,
         }
     }
 }
@@ -467,19 +476,25 @@ impl Action {
         }
     }
 
-    /// What the button says. A custom verb wears its own wire name, tidied.
+    /// What the button says. A custom verb wears its own wire name, tidied —
+    /// the agent's word, which is not this window's to translate.
     pub fn label(&self) -> String {
+        self.label_in(crate::lang::current())
+    }
+
+    pub fn label_in(&self, l: Lang) -> String {
+        let t = &l.strings().parts;
         match self {
-            Action::Open => "open".into(),
-            Action::Comment => "comment".into(),
-            Action::Approve => "approve".into(),
-            Action::Reject => "reject".into(),
-            Action::AcceptPart => "accept".into(),
-            Action::RejectPart => "reject".into(),
-            Action::Choose => "choose".into(),
-            Action::AskAgent => "ask".into(),
-            Action::OpenSource => "source".into(),
-            Action::Copy => "copy".into(),
+            Action::Open => t.surface_action_open.into(),
+            Action::Comment => t.surface_action_comment.into(),
+            Action::Approve => t.surface_action_approve.into(),
+            Action::Reject => t.surface_action_reject.into(),
+            Action::AcceptPart => t.surface_action_accept_part.into(),
+            Action::RejectPart => t.surface_action_reject_part.into(),
+            Action::Choose => t.surface_action_choose.into(),
+            Action::AskAgent => t.surface_action_ask.into(),
+            Action::OpenSource => t.surface_action_source.into(),
+            Action::Copy => t.surface_action_copy.into(),
             Action::Custom(s) => s.replace('_', " "),
         }
     }
@@ -1004,6 +1019,24 @@ impl Register {
         })
     }
 
+    /// The label [`Self::known`] gives `key`, in the reader's language.
+    ///
+    /// Display only. The parse stores [`Self::known`]'s English in
+    /// [`Section::label`] — a section's label is data, and an agent's own key
+    /// lands there too — so the chip translates at draw time, and only a label
+    /// this table wrote.
+    pub fn label_in(key: &str, l: Lang) -> Option<&'static str> {
+        let t = &l.strings().parts;
+        Some(match Register::known(key)?.1 {
+            "eli5" => t.surface_register_eli5,
+            "technical" => t.surface_register_technical,
+            "evidence" => t.surface_register_evidence,
+            "asks" => t.surface_register_asks,
+            "next" => t.surface_register_next,
+            _ => return None,
+        })
+    }
+
     /// The keys that are the plain reply, however the agent spelled it.
     ///
     /// `brief` is NOT among them any more. It was an alias here until
@@ -1128,9 +1161,14 @@ impl Group {
     /// colliding with a register inside it (the `evidence` tab holds *What was
     /// verified*) reads as two things rather than as a repetition.
     pub fn label(self) -> &'static str {
+        self.label_in(crate::lang::current())
+    }
+
+    pub fn label_in(self, l: Lang) -> &'static str {
+        let t = &l.strings().parts;
         match self {
-            Group::Reading => "reading",
-            Group::Evidence => "evidence",
+            Group::Reading => t.surface_group_reading,
+            Group::Evidence => t.surface_group_evidence,
             // `steps`, not `next`. In a row of three tabs the word `next` is
             // read as a NAVIGATION control — the thing that takes you to the
             // following tab — rather than as the name of what is inside this
@@ -1139,8 +1177,8 @@ impl Group {
             // still sends `next`, and `asks` still lands here too, which is
             // the other reason a verb-ish word was the wrong name for a tab
             // holding both.
-            Group::Next => "steps",
-            Group::Other => "other",
+            Group::Next => t.surface_group_steps,
+            Group::Other => t.surface_group_other,
         }
     }
 }
@@ -1192,7 +1230,11 @@ impl Artifact {
     /// there is not, because an agent that dropped a path without a type still
     /// produced something openable. `FILE` is the honest last answer: it says
     /// "something you can open" rather than guessing a format from nothing.
-    pub fn format_word(&self) -> String {
+    ///
+    /// The format acronyms are the same in every language; the four words
+    /// that are words (`IMG`, `VIDEO`, `AUDIO`, `FILE`) come from the table.
+    pub fn format_word_in(&self, l: Lang) -> String {
+        let t = &l.strings().parts;
         let from_mime = self.mime.as_deref().and_then(|m| {
             Some(match m.trim().to_ascii_lowercase().as_str() {
                 "text/html" | "application/xhtml+xml" => "HTML",
@@ -1201,9 +1243,9 @@ impl Artifact {
                 "application/json" => "JSON",
                 "text/csv" => "CSV",
                 "text/plain" => "TXT",
-                other if other.starts_with("image/") => "IMG",
-                other if other.starts_with("video/") => "VIDEO",
-                other if other.starts_with("audio/") => "AUDIO",
+                other if other.starts_with("image/") => t.surface_format_img,
+                other if other.starts_with("video/") => t.surface_format_video,
+                other if other.starts_with("audio/") => t.surface_format_audio,
                 _ => return None,
             })
         });
@@ -1218,14 +1260,14 @@ impl Artifact {
             "json" => "JSON".into(),
             "csv" => "CSV".into(),
             "txt" | "log" => "TXT".into(),
-            "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => "IMG".into(),
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => t.surface_format_img.into(),
             ext if !ext.is_empty()
                 && ext.len() <= 5
                 && ext.chars().all(|c| c.is_ascii_alphanumeric()) =>
             {
                 ext.to_ascii_uppercase()
             }
-            _ => "FILE".into(),
+            _ => t.surface_format_file.into(),
         }
     }
 }
@@ -1495,6 +1537,30 @@ impl Kind {
         }
     }
 
+    /// The word on the rail's kind chip, in the reader's language.
+    ///
+    /// Separate from [`Self::id`], which is the wire name: agents send it,
+    /// tests and the MCP reply match on it, and it never changes language.
+    pub fn word(&self) -> &'static str {
+        self.word_in(crate::lang::current())
+    }
+
+    pub fn word_in(&self, l: Lang) -> &'static str {
+        let t = &l.strings().parts;
+        match self {
+            Kind::Artifact(_) => t.surface_kind_artifact,
+            Kind::Markdown(_) => t.surface_kind_markdown,
+            Kind::Table(_) => t.surface_kind_table,
+            Kind::Architecture(_) => t.surface_kind_architecture,
+            Kind::Changeset(_) => t.surface_kind_changeset,
+            Kind::Decision(_) => t.surface_kind_decision,
+            Kind::Question(_) => t.surface_kind_question,
+            Kind::Response(_) => t.surface_kind_response,
+            Kind::Comment(_) => t.surface_kind_comment,
+            Kind::Unclassified(_) => t.surface_kind_unclassified,
+        }
+    }
+
     /// Which tab of the pane's rail this kind files under.
     ///
     /// Three tabs, not eight. A rail that needs a tab per kind has stopped
@@ -1610,11 +1676,16 @@ impl Shelf {
     ];
 
     pub fn label(self) -> &'static str {
+        self.label_in(crate::lang::current())
+    }
+
+    pub fn label_in(self, l: Lang) -> &'static str {
+        let t = &l.strings().parts;
         match self {
-            Shelf::Artifacts => "artifacts",
-            Shelf::Decisions => "decisions",
-            Shelf::Overview => "overview",
-            Shelf::Comments => "comments",
+            Shelf::Artifacts => t.surface_shelf_artifacts,
+            Shelf::Decisions => t.surface_shelf_decisions,
+            Shelf::Overview => t.surface_shelf_overview,
+            Shelf::Comments => t.surface_shelf_comments,
         }
     }
 
@@ -1640,7 +1711,7 @@ impl Shelf {
     /// [`None`] where a state chip is already carrying the whole message: a
     /// question that says ANSWERED has no use for the word `question` in front
     /// of it.
-    pub fn badge(self, kind: &Kind, lettered: bool) -> Option<String> {
+    pub fn badge_in(self, kind: &Kind, lettered: bool, l: Lang) -> Option<String> {
         match (self, kind) {
             // The state chip says everything a decision row needs.
             (_, Kind::Decision(_)) | (_, Kind::Question(_)) => None,
@@ -1649,11 +1720,10 @@ impl Shelf {
             // count, which is the one thing about a reply worth a glance.
             (_, Kind::Response(r)) => match r.doubts.len() {
                 0 => None,
-                1 => Some("1 doubt".into()),
-                n => Some(format!("{n} doubts")),
+                n => Some(l.count(&l.strings().parts.surface_badge_doubts, n)),
             },
-            (Shelf::Artifacts, Kind::Artifact(a)) => Some(a.format_word()),
-            (Shelf::Overview, Kind::Artifact(a)) if lettered => Some(a.format_word()),
+            (Shelf::Artifacts, Kind::Artifact(a)) => Some(a.format_word_in(l)),
+            (Shelf::Overview, Kind::Artifact(a)) if lettered => Some(a.format_word_in(l)),
             // On the comments board every row is a comment, so the word says
             // nothing. What the row wears instead is WHEN — the one fact that
             // orders a chronological board, and the one a reader actually wants
@@ -1661,23 +1731,7 @@ impl Shelf {
             // than here, because it needs the arrival stamp and a `Kind` does
             // not carry one.
             (Shelf::Comments, Kind::Comment(_)) => None,
-            _ => Some(kind.id().to_string()),
-        }
-    }
-
-    /// What an empty shelf is empty OF, in the words a person would use.
-    ///
-    /// Separate from [`Self::label`] because the tab and the empty state are
-    /// different sentences: `other 2·2` is a count on a tab, and "No other" is
-    /// not English. An empty shelf is the one place on this surface where the
-    /// only thing to read is the absence, so the absence is what it has to
-    /// say.
-    pub fn empty_word(self) -> &'static str {
-        match self {
-            Shelf::Artifacts => "artifacts yet",
-            Shelf::Decisions => "decisions yet",
-            Shelf::Overview => "responses yet",
-            Shelf::Comments => "comments yet",
+            _ => Some(kind.word_in(l).to_string()),
         }
     }
 }
@@ -1734,21 +1788,28 @@ pub enum Origin {
 impl Origin {
     /// The line under the card's title.
     pub fn label(&self) -> String {
+        self.label_in(crate::lang::current())
+    }
+
+    pub fn label_in(&self, l: Lang) -> String {
+        let t = &l.strings().parts;
+        let pid =
+            |template: &str, pid: &u32| crate::lang::fill(template, &[("pid", &pid.to_string())]);
         match self {
-            Origin::Unknown => "origin unknown \u{2014} no transport said".into(),
-            Origin::FileDrop => "dropped as a file \u{b7} writer unknown".into(),
+            Origin::Unknown => t.surface_origin_unknown.into(),
+            Origin::FileDrop => t.surface_origin_file.into(),
             Origin::Mcp {
-                pid,
+                pid: p,
                 own: Some(true),
-            } => format!("presented by this pane's agent \u{b7} MCP \u{b7} pid {pid}"),
+            } => pid(t.surface_origin_mcp_own, p),
             Origin::Mcp {
-                pid,
+                pid: p,
                 own: Some(false),
-            } => format!("presented over MCP by pid {pid} \u{2014} not this pane's agent"),
-            Origin::Mcp { pid, own: None } => format!("presented over MCP by pid {pid}"),
-            Origin::Derived => "read from this agent's own record".into(),
-            Origin::Hook => "arrived through this agent's own hooks \u{b7} whole".into(),
-            Origin::Person => "written here, by you".into(),
+            } => pid(t.surface_origin_mcp_other, p),
+            Origin::Mcp { pid: p, own: None } => pid(t.surface_origin_mcp, p),
+            Origin::Derived => t.surface_origin_derived.into(),
+            Origin::Hook => t.surface_origin_hook.into(),
+            Origin::Person => t.surface_origin_person.into(),
         }
     }
 
@@ -1811,20 +1872,41 @@ pub struct Surface {
 }
 
 impl Surface {
-    /// The one line the rail row shows under the title.
+    /// The one line the rail row shows under the title, in the reader's
+    /// language. Display only: the CLI dump and the tests read it in English
+    /// because nothing in their process ever publishes another language.
     pub fn subtitle(&self) -> String {
+        self.subtitle_in(crate::lang::current())
+    }
+
+    pub fn subtitle_in(&self, l: Lang) -> String {
+        use crate::lang::fill;
+        let t = &l.strings().parts;
+        let n = |v: usize| v.to_string();
         match &self.kind {
             Kind::Artifact(a) => a
                 .summary
                 .clone()
                 .or_else(|| a.mime.clone())
                 .unwrap_or_else(|| short_href(&a.href)),
-            Kind::Markdown(m) => format!("{} words", m.body.split_whitespace().count()),
-            Kind::Table(t) => format!("{} rows · {} columns", t.rows.len(), t.columns.len()),
+            Kind::Markdown(m) => fill(
+                t.surface_subtitle_words,
+                &[("n", &n(m.body.split_whitespace().count()))],
+            ),
+            Kind::Table(tb) => fill(
+                t.surface_subtitle_table,
+                &[("rows", &n(tb.rows.len())), ("cols", &n(tb.columns.len()))],
+            ),
             Kind::Architecture(a) => {
-                let mut s = format!("{} nodes · {} edges", a.nodes.len(), a.edges.len());
+                let mut s = fill(
+                    t.surface_subtitle_arch,
+                    &[("nodes", &n(a.nodes.len())), ("edges", &n(a.edges.len()))],
+                );
                 if !a.dangling.is_empty() {
-                    s.push_str(&format!(" · {} dangling", a.dangling.len()));
+                    s.push_str(&fill(
+                        t.surface_subtitle_arch_dangling,
+                        &[("n", &n(a.dangling.len()))],
+                    ));
                 }
                 s
             }
@@ -1833,23 +1915,37 @@ impl Surface {
                     .hunks
                     .iter()
                     .fold((0, 0), |(a, r), h| (a + h.added, r + h.removed));
-                format!("{} hunks · +{add} −{rem}", c.hunks.len())
+                fill(
+                    t.surface_subtitle_changeset,
+                    &[("n", &n(c.hunks.len())), ("add", &n(add)), ("rem", &n(rem))],
+                )
             }
             Kind::Decision(d) => match d.options.iter().find(|o| o.recommended) {
-                Some(o) => format!("{} options · recommends {}", d.options.len(), o.name),
-                None => format!("{} options · no recommendation", d.options.len()),
+                Some(o) => fill(
+                    t.surface_subtitle_decision_rec,
+                    &[("n", &n(d.options.len())), ("name", &o.name)],
+                ),
+                None => fill(
+                    t.surface_subtitle_decision_none,
+                    &[("n", &n(d.options.len()))],
+                ),
             },
             Kind::Question(q) => match &q.answer {
-                Answered::Chose(i) => format!(
-                    "answered · {}",
-                    q.options.get(*i).map(|o| o.label.as_str()).unwrap_or("?")
+                Answered::Chose(i) => fill(
+                    t.surface_subtitle_q_chose,
+                    &[(
+                        "option",
+                        q.options.get(*i).map(|o| o.label.as_str()).unwrap_or("?"),
+                    )],
                 ),
-                Answered::Typed(said) => format!("answered · {said}"),
-                Answered::ChoseUnknown => "answered · how is unavailable".into(),
-                Answered::Cancelled => "cancelled · nothing was answered".into(),
-                Answered::Ended => "ended · nobody recorded how".into(),
-                Answered::Skipped => "left blank · the round went without it".into(),
-                Answered::Waiting => format!("{} options · waiting on you", q.options.len()),
+                Answered::Typed(said) => fill(t.surface_subtitle_q_typed, &[("said", said)]),
+                Answered::ChoseUnknown => t.surface_subtitle_q_unknown.into(),
+                Answered::Cancelled => t.surface_subtitle_q_cancelled.into(),
+                Answered::Ended => t.surface_subtitle_q_ended.into(),
+                Answered::Skipped => t.surface_subtitle_q_skipped.into(),
+                Answered::Waiting => {
+                    fill(t.surface_subtitle_q_waiting, &[("n", &n(q.options.len()))])
+                }
             },
             // The plain reply IS the subtitle: a reply's row is read, not
             // counted.
@@ -1861,7 +1957,7 @@ impl Surface {
             // card does not open on is a bait the reader pays for every time.
             // Parker, on the brief: *"Plain Brief is still the default."*
             Kind::Response(r) => r.layman.clone(),
-            Kind::Unclassified(u) => u.reason.clone(),
+            Kind::Unclassified(u) => reason_in(&u.reason, l),
             // WHEN, and WHO only where who is knowable.
             //
             // The row signs `you` when this window watched the person type it,
@@ -1876,15 +1972,31 @@ impl Surface {
             // The stamp is absolute, so it is still true tomorrow. See
             // [`stamp_local`].
             Kind::Comment(_) => {
-                let when = stamp_local(self.arrived_ms)
+                let when = stamp_local(self.arrived_ms, l)
                     // Unknown is not the epoch. A clock this machine could not
                     // resolve says so rather than reading `1 Jan 1970`.
-                    .unwrap_or_else(|| "time unavailable".into());
+                    .unwrap_or_else(|| t.surface_subtitle_time_unavailable.into());
                 match self.origin {
-                    Origin::Person => format!("you \u{b7} {when}"),
+                    Origin::Person => fill(t.surface_subtitle_comment_you, &[("when", &when)]),
                     _ => when,
                 }
             }
+        }
+    }
+
+    /// The title as a row or a card shows it, in the reader's language.
+    ///
+    /// [`Self::title`] is data — the MCP reply hands it back to agents — so a
+    /// title this window made up for a payload that named none is stored in
+    /// English, by [`default_title`], and only that made-up title is
+    /// translated here. One the agent wrote is its own words. An agent that
+    /// happens to title a table `table of 3` gets the reader's words for it,
+    /// which is the same thing said.
+    pub fn title_in(&self, l: Lang) -> String {
+        if l != Lang::En && self.title == default_title(&self.kind) {
+            default_title_in(&self.kind, l)
+        } else {
+            self.title.clone()
         }
     }
 
@@ -2096,13 +2208,22 @@ fn assemble(
 
 /// A title for a payload that named none. Never "Untitled": a kind and a count
 /// is more use on a rail than a word that says the agent forgot.
+///
+/// English, always: the title is stored and handed back to agents.
+/// [`Surface::title_in`] translates it where a person reads it.
 fn default_title(kind: &Kind) -> String {
+    default_title_in(kind, Lang::En)
+}
+
+fn default_title_in(kind: &Kind, l: Lang) -> String {
+    let t = &l.strings().parts;
+    let n = |template: &str, v: usize| crate::lang::fill(template, &[("n", &v.to_string())]);
     match kind {
         Kind::Artifact(a) => short_href(&a.href),
-        Kind::Markdown(_) => "note".into(),
-        Kind::Table(t) => format!("table of {}", t.rows.len()),
-        Kind::Architecture(a) => format!("{} nodes", a.nodes.len()),
-        Kind::Changeset(c) => format!("{} hunks", c.hunks.len()),
+        Kind::Markdown(_) => t.surface_title_note.into(),
+        Kind::Table(tb) => n(t.surface_title_table, tb.rows.len()),
+        Kind::Architecture(a) => n(t.surface_title_nodes, a.nodes.len()),
+        Kind::Changeset(c) => n(t.surface_title_hunks, c.hunks.len()),
         Kind::Decision(d) => d.question.chars().take(TITLE_MAX_CHARS).collect(),
         Kind::Question(q) => q.question.chars().take(TITLE_MAX_CHARS).collect(),
         // The first sentence of the plain reply, which is what a person would
@@ -2112,7 +2233,7 @@ fn default_title(kind: &Kind) -> String {
             .chars()
             .take(TITLE_MAX_CHARS)
             .collect(),
-        Kind::Unclassified(_) => "unclassified".into(),
+        Kind::Unclassified(_) => t.surface_title_unclassified.into(),
         // The first LINE, not the first sentence: a note is written the way a
         // commit message is, and its opening line is already the summary the
         // writer chose. Splitting on a full stop would cut "check the bleed at
@@ -2120,7 +2241,7 @@ fn default_title(kind: &Kind) -> String {
         Kind::Comment(c) => {
             let first = c.body.lines().next().unwrap_or("").trim();
             if first.is_empty() {
-                "note".into()
+                t.surface_title_note.into()
             } else {
                 first.chars().take(TITLE_MAX_CHARS).collect()
             }
@@ -2157,9 +2278,24 @@ fn first_sentence(text: &str) -> &str {
 /// [`None`] rather than a fallback date when the C library cannot resolve the
 /// value. A comment stamped `1 Jan 1970` would be a clock failure wearing a
 /// plausible answer, and the row says `time unavailable` instead.
-fn stamp_local(ms: u64) -> Option<String> {
-    const MONTH: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+///
+/// The month names and the order of day, month and year are the reader's
+/// language's (`surface_stamp`); the digits are the same everywhere.
+fn stamp_local(ms: u64, l: Lang) -> Option<String> {
+    let t = &l.strings().parts;
+    let month_names = [
+        t.surface_month_jan,
+        t.surface_month_feb,
+        t.surface_month_mar,
+        t.surface_month_apr,
+        t.surface_month_may,
+        t.surface_month_jun,
+        t.surface_month_jul,
+        t.surface_month_aug,
+        t.surface_month_sep,
+        t.surface_month_oct,
+        t.surface_month_nov,
+        t.surface_month_dec,
     ];
     let secs: libc::time_t = (ms / 1000).try_into().ok()?;
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
@@ -2169,7 +2305,7 @@ fn stamp_local(ms: u64) -> Option<String> {
     if unsafe { libc::localtime_r(&secs, &mut tm) }.is_null() {
         return None;
     }
-    let month = MONTH.get(usize::try_from(tm.tm_mon).ok()?)?;
+    let month = month_names.get(usize::try_from(tm.tm_mon).ok()?)?;
     let year = 1900i32.checked_add(tm.tm_year)?;
     // A YEAR THAT IS NOT A YEAR IS NOT A STAMP.
     //
@@ -2191,9 +2327,15 @@ fn stamp_local(ms: u64) -> Option<String> {
     if !(1900..=2999).contains(&year) {
         return None;
     }
-    Some(format!(
-        "{} {month} {year}, {:02}:{:02}",
-        tm.tm_mday, tm.tm_hour, tm.tm_min
+    Some(crate::lang::fill(
+        t.surface_stamp,
+        &[
+            ("day", &tm.tm_mday.to_string()),
+            ("month", month),
+            ("year", &year.to_string()),
+            ("hh", &format!("{:02}", tm.tm_hour)),
+            ("mm", &format!("{:02}", tm.tm_min)),
+        ],
     ))
 }
 
@@ -2726,7 +2868,14 @@ fn parse_body(v: &Value) -> Option<Body> {
                         humanise(k),
                         match v {
                             Value::String(s) => s.clone(),
-                            Value::Null => "unavailable".into(),
+                            // Parse time, so the word is the language active
+                            // when the card arrived; facts are drawn, never
+                            // handed back to an agent.
+                            Value::Null => crate::lang::current()
+                                .strings()
+                                .parts
+                                .surface_fact_unavailable
+                                .into(),
                             other => other.to_string(),
                         },
                     )
@@ -2940,6 +3089,114 @@ fn check_version(raw: &str) -> Result<(), String> {
     }
 }
 
+/// Every reason [`parse`] can refuse a payload for that the table carries,
+/// in one language. The order is the pairing: entry `i` in English is entry
+/// `i` in any other language.
+fn reject_templates(l: Lang) -> [&'static str; 20] {
+    let t = &l.strings().parts;
+    [
+        t.surface_reject_not_object,
+        t.surface_reject_no_td,
+        t.surface_reject_bad_id,
+        t.surface_reject_retire_id,
+        t.surface_reject_no_kind,
+        t.surface_reject_artifact_href,
+        t.surface_reject_markdown_body,
+        t.surface_reject_table_columns,
+        t.surface_reject_arch_nodes,
+        t.surface_reject_changeset_hunks,
+        t.surface_reject_decision_question,
+        t.surface_reject_question_question,
+        t.surface_reject_question_options,
+        t.surface_reject_comment_body,
+        t.surface_reject_unknown_kind,
+        t.surface_reject_response_layman,
+        t.surface_reject_href_not_doc,
+        t.surface_reject_href_relative,
+        t.surface_reject_td_major,
+        t.surface_reject_td_format,
+    ]
+}
+
+/// Read an English refusal back into its template and the values filled into
+/// it: `(index into reject_templates, [(placeholder, value)])`.
+///
+/// The refusal is ONE string with two readers. [`parse`] returns it to the
+/// agent, in English, because that is the language the protocol is written
+/// in and the agent has to act on it; [`parse_lenient`] keeps the same string
+/// as the [`Unclassified`] card's reason, and a person reads that. So the
+/// English stays the stored fact and the card's subtitle is recognised and
+/// translated at draw time. A reason this does not recognise — an error the
+/// table does not carry yet — is drawn as it was sent, in English, rather than
+/// guessed at.
+fn recognise_reject(reason: &str) -> Option<(usize, Vec<(String, String)>)> {
+    reject_templates(Lang::En)
+        .iter()
+        .enumerate()
+        .find_map(|(i, template)| match_template(template, reason).map(|args| (i, args)))
+}
+
+/// Match `text` against a `{name}` template, returning each placeholder's
+/// value. Only `{lowercase_name}` is a placeholder — the same rule
+/// [`crate::lang::fill`] fills by — so a literal `{label, what_happens}` in a
+/// template is text to match. A value runs to the first occurrence of the
+/// literal that follows it.
+fn match_template(template: &str, text: &str) -> Option<Vec<(String, String)>> {
+    // literal, name, literal, name, …, literal
+    let mut literals = vec![String::new()];
+    let mut names: Vec<&str> = Vec::new();
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        let tail = &rest[open + 1..];
+        let name = tail
+            .find('}')
+            .map(|c| &tail[..c])
+            .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'));
+        let last = literals.last_mut()?;
+        match name {
+            Some(name) => {
+                last.push_str(&rest[..open]);
+                names.push(name);
+                literals.push(String::new());
+                rest = &tail[name.len() + 1..];
+            }
+            None => {
+                last.push_str(&rest[..=open]);
+                rest = tail;
+            }
+        }
+    }
+    literals.last_mut()?.push_str(rest);
+    let mut text = text.strip_prefix(literals[0].as_str())?;
+    let mut args = Vec::with_capacity(names.len());
+    for (name, next) in names.iter().zip(&literals[1..]) {
+        let end = if next.is_empty() {
+            text.len()
+        } else {
+            text.find(next.as_str())?
+        };
+        args.push((name.to_string(), text[..end].to_string()));
+        text = text[end..].strip_prefix(next.as_str())?;
+    }
+    text.is_empty().then_some(args)
+}
+
+/// An unclassified card's reason, in the reader's language. See
+/// [`recognise_reject`] for why the stored reason stays English.
+pub fn reason_in(reason: &str, l: Lang) -> String {
+    if l == Lang::En {
+        return reason.to_string();
+    }
+    match recognise_reject(reason) {
+        Some((i, args)) => {
+            let args: Vec<(&str, &str)> =
+                args.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+            crate::lang::fill(reject_templates(l)[i], &args)
+        }
+        None => reason.to_string(),
+    }
+}
+
 /// The last path segment, or the host — what a person calls the thing.
 fn short_href(href: &str) -> String {
     href.rsplit('/')
@@ -2961,7 +3218,13 @@ fn truncate_raw(value: &Value) -> String {
         while !text.is_char_boundary(cut) {
             cut -= 1;
         }
-        format!("{}\n… {} more bytes", &text[..cut], text.len() - cut)
+        // Only the unclassified card draws this, so the tail is in the
+        // language active when the card arrived.
+        let more = crate::lang::fill(
+            crate::lang::current().strings().parts.surface_raw_more,
+            &[("n", &(text.len() - cut).to_string())],
+        );
+        format!("{}\n{more}", &text[..cut])
     }
 }
 
@@ -3695,24 +3958,155 @@ mod tests {
         );
     }
 
+    /// Every refusal [`parse`] hands an agent is one the unclassified card can
+    /// read back into its template — so the card's subtitle can be drawn in
+    /// the reader's language while the agent keeps the English. A refusal the
+    /// recogniser misses is drawn in English, which is safe but is the
+    /// regression this pins.
+    #[test]
+    fn every_refusal_the_agent_reads_is_one_the_card_can_translate() {
+        let v = TDSP_VERSION;
+        let payloads = [
+            json!("not an object"),
+            json!({"kind": "markdown", "model": {"body": "x"}}),
+            json!({"td": v, "id": "!!!", "kind": "markdown", "model": {"body": "x"}}),
+            json!({"td": v, "op": "retire"}),
+            json!({"td": v}),
+            json!({"td": v, "kind": "artifact", "model": {}}),
+            json!({"td": v, "kind": "markdown", "model": {}}),
+            json!({"td": v, "kind": "table", "model": {}}),
+            json!({"td": v, "kind": "architecture", "model": {}}),
+            json!({"td": v, "kind": "changeset", "model": {}}),
+            json!({"td": v, "kind": "decision", "model": {}}),
+            json!({"td": v, "kind": "question", "model": {}}),
+            json!({"td": v, "kind": "question", "model": {"question": "q"}}),
+            json!({"td": v, "kind": "comment", "model": {}}),
+            json!({"td": v, "kind": "hologram", "model": {}}),
+            json!({"td": v, "kind": "response", "model": {}}),
+            json!({"td": v, "kind": "artifact", "model": {"href": "javascript:alert(1)"}}),
+            json!({"td": v, "kind": "artifact", "model": {"href": "docs/x.md"}}),
+            json!({"td": "99.0", "kind": "markdown", "model": {"body": "x"}}),
+            json!({"td": "soon", "kind": "markdown", "model": {"body": "x"}}),
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for p in &payloads {
+            let reason = parse(p, 0).expect_err("each payload is refused");
+            let (i, args) = recognise_reject(&reason)
+                .unwrap_or_else(|| panic!("the card cannot translate {reason:?}"));
+            let args: Vec<(&str, &str)> =
+                args.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+            assert_eq!(
+                crate::lang::fill(reject_templates(Lang::En)[i], &args),
+                reason,
+                "the template read back is the one that was filled"
+            );
+            assert_eq!(reason_in(&reason, Lang::En), reason);
+            seen.insert(i);
+        }
+        assert_eq!(
+            seen.len(),
+            20,
+            "every refusal in the table was produced once"
+        );
+        // A literal brace in a template is text, not a placeholder.
+        assert!(match_template("of {label, what} {n}", "of {label, what} 3").is_some());
+        // Something the table does not carry is drawn as sent.
+        assert_eq!(
+            reason_in("a brand new refusal", Lang::Fr),
+            "a brand new refusal"
+        );
+    }
+
+    /// The wire words and the words a person reads are different functions,
+    /// and in English they are the same words.
+    #[test]
+    fn display_words_leave_the_wire_names_alone() {
+        let kinds = [
+            "artifact",
+            "markdown",
+            "table",
+            "architecture",
+            "changeset",
+            "decision",
+            "question",
+            "response",
+            "comment",
+        ];
+        for k in kinds {
+            let s = parse(
+                &json!({"td": TDSP_VERSION, "kind": k, "model": {
+                    "href": "/tmp/x.md", "body": "b", "columns": ["a"], "nodes": [{"id": "a", "label": "A"}],
+                    "hunks": [{"file": "f", "patch": "@@"}], "question": "q", "options": ["a"],
+                    "layman": "plain",
+                }}),
+                0,
+            )
+            .unwrap()
+            .surface
+            .unwrap();
+            assert_eq!(s.kind.id(), k, "the wire name is untouched");
+            assert_eq!(
+                s.kind.word_in(Lang::En),
+                k,
+                "and English draws it as it is sent"
+            );
+            assert_eq!(s.title_in(Lang::En), s.title);
+            assert_eq!(s.subtitle_in(Lang::En), s.subtitle());
+        }
+        for (word, c) in [
+            ("measured", Confidence::Measured),
+            ("inferred", Confidence::Inferred),
+            ("hunch", Confidence::Hunch),
+            ("unknown", Confidence::Unknown),
+        ] {
+            assert_eq!(Confidence::parse(word), Some(c));
+            assert_eq!(c.label_in(Lang::En), word);
+        }
+        assert_eq!(Action::AskAgent.id(), "ask_agent");
+        assert_eq!(Action::AskAgent.label_in(Lang::En), "ask");
+        assert_eq!(
+            Register::label_in("tech", Lang::En),
+            Some("Technical brief")
+        );
+        assert_eq!(Register::label_in("my_own_key", Lang::En), None);
+        // A made-up title is stored in English whatever the reader's language,
+        // because the MCP reply hands it back to agents.
+        let t = parse(
+            &json!({"td": TDSP_VERSION, "kind": "table", "model": {"columns": ["a"], "rows": [["1"]]}}),
+            0,
+        )
+        .unwrap()
+        .surface
+        .unwrap();
+        assert_eq!(t.title, "table of 1");
+    }
+
     /// An unresolvable clock says so rather than reading 1 Jan 1970.
     #[test]
     fn a_stamp_this_machine_cannot_resolve_is_absent_not_the_epoch() {
-        let ok = stamp_local(1_789_863_240_000).expect("a resolvable stamp");
+        let ok = stamp_local(1_789_863_240_000, Lang::En).expect("a resolvable stamp");
         assert!(ok.contains("2026"), "{ok}");
         assert!(ok.contains("Sep"), "{ok}");
         // `localtime_r` does NOT refuse this: it answers `3 Apr 584556019`,
         // which is a confident, correctly-shaped, entirely invented date. An
         // absent stamp is the honest answer and the row prints `time
         // unavailable` for it.
-        assert_eq!(stamp_local(u64::MAX), None, "a garbage clock is not a date");
+        assert_eq!(
+            stamp_local(u64::MAX, Lang::En),
+            None,
+            "a garbage clock is not a date"
+        );
         // The boundary, from both sides, so the range is a decision and not an
         // accident: the epoch itself resolves, and a year past 2999 does not.
         assert!(
-            stamp_local(0).is_some(),
+            stamp_local(0, Lang::En).is_some(),
             "the epoch is a real instant, and west of UTC it falls in 1969"
         );
-        assert_eq!(stamp_local(33_000_000_000_000_000), None, "year 3015");
+        assert_eq!(
+            stamp_local(33_000_000_000_000_000, Lang::En),
+            None,
+            "year 3015"
+        );
     }
 
     #[test]
@@ -3862,7 +4256,9 @@ mod tests {
         );
         assert_eq!(s.kind.shelf(), Shelf::Overview);
         assert_eq!(
-            Shelf::Overview.badge(&s.kind, false).as_deref(),
+            Shelf::Overview
+                .badge_in(&s.kind, false, Lang::En)
+                .as_deref(),
             Some("2 doubts")
         );
     }

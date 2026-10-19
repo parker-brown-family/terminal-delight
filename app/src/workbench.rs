@@ -156,10 +156,15 @@ impl Face {
     /// a control cluster that already loses glyphs to the ⋯ overflow at 470
     /// pixels and this one never collapses.
     pub fn chip(self) -> &'static str {
+        self.chip_in(crate::lang::current())
+    }
+
+    pub fn chip_in(self, l: crate::lang::Lang) -> &'static str {
+        let t = &l.strings().parts;
         match self {
-            Face::Terminal => "TERM",
-            Face::Workbench => "BENCH",
-            Face::Document => "DOC",
+            Face::Terminal => t.bench_face_chip_term,
+            Face::Workbench => t.bench_face_chip_bench,
+            Face::Document => t.bench_face_chip_doc,
         }
     }
 }
@@ -306,16 +311,29 @@ impl<'a> Leaf<'a> {
         }
     }
 
-    /// The word on its chip.
+    /// The word on its chip, in the reader's language.
     pub fn label(self) -> &'a str {
+        self.label_in(crate::lang::current())
+    }
+
+    pub fn label_in(self, l: crate::lang::Lang) -> &'a str {
+        let t = &l.strings().parts;
         match self {
             // `Brief`, `Plain brief`, `Technical brief` — the row reads as one
             // ladder of depth, shortest on the left, which is the only reason
             // the bare word is allowed to sit beside two that qualify it.
-            Leaf::Brief => "Brief",
-            Leaf::Layman => "Plain brief",
-            Leaf::Section(s) => &s.label,
-            Leaf::Doubts => "doubts",
+            Leaf::Brief => t.bench_leaf_brief,
+            Leaf::Layman => t.bench_leaf_plain_brief,
+            // A register this build knows wears the table's word for it; a key
+            // it does not know wears the agent's own, which is not ours to
+            // translate.
+            Leaf::Section(s) => match crate::surface::Register::known(&s.key) {
+                Some((_, _, en)) if en == s.label => {
+                    crate::surface::Register::label_in(&s.key, l).unwrap_or(&s.label)
+                }
+                _ => &s.label,
+            },
+            Leaf::Doubts => t.bench_leaf_doubts,
         }
     }
 
@@ -3012,20 +3030,23 @@ pub fn turn_opening(effect: &crate::channel::Effect) -> (Option<String>, Option<
 /// `Exited` keeps its finality, and earns it: the process is gone, so *nothing
 /// further is coming* is a fact about the present rather than a prediction.
 pub fn live_says(state: AgentState) -> (&'static str, &'static str) {
+    live_says_in(state, crate::lang::current())
+}
+
+pub fn live_says_in(state: AgentState, l: crate::lang::Lang) -> (&'static str, &'static str) {
+    let t = &l.strings().parts;
     match state {
         // Silent on purpose. The card sits there for the whole turn, and a
         // sentence repeated under every turn stops being information. Parker:
         // *"that reply lands here when turn ends is actually persistent and
         // really gross... PLEASE JUST --- kill it"*.
-        AgentState::Working => ("IN FLIGHT", ""),
-        AgentState::Reading => ("IN FLIGHT", "it is reading what the bench just typed"),
-        AgentState::Paused => ("PAUSED", "you stopped this turn; it has not started again"),
-        AgentState::Asking => ("WAITING ON YOU", "it asked something before it could go on"),
-        AgentState::Blocked => ("BLOCKED", "the turn stopped on something that went wrong"),
-        AgentState::Done | AgentState::Idle => {
-            ("THE TURN ENDED", "no reply has landed on the bench")
-        }
-        AgentState::Exited => ("AGENT GONE", "the agent left before a reply landed"),
+        AgentState::Working => (t.bench_live_in_flight, ""),
+        AgentState::Reading => (t.bench_live_in_flight, t.bench_live_reading_sub),
+        AgentState::Paused => (t.bench_live_paused, t.bench_live_paused_sub),
+        AgentState::Asking => (t.bench_live_waiting, t.bench_live_waiting_sub),
+        AgentState::Blocked => (t.bench_live_blocked, t.bench_live_blocked_sub),
+        AgentState::Done | AgentState::Idle => (t.bench_live_ended, t.bench_live_ended_sub),
+        AgentState::Exited => (t.bench_live_gone, t.bench_live_gone_sub),
     }
 }
 
@@ -3561,15 +3582,20 @@ impl AgentState {
     /// Sentence case and no glyph: the card carries a coloured dot, and a
     /// glyph plus a colour plus a word is the same fact said three times.
     pub fn word(self) -> &'static str {
+        self.word_in(crate::lang::current())
+    }
+
+    pub fn word_in(self, l: crate::lang::Lang) -> &'static str {
+        let t = &l.strings().parts;
         match self {
-            AgentState::Asking => "Waiting on you",
-            AgentState::Blocked => "Blocked",
-            AgentState::Done => "Finished",
-            AgentState::Exited => "Exited",
-            AgentState::Working => "Working",
-            AgentState::Reading => "Reading your answer",
-            AgentState::Paused => "Paused",
-            AgentState::Idle => "Idle",
+            AgentState::Asking => t.bench_state_waiting,
+            AgentState::Blocked => t.bench_state_blocked,
+            AgentState::Done => t.bench_state_finished,
+            AgentState::Exited => t.bench_state_exited,
+            AgentState::Working => t.bench_state_working,
+            AgentState::Reading => t.bench_state_reading,
+            AgentState::Paused => t.bench_state_paused,
+            AgentState::Idle => t.bench_state_idle,
         }
     }
 
@@ -3713,7 +3739,7 @@ pub struct Row {
     pub subtitle: String,
     pub kind: &'static str,
     /// The short word this row wears, or [`None`] where the state chip
-    /// already says everything. See [`crate::surface::Shelf::badge`].
+    /// already says everything. See [`crate::surface::Shelf::badge_in`].
     pub badge: Option<String>,
     pub tint: Tint,
     pub standing: Standing,
@@ -4006,21 +4032,23 @@ pub fn verb_preview(
     comment: Option<&str>,
     tag: Option<&str>,
 ) -> String {
+    use crate::lang::fill;
     use crate::surface::{Action, ActionReport, Kind};
+    // Only the local verbs speak the reader's language: what the others
+    // preview is the exact line typed to the agent, which stays as typed.
+    let t = &crate::lang::current().strings().parts;
     match action {
         Action::Open => match &surface.kind {
-            Kind::Artifact(a) => format!("opens {}", a.href),
-            _ => "opens nothing \u{2014} this surface is not a document".to_string(),
+            Kind::Artifact(a) => fill(t.bench_preview_opens, &[("target", &a.href)]),
+            _ => t.bench_preview_opens_not_doc.to_string(),
         },
         Action::OpenSource => match surface.source.as_ref().and_then(|s| s.files.first()) {
-            Some(f) => format!("opens {f}"),
-            None => "opens nothing \u{2014} this surface names no source".to_string(),
+            Some(f) => fill(t.bench_preview_source, &[("file", f)]),
+            None => t.bench_preview_source_none.to_string(),
         },
         Action::Copy => match &surface.kind {
-            Kind::Comment(_) | Kind::Markdown(_) => {
-                "copies the text \u{2014} the agent is not told".to_string()
-            }
-            _ => "copies nothing \u{2014} this surface is not text".to_string(),
+            Kind::Comment(_) | Kind::Markdown(_) => t.bench_preview_copy.to_string(),
+            _ => t.bench_preview_copy_none.to_string(),
         },
         _ => ActionReport {
             surface: surface.id.clone(),
@@ -4304,15 +4332,18 @@ impl Bench {
         // the renderer so that one list is the rail, the keyboard's `step` and
         // the shelf's count — three readers of one fact that would otherwise
         // have three chances to disagree.
+        let l = crate::lang::current();
+        let t = &l.strings().parts;
         let live = (shelf == Shelf::Overview)
             .then_some(self.live.as_ref())
             .flatten()
-            .map(|t| Row {
-                id: t.id.clone(),
-                title: t.headline.clone().unwrap_or_else(|| {
-                    "a turn began \u{b7} nothing recorded what opened it".to_string()
-                }),
-                subtitle: "the reply has not landed yet".to_string(),
+            .map(|turn| Row {
+                id: turn.id.clone(),
+                title: turn
+                    .headline
+                    .clone()
+                    .unwrap_or_else(|| t.bench_live_row_title_unknown.to_string()),
+                subtitle: t.bench_live_row_subtitle.to_string(),
                 kind: LIVE_TURN_KIND,
                 badge: None,
                 tint: Tint::Pending,
@@ -4351,9 +4382,12 @@ impl Bench {
                             unseen: members.iter().any(|m| self.unseen.contains(m)),
                             id: opens.clone(),
                             title: title.clone(),
-                            subtitle: format!("{done} of {total} answered"),
+                            subtitle: crate::lang::fill(
+                                t.bench_round_answered,
+                                &[("done", &done.to_string()), ("total", &total.to_string())],
+                            ),
                             kind: s.kind.id(),
-                            badge: shelf.badge(&s.kind, false),
+                            badge: shelf.badge_in(&s.kind, false, l),
                             tint: if *waiting {
                                 Tint::Waiting
                             } else {
@@ -4365,10 +4399,10 @@ impl Bench {
                             selected: self.selected.as_ref() == Some(&s.id),
                             unseen: self.unseen.contains(&s.id),
                             id: s.id.clone(),
-                            title: s.title.clone(),
-                            subtitle: s.subtitle(),
+                            title: s.title_in(l),
+                            subtitle: s.subtitle_in(l),
                             kind: s.kind.id(),
-                            badge: shelf.badge(&s.kind, false),
+                            badge: shelf.badge_in(&s.kind, false, l),
                             tint: tint_of(&s.kind),
                             // Filled in below: standing is a property of a
                             // row's place in the shelf, which no row can know
@@ -8892,6 +8926,41 @@ mod tests {
         assert!(
             !rows.iter().any(|r| r.standing == Standing::Current),
             "nothing stands while a question is open"
+        );
+    }
+
+    /// A section chip translates the label this build gave a register it
+    /// knows, and leaves the agent's own key in the agent's own words.
+    #[test]
+    fn a_section_chip_translates_only_the_labels_this_build_wrote() {
+        use crate::lang::Lang;
+        use crate::surface::{Body, Register, Section};
+        let known = Section {
+            key: "technical".into(),
+            label: "Technical brief".into(),
+            register: Register::Technical,
+            body: Body::Prose("x".into()),
+        };
+        let theirs = Section {
+            key: "risk_matrix".into(),
+            label: "Risk matrix".into(),
+            register: Register::Other,
+            body: Body::Prose("x".into()),
+        };
+        assert_eq!(Leaf::Section(&known).label_in(Lang::En), "Technical brief");
+        assert_eq!(Leaf::Section(&theirs).label_in(Lang::En), "Risk matrix");
+        assert_eq!(Leaf::Section(&theirs).label_in(Lang::De), "Risk matrix");
+        assert_eq!(
+            Leaf::Section(&known).label_in(Lang::De),
+            Lang::De.strings().parts.surface_register_technical
+        );
+        // The wire key never changes language.
+        assert_eq!(Leaf::Section(&known).key(), "technical");
+        assert_eq!(Leaf::Brief.label_in(Lang::En), "Brief");
+        assert_eq!(Face::Workbench.chip_in(Lang::En), "BENCH");
+        assert_eq!(
+            live_says_in(AgentState::Asking, Lang::En).0,
+            "WAITING ON YOU"
         );
     }
 

@@ -66,6 +66,18 @@ impl Source {
         }
     }
 
+    /// [`Self::word`] in `l`, for the page a person reads. The English word
+    /// is the saved form ([`Self::from_word`], the surface's `handover` key),
+    /// so it never changes.
+    pub fn word_in(self, l: crate::lang::Lang) -> &'static str {
+        let p = l.strings().parts;
+        match self {
+            Source::Said => p.handover_source_said,
+            Source::Presented => p.handover_source_presented,
+            Source::Declared => p.handover_source_declared,
+        }
+    }
+
     fn from_word(w: &str) -> Option<Source> {
         match w {
             "said" => Some(Source::Said),
@@ -654,47 +666,62 @@ pub struct Row {
 /// its own. It is also a file an agent can read and a person can keep.
 ///
 /// `today` and `yesterday` are the local dates the headings are named
-/// against; `None` names every day by its date.
+/// against; `None` names every day by its date. In English: the pane
+/// writes it in the reader's language through [`history_markdown_in`].
+#[cfg(test)]
 pub fn history_markdown(
     pane: &str,
     rows: &[Row],
     today: Option<(i32, u32, u32)>,
     yesterday: Option<(i32, u32, u32)>,
 ) -> String {
+    history_markdown_in(pane, rows, today, yesterday, crate::lang::Lang::En)
+}
+
+/// [`history_markdown`], worded in `l`. The Markdown around the words, and
+/// the `declare_deliverable` / `Deliverable:` tokens inside them, are the same
+/// in every language. The page is a file, rewritten only when its text
+/// changes, so a language switch shows on the next rewrite.
+pub fn history_markdown_in(
+    pane: &str,
+    rows: &[Row],
+    today: Option<(i32, u32, u32)>,
+    yesterday: Option<(i32, u32, u32)>,
+    l: crate::lang::Lang,
+) -> String {
+    use crate::lang::fill;
+    let p = l.strings().parts;
     let mut out = String::new();
-    out.push_str("# Handed over\n\n");
+    out.push_str(p.handover_page_title);
+    out.push_str("\n\n");
     let pane = escape(pane.trim());
     let unopened = rows.iter().filter(|r| !r.opened).count();
     if rows.is_empty() {
-        out.push_str(&format!(
-            "**{pane}** has not handed anything over in this conversation yet.\n\n\
-             An agent hands something over with the `declare_deliverable` verb, \
-             or with a line that starts `Deliverable:` and carries a link. \
-             Each one is listed here, newest first, and opens over the pane with one click.\n"
-        ));
+        out.push_str(&fill(p.handover_page_empty, &[("pane", &pane)]));
+        out.push('\n');
         return out;
     }
-    let count = match rows.len() {
-        1 => "1 artifact".to_string(),
-        n => format!("{n} artifacts"),
-    };
+    let count = l.count(&p.handover_count, rows.len());
     let fresh = match unopened {
-        0 => "all opened".to_string(),
-        n => format!("**{n} new**"),
+        0 => p.handover_all_opened.to_string(),
+        n => fill(p.handover_n_new, &[("n", &n.to_string())]),
     };
     // The pane's name on a line of its own, so a long one wraps as a name
     // rather than pushing the counts onto a ragged second line.
-    out.push_str(&format!(
-        "**{pane}**\n\n\
-         {count}, newest first · {fresh} · \
-         click a name to open it over this pane, Esc puts this page away.\n"
+    out.push_str(&fill(
+        p.handover_page_intro,
+        &[("pane", &pane), ("count", &count), ("fresh", &fresh)],
     ));
+    out.push('\n');
     let mut day: Option<Option<(i32, u32, u32)>> = None;
     for r in rows {
         let this = r.when.map(Clock::date);
         if day != Some(this) {
             day = Some(this);
-            out.push_str(&format!("\n## {}\n", day_heading(r.when, today, yesterday)));
+            out.push_str(&format!(
+                "\n## {}\n",
+                day_heading(r.when, today, yesterday, l)
+            ));
         }
         // One marker per row: the list's own. "New" is a word in the line
         // under the name, where the eye that has found the name reads on.
@@ -705,33 +732,34 @@ pub fn history_markdown(
         ));
         let mut meta = Vec::new();
         if !r.opened {
-            meta.push("**new**".to_string());
+            meta.push(p.handover_meta_new.to_string());
         }
         meta.push(format!("`{}`", r.kind));
         meta.push(
             r.when
                 .map(Clock::hhmm)
-                .unwrap_or_else(|| "time unavailable".into()),
+                .unwrap_or_else(|| p.handover_time_unavailable.into()),
         );
-        meta.push(r.source.word().to_string());
+        meta.push(r.source.word_in(l).to_string());
         match r.fact {
             FileFact::Rewritten(ms) => meta.push(match local(ms) {
                 Some(c) if Some(c.date()) == r.when.map(Clock::date) => {
-                    format!("rewritten {}", c.hhmm())
+                    fill(p.handover_rewritten_time, &[("time", &c.hhmm())])
                 }
-                Some(c) => format!("rewritten {} {}", short_date(c), c.hhmm()),
-                None => "rewritten since".into(),
+                Some(c) => fill(
+                    p.handover_rewritten_date_time,
+                    &[("date", &short_date(c, l)), ("time", &c.hhmm())],
+                ),
+                None => p.handover_rewritten_since.into(),
             }),
-            FileFact::Gone => meta.push("**file gone**".into()),
+            FileFact::Gone => meta.push(p.handover_file_gone.into()),
             FileFact::Same | FileFact::Unknown => {}
         }
         out.push_str(&meta.join(" · "));
         out.push('\n');
     }
-    out.push_str(
-        "\n---\n\nWritten by Terminal Delight from what this agent handed over, \
-         and rewritten whenever something new arrives.\n",
-    );
+    out.push_str(p.handover_footer);
+    out.push('\n');
     out
 }
 
@@ -739,38 +767,62 @@ fn day_heading(
     when: Option<Clock>,
     today: Option<(i32, u32, u32)>,
     yesterday: Option<(i32, u32, u32)>,
+    l: crate::lang::Lang,
 ) -> String {
+    let p = l.strings().parts;
     let Some(c) = when else {
-        return "Time unavailable".into();
+        return p.handover_day_unavailable.into();
     };
     if Some(c.date()) == today {
-        return "Today".into();
+        return p.handover_day_today.into();
     }
     if Some(c.date()) == yesterday {
-        return "Yesterday".into();
+        return p.handover_day_yesterday.into();
     }
-    const DAY: [&str; 7] = [
-        "Sunday",
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
+    let day = [
+        p.handover_weekday_sunday,
+        p.handover_weekday_monday,
+        p.handover_weekday_tuesday,
+        p.handover_weekday_wednesday,
+        p.handover_weekday_thursday,
+        p.handover_weekday_friday,
+        p.handover_weekday_saturday,
     ];
-    let name = DAY.get(c.weekday as usize).copied().unwrap_or("");
-    format!("{name} {}", short_date(c)).trim().to_string()
+    let name = day.get(c.weekday as usize).copied().unwrap_or("");
+    crate::lang::fill(
+        p.handover_day_heading,
+        &[("weekday", name), ("date", &short_date(c, l))],
+    )
+    .trim()
+    .to_string()
 }
 
-fn short_date(c: Clock) -> String {
-    const MONTH: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+/// `14 Oct`, in the order and with the month names `l` uses. The months are
+/// the bench's own (`surface_month_*`): one set of names for the whole window.
+fn short_date(c: Clock, l: crate::lang::Lang) -> String {
+    let p = l.strings().parts;
+    let month = [
+        p.surface_month_jan,
+        p.surface_month_feb,
+        p.surface_month_mar,
+        p.surface_month_apr,
+        p.surface_month_may,
+        p.surface_month_jun,
+        p.surface_month_jul,
+        p.surface_month_aug,
+        p.surface_month_sep,
+        p.surface_month_oct,
+        p.surface_month_nov,
+        p.surface_month_dec,
     ];
-    let m = MONTH
+    let m = month
         .get(c.month.saturating_sub(1) as usize)
         .copied()
         .unwrap_or("");
-    format!("{} {m}", c.day)
+    crate::lang::fill(
+        p.handover_date_format,
+        &[("day", &c.day.to_string()), ("month", m)],
+    )
 }
 
 /// Markdown's own characters in a label, made literal.
@@ -1493,5 +1545,33 @@ mod tests {
         assert!(write_if_changed(&path, "two").unwrap());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "two");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_page_is_worded_per_language_but_the_saved_word_is_not() {
+        use crate::lang::Lang;
+        for src in [Source::Said, Source::Presented, Source::Declared] {
+            assert_eq!(src.word_in(Lang::En), src.word());
+            assert_eq!(Source::from_word(src.word()), Some(src));
+        }
+        let rows = vec![row(
+            "x",
+            "/tmp/s/a.html",
+            Some(clock(4, 9, 5)),
+            Source::Presented,
+            false,
+            FileFact::Gone,
+        )];
+        for l in Lang::ALL {
+            let page = history_markdown_in("p", &rows, None, None, l);
+            // Markdown structure survives every language's words.
+            assert!(page.starts_with("# "), "{l:?}: {page}");
+            assert!(page.contains("\n## "), "{l:?}: {page}");
+            assert!(page.contains("\n---\n"), "{l:?}: {page}");
+        }
+        assert_eq!(
+            history_markdown_in("p", &rows, None, None, Lang::En),
+            history_markdown("p", &rows, None, None)
+        );
     }
 }

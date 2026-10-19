@@ -251,6 +251,39 @@ pub fn remaining_label(left: Duration) -> String {
     }
 }
 
+/// [`remaining_label`] in `l`. The English function stays as it is, because
+/// main.rs trims its `" left"` to say the span in a sentence; this one and
+/// [`span_label_in`] are the two shapes a person reads.
+#[allow(dead_code)] // drawn by main.rs (the trash tray's offers, ~11574) once it adopts this
+pub fn remaining_label_in(l: crate::lang::Lang, left: Duration) -> String {
+    hm_in(l, left, false)
+}
+
+/// How long a holding lasts, with no "left": the span inside the delete
+/// dialog's "recoverable … for {span}", which main.rs builds today by
+/// trimming `" left"` off the English [`remaining_label`].
+#[allow(dead_code)] // drawn by main.rs (the delete confirmation, ~30599) once it adopts this
+pub fn span_label_in(l: crate::lang::Lang, span: Duration) -> String {
+    hm_in(l, span, true)
+}
+
+fn hm_in(l: crate::lang::Lang, d: Duration, bare: bool) -> String {
+    let t = &l.strings().parts;
+    let secs = d.as_secs();
+    if secs < 60 {
+        return t.hold_under_a_minute.to_string();
+    }
+    let mins = secs / 60;
+    let (h, m) = (mins / 60, mins % 60);
+    let template = match (h > 0, bare) {
+        (true, false) => t.hold_left_hm,
+        (false, false) => t.hold_left_m,
+        (true, true) => t.hold_span_hm,
+        (false, true) => t.hold_span_m,
+    };
+    crate::lang::fill(template, &[("h", &h.to_string()), ("m", &m.to_string())])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,6 +560,16 @@ mod tests {
         assert_eq!(remaining_label(mins(48)), "48m left");
         assert_eq!(remaining_label(mins(60)), "1h 0m left");
         assert_eq!(remaining_label(mins(221)), "3h 41m left");
+        // The language-taking shapes say the same in English, and the bare
+        // span is exactly what main.rs gets today by trimming " left".
+        use crate::lang::Lang;
+        for d in [Duration::from_secs(30), mins(48), mins(60), mins(221)] {
+            assert_eq!(remaining_label_in(Lang::En, d), remaining_label(d));
+            assert_eq!(
+                span_label_in(Lang::En, d),
+                remaining_label(d).trim_end_matches(" left")
+            );
+        }
     }
 
     #[test]

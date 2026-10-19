@@ -75,6 +75,22 @@ pub struct Picks<'a> {
     pub submit: Option<crate::workbench::Hit>,
 }
 
+/// The bench's words, in the language the window is showing.
+///
+/// Read from the process-wide language rather than passed down, because a
+/// pane renders itself without a workspace handle — the same door the pane
+/// header uses. Every word a person reads on a card comes through here; the
+/// agent's own text never does.
+fn words() -> &'static crate::lang::Parts {
+    crate::lang::current().strings().parts
+}
+
+/// A counted phrase from [`words`], in the form the window's language uses
+/// for `n`.
+fn counted(p: &crate::lang::Plural, n: usize) -> String {
+    crate::lang::current().count(p, n)
+}
+
 /// Which palette role each meaning borrows.
 ///
 /// A table, and a table of [`Role`]s rather than of colours, because `Role` is
@@ -291,6 +307,7 @@ fn micro(text: impl Into<String>, step: Step, colour: Hsla, sk: &Skin, th: &Them
 /// its arms are ORDERED: a wrong order is silent, compiles, and shows the
 /// wrong word on every row of a kind.
 pub fn lane_word(standing: Standing, kind: &str, tint: Tint) -> Option<&'static str> {
+    let w = words();
     match (standing, kind) {
         // A TURN HAS NOT SAID ANYTHING YET, so it stands for nothing — first
         // in the table because no other row's rule may reach it. The word is
@@ -299,7 +316,7 @@ pub fn lane_word(standing: Standing, kind: &str, tint: Tint) -> Option<&'static 
         // PRESENTED`, the rail cannot, so the rail makes the claim it can
         // support in every case rather than the livelier one that goes stale
         // the moment a turn ends having presented nothing.
-        (_, crate::workbench::LIVE_TURN_KIND) => Some("THIS TURN"),
+        (_, crate::workbench::LIVE_TURN_KIND) => Some(w.benchdraw_lane_this_turn),
         // A note does not STAND. The standing vocabulary is about work a person
         // has to resolve — what is waiting, what the answer currently is, how it
         // got there — and none of those questions apply to something you wrote
@@ -310,14 +327,16 @@ pub fn lane_word(standing: Standing, kind: &str, tint: Tint) -> Option<&'static 
         // is where a reader who has not moved the cursor is meant to start, and
         // `Standing::lit` already gives it the weight. LATEST is what that word
         // is on a chronological board. Parker: *"LATEST is nice."*
-        (Standing::Current, "comment") => Some("LATEST"),
+        (Standing::Current, "comment") => Some(w.benchdraw_lane_latest),
         (_, "comment") => None,
-        (Standing::Waiting, _) => Some("WAITING ON YOU"),
-        (Standing::Queued, _) => Some("ALSO WAITING"),
-        (Standing::Current, _) => Some("STANDS NOW"),
+        (Standing::Waiting, _) => Some(w.benchdraw_lane_waiting),
+        (Standing::Queued, _) => Some(w.benchdraw_lane_also_waiting),
+        (Standing::Current, _) => Some(w.benchdraw_lane_stands_now),
         (Standing::Past, _) => match (tint, kind) {
-            (Tint::Settled, "question") | (Tint::Settled, "decision") => Some("ANSWERED"),
-            (Tint::Settled, _) => Some("DONE"),
+            (Tint::Settled, "question") | (Tint::Settled, "decision") => {
+                Some(w.benchdraw_lane_answered)
+            }
+            (Tint::Settled, _) => Some(w.benchdraw_lane_done),
             _ => None,
         },
     }
@@ -500,7 +519,7 @@ pub fn add_note_row(sk: &Skin, th: &Theme) -> Div {
                 .min_w(px(0.))
                 .text_size(px(sk.pt(Step::Small)))
                 .text_color(mine.alpha(0.92))
-                .child("write a note"),
+                .child(words().benchdraw_write_note),
         )
         .child(micro("ALT+M", Step::Tag, sk.ink.ink_faint, sk, th))
 }
@@ -578,11 +597,56 @@ pub struct WeightLine {
 /// Eight adjectives reach this and exactly one of them starts with a vowel,
 /// which is precisely how `A involved job` shipped in the first draft of this
 /// sentence: a case that occurs once is a case nobody writes a branch for.
-fn article(word: &str) -> &'static str {
+///
+/// The rule is English's, and so are the two words it picks between; a
+/// language with no such agreement gives both the same word (or none), and the
+/// choice made here then picks nothing.
+fn article(word: &str, w: &crate::lang::Parts) -> &'static str {
     match word.chars().next() {
-        Some('a' | 'e' | 'i' | 'o' | 'u') => "An",
-        _ => "A",
+        Some('a' | 'e' | 'i' | 'o' | 'u') => w.benchdraw_article_an,
+        _ => w.benchdraw_article_a,
     }
+}
+
+/// [`crate::lang::fill`], and where each filled value landed.
+///
+/// The weight sentence highlights its system, its depth and its confidence as
+/// byte ranges into ONE string, and a translation is free to move a
+/// placeholder anywhere its grammar wants it — so the ranges are read off the
+/// rendered sentence as it is filled rather than assumed from English word
+/// order. Returns the text and, in the order they appear in it, the index into
+/// `args` of each value filled with the range it occupies.
+fn fill_marked(
+    template: &str,
+    args: &[(&str, &str)],
+) -> (String, Vec<(usize, std::ops::Range<usize>)>) {
+    let mut out = String::with_capacity(template.len());
+    let mut at = Vec::new();
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let tail = &rest[open + 1..];
+        let hit = tail.find('}').and_then(|close| {
+            let name = &tail[..close];
+            args.iter()
+                .position(|(n, _)| *n == name)
+                .map(|i| (close, i))
+        });
+        match hit {
+            Some((close, i)) => {
+                let start = out.len();
+                out.push_str(args[i].1);
+                at.push((i, start..out.len()));
+                rest = &tail[close + 1..];
+            }
+            None => {
+                out.push('{');
+                rest = tail;
+            }
+        }
+    }
+    out.push_str(rest);
+    (out, at)
 }
 
 /// The four weights, said the way a person would say them.
@@ -606,6 +670,12 @@ fn article(word: &str) -> &'static str {
 /// absent one must read as absent rather than as a default. The property test
 /// walks all 625 combinations and demands each one is still a sentence.
 pub fn weight_line(w: &Weight) -> WeightLine {
+    weight_line_in(w, words())
+}
+
+/// [`weight_line`] in a given language's words — whole clauses with named
+/// slots, never English fragments glued in English order.
+fn weight_line_in(w: &Weight, t: &crate::lang::Parts) -> WeightLine {
     let mut text = String::new();
     let mut marks: Vec<std::ops::Range<usize>> = Vec::new();
     let mut inks: Vec<Mark> = Vec::new();
@@ -616,29 +686,42 @@ pub fn weight_line(w: &Weight) -> WeightLine {
     // and trivial — and that distinction survives here as two adjectives, not
     // as two rows.
     let size = w.effort.map(|e| match e {
-        crate::surface::Effort::Small => "small",
-        crate::surface::Effort::Medium => "middling",
-        crate::surface::Effort::Large => "big",
-        crate::surface::Effort::Epic => "huge",
+        crate::surface::Effort::Small => t.benchdraw_effort_small,
+        crate::surface::Effort::Medium => t.benchdraw_effort_medium,
+        crate::surface::Effort::Large => t.benchdraw_effort_large,
+        crate::surface::Effort::Epic => t.benchdraw_effort_epic,
     });
     let tangle = w.complexity.map(|c| match c {
-        crate::surface::Complexity::Trivial => "straightforward",
-        crate::surface::Complexity::Moderate => "fiddly",
-        crate::surface::Complexity::Involved => "involved",
-        crate::surface::Complexity::Hairy => "hairy",
+        crate::surface::Complexity::Trivial => t.benchdraw_complexity_trivial,
+        crate::surface::Complexity::Moderate => t.benchdraw_complexity_moderate,
+        crate::surface::Complexity::Involved => t.benchdraw_complexity_involved,
+        crate::surface::Complexity::Hairy => t.benchdraw_complexity_hairy,
     });
-    match (size, tangle) {
-        (Some(s), Some(t)) => text.push_str(&format!("{} {s}, {t} job", article(s))),
-        (Some(s), None) => text.push_str(&format!("{} {s} job", article(s))),
-        (None, Some(t)) => text.push_str(&format!("{} {t} job", article(t))),
-        (None, None) => {}
+    let job = match (size, tangle) {
+        (Some(s), Some(_)) => Some((t.benchdraw_weight_job_both, s)),
+        (Some(s), None) => Some((t.benchdraw_weight_job_size, s)),
+        (None, Some(g)) => Some((t.benchdraw_weight_job_tangle, g)),
+        (None, None) => None,
+    };
+    if let Some((template, first)) = job {
+        // The article agrees with whichever adjective comes first. Trimmed,
+        // because a language with no article leaves the slot empty and the
+        // sentence must not open on the space that followed it.
+        let filled = crate::lang::fill(
+            template,
+            &[
+                ("article", article(first, t)),
+                ("size", size.unwrap_or("")),
+                ("tangle", tangle.unwrap_or("")),
+            ],
+        );
+        text.push_str(filled.trim_start());
     }
 
     // WHERE IT LANDS, and what it costs to be wrong there — the field a
     // reviewer actually wants, per `Foundation`'s own doc: not "how long" but
     // "if this is wrong, how much else is wrong with it".
     if let Some(f) = &w.foundation {
-        text.push_str(if text.is_empty() { "In " } else { " in " });
         // The name is written WHOLE. `clip(&f.system, 22)` is what Parker was
         // pointing at, and a sentence has nowhere to put an ellipsis: the line
         // wraps instead, which is what the heading directly above it has done
@@ -649,25 +732,35 @@ pub fn weight_line(w: &Weight) -> WeightLine {
         // here. Unknown is not zero, and "In , where" is how a renderer admits
         // it forgot that.
         let system = match f.system.trim() {
-            "" | "unnamed" => "a system it did not name",
+            "" | "unnamed" => t.benchdraw_weight_unnamed_system,
             named => named,
         };
-        let at = text.len();
-        text.push_str(system);
-        marks.push(at..text.len());
-        inks.push(Mark::Named);
-        text.push_str(", where ");
-        let at = text.len();
-        text.push_str(match f.depth {
-            Depth::Leaf => "nothing else depends on it",
-            Depth::Component => "other components call it",
-            Depth::Subsystem => "several components depend on it",
-            Depth::Bedrock => "a mistake here is paid for by everything above it",
-        });
-        marks.push(at..text.len());
-        inks.push(Mark::Deep(f.depth));
-    }
-    if !text.is_empty() {
+        let depth = match f.depth {
+            Depth::Leaf => t.benchdraw_depth_leaf,
+            Depth::Component => t.benchdraw_depth_component,
+            Depth::Subsystem => t.benchdraw_depth_subsystem,
+            Depth::Bedrock => t.benchdraw_depth_bedrock,
+        };
+        // A whole clause, opening the sentence or continuing the job phrase,
+        // with the system and the depth as named slots. Their highlights are
+        // measured on the clause as filled, in whatever order it put them.
+        let clause = if text.is_empty() {
+            t.benchdraw_weight_in
+        } else {
+            t.benchdraw_weight_in_mid
+        };
+        let (filled, at) = fill_marked(clause, &[("system", system), ("depth", depth)]);
+        let base = text.len();
+        text.push_str(&filled);
+        for (i, range) in at {
+            marks.push(base + range.start..base + range.end);
+            inks.push(if i == 0 {
+                Mark::Named
+            } else {
+                Mark::Deep(f.depth)
+            });
+        }
+    } else if !text.is_empty() {
         text.push('.');
     }
 
@@ -681,10 +774,10 @@ pub fn weight_line(w: &Weight) -> WeightLine {
         }
         let at = text.len();
         text.push_str(match c {
-            Confidence::Measured => "Measured",
-            Confidence::Inferred => "Inferred, not measured",
-            Confidence::Hunch => "A hunch",
-            Confidence::Unknown => "The agent looked and could not tell",
+            Confidence::Measured => t.benchdraw_sure_measured,
+            Confidence::Inferred => t.benchdraw_sure_inferred,
+            Confidence::Hunch => t.benchdraw_sure_hunch,
+            Confidence::Unknown => t.benchdraw_sure_unknown,
         });
         marks.push(at..text.len());
         inks.push(Mark::Sure(c));
@@ -718,7 +811,7 @@ pub fn weight_line(w: &Weight) -> WeightLine {
 pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
     if w.is_silent() {
         return div().child(micro(
-            "Nobody said how big this is or how deep it goes.",
+            words().benchdraw_weight_silent,
             Step::Note,
             sk.ink.ink_faint,
             sk,
@@ -839,8 +932,9 @@ fn summary_line(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         .flex_row()
         .gap(px(8.))
         .items_baseline()
+        // The kind in the reader's words; `id()` is the wire name.
         .child(micro(
-            surface.kind.id().to_string(),
+            surface.kind.word(),
             Step::Note,
             sk.ink.ink_faint,
             sk,
@@ -850,7 +944,7 @@ fn summary_line(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
             div()
                 .text_size(px(sk.pt(Step::Lead)))
                 .text_color(th.text)
-                .child(sel(clip(&surface.title, 60))),
+                .child(sel(clip(&surface.title_in(crate::lang::current()), 60))),
         )
 }
 
@@ -870,7 +964,7 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
                         .text_size(px(sk.pt(Step::Fine)))
                         .font_family(th.font_family.clone())
                         .text_color(ink(crate::workbench::tint_of(&surface.kind), th))
-                        .child(surface.kind.id().to_string()),
+                        .child(surface.kind.word()),
                 )
                 .child(
                     // Wraps rather than clips: the heading is the one string
@@ -882,7 +976,7 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
                         .min_w(px(0.))
                         .text_size(px(sk.pt(Step::Title)))
                         .text_color(th.text)
-                        .child(sel(surface.title.clone())),
+                        .child(sel(surface.title_in(crate::lang::current()))),
                 ),
         )
         // The subtitle, for the kinds whose subtitle says something a reader
@@ -1061,20 +1155,30 @@ fn escalation(
     use crate::surface::EscalationLevel as L;
     let tint = call.tint(th);
     let open = e.unanswered();
-    let legend = format!(
-        "\u{25c6} {} \u{b7} {} unanswered{}",
-        match e.level {
-            L::Blocking => "NEEDS YOU",
-            L::Wanted => "WANTED",
-            // Unreachable while `call_of` returns None for it; written out
-            // rather than unwrapped so a future level cannot panic a card.
-            L::None => "CLEAR",
-        },
-        open,
-        match e.level {
-            L::Blocking => " \u{b7} BLOCKING",
-            _ => " \u{b7} WORK CONTINUES",
-        }
+    let w = words();
+    let legend = crate::lang::fill(
+        w.benchdraw_escalation_legend,
+        &[
+            (
+                "level",
+                match e.level {
+                    L::Blocking => w.benchdraw_escalation_needs_you,
+                    L::Wanted => w.benchdraw_escalation_wanted,
+                    // Unreachable while `call_of` returns None for it; written
+                    // out rather than unwrapped so a future level cannot panic
+                    // a card.
+                    L::None => w.benchdraw_escalation_clear,
+                },
+            ),
+            ("open", &open.to_string()),
+            (
+                "blocking",
+                match e.level {
+                    L::Blocking => w.benchdraw_escalation_blocking,
+                    _ => w.benchdraw_escalation_continues,
+                },
+            ),
+        ],
     );
     // The frame comes from the Call, not from a `spine_frame` call written out
     // here: one place decides what a summons looks like.
@@ -1102,7 +1206,13 @@ fn escalation(
                 // declared a level, and a red frame it did not ask for is a
                 // claim the bench is making on its own behalf.
                 .when(e.inferred, |d| {
-                    d.child(micro("inferred", Step::Tag, sk.ink.ink_faint, sk, th))
+                    d.child(micro(
+                        words().benchdraw_escalation_inferred,
+                        Step::Tag,
+                        sk.ink.ink_faint,
+                        sk,
+                        th,
+                    ))
                 }),
         )
         .when_some(e.why.clone(), |d, why| {
@@ -1142,12 +1252,7 @@ fn escalation(
 
 /// `3 doubts · 1 hunch`: how much the agent is unsure of, and how unsure.
 fn doubts_measure(r: &Response) -> String {
-    let n = r.doubts.len();
-    let mut s = if n == 1 {
-        "1 doubt".to_string()
-    } else {
-        format!("{n} doubts")
-    };
+    let mut s = counted(&words().benchdraw_doubts, r.doubts.len());
     let hunches = r
         .doubts
         .iter()
@@ -1158,10 +1263,8 @@ fn doubts_measure(r: &Response) -> String {
             )
         })
         .count();
-    if hunches == 1 {
-        s.push_str(" \u{b7} 1 hunch");
-    } else if hunches != 0 {
-        s.push_str(&format!(" \u{b7} {hunches} hunches"));
+    if hunches != 0 {
+        s.push_str(&counted(&words().benchdraw_hunches, hunches));
     }
     s
 }
@@ -1386,7 +1489,7 @@ fn response(title: &str, r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Th
                         .gap(px(8.))
                         .items_baseline()
                         .child(micro(
-                            "ARTICLES OF DOUBT",
+                            words().benchdraw_articles_of_doubt,
                             Step::Tag,
                             sk.ink.ink_faint,
                             sk,
@@ -1423,7 +1526,9 @@ fn response(title: &str, r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Th
                                     doubt
                                         .confidence
                                         .map(|c| c.label().to_string())
-                                        .unwrap_or_else(|| "confidence undeclared".into()),
+                                        .unwrap_or_else(|| {
+                                            words().benchdraw_confidence_undeclared.into()
+                                        }),
                                     Step::Tag,
                                     // Amber is the house colour for a thing you
                                     // are meant to argue with, and that is
@@ -1582,7 +1687,7 @@ pub fn round_progress(
         // `answered`, so the tabs looked titled with a state. Parker: *"the
         // nice tabs are not title answered.. they are title QUESTIONS"*.
         .child(micro(
-            "QUESTIONS",
+            words().benchdraw_questions,
             Step::Fine,
             crate::emphasis::meta(th),
             sk,
@@ -1690,7 +1795,7 @@ pub fn round_progress(
                             .font_family(th.font_family.clone())
                             .text_color(tint)
                             .cursor_pointer()
-                            .child(sel("\u{2714} SUBMIT".to_string()))
+                            .child(sel(words().benchdraw_submit.to_string()))
                             .relative()
                             .child(zone(
                                 zones.expect("filtered on zones being present").clone(),
@@ -1700,11 +1805,14 @@ pub fn round_progress(
                 }),
         )
         .child(micro(
-            if round.submitting {
-                format!("{done} of {total} answered \u{b7} ready to submit")
-            } else {
-                format!("{done} of {total} answered")
-            },
+            crate::lang::fill(
+                if round.submitting {
+                    words().benchdraw_round_ready
+                } else {
+                    words().benchdraw_round_progress
+                },
+                &[("done", &done.to_string()), ("total", &total.to_string())],
+            ),
             Step::Fine,
             sk.ink.ink_faint,
             sk,
@@ -1827,21 +1935,21 @@ fn question(q: &crate::surface::Question, picks: Option<&Picks>, sk: &Skin, th: 
         .children(match &q.answer {
             Answered::Waiting => None,
             Answered::Chose(_) => Some(micro(
-                "answered".to_string(),
+                words().benchdraw_q_answered.to_string(),
                 Step::Note,
                 sk.ink.ink_faint,
                 sk,
                 th,
             )),
             Answered::Typed(said) => Some(micro(
-                format!("answered in the terminal \u{b7} \u{201c}{said}\u{201d}"),
+                crate::lang::fill(words().benchdraw_q_typed, &[("said", said)]),
                 Step::Note,
                 th.text.alpha(0.8),
                 sk,
                 th,
             )),
             Answered::ChoseUnknown => Some(micro(
-                "answered in the terminal \u{b7} how is unavailable".to_string(),
+                words().benchdraw_q_unknown.to_string(),
                 Step::Note,
                 sk.ink.ink_faint,
                 sk,
@@ -1853,7 +1961,7 @@ fn question(q: &crate::surface::Question, picks: Option<&Picks>, sk: &Skin, th: 
             // difference between a round you can still answer and one that
             // ended without you is a tint.
             Answered::Ended => Some(micro(
-                "ended \u{b7} the agent moved on and nobody recorded how".to_string(),
+                words().benchdraw_q_ended.to_string(),
                 Step::Note,
                 sk.ink.ink_faint,
                 sk,
@@ -1864,14 +1972,14 @@ fn question(q: &crate::surface::Question, picks: Option<&Picks>, sk: &Skin, th: 
             // has to read as that rather than as a failure — it is the
             // ordinary case the submit button was built to allow.
             Answered::Skipped => Some(micro(
-                "left blank \u{b7} the round was submitted without it".to_string(),
+                words().benchdraw_q_skipped.to_string(),
                 Step::Note,
                 sk.ink.ink_faint,
                 sk,
                 th,
             )),
             Answered::Cancelled => Some(micro(
-                "cancelled \u{b7} the round ended with no answer".to_string(),
+                words().benchdraw_q_cancelled.to_string(),
                 Step::Note,
                 sk.ink.ink_faint,
                 sk,
@@ -1887,9 +1995,9 @@ fn artifact(a: &crate::surface::Artifact, sk: &Skin, th: &Theme) -> Div {
     // `decide` is the reason the document is worth opening, and a card that
     // showed only its path made every artifact look identical.
     let mut fields: Vec<(&str, Option<String>)> = vec![
-        ("target", Some(a.href.clone())),
-        ("type", a.mime.clone()),
-        ("about", a.summary.clone()),
+        (words().benchdraw_artifact_target, Some(a.href.clone())),
+        (words().benchdraw_artifact_type, a.mime.clone()),
+        (words().benchdraw_artifact_about, a.summary.clone()),
     ];
     fields.extend(a.notes.iter().map(|(k, v)| (k.as_str(), Some(v.clone()))));
     field_grid(fields, sk, th)
@@ -1926,8 +2034,9 @@ fn column_shares(t: &crate::surface::Table) -> Vec<f32> {
                 .map(|cell| match cell {
                     Some(text) => text.chars().count(),
                     // `unavailable` is what the cell will DRAW, so it is what
-                    // the column has to be wide enough for.
-                    None => "unavailable".len(),
+                    // the column has to be wide enough for — in the words it
+                    // is drawn in, which is not English everywhere.
+                    None => words().benchdraw_unavailable.chars().count(),
                 })
                 .max()
                 .unwrap_or(0)
@@ -1983,7 +2092,13 @@ fn table(t: &crate::surface::Table, sk: &Skin, th: &Theme) -> Div {
                     Some(text) => micro(clip(text, 600), Step::Small, th.text, sk, th),
                     // A cell nobody filled says so, rather than being blank and
                     // reading as a value of nothing.
-                    None => micro("unavailable", Step::Small, sk.ink.ink_faint, sk, th),
+                    None => micro(
+                        words().benchdraw_unavailable,
+                        Step::Small,
+                        sk.ink.ink_faint,
+                        sk,
+                        th,
+                    ),
                 })
             }))
     });
@@ -2075,7 +2190,10 @@ fn architecture(a: &crate::surface::Architecture, sk: &Skin, th: &Theme) -> Div 
     });
     let dangling = a.dangling.iter().map(|e| {
         micro(
-            format!("{} → {} · no such node", e.from, e.to),
+            crate::lang::fill(
+                words().benchdraw_arch_dangling,
+                &[("from", &e.from), ("to", &e.to)],
+            ),
             Step::Note,
             th.complement,
             sk,
@@ -2190,7 +2308,13 @@ fn decision(d: &crate::surface::Decision, sk: &Skin, th: &Theme) -> Div {
                                 .child(sel(o.name.clone())),
                         )
                         .when(o.recommended, |x| {
-                            x.child(micro("recommended", Step::Tag, th.accent, sk, th))
+                            x.child(micro(
+                                words().benchdraw_decision_recommended,
+                                Step::Tag,
+                                th.accent,
+                                sk,
+                                th,
+                            ))
                         }),
                 )
                 .when_some(o.case.clone(), |x, case| {
@@ -2198,7 +2322,7 @@ fn decision(d: &crate::surface::Decision, sk: &Skin, th: &Theme) -> Div {
                 })
                 .when_some(o.cost.clone(), |x, cost| {
                     x.child(micro(
-                        format!("cost · {cost}"),
+                        crate::lang::fill(words().benchdraw_decision_cost, &[("cost", &cost)]),
                         Step::Small,
                         sk.ink.ink_faint,
                         sk,
@@ -2212,7 +2336,13 @@ fn decision(d: &crate::surface::Decision, sk: &Skin, th: &Theme) -> Div {
                     .flex()
                     .flex_col()
                     .gap(px(2.))
-                    .child(micro("IF WE DO", Step::Tag, sk.ink.ink_faint, sk, th))
+                    .child(micro(
+                        words().benchdraw_decision_if_we_do,
+                        Step::Tag,
+                        sk.ink.ink_faint,
+                        sk,
+                        th,
+                    ))
                     .children(d.consequences.iter().map(|c| {
                         micro(format!("· {c}"), Step::Small, th.text.alpha(0.85), sk, th)
                     })),
@@ -2258,7 +2388,7 @@ fn comment(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         // one-line note IS the heading above. The card says what the shelf is
         // for instead of leaving a blank panel that reads as a failure.
         return panel.child(micro(
-            "A NOTE TO YOURSELF \u{b7} THE AGENT WAS NOT TOLD",
+            words().benchdraw_note_to_self,
             Step::Tag,
             // `ink_faint`, not `th.faint` — the chrome legibility pass moved
             // every quiet line onto the foreground at low alpha because the
@@ -2289,7 +2419,7 @@ fn unclassified(u: &crate::surface::Unclassified, sk: &Skin, th: &Theme) -> Div 
         .flex_col()
         .gap(px(6.))
         .child(micro(
-            "NOTHING IS CLAIMED ABOUT THIS",
+            words().benchdraw_unclassified_tag,
             Step::Tag,
             sk.ink.ink_faint,
             sk,
@@ -2347,7 +2477,7 @@ fn field_grid(fields: Vec<(&str, Option<String>)>, sk: &Skin, th: &Theme) -> Div
                     // Shown missing rather than omitted: an omitted row leaves a
                     // hole a reader fills in themselves.
                     None => div().flex_1().min_w(px(0.)).child(micro(
-                        "unavailable",
+                        words().benchdraw_unavailable,
                         Step::Body,
                         sk.ink.ink_faint,
                         sk,
@@ -2422,9 +2552,9 @@ fn verdict_ink(v: Verdict, sk: &Skin, th: &Theme) -> Hsla {
 
 fn verdict_word(v: Verdict) -> &'static str {
     match v {
-        Verdict::Undecided => "undecided",
-        Verdict::Accepted => "accepted",
-        Verdict::Rejected => "rejected",
+        Verdict::Undecided => words().benchdraw_verdict_undecided,
+        Verdict::Accepted => words().benchdraw_verdict_accepted,
+        Verdict::Rejected => words().benchdraw_verdict_rejected,
     }
 }
 
@@ -2540,7 +2670,7 @@ pub fn title_card(
     .when_some(vitals, |d, v| {
         if v.is_unread() {
             return d.child(micro(
-                "turn \u{b7} unread",
+                words().benchdraw_turn_unread,
                 Step::Note,
                 sk.ink.ink_faint,
                 sk,
@@ -2557,7 +2687,7 @@ pub fn title_card(
                 .overflow_hidden()
                 .when_some(v.elapsed.clone(), |d, e| {
                     d.child(micro(
-                        format!("turn {e}"),
+                        crate::lang::fill(words().benchdraw_turn_elapsed, &[("elapsed", &e)]),
                         Step::Note,
                         th.text.alpha(0.75),
                         sk,
@@ -2566,7 +2696,10 @@ pub fn title_card(
                 })
                 .when_some(v.tokens, |d, n| {
                     d.child(micro(
-                        format!("\u{2193} {} tokens", crate::hud::fmt_tokens(n)),
+                        crate::lang::fill(
+                            words().benchdraw_turn_tokens,
+                            &[("tokens", &crate::hud::fmt_tokens(n))],
+                        ),
                         Step::Note,
                         th.text.alpha(0.75),
                         sk,
@@ -3309,7 +3442,7 @@ pub fn composer(
         }
         _ => div()
             .text_color(th.text.alpha(0.72))
-            .child("type to the agent")
+            .child(words().benchdraw_composer_placeholder)
             .into_any_element(),
     };
 
@@ -3420,11 +3553,7 @@ pub fn composer(
                         .rounded(sk.rad_raw(3.))
                         .bg(th.accent.alpha(0.18))
                         .child(micro(
-                            if n == 1 {
-                                "\u{1f5ce} 1 IMAGE".to_string()
-                            } else {
-                                format!("\u{1f5ce} {n} IMAGES")
-                            },
+                            counted(&words().benchdraw_images, n),
                             Step::Tag,
                             th.accent,
                             sk,
@@ -3446,7 +3575,13 @@ pub fn composer(
                         .py(px(2.))
                         .rounded(sk.rad_raw(3.))
                         .bg(th.human.alpha(0.16))
-                        .child(micro("LIVE \u{2192} AGENT", Step::Tag, th.human, sk, th)),
+                        .child(micro(
+                            words().benchdraw_live_to_agent,
+                            Step::Tag,
+                            th.human,
+                            sk,
+                            th,
+                        )),
                 )
             })
             // No count of files. The drag's value is parked on the app until
@@ -3461,7 +3596,7 @@ pub fn composer(
                         .rounded(sk.rad_raw(3.))
                         .bg(th.human.alpha(0.24))
                         .child(micro(
-                            "\u{2913} DROP TO INSERT THE PATH",
+                            words().benchdraw_drop_path,
                             Step::Tag,
                             th.human,
                             sk,
@@ -3477,7 +3612,7 @@ pub fn composer(
     // working here already expects.
     .when_some(hidden.filter(|_| !tight), |d, n| {
         d.child(micro(
-            format!("\u{2191} {n} more characters above"),
+            counted(&words().benchdraw_chars_above, n),
             Step::Fine,
             sk.ink.ink_faint,
             sk,
@@ -3486,7 +3621,7 @@ pub fn composer(
     })
     .when(hint, |d| {
         d.child(micro(
-            "TYPE ANYWHERE \u{b7} ENTER SENDS \u{b7} PASTE TEXT, FILES OR AN IMAGE",
+            words().benchdraw_composer_hint,
             Step::Fine,
             th.human.alpha(0.72),
             sk,
@@ -3560,7 +3695,7 @@ pub fn note_box(
         th,
     )
     .child(micro(
-        "A NOTE ON THIS PANE \u{b7} THE AGENT IS NOT TOLD",
+        words().benchdraw_note_composer_title,
         Step::Tag,
         mine,
         sk,
@@ -3574,7 +3709,7 @@ pub fn note_box(
     )
     .child(if durable {
         micro(
-            "return posts \u{b7} shift+return a new line \u{b7} esc discards",
+            words().benchdraw_note_composer_keys,
             Step::Tag,
             sk.ink.ink_faint,
             sk,
@@ -3590,7 +3725,7 @@ pub fn note_box(
         // absence a person can act on has to be on the face of the thing while
         // they still have the choice not to type into it.
         micro(
-            "THIS PANE CANNOT SAVE NOTES \u{b7} NOTHING HERE WILL SURVIVE",
+            words().benchdraw_note_cannot_save,
             Step::Tag,
             ink(Tint::Waiting, th),
             sk,
@@ -3635,10 +3770,10 @@ pub fn asked(lines: &[String], sk: &Skin, th: &Theme) -> Div {
         .border_l(px(3.))
         .border_color(th.human)
         .bg(th.human.alpha(0.07))
-        .child(micro("YOU", Step::Fine, th.human, sk, th))
+        .child(micro(words().benchdraw_you, Step::Fine, th.human, sk, th))
         .when(lines.is_empty(), |d| {
             d.child(micro(
-                "your message left this pane\u{2019}s history before the bench read it",
+                words().benchdraw_message_gone,
                 Step::Note,
                 // `ink_faint`, not `th.faint`. The palette's `faint` is the
                 // colour a DIVIDER is mixed from — measured at 1.22:1 to
@@ -3692,26 +3827,29 @@ pub fn asked(lines: &[String], sk: &Skin, th: &Theme) -> Div {
 /// and an absent summary is not an absent turn.
 pub fn woken_says(w: &crate::channel::Woken) -> (String, String) {
     use crate::channel::Woken;
+    let t = words();
     match w {
         Woken::Task { summary } => (
-            "WOKEN \u{b7} A BACKGROUND TASK FINISHED".to_string(),
+            t.benchdraw_woken_task.to_string(),
             summary
                 .clone()
-                .unwrap_or_else(|| "the harness named no task".into()),
+                .unwrap_or_else(|| t.benchdraw_woken_task_none.into()),
         ),
         Woken::Peer { from } => (
             match from {
-                Some(name) => format!("WOKEN \u{b7} A MESSAGE FROM {}", name.to_uppercase()),
-                None => "WOKEN \u{b7} A MESSAGE FROM ANOTHER SESSION".to_string(),
+                Some(name) => {
+                    crate::lang::fill(t.benchdraw_woken_peer, &[("name", &name.to_uppercase())])
+                }
+                None => t.benchdraw_woken_peer_unknown.to_string(),
             },
-            "another agent session sent this one a message".to_string(),
+            t.benchdraw_woken_peer_sub.to_string(),
         ),
         // A shape this build has not met. It says WHICH one, because "some
         // envelope arrived" and "a `scheduled-wake` arrived" are different
         // facts and only the second one can be chased.
         Woken::Other { tag } => (
-            "WOKEN \u{b7} BY THE HARNESS".to_string(),
-            format!("a \u{2039}{tag}\u{203a} this build has no name for"),
+            t.benchdraw_woken_other.to_string(),
+            crate::lang::fill(t.benchdraw_woken_other_sub, &[("tag", tag)]),
         ),
     }
 }
@@ -3804,7 +3942,7 @@ pub fn live_card(
             // the agent has reached for anything — so it says that, kindly,
             // rather than reporting on the screen.
             None => micro(
-                "thinking — no tool call yet",
+                words().benchdraw_thinking,
                 Step::Note,
                 sk.ink.ink_faint,
                 sk,
@@ -3817,14 +3955,21 @@ pub fn live_card(
                 .flex_row()
                 .gap(px(12.))
                 .items_baseline()
-                .children(
-                    v.elapsed.clone().map(|e| {
-                        micro(format!("turn {e}"), Step::Note, th.text.alpha(0.75), sk, th)
-                    }),
-                )
+                .children(v.elapsed.clone().map(|e| {
+                    micro(
+                        crate::lang::fill(words().benchdraw_turn_elapsed, &[("elapsed", &e)]),
+                        Step::Note,
+                        th.text.alpha(0.75),
+                        sk,
+                        th,
+                    )
+                }))
                 .children(v.tokens.map(|n| {
                     micro(
-                        format!("\u{2193} {} tokens", crate::hud::fmt_tokens(n)),
+                        crate::lang::fill(
+                            words().benchdraw_turn_tokens,
+                            &[("tokens", &crate::hud::fmt_tokens(n))],
+                        ),
                         Step::Note,
                         th.text.alpha(0.75),
                         sk,
@@ -3889,7 +4034,7 @@ pub fn waiting_block(
         th,
     )
     .child(micro(
-        "WAITING ON YOU",
+        words().benchdraw_question_nav_waiting,
         Step::Fine,
         ink(Tint::Waiting, th),
         sk,
@@ -4003,7 +4148,7 @@ pub fn empty(is_agent: bool, dir: &str, action: Option<Div>, sk: &Skin, th: &The
         .py(px(sk.tpx(22.)))
         .child(
             micro(
-                "NOTHING ON THE WORKBENCH",
+                words().benchdraw_empty_title,
                 Step::Lead,
                 th.complement,
                 sk,
@@ -4021,7 +4166,7 @@ pub fn empty(is_agent: bool, dir: &str, action: Option<Div>, sk: &Skin, th: &The
         .when(is_agent, |d| {
             d.child(
                 micro(
-                    "This agent has presented no work objects yet.",
+                    words().benchdraw_empty_agent,
                     Step::Head,
                     th.complement.alpha(0.85),
                     sk,
@@ -4031,7 +4176,7 @@ pub fn empty(is_agent: bool, dir: &str, action: Option<Div>, sk: &Skin, th: &The
             )
             .child(
                 micro(
-                    format!("drop a .json here: {dir}"),
+                    crate::lang::fill(words().benchdraw_empty_drop, &[("dir", dir)]),
                     Step::Note,
                     sk.ink.ink_faint,
                     sk,
@@ -4088,7 +4233,7 @@ pub fn launch_button(sk: &Skin, th: &Theme) -> Div {
             .text_size(px(sk.pt(Step::Head)))
             .font_weight(gpui::FontWeight::BOLD)
             .child("\u{2301}")
-            .child(sk.caps("LAUNCH AGENT")),
+            .child(sk.caps(words().benchdraw_launch_agent)),
         th.human,
         th,
     )
@@ -5192,6 +5337,43 @@ mod tests {
                 "In a system it did not name, where nothing else depends on it."
             );
         }
+    }
+
+    /// A translation puts the system and the depth wherever its grammar wants
+    /// them, and the highlights have to follow the words rather than English
+    /// word order. Here the depth comes BEFORE the system and the language has
+    /// no article, so the ranges are only right if they were measured on the
+    /// sentence as filled — and the opening must not be the space the empty
+    /// article left behind.
+    #[test]
+    fn the_weight_marks_follow_the_words_wherever_a_translation_puts_them() {
+        let moved = crate::lang::Parts {
+            benchdraw_article_a: "",
+            benchdraw_article_an: "",
+            benchdraw_weight_job_both: "{article} {size}-{tangle} Arbeit",
+            benchdraw_weight_in_mid: " — {depth}, im System {system}.",
+            ..*crate::lang::Lang::En.strings().parts
+        };
+        let line = weight_line_in(&weighed(), &moved);
+        assert_eq!(
+            line.text,
+            "big-fiddly Arbeit — several components depend on it, \
+             im System terminal-delight — workbench. Measured."
+        );
+        assert_eq!(
+            marked(&line, Mark::Named).as_deref(),
+            Some("terminal-delight — workbench")
+        );
+        assert_eq!(
+            marked(&line, Mark::Deep(Depth::Subsystem)).as_deref(),
+            Some("several components depend on it")
+        );
+        assert_eq!(
+            marked(&line, Mark::Sure(Confidence::Measured)).as_deref(),
+            Some("Measured")
+        );
+        // In sentence order, which `with_highlights` requires.
+        assert!(line.marks.windows(2).all(|p| p[0].end <= p[1].start));
     }
 
     #[test]
