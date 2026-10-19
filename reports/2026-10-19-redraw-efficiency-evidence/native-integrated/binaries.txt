@@ -1,0 +1,2 @@
+e974e1b5a7d7259435099156882c1af76ef4173033857b21765bd0627ef2f78f  /tmp/td-redraw-efficiency/integrated-candidate
+8fb861814633fd13eb006b412c6632cb0a710950ff25380e0773d0d753ce8433  /home/parker/.local/lib/terminal-delight/td-2d5b879-video-clips-and-codex-files

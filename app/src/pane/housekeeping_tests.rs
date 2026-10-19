@@ -37,6 +37,73 @@ fn run_for(pane: &mut Pane, ms: u64) {
 }
 
 #[gpui::test]
+fn hidden_output_does_not_dispatch_ui_events_and_activation_reads_latest(cx: &mut TestAppContext) {
+    let mut attached = Pane::attached(cx);
+    let pane = &mut attached.pane;
+    hide(pane);
+    let events = pane.read(|v| v.output_events);
+    let ticks = pane.read(|v| v.housekeeping_ticks);
+    // Each write is separately observed at the parser: this cannot pass just
+    // because the operating system combined all writes into a single read.
+    for n in 0..40 {
+        let marker = format!("hidden-{n:04}");
+        attached
+            .host
+            .write_all(format!("\r{marker}").as_bytes())
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !pane.rows().iter().any(|r| r.contains(&marker)) {
+            pane.cx.run_until_parked();
+            assert!(Instant::now() < deadline, "parser stopped while hidden");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        pane.cx.run_until_parked();
+    }
+    assert_eq!(
+        pane.read(|v| v.output_events),
+        events,
+        "hidden output dispatched screen events"
+    );
+    assert_eq!(
+        pane.read(|v| v.housekeeping_ticks),
+        ticks,
+        "output woke the hidden clock"
+    );
+    // A non-screen event must still reach the UI before any clock advances.
+    attached.host.write_all(b"\x1b]2;hidden-title\x07").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while pane.read(|v| v.title.clone()) != "hidden-title" {
+        pane.cx.run_until_parked();
+        assert!(Instant::now() < deadline, "title event was suppressed");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    // The existing five-second background refresh still sees generation
+    // changes even though no screen event set offscreen_dirty.
+    pane.view.update(pane.cx, |v, cx| {
+        v.offscreen_dirty = false;
+        v.offscreen_flushed = Instant::now() - OFFSCREEN_REFRESH;
+        v.flush_offscreen(cx);
+        assert_eq!(v.hidden_generation, v.session.content_generation());
+        assert!(!v.offscreen_dirty);
+        assert!(v.offscreen_flushed.elapsed() < Duration::from_millis(100));
+    });
+    pane.read(|v| v.mark_shown(true));
+    pane.redraw();
+    assert!(pane.rows().iter().any(|r| r.contains("hidden-0039")));
+    attached.host.write_all(b"\rVISIBLE-AFTER-HIDE").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while pane.read(|v| v.output_events) == events {
+        pane.cx.run_until_parked();
+        assert!(
+            Instant::now() < deadline,
+            "visible output wake never resumed"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(pane.rows().iter().any(|r| r.contains("VISIBLE-AFTER-HIDE")));
+}
+
+#[gpui::test]
 fn hidden_housekeeping_sleeps_and_visibility_edges_wake_it(cx: &mut TestAppContext) {
     let mut attached = Pane::attached(cx);
     let pane = &mut attached.pane;

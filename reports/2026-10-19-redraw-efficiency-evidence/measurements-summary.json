@@ -1,0 +1,90 @@
+{
+  "Mixed": {
+    "before": 16.874137963659916,
+    "after": 12.249306915853742,
+    "saved": 4.749771213590785,
+    "reduction": 27.94117647058824,
+    "favorable": 5,
+    "count": 5
+  },
+  "Mixed, reverse launch": {
+    "before": 16.999098584518105,
+    "after": 12.12440172141109,
+    "saved": 5.124728249744429,
+    "reduction": 29.078014184397162,
+    "favorable": 5,
+    "count": 5
+  },
+  "All busy, 20 Hz": {
+    "before": 18.374085025629963,
+    "after": 14.249284374215243,
+    "saved": 4.124792845167569,
+    "reduction": 22.448979591836732,
+    "favorable": 5,
+    "count": 5
+  },
+  "All busy, 100 Hz": {
+    "before": 20.74902760717079,
+    "after": 16.374232629755262,
+    "saved": 4.249801653252181,
+    "reduction": 20.481927710843383,
+    "favorable": 5,
+    "count": 5
+  },
+  "Identical old builds": {
+    "before": 17.249134759668426,
+    "after": 16.999200833580385,
+    "saved": 0.249986228289508,
+    "reduction": 1.4388489208633215,
+    "favorable": 3,
+    "count": 5
+  },
+  "Synthetic agents idle": {
+    "before": 35.04385760225166,
+    "after": 36.14209815388918,
+    "saved": -1.0982405516375167,
+    "reduction": -3.1339031339031345,
+    "favorable": 1,
+    "count": 5
+  },
+  "Synthetic agents working": {
+    "before": 43.92174906896821,
+    "after": 42.22730557522535,
+    "saved": 3.194471094087021,
+    "reduction": 7.339449541284396,
+    "favorable": 3,
+    "count": 5
+  },
+  "Synthetic agents idle, reverse": {
+    "before": 35.54202836414101,
+    "after": 35.83672608511628,
+    "saved": 0.69872291938443,
+    "reduction": 1.9774011299434984,
+    "favorable": 3,
+    "count": 5
+  },
+  "Synthetic agents working, reverse": {
+    "before": 44.52586067510962,
+    "after": 43.72314858692714,
+    "saved": 0.09983618138575423,
+    "reduction": 0.23474178403755136,
+    "favorable": 3,
+    "count": 5
+  },
+  "Plain programs idle": {
+    "before": 1.6972601719655216,
+    "after": 1.6972601719655216,
+    "saved": 0.0,
+    "reduction": 0.0,
+    "favorable": 2,
+    "count": 5
+  },
+  "Plain programs working": {
+    "before": 4.891486075482451,
+    "after": 3.394406447579012,
+    "saved": 1.3976967725325338,
+    "reduction": 29.166666666666657,
+    "favorable": 5,
+    "count": 5
+  }
+}

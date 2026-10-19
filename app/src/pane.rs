@@ -18,6 +18,7 @@ mod bench;
 /// The document half of this view — the floating square and the Document
 /// face. A child module for the same reason; see `pane/doc.rs`.
 mod doc;
+mod grid_paint;
 /// What this pane's agent handed over: the header chip, the history page and
 /// the screen scan. A child module for the same reason; see `pane/handed.rs`.
 mod handed;
@@ -2783,6 +2784,9 @@ pub struct TerminalView {
     /// on every draw (`Workspace::render`). An atomic so the workspace can set
     /// it while only reading the pane, and so it is never a frame stale.
     shown: Arc<std::sync::atomic::AtomicBool>,
+    hidden_generation: u64,
+    #[cfg(test)]
+    output_events: usize,
     housekeeping_wake: RefCell<futures::channel::mpsc::Sender<()>>,
     #[cfg(test)]
     housekeeping_ticks: usize,
@@ -2797,6 +2801,7 @@ pub struct TerminalView {
     /// read at. See [`Self::live_rows`].
     live_rows_memo: std::cell::RefCell<Option<LiveRowsMemo>>,
     styled_memo: std::cell::RefCell<Option<styling::Memo>>,
+    grid_paint: gpui::Entity<grid_paint::GridPaint>,
     /// When this pane last asked for a frame, and whether one is already
     /// scheduled for the end of the gap. See [`Self::repaint`].
     last_frame_ask: Instant,
@@ -4946,6 +4951,7 @@ impl TerminalView {
         })
         .detach();
 
+        let shown = session.screen_wakeups.clone();
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64 ^ d.as_secs())
@@ -5006,7 +5012,10 @@ impl TerminalView {
             bell_blocked: false,
             bell_line: None,
             needs_input_line: None,
-            shown: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            shown,
+            hidden_generation: 0,
+            #[cfg(test)]
+            output_events: 0,
             housekeeping_wake: RefCell::new(housekeeping_wake),
             #[cfg(test)]
             housekeeping_ticks: 0,
@@ -5016,6 +5025,7 @@ impl TerminalView {
             offscreen_flushed: Instant::now(),
             live_rows_memo: std::cell::RefCell::new(None),
             styled_memo: std::cell::RefCell::new(None),
+            grid_paint: cx.new(|_| grid_paint::GridPaint::default()),
             last_frame_ask: Instant::now(),
             frame_pending: false,
             deliverable: None,
@@ -5565,6 +5575,13 @@ impl TerminalView {
     /// The hidden half of [`Self::repaint`]: draw what changed while hidden,
     /// once [`OFFSCREEN_REFRESH`] has passed. Called by the pane's own clock.
     fn flush_offscreen(&mut self, cx: &mut Context<Self>) {
+        if !self.shown.load(std::sync::atomic::Ordering::Relaxed) {
+            let generation = self.session.content_generation();
+            if generation != self.hidden_generation {
+                self.hidden_generation = generation;
+                self.offscreen_dirty = true;
+            }
+        }
         if self.offscreen_dirty && self.offscreen_flushed.elapsed() >= OFFSCREEN_REFRESH {
             self.offscreen_dirty = false;
             self.offscreen_flushed = Instant::now();
@@ -5575,6 +5592,10 @@ impl TerminalView {
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
         match event {
             TermEvent::Wakeup => {
+                #[cfg(test)]
+                {
+                    self.output_events += 1;
+                }
                 let typed = self.pending_input.take();
                 if let Some(t) = typed {
                     if self.latency_log {
@@ -11606,37 +11627,19 @@ impl Render for TerminalView {
                     } else if let Some(doc_el) = doc_el {
                         doc_el
                     } else {
-                        div()
-                            .px(px(grid_pad_x))
-                            .py(px(grid_pad_y))
-                            .flex()
-                            .flex_col()
-                            .children(lines.into_iter().map(|(text, runs)| {
-                                // Crawl mode centres each row: alacritty fills a row
-                                // to full width with blank cells, so we trim the
-                                // trailing blanks (clamping the runs to match) and let
-                                // the flex row justify-centre the remaining shaped
-                                // text. gpui measures the real glyph run, so this
-                                // centres correctly even in the proportional crawl
-                                // font. The grid model is unchanged (visual only).
-                                if th.crawl {
-                                    return match crawl_centered_runs(text, runs) {
-                                        Some((t, cut)) => div()
-                                            .h(px(self.cell_h))
-                                            .flex()
-                                            .justify_center()
-                                            .whitespace_nowrap()
-                                            .child(StyledText::new(t).with_runs(cut)),
-                                        None => div().h(px(self.cell_h)).whitespace_nowrap(),
-                                    };
-                                }
-                                let line = div().h(px(self.cell_h)).whitespace_nowrap();
-                                if text.is_empty() {
-                                    line
-                                } else {
-                                    line.child(StyledText::new(text).with_runs(runs))
-                                }
-                            }))
+                        let height = self.cell_h * lines.len() as f32 + 2.0 * grid_pad_y;
+                        grid_paint::GridPaint::replace_if_changed(
+                            &mut self.grid_paint,
+                            grid_paint::Snapshot {
+                                lines,
+                                cell_h: self.cell_h,
+                                pad: (grid_pad_x, grid_pad_y),
+                                crawl: th.crawl,
+                            },
+                            cx,
+                        );
+                        gpui::AnyView::from(self.grid_paint.clone())
+                            .cached(gpui::StyleRefinement::default().w_full().h(px(height)))
                             .into_any_element()
                     })
                     .children(pictures_over)

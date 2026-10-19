@@ -1,0 +1,1 @@
+Baseline app tree identical to installed f597f3c. Four panes, one busy at20Hz,20seconds,99Hz user-only main thread samples.406 samples,0 lost. Taffy layout prominent.

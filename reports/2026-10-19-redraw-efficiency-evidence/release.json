@@ -1,0 +1,49 @@
+{
+  "status": "Verified release \u00b7 paired measurements and native checks complete",
+  "tests": "The integrated release suites passed 2,465 default-core tests and 2,418 alternate-core tests, with nine ignored in each.",
+  "keep_reason": "The drawing reduction repeated across launch orders and busy workloads. The hidden filter removes screen callbacks and reduces CPU in the plain-program control; the agent workload remains uncertain.",
+  "deployment": "The release replaces the window while the existing terminal host keeps running. The preceding version remains available for rollback; the local delivery copy records the completed installation.",
+  "verification": "The integrated binary also passed the native compatibility test against the older terminal host. GitHub independently passed both full test configurations and both Clippy checks before the final report update.",
+  "links": [
+    [
+      "Pull request and source diff",
+      "https://github.com/parker-brown-family/terminal-delight/pull/1000"
+    ],
+    [
+      "Raw measurements and replay scripts",
+      "https://github.com/parker-brown-family/terminal-delight/tree/perf/redraw-efficiency/reports/2026-10-19-redraw-efficiency-evidence"
+    ],
+    [
+      "Measured summary",
+      "2026-10-19-redraw-efficiency-evidence/measurements-summary.json"
+    ],
+    [
+      "Test receipts",
+      "2026-10-19-redraw-efficiency-evidence/verification.json"
+    ],
+    [
+      "Native integrated test capture",
+      "2026-10-19-redraw-efficiency-evidence/native-integrated/activated-pane.png"
+    ],
+    [
+      "Fault-control results",
+      "2026-10-19-redraw-efficiency-evidence/fault-controls.json"
+    ],
+    [
+      "Earlier cache failure",
+      "2026-10-19-redraw-efficiency-evidence/rejected-mutable-cache-tests.txt"
+    ],
+    [
+      "Binary and experiment provenance",
+      "2026-10-19-redraw-efficiency-evidence/provenance.json"
+    ],
+    [
+      "Remaining agent-classification problem",
+      "https://github.com/parker-brown-family/terminal-delight/issues/901#issuecomment-6262681799"
+    ],
+    [
+      "Remaining busy-hidden-pane target",
+      "https://github.com/parker-brown-family/terminal-delight/issues/964"
+    ]
+  ]
+}
