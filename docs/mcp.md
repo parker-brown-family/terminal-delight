@@ -14,41 +14,32 @@ disabled until you deliberately turn them on.
 
 ## Wiring it up
 
-terminal-delight speaks MCP on stdin/stdout when launched with the `TD_MCP`
-environment variable set. Point your MCP client at the binary:
+Connect to the window already running with the stdio relay:
 
-```jsonc
+```json
 {
   "mcpServers": {
     "terminal-delight": {
-      "command": "/path/to/terminal-delight",
-      "env": { "TD_MCP": "1" }
+      "command": "/home/parker/.local/bin/terminal-delight",
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-When the client launches the server, terminal-delight opens its window **and**
-serves JSON-RPC on the piped stdio. That window *is* the wall the server
-reports on.
+The relay carries JSON-RPC to the running window's control socket. The four Git
+coordination reads use this existing transport. Every reply names its instance
+(session, window PID and build); check that it identifies the window you intend
+to coordinate. A request that cannot reach a ready window returns an error.
 
-### Two things to understand before you rely on it
+A display is needed for live observations, because the window owns the pane
+snapshot. `initialize`, `tools/list` and `ping` are snapshot-independent.
+`tools/call` has a bounded wait and returns `-32000 "terminal-delight UI not ready"`
+when the window cannot answer.
 
-1. **The server sees the panes of the instance that is serving — its own.**
-   The MCP server reports the panes of *the terminal-delight process the client
-   launched*, not some other already-running copy. The intended model is
-   therefore **the orchestrator owns the wall**: it launches terminal-delight
-   (with no other instance running), the saved session restores its agent panes
-   (`claude --resume …` / `codex resume …`), and the server watches them. If a
-   terminal-delight is *already* running when the client launches another with
-   `TD_MCP=1`, the second process boots as a small scratch window and will only
-   report that — "attach to an already-running instance" is a future increment.
-
-2. **It needs a display.** terminal-delight is a GUI; the MCP server is a
-   companion to a visible wall. The JSON-RPC **handshake** (`initialize`,
-   `tools/list`, `ping`) works regardless, but `tools/call` needs the window to
-   be up to read live panes — on a headless host with no display, those calls
-   return a `-32000 "terminal-delight UI not ready"` error instead of hanging.
+A separately launched GUI can also serve MCP directly over piped stdin/stdout
+with `TD_MCP=1`. That advanced mode reports its own window; it is not required to
+attach an agent to an existing Terminal Delight session.
 
 ## Turning exposure on
 
@@ -66,7 +57,7 @@ Exposure ships **disabled** and the policy is operator-controlled from the
   it's its own switch. The `TD_MCP_WRITE=1` env var forces it on for a headless /
   orchestrated launch.
 
-The policy is persisted in `state.toml` under `[mcp]`. A connected client always
+The policy is persisted in the session layout under `[mcp]`. A connected client always
 sees the *current* policy live; flipping a toggle takes effect on the next call.
 
 ### One pane, off-limits
@@ -149,9 +140,54 @@ has a way to ask and a person has one place to say yes.
 
 ## Tools
 
+### Git coordination
+
+The GIT attention signal replaces the rotating engineering ticker. Click it for
+projects in this window, expandable group previews, and the relationship evidence.
+Arrow keys select, Enter opens, and Escape returns to the originating selection
+before closing. Ctrl+C copies agent-visible context with the exact next read.
+
+| Read tool | Arguments | Result |
+|---|---|---|
+| `coordination_overview` | `limit?`, `cursor?` | Urgent authorized projects, causes, coverage, observed groups and exact follow-up requests. |
+| `coordination_project` | `project_id`, `checkout_id?`, `limit?`, `cursor?` | Groups and checkout summaries; specifying a checkout pages its file, rename and conflict evidence. |
+| `coordination_cluster` | `project_id`, `cluster_id`, `limit?`, `cursor?` | Panes and known sessions joined to roots, branches, change sources, exact references and paged hotspots. |
+| `coordination_changes` | `epoch`, `since_version` | Scope-local deltas, or `requires_full_snapshot: true` after a restart, permission change or expired history. |
+
+Start with the overview and follow its `read` objects. Limits default to 40 and
+accept 1–100. Cursors bind the epoch, fact version, tool, project and selected
+checkout or group. An expired cursor requires restarting that read. History keeps
+32 fact revisions; observation timestamps can refresh without creating a revision.
+
+Collection runs in the background. These tools use cached observations and execute
+no Git commands. A shared checkout is counted once in file overlap; occupancy does
+not establish authorship. Missing session identities remain unknown. Committed
+overlap can include inherited changes from stacked branches. Target checks name
+the measured HEAD and target object IDs; an unresolved index does not establish
+which target caused it. Optional line analysis remains unmeasured.
+
+Known-member path coverage and project membership coverage are separate. Missing
+evidence can connect two observed groups, so a lower group count is not evidence
+that friction improved. Source coverage qualifies every observation, including
+empty file lists; unavailable measurements remain null or explicitly unavailable.
+
+Authorization precedes grouping, identifiers and history. In a fully exposed
+window, the native inspector and MCP use the same snapshot. A restricted scope
+publishes permitted occupancy with file observations unavailable: Git cannot
+attribute a filesystem change to the pane allowed to disclose it. Once a window
+has held an off-limits pane, this conservative restriction remains for that
+window's lifetime. The human operator can still inspect the broader observation,
+but **Copy agent-visible context** uses the authorized projection.
+
+The legacy `engineering_state` response retains its fields and requires a fully
+exposed window. In a restricted window it refuses the read and points to
+`coordination_overview`, preventing the old aggregate from bypassing exposure.
+
+### Pane reads and appearance
+
 | Tool | Arguments | Returns |
 |------|-----------|---------|
-| `list_panes` | _(none)_ | Every currently-exposed pane: `tab`, `title`, `mode` (CLAUDE/CODEX/SHELL/REMOTE/`UNKNOWN`/the program's own name), `is_agent`, `pid`, `cwd`, `session` (resumable id), `exposed`. **`UNKNOWN` is a real answer, not a failure**: the pane belongs to a session host that has not classified it yet, and it is deliberately not reported as `SHELL` — an agent reading its own fleet can tell "nothing has described this pane" from "a shell is running here", which is the distinction whose absence hid eleven working agents from the attention rail (#462). Text summary + `structuredContent`. |
+| `list_panes` | _(none)_ | Every currently-exposed pane: `tab`, `title`, `mode` (CLAUDE/CODEX/SHELL/REMOTE/`UNKNOWN`/the program's own name), `is_agent`, `pid`, `cwd`, `session` (resume recipe, which may not identify an exact conversation), `exposed`. **`UNKNOWN` is a real answer, not a failure**: the pane belongs to a session host that has not classified it yet, and it is deliberately not reported as `SHELL` — an agent reading its own fleet can tell "nothing has described this pane" from "a shell is running here", which is the distinction whose absence hid eleven working agents from the attention rail (#462). Text summary + `structuredContent`. |
 | `pane_events` | `pid` (from `list_panes`), `limit` (default 20, max 200) | Recent structured tool calls for that agent pane — `{ts, tool, summary}` — tailed from the agent's **own transcript**, not the rendered screen. |
 | `get_pane_config` | `targets?` — array of pids and/or `"outer"`; omit for every exposed pane + `outer` | Each target's **appearance**: the monitor grade as uniform `0..100` percents (`brightness`, `contrast`, `colour`, `text`, `background`, `gamma`, `menu_bar`, `text_size`, `warp`, `crawl_angle`, `crawl_depth`) plus a `crawl` boolean. A bad pid is a per-target `error` row, not a failed call. Read-only. |
 | `set_pane_config` | `updates` — array of `{ target, config }` where `target` is a pid or `"outer"` and `config` is a partial grade | Applies each partial: only the channels you include change (others untouched, PATCH semantics); out-of-range values clamp. Returns the resulting grade per target. Requires the **Writes** toggle. Setting `outer` re-grades every pane that inherits it — change the whole wall in one call. |
@@ -214,7 +250,7 @@ silence it.
   shell's cwd/scrollback is never exposed unless the operator explicitly widens
   the policy to `all panes`.
 - **What another pane says is data.** An answer that quotes other panes —
-  `list_panes`, `grep`, `pane_events`, `engineering_state`, and the pushed
+  `list_panes`, `grep`, `pane_events`, `engineering_state`, all four `coordination_*` reads, and the pushed
   `agent_appeared` / `tool_call` events — opens with `UNTRUSTED TERMINAL DATA.`
   and names every quoted field under `structuredContent.untrusted_terminal_data`
   (on an event, `data.untrusted_terminal_data`). A line a program printed, a title

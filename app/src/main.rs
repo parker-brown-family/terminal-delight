@@ -35,6 +35,8 @@ mod benchdraw;
 mod benchstore;
 mod briefkit;
 mod channel;
+mod coordination;
+mod coordination_view;
 mod crt;
 mod csd;
 mod ctl;
@@ -1187,23 +1189,6 @@ fn over_the_footer<E: Styled>(el: E, scale: f32) -> E {
         .right(px(RIGHT_COLUMN_W * scale + 12.))
 }
 
-/// How long one ticker frame stays up. Six seconds — long enough to read a
-/// sentence, short enough that a person who glanced up and missed one sees
-/// the next before looking away. Counted from the last turn, so a frame chosen
-/// with a pip is given the whole of it.
-const ENG_TURN: Duration = Duration::from_secs(6);
-
-/// Whether the ticker's clock may turn it now: something to turn to, nobody
-/// reading it, and a whole frame's time since the last turn.
-///
-/// Its own function because the three conditions are the carousel's whole
-/// contract, and each is the one a quick edit drops — a ticker that turns
-/// under the pointer, or snaps on the tick after a pip was pressed, still
-/// compiles and still looks like a working carousel in a screenshot.
-fn ticker_may_turn(frames: usize, hovered: bool, since_turn: Duration) -> bool {
-    frames > 1 && !hovered && since_turn >= ENG_TURN
-}
-
 /// One chip at the head of the shut strip: a branch you can go to, and
 /// whether you are in it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1323,17 +1308,11 @@ enum EngKey {
 /// rebuilding them on every render was allocation for the same answer.
 struct Reading {
     state: engstate::ProjectState,
-    frames: Vec<engstate::Frame>,
-    badge: Vec<engstate::Segment>,
 }
 
 impl Reading {
     fn of(state: engstate::ProjectState) -> Reading {
-        Reading {
-            frames: state.frames(),
-            badge: state.badge(),
-            state,
-        }
+        Reading { state }
     }
 }
 
@@ -1341,21 +1320,17 @@ impl Reading {
 /// is missing or stale, else the stalest of the others that is stale, else
 /// nothing. `keys` is every branch the tree has, active first.
 ///
-/// The active branch always wins because it is the one on screen; the others
+/// The oldest observation wins, with the active branch breaking ties; the others
 /// are read round-robin behind it so that `engineering_state` describes the
 /// whole session for a coordinating agent, not only the places a person has
 /// visited since the window opened. A branch never read has age `MAX` and so
 /// goes first among the others.
 fn next_stale(keys: &[EngKey], age: impl Fn(&EngKey) -> Duration) -> Option<EngKey> {
-    let active = *keys.first()?;
-    if age(&active) >= ENG_STALE {
-        return Some(active);
-    }
-    keys[1..]
-        .iter()
-        .copied()
-        .filter(|k| age(k) >= ENG_STALE)
-        .max_by_key(|k| age(k))
+    keys.iter()
+        .enumerate()
+        .filter(|(_, k)| age(k) >= ENG_STALE)
+        .max_by(|(ia, a), (ib, b)| age(a).cmp(&age(b)).then_with(|| ib.cmp(ia)))
+        .map(|(_, k)| *k)
 }
 /// Default bar width in logical pixels at scale 1.0 — wide enough for two
 /// levels of indent plus a name plus its roll-up glyphs.
@@ -4414,20 +4389,13 @@ struct Workspace {
     /// A scan is out. One at a time: a second pass queued behind a slow git
     /// would land after the first and say the same thing.
     eng_scanning: bool,
-    /// Which ticker frame is up, advanced on its own clock.
-    eng_frame: usize,
-    /// When the ticker last turned — by its clock or by a pip. The clock
-    /// counts [`ENG_TURN`] from here, so a frame somebody picked by hand gets a
-    /// whole interval before it moves, the way any carousel behaves.
-    eng_frame_at: Instant,
-    /// How many times the ticker has turned. Keys the new frame's fade-in, so
-    /// every turn animates, including one back to a frame shown before.
-    eng_turns: u64,
-    /// The ticker's last hover event said the pointer is on it. It holds still
-    /// while you read it — a sentence that moves out from under the eye is the
-    /// one thing a carousel must never do. An event, not a fact: see
-    /// `tick_eng_frame` for the two exits that never send one.
-    eng_hover: bool,
+    coord_operator: coordination::Store,
+    coord_authorized: std::sync::Arc<coordination::Store>,
+    coord_scope: String,
+    coord_off_limits_seen: bool,
+    coord_view: coordination::View,
+    coord_rows: std::cell::RefCell<Option<coordination_view::Rows>>,
+    coord_scrolls: std::cell::RefCell<std::collections::HashMap<String, gpui::ScrollHandle>>,
     /// The afterglow: what changed between consecutive readings of each
     /// project, with when it was noticed. Kept for [`ENG_AFTERGLOW`] and then
     /// dropped — evidence that something happened, never a notification.
@@ -5945,10 +5913,21 @@ impl Workspace {
             vitals_refreshing: false,
             eng: std::collections::HashMap::new(),
             eng_scanning: false,
-            eng_frame: 0,
-            eng_frame_at: Instant::now(),
-            eng_turns: 0,
-            eng_hover: false,
+            coord_operator: coordination::Store::new(format!(
+                "{}-operator-{:?}",
+                std::process::id(),
+                coordination::unix_ms()
+            )),
+            coord_authorized: std::sync::Arc::new(coordination::Store::new(format!(
+                "{}-agent-{:?}",
+                std::process::id(),
+                coordination::unix_ms()
+            ))),
+            coord_scope: String::new(),
+            coord_off_limits_seen: false,
+            coord_view: coordination::View::default(),
+            coord_rows: std::cell::RefCell::new(None),
+            coord_scrolls: std::cell::RefCell::new(std::collections::HashMap::new()),
             eng_events: std::collections::HashMap::new(),
             // a rig lever, like TD_RAIL_DEBUG: there is no click injection on
             // this machine, so the table is photographed by opening at launch
@@ -6160,6 +6139,9 @@ impl Workspace {
             ws.active = saved.active.min(ws.tabs.len() - 1);
             ws.focus_active(window, cx);
         }
+        if ws.eng_table {
+            window.focus(&ws.focus_handle, cx);
+        }
         // frame jiggle clock (cheap idle poll). MUST stop when this window's
         // Workspace is dropped — otherwise every opened-then-closed window
         // (scratch, tear-off) leaves an orphan 60ms task waking forever on a
@@ -6316,27 +6298,6 @@ impl Workspace {
                 .await;
             if this
                 .update(cx, |ws: &mut Workspace, cx| ws.apply_eng(key, state, cx))
-                .is_err()
-            {
-                break;
-            }
-        })
-        .detach();
-        // The ticker's clock. It LOOKS twice a second and turns only when
-        // [`ticker_may_turn`] says so: a fixed six-second beat could not hold
-        // still under the pointer, and it would snap a frame somebody had just
-        // picked with a pip a moment later. A look that turns nothing asks for
-        // no repaint, so a silent rail still costs nothing. It runs in the
-        // window because whether the pointer is still IN the window is part of
-        // the answer — see `tick_eng_frame`.
-        cx.spawn_in(window, async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(500))
-                .await;
-            if this
-                .update_in(cx, |ws: &mut Workspace, window, cx| {
-                    ws.tick_eng_frame(window, cx)
-                })
                 .is_err()
             {
                 break;
@@ -10200,7 +10161,7 @@ impl Workspace {
                 div()
                     .text_size(px(8.5))
                     .text_color(th.accent.alpha(0.8))
-                    .child("esc or click outside to close"),
+                    .child("Escape: back, then close · click outside to close"),
             );
 
         div()
@@ -13228,11 +13189,6 @@ impl Workspace {
 
     // ---- the project rail --------------------------------------------------
 
-    /// The active project's engineering state, if the rail has read it yet.
-    fn eng_state(&self) -> Option<&engstate::ProjectState> {
-        self.eng.get(&self.eng_key()).map(|r| &r.state)
-    }
-
     /// The branch the rail reads for right now — see [`EngKey`].
     fn eng_key(&self) -> EngKey {
         Self::eng_key_of(self.place_of(self.active))
@@ -13263,6 +13219,7 @@ impl Workspace {
     /// case that matters — the sweep's two-second beat is the most a person
     /// waits to see the rail say something about where they just arrived.
     fn eng_scan_request(&mut self, cx: &App) -> Option<(EngKey, engstate::ScanInput)> {
+        self.sync_coordination_scope(cx);
         if self.eng_scanning {
             return None;
         }
@@ -13298,15 +13255,14 @@ impl Workspace {
         let name = self.eng_key_name(key);
         let mut mine = Vec::new();
         let mut others = Vec::new();
+        let mut unlocated = Vec::new();
+        let full_scope = self.coordination_full_scope();
         for (i, tab) in self.tabs.iter().enumerate() {
             let place = self.place_of(i);
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
             for pane in leaves {
                 let v = pane.read(cx);
-                let Some(cwd) = v.current_cwd() else {
-                    continue;
-                };
                 let tab_name = tab.name.clone().unwrap_or_else(|| {
                     if v.title.trim().is_empty() {
                         v.mode.label().to_lowercase()
@@ -13314,7 +13270,32 @@ impl Workspace {
                         v.title.clone()
                     }
                 });
+                let rt = v.runtime();
+                let participant = coordination::Participant {
+                    id: format!("{}:{:?}", crate::instance::key(), pane.entity_id()),
+                    project_id: Self::coordination_key(Self::eng_key_of(place)),
+                    pane_id: v.pane_id(),
+                    pid: v.shell_pid(),
+                    title: v
+                        .name
+                        .clone()
+                        .filter(|name| !name.trim().is_empty())
+                        .or_else(|| (!v.title.trim().is_empty()).then(|| v.title.clone()))
+                        .unwrap_or_else(|| tab_name.clone()),
+                    mode: v.mode.label().into(),
+                    agent: Self::coordination_agent(&v.mode),
+                    session: coordination::session_identity(rt.resume.as_deref()),
+                    exposed: mcp::should_expose(&self.mcp, v.mode.is_agent(), v.off_limits),
+                    full_scope,
+                };
+                let Some(cwd) = v.current_cwd() else {
+                    if Self::eng_key_of(place) == key {
+                        unlocated.push(participant);
+                    }
+                    continue;
+                };
                 let w = engstate::Writer {
+                    participant: Some(participant),
                     tab: i,
                     tab_name,
                     label: v.mode.label().to_string(),
@@ -13340,6 +13321,9 @@ impl Workspace {
             }
         }
         engstate::ScanInput {
+            coordination_key: Some(Self::coordination_key(key)),
+            scope_key: self.coord_scope.clone(),
+            unlocated,
             project: match key {
                 EngKey::Project(p) => Some(p),
                 EngKey::Group(_) | EngKey::Unfiled => None,
@@ -13378,23 +13362,19 @@ impl Workspace {
             let excess = log.len().saturating_sub(12);
             log.drain(..excess);
         }
+        if let Some(reading) = &state.coordination {
+            self.coord_operator.update(reading.operator.clone());
+            if reading.scope_key == self.coord_scope {
+                let store = std::sync::Arc::make_mut(&mut self.coord_authorized);
+                if let Some(p) = &reading.authorized {
+                    store.update(p.clone());
+                } else {
+                    store.remove(&reading.operator.id);
+                }
+            }
+        }
         self.eng.insert(key, Reading::of(state));
         cx.notify();
-    }
-
-    /// The afterglow still on show for the active project, oldest first.
-    fn eng_afterglow(&self) -> Vec<&str> {
-        let key = self.eng_key();
-        let now = Instant::now();
-        self.eng_events
-            .get(&key)
-            .map(|log| {
-                log.iter()
-                    .filter(|(at, _)| now.duration_since(*at) < ENG_AFTERGLOW)
-                    .map(|(_, e)| e.as_str())
-                    .collect()
-            })
-            .unwrap_or_default()
     }
 
     /// Every project's reading, for the MCP snapshot — the active one flagged,
@@ -13418,63 +13398,6 @@ impl Workspace {
                 st.state.report(*key == active, &glow)
             })
             .collect()
-    }
-
-    /// Every frame the ticker rotates through: the reading's own, then one
-    /// for the afterglow when there is any. One function, so the clock and
-    /// the renderer count the same frames.
-    fn eng_frames(&self) -> Vec<engstate::Frame> {
-        let Some(reading) = self.eng.get(&self.eng_key()) else {
-            return Vec::new();
-        };
-        let mut frames = reading.frames.clone();
-        let glow = self.eng_afterglow();
-        if !glow.is_empty() {
-            // the three newest, newest first — the rest are on the badge's
-            // dot and in the table
-            let recent: Vec<&str> = glow.iter().rev().take(3).copied().collect();
-            frames.push(engstate::Frame {
-                kind: engstate::FrameKind::Events,
-                text: format!("\u{25c6} {}", recent.join(" \u{00b7} ")),
-                tone: engstate::Tone::Plain,
-            });
-        }
-        frames
-    }
-
-    /// Advance the ticker when its clock says a frame has had its time.
-    /// Silent when there is nothing to rotate, while the pointer is on it,
-    /// and for a whole frame after any turn — see [`ticker_may_turn`].
-    ///
-    /// `eng_hover` is only what the ticker's last hover event said, and gpui
-    /// sends one on a pointer MOVE and on nothing else. Two ways of leaving
-    /// send none. Shutting the tree under a resting pointer stops drawing the
-    /// ticker, and its element's hover state goes with it, so nothing will
-    /// ever un-say it: forgotten here. The pointer leaving the window arrives
-    /// on Wayland as `MouseExited` alone, which no hover listener hears, and
-    /// left alone it froze the carousel for as
-    /// long as you worked in another window, which is when a glance at it is
-    /// most likely. That one is only set aside rather than forgotten, because
-    /// a pointer that comes back in over the ticker sends no fresh "entered".
-    fn tick_eng_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if !self.left_bar {
-            self.eng_hover = false;
-        }
-        let read = self.eng_hover && window.is_window_hovered();
-        let n = self.eng_frames().len();
-        if !ticker_may_turn(n, read, self.eng_frame_at.elapsed()) {
-            return;
-        }
-        self.turn_eng_frame((self.eng_frame + 1) % n, cx);
-    }
-
-    /// Put frame `to` up — the clock's turn and a pip's are the same act, so
-    /// both restart the interval and both fade the new frame in.
-    fn turn_eng_frame(&mut self, to: usize, cx: &mut Context<Self>) {
-        self.eng_frame = to;
-        self.eng_frame_at = Instant::now();
-        self.eng_turns = self.eng_turns.wrapping_add(1);
-        cx.notify();
     }
 
     // ---- ctl `tabs`: the tab strip, scripted ---------------------------------
@@ -18447,12 +18370,6 @@ impl Workspace {
         // A left-bar menu is dismissed by Esc like every other overlay, and by
         // nothing else — a menu that ate arrow keys would be claiming a
         // navigation model it does not have.
-        if self.eng_table && ks.key.as_str() == "escape" {
-            self.eng_table = false;
-            self.focus_active(window, cx);
-            cx.notify();
-            return;
-        }
         if self.bar_menu.is_some() && ks.key.as_str() == "escape" {
             self.close_bar_menu(cx);
             return;
@@ -24905,68 +24822,66 @@ impl Workspace {
         chip
     }
 
-    /// The persistent badge in the mother bar's corner: the isolation health of
-    /// the project the window is standing in.
-    ///
-    /// `[4 WORKTREES ✓]`, `[2 WORKTREES · 1 SHARED]`, `[⚠ 1 FOREIGN]`,
-    /// `[NO GIT]` — the
-    /// one thing about a project a person wants at a glance without reading a
-    /// ticker: are the things writing into it writing into separate
-    /// directories? Until the first scan has landed it says `SCANNING`,
-    /// because an empty badge would read as "nothing to report", which is a
-    /// different claim.
+    /// Window-wide attention, derived from all cached projects. A clear local
+    /// project cannot silence an alert elsewhere; unknown and stale stay visible.
     fn eng_badge(&self, pt: f32, cx: &mut Context<Self>) -> gpui::Div {
         let th = theme::theme(cx);
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
-        let mut segments = match self.eng.get(&self.eng_key()) {
-            Some(r) => r.badge.clone(),
-            None => vec![engstate::Segment {
-                text: "SCANNING".into(),
-                tone: engstate::Tone::Muted,
-            }],
+        let snapshot = &self.coordination_store().snapshot;
+        let status = snapshot.severity();
+        let stale = snapshot
+            .projects
+            .iter()
+            .any(|p| p.age_ms().is_some_and(|age| age > 30000));
+        let age_unknown = snapshot.coverage() == coordination::Coverage::Complete
+            && snapshot.projects.iter().any(|p| p.age_ms().is_none());
+        let complete =
+            snapshot.coverage() == coordination::Coverage::Complete && !stale && !age_unknown;
+        let label = if complete && status == Some(coordination::Severity::Clear) {
+            "GIT".into()
+        } else {
+            format!(
+                "GIT · {} · {}{}",
+                status.map(|s| s.label()).unwrap_or("UNKNOWN"),
+                if snapshot.affected() > 0 {
+                    format!(
+                        "{} {}",
+                        snapshot.affected(),
+                        if snapshot.affected() == 1 {
+                            "project"
+                        } else {
+                            "projects"
+                        }
+                    )
+                } else {
+                    "observing".into()
+                },
+                if stale {
+                    " · STALE"
+                } else if age_unknown {
+                    " · AGE UNKNOWN"
+                } else if complete {
+                    ""
+                } else if snapshot.coverage() == coordination::Coverage::Unavailable {
+                    " · UNREAD"
+                } else {
+                    " · PARTIAL"
+                }
+            )
         };
-        // the afterglow's dot: something happened here in the last quarter
-        // hour, and the ticker has the sentence
-        if !self.eng_afterglow().is_empty() {
-            segments.push(engstate::Segment {
-                text: "\u{25c6}".into(),
-                tone: engstate::Tone::Good,
-            });
-        }
-        let mut chip = sk
+        let ink = match status {
+            Some(coordination::Severity::Alert) => th.ansi[1],
+            Some(coordination::Severity::Warning) => th.ansi[3],
+            _ => th.text,
+        };
+        let chip = sk
             .bezel(false, s)
             .flex_none()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(5. * s))
             .text_size(px(pt * 0.8))
             .font_weight(gpui::FontWeight::SEMIBOLD)
-            .border_color(th.text.alpha(0.22));
-        for (i, seg) in segments.iter().enumerate() {
-            if i > 0 {
-                chip = chip.child(
-                    div()
-                        .text_color(th.text.alpha(0.35))
-                        .child("\u{00b7}".to_string()),
-                );
-            }
-            let ink = self.eng_ink(seg.tone, &th);
-            // A warning wears a wash as well as its ink. On an amber palette
-            // the ansi yellow is a hair from the text colour, and `1 SHARED`
-            // read exactly like `3 WT` beside it; a tint behind the words is
-            // a difference every palette can show.
-            let warn = seg.tone == engstate::Tone::Warn;
-            chip = chip.child(
-                div()
-                    .text_color(ink)
-                    .when(warn, |d| {
-                        d.px(px(4. * s)).rounded(sk.radius()).bg(ink.alpha(0.16))
-                    })
-                    .child(seg.text.clone()),
-            );
-        }
+            .text_color(ink)
+            .child(label);
         // click: unfold it into the table. Propagation stops here so the
         // mother bar's move handle does not also arm on the press.
         chip.on_mouse_down(
@@ -24984,6 +24899,7 @@ impl Workspace {
     fn toggle_eng_table(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.eng_table = !self.eng_table;
         if self.eng_table {
+            self.coord_view = coordination::View::default();
             self.commit_all_renames(cx);
             self.bar_menu = None;
             window.focus(&self.focus_handle, cx);
@@ -25009,233 +24925,7 @@ impl Workspace {
         if !self.eng_table {
             return None;
         }
-        let sk = skin::skin(cx, s);
-        let st = self.eng_state();
-        let mono = |d: gpui::Div| d.font_family("monospace").text_size(px(10.5 * s));
-        let cell = |w: f32, ink: Hsla, text: String| {
-            mono(div())
-                .flex_none()
-                .w(px(w * s))
-                .overflow_hidden()
-                .truncate()
-                .text_color(ink)
-                .child(text)
-        };
-        // Air at the top. The heading row sat on the border and the title on
-        // the heading; Parker: "just need a bit better spacing along the
-        // top". More above than below, since the eye enters from the rail.
-        let mut rows = div()
-            .flex()
-            .flex_col()
-            .gap(px(4. * s))
-            .px(px(12. * s))
-            .pt(px(11. * s))
-            .pb(px(9. * s))
-            .min_w(px(700. * s));
-        // The house menu's heading row first: what surface this is, and the
-        // keys it answers to — the NEEDS ME panel's recipe, so a person who
-        // has learned one panel has learned this one.
-        rows = rows.child(
-            div()
-                .flex()
-                .flex_row()
-                .justify_between()
-                .px(px(3. * s))
-                .pb(px(9. * s))
-                .text_size(px(9.5 * s))
-                .text_color(sk.ink.ink_dim)
-                .child("PROJECT RAIL \u{b7} the badge, unfolded")
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap(px(6. * s))
-                        .child("click the badge")
-                        .child("esc"),
-                ),
-        );
-        // then what this is a table OF, and how fresh it is
-        let name = self
-            .eng_key_name(self.eng_key())
-            .map(|n| n.to_uppercase())
-            .unwrap_or_else(|| "UNFILED".into());
-        let freshness = match st {
-            Some(st) => format!(
-                "read {}s ago in {}ms",
-                st.scanned_at.elapsed().as_secs(),
-                st.took.as_millis()
-            ),
-            None => "not read yet".into(),
-        };
-        rows = rows.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .pb(px(7. * s))
-                .child(
-                    div()
-                        .text_size(px(11. * s))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(th.text)
-                        .child(name),
-                )
-                .child(
-                    div()
-                        .text_size(px(9.5 * s))
-                        .text_color(th.text.alpha(0.5))
-                        .child(freshness),
-                ),
-        );
-        let Some(st) = st else {
-            return Some(self.eng_table_frame(&sk, th, s, rows, cx));
-        };
-        let muted = th.text.alpha(0.55);
-        let warn = self.eng_ink(engstate::Tone::Warn, th);
-        // column heads
-        rows = rows.child(
-            div()
-                .flex()
-                .flex_row()
-                .gap(px(8. * s))
-                .child(cell(210., muted, "line".into()))
-                .child(cell(60., muted, "".into()))
-                .child(cell(110., muted, "uncommitted".into()))
-                .child(cell(60., muted, "vs main".into()))
-                .child(cell(200., muted, "writing here".into())),
-        );
-        let main_name = st
-            .primary()
-            .and_then(|r| r.main_ref.as_deref())
-            .map(|m| m.rsplit('/').next().unwrap_or(m).to_string());
-        for c in &st.checkouts {
-            let is_primary = st.primary().is_some_and(|p| p.id == c.repo);
-            let line = if is_primary {
-                c.line()
-            } else {
-                let repo = st
-                    .repos
-                    .iter()
-                    .find(|r| r.id == c.repo)
-                    .map(|r| r.name.as_str())
-                    .unwrap_or("?");
-                format!("{} ({repo})", c.line())
-            };
-            // The badge's own word for one checkout, so the table it unfolds
-            // into says what the badge says.
-            let kind = if c.shared() {
-                "SHARED"
-            } else {
-                engstate::worktree_noun(1)
-            };
-            let kind_ink = if c.shared() { warn } else { th.accent };
-            let dirt = match (c.dirty, c.delta) {
-                (Some(0), _) => "clean".to_string(),
-                (Some(n), Some((a, d))) => format!("{n} dirty +{a} \u{2212}{d}"),
-                (Some(n), None) => format!("{n} dirty"),
-                (None, _) => "unmeasured".to_string(),
-            };
-            let dirt_ink = match c.dirty {
-                Some(0) => muted,
-                Some(_) => th.text,
-                None => muted,
-            };
-            let vs = match c.ahead_behind {
-                _ if Some(c.line()) == main_name => "\u{2014}".to_string(),
-                Some((a, b)) => format!("\u{2191}{a} \u{2193}{b}"),
-                None => "?".to_string(),
-            };
-            let who: Vec<String> = c
-                .writers
-                .iter()
-                .map(|w| format!("{} ({})", w.label.to_lowercase(), w.tab_name))
-                .collect();
-            rows = rows.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap(px(8. * s))
-                    .child(cell(210., th.text, line))
-                    .child(cell(60., kind_ink, kind.into()))
-                    .child(cell(110., dirt_ink, dirt))
-                    .child(cell(60., th.text, vs))
-                    .child(cell(200., th.text, who.join(", "))),
-            );
-        }
-        // the drift and the panes in no repository
-        let mut notes: Vec<(Hsla, String)> = Vec::new();
-        for f in &st.foreign {
-            notes.push((
-                warn,
-                format!(
-                    "\u{26a0} {} is filed here but working in {}",
-                    f.writer.tab_name, f.repo_name
-                ),
-            ));
-        }
-        for v in &st.visitors {
-            notes.push((
-                muted,
-                match &v.filed_under {
-                    Some(u) => format!(
-                        "\u{25cc} {} is working here but filed under {u}",
-                        v.writer.tab_name
-                    ),
-                    None => format!("\u{25cc} {} is working here, unfiled", v.writer.tab_name),
-                },
-            ));
-        }
-        for w in &st.no_git {
-            notes.push((muted, format!("{} is in no repository", w.tab_name)));
-        }
-        if let Some(r) = st.primary() {
-            if let Some(n) = r.worktrees_on_disk {
-                let in_use = st.primary_checkouts().len() as u32;
-                if n > in_use {
-                    notes.push((
-                        muted,
-                        format!("{n} worktrees of {} on disk, {in_use} in use", r.name),
-                    ));
-                }
-            }
-        }
-        if !notes.is_empty() {
-            rows = rows.child(div().h(px(1.)).mt(px(4. * s)).bg(th.text.alpha(0.12)));
-            for (ink, text) in notes {
-                rows = rows.child(mono(div()).text_color(ink).child(text));
-            }
-        }
-        // the afterglow, oldest first, with how long ago
-        let glow = self.eng_afterglow();
-        if !glow.is_empty() {
-            rows = rows.child(div().h(px(1.)).mt(px(4. * s)).bg(th.text.alpha(0.12)));
-            let key = self.eng_key();
-            let now = Instant::now();
-            if let Some(log) = self.eng_events.get(&key) {
-                for (at, e) in log {
-                    let age = now.duration_since(*at).as_secs();
-                    let when = if age < 60 {
-                        format!("{age}s ago")
-                    } else {
-                        format!("{}m ago", age / 60)
-                    };
-                    rows = rows.child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap(px(8. * s))
-                            .child(cell(60., muted, when))
-                            .child(
-                                mono(div())
-                                    .text_color(th.text)
-                                    .child(format!("\u{25c6} {e}")),
-                            ),
-                    );
-                }
-            }
-        }
-        Some(self.eng_table_frame(&sk, th, s, rows, cx))
+        Some(self.render_coordination(th, s, cx))
     }
 
     /// The scrim and the panel around the table — the same shape as every
@@ -25258,12 +24948,17 @@ impl Workspace {
             .pt(px(6. * s))
             .text_size(px(8.5 * s))
             .text_color(th.accent.alpha(0.8))
-            .child("esc or click outside to close");
+            .child("Escape: back, then close · click outside to close");
         self.over_the_glass(
             div()
-                .id("eng-table-panel")
+                .id(SharedString::from(format!(
+                    "git-inspector:{:?}:{}",
+                    self.coord_view.depth, self.coord_view.page
+                )))
                 .absolute()
                 .left(px(12. * s))
+                .right(px(12. * s))
+                .max_w(px(800. * s))
                 .top(px(50. * s))
                 .max_h(px(self.tray_max_h(50. * s)))
                 .overflow_x_hidden()
@@ -25278,7 +24973,13 @@ impl Workspace {
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
-                .child(rows.child(footer)),
+                .child(
+                    rows.child(footer)
+                        .id("git-inspector-rows")
+                        .max_h(px(self.tray_max_h(50. * s)))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.coordination_scroll()),
+                ),
             |ws, window, cx| {
                 ws.eng_table = false;
                 ws.focus_active(window, cx);
@@ -25333,223 +25034,6 @@ impl Workspace {
                 }),
             )
             .child(panel)
-    }
-
-    /// The ink a tone is drawn in. Bound here and nowhere else, so the model
-    /// never names a colour and the palette decides what "warn" looks like.
-    fn eng_ink(&self, tone: engstate::Tone, th: &theme::Theme) -> Hsla {
-        match tone {
-            engstate::Tone::Plain => th.text,
-            engstate::Tone::Muted => th.text.alpha(0.55),
-            engstate::Tone::Good => th.accent,
-            // the palette's own yellow: every theme has one, and it is the
-            // colour a shell already uses for "look at this"
-            engstate::Tone::Warn => th.ansi[3],
-        }
-    }
-
-    /// The ticker: the active project's engineering state as a carousel of
-    /// frames, hung in the top-left corner off the badge it expands on.
-    ///
-    /// It used to take the middle of the top row with its sentence flush left
-    /// and its `3/7` counter and heartbeat flung to the far right — so the one
-    /// number saying where you were in the rotation sat a window's width from
-    /// the sentence it was counting. Parker: *"the 4/8 here in the top right...
-    /// not sure what that is telling us... oh, 7/8 ... 8/8"*, and then what it
-    /// should be instead: *"the carousel needs to act like the best website
-    /// carousel from 2015 ... pips to denote position"*.
-    ///
-    /// So it is one: a pip per frame with the current one lit and drawn long, a
-    /// press on any pip goes straight to that frame and restarts the clock, the
-    /// rotation holds still while the pointer is on it, and each new frame
-    /// fades in rather than snapping. The pips stand AHEAD of the sentence so
-    /// they never move — sentences come in every length, and a row of dots that
-    /// slid about with them would be a position indicator whose own position
-    /// meant nothing. A single frame draws no pips: one slide is not a carousel.
-    ///
-    /// The heartbeat leads, beside the badge, for the same reason: both are
-    /// standing readings of the project, where the frames are its news.
-    fn render_ticker(&self, scale: f32, cx: &mut Context<Self>) -> gpui::Div {
-        let th = theme::theme(cx);
-        // The row takes the top bar's slack (`flex_1`), so its spare width
-        // collects at the far end — and it carries no hover, because empty bar
-        // is not the ticker. The hold is on `read`, below.
-        let mut row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .min_w_0()
-            .flex_1()
-            .gap(px(10. * scale));
-        let Some(st) = self.eng_state() else {
-            return row;
-        };
-        if let Some(p) = st.primary().and_then(|r| r.pulse) {
-            row = row.child(self.render_pulse(&p, scale, cx));
-        }
-        let frames = self.eng_frames();
-        if frames.is_empty() {
-            // Silence means healthy: the badge already said what there is to
-            // say. No rule either — a divider with nothing after it divides
-            // nothing.
-            return row;
-        }
-        // a thin rule between the standing readings and the news
-        row = row.child(
-            div()
-                .flex_none()
-                .w(px(1.))
-                .h(px(14. * scale))
-                .bg(th.text.alpha(0.18)),
-        );
-        // What you READ — the pips and the sentence — and only that holds the
-        // carousel still. The hover sat on the whole row at first, which is as
-        // wide as the bar's empty middle, so a pointer resting anywhere between
-        // the sentence and the agent counter froze the ticker. Sized to its
-        // content, and still free to shrink so the sentence truncates.
-        let mut read = div()
-            .id("eng-ticker")
-            .flex()
-            .flex_row()
-            .items_center()
-            .min_w_0()
-            .gap(px(10. * scale))
-            .on_hover(cx.listener(|ws, hovered: &bool, _w, _cx| {
-                ws.eng_hover = *hovered;
-                // Leaving is a fresh start rather than a turn that fell due
-                // while you were reading: the frame you were on stays up for a
-                // whole interval after you look away from it.
-                if !*hovered {
-                    ws.eng_frame_at = Instant::now();
-                }
-            }));
-        let at = self.eng_frame % frames.len();
-        if frames.len() > 1 {
-            read = read.child(self.render_pips(&frames, at, scale, cx));
-        }
-        let frame = &frames[at];
-        let lead = 6. * scale;
-        read = read.child(
-            div()
-                .relative()
-                .min_w_0()
-                // Never wraps: gpui wraps text by default, and a frame wider
-                // than the row would take a second line and make the whole
-                // mother bar taller.
-                .truncate()
-                .text_size(px(11.5 * scale))
-                .text_color(self.eng_ink(frame.tone, &th))
-                .child(frame.text.clone())
-                // The turn: fade up and settle in from a few pixels right,
-                // keyed on the turn count so every turn plays it — including
-                // one that comes back round to a frame already shown.
-                .with_animation(
-                    ("eng-frame-in", self.eng_turns),
-                    Animation::new(Duration::from_millis(320)).with_easing(gpui::ease_out_quint()),
-                    move |el, t| el.opacity(t).left(px((1. - t) * lead)),
-                ),
-        );
-        row.child(read)
-    }
-
-    /// The carousel's pips: one per frame, the current one lit and long.
-    ///
-    /// Each dot sits in a cell several times its own size, because a five-pixel
-    /// dot is a thing you aim at and a cell is a thing you press. A frame that
-    /// carries a warning keeps the warning's ink on its pip while it waits its
-    /// turn, so the row says which of the frames are the ones to read before
-    /// you have read any of them.
-    fn render_pips(
-        &self,
-        frames: &[engstate::Frame],
-        at: usize,
-        scale: f32,
-        cx: &mut Context<Self>,
-    ) -> gpui::Div {
-        let th = theme::theme(cx);
-        let sk = skin::skin(cx, scale);
-        let mut pips = div().flex_none().flex().flex_row().items_center();
-        for (i, f) in frames.iter().enumerate() {
-            let lit = i == at;
-            let ink = if lit {
-                th.accent
-            } else if f.tone == engstate::Tone::Warn {
-                self.eng_ink(f.tone, &th).alpha(0.75)
-            } else {
-                th.text.alpha(0.28)
-            };
-            let hot = th.accent.alpha(0.75);
-            let grp = SharedString::from(format!("eng-pip-{i}"));
-            pips = pips.child(
-                div()
-                    .id(("eng-pip", i))
-                    .group(grp.clone())
-                    .flex_none()
-                    .h(px(16. * scale))
-                    .px(px(2.5 * scale))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .child(
-                        div()
-                            .w(px(if lit { 14. } else { 5. } * scale))
-                            .h(px(5. * scale))
-                            .rounded(sk.radius_pill())
-                            .bg(ink)
-                            .when(!lit, |d| d.group_hover(grp, move |st| st.bg(hot))),
-                    )
-                    // Propagation stops here or the press also arms the mother
-                    // bar's move handle underneath it.
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.turn_eng_frame(i, cx);
-                        }),
-                    ),
-            );
-        }
-        pips
-    }
-
-    /// The heartbeat: twelve bars, one per five minutes of the last hour,
-    /// oldest on the left. Not a graph to study — peripheral vision tells you
-    /// the project is hot. A calm hour is twelve baseline dots, drawn rather
-    /// than omitted, so an absent instrument and a quiet one look different.
-    fn render_pulse(&self, p: &[u32; 12], scale: f32, cx: &mut Context<Self>) -> gpui::Div {
-        let th = theme::theme(cx);
-        let max = p.iter().copied().max().unwrap_or(0).max(1) as f32;
-        let mut bars = div()
-            .flex_none()
-            .flex()
-            .flex_row()
-            .items_end()
-            .gap(px(1.5 * scale))
-            .h(px(12. * scale));
-        for (i, &v) in p.iter().enumerate() {
-            // newest bars brightest, so the eye reads direction as well as size
-            let age = (11 - i) as f32 / 11.;
-            let ink = if v == 0 {
-                th.text.alpha(0.18)
-            } else {
-                th.accent.alpha(0.45 + 0.55 * (1. - age))
-            };
-            let h = if v == 0 {
-                2. * scale
-            } else {
-                (3. + 9. * (v as f32 / max)) * scale
-            };
-            bars = bars.child(
-                div()
-                    .flex_none()
-                    .w(px(3. * scale))
-                    .h(px(h))
-                    .rounded(px(1.))
-                    .bg(ink),
-            );
-        }
-        bars
     }
 
     /// The tab-config wheel: the same HSV disk as the theme breakout, carrying
@@ -27657,7 +27141,7 @@ impl Render for Workspace {
         // own widths inside it, so it reads from the corner outward and the
         // row's slack collects at its far end rather than inside it.
         let middle: gpui::AnyElement = if self.left_bar {
-            self.render_ticker(scale, cx).into_any_element()
+            div().flex_1().into_any_element()
         } else {
             tab_strip.into_any_element()
         };
@@ -32907,6 +32391,10 @@ impl Render for Workspace {
                     cx.notify();
                     return;
                 }
+                if ws.coordination_capture_key(&ev.keystroke, window, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
                 if ev.keystroke.key.as_str() == "escape" && ws.escape_closes_the_reader(window, cx)
                 {
                     cx.stop_propagation();
@@ -35136,8 +34624,12 @@ mod tests {
         let c = EngKey::Unfiled;
         let keys = [a, b, c];
         let secs = |n: u64| Duration::from_secs(n);
-        // active stale → active, however stale the others are
+        // Ties prefer the active branch; older unseen branches cannot starve.
         assert_eq!(next_stale(&keys, |_| secs(999)), Some(a));
+        assert_eq!(
+            next_stale(&keys, |k| if *k == a { secs(21) } else { secs(90) }),
+            Some(b)
+        );
         // active fresh → the stalest of the others
         let age = |k: &EngKey| match k {
             EngKey::Project(_) => secs(1),
@@ -35587,7 +35079,7 @@ mod tests {
     /// identifying, the badge and the ticker do the informing, and the tree
     /// says where you are standing.
     #[test]
-    fn the_header_corner_carries_the_mark_the_badge_and_the_ticker() {
+    fn the_header_corner_carries_window_attention_and_retires_the_ticker() {
         let src = shipped_src();
         let region = |sig: &str| -> &str {
             let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
@@ -35640,7 +35132,7 @@ mod tests {
         let choice = region("let middle: gpui::AnyElement");
         assert!(
             choice.contains("if self.left_bar")
-                && choice.contains("self.render_ticker(")
+                && choice.contains("div().flex_1()")
                 && choice.contains("tab_strip.into_any_element()"),
             "the middle is the rail with the tree open and the strip with it \
              shut — both, chosen by self.left_bar"
@@ -35675,124 +35167,9 @@ mod tests {
             &src[at..at + end]
         };
         assert!(
-            badge.contains("self.eng.get(&self.eng_key())"),
+            badge.contains("self.coordination_store().snapshot"),
             "the badge must read the same key the ticker reads"
         );
-    }
-
-    /// The ticker is a carousel: pips for position, press to jump, hold still
-    /// under the pointer.
-    ///
-    /// It carried a `4/8` counter at the far end of the row from the sentence
-    /// it counted. Parker: *"not sure what that is telling us... the carousel
-    /// needs to act like the best website carousel from 2015 ... pips to
-    /// denote position"*. Every clause below is one of that carousel's habits,
-    /// and each is the kind a quick edit drops while the screenshot still looks
-    /// like a working carousel.
-    #[test]
-    fn the_ticker_is_a_carousel_with_pips_that_holds_still_when_read() {
-        let code = shipped_code();
-        let body = |sig: &str| -> String {
-            let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
-            let end = code[at..].find("\n    }\n").expect("end of fn");
-            code[at..at + end].to_string()
-        };
-        let ticker = body("    fn render_ticker(");
-        assert!(
-            ticker.contains("self.render_pips(&frames, at, scale, cx)")
-                && ticker.contains("if frames.len() > 1"),
-            "the position is a row of pips — and one frame draws none"
-        );
-        assert!(!ticker.contains("\"{}/{}\""), "the n/m counter is gone");
-        // Pips stand AHEAD of the sentence, so they never move while
-        // sentences of different lengths come and go.
-        let pips_at = ticker.find("self.render_pips(").expect("pips");
-        let text_at = ticker
-            .find(".child(frame.text.clone())")
-            .expect("the sentence");
-        assert!(pips_at < text_at, "the pips come before the sentence");
-        assert!(
-            ticker.contains(".truncate()"),
-            "the sentence truncates: gpui wraps by default, and a wrapped frame \
-             would make the whole mother bar taller"
-        );
-        // Holds still under the pointer.
-        assert!(
-            ticker.contains(".on_hover(") && ticker.contains("ws.eng_hover = *hovered;"),
-            "the ticker must know when it is being read"
-        );
-        // …and only when the pointer is on what you read. The row that takes
-        // the bar's slack is `flex_1`; a hover there made the whole empty middle
-        // of the top bar a pause button.
-        let read_at = ticker.find(".id(\"eng-ticker\")").expect("the read area");
-        let hover_at = ticker[read_at..].find(".on_hover(").expect("its hover") + read_at;
-        assert!(
-            !ticker[read_at..hover_at].contains(".flex_1()"),
-            "the hovered element must not be the one that takes the row's slack"
-        );
-        assert_eq!(
-            ticker.matches(".on_hover(").count(),
-            1,
-            "one hover, on the read area"
-        );
-        assert!(
-            ticker.contains("read = read.child(self.render_pips(")
-                && ticker
-                    .find(".child(frame.text.clone())")
-                    .expect("the sentence")
-                    > hover_at
-                && ticker.contains("row.child(read)"),
-            "the pips and the sentence are the read area's children"
-        );
-        // A pip goes straight to its frame — and stops the press there, or it
-        // also arms the mother bar's move handle underneath.
-        let pips = body("    fn render_pips(");
-        assert!(
-            pips.contains("cx.stop_propagation();") && pips.contains("ws.turn_eng_frame(i, cx);"),
-            "a pip press jumps to its frame and goes no further"
-        );
-        // The clock and a pip turn the ticker the same way: fresh interval,
-        // fresh fade.
-        let turn = body("    fn turn_eng_frame(");
-        assert!(
-            turn.contains("self.eng_frame_at = Instant::now();")
-                && turn.contains("self.eng_turns = self.eng_turns.wrapping_add(1);"),
-            "every turn restarts the clock and replays the fade"
-        );
-        let tick = body("    fn tick_eng_frame(");
-        assert!(
-            tick.contains("ticker_may_turn(n, read, self.eng_frame_at.elapsed())"),
-            "the clock asks the carousel's contract before turning"
-        );
-        // …and "read" is the hover event AND a pointer still in the window. A
-        // hover listener hears only moves, so a pointer that left the window
-        // over the ticker left `eng_hover` true and the carousel frozen for as
-        // long as it stayed out.
-        assert!(
-            tick.contains("let read = self.eng_hover && window.is_window_hovered();"),
-            "a pointer outside the window is reading nothing"
-        );
-        // A ticker the shut tree stopped drawing cannot be under the pointer,
-        // and no event will ever say it left.
-        assert!(
-            tick.contains("if !self.left_bar {") && tick.contains("self.eng_hover = false;"),
-            "the hold is forgotten when the ticker is not drawn"
-        );
-    }
-
-    /// The clock's three conditions, as values rather than as source.
-    #[test]
-    fn the_ticker_turns_only_when_there_is_more_nobody_is_reading_and_a_frame_has_had_its_time() {
-        let due = ENG_TURN + Duration::from_millis(1);
-        let early = ENG_TURN - Duration::from_millis(1);
-        assert!(ticker_may_turn(4, false, due), "a due frame turns");
-        assert!(!ticker_may_turn(4, true, due), "never under the pointer");
-        assert!(!ticker_may_turn(4, false, early), "never before its time");
-        assert!(
-            !ticker_may_turn(1, false, due),
-            "one frame has nowhere to go"
-        );
-        assert!(!ticker_may_turn(0, false, due), "and no frames, nothing");
     }
 
     /// The tree washes the rows you are standing in: the active task's
@@ -35899,28 +35276,6 @@ mod tests {
                 && go.contains("self.activate_tab(i, window, cx);"),
             "going to a branch is activating its landing tab, nothing more"
         );
-    }
-
-    /// The checkouts table names a checkout the way the badge does.
-    ///
-    /// The badge learned to say `1 WORKTREE` — Parker: *"1 WT -- should just
-    /// say worktree"* — and the table one click away kept saying `WT`. Both now
-    /// take the word from `engstate::worktree_noun`, and no `WT` is left to
-    /// find.
-    #[test]
-    fn the_checkouts_table_names_a_checkout_the_way_the_badge_does() {
-        let code = shipped_code();
-        let table = body_of(&code, "fn render_eng_table");
-        assert!(
-            table.contains("engstate::worktree_noun(1)"),
-            "the table's kind column must take the badge's own word"
-        );
-        assert!(
-            !code.contains("\"WT\""),
-            "the abbreviation is back somewhere in the chrome"
-        );
-        assert_eq!(engstate::worktree_noun(1), "WORKTREE");
-        assert_eq!(engstate::worktree_noun(3), "WORKTREES");
     }
 
     /// The tree's actions row carries no scope text.
@@ -37385,13 +36740,13 @@ mod tests {
             .collect();
         // The snapshot, the search, the open-document gate and the panel; the
         // fifth site, the write gate, is `may_write`, checked below.
-        assert_eq!(calls.len(), 4, "{calls:?}");
+        assert_eq!(calls.len(), 5, "{calls:?}");
         let reads_mark = calls.iter().filter(|c| c.contains("off_limits")).count();
         let literal_false: Vec<&String> = calls
             .iter()
             .filter(|c| c.trim_end().trim_end_matches(',').ends_with("false"))
             .collect();
-        assert_eq!(reads_mark, 3, "a site stopped reading the mark: {calls:?}");
+        assert_eq!(reads_mark, 4, "a site stopped reading the mark: {calls:?}");
         assert_eq!(
             literal_false.len(),
             1,

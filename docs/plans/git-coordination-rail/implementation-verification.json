@@ -1,0 +1,108 @@
+{
+  "status": "verified",
+  "baseline": "f1d99f922b0914709ab916467cd9654224d9660f",
+  "source_manifest": {
+    "app/src/coordination.rs": "920a4d438d585329dfc52e6d480ab415393413ca034bcc79e02ae7f4932fac31",
+    "app/src/coordination/tests.rs": "c847d8105aa6e6426c6075c21229855cdbc097ede4d4596688c8cbb08a7d92e8",
+    "app/src/coordination_view.rs": "f9dad536d098cf3fb14fd3c8513785dae56735babee9a4f0c138622afb89f699",
+    "app/src/engstate.rs": "6304ed437fb336893fa678f1587db7bb5f00b926c960165c49e172d1e0631f3f",
+    "app/src/main.rs": "423cf89e4842a206d2e73d124f084fa783c72ce5866113c012a11e1ed08193aa",
+    "app/src/host.rs": "53eb54b30748cf963675c1a26e6c78bffdb4ab385890a567d80f3ca144ffc355",
+    "app/src/mcp.rs": "38376a9a951466d0f9d9fa97726aa03531f441d5caa7f6048a07d260524eaeeb",
+    "app/src/mcp_transport.rs": "a8712d81262e6096178b49e6a452a22fdd33e2e814773766c23f1cbbb1daa897",
+    "app/Cargo.lock": "116d3cf6fdff2bb042f17dc72a92e88895fce238e5fee30a2b47ebe49e5db753"
+  },
+  "checks": {
+    "rio": {
+      "display": "2,445 passed \u00b7 9 ignored",
+      "passed": 2445,
+      "ignored": 9,
+      "command": "cargo test --locked",
+      "log": "/tmp/td-coordination-final-tests.log"
+    },
+    "fallback": {
+      "display": "2,398 passed \u00b7 9 ignored",
+      "passed": 2398,
+      "ignored": 9,
+      "command": "cargo test --locked --features core-alacritty",
+      "log": "/tmp/td-coordination-final-fallback.log"
+    },
+    "production_clippy": {
+      "both_cores": "passed",
+      "commands": [
+        "cargo clippy --locked -- -D warnings",
+        "cargo clippy --locked --features core-alacritty -- -D warnings"
+      ]
+    },
+    "fmt": "passed",
+    "release_build": "passed",
+    "dedicated_coordination_checks": 36,
+    "host_loaded_unit_stress": {
+      "full_suite_runs": 20,
+      "all_passed": true
+    },
+    "fault_controls": {
+      "source_restored": true,
+      "code_sha256": "dc0abf18ae6b0c06eac08bc1228ff3e62c074376da3602d9482b6bb527c60eda",
+      "controls": [
+        {
+          "mutation": "authorization",
+          "test": "coordination::tests::publication_ids_and_deltas_ignore_hidden_only_paths_titles_and_participants",
+          "exit": 101,
+          "caught_by_assertion": true,
+          "log": "/tmp/td-coordination-mutation-authorization.log"
+        },
+        {
+          "mutation": "coverage",
+          "test": "coordination::tests::separate_files_are_clear_only_with_complete_required_coverage",
+          "exit": 101,
+          "caught_by_assertion": true,
+          "log": "/tmp/td-coordination-mutation-coverage.log"
+        }
+      ]
+    },
+    "native": {
+      "pid": 2643685,
+      "natural_escape": true,
+      "widths": [
+        390,
+        520,
+        1500
+      ],
+      "policy_epoch_reset": true,
+      "old_cursor_reset": true,
+      "clipboard_permission_fresh": true,
+      "terminal_processes_preserved": [
+        2644136,
+        2644140,
+        2644142,
+        2644146,
+        2644148,
+        2644151,
+        2644154,
+        2644157
+      ]
+    },
+    "clipboard_after": {
+      "negative_control": false,
+      "copied_hidden_paths": false,
+      "pid": 2643685
+    },
+    "dependency_policy": "cargo deny check: advisories, bans, licenses and sources passed",
+    "clipboard_before": {
+      "negative_control": true,
+      "copied_hidden_paths": true,
+      "pid": 2575406
+    },
+    "clipboard_control_method": "Both builds used a sentinel-cleared clipboard and a blocked Git worker. The earlier binary copied hidden paths; the corrected binary did not. The final native sequence preserved all eight fixture process identities."
+  },
+  "installation": {
+    "installed": false,
+    "detail": "Release binary built and verified locally. Installation follows the single pull request and required CI checks."
+  },
+  "limits": [
+    "No line-overlap measurement or push notifications.",
+    "Restricted exposure withholds filesystem evidence conservatively; shared filesystem edits cannot be attributed to allowed panes.",
+    "Native fixture uses shell emitters; known session identity is tested with shared native-row/MCP fixtures."
+  ]
+}
