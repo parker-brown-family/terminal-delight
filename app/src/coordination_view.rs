@@ -1733,7 +1733,7 @@ mod tests {
             target_conflicts: None,
         };
         let mut collapsed = vec![];
-        append_context(&mut collapsed, &context, None, false);
+        append_context(&mut collapsed, &context, None, false, lang::Lang::En);
         assert_eq!(collapsed.len(), 1);
         assert!(collapsed[0].title.contains("Shared checkout"));
         assert!(collapsed[0]
@@ -1754,6 +1754,7 @@ mod tests {
             &context,
             Some(&std::collections::BTreeSet::from([path.bytes_hex])),
             true,
+            lang::Lang::En,
         );
         assert!(rows[0]
             .detail
@@ -1818,9 +1819,14 @@ mod tests {
             coordination::meaning::explain(&project, coordination::unix_ms().unwrap());
         assert!(project.clusters.is_empty());
         assert_eq!(
-            project_lead(&project),
+            coordination::meaning::lead(&project),
             "The last merge check reported a conflict; the current result is unknown."
         );
-        assert_eq!(coverage_label(project.coverage), "partial scan");
+        assert_eq!(
+            coordination::meaning::lead_in(&project, lang::Lang::De),
+            lang::DE.gc.hl_last_merge_unknown,
+            "the overlay says the lead in the reader's language"
+        );
+        assert_eq!(coverage_label(project.coverage, lang::Lang::En), "partial scan");
     }
 }
