@@ -1019,15 +1019,16 @@ impl SavedNode {
     /// recipe has been taken away and whose pane id has not.
     fn for_each_claim(
         &mut self,
-        f: &mut impl FnMut(&mut Option<u64>, &mut Option<String>, &mut Option<SavedNote>),
+        f: &mut impl FnMut(Option<&str>, &mut Option<u64>, &mut Option<String>, &mut Option<SavedNote>),
     ) {
         match self {
             SavedNode::Leaf {
+                cwd,
                 pane_id,
                 resume,
                 note,
                 ..
-            } => f(pane_id, resume, note),
+            } => f(cwd.as_deref(), pane_id, resume, note),
             SavedNode::Split { a, b, .. } => {
                 a.for_each_claim(f);
                 b.for_each_claim(f);
@@ -1090,7 +1091,7 @@ fn dedupe_resumes(tabs: &mut [SavedTab]) {
     let mut claimed = std::collections::HashSet::new();
     let mut panes = std::collections::HashSet::new();
     for tab in tabs.iter_mut() {
-        tab.node.for_each_claim(&mut |pane_id, resume, note| {
+        tab.node.for_each_claim(&mut |cwd, pane_id, resume, note| {
             let mut copied = false;
             if let Some(id) = *pane_id {
                 if !panes.insert(id) {
@@ -1099,21 +1100,31 @@ fn dedupe_resumes(tabs: &mut [SavedTab]) {
                 }
             }
             if let Some(cmd) = resume.clone() {
-                if !claimed.insert(cmd.clone()) {
+                if resume_claim(cwd, &cmd).is_some_and(|claim| !claimed.insert(claim)) {
                     *resume = bare_agent(&cmd);
                     copied = true;
                 }
             }
-            // Say so on the glass. The restore explains this when IT finds the
-            // collision (`LeafPlan::Duplicate`), and dropping the claim here
-            // means the restore no longer can — the leaf reaches it looking like
-            // an ordinary fresh shell. Repairing something silently and leaving
-            // a person to notice that a tab is empty is the failure this whole
-            // thread is about, so the explanation moves with the repair.
+            // Say so on the glass — but only where the next restore really will
+            // start this leaf afresh, which is a leaf left holding no terminal.
+            //
+            // The restore explains a collision when IT finds one
+            // (`LeafPlan::Duplicate`), and dropping the claim here means it no
+            // longer can: a leaf with no terminal reaches it looking like an
+            // ordinary fresh shell, so the explanation moves with the repair.
+            //
+            // A leaf that still names a pane is a terminal the host is running
+            // right now, with its own agent in it. The restore binds it rather
+            // than starting it, the host writes its real recipe back over the
+            // stripped one at the next checkpoint, and a note saying "this is a
+            // fresh shell" is false on the glass it lands on. Until 2026-10-19
+            // it was written there on every save: every pair of Codex panes in
+            // one directory (both `codex resume --last`) and every pair of bare
+            // `claude` panes anywhere wore it while mid-conversation (#919).
             //
             // Only onto blank glass: somebody's own words outrank ours, and the
             // note they wrote is usually what identifies the tab.
-            if copied && note.is_none() {
+            if copied && pane_id.is_none() && note.is_none() {
                 let said = duplicate_leaf_note();
                 *note = Some(SavedNote {
                     title: said.title,
@@ -1124,6 +1135,39 @@ fn dedupe_resumes(tabs: &mut [SavedTab]) {
             }
         });
     }
+}
+
+/// What a resume line claims, if anything: the conversation two leaves must
+/// not both come back onto.
+///
+/// `claude --resume <id>` and `codex resume <id>` claim that conversation,
+/// wherever they run. `claude --continue` and `codex resume --last` claim "the
+/// newest one here", so they collide only with the same line in the same
+/// directory — the same line in another directory is another conversation.
+/// Anything else (`claude`, `codex`, a script) names no conversation, and two
+/// leaves running it are two of it, which is what a second pane was for.
+///
+/// The text alone was the key until 2026-10-19, so a bare `claude` in one tab
+/// collided with a bare `claude` in another, and a `codex resume --last` in
+/// one repository with one in a different repository.
+fn resume_claim(cwd: Option<&str>, cmd: &str) -> Option<String> {
+    if let Some(id) = named_session(Some(cmd)) {
+        return Some(format!("session {id}"));
+    }
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    let newest_here = words.iter().any(|w| *w == "--continue" || *w == "-c")
+        || words.windows(2).any(|w| w == ["resume", "--last"]);
+    // Two leaves with no recorded directory both restore into the same
+    // fallback one, so an unknown directory is one shared key, not a pass.
+    newest_here.then(|| format!("newest {} {}", cwd.unwrap_or(""), words.join(" ")))
+}
+
+/// Whether a saved note is the one `dedupe_resumes` writes, rather than words
+/// a person or an agent chose. Matched on the whole text, so a hand-written note
+/// that merely starts "DUPLICATE TAB" is theirs.
+fn is_duplicate_leaf_note(note: &SavedNote) -> bool {
+    let ours = duplicate_leaf_note();
+    note.title == ours.title && note.text == ours.text
 }
 
 /// A resume command with the session part stripped — `claude --continue` becomes
@@ -5131,6 +5175,24 @@ fn duplicate_leaf_note() -> sticky::Saved {
     }
 }
 
+/// The note a saved leaf comes back wearing.
+///
+/// A leaf bound to its running terminal was not started afresh, so the
+/// DUPLICATE TAB note saying it was is false on that glass. Saves wrote that
+/// note onto live panes until 2026-10-19 (#919) and the session files still
+/// carry it; dropping it here is what stops every reattach repainting it. A
+/// leaf that really is respawned keeps it, and every other note is kept as
+/// written.
+fn note_on_reattach(note: Option<&SavedNote>, bound: bool) -> Option<sticky::Saved> {
+    note.filter(|n| !(bound && is_duplicate_leaf_note(n)))
+        .map(|n| sticky::Saved {
+            title: n.title.clone(),
+            text: n.text.clone(),
+            seed: n.seed,
+            pinned: n.pinned,
+        })
+}
+
 /// Match a saved layout against what is actually running.
 ///
 /// Pure, and deliberately so: this is the decision that a restore either gets
@@ -5653,20 +5715,16 @@ fn build_node_attached(
             off_limits,
             ..
         } => {
+            let plan = plans.next();
             let restore = session::PaneRestore {
                 program: None,
                 mark: None,
                 cwd: cwd.clone(),
                 resume: resume.clone(),
                 logo: logo.clone(),
-                note: note.as_ref().map(|n| sticky::Saved {
-                    title: n.title.clone(),
-                    text: n.text.clone(),
-                    seed: n.seed,
-                    pinned: n.pinned,
-                }),
+                note: note_on_reattach(note.as_ref(), matches!(plan, Some(LeafPlan::Bind { .. }))),
             };
-            let built = match plans.next() {
+            let built = match plan {
                 // The terminal is still running. Take it, and do NOT type the
                 // resume line: the agent it would start is already in there.
                 Some(LeafPlan::Bind { pane }) => match live.get(&pane.0) {
@@ -35833,7 +35891,7 @@ mod tests {
             .map(|t| {
                 let mut work = vec![];
                 t.node
-                    .for_each_claim(&mut |_, resume, _| work.push(resume.clone()));
+                    .for_each_claim(&mut |_, _, resume, _| work.push(resume.clone()));
                 (t.name.clone(), work)
             })
             .collect()
@@ -39491,7 +39549,8 @@ mod tests {
         let resumes = |tabs: &mut [SavedTab]| {
             let mut out = vec![];
             for tab in tabs.iter_mut() {
-                tab.node.for_each_claim(&mut |_, r, _| out.push(r.clone()));
+                tab.node
+                    .for_each_claim(&mut |_, _, r, _| out.push(r.clone()));
             }
             out
         };
@@ -39585,7 +39644,7 @@ mod tests {
         let mut ids = vec![];
         let mut notes = vec![];
         for t in tabs.iter_mut() {
-            t.node.for_each_claim(&mut |pane, _, _| ids.push(*pane));
+            t.node.for_each_claim(&mut |_, pane, _, _| ids.push(*pane));
             if let SavedNode::Leaf { note, .. } = &t.node {
                 notes.push(note.as_ref().map(|n| n.text.clone()));
             }
@@ -39686,6 +39745,131 @@ mod tests {
         assert!(theirs.pinned, "and took their pin out while we were at it");
     }
 
+    /// Two live agents that each resume "the newest one here" are two agents,
+    /// and a save must not tell either of them it is a fresh shell (#919).
+    ///
+    /// Modelled on session 1 on 2026-10-13: panes 212 and 213, both Codex in
+    /// `cinema-delight`, both recorded as `codex resume --last` because Codex
+    /// keeps no rollout open, each mid-way through its own conversation. Every
+    /// save stamped DUPLICATE TAB onto 213, the next reattach painted it, and
+    /// Parker asked whether he had typed into the wrong agent.
+    #[test]
+    fn a_save_never_tells_a_live_pane_it_is_a_fresh_shell() {
+        let leaf = |pane: Option<u64>, cwd: &str, resume: &str| SavedNode::Leaf {
+            off_limits: false,
+            appearance: PaneTheme::default(),
+            cwd: Some(cwd.into()),
+            resume: Some(resume.into()),
+            name: None,
+            logo: None,
+            note: None,
+            pane_id: pane,
+            document: None,
+        };
+        let tab = |node: SavedNode| SavedTab {
+            level: None,
+            name: None,
+            color: None,
+            text_color: None,
+            group: None,
+            node,
+            project: None,
+        };
+        let notes = |tabs: &[SavedTab]| -> Vec<bool> {
+            tabs.iter()
+                .map(|t| matches!(&t.node, SavedNode::Leaf { note: Some(_), .. }))
+                .collect()
+        };
+        let resumes = |tabs: &mut [SavedTab]| {
+            let mut out = vec![];
+            for tab in tabs.iter_mut() {
+                tab.node
+                    .for_each_claim(&mut |_, _, r, _| out.push(r.clone()));
+            }
+            out
+        };
+
+        // Two live terminals, one directory, one line between them.
+        let mut tabs = vec![
+            tab(leaf(Some(212), "/w/cinema", "codex resume --last")),
+            tab(leaf(Some(213), "/w/cinema", "codex resume --last")),
+        ];
+        dedupe_resumes(&mut tabs);
+        assert_eq!(
+            notes(&tabs),
+            [false, false],
+            "a live pane was told it is a fresh shell"
+        );
+
+        // A bare agent names no conversation, so nothing collides at all; and
+        // "the newest one here" in another directory is another conversation.
+        let mut tabs = vec![
+            tab(leaf(Some(1), "/a", "claude")),
+            tab(leaf(Some(2), "/b", "claude")),
+            tab(leaf(Some(3), "/a", "codex resume --last")),
+            tab(leaf(Some(4), "/b", "codex resume --last")),
+        ];
+        dedupe_resumes(&mut tabs);
+        assert_eq!(notes(&tabs), [false; 4]);
+        assert_eq!(
+            resumes(&mut tabs),
+            [
+                Some("claude".to_string()),
+                Some("claude".to_string()),
+                Some("codex resume --last".to_string()),
+                Some("codex resume --last".to_string()),
+            ],
+            "a line that collides with nothing was rewritten"
+        );
+
+        // The forecast still holds where it is true: a leaf holding no terminal
+        // will be started again, and the second of two in one place is told so.
+        let mut tabs = vec![
+            tab(leaf(None, "/w/cinema", "codex resume --last")),
+            tab(leaf(None, "/w/cinema", "codex resume --last")),
+        ];
+        dedupe_resumes(&mut tabs);
+        assert_eq!(notes(&tabs), [false, true]);
+        assert_eq!(
+            resumes(&mut tabs)[1].as_deref(),
+            Some("codex"),
+            "the second still opens its own agent"
+        );
+    }
+
+    /// The note already sitting in the session files comes off a pane that
+    /// reattaches to its own terminal, and nothing else does.
+    #[test]
+    fn a_bound_pane_sheds_the_duplicate_note_and_keeps_its_own() {
+        let ours = duplicate_leaf_note();
+        let stamped = SavedNote {
+            title: ours.title.clone(),
+            text: ours.text.clone(),
+            seed: 0,
+            pinned: false,
+        };
+        let theirs = SavedNote {
+            title: Some("DUPLICATE TAB".into()),
+            text: "I opened this one twice on purpose".into(),
+            seed: 5,
+            pinned: true,
+        };
+        assert!(
+            note_on_reattach(Some(&stamped), true).is_none(),
+            "a reattach repainted DUPLICATE TAB on a terminal it bound"
+        );
+        assert_eq!(
+            note_on_reattach(Some(&stamped), false).map(|n| n.text),
+            Some(ours.text),
+            "a leaf really respawned lost the explanation"
+        );
+        assert_eq!(
+            note_on_reattach(Some(&theirs), true).map(|n| n.text),
+            Some(theirs.text.clone()),
+            "somebody's own note that only shares the headline was taken"
+        );
+    }
+
     /// The invariant, stated as itself: whatever goes in, no terminal is claimed
     /// twice on the way out.
     ///
@@ -39732,7 +39916,7 @@ mod tests {
         let mut seen_panes = std::collections::HashSet::new();
         let mut seen_work = std::collections::HashSet::new();
         for t in tabs.iter_mut() {
-            t.node.for_each_claim(&mut |pane, resume, _| {
+            t.node.for_each_claim(&mut |_, pane, resume, _| {
                 if let Some(id) = *pane {
                     assert!(seen_panes.insert(id), "pane {id} is claimed twice");
                 }

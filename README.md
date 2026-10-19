@@ -163,23 +163,27 @@ Runtime dependencies (checked by the scripts, which fail with a message):
 The Rust side (the `ctl adopt` verb and `terminal-delight probe`) adds no new
 crate dependencies.
 
-### The rest of it lives in two sibling repos
+### The rest of it lives in a sibling repo
 
 The terminal is the app. The look it wears, and the desktop that wears it back,
-are separate projects on purpose — you can take one without the others.
+are separate projects on purpose — you can take one without the other.
 
 | Repo | What it is |
 |---|---|
 | [**terminal-delight**](https://github.com/parker-brown-family/terminal-delight) | the terminal itself — GPU-native, Rust, tiling panes, per-pane grading |
 | [**omarchy-terminal-delight-theme**](https://github.com/parker-brown-family/omarchy-terminal-delight-theme) | the desktop half — the Omarchy theme, the variant set, the compositor curve, and `td-tint` |
-| [**omarchy-td-palette**](https://github.com/parker-brown-family/omarchy-td-palette) | *Terminal Paint* — the 🎨 bar widget that raises the picker over every terminal tile on the workspace |
 
 The seam between them is `td-tint`, which ships with the theme: it writes a
 variant's OSC palette down another terminal's tty and puts the matching
 gradient on its window border. That is how foot, Alacritty, kitty and Ghostty
-get the same one-click identity Terminal Delight panes have — and why the
-palette widget can paint a whole workspace without any of those terminals
-knowing this project exists.
+get the same one-click identity Terminal Delight panes have, without any of
+those terminals knowing this project exists.
+
+The paint overlay needs no plugin. Terminal Delight does not bind a desktop
+key for it; on Omarchy, bind Super+Alt+P to
+`terminal-delight ctl paint toggle`, which raises the overlay in every
+Terminal Delight window on the active workspace and folds them all on the
+next press.
 
 ## Architecture
 
