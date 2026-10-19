@@ -1,0 +1,1607 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Git Coordination · Terminal Delight</title><style>/* decision-brief — glass over an Omarchy wallpaper.
+ *
+ * The look is Terminal Delight's docs redesign (td-docs, docsite/redesign/redesign.css):
+ * the theme's wallpaper, blurred, under a scrim of the theme's own ground; the Omarchy
+ * kiosk's glass on every surface that is not a terminal; milky, lit glass for the one
+ * element the reader must not miss; and code on opaque black, because a terminal you
+ * can see the wall through is not a terminal.
+ *
+ * Still ONE design and no theme toggle — tps-report shipped four themes and nobody ever
+ * switched. What changes per brief is the palette, and it is not a choice anyone makes:
+ * scripts/brief-wall picks a random Omarchy theme at build time, and paints its wallpaper
+ * and its colour roles into a <style id="brief-wall"> block that goes straight after this
+ * file. Without that block the page wears Last Voyage, the kiosk family's default, over a
+ * glow instead of a wallpaper, and still looks finished.
+ *
+ * What the theme may NOT touch: the status and categorical colours. A red box means a
+ * decision is waiting in every brief, whatever the wallpaper, so --critical, --serious,
+ * --warning, --good and --s1..--s8 are fixed hex. They are the validated dataviz default
+ * palette (dark steps), which clears the CVD, chroma, lightness and contrast gates on the
+ * adjacent pairlist. If you change them, re-run the validator; do not eyeball it.
+ *
+ * Everything below sits in @layer brief, so a brief's own style block beats it without a
+ * specificity fight, whatever order the two are pasted in. The one exception is at the
+ * very bottom: the notes UI's glass, which has to beat notes.css.
+ */
+@layer brief {
+
+:root {
+  color-scheme: dark;
+
+  /* Colour roles, as the Terminal Delight kiosk family names them (assets/kiosk-theme.js).
+     Last Voyage until brief-wall overwrites them. */
+  --bg: #14100c;  --bg2: #201913;  --bg0: #0b0907;
+  --fg: #e2c79a;  --fg2: #a07a50;  --fgb: #f3d69b;
+  --acc: #dd6d16; --mut: #6c4727;  --sel: #54351e;
+  --red: #e2542a; --grn: #93663b;  --yel: #d8a55e; --blu: #a1561c; --mag: #b7935e; --cyn: #f58e28;
+  --dim: color-mix(in srgb, var(--fg) 60%, var(--fg2));   /* brief-wall measures and writes this */
+
+  --wall: none;          /* brief-wall: url("data:image/webp;base64,…") */
+  --scrim: 80%;          /* how much of the theme's ground lies over the wall */
+  --wall-label: "";      /* brief-wall: which wallpaper, printed under the footer */
+
+  --line:  color-mix(in srgb, var(--dim) 28%, transparent);
+  --line2: color-mix(in srgb, var(--dim) 48%, transparent);
+
+  /* The Omarchy kiosk's glass: a hard top highlight, a dark bottom lip and a wide inner
+     bloom, so it reads as a thick pane rather than a tinted rectangle. */
+  --glass-tint: #ffffff1a; --glass-tint-2: #ffffff05; --glass-edge: #ffffff2e;
+  --glass: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 58%, transparent);
+  --glass-shadow: 0 12px 34px #00000047, inset 0 1px 0 #ffffff5c, inset 0 -1px 0 #00000038, inset 0 0 30px #ffffff0d;
+  --glass-blur: blur(16px) saturate(1.5);
+
+  /* The names this file used before the glass, kept so notes.css and every brief's own
+     style block still resolve. They are opaque on purpose: notes.css sets text in
+     var(--surface-1) on amber, and see-through ink on amber is mud. */
+  --surface-0: var(--bg0);
+  --surface-1: var(--bg);
+  --surface-2: var(--bg2);
+  --surface-3: color-mix(in srgb, var(--bg2) 80%, var(--fg));
+  --text-primary:   var(--fgb);
+  --text-secondary: var(--fg);
+  --text-muted:     var(--dim);
+
+  /* categorical — assign in fixed order, never cycle. Not themed. */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. Not themed. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: "JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; background: var(--bg0); scrollbar-color: var(--line2) transparent; }
+body {
+  margin: 0; min-height: 100vh; background: transparent; color: var(--fg);
+  font: 16px/1.62 var(--sans); -webkit-font-smoothing: antialiased;
+}
+::selection { background: color-mix(in srgb, var(--acc) 42%, transparent); color: var(--fgb); }
+:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+a { color: var(--acc); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { color: var(--fgb); }
+
+/* ---- the wall ----
+   Two fixed layers under everything, so every glass surface has something to blur and no
+   markup is needed. The wall is blurred a little and scrimmed a lot; without one, two soft
+   glows in the theme's accent stand in. The scanlines sit UNDER the text, never over it. */
+body::before {
+  content: ""; position: fixed; inset: -14px; z-index: -2; pointer-events: none;
+  background:
+    linear-gradient(color-mix(in srgb, var(--bg) var(--scrim), transparent), color-mix(in srgb, var(--bg) var(--scrim), transparent)),
+    var(--wall) center / cover no-repeat,
+    radial-gradient(60rem 42rem at 88% -8%, color-mix(in srgb, var(--acc) 26%, transparent), transparent 70%),
+    radial-gradient(52rem 40rem at -6% 34%, color-mix(in srgb, var(--cyn) 16%, transparent), transparent 70%),
+    var(--bg0);
+  filter: blur(2.5px) saturate(1.1);
+}
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, #00000024 0 1px, transparent 1px 3px),
+    radial-gradient(130% 110% at 50% 40%, transparent 55%, #00000073 100%);
+}
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+header.top, .wrap > header:first-child, body > header { padding: 64px 0 26px; }
+header.top .wrap > :last-child, .wrap > header > :last-child { margin-bottom: 0; }
+
+/* ---- the masthead ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a heading
+   breaks the heading. The body does the explaining. */
+.eyebrow, header .meta, .kicker {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 18px; font: 700 11.5px/1.4 var(--mono); letter-spacing: .16em;
+  text-transform: uppercase; color: var(--acc);
+}
+.eyebrow::before, header .meta::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--acc); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acc) 20%, transparent), 0 0 14px var(--acc);
+}
+h1 {
+  margin: 0 0 20px; max-width: 22ch; color: var(--fgb);
+  font: 760 clamp(2.3rem, 4.8vw, 4.3rem)/1.02 var(--sans); letter-spacing: -.035em;
+  text-wrap: balance; text-shadow: 0 2px 30px color-mix(in srgb, var(--bg0) 70%, transparent);
+}
+h1 .n { font: 700 .82em/1 var(--mono); letter-spacing: -.02em; color: var(--dim); margin-right: .3em; }
+h1 .hi { color: var(--acc); }
+.lede {
+  max-width: 68ch; margin: 0 0 22px; color: var(--fg);
+  font-size: clamp(17px, 1.5vw, 19.5px); line-height: 1.6;
+}
+.stamps, .stamp-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.stamp {
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px; border-radius: 999px;
+  font: 700 10.5px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--fg);
+}
+.stamp::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+.stamp.good::before, .stamp.live::before { background: var(--good); box-shadow: 0 0 0 3px #0ca30c33, 0 0 10px var(--good); }
+.stamp.warn::before { background: var(--warning); box-shadow: 0 0 0 3px #fab21933; }
+.stamp.crit::before { background: var(--critical); box-shadow: 0 0 0 3px #d03b3b33; }
+
+/* ---- headings ---- */
+h2 {
+  margin: 68px 0 16px; color: var(--fgb); text-wrap: balance;
+  font: 740 clamp(1.5rem, 2.7vw, 2.15rem)/1.12 var(--sans); letter-spacing: -.025em;
+  scroll-margin-top: 24px;
+}
+h2 .n { font: 700 .8em/1 var(--mono); color: var(--dim); letter-spacing: 0; margin-right: .45em; }
+/* the label form: mono small caps, a lit number, and a hairline running out to the edge */
+h2.sec {
+  display: flex; align-items: center; gap: 14px; margin: 64px 0 20px;
+  font: 700 12.5px/1.3 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--fgb);
+}
+h2.sec::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--line2), transparent); }
+h2.sec .n { color: var(--acc); font-size: 1em; margin: 0; }
+h3 { margin: 0 0 8px; color: var(--fgb); font: 650 17.5px/1.3 var(--sans); letter-spacing: -.01em; }
+p { margin: 0 0 14px; }
+b, strong { color: var(--fgb); font-weight: 650; }
+ul, ol { padding-left: 22px; }
+li { margin-bottom: 6px; }
+hr { border: 0; height: 1px; margin: 44px 0; background: linear-gradient(90deg, transparent, var(--line2), transparent); }
+.dim { color: var(--dim); }
+
+/* ---- glass: every surface that is not a terminal ---- */
+.panel, .card, .finding, .tile, .grill .ask, .grill .q, .grill-q, .callout, .esc-list > li,
+.facts, .stamp, table, blockquote, .linkbtn, .open-dialog, button[data-dlg] {
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  background: var(--glass); border: 1px solid var(--glass-edge); box-shadow: var(--glass-shadow);
+}
+.panel { padding: 18px 20px; border-radius: 16px; margin: 0 0 16px; }
+
+/* ---- milky glass: the element the reader must not miss ----
+   Put the headline verdict in one. Bright, lit from above, the wall blurred through it, a
+   sheen across the top, a streak, and the faint scanlines of Terminal Delight's CRT.
+   One or two per page; a page of them is a page of nothing. */
+.glass {
+  position: relative; isolation: isolate; overflow: hidden;
+  padding: 22px 26px; margin: 0 0 22px; border-radius: 18px; color: var(--bg0);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7); backdrop-filter: blur(20px) saturate(1.7);
+  background: linear-gradient(180deg, #ffffffa8 0%, #ffffff30 38%, #ffffff00 60%), color-mix(in srgb, var(--fgb) 84%, transparent);
+  border: 1px solid #ffffffb0;
+  box-shadow: 0 18px 40px -12px #00000090, inset 0 1px 0 #ffffffe6, inset 0 -2px 0 #0000002e, inset 0 0 26px #ffffff40, inset 0 -18px 30px -18px #00000030;
+}
+.glass::before {
+  content: ""; position: absolute; z-index: -1; left: 1px; right: 1px; top: 1px; height: 50%;
+  border-radius: 17px 17px 0 0; pointer-events: none;
+  background: linear-gradient(180deg, #ffffffb0 0%, #ffffff40 45%, #ffffff00 100%);
+}
+.glass::after {
+  content: ""; position: absolute; z-index: -1; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(115deg, transparent 38%, #ffffff38 46%, transparent 54%),
+    repeating-linear-gradient(0deg, #0000000d 0 1px, transparent 1px 3px);
+}
+.glass :is(h1, h2, h3, h4, b, strong, a) { color: var(--bg0); text-shadow: none; }
+.glass p:last-child { margin-bottom: 0; }
+.glass :is(.lbl, .k, .kicker, .eyebrow, .h) { color: color-mix(in srgb, var(--bg0) 62%, var(--fgb)); }
+.glass > .h { display: block; margin: 0 0 8px; font: 700 11.5px/1.3 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+.glass code { background: color-mix(in srgb, var(--bg0) 12%, transparent); color: var(--bg0); }
+.glass .tag { color: var(--bg0); background: color-mix(in srgb, var(--bg0) 10%, transparent); border-color: color-mix(in srgb, var(--bg0) 30%, transparent); box-shadow: none; }
+.glass .tag::before { box-shadow: none; }
+.glass pre { margin-top: 12px; }
+
+/* ---- two faces: the prose on the left, its evidence level with it on the right ---- */
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 40px; align-items: start; margin: 0 0 18px; }
+.pair > * > :first-child { margin-top: 0; }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 0 0 16px; padding: 13px 16px; border-radius: 14px; font-size: 14px; }
+.facts .cap { grid-column: 1 / -1; margin-bottom: 3px; font: 700 10.5px var(--mono); letter-spacing: .15em; text-transform: uppercase; color: var(--yel); }
+.facts dt { font: 12px/1.75 var(--mono); color: var(--dim); }
+.facts dd { margin: 0; font: 13px/1.75 var(--mono); color: var(--fgb); overflow-wrap: anywhere; }
+
+/* ---- read-first: ranked, hard cap of five ---- */
+.esc-list { list-style: none; margin: 0 0 26px; padding: 0; display: grid; gap: 10px; counter-reset: rf; }
+.esc-list > li {
+  position: relative; margin: 0; padding: 16px 22px 16px 68px; border-radius: 16px; counter-increment: rf;
+}
+.esc-list > li::before, .esc-list .esc-n {
+  position: absolute; left: 22px; top: 15px; font: 700 19px/1.2 var(--mono); color: var(--acc);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--acc) 55%, transparent);
+}
+.esc-list > li::before { content: counter(rf, decimal-leading-zero); }
+.esc-list > li:has(.esc-n)::before { content: none; }
+.esc-list > li > b { color: var(--fgb); font-size: 16px; }
+.esc-list > li > span:not(.tag):not(.esc-n) { display: block; margin-top: 4px; color: var(--fg); }
+
+/* ---- cards, one lit ---- */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; margin: 0 0 22px; }
+.card { padding: 20px 22px; border-radius: 16px; }
+.card h3 { margin: 10px 0 8px; }
+.card p { font-size: 15px; }
+.card .why { margin: 12px 0 0; padding-top: 11px; border-top: 1px dashed var(--line2); color: var(--dim); font-size: 14px; }
+.badge {
+  display: inline-block; padding: 3px 10px; border: 1px solid var(--line2); border-radius: 999px;
+  font: 700 10px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim);
+}
+.card.rec {
+  border-color: color-mix(in srgb, var(--s3) 75%, transparent);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--s3) 20%, transparent), transparent 60%), var(--glass);
+  box-shadow: var(--glass-shadow), 0 0 0 1px var(--s3) inset, 0 18px 50px -18px color-mix(in srgb, var(--s3) 70%, transparent);
+}
+.card.rec .badge { color: #6fe0b4; border-color: var(--s3); background: color-mix(in srgb, var(--s3) 20%, transparent); }
+
+/* ---- stat tiles ---- */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 0 0 22px; }
+.tile { display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; border-radius: 16px; }
+.tile .k { font: 700 10.5px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.tile > b, .tile .big {
+  font: 780 2.3rem/1 var(--sans); letter-spacing: -.045em; color: var(--acc);
+  text-shadow: 0 0 26px color-mix(in srgb, var(--acc) 40%, transparent);
+}
+.tile .u { font-size: 13px; color: var(--dim); }
+
+/* ---- findings ---- */
+.finding { margin: 0 0 12px; padding: 16px 20px; border-radius: 16px; }
+.finding .t { color: var(--fgb); font-weight: 650; }
+.finding .w { margin-top: 6px; color: var(--fg); }
+
+/* ---- the grill: red is "a decision is waiting", so the grill is lit red, softly ---- */
+.grill .ask, .grill .q, .grill-q {
+  margin: 0 0 14px; padding: 20px 22px; border-radius: 18px;
+  border-color: color-mix(in srgb, var(--critical) 38%, var(--glass-edge));
+  background: linear-gradient(150deg, color-mix(in srgb, var(--critical) 13%, transparent), transparent 55%), var(--glass);
+}
+.grill .ask h3, .grill .q > b:first-child { color: var(--fgb); }
+:is(.ask, .q, .grill-q) .rec {
+  display: block; margin: 12px 0 0; padding: 10px 14px; border-radius: 10px; color: var(--fgb);
+  border-left: 3px solid var(--s3); background: color-mix(in srgb, var(--s3) 14%, transparent);
+}
+
+/* ---- figures: dark glass, because what is drawn on them was drawn for a dark page ---- */
+figure {
+  margin: 0 0 28px; padding: 20px 22px 16px; border-radius: 18px; border: 1px solid var(--glass-edge);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3);
+  background: linear-gradient(165deg, color-mix(in srgb, var(--bg2) 74%, transparent), color-mix(in srgb, var(--bg0) 90%, transparent) 72%);
+  box-shadow: 0 26px 60px -24px #000000c0, inset 0 1px 0 #ffffff2a, inset 0 0 40px #ffffff08;
+}
+figure > .lbl {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 14px;
+  font: 700 11px/1.3 var(--mono); letter-spacing: .15em; text-transform: uppercase; color: var(--dim);
+}
+figure > .lbl::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--acc); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acc) 18%, transparent);
+}
+figcaption { margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--line); font-size: 14.5px; color: var(--fg); }
+figcaption b { color: var(--fgb); }
+figure svg { display: block; width: 100%; height: auto; }
+figure img { display: block; max-width: 100%; height: auto; border-radius: 10px; }
+.scroller { overflow-x: auto; }
+.gutter { margin-top: 10px; font: 11.5px/1.5 var(--mono); color: var(--dim); }
+
+/* Figure ink for inline SVG, so a drawing wears the theme it sits in. Classes, because a
+   presentation attribute cannot read var(). Hex attributes still work; these are optional.
+   The six meanings are the fixed ones from reference/pictures.md. */
+svg .ink { fill: var(--fgb); }   svg .ink2 { fill: var(--dim); }   svg .ink-acc { fill: var(--acc); }
+svg .box { fill: color-mix(in srgb, var(--bg2) 88%, var(--bg0)); stroke: var(--line2); }
+svg .wire { fill: none; stroke: var(--dim); }
+svg .crit { --k: var(--critical); } svg .fail { --k: var(--serious); } svg .ready { --k: var(--s3); }
+svg .struct { --k: var(--s1); } svg .mine { --k: var(--warning); } svg .unk { --k: var(--dim); }
+svg :is(.crit, .fail, .ready, .struct, .mine, .unk):not(text):not(line):not(path) { fill: color-mix(in srgb, var(--k) 16%, var(--bg0)); stroke: var(--k); }
+svg :is(line, path):is(.crit, .fail, .ready, .struct, .mine, .unk) { stroke: var(--k); }
+svg text:is(.crit, .fail, .ready, .struct, .mine, .unk) { fill: var(--k); }
+svg .unk:not(text) { stroke-dasharray: 5 4; }
+
+/* ---- code: the only thing on the page that looks like a terminal, because it is one.
+   Opaque on purpose. ---- */
+/* inline-block, so a flag like --theme moves to the next line whole instead of breaking
+   after its hyphens; a path longer than the line still wraps, inside its own box */
+code {
+  display: inline-block; max-width: 100%; vertical-align: baseline;
+  font: .86em/1.5 var(--mono); color: var(--fgb); padding: 0 6px; border-radius: 5px;
+  background: color-mix(in srgb, var(--sel) 62%, transparent); overflow-wrap: anywhere;
+}
+pre {
+  margin: 0 0 16px; padding: 14px 17px; overflow-x: auto; border-radius: 12px;
+  background: color-mix(in srgb, var(--bg0) 95%, transparent); border: 1px solid var(--line2);
+  box-shadow: inset 0 1px 0 #ffffff12, 0 12px 28px -16px #000000d0;
+}
+pre code { display: inline; background: none; padding: 0; color: var(--fgb); font-size: 13px; line-height: 1.72; overflow-wrap: normal; }
+pre .ln { display: flex; gap: 10px; white-space: pre-wrap; word-break: break-all; }   /* wrap at the edge, as a terminal does */
+pre .ln::before { content: "$"; color: var(--grn); flex: none; user-select: none; }
+
+/* ---- tables ---- */
+table {
+  width: 100%; margin: 0 0 18px; border-collapse: separate; border-spacing: 0;
+  border-radius: 14px; overflow: hidden; font-size: 14px;
+}
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font: 700 10.5px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+  background: color-mix(in srgb, var(--bg0) 42%, transparent);
+}
+td { color: var(--fg); }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: color-mix(in srgb, var(--acc) 7%, transparent); }
+td b, td strong { color: var(--fgb); }
+
+blockquote {
+  margin: 0 0 16px; padding: 14px 20px; border-radius: 4px 14px 14px 4px;
+  border-left: 3px solid var(--acc); color: var(--fg); font-size: 15px; font-style: italic;
+}
+
+.callout {
+  margin: 0 0 18px; padding: 15px 20px; border-radius: 4px 14px 14px 4px; border-left: 3px solid var(--warning);
+  background: linear-gradient(90deg, #fab2191c, transparent 70%), var(--glass);
+}
+.callout.crit { border-left-color: var(--critical); background: linear-gradient(90deg, #d03b3b24, transparent 70%), var(--glass); }
+.callout.good { border-left-color: var(--good);     background: linear-gradient(90deg, #0ca30c1f, transparent 70%), var(--glass); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  display: block; margin: 0 0 7px; font: 700 10.5px/1.3 var(--mono); letter-spacing: .12em;
+  text-transform: uppercase; color: var(--dim);
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-flex; align-items: center; gap: 6px; margin-right: 7px; padding: 3px 9px 3px 8px;
+  border: 1px solid; border-radius: 999px; vertical-align: 2px;
+  font: 700 10px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+}
+.tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 7px currentColor; }
+.tag:is(.v, .measured)                { color: #6cd46c; background: #0ca30c2e; border-color: #0ca30c66; }
+.tag:is(.w, .inferred)                { color: #f5c95f; background: #fab21924; border-color: #fab21961; }
+.tag:is(.c, .hunch, .contradicted)    { color: #f08a8a; background: #d03b3b29; border-color: #d03b3b66; }
+.tag:is(.u, .unknown)                 { color: var(--dim); background: color-mix(in srgb, var(--dim) 12%, transparent); border-color: var(--line2); border-style: dashed; }
+.glass .tag:is(.v, .measured)::before { background: var(--good); }
+.glass .tag:is(.w, .inferred)::before { background: var(--s4); }
+.glass .tag:is(.c, .hunch, .contradicted)::before { background: var(--critical); }
+
+/* ---- buttons that open a modal ---- */
+.linkbtn, .open-dialog, button[data-dlg] {
+  display: inline-flex; align-items: center; gap: 8px; margin: 0 8px 8px 0; padding: 8px 15px; border-radius: 999px;
+  font: 600 13px/1.2 var(--mono); color: var(--fgb); cursor: pointer;
+  transition: transform .12s ease, border-color .12s ease;
+}
+.linkbtn:hover, .open-dialog:hover, button[data-dlg]:hover {
+  transform: translateY(-1px); border-color: color-mix(in srgb, var(--acc) 70%, transparent);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--acc) 24%, transparent);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+  color: var(--fg); border: 1px solid var(--glass-edge); border-radius: 18px;
+  -webkit-backdrop-filter: blur(24px) saturate(1.4); backdrop-filter: blur(24px) saturate(1.4);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 88%, transparent);
+  box-shadow: 0 40px 120px #000000b3, inset 0 1px 0 #ffffff47;
+}
+dialog::backdrop { background: color-mix(in srgb, var(--bg0) 62%, transparent); backdrop-filter: blur(6px); }
+.dlg-head {
+  position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: flex-start; gap: 20px;
+  padding: 20px 26px; border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg2) 94%, var(--bg0));
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { margin: 0; font: 11.5px/1.5 var(--mono); color: var(--dim); }
+.x {
+  flex: none; width: 32px; height: 32px; border-radius: 999px; cursor: pointer;
+  font-size: 17px; line-height: 1; color: var(--fg);
+  background: color-mix(in srgb, var(--bg0) 45%, transparent); border: 1px solid var(--line2);
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  margin: 30px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line);
+  font: 700 11.5px/1.3 var(--mono); letter-spacing: .13em; text-transform: uppercase; color: var(--dim);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p, .dlg-body ul { font-size: 15px; color: var(--fg); }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; }
+.dlg-body li { margin-bottom: 8px; }
+
+footer {
+  margin-top: 76px; padding-top: 24px; border-top: 1px solid var(--line);
+  font: 12px/1.6 var(--mono); color: var(--dim);
+}
+footer p { margin: 0 0 7px; }
+footer::after { content: var(--wall-label); display: block; margin-top: 12px; opacity: .75; }
+
+@media (max-width: 900px) {
+  .pair { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .wrap { padding: 0 16px 80px; }
+  header.top, .wrap > header:first-child, body > header { padding-top: 40px; }
+  h1 { font-size: clamp(2rem, 9vw, 2.6rem); }
+  h2 { margin-top: 52px; }
+  .esc-list > li { padding: 14px 16px 14px 56px; }
+  .esc-list > li::before, .esc-list .esc-n { left: 16px; font-size: 17px; }
+  figure { padding: 14px 14px 12px; border-radius: 14px; }
+}
+@media print {
+  body::before, body::after { display: none; }
+}
+
+} /* @layer brief */
+
+/* ---- the notes UI, in glass ----
+   Outside the layer and one step more specific than notes.css, which it has to beat.
+   notes.css itself is left alone: its bytes are pinned by fixtures/notes-format, and
+   Terminal Delight vendors those. It already reads every colour from the tokens above. */
+:root .notebar {
+  padding: 7px 8px 7px 16px; border-radius: 999px; border-color: var(--glass-edge);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 80%, transparent);
+  box-shadow: 0 16px 44px #00000080, inset 0 1px 0 #ffffff55;
+}
+:root .notebar button { border-radius: 999px; background: color-mix(in srgb, var(--bg0) 45%, transparent); border-color: var(--line2); }
+@media (max-width: 640px) { :root .notebar { border-radius: 18px; padding: 8px 10px; } }   /* notes.css wraps it to two rows here */
+:root .note-btn { border-radius: 999px; }
+:root :is(#note-text, #export-out) { background: color-mix(in srgb, var(--bg0) 92%, transparent); border-color: var(--line2); border-radius: 10px; }
+:root #note-list li { background: var(--glass); border-color: var(--glass-edge); border-left-color: var(--warning); }
+</style><style id="brief-wall">
+/* brief-wall — theme matte-black (dark), wallpaper 2-dot-hands.jpg
+   scrim 0.78; contrast over the wall's brightest tenth: fg 10.11:1, fgb 10.11:1, dim 6.2:1, acc 7.38:1 */
+:root {
+  --bg: #121212;
+  --bg2: #1e1e1e;
+  --bg0: #090909;
+  --fg: #bebebe;
+  --fg2: #555555;
+  --fgb: #bebebe;
+  --acc: #e68e0d;
+  --mut: #333333;
+  --sel: #2a2a2a;
+  --red: #d35f5f;
+  --grn: #ffc107;
+  --yel: #b91c1c;
+  --blu: #e68e0d;
+  --mag: #d35f5f;
+  --cyn: #bebebe;
+  --dim: #949494;
+  --scrim: 78%;
+  --wall-label: "wallpaper · matte-black · 2-dot-hands.jpg";
+  --wall: url("data:image/webp;base64,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");
+}
+</style>
+<style>.wrap{max-width:1060px} main.wrap{padding-bottom:100px} section>p{max-width:76ch}.micro{font-size:13px;color:var(--dim)}.tiny{font:11px/1.5 var(--mono);color:var(--dim)}.surface-label{font:10px/1.6 var(--mono);letter-spacing:.09em;margin:18px 0 10px}.proposal{color:var(--warning)}.current-ui{width:880px;font:13px/1.5 var(--mono);padding:12px;color:var(--fg);background:var(--bg0);border-radius:8px}.rail-line,.proposed-rail{display:flex;align-items:center;gap:18px}.quiet{color:var(--dim)}.chip{border:1px solid var(--line2);border-radius:6px;padding:7px 10px;white-space:nowrap}.old-overlay{margin-top:14px;padding:20px 16px 15px;border:2px solid var(--line2);border-radius:10px}.old-heading{display:flex;justify-content:space-between;margin:16px 0 22px}.old-grid{display:grid;grid-template-columns:235px 82px 145px 76px 1fr;gap:8px;margin:12px 0}.cut{white-space:nowrap;overflow:hidden}.old-foot{border-top:1px solid var(--line);padding-top:9px}.proposed-rail{width:max-content;min-width:720px;padding:14px;background:var(--bg0);border-radius:8px;font:12px var(--mono)}.signal{display:inline-block;padding:7px 10px;border:1px solid var(--warning);border-radius:5px;color:var(--fgb);white-space:nowrap}.rail-small{margin-top:18px;width:320px;max-width:100%}.compact-rail{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:9px 0;padding:8px;background:var(--bg0);border-radius:6px;font:11px var(--mono)}figure svg{display:block;width:100%;height:auto;min-width:650px} figure .scroller{max-width:100%;overflow-x:auto}.demo{margin-top:12px;border:1px solid var(--warning);border-radius:10px;background:var(--bg0);padding:20px;font:12px/1.5 var(--mono);color:var(--fgb)}.demo-head,.demo-bottom,.project-summary,.list-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.demo-head{padding-bottom:15px;border-bottom:1px solid var(--line2)}.demo-head strong{letter-spacing:.1em}.crumbs{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin:12px 0 22px;color:var(--dim)}.demo button{font:inherit;color:inherit;cursor:pointer;border:1px solid var(--line2);background:transparent;border-radius:5px;padding:7px 10px;text-align:left}.demo button:hover{background:var(--bg2);border-color:var(--fg)}.crumbs button{padding:3px 0;border:0;color:var(--fg)}.list-heading{font-size:10px;color:var(--dim);padding-bottom:8px}.project-row{display:grid;width:100%;grid-template-columns:112px minmax(0,1fr) 158px;gap:12px;padding:18px 10px!important;border:0!important;border-bottom:1px solid var(--line)!important;border-radius:0!important;align-items:start;text-align:left}.project-row.selected{background:var(--bg2)}.project-row b,.cluster-row b{display:block;font-size:13px}.project-row em,.cluster-row em{display:block;font-style:normal;font-size:11px;line-height:1.7;margin-top:3px}.project-row small{font-size:9px}.project-row b small{margin-left:5px;padding:2px 4px;border:1px solid var(--line2);color:var(--dim)}.status{font-size:10px;padding-top:3px;white-space:nowrap}.coverage{font-size:10px;text-align:right;color:var(--dim)}.coverage small{font-size:9px}.good-ink{color:#67cc99}.unknown{color:var(--dim);border-style:dashed!important}.demo-foot{font:10px/1.6 var(--mono);color:var(--dim);margin:16px 0 0}.demo-bottom{margin-top:18px;padding-top:12px;border-top:1px solid var(--line)}.project-summary{margin-bottom:6px;font-size:13px}.project-summary span{font-size:10px}.demo-tabs{display:flex;gap:6px;margin:20px 0 6px}.demo-tabs button.on{border-bottom:2px solid var(--fgb)}.cluster-row{display:grid;grid-template-columns:112px 1fr 12px;gap:12px;width:100%;padding:18px 9px!important;border:0!important;border-bottom:1px solid var(--line)!important}.independent{display:flex;gap:12px;flex-wrap:wrap;padding:17px 9px;border-bottom:1px solid var(--line);font-size:10px}.independent b{color:inherit}.evidence-locus{padding:14px;background:var(--bg2);border-radius:5px;margin:13px 0;display:grid;gap:7px;overflow-wrap:anywhere}.evidence-locus b{font-size:10px;color:var(--dim)}.evidence-locus code{font-size:14px}.evidence-locus span{font-size:11px}.evidence-mini{display:grid;grid-template-columns:1fr 1.2fr;gap:8px;margin:18px 0;font-size:11px}.evidence-mini span{color:var(--dim)}.pane-list{display:flex;flex-wrap:wrap;gap:6px}.checkout-table{min-width:650px;width:100%;font-size:10px}.checkout-table th,.checkout-table td{padding:10px;text-align:left}.states{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding-top:10px}.state{border:1px solid var(--line2);border-radius:8px;padding:18px;display:grid;gap:8px;font:12px var(--mono)}.state b{font-size:18px}.state small{font-size:11px;color:var(--dim)}.slice-list{padding-top:12px}.slice-list>div{display:flex;gap:18px;padding:20px 0;border-bottom:1px solid var(--line)}.slice-list>div:last-child{border:0}.slice-index{display:flex;width:34px;height:34px;flex-shrink:0;align-items:center;justify-content:center;background:var(--s1);color:#fff;clip-path:polygon(15% 0,100% 0,85% 100%,0 100%);font:700 15px var(--mono)}.slice-list p{font-size:14px;margin:6px 0}.slice-list small{display:block;font-size:12px;color:var(--dim)}.grill .ask h3{padding-right:32px}.grill .ask p{max-width:70ch}.glass p{color:var(--bg0);margin:0;font-size:18px}.wall-credit:after{content:var(--wall-label);display:block;margin:20px 0;font:10px var(--mono);color:var(--dim)}footer{padding-top:36px;margin-top:40px;border-top:1px solid var(--line);font-size:12px;color:var(--dim)}[hidden]{display:none!important}button{max-width:100%}code{overflow-wrap:anywhere}.dlg-body a{overflow-wrap:anywhere}.demo p{max-width:100%}
+@media(max-width:700px){.demo{padding:12px}.demo-head{align-items:flex-start;flex-direction:column;gap:5px}.project-row{grid-template-columns:90px 1fr;gap:8px}.project-row .coverage{grid-column:2;text-align:left}.project-summary{align-items:flex-start;flex-direction:column}.cluster-row{grid-template-columns:86px 1fr 8px;gap:8px}.demo-bottom{align-items:flex-start;flex-direction:column}.evidence-mini{grid-template-columns:1fr}.evidence-mini b{margin-bottom:5px}.states{grid-template-columns:1fr}.current-ui{font-size:12px}.slice-list>div{gap:10px}.glass p{font-size:16px}.notebar{max-width:calc(100vw - 12px);flex-wrap:wrap}h1{font-size:clamp(2.2rem,8vw,4rem)}}
+</style><style>/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+
+/* ---- concur: a rubber stamp in a space on each decision's right ----
+   notes.js adds .concurrable to every decision and appends the space. The padding is
+   forced because briefs set .grill .ask padding with a shorthand of their own, and the
+   space must never sit under the note button in the top-right corner. */
+.concurrable {
+  --concur-size: 120px;
+  position: relative;
+  min-height: calc(var(--concur-size) + 58px);
+  padding-right: calc(var(--concur-size) + 34px) !important;
+}
+.concur-zone {
+  position: absolute; right: 14px; top: max(42px, calc(50% - var(--concur-size) / 2));
+  width: var(--concur-size); height: var(--concur-size); margin: 0; padding: 0;
+  background: transparent; border: 1.5px dashed #56554e; border-radius: 14px;
+  color: #6b6a62; font: inherit; cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.concur-q {
+  position: absolute; inset: 0 0 18px; display: grid; place-items: center;
+  font: 600 46px/1 var(--sans); transition: opacity .15s;
+}
+.concur-lbl {
+  position: absolute; left: 0; right: 0; bottom: 9px; text-align: center;
+  font: 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
+  transition: opacity .15s;
+}
+.concur-zone:not(.on):hover,
+.concur-zone:not(.on):focus-visible {
+  border-color: var(--text-secondary); color: var(--text-secondary);
+  animation: concur-throb .9s ease-in-out infinite;
+}
+@keyframes concur-throb { 0%, 100% { scale: 1; } 50% { scale: 1.07; } }
+.concur-zone:focus-visible { outline: 2px solid var(--s1); outline-offset: 3px; }
+.concur-zone.on { border-color: transparent; }
+.concur-zone.on .concur-q, .concur-zone.on .concur-lbl { opacity: 0; }
+.concur-zone.on::after {
+  content: "click to peel"; position: absolute; left: -24px; right: -24px; bottom: -20px;
+  text-align: center; font: 10px/1 var(--mono); letter-spacing: .08em; color: var(--text-muted);
+  opacity: 0; transition: opacity .15s; pointer-events: none;
+}
+.concur-zone.on:hover::after { opacity: 1; }
+
+.concur-stamp {
+  position: absolute; left: -12px; top: -12px;
+  width: calc(100% + 24px); height: calc(100% + 24px);
+  overflow: visible; pointer-events: none;
+  rotate: var(--r, 0deg); translate: var(--dx, 0px) var(--dy, 0px);
+}
+.concur-stamp.thud { animation: concur-thud .2s cubic-bezier(.2,.8,.3,1) both; }
+@keyframes concur-thud { 0% { scale: 1.9; opacity: 0; } 70% { scale: .97; opacity: 1; } 100% { scale: 1; } }
+.concur-stamp.peel { animation: concur-peel .3s cubic-bezier(.5,0,.9,.4) forwards; }
+@keyframes concur-peel {
+  to {
+    rotate: calc(var(--r, 0deg) - 30deg);
+    translate: calc(var(--dx, 0px) + 36px) calc(var(--dy, 0px) - 32px);
+    scale: .72; opacity: 0;
+  }
+}
+.concurrable.concur-jolt { animation: concur-jolt .24s ease-out; }
+@keyframes concur-jolt { 0%, 100% { translate: 0 0; } 30% { translate: 0 2px; } 65% { translate: 0 -1px; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .concur-zone, .concur-stamp, .concurrable { animation: none !important; transition: none !important; }
+}
+@media (max-width: 640px) {
+  .concurrable { --concur-size: 96px; }
+  .concur-q { font-size: 38px; }
+}
+</style><style id="coordination-v2">.proposed-rail{min-width:0;width:100%;max-width:700px;justify-content:space-between}.single-git{display:inline-flex;align-items:center;gap:15px;flex-wrap:wrap;border:1px solid var(--line2);padding:10px 14px;border-radius:7px;background:var(--bg0);font:12px var(--mono)}.removed-space{height:34px;margin-top:9px;border-top:1px dashed var(--line);color:var(--dim);font:10px var(--mono);padding-top:9px}.compact-rail{gap:7px;justify-content:flex-start;flex-wrap:wrap}.sev-alert{color:#ffa180;font-weight:800}.sev-warning{color:#f4f4f4;font-weight:800}.sev-caution{color:#8ab4f8;font-weight:500}.sev-clear{color:#67cc99}.sev-unknown{color:var(--dim)}.demo .status{font-size:11px}.demo .sev-warning{border-left:3px solid currentColor;padding-left:6px}.demo .sev-alert{border-left:4px double currentColor;padding-left:6px}.demo .project-row{grid-template-columns:111px minmax(0,1fr) 145px}.project-row .project-link{display:inline;font-size:14px;padding:0;border:0;text-align:left;text-wrap:balance}.project-row .project-link:hover{text-decoration:underline}.current-mark{display:inline;font:9px var(--mono);color:var(--dim);margin-left:8px}.project-row .expand-project{margin-top:10px;display:block;font-size:10px}.project-age{display:block;color:var(--dim);font:10px/1.5 var(--mono);margin-top:5px}.directory-preview{margin-left:26px;padding-left:15px;border-left:1px solid var(--line2)}.preview-row{display:grid;grid-template-columns:98px minmax(0,1fr) 10px;gap:8px;width:100%;border:0!important;border-bottom:1px solid var(--line)!important;padding:15px 6px!important;border-radius:0!important}.preview-row b{font-size:12px}.preview-row em{display:block;font:10px/1.7 var(--mono);margin-top:4px}.dimensions{display:flex;flex-wrap:wrap;gap:5px;margin:9px 0}.dimensions>span{font:10px/1.5 var(--mono);border:1px solid var(--line2);padding:3px 6px;border-radius:3px}.dimensions b{display:inline;font-size:10px}.scope-note{border-left:2px dashed var(--dim);padding:10px 12px;background:var(--bg2);font:11px/1.7 var(--mono);margin:15px 0}.mock-scope{font:10px/1.5 var(--mono);color:var(--dim);margin:10px 0}.demo h3{font:700 14px/1.4 var(--mono);margin:18px 0 14px}.demo-head #closed-git-summary{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:0;font-size:11px}.fixture-controls{display:flex;flex-wrap:wrap;gap:14px;margin:14px 0 18px;padding:14px;border:1px dashed var(--line2);border-radius:8px}.fixture-controls label{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font:11px/1.5 var(--mono)}.fixture-controls select{font:inherit;background:var(--bg0);color:var(--fgb);border:1px solid var(--line2);border-radius:4px;padding:6px;max-width:100%}.runtime-legend{display:flex;gap:12px;flex-wrap:wrap;font:10px/1.6 var(--mono);margin:14px 0}.relations{min-width:740px;width:100%;font:11px/1.6 var(--mono);border-collapse:collapse}.relations th,.relations td{vertical-align:top;text-align:left;padding:13px 10px;border-bottom:1px solid var(--line)}.relations td:nth-child(1){width:23%}.relations td:nth-child(2){width:27%}.relations td:nth-child(3){width:50%}.relations td details{margin-top:10px}.demo details summary{cursor:pointer;color:var(--dim);font-size:10px}.demo details code,.demo details pre{font-size:10px}.demo details pre{max-height:300px;overflow:auto}.hotspot-list{margin-top:22px}.hotspot-list h4{font-size:12px}.hotspot-row{display:grid;grid-template-columns:110px minmax(0,1fr) auto;gap:8px;padding:12px 6px;border-bottom:1px solid var(--line);font-size:10px}.hotspot-row>span,.hotspot-row small{color:var(--dim);font-size:9px}.pager{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:12px 0;font-size:10px}.demo button:disabled{opacity:.35;cursor:default}.topology-strip{display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:center;margin:18px 0;font:11px/1.7 var(--mono)}.topology-strip>div{padding:15px;border:1px solid var(--line2);border-radius:7px}.topology-strip b,.topology-strip span{display:block}.topology-strip>span{font-size:24px;color:var(--dim)}.topology-change{padding:12px;border-left:3px solid var(--s1);font:11px/1.7 var(--mono);background:var(--bg2)}.demo hr{margin:8px 0}.fixture-controls input{accent-color:var(--acc)}.demo button,.fixture-controls select{min-height:30px}.project-node:has(.sev-alert)>.project-row{padding-top:22px!important;padding-bottom:22px!important}.demo .cluster-row{grid-template-columns:106px minmax(0,1fr) 10px}.demo-view{min-width:0}
+@media(max-width:700px){.demo .project-row{grid-template-columns:94px minmax(0,1fr)}.demo .project-row>.coverage{grid-column:2;text-align:left}.directory-preview{margin-left:8px;padding-left:8px}.preview-row{grid-template-columns:1fr 10px}.preview-row>.status{grid-column:1/-1}.demo .cluster-row{grid-template-columns:1fr 10px}.cluster-row>.status{grid-column:1/-1}.hotspot-row{grid-template-columns:1fr}.topology-strip{grid-template-columns:1fr}.topology-strip>span{transform:rotate(90deg);justify-self:center}.fixture-controls{padding:10px}.fixture-controls label{width:100%}.demo-head #closed-git-summary{gap:8px}.demo-head{flex-direction:column}.single-git{font-size:11px}.runtime-legend{gap:8px}.states .state b{font-size:17px}}
+
+#demo-content{max-height:640px;overflow-y:auto;overscroll-behavior:contain;padding-right:3px}.checkout-table{min-width:820px}
+</style></head><body><header class="top"><div class="wrap">
+  <p class="eyebrow">Terminal Delight · design decision · 18 October 2026</p>
+  <h1>Git Coordination</h1>
+  <p class="lede">Your rail spends its top row on rotating Git facts. You asked to squash that ticker into nothing. Replace it with one window-wide attention signal, then open it when you need to inspect the connected work.</p>
+  <div class="stamps"><span class="stamp">Revised proposal v2 · 4/10</span><span class="stamp">About 6 minutes</span><span class="stamp">Native Rust / GPUI</span></div>
+</div></header>
+<main class="wrap">
+<section aria-labelledby="entry">
+  <h2 id="entry">The Glance</h2>
+  <p>The closed signal covers projects in this window. Branch metrics and worktree inventory move into project inspection. Selecting a clear project leaves an alert elsewhere visible.</p>
+  <figure id="fig-01-a-stable-signal"><span class="lbl">01 · A stable signal</span>
+    <div class="surface-label">CURRENT · redrawn from your screenshot <span class="tag measured">measured</span></div>
+    <div class="scroller"><div class="current-ui">
+      <div class="rail-line"><span class="chip">1 WORKTREE · 1 SHARED</span><span class="quiet">● ● ● ▰ &nbsp; 1 lines of work, one shared · quiet for an hour</span></div>
+    </div></div>
+    <div class="surface-label proposal">PROPOSED · yellow = the amendments <span class="tag inferred">inferred</span></div>
+    <div class="proposed-rail"><div class="single-git"><b>GIT</b><span class="sev-alert">! ALERT</span><span>3 affected projects</span><span class="quiet">PARTIAL</span></div></div><div class="removed-space">This window · detailed Git metrics are available on opening</div>
+    <div class="rail-small"><span class="tiny">NARROW · 320 CSS px</span><div class="compact-rail"><b>GIT</b><span class="sev-alert">! ALERT</span><span>3 projects</span><span class="quiet">PARTIAL</span></div><span class="tiny">QUIET · COMPLETE</span><div class="compact-rail quiet">GIT</div></div>
+    <figcaption><b>One stable window-wide signal replaces the ticker.</b> The proposed example has three affected projects while Client Portal is selected and clear. Quiet, complete observations reduce to a subdued GIT label. Current text is redrawn from your screenshot; all proposed counts and CSS widths are illustrative.</figcaption>
+  </figure>
+  <p class="micro">Scope stays explicit: this TD window. Git attention remains separate from the agent-needs-input queue. Unknown and stale observations stay visible even when no overlap is currently established.</p>
+</section>
+
+<section aria-labelledby="connection">
+  <h2 id="connection">The Connection</h2>
+  <p>Four worktrees touching one file share one <b>hotspot</b>. Work connected through shared files or checkouts forms a <b>cluster</b>, which can be inspected together.</p>
+  <figure id="fig-02-count-the-shared"><span class="lbl">02 · Count the shared place</span>
+    <div class="scroller"><svg viewBox="0 0 780 300" role="img" aria-label="Four panes in three checkouts connect through one common file; the host checkout has two panes. Agent identities and line overlap are unknown.">
+      <g class="wire" fill="none"><path d="M185 74H270V150H330"/><path d="M185 150H330"/><path d="M185 226H270V150"/><path d="M535 150H592"/></g>
+      <rect x="16" y="40" width="170" height="66" rx="8" class="box struct"/><rect x="16" y="116" width="170" height="66" rx="8" class="box struct"/><rect x="16" y="192" width="170" height="66" rx="8" class="box struct"/>
+      <rect x="330" y="97" width="205" height="106" rx="10" class="box mine"/><rect x="592" y="97" width="170" height="106" rx="10" class="box struct"/>
+      <g class="ink" font-family="ui-monospace,monospace" font-size="13"><text x="30" y="64">render · pane A</text><text x="30" y="141">host · panes B + C</text><text x="30" y="216">cli · pane D</text><text x="345" y="121">relay.rs</text><text x="345" y="147">3 checkouts</text><text x="345" y="172">1 file hotspot</text><text x="607" y="123">ONE CLUSTER</text><text x="607" y="150">4 panes</text><text x="607" y="176">3 checkouts</text></g>
+      <g class="ink2" font-family="ui-monospace,monospace" font-size="11"><text x="30" y="86">committed + unstaged</text><text x="30" y="164">shared checkout hotspot</text><text x="30" y="240">staged</text><text x="20" y="282">Illustrative · yellow = the proposed grouping · agent identities / line overlap: unknown</text></g>
+    </svg></div>
+    <figcaption><b>The same checkout contributes once to file overlap.</b> Its two panes also form a shared-checkout hotspot. This diagram follows the handoff’s grouping rule; it makes no claim that either pane authored a particular change.</figcaption>
+  </figure>
+  <p>Today’s scanner compares branch pairs and omits untracked paths from overlap. Collect committed, staged, unstaged and untracked paths separately before building the groups.</p>
+  <button class="linkbtn" data-dlg="d-evidence">Source checks &amp; handoff amendments ↗</button>
+</section>
+
+<section aria-labelledby="inspection">
+  <h2 id="inspection">The Drill-Down</h2>
+  <p>Expand a project to preview its groups, or open it for the full breakdown. At evidence depth, panes, branches, checkouts and path sources appear together.</p>
+  <figure id="fig-03-three-depths-one"><span class="lbl">03 · Three depths, one overlay</span>
+    <div class="surface-label proposal">INTERACTIVE MOCKUP · fictional observations · yellow = the proposed frame</div>
+    <div class="fixture-controls" id="fixture-controls">
+      <label>Observation fixture <select id="fixture-mode"><option value="missing">Missing packaging footprint</option><option value="bridge">Packaging bridge measured</option><option value="dense">Dense common file · 40 checkouts</option></select></label>
+      <label><input type="checkbox" id="fixture-known"> Known agent/session identities</label>
+      <label>Host target check <select id="fixture-target"><option value="not_checked">Not checked</option><option value="checked_none">Checked · none reported</option><option value="conflict">Checked · conflict reported</option><option value="unavailable">Unavailable</option><option value="stale">Stale</option></select></label>
+    </div>
+    <div class="demo" id="demo" tabindex="-1" aria-label="Git coordination prototype">
+      <div class="demo-head"><strong>GIT</strong><button id="closed-git-summary" aria-controls="demo-content" aria-expanded="true" aria-label="Toggle window-wide Git coordination"></button></div>
+      <div class="mock-scope">This window · current project: Client Portal (clear)</div>
+      <div id="demo-content"></div>
+      <div class="demo-bottom" id="demo-bottom"><button id="demo-back">Close</button><span class="quiet">Esc returns to your selection · then closes</span></div>
+    </div>
+    <div class="runtime-legend"><span class="sev-alert">! Alert · orange</span><span class="sev-warning">▲ Warning · bright / bold</span><span class="sev-caution">◇ Caution · blue</span><span class="sev-clear">✓ Clear · green</span><span class="sev-unknown">? Unknown · grey</span></div>
+    <figcaption><b>A clear selected project cannot hide an alert elsewhere.</b> Expand Terminal Delight’s preview or open its project; select Shared host code for the joined relationship table. Toggle known identities to see B and C share one session. The dense fixture retains every hotspot behind bounded pages. All observations are fictional.</figcaption>
+  </figure>
+  <figure id="fig-04-coverage-survives-the"><span class="lbl">04 · Coverage survives the glance</span>
+    <div class="states">
+      <div class="state"><span class="sev-clear">✓ CLEAR</span><b>0 observed groups</b><small>Required observations complete</small></div>
+      <div class="state"><span class="sev-warning">▲ WARNING</span><b>2 observed groups</b><small>Known-member paths complete · project graph incomplete</small></div>
+      <div class="state unknown"><span>? UNKNOWN</span><b>Group count unknown</b><small>Initial scan / unavailable</small></div>
+      <div class="state unknown"><span>◷ STALE</span><b>Last observed: warning</b><small>Reading age remains visible</small></div>
+    </div>
+    <div class="topology-strip"><div><b>Before · 2 groups</b><span>Host &nbsp; · &nbsp; Palette<br>Packaging unmeasured</span></div><span aria-hidden="true">→</span><div><b>After · 1 connected group</b><span>Host — Packaging — Palette<br>Warning unchanged</span></div></div>
+    <figcaption><b>Fewer observed groups can mean more connected work.</b> A newly measured bridge joins the host and palette groups. Their count falls from two to one while warning remains. Known-member evidence and membership coverage travel separately in UI and MCP; a partial count is neither final nor a lower bound.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="mechanism">
+  <h2 id="mechanism">The Build</h2>
+  <p>Extend TD’s existing background scanner. Derive groups once per reading, then use the same logic for native views and permission-scoped MCP reads.</p>
+  <figure id="fig-05-collect"><span class="lbl">05 · Collect</span><div class="scroller"><svg viewBox="0 0 760 350" role="img" aria-label="Architecture step 1: collect observations through the existing scanner; positions remain fixed across steps."><g class="wire" fill="none"><path d="M210 73H270"/><path d="M460 73H520"/></g><rect class="box ready" x="20" y="38" width="190" height="70" rx="8"/><rect class="box ready" x="270" y="38" width="190" height="70" rx="8"/><rect class="box mine" x="520" y="38" width="215" height="70" rx="8"/><g class="ink" font-family="ui-monospace,monospace" font-size="12"><text x="34" y="64">Panes + local Git</text><text x="34" y="87" class="ink2">existing observations</text><text x="284" y="64">Background scanner</text><text x="284" y="87" class="ink2">engstate.rs</text><text x="534" y="64">Typed footprints</text><text x="534" y="87" class="ink2">source + identity + gaps</text><text x="20" y="342" class="ink2" font-size="10">green = existing system · yellow = proposed additions · local window boundary</text></g></svg></div><figcaption><b>Keep one Git worker.</b> Extend its observations with source-labelled paths and stable checkout/pane identities. The legacy engineering report keeps its keys and meanings. Source: current scanner/cache seams plus proposed modules.</figcaption></figure><figure id="fig-06-group"><span class="lbl">06 · Group</span><div class="scroller"><svg viewBox="0 0 760 350" role="img" aria-label="Architecture step 2: group observations through the existing scanner; positions remain fixed across steps."><g class="wire" fill="none"><path d="M210 73H270"/><path d="M460 73H520"/></g><rect class="box ready" x="20" y="38" width="190" height="70" rx="8"/><rect class="box ready" x="270" y="38" width="190" height="70" rx="8"/><rect class="box mine" x="520" y="38" width="215" height="70" rx="8"/><g class="wire" fill="none"><path d="M627 108V150"/><path d="M520 183H460"/></g><rect class="box mine" x="520" y="150" width="215" height="70" rx="8"/><rect class="box mine" x="270" y="150" width="190" height="70" rx="8"/><g class="ink" font-family="ui-monospace,monospace" font-size="12"><text x="34" y="64">Panes + local Git</text><text x="34" y="87" class="ink2">existing observations</text><text x="284" y="64">Background scanner</text><text x="284" y="87" class="ink2">engstate.rs</text><text x="534" y="64">Typed footprints</text><text x="534" y="87" class="ink2">source + identity + gaps</text><text x="534" y="177">Hotspots → clusters</text><text x="534" y="201" class="ink2">coordination.rs · pure</text><text x="284" y="177">Native overlay</text><text x="284" y="201" class="ink2">operator scope</text><text x="20" y="342" class="ink2" font-size="10">green = existing system · yellow = proposed additions · local window boundary</text></g></svg></div><figcaption><b>Derive connected work once per reading.</b> Cache the graph and render it in the native overlay. No separate UI severity formula or scanner is needed. Source: current scanner/cache seams plus proposed modules.</figcaption></figure><figure id="fig-07-expose"><span class="lbl">07 · Expose</span><div class="scroller"><svg viewBox="0 0 760 350" role="img" aria-label="Architecture step 3: expose observations through the existing scanner; positions remain fixed across steps."><g class="wire" fill="none"><path d="M210 73H270"/><path d="M460 73H520"/></g><rect class="box ready" x="20" y="38" width="190" height="70" rx="8"/><rect class="box ready" x="270" y="38" width="190" height="70" rx="8"/><rect class="box mine" x="520" y="38" width="215" height="70" rx="8"/><g class="wire" fill="none"><path d="M627 108V150"/><path d="M520 183H460"/></g><rect class="box mine" x="520" y="150" width="215" height="70" rx="8"/><rect class="box mine" x="270" y="150" width="190" height="70" rx="8"/><g class="wire" fill="none"><path d="M627 108V128H115V150"/><path d="M115 220V250"/><path d="M210 285H270"/></g><rect class="box mine" x="20" y="150" width="190" height="70" rx="8"/><rect class="box mine" x="20" y="250" width="190" height="70" rx="8"/><rect class="box mine" x="270" y="250" width="190" height="70" rx="8"/><g class="ink" font-family="ui-monospace,monospace" font-size="12"><text x="34" y="64">Panes + local Git</text><text x="34" y="87" class="ink2">existing observations</text><text x="284" y="64">Background scanner</text><text x="284" y="87" class="ink2">engstate.rs</text><text x="534" y="64">Typed footprints</text><text x="534" y="87" class="ink2">source + identity + gaps</text><text x="534" y="177">Hotspots → clusters</text><text x="534" y="201" class="ink2">coordination.rs · pure</text><text x="284" y="177">Native overlay</text><text x="284" y="201" class="ink2">operator scope</text><text x="34" y="177">Authorized facts</text><text x="34" y="201" class="ink2">policy before grouping</text><text x="34" y="277">Same graph logic</text><text x="34" y="301" class="ink2">authorized scope</text><text x="284" y="277">Read-only MCP</text><text x="284" y="301" class="ink2">existing window relay</text><text x="20" y="342" class="ink2" font-size="10">green = existing system · yellow = proposed additions · local window boundary</text></g></svg></div><figcaption><b>Apply permissions before deriving agent-visible groups.</b> The MCP branch uses the same pure algorithm on authorized facts. Filtering a finished all-pane cluster would leak through its counts and paths. Source: current scanner/cache seams plus proposed modules.</figcaption></figure>
+  <p class="micro">Retain the two-second scheduling beat and twenty-second stale threshold as starting points. Display each project’s actual scan age; keep Git subprocesses outside paint and MCP handlers.</p>
+  <figure id="fig-08-prove-one-route"><span class="lbl">08 · Prove one route before expanding</span>
+    <div class="slice-list">
+      <div><span class="slice-index">1</span><div><b>Tracer: one shared checkout</b><p>Stable pane/context identity → window-wide signal → project → evidence → focus, plus a permission-scoped MCP read of the same fixture. Keep unavailable fields visible.</p><small>Pass: two panes become one shared-checkout hotspot; hidden panes change no visible aggregate.</small></div></div>
+      <div><span class="slice-index">2</span><div><b>Trustworthy file groups</b><p>Collect four path sources with NUL-safe parsing; add multiway file hotspots and connected clusters. Preserve the legacy touched field.</p><small>Pass: four worktrees sharing a file yield one hotspot; a bridge joins groups; a missing base qualifies committed overlap.</small></div></div>
+      <div><span class="slice-index">3</span><div><b>All projects and incremental reads</b><p>Replace the ticker, rank projects and add preview children. Retain Checkouts, reconcile graph changes and ship the changes API. Push can wait.</p><small>Pass: a clear selected project cannot conceal another project’s alert; unknown sorts ahead of clear; bridge lineage preserves the warning.</small></div></div>
+      <div><span class="slice-index">4</span><div><b>Native acceptance</b><p>Exercise keyboard focus restoration, partial graphs, sparse and dense shared-file fixtures, privacy metadata, flat/warped hit testing and both supported core suites.</p><small>Pass: no frame-time Git; bounded hotspot inspection; exact repeated-Escape sequence; one shared fixture drives native UI and actual MCP response tests.</small></div></div>
+    </div>
+    <figcaption><b>The first slice proves the entire read-and-focus route.</b> This changes the handoff’s ordering: privacy and MCP parity start with the tracer, before the full graph. No duration estimate is established.</figcaption>
+  </figure>
+  <button class="linkbtn" data-dlg="d-contract">Data contract, acceptance cases &amp; file map ↗</button>
+</section>
+
+<section aria-labelledby="decisions">
+  <h2 id="decisions">The Decisions</h2>
+  <div class="glass"><p>Recommended: replace the ticker with one window-wide Git attention signal. Inspect projects, connected work and joined evidence through the existing collector and permission-scoped model.</p></div>
+  <div class="grill">
+    <div class="ask" id="ask-entry-point"><h3>Entry Point</h3><p>Replace the ticker. Summarize window-wide Git attention, expand project previews, and open project or cluster details. Preserve Git facts in inspection.</p><div class="rec">Revised · a clear current project still exposes urgent Git attention elsewhere.</div></div>
+    <div class="ask" id="ask-signal-policy"><h3>Signal Policy</h3><p>Show distinct labelled severity, the observed cause and comparable dimensions. Separate known-member evidence from project graph completeness; preserve unknown agent identity.</p><div class="rec">Revised · stable severity ordering; partial group counts are provisional topology.</div></div>
+    <div class="ask" id="ask-first-release"><h3>First Release</h3><p>Retain the collector, graph and permission-scoped MCP plan. Ship native views, reliable footprints and all four read/delta tools through the existing relay. Line analysis and push remain optional.</p><div class="rec">Direction retained · preserve engineering_state compatibility and prove scoped native/MCP parity in the tracer.</div></div>
+  </div>
+  <p class="micro">Annotate a picture or decision; save the file to return your notes. Application code is unchanged.</p>
+</section>
+<footer><p>Revision basis: your saved ticker note and downloaded proposal review/test results. Source audit retained from the first version: fetched main <code>f1d99f922b09</code>. That audit’s working checkout was <code>ef6dcde524a1</code>; it was not re-audited for this interface revision. Illustrations are HTML/SVG proposals, not captures of implemented UI.</p><button class="linkbtn" data-dlg="d-evidence">Evidence &amp; limits ↗</button><span class="wall-credit"></span></footer>
+</main>
+
+<dialog id="d-evidence"><div class="dlg-head"><h3>Evidence</h3><button class="x" data-close>×</button></div><div class="dlg-body">
+  <p>Audit baseline: fetched <code>origin/main</code> at <code>f1d99f922b0914709ab916467cd9654224d9660f</code>, 18 October 2026. APES’s architecture digest is dated August and reports itself stale; current source supplied the facts below. The checkout’s unrelated edits were left intact.</p>
+  <h4>Reuse</h4><p><span class="tag measured">measured</span> <a href="https://github.com/parker-brown-family/terminal-delight/blob/f1d99f922b0914709ab916467cd9654224d9660f/app/src/main.rs#L13265">eng_scan_request / eng_input / apply_eng</a> already provide background scheduling and cached project readings. <code>render_eng_table</code> starts at line 25003; the existing table’s data remains available in Checkouts. <code>tree.rs::Place</code> preserves declared project/initiative membership.</p>
+  <h4>Footprint gap</h4><p><span class="tag measured">measured</span> <a href="https://github.com/parker-brown-family/terminal-delight/blob/f1d99f922b0914709ab916467cd9654224d9660f/app/src/engstate.rs#L517">measure_against_main</a> filters out <code>??</code> paths from <code>Checkout::touched</code>. It reads line-based path output. The new footprint needs NUL-delimited raw paths, rename links and separate source coverage. Invalidate this gap first if newer source replaces this collection path with lossless untracked-path evidence.</p>
+  <h4>Grouping gap</h4><p><span class="tag measured">measured</span> <a href="https://github.com/parker-brown-family/terminal-delight/blob/f1d99f922b0914709ab916467cd9654224d9660f/app/src/engstate.rs#L1449">ProjectState::collisions</a> compares pairs of landing lines, skipping equal line names. <code>Writer</code> has tab index/name, label and cwd; no stable pane/session ID. Invalidate if the selected implementation baseline now derives multi-party components using checkout and participant identity.</p>
+  <h4>Exposure boundary</h4><p><span class="tag inferred">inferred</span> Current <code>eng_input</code> gathers all panes with a cwd. <code>eng_reports</code> exports cached reports; <code>mcp_transport::snapshot_of</code> inserts those reports, while <code>engineering_state</code> checks the master enable switch. Those seams warrant an exposure audit; an end-to-end leak reproduction was not run for this planning task. Invalidate the concern by proving that off-limits fixtures reveal no path, title, participant count or derived cluster in the final response.</p>
+  <h4>Relay amendment</h4><p><span class="tag measured">measured</span> The handoff follows <code>docs/mcp.md</code>’s older launch-own-window account. <a href="https://github.com/parker-brown-family/terminal-delight/blob/f1d99f922b0914709ab916467cd9654224d9660f/app/src/ctl.rs#L27">ctl.rs</a> already documents the running-window stdio relay; it also parses <code>mcp from &lt;session&gt; &lt;pane&gt; rpc</code>. Reuse this route. Its existence does not establish correct routing across every window; the <a href="https://github.com/parker-brown-family/terminal-delight/issues/949">wrong-session routing follow-up</a> is relevant acceptance work. New coordination tool names were absent from the inspected main UI/MCP files.</p>
+  <h4>Interface revision</h4><p>The saved ticker note and <code>TERMINAL_DELIGHT_GCF_PROPOSAL_REVIEW.md</code> replace the former keep-the-ticker recommendation. Expandable previews, joined relations, session fixtures, explicit conflict states, dual coverage, bridge/dense examples and focus restoration are now the reviewable interface. The collector/graph/MCP architecture is retained. Browser fixture projections do not constitute a production MCP implementation.</p><h4>Design amendments</h4><p><span class="tag inferred">inferred</span> “Git Coordination” is the compact chrome label; the handoff’s “Git Coordination Friction” remains the full feature name. Counts prefer checkouts and panes until session identity is known. An isolated branch conflict is a project finding, without inventing a multi-party cluster. Off-limits participants cannot supply even a hidden-person count: authorized coverage becomes generically limited. These are recommendations for review.</p>
+     <p><span class="tag measured">measured</span> The review’s keyboard defect was reproduced before editing: after Focus host B, repeated Escape left the project open with focus on BODY. The earlier check had artificially focused the container and missed it. Revision browser checks passed at 390, 720, 968, 1100 and 1600 CSS px: natural repeated Escape, keyboard entry/back, previews, joined relations, known sessions, five conflict states, bridge lineage, all 11 dense hotspots/40 contexts, and saved annotations. Your original note remains intact. No JavaScript errors were observed. These checks cover this HTML, not Rust or native GPUI.</p><h4>Picture provenance</h4><p>Figure 01 contrasts the screenshot’s ticker with its proposed replacement. Figures 02–04 draw synthetic relationships, directory previews and membership changes from the handoff and review. Figures 05–07 combine source-verified seams with proposed modules. Figure 08 is a proposed delivery sequence. No screenshot-derived size is claimed as a native measurement; 320 CSS px is a chosen preview size. Browser checks verify this document, not TD’s GPUI layout or performance.</p>
+  <p><a href="/home/parker/Downloads/TERMINAL_DELIGHT_GIT_COORDINATION_FRICTION_HANDOFF.md">Original handoff</a> · <a href="/home/parker/Work/terminal-delight/docs/plans/git-coordination-rail/00-status.md">Planning status</a></p>
+</div></dialog>
+
+<dialog id="d-contract"><div class="dlg-head"><h3>Implementation Contract</h3><button class="x" data-close>×</button></div><div class="dlg-body">
+  <h4>Identity and scope</h4><p>Keep declared TD project ID and observed repository identity distinct. Remote origin groups display; Git common-dir plus canonical checkout root identifies a work context. Separate clones require explicitly qualified cross-clone comparison. Preserve detached HEAD, raw path bytes and rename links. Qualify pane/session IDs by instance; multiple panes of one session do not become multiple agents. An uncertain session join stays unknown. Shared checkout occupancy can be shown without attributing an edit.</p>
+  <h4>Required coverage</h4><p>Keep evidence_coverage for known members separate from membership_coverage for the declared project graph. A partial observed group count is not a lower bound: missing observations may join groups. Required dimensions: checkout/pane association and committed, staged, unstaged, untracked path measurements for the declared scope. Each source carries errors and timestamps. Missing base makes committed coverage partial; staged/unstaged/untracked evidence can still produce a known hotspot. The main ref is labelled an assumed integration target until declared. Qualify stacked-branch ancestry to prevent inherited files becoming unqualified overlap. Idle inventory is measured separately from active coordination; optional line analysis never turns complete path coverage into a line-conflict claim.</p>
+  <h4>Display rules</h4><p>Version-one defaults: two checkouts with an intersecting path → caution; three or more → warning. Multiple known agent sessions sharing a checkout → warning. Ambiguous identity yields a labelled shared-pane observation and at least caution for two or more observed panes, with distinct-session/agent count unknown. One known session represented by several panes is not multiple agents; occupancy remains visible without implying concurrent authorship. An unresolved or merge-tree-reported conflict names its exact integration target and yields alert. A single-checkout conflict is a finding, not a fabricated multi-party cluster. Complete required coverage with no observed exposure yields clear; partial coverage without known severity yields null. Deduplicate cross-project physical occupancy by observation identity while retaining both declared project labels; never move tabs. Window-wide glance summarizes evidenced alert/warning/caution projects independently of selection. Order alert, warning, caution, unavailable/unknown, then clear; retain project-specific age and stable name/ID tie-breaks. A stale known finding retains severity with an explicit age. Glyph, word and visual weight distinguish alert/warning/caution; selection remains a quiet marker.</p><h4>Stable snapshots</h4><p>Publish immutable snapshots with schema version, instance epoch, monotonic version, project timestamps, source OIDs, severity, coverage and limits. Derive severity once with a reported rule version. Preserve separate evidence and membership coverage in project/cluster projections; bridge events report topology and lineage, without inferring improvement from a falling group count. Reconcile cluster membership across scans; unambiguous growth retains ID. Ambiguous splits/merges get fresh IDs with lineage. Bounded delta history expires explicitly; changing instance resets cursors. Freeze the version-one schema after approval and contract tests.</p>
+  <h4>MCP parity</h4><p>Proposed read-only tools: <code>coordination_overview</code>, <code>coordination_project</code>, <code>coordination_cluster</code>, <code>coordination_changes</code>. Bind drill-down to a snapshot version or report an explicit version change; do not silently combine readings. Unknown IDs return not-found. Every result includes instance, version, observed time, scan age, coverage, truncation and stable IDs. Paginate large results. Keep provenance labels for hostile names/paths. No-change is explicit. Publication and pagination bind to one authorized revision; expiry and reset behavior must be independent of hidden-only activity. Test one shared fixture against actual native UI and real MCP tool responses; the HTML projection here is illustrative and cannot establish production parity.</p>
+  <h4>Authorization before derivation</h4><p>Share the observation model and graph algorithm; project an authorized fact set before deriving an MCP result. Never redact participant rows from an already-derived all-pane graph. A denied source cannot influence visible paths, counts, ordering, generated titles, cluster IDs/lineage, externally visible revisions/cursors, or change notices. Authorized revisions advance only for changes to that authorized projection; hidden-only changes cannot create activity through a new revision, cursor or delta. Envelope timing uses a declared fixed cadence, independent of hidden observations; project observation times describe authorized sources. Use a generic scope-limited coverage state with no hidden count. Cache by visibility scope/policy revision, invalidate on exposure changes, and test noninterference. A human and agent with the same authorized scope and snapshot see the same facts; the operator’s broader view may legitimately differ.</p>
+  <h4>File map</h4><ul><li><code>app/src/engstate.rs</code>: extend collection beside legacy fields; preserve existing report semantics.</li><li><code>app/src/coordination.rs</code> (proposed): typed footprints, evidence, hotspots, graph, coverage, severity, identity and deltas.</li><li><code>app/src/main.rs</code> with an extracted view helper if warranted: signal, overlay state, breadcrumb, keyboard and pane focus.</li><li><code>app/src/mcp.rs</code> / <code>mcp_transport.rs</code>: definitions, authorized snapshot projection, bounded read APIs and provenance.</li><li><code>app/src/ctl.rs</code>: reuse relay; no new transport required.</li><li><code>docs/mcp.md</code>: current relay description and new schema examples.</li></ul>
+  <h4>Acceptance</h4><p>Use real temporary repos for Git collection and pure fixtures for graph logic. Cover separate files, a two-way overlap, a four-way overlap, a bridge and a single shared checkout; deduplicate resumed sessions. Include untracked-only files, staged-only files, renames, unusual and non-UTF8 paths, stacked ancestry, distinct clones, detached/unborn HEAD, sparse/submodule limits, missing cwd/base, timeout, HEAD changes during scan and deleted worktrees. A main-target conflict must name its exact target, independently of clustering.</p>
+  <p>Verify public UI/MCP parity at one version/scope, master-off refusal, agents-only policy, off-limits noninterference through paths/counts/deltas, closed-pane navigation, identity continuity, split/merge lineage, bounded results and cursor expiry. Run format, strict Clippy and both supported full core suites against the exact implementation tree. Photograph real GPUI states with keyboard navigation, flat/warped geometry and small/large scale. Compare measured scan duration against the baseline under a 100-checkout / 10k-path sparse fixture and a dense common-path fixture. Keep every individual hotspot inspectable through bounded pages, with no pairwise alert explosion or silently excluded common files. Test complete known-member evidence with incomplete membership, then a bridge joining two groups; status does not improve solely because the count falls. Test known/unknown sessions, B/C sharing one session, separate panes per agent and focus restoration after navigation, refresh and closed handles. Hidden-only fixture mutations must leave all exposed titles, IDs, lineage, ordering, versions/cursors and deltas unchanged. Performance budgets await native measurement.</p>
+  <h4>Execution boundary</h4><p>TD reads local observations and focuses existing panes. This feature adds no Jev dependency, agent control, merge/rebase action, Git fetch, PR pipeline or review policy. Preserve the existing main-target merge observation with its target and OIDs. Its merge-tree operation can write Git objects; decide any stricter object-store read-only contract before expanding it. No new pairwise merge attempts are proposed.</p>
+</div></dialog>
+<!-- decision-brief — the markup the notes system needs.
+     Paste immediately before the closing </body>. notes.js finds these by id.
+     Nothing here needs editing except NOTES_FILE. -->
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Notes and concurs are baked in here by "save into file". Leave them empty and leave them in,
+     with their data-format: it names the format notes.js writes, and other writers check it. -->
+<script type="application/json" id="report-notes" data-format="1" data-rev="2026-10-18T23:44:29.455Z">{
+ "fig-01-a-stable-signal": [
+  {
+   "text": "Basically the goal  is to take this ticker on the right and squash it into nothing (it is too much info and unclear what is actually useful and what it is useful FOR.",
+   "title": "01 · A stable signal",
+   "ts": "2026-10-18 22:45"
+  }
+ ]
+}</script>
+<script type="application/json" id="report-concurs" data-format="1" data-rev="2026-10-18T23:44:29.455Z">{
+ "ask-entry-point": "2026-10-18 23:44",
+ "ask-signal-policy": "2026-10-18 23:44",
+ "ask-first-release": "2026-10-18 23:44"
+}</script>
+
+<script>
+  /* Set before notes.js runs. Used for the storage key and the download filename. */
+  window.NOTES_FILE = '2026-10-18-git-coordination-rail.html';
+</script>
+<!-- then paste the contents of assets/notes.js inline, inside a <script> tag -->
+<script>(function () {
+  'use strict';
+  document.querySelectorAll('[data-dlg]').forEach(button => button.addEventListener('click', () => document.getElementById(button.dataset.dlg).showModal()));
+  document.querySelectorAll('#d-evidence [data-close], #d-contract [data-close]').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
+  const demo = document.getElementById('demo'), content = document.getElementById('demo-content');
+  const control = document.getElementById('fixture-controls');
+  const state = {view:'all',project:'td',cluster:'fc-host',mode:'missing',known:false,target:'not_checked',current:'portal',open:true,hotspotPage:0,relationPage:0,revision:91};
+  const history = [], expanded = new Set(['td']);
+  const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const marks = {alert:'! ALERT',warning:'▲ WARNING',caution:'◇ CAUTION',unknown:'? UNKNOWN',clear:'✓ CLEAR'};
+  const ranks = {alert:0,warning:1,caution:2,unknown:3,clear:4};
+  const status = severity => `<span class="status sev-${severity}">${marks[severity]}</span>`;
+  const key = value => `data-focus-key="${value}"`;
+  const metrics={render:['2 tracked · +12 −4','↑3 ↓1'],host:['1 tracked · +8 −2','↑2 ↓1'],cli:['1 staged · +5 −0','↑1 ↓1'],theme:['1 tracked · +4 −1','↑1 ↓0'],ui:['1 tracked · +6 −2','↑2 ↓0'],docs:['1 tracked · +3 −0','↑1 ↓0']};
+  const checkout = (id,panes,paths) => ({id,panes,root:'/work/td-'+id,branch:'feature/'+id,head:'fixture-head-'+id,paths,metrics:metrics[id]??null,observed_at:'2026-10-18T23:30:00Z'});
+  function checkouts() {
+    if (state.mode === 'dense') return Array.from({length:40}, (_,i) => checkout('dense-'+String(i+1).padStart(2,'0'),['P'+(i+1)], {'app/src/common.rs':['unstaged'],['app/src/group-'+Math.floor(i/4)+'.rs']:['staged']}));
+    return [checkout('render',['A'],{'app/src/host/relay.rs':['committed','unstaged']}),checkout('host',['B','C'],{'app/src/host/relay.rs':['unstaged']}),checkout('cli',['D'],{'app/src/host/relay.rs':['staged']}),checkout('theme',['E'],{'app/src/theme/palette.rs':['unstaged']}),checkout('ui',['F'],{'app/src/theme/palette.rs':['committed']}),checkout('docs',['G'],{'docs/help.md':['committed']}),checkout('packaging',['H'],state.mode==='bridge'?{'app/src/host/relay.rs':['unstaged'],'app/src/theme/palette.rs':['unstaged']}:null)];
+  }
+  function groups(rows) {
+    const index = new Map(), hotspots=[];
+    rows.forEach(row => Object.keys(row.paths || {}).forEach(path => {if(!index.has(path))index.set(path,[]);index.get(path).push(row.id);}));
+    [...index].sort(([a],[b])=>a.localeCompare(b)).forEach(([path,ids])=>{if(ids.length>1)hotspots.push({id:'path:'+path,kind:'shared_file',path,checkouts:ids});});
+    rows.filter(row=>row.panes.length>1).forEach(row=>hotspots.push({id:'checkout:'+row.id,kind:'shared_checkout',path:row.root,checkouts:[row.id]}));
+    const parent=new Map(rows.map(row=>[row.id,row.id]));
+    function find(id){while(parent.get(id)!==id)id=parent.get(id);return id;}
+    hotspots.forEach(h=>h.checkouts.slice(1).forEach(id=>parent.set(find(id),find(h.checkouts[0]))));
+    const byRoot=new Map();
+    hotspots.forEach(h=>{const root=find(h.checkouts[0]);if(!byRoot.has(root))byRoot.set(root,[]);byRoot.get(root).push(h);});
+    return [...byRoot.values()].map(items=>{
+      const ids=[...new Set(items.flatMap(h=>h.checkouts))].sort();
+      const id=state.mode==='dense'?'fc-dense':ids.includes('packaging')?'fc-joined':ids.includes('host')?'fc-host':'fc-palette';
+      const members=rows.filter(row=>ids.includes(row.id));
+      const maxFile=Math.max(0,...items.filter(h=>h.kind==='shared_file').map(h=>h.checkouts.length));
+      const shared=items.filter(h=>h.kind==='shared_checkout');
+      // The known fixture associates B and C with one session; occupancy alone
+      // must not manufacture a multi-agent warning from that duplicate view.
+      const severity=state.target==='conflict'&&ids.includes('host')?'alert':maxFile>=3?'warning':'caution';
+      return {id,title:id==='fc-dense'?'Common file across 40 checkouts':id==='fc-joined'?'Host and palette work connected':id==='fc-host'?'Shared host code':'Shared palette file',severity,checkouts:members,hotspots:items,dimensions:{shared_checkout:shared.length,shared_file:items.filter(h=>h.kind==='shared_file').length,line_overlap:'not_checked',target_conflict:ids.includes('host')?state.target:'not_checked'},known_member_paths:'complete',membership_coverage:state.mode==='missing'?'partial':'complete',supersedes:id==='fc-joined'?['fc-host','fc-palette']:[],reason:id==='fc-dense'?'40 checkouts include common.rs; inspect all 11 hotspots.':id==='fc-joined'?'Packaging links relay.rs and palette.rs; shared host occupancy remains.':id==='fc-host'?'Three checkouts include relay.rs; the host checkout has two panes.':'Two checkouts include palette.rs.'};
+    }).sort((a,b)=>ranks[a.severity]-ranks[b.severity]||a.id.localeCompare(b.id));
+  }
+  function projects() {
+    const rows=checkouts(), clusters=groups(rows), tdSeverity=clusters.some(c=>c.severity==='alert')?'alert':'warning';
+    return [
+      {id:'td',name:'Terminal Delight',severity:tdSeverity,age:'4s ago',coverage:state.mode==='missing'?'partial':'complete',clusters,rows,summary:`${clusters.length} observed group${clusters.length===1?'':'s'} · ${rows.length} checkouts · ${rows.reduce((n,r)=>n+r.panes.length,0)} panes`},
+      {id:'bfs',name:'BFS Website',severity:'alert',age:'12s ago',coverage:'complete',clusters:[],rows:[],summary:'1 target conflict · 0 observed groups'},
+      {id:'next',name:'Next Run',severity:'caution',age:'9s ago',coverage:'complete',clusters:[],rows:[],summary:'2 checkouts share pacing.ts · 1 observed group'},
+      {id:'music',name:'Music Prototype',severity:'unknown',age:'not yet read',coverage:'unavailable',clusters:[],rows:[],summary:'Footprints unavailable · group count unknown'},
+      {id:'portal',name:'Client Portal',severity:'clear',age:'2s ago',coverage:'complete',clusters:[],rows:[],summary:'0 groups · 4 checkouts · complete required checks'}
+    ].sort((a,b)=>ranks[a.severity]-ranks[b.severity]||a.id.localeCompare(b.id));
+  }
+  function dimensionSummary(c) {
+    return `<div class="dimensions"><span>Checkout sharing <b>${c.dimensions.shared_checkout}</b></span><span>Common files <b>${c.dimensions.shared_file}</b></span><span>Line overlap <b>not checked</b></span></div>`;
+  }
+  function groupRow(c,preview=false) {
+    const panes=c.checkouts.reduce((n,r)=>n+r.panes.length,0);
+    return `<button class="${preview?'preview-row':'cluster-row'}" data-open-cluster="${c.id}" data-project="td" ${key((preview?'preview:':'cluster:')+c.id)}>${status(c.severity)}<span><b>${esc(c.title)}</b><em>${esc(c.reason)}</em>${dimensionSummary(c)}<em class="quiet">${panes} panes · ${c.checkouts.length} checkouts · ${c.hotspots.length} hotspots · membership ${c.membership_coverage}</em></span><span>›</span></button>`;
+  }
+  function overview(list) {
+    return `<h3 id="view-title" tabindex="-1">Projects in this window</h3><div class="list-heading"><span>Evidence rank · stable name tie-break</span><span>Each project’s actual scan age</span></div>`+list.map(p=>`<div class="project-node" data-project-id="${p.id}"><div class="project-row">${status(p.severity)}<div><button class="project-link" data-open-project="${p.id}" ${key('project:'+p.id)}>${esc(p.name)}</button>${p.id===state.current?'<small class="current-mark">CURRENT</small>':''}<em>${esc(p.summary)}</em><span class="project-age">${p.age==='not yet read'?p.age:'read '+p.age}</span></div><div class="coverage">${p.coverage.toUpperCase()}${p.id==='td'?`<button class="expand-project" aria-label="${expanded.has(p.id)?'Collapse':'Expand'} Terminal Delight cluster previews" aria-expanded="${expanded.has(p.id)}" data-expand="td" ${key('expand:td')}>${expanded.has(p.id)?'▾ Hide groups':'▸ Preview groups'}</button>`:''}</div></div>${p.id==='td'&&expanded.has(p.id)?`<div class="directory-preview">${p.clusters.slice(0,3).map(c=>groupRow(c,true)).join('')}</div>`:''}</div>`).join('')+`<p class="demo-foot">Alert → warning → caution → unknown → clear. CURRENT marks Client Portal in this fixture; it does not change the ranking.</p>`;
+  }
+  function projectView(p) {
+    const heading=`<h3 id="view-title" tabindex="-1">${esc(p.name)}</h3><div class="project-summary">${status(p.severity)}<span>read ${p.age} · ${p.coverage.toUpperCase()}</span></div><p class="tiny">${esc(p.summary)}${p.id==='td'?' · '+(state.known?`${p.rows.length} known agent sessions`:'distinct agent identities unknown'):''}</p>`;
+    if(p.id!=='td')return heading+(p.id==='bfs'?`<div class="evidence-locus"><b>VERIFIED TARGET FINDING · fictional</b><code>pages/index.tsx conflicts with origin/main</code><span>Checked · target fixture-main-bfs · HEAD fixture-head-bfs · 12s ago. One checkout; no multi-party cluster is invented.</span></div>`:`<p>${p.id==='portal'?'Required observations complete; no coordination exposure observed.':p.id==='music'?'Required path observations unavailable; severity and final grouping remain unknown.':'Two distinct checkouts include pacing.ts. Line overlap not checked.'}</p>`);
+    return heading+`<div class="demo-tabs"><button data-tab="clusters" class="on" ${key('tab:clusters')}>Observed groups (${p.clusters.length})</button><button data-tab="checkouts" ${key('tab:checkouts')}>Checkouts (${p.rows.length})</button></div><div data-panel="clusters">${p.clusters.map(c=>groupRow(c)).join('')}${state.mode==='missing'?'<p class="scope-note">Project graph incomplete. Packaging may reveal another group or connect these groups.</p><div class="independent"><b>NO OBSERVED OVERLAP</b><span>docs · known paths complete · possible peers unmeasured</span></div><div class="independent unknown"><b>UNMEASURED</b><span>packaging · 1 pane · footprint unavailable</span></div>':''}</div><div data-panel="checkouts" hidden><div class="scroller"><table class="checkout-table"><thead><tr><th>Checkout / branch</th><th>Uncommitted</th><th>vs main</th><th>Path sources</th><th>Panes</th></tr></thead><tbody>${p.rows.map(r=>`<tr><td>${r.id}<br>${r.branch}</td><td>${r.metrics?r.metrics[0]:'unavailable'}</td><td>${r.metrics?r.metrics[1]:'unavailable'}</td><td>${r.paths?[...new Set(Object.values(r.paths).flat())].join(' + '):'unavailable'}</td><td>${r.panes.join(', ')}</td></tr>`).join('')}</tbody></table></div><p class="demo-foot">Inventory remains separate from these in-use checkouts. Dirty totals, ahead/behind and on-disk worktrees remain inspection fields in native TD.</p></div>`;
+  }
+  function participant(r) {
+    if(!state.known)return `Identity unknown<br><span class="quiet">Pane${r.panes.length>1?'s':''} ${r.panes.join(', ')}</span>`;
+    return `${r.id==='host'?'Codex':'Claude'} · ${esc(r.id)}<br><span class="quiet">session:${esc(r.id)}-02 · panes ${r.panes.join(', ')}</span>`;
+  }
+  function targetObservation(c) {
+    const kind=c.checkouts.some(r=>r.id==='host')?state.target:'not_checked';
+    const names={not_checked:'Not checked',checked_none:'Checked · no conflict reported',conflict:'Checked · conflict reported',unavailable:'Unavailable · command timed out',stale:'Stale · previous result retained'};
+    const refs=kind==='checked_none'||kind==='conflict'?'origin/main @ fixture-main-91 · host HEAD @ fixture-head-host · read 4s ago':kind==='stale'?'origin/main @ fixture-main-90 · result is 42s old; current refs unmeasured':'origin/main is the assumed target · target OID unmeasured';
+    return `<div class="evidence-locus"><b>TARGET-SPECIFIC CONFLICT CHECK</b><strong>${names[kind]}</strong><span>${refs}</span>${kind==='conflict'?'<code>app/src/host/relay.rs</code>':''}</div>`;
+  }
+  function clusterView(p,c) {
+    const hp=c.hotspots.slice(state.hotspotPage*5,state.hotspotPage*5+5);
+    const rows=c.checkouts.slice(state.relationPage*10,state.relationPage*10+10);
+    return `<h3 id="view-title" tabindex="-1">${esc(c.title)}</h3><div class="project-summary">${status(c.severity)}<span>read 4s ago · rule v1</span></div><p>${esc(c.reason)}</p><p class="scope-note"><b>Known-member paths complete · project graph ${c.membership_coverage==='partial'?'incomplete':'complete'}</b></p><p class="tiny">${c.checkouts.length} checkouts · ${c.checkouts.reduce((n,r)=>n+r.panes.length,0)} panes · ${state.known?c.checkouts.length+' known agent sessions':'distinct agents unknown'}. Git associates changes with checkouts; authorship remains unknown.</p>${dimensionSummary(c)}<div class="scroller"><table class="relations"><thead><tr><th>Participant / pane</th><th>Checkout / branch</th><th>Connected path sources</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${participant(r)}</td><td><b>${esc(r.id)}</b><br><code>${esc(r.branch)}</code><details><summary>Root and measured refs</summary><code>${esc(r.root)}<br>HEAD ${esc(r.head)}<br>base origin/main: assumed<br>${r.observed_at}</code></details></td><td>${c.hotspots.filter(h=>h.kind==='shared_file'&&h.checkouts.includes(r.id)).map(h=>`<code>${esc(h.path)}</code><br>${r.paths[h.path].join(' + ')}`).join('<hr>')}<small class="project-age">observed 4s ago</small></td></tr>`).join('')}</tbody></table></div>${c.checkouts.length>10?`<div class="pager"><button data-page="relations:-1" ${key('relations-prev')} ${state.relationPage===0?'disabled':''}>Previous contexts</button><span>${state.relationPage*10+1}–${Math.min((state.relationPage+1)*10,c.checkouts.length)} of ${c.checkouts.length} checkouts</span><button data-page="relations:1" ${key('relations-next')} ${(state.relationPage+1)*10>=c.checkouts.length?'disabled':''}>Next contexts</button></div>`:''}<div class="hotspot-list"><h4>Hotspots · ${c.hotspots.length}</h4>${hp.map(h=>`<div class="hotspot-row"><span>${h.kind==='shared_file'?'SHARED FILE':'SHARED CHECKOUT'}</span><code>${esc(h.path)}</code><small>${h.checkouts.length} checkout${h.checkouts.length===1?'':'s'}${h.kind==='shared_checkout'?' · 2 panes · '+(state.known?'one known session':'session identities unknown'):''}</small></div>`).join('')}</div>${c.hotspots.length>5?`<div class="pager"><button data-page="hotspots:-1" ${key('hotspots-prev')} ${state.hotspotPage===0?'disabled':''}>Previous hotspots</button><span>${state.hotspotPage*5+1}–${Math.min((state.hotspotPage+1)*5,c.hotspots.length)} of ${c.hotspots.length}</span><button data-page="hotspots:1" ${key('hotspots-next')} ${(state.hotspotPage+1)*5>=c.hotspots.length?'disabled':''}>Next hotspots</button></div>`:''}${targetObservation(c)}<div class="evidence-mini"><span>Line overlap</span><b>Not checked</b><span>Membership</span><b>${c.membership_coverage==='partial'?'May grow or merge with another group':'Complete for this declared fixture scope'}</b></div><div class="pane-list">${rows.flatMap(r=>r.panes.map(pane=>`<button data-focus-pane="${pane}" ${key('pane:'+pane)}>Focus ${r.id} · ${pane} ↗</button>`)).join('')}</div><p id="focus-result" class="demo-foot" aria-live="polite">Pane focus is simulated; native TD revalidates the handle.</p><details><summary>Same-fixture sample projection · illustrative, no live MCP</summary><pre>${esc(JSON.stringify({schema_version:1,instance:'fixture-window',authorized_revision:state.revision,cluster_id:c.id,supersedes:c.supersedes,dimensions:c.dimensions,evidence_coverage:c.known_member_paths,membership_coverage:c.membership_coverage,checkout_ids:c.checkouts.map(r=>r.id)},null,2))}</pre></details>`;
+  }
+  function focusKey(value){return [...demo.querySelectorAll('[data-focus-key]')].find(e=>e.dataset.focusKey===value&&!e.closest('[hidden]'));}
+  function render(focus='heading') {
+    const list=projects(), p=list.find(p=>p.id===state.project);
+    const affected=list.filter(p=>['alert','warning','caution'].includes(p.severity)).length;
+    document.getElementById('closed-git-summary').innerHTML=`${status(list[0].severity)}<span>${affected} affected projects</span><span class="coverage">${list.some(p=>p.coverage!=='complete')?'PARTIAL':'COMPLETE'}</span>`;
+    content.hidden=!state.open;
+    document.getElementById('demo-bottom').hidden=!state.open;
+    document.getElementById('closed-git-summary').setAttribute('aria-expanded',String(state.open));
+    if(!state.open){document.getElementById('closed-git-summary').focus({preventScroll:true});return;}
+    let cluster=p?.clusters.find(c=>c.id===state.cluster);
+    if(state.view==='cluster'&&!cluster){cluster=p.clusters[0];state.cluster=cluster?.id;}
+    const crumb=`<nav class="crumbs" aria-label="Prototype breadcrumb"><button data-crumb="all" ${key('crumb:all')}>All projects</button>${state.view!=='all'?` / <button data-crumb="project" ${key('crumb:project')}>${esc(p.name)}</button>`:''}${state.view==='cluster'?' / Evidence':''}</nav>`;
+    const notice=state.mode==='bridge'?`<p class="topology-change" role="status">Bridge measured: two observed groups connected into one. ${p.severity==='alert'?'Alert':'Warning'} remains; the lower group count is a topology change.</p>`:'';
+    content.innerHTML=crumb+notice+(state.view==='all'?overview(list):state.view==='project'?projectView(p):cluster?clusterView(p,cluster):projectView(p));
+    document.getElementById('demo-back').textContent=history.length?'Back':'Close';
+    const target=focus==='heading'?document.getElementById('view-title'):focusKey(focus)||document.getElementById('view-title');
+    if(focus==='heading')content.scrollTop=0;
+    if(focus)target?.focus({preventScroll:true});
+  }
+  function location(){return {view:state.view,project:state.project,cluster:state.cluster};}
+  function navigate(next,origin){history.push({location:location(),focus:origin?.dataset.focusKey,scroll:window.scrollY,contentScroll:content.scrollTop});Object.assign(state,next,{hotspotPage:0,relationPage:0});render();}
+  function back(){
+    const prior=history.pop();
+    if(prior){Object.assign(state,prior.location);render(prior.focus||'heading');content.scrollTop=prior.contentScroll;window.scrollTo(0,prior.scroll);}
+    else{state.open=false;render();}
+  }
+  demo.addEventListener('click',event=>{
+    const b=event.target.closest('button');if(!b)return;
+    if(b.id==='closed-git-summary'){state.open=!state.open;render();return;}
+    if(b.dataset.openProject){navigate({view:'project',project:b.dataset.openProject},b);return;}
+    if(b.dataset.openCluster){navigate({view:'cluster',project:b.dataset.project,cluster:b.dataset.openCluster},b);return;}
+    if(b.dataset.expand){expanded.has(b.dataset.expand)?expanded.delete(b.dataset.expand):expanded.add(b.dataset.expand);render(b.dataset.focusKey);return;}
+    if(b.dataset.crumb){
+      const wanted=b.dataset.crumb, at=history.map(h=>h.location.view).lastIndexOf(wanted);
+      if(at>=0){const prior=history[at];history.splice(at);Object.assign(state,prior.location);render(prior.focus||'heading');}
+      else if(wanted!==state.view)navigate({view:wanted},b);
+      return;
+    }
+    if(b.dataset.tab){demo.querySelectorAll('[data-panel]').forEach(el=>el.hidden=el.dataset.panel!==b.dataset.tab);demo.querySelectorAll('[data-tab]').forEach(el=>el.classList.toggle('on',el===b));return;}
+    if(b.dataset.focusPane){document.getElementById('focus-result').textContent='Simulated focus: pane '+b.dataset.focusPane+'. No terminal was changed.';return;}
+    if(b.dataset.page){const [type,delta]=b.dataset.page.split(':');state[type==='hotspots'?'hotspotPage':'relationPage']+=Number(delta);render(b.dataset.focusKey);return;}
+    if(b.id==='demo-back')back();
+  });
+  demo.addEventListener('keydown',event=>{if(event.key==='Escape'&&state.open&&!document.querySelector('dialog[open]')){event.preventDefault();event.stopPropagation();back();}});
+  control.addEventListener('change',event=>{
+    const focus=event.target;state.mode=document.getElementById('fixture-mode').value;state.known=document.getElementById('fixture-known').checked;state.target=document.getElementById('fixture-target').value;
+    state.revision++;state.hotspotPage=state.relationPage=0;render(null);focus.focus({preventScroll:true});
+  });
+  // Initial rendering must not take focus or scroll away from the document opening.
+  render(null);
+})();
+
+</script><script>/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * CONCUR. Every decision (.ask) also gets a space on its right that takes a rubber stamp —
+ * the commonest answer a decision gets, and the quickest way to say the work was good.
+ * A concur is independent of notes, rides in the map as "✓ concur" on the decision's own
+ * line, and is baked into its own island (#report-concurs) so the notes island keeps the
+ * shape every saved brief already has.
+ *
+ * FORMAT 1. Other programs write these islands too (Terminal Delight edits a brief's notes
+ * in place), so what a save writes is a contract, pinned byte for byte by the fixtures in
+ * fixtures/notes-format/ and its reference writer. Each island carries data-format and a
+ * revision, data-rev, the time of the write. Island JSON escapes "<" before "/" and "!",
+ * and the plain-text mirror breaks any sequence that would end an HTML comment. A change
+ * to any of that bumps FORMAT and the fixtures in the same commit.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE     — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS  — [[selector, prefix], ...] overriding what gets an affordance.
+ *   window.CONCUR_TARGETS — selector for what takes a concur stamp. Default: the grill's decisions.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit.
+
+     FIGURES ARE SECOND, for the same reason. The 2026-09-15 attention-spine
+     brief carried eleven pictures and had to override NOTES_TARGETS wholesale
+     to make any of them annotatable, because `figure` was not here — a fork of
+     this list living in one report, where nothing else would inherit it. The
+     pictures are the part a reader argues with, so they are in the default list
+     now. `titleOf()` already reads `.lbl`, so a figure labelled `03 · What
+     opening costs` anchors as `fig-03-what-opening-costs`. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['figure', 'fig'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  var FORMAT = '1';
+  /* Concurs: { anchor: 'YYYY-MM-DD HH:MM' }, under their own key and island. */
+  var CKEY = 'concurs:' + FILE;
+  var SKEY = 'notes-sync:' + FILE;
+  var CONCUR_SEL = window.CONCUR_TARGETS || '.grill .q, .grill-q, .ask';
+
+  /* ---- which notes the page shows: the file's and this browser's, together ----
+     Notes live in two places: the islands baked into this file, which is what an agent
+     reads, and localStorage, which keeps a reader's edits between reloads. Before format 1
+     the stored copy simply won, so once a browser had stored any map for this filename,
+     even the {} the clear button leaves, notes written into the file by anyone else never
+     showed again (agent-skills#24).
+
+     So every save stamps a revision on the islands, and this browser keeps, under SKEY,
+     the revision it last took in and every note and concur it has taken from an island or
+     written into one. On load, for notes and concurs alike:
+       - nothing stored: the island, as before;
+       - the island's revision is the one last taken in: the stored copy, as before;
+       - anything else, including an island with no revision (a brief saved before
+         format 1): the stored copy, plus every note and concur in the island this browser
+         has not seen before.
+     Nothing the browser holds is ever dropped, and a note it deleted stays deleted. The
+     price: a note deleted from the file by another writer stays in a browser that still
+     holds it. Revisions are compared for sameness, not order, because a save lands in
+     Downloads while the original may have been changed in the meantime. */
+  function stored(key) {
+    try {
+      var v = JSON.parse(localStorage.getItem(key) || 'null');
+      return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+    } catch (e) { return null; }
+  }
+  function readIsland(id) {
+    var el = document.getElementById(id), map = {};
+    if (el) {
+      try { map = JSON.parse(el.textContent || '{}'); } catch (e) { /* a malformed island must not break the page */ }
+      if (!map || typeof map !== 'object' || Array.isArray(map)) map = {};
+    }
+    return { map: map, rev: el ? el.getAttribute('data-rev') : null };
+  }
+  function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+  function noteId(nid, n) { return nid + '\n' + (n.ts || '') + '\n' + n.text; }
+  function idsOf(kind, map) {
+    var out = [];
+    for (var k in map) {
+      if (!has(map, k)) continue;
+      if (kind === 'concurs') out.push(k + '\n' + map[k]);
+      else if (Array.isArray(map[k])) map[k].forEach(function (n) { if (n) out.push(noteId(k, n)); });
+    }
+    return out;
+  }
+  function union(a, b) {
+    var seen = Object.create(null), out = [];
+    a.concat(b).forEach(function (x) { if (!seen[x]) { seen[x] = 1; out.push(x); } });
+    return out;
+  }
+
+  var SYNC = stored(SKEY) || {};
+  ['notes', 'concurs'].forEach(function (k) {
+    var s = SYNC[k];
+    if (!s || typeof s !== 'object' || !Array.isArray(s.seen)) SYNC[k] = { rev: null, seen: [] };
+  });
+
+  function takeIn(kind, key, isl) {
+    var s = SYNC[kind], have = stored(key), added = false;
+    if (have && !(isl.rev && isl.rev === s.rev)) {
+      var seen = Object.create(null), mine = Object.create(null);
+      s.seen.forEach(function (x) { seen[x] = 1; });
+      idsOf(kind, have).forEach(function (x) { mine[x] = 1; });
+      Object.keys(isl.map).forEach(function (k) {
+        if (kind === 'concurs') {
+          if (!has(have, k) && !seen[k + '\n' + isl.map[k]]) { have[k] = isl.map[k]; added = true; }
+          return;
+        }
+        if (!Array.isArray(isl.map[k])) return;
+        isl.map[k].forEach(function (n) {
+          var id = n && noteId(k, n);
+          if (!n || seen[id] || mine[id]) return;
+          if (!Array.isArray(have[k])) have[k] = [];
+          have[k].push(n);
+          mine[id] = 1;
+          added = true;
+        });
+      });
+    }
+    SYNC[kind] = { rev: isl.rev, seen: union(s.seen, idsOf(kind, isl.map)) };
+    return { map: have || isl.map, added: added };
+  }
+
+  var tookN = takeIn('notes', KEY, readIsland('report-notes'));
+  var tookC = takeIn('concurs', CKEY, readIsland('report-concurs'));
+  var N = tookN.map, C = tookC.map;
+  if (tookN.added) save();
+  if (tookC.added) saveConcurs();
+
+  var reduceMotion = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var active = null, activeTitle = '';
+
+  /* The sync record goes with every write, so what it says was seen is always stored. */
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
+  }
+  function saveConcurs() {
+    try { localStorage.setItem(CKEY, JSON.stringify(C)); localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
+  }
+  function stamp() { return new Date().toISOString().slice(0, 16).replace('T', ' '); }
+  function concurCount() {
+    var n = 0;
+    for (var k in C) { if (C.hasOwnProperty(k)) n++; }
+    return n;
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  /* ---- concur: a rubber stamp in a space on each decision's right ----
+     The angle is seeded from the anchor, so a stamp lands the same way on every reload
+     and a page of them still looks hand-done. */
+  function seed(s) {
+    var h = 2166136261;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0) / 4294967295;
+  }
+  function stampSvg(id) {
+    var r = -12 + 9 * seed(id), dx = (seed(id + ':x') - 0.5) * 6, dy = (seed(id + ':y') - 0.5) * 6;
+    var ink = '#35c27a';
+    return '<svg class="concur-stamp" viewBox="0 0 120 120" aria-label="concur stamp" style="--r:' +
+      r.toFixed(1) + 'deg;--dx:' + dx.toFixed(1) + 'px;--dy:' + dy.toFixed(1) + 'px">' +
+      '<g filter="url(#concur-ink)">' +
+      '<rect x="9" y="33" width="102" height="54" rx="7" fill="none" stroke="' + ink + '" stroke-width="5"/>' +
+      '<rect x="16" y="40" width="88" height="40" rx="3" fill="none" stroke="' + ink + '" stroke-width="1.6"/></g>' +
+      '<g filter="url(#concur-ink-fine)">' +
+      '<path d="M22 61 L28 67 L39 52" fill="none" stroke="' + ink + '" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<text x="70" y="69" text-anchor="middle" textLength="58" lengthAdjust="spacingAndGlyphs" fill="' + ink + '" ' +
+      'font-family="Anton, Oswald, Impact, \'Arial Black\', \'DejaVu Sans Condensed\', sans-serif" ' +
+      'font-weight="800" font-size="21">CONCUR</text></g></svg>';
+  }
+
+  /* Wet ink. The strokes swell a little, a fine speckle and a few round air pockets are cut
+     out of them, then a blur and a hard alpha curve round every edge and every hole the way
+     ink sits on paper, and a slow wobble bends the whole. The frame takes big pockets; the
+     check and the word take small ones, because pockets that size eat a condensed letter.
+     The pockets are sized to survive a snapshot: Terminal Delight's document square draws a
+     screenshot of the page, where the old two-pixel speckle smoothed away. One copy per page. */
+  function wetInk(id, pocketFreq, pocketAt, speckCut, blur, swell) {
+    return '<filter id="' + id + '" x="-15%" y="-15%" width="130%" height="130%">' +
+      '<feMorphology in="SourceGraphic" operator="dilate" radius="' + swell + '" result="fat"/>' +
+      '<feTurbulence type="fractalNoise" baseFrequency="0.6" numOctaves="2" seed="11" result="n"/>' +
+      '<feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  -9 0 0 0 ' + speckCut + '" result="speck"/>' +
+      '<feTurbulence type="fractalNoise" baseFrequency="' + pocketFreq + '" numOctaves="3" seed="3" result="p"/>' +
+      '<feColorMatrix in="p" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  -22 0 0 0 ' + (22 * pocketAt).toFixed(2) + '" result="pock"/>' +
+      '<feComposite in="speck" in2="pock" operator="in" result="mask"/>' +
+      '<feComposite in="fat" in2="mask" operator="in" result="inked"/>' +
+      '<feGaussianBlur in="inked" stdDeviation="' + blur + '" result="soft"/>' +
+      '<feComponentTransfer in="soft" result="wet"><feFuncA type="linear" slope="5" intercept="-1.6"/></feComponentTransfer>' +
+      '<feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="5" result="w"/>' +
+      '<feDisplacementMap in="wet" in2="w" scale="3" xChannelSelector="R" yChannelSelector="G"/>' +
+      '</filter>';
+  }
+  function concurDefs() {
+    if (document.getElementById('concur-defs')) return;
+    var d = document.createElement('div');
+    d.innerHTML = '<svg id="concur-defs" viewBox="0 0 1 1" aria-label="concur stamp ink" focusable="false" ' +
+      'style="position:absolute;width:0;height:0;overflow:hidden"><defs>' +
+      wetInk('concur-ink', 0.17, 0.62, 6.0, 0.55, 0.4) +
+      wetInk('concur-ink-fine', 0.35, 0.72, 7.0, 0.3, 0.28) +
+      '</defs></svg>';
+    document.body.appendChild(d.firstChild);
+  }
+
+  function showConcur(el, zone, on, animate) {
+    var live = zone.querySelector('.concur-stamp:not(.peel)');
+    if (on && !live) {
+      zone.insertAdjacentHTML('beforeend', stampSvg(el.dataset.nid));
+      if (animate && !reduceMotion) {
+        zone.querySelector('.concur-stamp:not(.peel)').classList.add('thud');
+        setTimeout(function () {
+          el.classList.remove('concur-jolt'); void el.offsetWidth; el.classList.add('concur-jolt');
+        }, 110);
+      }
+    } else if (!on && live) {
+      if (animate && !reduceMotion) {
+        live.classList.add('peel');
+        setTimeout(function () { live.remove(); }, 320);
+      } else live.remove();
+    }
+    zone.classList.toggle('on', on);
+    el.classList.toggle('has-concur', on);
+    zone.setAttribute('aria-pressed', on ? 'true' : 'false');
+    zone.title = on ? 'Concurred. Click to peel it off' : 'Concur with this decision';
+  }
+
+  function concurZones() {
+    var made = 0;
+    Array.prototype.forEach.call(document.querySelectorAll(CONCUR_SEL), function (el) {
+      if (!el.dataset.nid || el.querySelector(':scope > .concur-zone')) return;
+      if (el.closest('#d-note, #d-export, .notebar')) return;
+      var zone = document.createElement('button');
+      zone.type = 'button';
+      zone.className = 'concur-zone';
+      zone.innerHTML = '<span class="concur-q" aria-hidden="true">?</span><span class="concur-lbl">concur</span>';
+      zone.addEventListener('click', function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        var id = el.dataset.nid;
+        if (C[id]) delete C[id]; else C[id] = stamp();
+        saveConcurs();
+        showConcur(el, zone, !!C[id], true);
+        badges();
+      });
+      el.classList.add('concurrable');
+      el.appendChild(zone);
+      showConcur(el, zone, !!C[el.dataset.nid], false);
+      made++;
+    });
+    if (!made) return;
+    concurDefs();
+    var bar = document.getElementById('notebar');
+    if (bar && !document.getElementById('concur-cnt')) {
+      var s = document.createElement('span');
+      s.className = 'cnt';
+      s.id = 'concur-cnt';
+      s.innerHTML = '&middot; <b id="concur-count">0</b> <span id="concur-word">concurs</span>';
+      var first = bar.querySelector('.cnt');
+      if (first) first.parentNode.insertBefore(s, first.nextSibling); else bar.insertBefore(s, bar.firstChild);
+    }
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    var cc = concurCount();
+    var ce = document.getElementById('concur-count');
+    if (ce) ce.textContent = cc;
+    var cw = document.getElementById('concur-word');
+    if (cw) cw.textContent = cc === 1 ? 'concur' : 'concurs';
+    /* A concur alone is an answer worth exporting; clear stays notes-only. */
+    ['btn-export', 'btn-embed'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total + cc === 0;
+    });
+    var bc = document.getElementById('btn-clear');
+    if (bc) bc.disabled = total === 0;
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var cc = concurCount();
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements' +
+        (cc ? ' · ' + cc + (cc === 1 ? ' concur' : ' concurs') : '') + '.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads.
+       A concur rides on the decision's own line, so an agreed decision with no note
+       still reaches the agent. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid] || [];
+      var agreed = !!C[el.dataset.nid];
+      if (!list.length && !agreed) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle + (agreed ? '  ✓ concur' : ''));
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+
+  /* JSON leaves "<" alone, so a note reading "<\/script>" used to end the island early:
+     the rest spilled into the page and the reopened brief showed no notes at all
+     (agent-skills#25). Escaped, it is still JSON and parses to the same strings. */
+  function islandJson(map) {
+    return JSON.stringify(map, null, 1).replace(/<\//g, '<\\/').replace(/<!/g, '\\u003c!');
+  }
+  /* The only two sequences that end an HTML comment. A reader's own "---" stays. */
+  function commentSafe(s) {
+    return s.replace(/--!>/g, '--! >').replace(/-->/g, '-- >');
+  }
+  function stampIsland(el, rev) {
+    el.setAttribute('data-format', FORMAT);
+    el.setAttribute('data-rev', rev);
+  }
+  /* The mirror's first line, written once here so a grep of a brief for it finds one
+     line of code and then the mirror itself. */
+  var MIRROR_HEAD = '\nREADER NOTES —';
+  /* The last mirror comment, if it follows the notes island: the one a save replaces. */
+  function lastMirror(root, island) {
+    var w = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT), c, last = null;
+    while ((c = w.nextNode())) if (c.data.indexOf(MIRROR_HEAD) === 0) last = c;
+    if (last && island && !(island.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING)) return null;
+    return last;
+  }
+
+  function embedNotes() {
+    var rev = new Date().toISOString();
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) { island.textContent = islandJson(N); stampIsland(island, rev); }
+
+    /* Concur UI is rebuilt on load, so strip it; the answers go into their own island,
+       created here, where the reference writer puts it, if the brief predates it and
+       there is something to put in it. */
+    Array.prototype.forEach.call(doc.querySelectorAll('.concur-zone, #concur-defs, #concur-cnt'),
+      function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.concurrable'), function (n) {
+      n.classList.remove('concurrable', 'has-concur', 'concur-jolt');
+    });
+    var cisl = doc.querySelector('#report-concurs');
+    if (!cisl && concurCount()) {
+      cisl = document.createElement('script');
+      cisl.type = 'application/json';
+      cisl.id = 'report-concurs';
+      if (island && island.parentNode) island.parentNode.insertBefore(cisl, island.nextSibling);
+      else if (doc.querySelector('body')) doc.querySelector('body').appendChild(cisl);
+    }
+    if (cisl) { cisl.textContent = islandJson(C); stampIsland(cisl, rev); }
+
+    /* A plain-text mirror as well, so grep and ctx_read find the notes without anyone
+       having to parse JSON out of a script tag. A save replaces the last one rather than
+       adding another, so saving never leaves a stale map behind for a grep to find. */
+    var text = MIRROR_HEAD + '\n' + commentSafe(buildMap()) + '\n';
+    var mirror = lastMirror(doc, island), body = doc.querySelector('body');
+    if (mirror) mirror.data = text;
+    else if (body) body.appendChild(document.createComment(text));
+
+    /* Everything just written counts as seen, under the revision just stamped. */
+    SYNC.notes = { rev: rev, seen: union(SYNC.notes.seen, idsOf('notes', N)) };
+    SYNC.concurs = { rev: rev, seen: union(SYNC.concurs.seen, idsOf('concurs', C)) };
+    try { localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    concurZones();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script><!--
+READER NOTES —
+NOTES — 2026-10-18-git-coordination-rail.html
+1 notes on 1 elements · 3 concurs.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[fig-01-a-stable-signal] 01 · A stable signal
+  · Basically the goal  is to take this ticker on the right and squash it into nothing (it is too much info and unclear what is actually useful and what it is useful FOR.
+
+[ask-entry-point] Entry Point  ✓ concur
+
+[ask-signal-policy] Signal Policy  ✓ concur
+
+[ask-first-release] First Release  ✓ concur
+
+--></body></html>

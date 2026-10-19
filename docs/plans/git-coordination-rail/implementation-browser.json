@@ -1,0 +1,73 @@
+{
+  "widths": {
+    "390": "no horizontal page overflow",
+    "760": "no horizontal page overflow",
+    "1100": "no horizontal page overflow",
+    "1600": "no horizontal page overflow"
+  },
+  "dialogs": [
+    "d-native-glance",
+    "d-native-evidence",
+    "d-native-narrow",
+    "d-contract",
+    "d-method"
+  ],
+  "structure": {
+    "figures": [
+      {
+        "id": "fig-glance",
+        "notable": true,
+        "label": "01 · A clear selection keeps attention elsewhere visible"
+      },
+      {
+        "id": "fig-directory",
+        "notable": true,
+        "label": "02 · Preview the connections before drilling in"
+      },
+      {
+        "id": "fig-relationships",
+        "notable": true,
+        "label": "03 · Four panes, three checkouts, one shared-file hotspot"
+      },
+      {
+        "id": "fig-keyboard",
+        "notable": true,
+        "label": "04 · Pane navigation keeps the inspector's keyboard"
+      },
+      {
+        "id": "fig-architecture-1",
+        "notable": true,
+        "label": "05 · Background observations"
+      },
+      {
+        "id": "fig-architecture-2",
+        "notable": true,
+        "label": "06 · Authorized relationships"
+      },
+      {
+        "id": "fig-architecture-3",
+        "notable": true,
+        "label": "07 · A shared snapshot"
+      },
+      {
+        "id": "fig-checks",
+        "notable": true,
+        "label": "08 · The tests reject false confidence"
+      }
+    ],
+    "callouts": [
+      true
+    ],
+    "svgs": [
+      true,
+      true,
+      true
+    ],
+    "external": 0,
+    "pending": 0,
+    "imageCount": 3,
+    "badAnchors": []
+  },
+  "notesSaveReopen": true,
+  "errors": []
+}

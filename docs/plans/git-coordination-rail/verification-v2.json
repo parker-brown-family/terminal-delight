@@ -1,0 +1,185 @@
+{
+  "notesInitially": "1",
+  "notePreserved": true,
+  "overviewOrder": [
+    "bfs",
+    "td",
+    "next",
+    "music",
+    "portal"
+  ],
+  "clearSelectionStillShowsElsewhereAlert": true,
+  "projectAges": [
+    "read 12s ago",
+    "read 4s ago",
+    "read 9s ago",
+    "not yet read",
+    "read 2s ago"
+  ],
+  "styles": [
+    {
+      "s": "alert",
+      "text": "! ALERT",
+      "color": "rgb(255, 161, 128)",
+      "weight": "800"
+    },
+    {
+      "s": "warning",
+      "text": "▲ WARNING",
+      "color": "rgb(244, 244, 244)",
+      "weight": "800"
+    },
+    {
+      "s": "caution",
+      "text": "◇ CAUTION",
+      "color": "rgb(138, 180, 248)",
+      "weight": "500"
+    },
+    {
+      "s": "clear",
+      "text": "✓ CLEAR",
+      "color": "rgb(103, 204, 153)",
+      "weight": "400"
+    },
+    {
+      "s": "unknown",
+      "text": "? UNKNOWN",
+      "color": "rgb(148, 148, 148)",
+      "weight": "400"
+    }
+  ],
+  "previewShortcutRestoresSelection": true,
+  "relations": [
+    "Identity unknownPane Arenderfeature/renderRoot and measured refs/work/td-renderHEAD fixture-head-renderbase origin/main: assumed2026-10-18T23:30:00Zapp/src/host/relay.rscommitted + unstagedobserved 4s ago",
+    "Identity unknownPanes B, Chostfeature/hostRoot and measured refs/work/td-hostHEAD fixture-head-hostbase origin/main: assumed2026-10-18T23:30:00Zapp/src/host/relay.rsunstagedobserved 4s ago",
+    "Identity unknownPane Dclifeature/cliRoot and measured refs/work/td-cliHEAD fixture-head-clibase origin/main: assumed2026-10-18T23:30:00Zapp/src/host/relay.rsstagedobserved 4s ago"
+  ],
+  "keyboard": [
+    {
+      "tag": "BUTTON",
+      "id": "",
+      "key": "cluster:fc-host",
+      "visible": true
+    },
+    {
+      "tag": "BUTTON",
+      "id": "",
+      "key": "project:td",
+      "visible": true
+    },
+    {
+      "tag": "BUTTON",
+      "id": "closed-git-summary",
+      "visible": true
+    }
+  ],
+  "keyboardOnlyEntryAndBack": true,
+  "knownSessionsNotPanes": true,
+  "targetChecks": {
+    "not_checked": "TARGET-SPECIFIC CONFLICT CHECK\nNot checked\norigin/main is the assumed target · target OID unmeasured",
+    "checked_none": "TARGET-SPECIFIC CONFLICT CHECK\nChecked · no conflict reported\norigin/main @ fixture-main-91 · host HEAD @ fixture-head-host · read 4s ago",
+    "conflict": "TARGET-SPECIFIC CONFLICT CHECK\nChecked · conflict reported\norigin/main @ fixture-main-91 · host HEAD @ fixture-head-host · read 4s ago\napp/src/host/relay.rs",
+    "unavailable": "TARGET-SPECIFIC CONFLICT CHECK\nUnavailable · command timed out\norigin/main is the assumed target · target OID unmeasured",
+    "stale": "TARGET-SPECIFIC CONFLICT CHECK\nStale · previous result retained\norigin/main @ fixture-main-90 · result is 42s old; current refs unmeasured"
+  },
+  "bridgeProjection": {
+    "schema_version": 1,
+    "instance": "fixture-window",
+    "authorized_revision": 100,
+    "cluster_id": "fc-joined",
+    "supersedes": [
+      "fc-host",
+      "fc-palette"
+    ],
+    "dimensions": {
+      "shared_checkout": 1,
+      "shared_file": 2,
+      "line_overlap": "not_checked",
+      "target_conflict": "not_checked"
+    },
+    "evidence_coverage": "complete",
+    "membership_coverage": "complete",
+    "checkout_ids": [
+      "render",
+      "host",
+      "cli",
+      "theme",
+      "ui",
+      "packaging"
+    ]
+  },
+  "denseHotspots": [
+    "app/src/common.rs",
+    "app/src/group-0.rs",
+    "app/src/group-1.rs",
+    "app/src/group-2.rs",
+    "app/src/group-3.rs",
+    "app/src/group-4.rs",
+    "app/src/group-5.rs",
+    "app/src/group-6.rs",
+    "app/src/group-7.rs",
+    "app/src/group-8.rs",
+    "app/src/group-9.rs"
+  ],
+  "denseContexts": 40,
+  "layout": {
+    "390": {
+      "overview": true,
+      "cluster": true
+    },
+    "720": {
+      "overview": true,
+      "cluster": true
+    },
+    "968": {
+      "overview": true,
+      "cluster": true
+    },
+    "1100": {
+      "overview": true,
+      "cluster": true
+    },
+    "1600": {
+      "overview": true,
+      "cluster": true
+    }
+  },
+  "coverage": {
+    "notes": [
+      [
+        "figure",
+        8,
+        8
+      ],
+      [
+        ".grill .ask",
+        3,
+        3
+      ]
+    ],
+    "badAnchors": [],
+    "svgs": [
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "figures": [
+      "01",
+      "02",
+      "03",
+      "04",
+      "05",
+      "06",
+      "07",
+      "08"
+    ],
+    "external": 0,
+    "wallpaper": "\"wallpaper · matte-black · 2-dot-hands.jpg\""
+  },
+  "noteMap": "NOTES — 2026-10-18-git-coordination-rail.html\n2 notes on 2 elements · 1 concur.\nEach [anchor] is an element id in that file — search it to find the passage.\n\n[fig-01-a-stable-signal] 01 · A stable signal\n  · Basically the goal  is to take this ticker on the right and squash it into nothing (it is too much info and unclear what is actually useful and what it is useful FOR.\n\n[ask-entry-point] Entry Point\n  · Revision verification note.\n\n[ask-signal-policy] Signal Policy  ✓ concur\n",
+  "savedReopened": true,
+  "savedKeyboard": true,
+  "errors": []
+}
