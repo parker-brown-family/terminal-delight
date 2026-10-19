@@ -407,6 +407,37 @@ fn navigation_returns_to_each_origin_and_then_closes() {
     assert_eq!(v.selected, 3);
     assert_eq!(v.depth, Depth::Overview);
     assert!(!v.back());
+    assert!(v.forward());
+    assert_eq!(v.selected, 2);
+    assert!(matches!(v.depth, Depth::Project(_)));
+    assert!(v.forward());
+    assert!(matches!(v.depth, Depth::Cluster(_, _)));
+    assert!(!v.forward());
+    assert!(v.back());
+    v.enter(Depth::Checkouts("p".into()));
+    assert!(!v.forward(), "a new navigation clears forward history");
+}
+#[test]
+fn breadcrumb_jumps_are_visits_in_mouse_back_and_forward_history() {
+    let mut view = View::default();
+    view.enter(Depth::Project("p".into()));
+    view.enter(Depth::Cluster("p".into(), "c".into()));
+
+    // A project crumb is a direct target even when a group was opened from
+    // the overview preview rather than from the project screen.
+    view.enter(Depth::Project("p".into()));
+    assert_eq!(view.depth, Depth::Project("p".into()));
+    assert!(view.back());
+    assert_eq!(view.depth, Depth::Cluster("p".into(), "c".into()));
+    assert!(view.forward());
+    assert_eq!(view.depth, Depth::Project("p".into()));
+
+    view.enter(Depth::Overview);
+    assert_eq!(view.depth, Depth::Overview);
+    assert!(view.back());
+    assert_eq!(view.depth, Depth::Project("p".into()));
+    assert!(view.forward());
+    assert_eq!(view.depth, Depth::Overview);
 }
 #[test]
 fn launch_recipes_are_not_fabricated_session_ids() {

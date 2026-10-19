@@ -16318,6 +16318,10 @@ mod tests {
         // and the pane would stay open: the chord would read as DEAD rather
         // than as wrong, which is the failure nobody files a bug about.
         assert_eq!(alt_char("w"), None);
+        // The Git inspector belongs to the window even with a printable
+        // key_char; no ESC g may reach a shell or an agent.
+        assert_eq!(alt_char("g"), None);
+        assert_eq!(alt_char("G"), None);
         // alt+k flips the pane's face. It is the PANE's chord rather than the
         // workspace's, and `on_key` returns on it well before this encoder is
         // reached — but it is asserted here for the same reason alt+w is: this

@@ -6,6 +6,7 @@
 //! by direction · ctrl+arrows: word-jump in the shell · alt+v / alt+h: split ↔ / ↕
 //! alt+w: close the focused PANE (ctrl+w closes the whole tab) ·
 //! alt+k: flip the focused pane between its TERMINAL and WORKBENCH faces ·
+//! alt+g: open or close Git coordination ·
 //! ctrl+alt+arrows: walk the left bar's tree (→ opens a branch, then steps in;
 //! ← closes it, then climbs out) ·
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
@@ -24841,34 +24842,38 @@ impl Workspace {
         let label = if complete && status == Some(coordination::Severity::Clear) {
             "GIT".into()
         } else {
-            format!(
-                "GIT · {} · {}{}",
-                status.map(|s| s.label()).unwrap_or("UNKNOWN"),
-                if snapshot.affected() > 0 {
+            let attention = match status {
+                Some(
+                    level @ (coordination::Severity::Alert
+                    | coordination::Severity::Warning
+                    | coordination::Severity::Caution),
+                ) => {
+                    let count = snapshot
+                        .projects
+                        .iter()
+                        .filter(|p| p.severity == Some(level))
+                        .count();
                     format!(
-                        "{} {}",
-                        snapshot.affected(),
-                        if snapshot.affected() == 1 {
-                            "project"
-                        } else {
-                            "projects"
-                        }
+                        "{count} {}{}",
+                        level.label(),
+                        if count == 1 { "" } else { "S" }
                     )
-                } else {
-                    "observing".into()
-                },
-                if stale {
-                    " · STALE"
-                } else if age_unknown {
-                    " · AGE UNKNOWN"
-                } else if complete {
-                    ""
-                } else if snapshot.coverage() == coordination::Coverage::Unavailable {
-                    " · UNREAD"
-                } else {
-                    " · PARTIAL"
                 }
-            )
+                Some(coordination::Severity::Clear) => "CLEAR".into(),
+                None => "UNKNOWN".into(),
+            };
+            let qualifier = if stale {
+                " · STALE"
+            } else if age_unknown {
+                " · AGE UNKNOWN"
+            } else if complete {
+                ""
+            } else if snapshot.coverage() == coordination::Coverage::Unavailable {
+                " · UNREAD"
+            } else {
+                " · PARTIAL"
+            };
+            format!("GIT · {attention}{qualifier}")
         };
         let ink = match status {
             Some(coordination::Severity::Alert) => th.ansi[1],
@@ -30932,6 +30937,7 @@ impl Render for Workspace {
                         row("Alt+K", s.toggle_bench),
                         row("Alt+A", s.launch_agent),
                         row("Alt+L", s.lookup),
+                        row("Alt+G", s.git_coordination),
                         row("Ctrl+W", s.close_tab),
                         row("Ctrl+Alt+↑↓←→", s.walk_tree),
                         row("Ctrl+Alt+1…9", s.jump_branch),

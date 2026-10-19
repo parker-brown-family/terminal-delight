@@ -4,11 +4,78 @@ use coordination::{Coverage, Depth, Severity};
 
 #[derive(Clone)]
 enum Action {
+    Back,
+    Forward,
     Open(Depth),
     Expand(String),
     Focus(String),
     Copy,
     Page(usize),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowKind {
+    Heading,
+    Section,
+    Card,
+    Participant,
+    Note,
+    Control,
+}
+
+#[derive(Clone)]
+struct Row {
+    kind: RowKind,
+    title: String,
+    detail: Option<String>,
+    meta: Option<String>,
+    severity: Option<Severity>,
+    action: Option<Action>,
+    disclosure: Option<Action>,
+    inset: bool,
+}
+
+impl Row {
+    fn new(kind: RowKind, title: impl Into<String>) -> Self {
+        Self {
+            kind,
+            title: title.into(),
+            detail: None,
+            meta: None,
+            severity: None,
+            action: None,
+            disclosure: None,
+            inset: false,
+        }
+    }
+
+    fn card(title: impl Into<String>, action: Action, severity: Option<Severity>) -> Self {
+        let mut row = Self::new(RowKind::Card, title);
+        row.action = Some(action);
+        row.severity = severity;
+        row
+    }
+
+    fn control(title: impl Into<String>, action: Action) -> Self {
+        let mut row = Self::new(RowKind::Control, title);
+        row.action = Some(action);
+        row
+    }
+
+    fn detail(mut self, text: impl Into<String>) -> Self {
+        self.detail = Some(text.into());
+        self
+    }
+
+    fn meta(mut self, text: impl Into<String>) -> Self {
+        self.meta = Some(text.into());
+        self
+    }
+
+    fn inset(mut self) -> Self {
+        self.inset = true;
+        self
+    }
 }
 
 pub(super) struct Rows {
@@ -156,6 +223,10 @@ impl Workspace {
 
     fn coordination_action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         match action {
+            Action::Back => self.coordination_back(window, cx),
+            Action::Forward => {
+                self.coord_view.forward();
+            }
             Action::Open(depth) => self.coord_view.enter(depth),
             Action::Expand(id) => {
                 if !self.coord_view.expanded.remove(&id) {
@@ -208,8 +279,17 @@ impl Workspace {
                 // pane-navigation button. Repeated Escape never falls to a PTY.
             }
         }
-        window.focus(&self.focus_handle, cx);
+        if self.eng_table {
+            window.focus(&self.focus_handle, cx);
+        }
         cx.notify();
+    }
+
+    fn coordination_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.coord_view.back() {
+            self.eng_table = false;
+            self.focus_active(window, cx);
+        }
     }
 
     fn coordination_rows(&self) -> std::sync::Arc<Vec<Row>> {
@@ -247,110 +327,79 @@ impl Workspace {
         };
         match &self.coord_view.depth {
             Depth::Overview => {
-                rows.push((
-                    "Projects in this window · urgency first · timestamps are observation ages"
-                        .into(),
-                    None,
-                    None,
+                rows.push(Row::new(
+                    RowKind::Section,
+                    "PROJECTS IN THIS WINDOW · URGENCY FIRST",
                 ));
                 if snapshot.projects.is_empty() {
-                    rows.push((
-                        "UNKNOWN · waiting for the background scan".into(),
-                        None,
-                        None,
-                    ));
+                    rows.push(Row::new(RowKind::Note, "Waiting for the background scan"));
                 }
                 for p in &snapshot.projects {
-                    rows.push((
-                        format!(
-                            "{} {} · {} · {} observed groups{}",
-                            p.severity.map(|s| s.glyph()).unwrap_or("?"),
-                            p.name,
-                            p.severity.map(|s| s.label()).unwrap_or("UNKNOWN"),
-                            p.clusters.len(),
-                            if p.coverage == Coverage::Complete {
-                                ""
-                            } else {
-                                " · PARTIAL"
-                            }
-                        ),
-                        Some(Action::Open(Depth::Project(p.id.clone()))),
+                    let mut card = Row::card(
+                        p.name.clone(),
+                        Action::Open(Depth::Project(p.id.clone())),
                         p.severity,
-                    ));
-                    rows.push((
-                        format!(
-                            "  {}",
-                            p.age_ms()
-                                .map(|ms| format!(
-                                    "observed {}s ago{}",
-                                    ms / 1000,
-                                    if ms > 30000 { " · STALE" } else { "" }
-                                ))
-                                .unwrap_or_else(|| "observation age unavailable".into())
-                        ),
-                        None,
-                        None,
+                    )
+                    .detail(project_lead(p))
+                    .meta(format!(
+                        "{} · {} · {}",
+                        group_count(p.clusters.len()),
+                        coverage_label(p.coverage),
+                        observation_age(p.age_ms())
                     ));
                     if !p.clusters.is_empty() {
-                        rows.push((
-                            format!(
-                                "  {} group previews",
-                                if self.coord_view.expanded.contains(&p.id) {
-                                    "▾"
-                                } else {
-                                    "▸"
-                                }
-                            ),
-                            Some(Action::Expand(p.id.clone())),
-                            None,
-                        ));
+                        card.disclosure = Some(Action::Expand(p.id.clone()));
                     }
+                    rows.push(card);
                     if self.coord_view.expanded.contains(&p.id) {
                         for c in p.clusters.iter().take(3) {
-                            rows.push((
-                                format!("    {} {}", c.severity.glyph(), c.title),
-                                Some(Action::Open(Depth::Cluster(p.id.clone(), c.id.clone()))),
-                                Some(c.severity),
-                            ));
+                            rows.push(
+                                Row::card(
+                                    c.title.clone(),
+                                    Action::Open(Depth::Cluster(p.id.clone(), c.id.clone())),
+                                    Some(c.severity),
+                                )
+                                .detail(cluster_size(c))
+                                .meta(format!(
+                                    "{} evidence · {} group membership",
+                                    c.evidence_coverage.label(),
+                                    c.membership_coverage.label()
+                                ))
+                                .inset(),
+                            );
                         }
                     }
                 }
             }
             Depth::Project(_) | Depth::Checkouts(_) => {
                 if let Some(p) = project {
-                    rows.push((
-                        format!(
-                            "{} · {} · {} coverage",
-                            p.name,
-                            p.severity.map(|s| s.label()).unwrap_or("UNKNOWN"),
-                            p.coverage.label()
-                        ),
-                        None,
-                        p.severity,
-                    ));
-                    rows.push((
-                        format!(
-                            "{} panes · {} sessions · {} checkouts",
-                            count(p.pane_count),
-                            count(p.session_count),
-                            count(p.checkout_count)
-                        ),
-                        None,
-                        None,
-                    ));
-                    rows.push((
-                        "Coordination groups".into(),
-                        Some(Action::Open(Depth::Project(p.id.clone()))),
-                        None,
-                    ));
-                    rows.push((
-                        "Inspect checkouts and branches".into(),
-                        Some(Action::Open(Depth::Checkouts(p.id.clone()))),
-                        None,
+                    rows.push(
+                        Row::new(RowKind::Heading, p.name.clone())
+                            .detail(project_lead(p))
+                            .meta(format!(
+                                "{} · {} · {} · {} · {}",
+                                coverage_label(p.coverage),
+                                observation_age(p.age_ms()),
+                                counted(p.pane_count, "pane"),
+                                counted(p.session_count, "session"),
+                                counted(p.checkout_count, "checkout")
+                            )),
+                    );
+                    rows.push(Row::control(
+                        if matches!(self.coord_view.depth, Depth::Checkouts(_)) {
+                            "← Coordination groups"
+                        } else {
+                            "Inspect checkouts and branches →"
+                        },
+                        Action::Open(if matches!(self.coord_view.depth, Depth::Checkouts(_)) {
+                            Depth::Project(p.id.clone())
+                        } else {
+                            Depth::Checkouts(p.id.clone())
+                        }),
                     ));
                     if matches!(self.coord_view.depth, Depth::Checkouts(_)) {
                         let inventory_id = format!("inventory:{}", p.id);
-                        rows.push((
+                        rows.push(Row::control(
                             format!(
                                 "{} Worktrees on disk and idle inventory",
                                 if self.coord_view.expanded.contains(&inventory_id) {
@@ -359,8 +408,7 @@ impl Workspace {
                                     "▸"
                                 }
                             ),
-                            Some(Action::Expand(inventory_id.clone())),
-                            None,
+                            Action::Expand(inventory_id.clone()),
                         ));
                         if self.coord_view.expanded.contains(&inventory_id) {
                             if let Some(reading) = self
@@ -370,36 +418,40 @@ impl Workspace {
                                 .map(|(_, r)| r)
                             {
                                 for repo in &reading.state.repos {
-                                    rows.push((
-                                        format!(
-                                            "{} · {} worktrees on disk",
-                                            repo.name,
-                                            repo.worktrees_on_disk
-                                                .map(|n| n.to_string())
-                                                .unwrap_or_else(|| "unavailable".into())
-                                        ),
-                                        None,
-                                        None,
-                                    ));
+                                    rows.push(
+                                        Row::new(
+                                            RowKind::Note,
+                                            format!(
+                                                "{} · {} worktrees on disk",
+                                                repo.name,
+                                                repo.worktrees_on_disk
+                                                    .map(|n| n.to_string())
+                                                    .unwrap_or_else(|| "unavailable".into())
+                                            ),
+                                        )
+                                        .inset(),
+                                    );
                                 }
                                 for idle in &reading.state.idle {
-                                    rows.push((
-                                        format!(
-                                            "idle · {} · {} · dirty {}",
-                                            idle.root.display(),
-                                            idle.branch
-                                                .as_deref()
-                                                .unwrap_or("detached / unavailable"),
-                                            idle.dirty
-                                                .map(|n| n.to_string())
-                                                .unwrap_or_else(|| "unavailable".into())
-                                        ),
-                                        None,
-                                        None,
-                                    ));
+                                    rows.push(
+                                        Row::new(
+                                            RowKind::Note,
+                                            format!(
+                                                "idle · {} · {} · dirty {}",
+                                                idle.root.display(),
+                                                idle.branch
+                                                    .as_deref()
+                                                    .unwrap_or("detached / unavailable"),
+                                                idle.dirty
+                                                    .map(|n| n.to_string())
+                                                    .unwrap_or_else(|| "unavailable".into())
+                                            ),
+                                        )
+                                        .inset(),
+                                    );
                                 }
                             } else {
-                                rows.push(("Inventory not yet observed".into(), None, None));
+                                rows.push(Row::new(RowKind::Note, "Inventory not yet observed"));
                             }
                         }
                         for c in &p.contexts {
@@ -412,69 +464,79 @@ impl Workspace {
                         }
                     } else {
                         if p.clusters.is_empty() {
-                            rows.push((if p.coverage==Coverage::Complete{"CLEAR · no shared file or checkout observed"}else{"No group observed yet · incomplete observations can reveal or join groups"}.into(),None,None));
+                            rows.push(Row::new(RowKind::Note, if p.coverage==Coverage::Complete{"No shared file or checkout observed"}else{"No group observed yet; incomplete observations may reveal or join groups"}));
+                        }
+                        if !p.clusters.is_empty() {
+                            rows.push(Row::new(RowKind::Section, "COORDINATION GROUPS"));
                         }
                         for c in &p.clusters {
-                            rows.push((
-                                format!(
-                                    "{} {} · {}",
-                                    c.severity.glyph(),
-                                    c.title,
+                            rows.push(
+                                Row::card(
+                                    c.title.clone(),
+                                    Action::Open(Depth::Cluster(p.id.clone(), c.id.clone())),
+                                    Some(c.severity),
+                                )
+                                .detail(cluster_size(c))
+                                .meta(
                                     c.dimensions
                                         .iter()
                                         .map(|d| d.replace('_', " "))
                                         .collect::<Vec<_>>()
-                                        .join(" + ")
+                                        .join(" · "),
                                 ),
-                                Some(Action::Open(Depth::Cluster(p.id.clone(), c.id.clone()))),
-                                Some(c.severity),
-                            ));
+                            );
+                        }
+                        if !p.findings.is_empty() {
+                            rows.push(Row::new(RowKind::Section, "INTEGRATION FINDINGS"));
                         }
                         for f in &p.findings {
-                            rows.push((f.clone(), None, Some(Severity::Alert)));
+                            rows.push(
+                                Row::card(
+                                    f.clone(),
+                                    Action::Open(Depth::Checkouts(p.id.clone())),
+                                    Some(Severity::Alert),
+                                )
+                                .meta("Open checkouts for the measured paths and target"),
+                            );
                         }
                         for u in &p.unlocated {
-                            rows.push((
-                                format!("{} · checkout unavailable", u.title),
-                                Some(Action::Focus(u.id.clone())),
-                                None,
-                            ));
+                            rows.push(
+                                Row::card(u.title.clone(), Action::Focus(u.id.clone()), None)
+                                    .detail("Checkout unavailable · Focus pane"),
+                            );
                         }
                     }
                 } else {
-                    rows.push((
-                        "Project retired · go back for the current window".into(),
-                        None,
-                        None,
+                    rows.push(Row::new(
+                        RowKind::Note,
+                        "Project retired · go back for the current window",
                     ));
                 }
             }
             Depth::Cluster(_, id) => {
                 if let Some(p) = project {
                     if let Some(c) = p.clusters.iter().find(|c| &c.id == id) {
-                        rows.push((
-                            format!("{} {}", c.severity.label(), c.title),
-                            None,
-                            Some(c.severity),
-                        ));
-                        rows.push((
-                            format!(
-                                "Known-member evidence {} · project graph {}",
-                                c.evidence_coverage.label(),
-                                c.membership_coverage.label()
-                            ),
-                            None,
-                            None,
-                        ));
-                        rows.push(("Occupancy is observed. File authorship and line overlap are not measured.".into(),None,None));
+                        rows.push(
+                            Row::new(RowKind::Heading, c.title.clone())
+                                .detail(cluster_size(c))
+                                .meta(format!(
+                                    "Known-member paths {} · project graph {}",
+                                    c.evidence_coverage.label(),
+                                    c.membership_coverage.label()
+                                )),
+                        );
+                        rows.push(Row::new(RowKind::Note,
+                            "Pane occupancy is observed; file authorship and line overlap are unmeasured."));
+                        rows.push(Row::new(RowKind::Section, "WHY THIS GROUP"));
                         for h in p.hotspots.iter().filter(|h| c.hotspot_ids.contains(&h.id)) {
-                            rows.push((
-                                format!("{} · {}", h.kind.replace('_', " "), h.reason),
-                                None,
-                                Some(h.severity),
-                            ));
+                            let mut row = Row::new(
+                                RowKind::Note,
+                                format!("{} · {}", h.kind.replace('_', " "), hotspot_lead(h)),
+                            );
+                            row.severity = Some(h.severity);
+                            rows.push(row);
                             if let Some(q) = &h.qualification {
-                                rows.push((q.clone(), None, None));
+                                rows.push(Row::new(RowKind::Note, q.clone()).inset());
                             }
                         }
                         let mut paths: std::collections::BTreeSet<_> = p
@@ -494,6 +556,7 @@ impl Workspace {
                                 ctx.footprint.paths.iter().map(|p| p.path.bytes_hex.clone()),
                             );
                         }
+                        rows.push(Row::new(RowKind::Section, "CHECKOUTS AND PARTICIPANTS"));
                         for ctx in p
                             .contexts
                             .iter()
@@ -507,10 +570,9 @@ impl Workspace {
                             );
                         }
                     } else {
-                        rows.push((
-                            "Group changed or retired · go back to inspect its successors".into(),
-                            None,
-                            None,
+                        rows.push(Row::new(
+                            RowKind::Note,
+                            "Group changed or retired · go back to inspect its successors",
                         ));
                     }
                 }
@@ -531,32 +593,212 @@ impl Workspace {
             .page
             .min(all.len().saturating_sub(1) / coordination::PAGE);
         let start = page * coordination::PAGE;
+        let sk = skin::skin(cx, s);
         let mut rows = div()
             .flex()
             .flex_col()
-            .gap(px(9. * s))
-            .p(px(18. * s))
-            .w(px(760. * s))
+            .gap(px(7. * s))
+            .p(px(12. * s))
+            .w_full()
+            .max_w(px(760. * s))
             .max_w_full()
-            .text_size(px(12. * s))
-            .text_color(th.text);
+            .text_size(px(11. * s))
+            .text_color(sk.ink.ink);
         rows = rows.child(
             div()
-                .font_weight(gpui::FontWeight::BOLD)
-                .child("GIT COORDINATION"),
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap(px(8. * s))
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_size(px(12. * s))
+                        .child("GIT COORDINATION"),
+                )
+                .child(
+                    div()
+                        .cursor_pointer()
+                        .px(px(7. * s))
+                        .py(px(4. * s))
+                        .rounded(sk.rad_raw(4.))
+                        .border_1()
+                        .border_color(sk.ink.ink_dim.alpha(0.55))
+                        .bg(sk.ink.ink.alpha(0.07))
+                        .hover(move |st| st.bg(sk.ink.ink.alpha(0.14)))
+                        .text_size(px(9. * s))
+                        .child("Copy context")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                                cx.stop_propagation();
+                                ws.coordination_action(Action::Copy, w, cx);
+                            }),
+                        ),
+                ),
         );
-        rows =
-            rows.child(div().text_color(th.text.alpha(0.6)).child(
-                "Escape: back, then close · ↑ ↓ select · Enter: inspect · observations only",
-            ));
-        let button = |text: String, action: Action, cx: &mut Context<Self>| {
+        let (level, project_name, checkout, back_label) = match &self.coord_view.depth {
+            Depth::Overview => ("LEVEL 1", None, false, "Close"),
+            Depth::Project(id) | Depth::Checkouts(id) => {
+                let name = self
+                    .coordination_store()
+                    .snapshot
+                    .projects
+                    .iter()
+                    .find(|p| &p.id == id)
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("Project changed");
+                (
+                    "LEVEL 2",
+                    Some(name.to_string()),
+                    matches!(self.coord_view.depth, Depth::Checkouts(_)),
+                    "← Back",
+                )
+            }
+            Depth::Cluster(id, _) => {
+                let name = self
+                    .coordination_store()
+                    .snapshot
+                    .projects
+                    .iter()
+                    .find(|p| &p.id == id)
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("Project changed");
+                ("LEVEL 3", Some(name.to_string()), false, "← Back")
+            }
+        };
+        let mut breadcrumb = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap(px(3. * s))
+            .flex_1()
+            .min_w_0()
+            .text_size(px(9. * s))
+            .text_color(sk.ink.ink_dim)
+            .child(format!("{level} ·"));
+        let mut all_projects = div().child("ALL PROJECTS");
+        if !matches!(self.coord_view.depth, Depth::Overview) {
+            all_projects = all_projects
+                .cursor_pointer()
+                .px(px(3. * s))
+                .rounded(sk.rad_raw(3.))
+                .text_color(sk.ink.ink)
+                .border_b(px(1.))
+                .border_color(sk.ink.ink.alpha(0.4))
+                .hover(move |st| st.bg(sk.ink.ink.alpha(0.16)))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                        cx.stop_propagation();
+                        ws.coordination_action(Action::Open(Depth::Overview), w, cx);
+                    }),
+                );
+        }
+        breadcrumb = breadcrumb.child(all_projects);
+        if let Some(name) = project_name {
+            breadcrumb = breadcrumb.child("›");
+            let mut project = div().child(name);
+            if let Depth::Cluster(id, _) | Depth::Checkouts(id) = &self.coord_view.depth {
+                let id = id.clone();
+                project = project
+                    .cursor_pointer()
+                    .px(px(3. * s))
+                    .rounded(sk.rad_raw(3.))
+                    .text_color(sk.ink.ink)
+                    .border_b(px(1.))
+                    .border_color(sk.ink.ink.alpha(0.4))
+                    .hover(move |st| st.bg(sk.ink.ink.alpha(0.16)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, w, cx| {
+                            cx.stop_propagation();
+                            ws.coordination_action(Action::Open(Depth::Project(id.clone())), w, cx);
+                        }),
+                    );
+            }
+            breadcrumb = breadcrumb.child(project);
+        }
+        if checkout {
+            breadcrumb = breadcrumb.child("›").child("CHECKOUTS");
+        } else if matches!(self.coord_view.depth, Depth::Cluster(_, _)) {
+            breadcrumb = breadcrumb.child("›").child("GROUP EVIDENCE");
+        }
+        let mut navigation = div().flex().flex_row().flex_none().gap(px(4. * s)).child(
             div()
                 .cursor_pointer()
-                .px(px(6. * s))
-                .py(px(5. * s))
+                .px(px(7. * s))
+                .py(px(4. * s))
+                .rounded(sk.rad_raw(4.))
                 .border_1()
-                .border_color(th.text.alpha(0.2))
-                .child(text)
+                .border_color(sk.ink.ink_dim.alpha(0.55))
+                .bg(sk.ink.ink.alpha(0.06))
+                .hover(move |st| st.bg(sk.ink.ink.alpha(0.14)))
+                .text_size(px(9. * s))
+                .child(back_label)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                        cx.stop_propagation();
+                        ws.coordination_action(Action::Back, w, cx);
+                    }),
+                ),
+        );
+        if !self.coord_view.forward.is_empty() {
+            navigation = navigation.child(
+                div()
+                    .cursor_pointer()
+                    .px(px(7. * s))
+                    .py(px(4. * s))
+                    .rounded(sk.rad_raw(4.))
+                    .border_1()
+                    .border_color(sk.ink.ink_dim.alpha(0.55))
+                    .bg(sk.ink.ink.alpha(0.06))
+                    .hover(move |st| st.bg(sk.ink.ink.alpha(0.14)))
+                    .text_size(px(9. * s))
+                    .child("Forward →")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                            cx.stop_propagation();
+                            ws.coordination_action(Action::Forward, w, cx);
+                        }),
+                    ),
+            );
+        }
+        rows = rows.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap(px(8. * s))
+                .pb(px(6. * s))
+                .border_b(px(1.))
+                .border_color(sk.ink.ink.alpha(0.16))
+                .child(breadcrumb)
+                .child(navigation),
+        );
+        rows = rows.child(
+            div()
+                .text_size(px(9. * s))
+                .text_color(sk.ink.ink_dim)
+                .child("↑ ↓ select · Enter inspect · → previews · Esc back · observations only"),
+        );
+        let button = |text: &str, action: Action, cx: &mut Context<Self>| {
+            div()
+                .cursor_pointer()
+                .px(px(8. * s))
+                .py(px(4. * s))
+                .rounded(sk.rad_raw(4.))
+                .border_1()
+                .border_color(sk.ink.ink_dim.alpha(0.55))
+                .bg(sk.ink.ink.alpha(0.06))
+                .hover(move |st| st.bg(sk.ink.ink.alpha(0.14)))
+                .text_size(px(9.5 * s))
+                .child(text.to_string())
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, w, cx| {
@@ -565,57 +807,225 @@ impl Workspace {
                     }),
                 )
         };
-        rows = rows.child(button(
-            "Copy agent-visible context · Ctrl+C".into(),
-            Action::Copy,
-            cx,
-        ));
-        for (i, (text, action, severity)) in all
-            .iter()
-            .cloned()
-            .enumerate()
-            .skip(start)
-            .take(coordination::PAGE)
-        {
-            let ink = match severity {
+        for (i, row) in all.iter().enumerate().skip(start).take(coordination::PAGE) {
+            let ink = match row.severity {
                 Some(Severity::Alert) => th.ansi[1],
                 Some(Severity::Warning) => th.ansi[3],
-                Some(Severity::Caution) => th.text,
-                _ => th.text.alpha(0.72),
+                Some(Severity::Caution) => th.ansi[3].alpha(0.7),
+                Some(Severity::Clear) => th.ansi[2],
+                None => sk.ink.ink_dim,
             };
-            let row = div()
-                .px(px(6. * s))
-                .py(px(4. * s))
-                .text_color(ink)
-                .when(i == self.coord_view.selected, |d| {
-                    d.bg(th.accent.alpha(0.14))
-                })
-                .child(text);
-            rows = rows.child(if let Some(action) = action {
-                row.cursor_pointer().on_mouse_down(
+            let selected = i == self.coord_view.selected;
+            let mut el = div().when(row.kind != RowKind::Control, |d| d.w_full());
+            if row.kind == RowKind::Card {
+                let title = row.title.clone();
+                let mut head = div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(7. * s))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(sk.ink.ink)
+                            .child(title),
+                    );
+                if let Some(severity) = row.severity {
+                    head = head.child(
+                        div()
+                            .flex_none()
+                            .text_size(px(9. * s))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(ink)
+                            .child(format!("{} {}", severity.glyph(), severity.label())),
+                    );
+                }
+                if let Some(disclosure) = row.disclosure.clone() {
+                    let open = match &disclosure {
+                        Action::Expand(id) => self.coord_view.expanded.contains(id),
+                        _ => false,
+                    };
+                    head = head.child(
+                        div()
+                            .flex_none()
+                            .cursor_pointer()
+                            .px(px(6. * s))
+                            .py(px(2. * s))
+                            .rounded(sk.rad_raw(3.))
+                            .border_1()
+                            .border_color(ink.alpha(0.6))
+                            .text_color(ink)
+                            .child(if open { "▾" } else { "▸" })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, w, cx| {
+                                    cx.stop_propagation();
+                                    ws.coord_view.selected = i;
+                                    ws.coordination_action(disclosure.clone(), w, cx);
+                                }),
+                            ),
+                    );
+                } else {
+                    head = head.child(div().text_color(ink).child("›"));
+                }
+                el = el
+                    .rounded(sk.rad_raw(6.))
+                    .border_1()
+                    .border_color(if selected {
+                        ink
+                    } else {
+                        sk.ink.ink.alpha(0.16)
+                    })
+                    .border_l(px(if selected { 4. * s } else { 3. * s }))
+                    .bg(sk.ink.ink.alpha(if selected { 0.15 } else { 0.055 }))
+                    .hover(move |st| st.bg(sk.ink.ink.alpha(0.13)))
+                    .px(px(10. * s))
+                    .py(px(7. * s))
+                    .flex()
+                    .flex_col()
+                    .gap(px(3. * s))
+                    .child(head);
+            } else if row.kind == RowKind::Participant {
+                let action = row.action.clone();
+                el = el
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8. * s))
+                    .px(px(7. * s))
+                    .py(px(3. * s))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .text_color(sk.ink.ink)
+                            .child(row.title.clone())
+                            .children(row.detail.clone().map(|detail| {
+                                div()
+                                    .text_size(px(9. * s))
+                                    .text_color(sk.ink.ink_dim)
+                                    .child(detail)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .px(px(7. * s))
+                            .py(px(3. * s))
+                            .rounded(sk.rad_raw(4.))
+                            .border_1()
+                            .border_color(if selected {
+                                th.accent
+                            } else {
+                                sk.ink.ink_dim.alpha(0.6)
+                            })
+                            .bg(sk.ink.ink.alpha(if selected { 0.13 } else { 0.06 }))
+                            .hover(move |st| st.bg(sk.ink.ink.alpha(0.14)))
+                            .cursor_pointer()
+                            .child("Focus")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, w, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(action) = action.clone() {
+                                        ws.coord_view.selected = i;
+                                        ws.coordination_action(action, w, cx);
+                                    }
+                                }),
+                            ),
+                    );
+            } else {
+                el = el
+                    .px(px(7. * s))
+                    .py(px(3. * s))
+                    .text_color(if row.severity.is_some() {
+                        ink
+                    } else {
+                        sk.ink.ink_dim
+                    })
+                    .when(row.kind == RowKind::Control, |d| {
+                        d.rounded(sk.rad_raw(4.))
+                            .border_1()
+                            .border_color(if selected {
+                                th.accent
+                            } else {
+                                sk.ink.ink.alpha(0.22)
+                            })
+                            .bg(sk.ink.ink.alpha(if selected { 0.13 } else { 0.055 }))
+                            .hover(move |st| st.bg(sk.ink.ink.alpha(0.13)))
+                    })
+                    .when(row.kind == RowKind::Heading, |d| {
+                        d.border_l(px(3. * s))
+                            .border_color(ink)
+                            .text_size(px(13. * s))
+                            .font_weight(gpui::FontWeight::BOLD)
+                    })
+                    .when(row.kind == RowKind::Section, |d| {
+                        d.pt(px(8. * s))
+                            .text_size(px(9. * s))
+                            .font_weight(gpui::FontWeight::BOLD)
+                    })
+                    .child(row.title.clone());
+            }
+            if row.kind != RowKind::Participant {
+                if let Some(detail) = &row.detail {
+                    el = el.child(div().text_color(sk.ink.ink).child(detail.clone()));
+                }
+            }
+            if let Some(meta) = &row.meta {
+                el = el.child(
+                    div()
+                        .text_size(px(9. * s))
+                        .text_color(sk.ink.ink_dim)
+                        .child(meta.clone()),
+                );
+            }
+            if let Some(action) = row
+                .action
+                .clone()
+                .filter(|_| row.kind != RowKind::Participant)
+            {
+                el = el.cursor_pointer().on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, w, cx| {
                         cx.stop_propagation();
                         ws.coord_view.selected = i;
                         ws.coordination_action(action.clone(), w, cx);
                     }),
-                )
-            } else {
-                row
-            });
+                );
+            }
+            rows = rows.child(
+                div()
+                    .flex()
+                    .when(row.inset, |d| d.pl(px(13. * s)))
+                    .child(el),
+            );
         }
         if page > 0 {
-            rows = rows.child(button(
-                "← Previous evidence".into(),
-                Action::Page(page - 1),
-                cx,
-            ));
+            rows = rows.child(button("← Previous", Action::Page(page - 1), cx));
         }
-        if start + coordination::PAGE < self.coordination_rows().len() {
-            rows = rows.child(button("More evidence →".into(), Action::Page(page + 1), cx));
+        if start + coordination::PAGE < all.len() {
+            rows = rows.child(button("More →", Action::Page(page + 1), cx));
         }
-        let sk = skin::skin(cx, s);
         self.eng_table_frame(&sk, th, s, rows, cx)
+            .on_mouse_down(
+                MouseButton::Navigate(gpui::NavigationDirection::Back),
+                cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                    cx.stop_propagation();
+                    ws.coordination_action(Action::Back, w, cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Navigate(gpui::NavigationDirection::Forward),
+                cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                    cx.stop_propagation();
+                    ws.coordination_action(Action::Forward, w, cx);
+                }),
+            )
     }
 
     pub(super) fn coordination_keypress(
@@ -631,7 +1041,7 @@ impl Workspace {
         let indices: Vec<_> = rows
             .iter()
             .enumerate()
-            .filter_map(|(i, r)| r.1.as_ref().map(|_| i))
+            .filter_map(|(i, r)| r.action.as_ref().map(|_| i))
             .collect();
         match key {
             "down" => {
@@ -656,8 +1066,35 @@ impl Workspace {
                 }
             }
             "enter" => {
-                if let Some(action) = rows.get(self.coord_view.selected).and_then(|r| r.1.clone()) {
+                if let Some(action) = rows
+                    .get(self.coord_view.selected)
+                    .and_then(|r| r.action.clone())
+                {
                     self.coordination_action(action, window, cx);
+                }
+            }
+            "right" => {
+                if let Some(action) = rows
+                    .get(self.coord_view.selected)
+                    .and_then(|r| r.disclosure.clone())
+                {
+                    if let Action::Expand(id) = &action {
+                        if !self.coord_view.expanded.contains(id) {
+                            self.coordination_action(action, window, cx);
+                        }
+                    }
+                }
+            }
+            "left" => {
+                if let Some(action) = rows
+                    .get(self.coord_view.selected)
+                    .and_then(|r| r.disclosure.clone())
+                {
+                    if let Action::Expand(id) = &action {
+                        if self.coord_view.expanded.contains(id) {
+                            self.coordination_action(action, window, cx);
+                        }
+                    }
                 }
             }
             _ => return false,
@@ -677,18 +1114,24 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        let modifiers = &key.modifiers;
+        if modifiers.alt
+            && !modifiers.control
+            && !modifiers.platform
+            && key.key.eq_ignore_ascii_case("g")
+        {
+            self.toggle_eng_table(window, cx);
+            return true;
+        }
         if !self.eng_table {
             return false;
         }
-        let modifiers = &key.modifiers;
         if modifiers.control && !modifiers.alt && !modifiers.platform && key.key == "c" {
             self.copy_coordination_context(window, cx);
         } else if !modifiers.control && !modifiers.alt && !modifiers.platform {
             if key.key == "escape" {
-                if !self.coord_view.back() {
-                    self.eng_table = false;
-                    self.focus_active(window, cx);
-                } else {
+                self.coordination_back(window, cx);
+                if self.eng_table {
                     window.focus(&self.focus_handle, cx);
                 }
                 cx.notify();
@@ -703,45 +1146,151 @@ impl Workspace {
 fn count(n: Option<usize>) -> String {
     n.map(|n| n.to_string()).unwrap_or_else(|| "unknown".into())
 }
-type Row = (String, Option<Action>, Option<Severity>);
+fn counted(n: Option<usize>, noun: &str) -> String {
+    format!("{} {noun}{}", count(n), if n == Some(1) { "" } else { "s" })
+}
+fn group_count(n: usize) -> String {
+    format!("{n} observed {}", if n == 1 { "group" } else { "groups" })
+}
+fn coverage_label(coverage: Coverage) -> &'static str {
+    match coverage {
+        Coverage::Complete => "complete scan",
+        Coverage::Partial => "partial scan",
+        Coverage::Unavailable => "scan unavailable",
+    }
+}
+fn observation_age(age: Option<u64>) -> String {
+    age.map(|ms| {
+        format!(
+            "observed {}s ago{}",
+            ms / 1000,
+            if ms > 30_000 { " · stale" } else { "" }
+        )
+    })
+    .unwrap_or_else(|| "observation age unavailable".into())
+}
+fn hotspot_lead(h: &coordination::Hotspot) -> String {
+    if h.kind == "shared_checkout" {
+        format!(
+            "{} sharing one checkout",
+            counted(Some(h.participant_ids.len()), "pane")
+        )
+    } else {
+        h.reason.clone()
+    }
+}
+fn project_lead(p: &coordination::Project) -> String {
+    if let Some(h) = p.hotspots.first() {
+        return hotspot_lead(h);
+    }
+    if let Some(finding) = p.findings.first() {
+        return finding.clone();
+    }
+    match (p.severity, p.coverage) {
+        (Some(Severity::Clear), Coverage::Complete) => "No shared checkout or file observed".into(),
+        (None, _) => "Waiting for Git observation".into(),
+        _ => "No group observed yet; scan incomplete".into(),
+    }
+}
+fn cluster_size(c: &coordination::Cluster) -> String {
+    format!(
+        "{} · {} · {} · {}",
+        c.dimensions
+            .iter()
+            .map(|d| d.replace('_', " "))
+            .collect::<Vec<_>>()
+            .join(" + "),
+        counted(Some(c.checkout_ids.len()), "checkout"),
+        counted(Some(c.participant_ids.len()), "pane"),
+        counted(c.session_count, "session")
+    )
+}
 fn append_context(
     rows: &mut Vec<Row>,
     c: &coordination::Context,
     paths: Option<&std::collections::BTreeSet<String>>,
     expanded: bool,
 ) {
-    rows.push((
-        format!(
-            "{} · branch {} · {}",
-            c.root,
-            c.branch.as_deref().unwrap_or("unavailable"),
+    let titles = c
+        .participants
+        .iter()
+        .take(3)
+        .map(|p| p.title.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = c.participants.len().saturating_sub(3);
+    let preview = if more > 0 {
+        format!("{titles} +{more} more")
+    } else {
+        titles
+    };
+    let changed = c
+        .footprint
+        .paths
+        .iter()
+        .filter(|p| paths.is_none_or(|set| set.contains(&p.path.bytes_hex)))
+        .count();
+    rows.push(
+        Row::card(
+            if c.participants.len() > 1 {
+                "Shared checkout"
+            } else {
+                "Checkout"
+            },
+            Action::Expand(c.id.clone()),
+            None,
+        )
+        .detail(format!(
+            "{} · branch {}",
+            counted(Some(c.participants.len()), "pane"),
+            c.branch.as_deref().unwrap_or("unavailable")
+        ))
+        .meta(format!(
+            "{} · {} relevant changed {} · {} paths",
+            preview,
+            changed,
+            if changed == 1 { "file" } else { "files" },
             c.footprint.coverage().label()
-        ),
-        None,
-        None,
-    ));
+        )),
+    );
+    if !expanded {
+        return;
+    }
+
+    rows.push(Row::new(RowKind::Note, format!("Checkout root · {}", c.root)).inset());
+    rows.push(Row::new(RowKind::Section, "PARTICIPANTS").inset());
     for p in &c.participants {
-        rows.push((
-            format!(
-                "  {} · {} · session {} · focus pane",
-                p.title,
+        let mut row = Row::new(RowKind::Participant, p.title.clone())
+            .detail(format!(
+                "{} · session {}",
                 p.mode,
                 p.session.as_deref().unwrap_or("unknown")
-            ),
-            Some(Action::Focus(p.id.clone())),
-            None,
-        ));
+            ))
+            .inset();
+        row.action = Some(Action::Focus(p.id.clone()));
+        rows.push(row);
     }
-    if let Some(paths) = paths {
-        for p in c
-            .footprint
-            .paths
-            .iter()
-            .filter(|p| paths.contains(&p.path.bytes_hex))
-        {
-            rows.push((
+    rows.push(Row::new(RowKind::Section, "CHANGED FILES").inset());
+    if changed == 0 {
+        rows.push(
+            Row::new(
+                RowKind::Note,
+                "No relevant path observed; path coverage may be incomplete",
+            )
+            .inset(),
+        );
+    }
+    for p in c
+        .footprint
+        .paths
+        .iter()
+        .filter(|p| paths.is_none_or(|set| set.contains(&p.path.bytes_hex)))
+    {
+        rows.push(
+            Row::new(
+                RowKind::Note,
                 format!(
-                    "  {} · {}",
+                    "{} · {}",
                     p.path.display,
                     p.sources
                         .iter()
@@ -749,41 +1298,59 @@ fn append_context(
                         .collect::<Vec<_>>()
                         .join(" + ")
                 ),
-                None,
-                None,
-            ));
-        }
+            )
+            .inset(),
+        );
     }
-    rows.push((
-        format!(
-            "  Integration check: {} · observed {}",
-            match c.footprint.target_check.state {
-                coordination::TargetState::NotChecked => "not checked",
-                coordination::TargetState::CheckedNone => "checked; no committed conflicts",
-                coordination::TargetState::Conflict => "committed conflict observed",
-                coordination::TargetState::Unavailable => "measurement unavailable",
-                coordination::TargetState::Stale => "stale; HEAD moved",
-            },
-            coordination::unix_ms()
-                .and_then(|now| now.checked_sub(c.footprint.observed_at_ms?))
-                .map(|ms| format!("{}s ago", ms / 1000))
-                .unwrap_or_else(|| "unavailable".into())
-        ),
-        None,
-        None,
-    ));
-    rows.push((
-        format!(
-            "  {} references and checkout details",
-            if expanded { "▾" } else { "▸" }
-        ),
-        Some(Action::Expand(c.id.clone())),
-        None,
-    ));
-    if expanded {
-        rows.push((
+    rows.push(Row::new(RowKind::Section, "INTEGRATION CHECK").inset());
+    rows.push(
+        Row::new(
+            RowKind::Note,
             format!(
-                "  Git: dirty {} · untracked {} · ahead/behind {}",
+                "{} · observed {}",
+                match c.footprint.target_check.state {
+                    coordination::TargetState::NotChecked => "Not checked",
+                    coordination::TargetState::CheckedNone => "Checked; no committed conflicts",
+                    coordination::TargetState::Conflict => "Committed conflict observed",
+                    coordination::TargetState::Unavailable => "Measurement unavailable",
+                    coordination::TargetState::Stale => "Stale; HEAD moved",
+                },
+                coordination::unix_ms()
+                    .and_then(|now| now.checked_sub(c.footprint.observed_at_ms?))
+                    .map(|ms| format!("{}s ago", ms / 1000))
+                    .unwrap_or_else(|| "unavailable".into())
+            ),
+        )
+        .inset(),
+    );
+    for path in c
+        .target_conflicts
+        .iter()
+        .flatten()
+        .chain(&c.footprint.unmerged)
+    {
+        let mut row = Row::new(RowKind::Note, format!("Conflict path · {}", path.display)).inset();
+        row.severity = Some(Severity::Alert);
+        rows.push(row);
+    }
+    rows.push(Row::new(RowKind::Section, "GIT REFERENCES").inset());
+    rows.push(
+        Row::new(
+            RowKind::Note,
+            format!(
+                "HEAD {} · base {} · target {}",
+                c.footprint.head_oid.as_deref().unwrap_or("unavailable"),
+                c.footprint.base_oid.as_deref().unwrap_or("unavailable"),
+                c.footprint.base_ref.as_deref().unwrap_or("unavailable")
+            ),
+        )
+        .inset(),
+    );
+    rows.push(
+        Row::new(
+            RowKind::Note,
+            format!(
+                "Dirty {} · untracked {} · ahead/behind {}",
                 c.dirty
                     .map(|n| n.to_string())
                     .unwrap_or_else(|| "unknown".into()),
@@ -794,34 +1361,11 @@ fn append_context(
                     .map(|(a, b)| format!("{a}/{b}"))
                     .unwrap_or_else(|| "unknown".into())
             ),
-            None,
-            None,
-        ));
-        rows.push((
-            format!(
-                "  HEAD {} · base {} · target {}",
-                c.footprint.head_oid.as_deref().unwrap_or("unavailable"),
-                c.footprint.base_oid.as_deref().unwrap_or("unavailable"),
-                c.footprint.base_ref.as_deref().unwrap_or("unavailable")
-            ),
-            None,
-            None,
-        ));
-    }
-    for path in c
-        .target_conflicts
-        .iter()
-        .flatten()
-        .chain(&c.footprint.unmerged)
-    {
-        rows.push((
-            format!("  Conflict path: {}", path.display),
-            None,
-            Some(Severity::Alert),
-        ));
-    }
+        )
+        .inset(),
+    );
     for error in &c.footprint.errors {
-        rows.push((format!("  Unavailable: {error}"), None, None));
+        rows.push(Row::new(RowKind::Note, format!("Unavailable · {error}")).inset());
     }
 }
 
@@ -883,23 +1427,46 @@ mod tests {
             ahead_behind: None,
             target_conflicts: None,
         };
+        let mut collapsed = vec![];
+        append_context(&mut collapsed, &context, None, false);
+        assert_eq!(collapsed.len(), 1);
+        assert!(collapsed[0].title.contains("Shared checkout"));
+        assert!(collapsed[0]
+            .detail
+            .as_ref()
+            .is_some_and(|s| s.contains("2 panes")));
+        assert!(!collapsed[0]
+            .meta
+            .as_ref()
+            .is_some_and(|s| s.contains("known-host-session")));
+        assert!(!collapsed[0]
+            .meta
+            .as_ref()
+            .is_some_and(|s| s.contains("/fixture/host")));
         let mut rows = vec![];
         append_context(
             &mut rows,
             &context,
             Some(&std::collections::BTreeSet::from([path.bytes_hex])),
-            false,
+            true,
         );
-        assert!(rows[0].0.contains("/fixture/host") && rows[0].0.contains("feature/host"));
-        assert!(rows.iter().any(|r| r.0.contains("Host B")
-            && r.0.contains("known-host-session")
-            && matches!(&r.1,Some(Action::Focus(id)) if id=="pane-b")));
+        assert!(rows[0]
+            .detail
+            .as_ref()
+            .is_some_and(|s| s.contains("feature/host")));
+        assert!(rows.iter().any(|r| r.title.contains("/fixture/host")));
+        assert!(rows.iter().any(|r| r.title.contains("Host B")
+            && r.detail
+                .as_ref()
+                .is_some_and(|s| s.contains("known-host-session"))
+            && matches!(&r.action,Some(Action::Focus(id)) if id=="pane-b")));
+        assert!(rows.iter().any(|r| r.title.contains("Host C")
+            && r.detail
+                .as_ref()
+                .is_some_and(|s| s.contains("known-host-session"))));
         assert!(rows
             .iter()
-            .any(|r| r.0.contains("Host C") && r.0.contains("known-host-session")));
-        assert!(rows
-            .iter()
-            .any(|r| r.0.contains("relay.rs") && r.0.contains("unstaged")));
+            .any(|r| r.title.contains("relay.rs") && r.title.contains("unstaged")));
         let project = coordination::derive(
             "p",
             "Fixture",
@@ -925,5 +1492,29 @@ mod tests {
             value["data"]["checkouts"][0]["participants"][0]["session"],
             "known-host-session"
         );
+    }
+
+    #[test]
+    fn an_isolated_conflict_explains_an_alert_without_a_group() {
+        let mut project = coordination::Project::pending("job".into(), "JOB".into());
+        project.severity = Some(Severity::Alert);
+        project.coverage = Coverage::Partial;
+        project.hotspots.push(coordination::Hotspot {
+            id: "conflict".into(),
+            kind: "target_conflict".into(),
+            path: None,
+            checkout_ids: vec!["checkout".into()],
+            participant_ids: vec!["pane".into()],
+            severity: Severity::Alert,
+            reason: "2 committed conflict paths against origin/main".into(),
+            qualification: None,
+        });
+        assert!(project.clusters.is_empty());
+        assert_eq!(
+            project_lead(&project),
+            "2 committed conflict paths against origin/main"
+        );
+        assert_eq!(group_count(project.clusters.len()), "0 observed groups");
+        assert_eq!(coverage_label(project.coverage), "partial scan");
     }
 }
