@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::md_notes;
+use super::notes_ui::Words;
 use crate::lang::fill;
 
 /// The list's format. A list of a later one is read-only here.
@@ -117,34 +118,35 @@ pub fn path_of(folder: &Path, img: &DocImage) -> PathBuf {
 /// picture is looked for on disk, so one whose file went is shown as gone
 /// rather than dropped.
 ///
-/// The error is said in the notes bar, so it is in the reader's language.
-pub fn read(folder: &Path, doc: &Path) -> Result<DocImages, String> {
-    let t = words();
+/// The error is said in the notes bar, so it is in the reader's language,
+/// and carried in English by the report.
+pub fn read(folder: &Path, doc: &Path) -> Result<DocImages, Words> {
     let list = folder.join(LIST);
+    let path = list.display().to_string();
     let bytes = match std::fs::read(&list) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(DocImages::empty(doc)),
         Err(e) => {
-            return Err(fill(
-                t.notes_pictures_unreadable,
-                &[("error", &e.to_string())],
-            ))
+            let error = e.to_string();
+            return Err(said(|t| {
+                fill(t.notes_pictures_unreadable, &[("error", &error)])
+            }));
         }
     };
     let mut images: DocImages = serde_json::from_slice(&bytes).map_err(|e| {
-        fill(
-            t.notes_pictures_unreadable_at,
-            &[
-                ("path", &list.display().to_string()),
-                ("error", &e.to_string()),
-            ],
-        )
+        let error = e.to_string();
+        said(|t| {
+            fill(
+                t.notes_pictures_unreadable_at,
+                &[("path", &path), ("error", &error)],
+            )
+        })
     })?;
     if images.format != FORMAT {
-        return Err(fill(
-            t.notes_pictures_newer_format,
-            &[("format", &images.format.to_string())],
-        ));
+        let format = images.format.to_string();
+        return Err(said(|t| {
+            fill(t.notes_pictures_newer_format, &[("format", &format)])
+        }));
     }
     // A picture's file is a name inside this folder, the name `attach` gave
     // it. A list naming anything else is not one TD wrote, and what reads
@@ -156,13 +158,13 @@ pub fn read(folder: &Path, doc: &Path) -> Result<DocImages, String> {
         .flatten()
         .find(|img| !plain_name(&img.file))
     {
-        return Err(fill(
-            t.notes_pictures_outside_folder,
-            &[
-                ("path", &list.display().to_string()),
-                ("file", &format!("{:?}", bad.file)),
-            ],
-        ));
+        let file = format!("{:?}", bad.file);
+        return Err(said(|t| {
+            fill(
+                t.notes_pictures_outside_folder,
+                &[("path", &path), ("file", &file)],
+            )
+        }));
     }
     for img in images.on.values_mut().flatten() {
         img.here = path_of(folder, img).is_file();
@@ -201,27 +203,32 @@ pub fn attach(
     bytes: &[u8],
     ext: &str,
     ts: &str,
-) -> Result<(DocImages, Attached), String> {
+) -> Result<(DocImages, Attached), Words> {
     if ext.is_empty()
         || ext.len() > 5
         || !ext
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
     {
-        return Err(fill(words().notes_pictures_bad_extension, &[("ext", ext)]));
+        return Err(said(|t| {
+            fill(t.notes_pictures_bad_extension, &[("ext", ext)])
+        }));
     }
-    let t = words();
     let mut images = read(folder, doc)?;
     let hash = format!("{:016x}", md_notes::fnv_bytes(bytes));
     if let Some(same) = images.on(nid).iter().find(|i| i.hash == hash) {
         return Ok((images.clone(), Attached::Already(same.n)));
     }
-    std::fs::create_dir_all(folder)
-        .map_err(|e| fill(t.notes_pictures_folder_failed, &[("error", &e.to_string())]))?;
+    std::fs::create_dir_all(folder).map_err(|e| {
+        let error = e.to_string();
+        said(|t| fill(t.notes_pictures_folder_failed, &[("error", &error)]))
+    })?;
     let n = images.next;
     let file = format!("doc-image-{n}.{ext}");
-    put(folder, &file, bytes)
-        .map_err(|e| fill(t.notes_pictures_keep_failed, &[("error", &e.to_string())]))?;
+    put(folder, &file, bytes).map_err(|e| {
+        let error = e.to_string();
+        said(|t| fill(t.notes_pictures_keep_failed, &[("error", &error)]))
+    })?;
     images.next = n + 1;
     images
         .on
@@ -242,7 +249,7 @@ pub fn attach(
 /// deleted. A picture no longer in the list is not an error, and a file
 /// already gone is not one either: afterwards the list says what the person
 /// asked it to.
-pub fn remove(folder: &Path, doc: &Path, nid: &str, n: u32) -> Result<DocImages, String> {
+pub fn remove(folder: &Path, doc: &Path, nid: &str, n: u32) -> Result<DocImages, Words> {
     let mut images = read(folder, doc)?;
     let Some(list) = images.on.get_mut(nid) else {
         return Ok(images);
@@ -259,22 +266,26 @@ pub fn remove(folder: &Path, doc: &Path, nid: &str, n: u32) -> Result<DocImages,
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => {
-            return Err(fill(
-                words().notes_pictures_delete_failed,
-                &[("label", &gone.label()), ("error", &e.to_string())],
-            ))
+            let (label, error) = (gone.label(), e.to_string());
+            return Err(said(|t| {
+                fill(
+                    t.notes_pictures_delete_failed,
+                    &[("label", &label), ("error", &error)],
+                )
+            }));
         }
     }
     Ok(images)
 }
 
-/// The words a picture's errors are said in: the notes bar's, the reader's.
-fn words() -> &'static crate::lang::Parts {
-    crate::lang::current().strings().parts
+/// A picture's error, said by `say` from a language's words: in the reader's
+/// language for the notes bar, and in English for the report.
+fn said(say: impl Fn(&crate::lang::Parts) -> String) -> Words {
+    Words::said(|l| say(l.strings().parts))
 }
 
-fn write_list(folder: &Path, images: &DocImages) -> Result<(), String> {
-    let failed = |e: String| fill(words().notes_pictures_list_write_failed, &[("error", &e)]);
+fn write_list(folder: &Path, images: &DocImages) -> Result<(), Words> {
+    let failed = |e: String| said(|t| fill(t.notes_pictures_list_write_failed, &[("error", &e)]));
     let mut out = serde_json::to_string_pretty(images).map_err(|e| failed(e.to_string()))?;
     out.push('\n');
     put(folder, LIST, out.as_bytes()).map_err(|e| failed(e.to_string()))
@@ -421,7 +432,10 @@ mod tests {
         let folder = folder(&root, &doc);
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(folder.join(LIST), b"{ not json").unwrap();
-        assert!(read(&folder, &doc).unwrap_err().contains("cannot be read"));
+        assert!(read(&folder, &doc)
+            .unwrap_err()
+            .english()
+            .contains("cannot be read"));
         assert!(attach(&folder, &doc, "p", b"a", "png", "t").is_err());
         assert_eq!(std::fs::read(folder.join(LIST)).unwrap(), b"{ not json");
         std::fs::write(
@@ -429,7 +443,10 @@ mod tests {
             br#"{"format":2,"file":"x","next":1,"on":{}}"#,
         )
         .unwrap();
-        assert!(read(&folder, &doc).unwrap_err().contains("newer TD"));
+        assert!(read(&folder, &doc)
+            .unwrap_err()
+            .english()
+            .contains("newer TD"));
     }
 
     /// The extension becomes part of a file name, so only a short run of
@@ -465,6 +482,7 @@ mod tests {
             assert!(
                 read(&folder, &doc)
                     .unwrap_err()
+                    .english()
                     .contains("outside their folder"),
                 "{bad}"
             );

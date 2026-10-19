@@ -127,7 +127,6 @@ impl Bar {
     /// The bar's heading in `l`, for the card. [`Self::label`] stays English
     /// because it is what identifies the bar; a label this table does not
     /// know is drawn as it is.
-    #[allow(dead_code)] // drawn by main.rs (vitals bar_row heading) once it adopts this
     pub fn label_in(&self, l: crate::lang::Lang) -> &'static str {
         let p = l.strings().parts;
         match self.label {
@@ -216,7 +215,6 @@ impl Call {
 
     /// The verdict chip in `l`. [`Self::label`] stays English: the `vitals`
     /// CLI emits it as the `call` field.
-    #[allow(dead_code)] // drawn by main.rs (the CALL stat box) once it adopts this
     pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
         let p = l.strings().parts;
         match self {

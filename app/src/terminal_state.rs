@@ -2,6 +2,7 @@
 //! says that a console is at a prompt or a remote connection succeeded.
 use crate::pane::PaneMode;
 
+#[cfg(test)]
 pub const HOVER: &[&str] = &[
     "Colour by terminal state",
     "SSH / remote · agent provider",
@@ -12,7 +13,6 @@ pub const HOVER: &[&str] = &[
 ];
 
 /// [`HOVER`] in the reader's language, line for line.
-#[allow(dead_code)] // drawn by main.rs (the toggle's hover card, ~17589) once it adopts this
 pub fn hover_in(l: crate::lang::Lang) -> [&'static str; 6] {
     let t = &l.strings().parts;
     [

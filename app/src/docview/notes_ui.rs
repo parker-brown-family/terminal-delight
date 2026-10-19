@@ -283,22 +283,87 @@ pub enum MarkHit {
     Concur(String),
 }
 
+/// Words the notes bar says, held twice: as the reader reads them on the bar,
+/// and in English for the report the control socket hands to CLIs and
+/// agents. Both are made when the words are said, because what they say (a
+/// file that failed, an error the disk gave) cannot be asked again later.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Words {
+    shown: String,
+    english: String,
+}
+
+impl Words {
+    /// What `say` says in the reader's language, and again in English.
+    pub fn said(say: impl Fn(crate::lang::Lang) -> String) -> Words {
+        Words::said_in(crate::lang::current(), say)
+    }
+
+    /// [`Self::said`] for a reader of `shown`: the tests' way in, since the
+    /// window's language is one process-wide value they must not move.
+    fn said_in(shown: crate::lang::Lang, say: impl Fn(crate::lang::Lang) -> String) -> Words {
+        Words {
+            shown: say(shown),
+            english: say(crate::lang::Lang::En),
+        }
+    }
+
+    /// Words that read the same in every language: an error the system gave,
+    /// or a sentence that stays English at its source.
+    pub fn as_is(words: impl Into<String>) -> Words {
+        let english = words.into();
+        Words {
+            shown: english.clone(),
+            english,
+        }
+    }
+
+    /// These words inside a sentence of their own, said in each language with
+    /// the inner words in that same language.
+    pub fn within(&self, say: impl Fn(crate::lang::Lang, &str) -> String) -> Words {
+        Words {
+            shown: say(crate::lang::current(), &self.shown),
+            english: say(crate::lang::Lang::En, &self.english),
+        }
+    }
+
+    /// As the bar draws them.
+    pub fn shown(&self) -> &str {
+        &self.shown
+    }
+
+    /// As the report carries them.
+    pub fn english(&self) -> &str {
+        &self.english
+    }
+}
+
 /// What the bar last said, and in which voice.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Said {
     /// Something happened as asked.
-    Done(String),
+    Done(Words),
     /// Something is under way.
-    Working(String),
+    Working(Words),
     /// Something was refused or failed: nothing was written.
-    Refused(String),
+    Refused(Words),
 }
 
 impl Said {
-    pub fn text(&self) -> &str {
+    fn words(&self) -> &Words {
         match self {
-            Said::Done(s) | Said::Working(s) | Said::Refused(s) => s,
+            Said::Done(w) | Said::Working(w) | Said::Refused(w) => w,
         }
+    }
+
+    /// What the bar draws: the reader's language.
+    pub fn text(&self) -> &str {
+        self.words().shown()
+    }
+
+    /// What the report carries: English, because a CLI or an agent reads it.
+    pub fn english(&self) -> &str {
+        self.words().english()
     }
 }
 
@@ -331,7 +396,7 @@ pub enum Pictures {
         list: DocImages,
     },
     /// The list cannot be read. Said in the box; nothing is written over it.
-    Unreadable(String),
+    Unreadable(Words),
 }
 
 /// A picture pasted into a note box, for the view to keep: its bytes or files
@@ -661,7 +726,7 @@ impl NotesLayer {
 
     /// The document's list of pictures, read from `folder`, or why it cannot
     /// be. From now on a picture pasted here is numbered against it.
-    pub fn pictures_read(&mut self, folder: std::path::PathBuf, read: Result<DocImages, String>) {
+    pub fn pictures_read(&mut self, folder: std::path::PathBuf, read: Result<DocImages, Words>) {
         self.pictures = match read {
             Ok(list) => Pictures::Kept { folder, list },
             Err(why) => Pictures::Unreadable(why),
@@ -699,7 +764,7 @@ impl NotesLayer {
 
     /// What a picture paste came to, once the view has kept it: the list as
     /// it is now, and which number the picture has, or why it was not kept.
-    pub fn attached(&mut self, kept: Result<(DocImages, Vec<Attached>), String>) {
+    pub fn attached(&mut self, kept: Result<(DocImages, Vec<Attached>), Words>) {
         match kept {
             Ok((list, attached)) => {
                 if let Pictures::Kept { list: have, .. } = &mut self.pictures {
@@ -715,20 +780,23 @@ impl NotesLayer {
                         })
                         .collect()
                 };
-                let mut said = Vec::new();
                 let (new, old) = (named(false), named(true));
-                let t = &crate::lang::current().strings().parts;
                 let labels = |l: &[String]| l.join(", ");
-                if !new.is_empty() {
-                    said.push(fill(t.notes_attached_as, &[("labels", &labels(&new))]));
-                }
-                if !old.is_empty() {
-                    said.push(fill(
-                        t.notes_already_attached_as,
-                        &[("labels", &labels(&old))],
-                    ));
-                }
-                self.said = (!said.is_empty()).then(|| Said::Done(said.join(" · ")));
+                let words = Words::said(|l| {
+                    let t = &l.strings().parts;
+                    let mut said = Vec::new();
+                    if !new.is_empty() {
+                        said.push(fill(t.notes_attached_as, &[("labels", &labels(&new))]));
+                    }
+                    if !old.is_empty() {
+                        said.push(fill(
+                            t.notes_already_attached_as,
+                            &[("labels", &labels(&old))],
+                        ));
+                    }
+                    said.join(" · ")
+                });
+                self.said = (!new.is_empty() || !old.is_empty()).then_some(Said::Done(words));
             }
             Err(why) => self.said = Some(Said::Refused(why)),
         }
@@ -736,7 +804,7 @@ impl NotesLayer {
 
     /// A picture's delete, once the view has carried it out: the list as it
     /// is now, or why the picture is still there.
-    pub fn unattached(&mut self, kept: Result<DocImages, String>) {
+    pub fn unattached(&mut self, kept: Result<DocImages, Words>) {
         match kept {
             Ok(list) => {
                 if let Pictures::Kept { list: have, .. } = &mut self.pictures {
@@ -1192,13 +1260,15 @@ impl NotesLayer {
         }
         self.close_warned = true;
         let n = self.pending.len();
-        let l = crate::lang::current();
-        let t = &l.strings().parts;
-        self.said = Some(Said::Refused(if self.in_store() {
-            l.count(&t.notes_close_not_kept_n, n)
-        } else {
-            l.count(&t.notes_close_unsaved_n, n)
-        }));
+        let in_store = self.in_store();
+        self.said = Some(Said::Refused(Words::said(|l| {
+            let t = &l.strings().parts;
+            if in_store {
+                l.count(&t.notes_close_not_kept_n, n)
+            } else {
+                l.count(&t.notes_close_unsaved_n, n)
+            }
+        })));
         true
     }
 
@@ -1257,21 +1327,22 @@ impl NotesLayer {
             return Pasting::Pass;
         };
         let nid = b.nid.clone();
-        let t = &crate::lang::current().strings().parts;
         match pasted {
             Pasted::Words(raw) => {
                 let words = pasted_words(&raw);
                 let offered = words.chars().count();
                 let took = b.draft.insert_capped(&words, MAX_NOTE_CHARS);
                 if took < offered {
-                    self.said = Some(Said::Refused(fill(
-                        t.notes_paste_truncated,
-                        &[
-                            ("took", &grouped(took)),
-                            ("offered", &grouped(offered)),
-                            ("max", &grouped(MAX_NOTE_CHARS)),
-                        ],
-                    )));
+                    self.said = Some(Said::Refused(Words::said(|l| {
+                        fill(
+                            l.strings().parts.notes_paste_truncated,
+                            &[
+                                ("took", &grouped(took)),
+                                ("offered", &grouped(offered)),
+                                ("max", &grouped(MAX_NOTE_CHARS)),
+                            ],
+                        )
+                    })));
                 }
                 Pasting::Took
             }
@@ -1284,18 +1355,21 @@ impl NotesLayer {
                         picture,
                         ts: utc_minute(now),
                     };
-                    self.said = Some(Said::Working(t.notes_attaching.into()));
+                    self.said = Some(Said::Working(Words::said(|l| {
+                        l.strings().parts.notes_attaching.into()
+                    })));
                     Pasting::Attach(attaching)
                 }
                 Pictures::Unread => {
-                    self.said = Some(Said::Refused(t.notes_pictures_unread.into()));
+                    self.said = Some(Said::Refused(Words::said(|l| {
+                        l.strings().parts.notes_pictures_unread.into()
+                    })));
                     Pasting::Took
                 }
                 Pictures::Unreadable(why) => {
-                    self.said = Some(Said::Refused(fill(
-                        t.notes_picture_refused,
-                        &[("why", why)],
-                    )));
+                    self.said = Some(Said::Refused(why.within(|l, why| {
+                        fill(l.strings().parts.notes_picture_refused, &[("why", why)])
+                    })));
                     Pasting::Took
                 }
             },
@@ -1403,11 +1477,10 @@ impl NotesLayer {
         self.saving = true;
         // A note kept as it is written says nothing while it is kept.
         if !self.in_store() {
-            let t = &crate::lang::current().strings().parts;
-            self.said = Some(Said::Working(fill(
-                t.notes_saving_into,
-                &[("file", &self.label)],
-            )));
+            let file = &self.label;
+            self.said = Some(Said::Working(Words::said(|l| {
+                fill(l.strings().parts.notes_saving_into, &[("file", file)])
+            })));
         }
         self.pending.clone()
     }
@@ -1465,28 +1538,30 @@ impl NotesLayer {
             (None, _) => ConcurMap::default(),
         };
         self.base = Shown::Notes { notes, concurs };
-        let t = &crate::lang::current().strings().parts;
-        self.said = Some(Said::Working(fill(
-            t.notes_saved_reading_back,
-            &[("file", file)],
-        )));
+        self.said = Some(Said::Working(Words::said(|l| {
+            fill(
+                l.strings().parts.notes_saved_reading_back,
+                &[("file", file)],
+            )
+        })));
         self.refresh();
     }
 
     /// The written file, reopened fresh, shows what was written.
     pub fn confirmed(&mut self, file: &str) {
-        let t = &crate::lang::current().strings().parts;
-        self.said = Some(Said::Done(fill(t.notes_saved_ok, &[("file", file)])));
+        self.said = Some(Said::Done(Words::said(|l| {
+            fill(l.strings().parts.notes_saved_ok, &[("file", file)])
+        })));
     }
 
     /// The written file, reopened fresh, does not show what was written; it
     /// stays written, and the bar says where the copy from before is.
-    pub fn unconfirmed(&mut self, why: String) {
+    pub fn unconfirmed(&mut self, why: Words) {
         self.said = Some(Said::Refused(why));
     }
 
     /// The save did not happen: nothing was written, the edits wait.
-    pub fn refused(&mut self, why: String) {
+    pub fn refused(&mut self, why: Words) {
         self.saving = false;
         self.said = Some(Said::Refused(why));
     }
@@ -1561,14 +1636,16 @@ impl NotesLayer {
         let Some(map) = self.map(anchors) else { return };
         cx.write_to_clipboard(ClipboardItem::new_string(map.clone()));
         cx.write_to_primary(ClipboardItem::new_string(map.clone()));
-        let t = &crate::lang::current().strings().parts;
-        self.said = Some(Said::Done(fill(
-            t.notes_map_copied,
-            &[
-                ("chars", &map.chars().count().to_string()),
-                ("tokens", &map.len().div_ceil(4).to_string()),
-            ],
-        )));
+        let (chars, tokens) = (
+            map.chars().count().to_string(),
+            map.len().div_ceil(4).to_string(),
+        );
+        self.said = Some(Said::Done(Words::said(|l| {
+            fill(
+                l.strings().parts.notes_map_copied,
+                &[("chars", &chars), ("tokens", &tokens)],
+            )
+        })));
     }
 
     /// What the bar says, for the control socket and the tests.
@@ -1593,9 +1670,10 @@ impl NotesLayer {
             "unsaved": self.unsaved(),
             "saving": self.saving,
             "gone": self.gone,
-            // What the bar says, as it says it: in the reader's language.
-            "said": self.said.as_ref().map(|s| s.text().to_string()),
-            "sent": self.sent.as_ref().map(|s| s.text().to_string()),
+            // What the bar says, in English whatever language the bar is
+            // drawn in: a CLI or an agent reads this, and compares it.
+            "said": self.said.as_ref().map(|s| s.english().to_string()),
+            "sent": self.sent.as_ref().map(|s| s.english().to_string()),
             "map": self.map(anchors),
             "open": self.note_box.as_ref().map(|b| b.nid.clone()),
             // The words being written in the open note box, which is where a
@@ -1904,7 +1982,7 @@ impl NotesLayer {
         let t = &crate::lang::current().strings().parts;
         let pictures = self.pictures_on(nid);
         let unreadable = match &self.pictures {
-            Pictures::Unreadable(why) => Some(why.as_str()),
+            Pictures::Unreadable(why) => Some(why.shown()),
             _ => None,
         };
         if pictures.is_empty() && unreadable.is_none() {
@@ -2557,7 +2635,7 @@ mod tests {
             "unread is not none"
         );
 
-        l.pictures_read("/state/pictures/b".into(), Err("broken list".into()));
+        l.pictures_read("/state/pictures/b".into(), Err(Words::as_is("broken list")));
         assert_eq!(l.paste(Pasted::Picture(png()), now), Pasting::Took);
         assert!(l
             .said
@@ -2803,7 +2881,7 @@ mod tests {
             "second".into(),
             "2026-09-24 11:01".into(),
         );
-        l.refused("the disk said no".into());
+        l.refused(Words::as_is("the disk said no"));
         assert_eq!(l.unsaved(), 2, "a refusal keeps every edit");
         let edits = l.begin_save();
         let mut written = NoteMap::default();
@@ -2929,6 +3007,36 @@ mod tests {
         }
     }
 
+    /// The bar says its words in the reader's language, and the report the
+    /// control socket hands to CLIs and agents carries the same words in
+    /// English — for what the bar said and for what the last ↪ said. A
+    /// report that read the bar's text instead says `de`/`ja` here and fails.
+    #[test]
+    fn the_report_says_in_english_what_the_bar_says_in_the_readers_language() {
+        use crate::lang::Lang;
+        let mut l = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
+        let unsaved = |lang: Lang| lang.count(&lang.strings().parts.notes_close_unsaved_n, 2);
+        l.say(Said::Refused(Words::said_in(Lang::De, |lang| {
+            format!("{} · {}", lang.code(), unsaved(lang))
+        })));
+        l.say_sent(Said::Done(Words::said_in(Lang::Ja, |lang| {
+            format!("{} sent", lang.code())
+        })));
+        assert_eq!(
+            l.said.as_ref().map(Said::text),
+            Some(format!("de · {}", unsaved(Lang::De)).as_str()),
+            "the bar draws the reader's language"
+        );
+        assert_eq!(l.sent.as_ref().map(Said::text), Some("ja sent"));
+        let report = l.report(&[]);
+        assert_eq!(report["said"], format!("en · {}", unsaved(Lang::En)));
+        assert_eq!(report["sent"], "en sent");
+        // Words from outside the table (an OS error) sit inside a sentence
+        // in each language, English in the report.
+        let why = Words::as_is("disk full").within(|lang, why| format!("{}: {why}", lang.code()));
+        assert_eq!(why.english(), "en: disk full");
+    }
+
     /// ↪ sends what the bar shows, unsaved notes included, and saves them
     /// as it goes; the button says so while there is something to save.
     ///
@@ -2984,7 +3092,7 @@ mod tests {
         );
         l.set_gone(false);
         let _ = l.begin_save();
-        l.say_sent(Said::Done("in the agent's prompt, not sent".into()));
+        l.say_sent(Said::Done(Words::as_is("in the agent's prompt, not sent")));
         l.confirmed("brief.html");
         let bar = l.report(&anchors);
         assert_eq!(bar["sent"], "in the agent's prompt, not sent");

@@ -70,7 +70,6 @@ impl AgentState {
     }
 
     /// [`Self::label`] as a person reads it, in `l`.
-    #[allow(dead_code)] // drawn by main.rs (the MCP-status rows, ~28701 / ~28996) once it adopts this
     pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
         let t = &l.strings().parts;
         match self {

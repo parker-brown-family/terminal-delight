@@ -89,7 +89,6 @@ impl Harness {
     /// The chip's word in `l`. [`Self::label`] is also the stored word
     /// ([`Self::from_label`]), so it stays English; only `local` is an
     /// ordinary word — `claude` and `codex` are product names.
-    #[allow(dead_code)] // drawn by main.rs (launcher harness chips) once it adopts this
     pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
         match self {
             Harness::Local => l.strings().parts.launcher_harness_local,
@@ -255,13 +254,13 @@ impl Effort {
         }
     }
 
+    #[cfg(test)]
     pub fn label(self) -> &'static str {
         self.id()
     }
 
     /// The chip's word in `l`, for display only. [`Self::label`] stays the
     /// flag value, because the journal and the command line read it.
-    #[allow(dead_code)] // drawn by main.rs (launcher effort chips) once it adopts this
     pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
         let p = l.strings().parts;
         match self {
@@ -439,6 +438,7 @@ pub enum Reach {
 impl Reach {
     pub const ALL: [Reach; 3] = [Reach::Repo, Reach::Machine, Reach::Anywhere];
 
+    #[cfg(test)]
     pub fn label(self) -> &'static str {
         match self {
             Reach::Repo => "this repo",
@@ -448,7 +448,6 @@ impl Reach {
     }
 
     /// The dial's words in `l`; [`Self::label`] is the English.
-    #[allow(dead_code)] // drawn by main.rs (launcher reach chips) once it adopts this
     pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
         let p = l.strings().parts;
         match self {

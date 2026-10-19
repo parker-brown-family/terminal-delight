@@ -7945,7 +7945,7 @@ impl Workspace {
                                                 .clone()
                                                 .filter(|n| !n.is_empty())
                                                 .or_else(|| {
-                                                    (!v.title.is_empty()).then(|| v.title.clone())
+                                                    (!v.title.is_empty()).then(|| v.shown_title())
                                                 })
                                                 .unwrap_or_else(|| v.mode.label().to_string());
                                             (Some(v.off_limits), Some(title))
@@ -9240,7 +9240,12 @@ impl Workspace {
         for h in launcher::Harness::ALL {
             let word = h.label();
             harness_chips = harness_chips.child(
-                chip(word, h == harness, pref.harness() == Some(h)).on_mouse_down(
+                chip(
+                    h.label_in(self.lang),
+                    h == harness,
+                    pref.harness() == Some(h),
+                )
+                .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
@@ -9277,7 +9282,12 @@ impl Workspace {
             let e = *e;
             let id = e.id();
             effort_chips = effort_chips.child(
-                chip(id, e == effort_now, pref.effort(harness) == Some(e)).on_mouse_down(
+                chip(
+                    e.label_in(self.lang),
+                    e == effort_now,
+                    pref.effort(harness) == Some(e),
+                )
+                .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
@@ -9530,7 +9540,7 @@ impl Workspace {
             let mut list = div().flex().flex_col().gap_1p5();
             for l in &rec.limits {
                 let col = pressure(l.percent);
-                let resets = usage::until(&l.resets_at, now)
+                let resets = usage::until_in(&l.resets_at, now, self.lang)
                     .map(|t| lang::fill(ui.use_resets_in, &[("duration", &t)]))
                     .unwrap_or_default();
                 list = list.child(
@@ -9679,7 +9689,7 @@ impl Workspace {
                                 .w(px(28.))
                                 .flex_none()
                                 .text_color(th.text.alpha(if is_today { 0.9 } else { 0.5 }))
-                                .child(usage::weekday(&d.date)),
+                                .child(usage::weekday_in(&d.date, self.lang)),
                         )
                         .child(div().flex_1().min_w(px(0.)).child(meter(frac, col, 5.)))
                         .child(
@@ -9780,7 +9790,7 @@ impl Workspace {
 
         // ---- provenance, and the button that re-asks --------------------------
         let mut prov: Vec<String> = Vec::new();
-        if let Some(t) = usage::since(&rec.updated_at, usage::now_epoch()) {
+        if let Some(t) = usage::since_in(&rec.updated_at, usage::now_epoch(), self.lang) {
             prov.push(lang::fill(ui.use_collected_ago, &[("ago", &t)]));
         }
         if rec.total_prompts > 0 {
@@ -10663,10 +10673,9 @@ impl Workspace {
         ev: &pane::SendNotesBeside,
         cx: &mut Context<Self>,
     ) {
-        use docview::notes_ui::Said;
-        let ui = self.lang.strings().ui;
+        use docview::notes_ui::{Said, Words};
         let said = match self.notes_send_target(from.entity_id(), ev.seat, cx) {
-            None => Said::Refused(ui.doc_no_agent_beside.into()),
+            None => Said::Refused(Words::said(|l| l.strings().ui.doc_no_agent_beside.into())),
             Some((target, who)) => match target.update(cx, |v, cx| v.send_notes(&ev.map, cx)) {
                 Ok(landed) => {
                     // `who` is compared in English — "agent" is the word
@@ -10674,28 +10683,34 @@ impl Workspace {
                     // and only the sentence drawn from it is translated. One
                     // whole phrase per case, because "whose" and "which place"
                     // agree with each other differently in every language.
+                    // Said in the reader's language for the bar and in
+                    // English for the notes report.
                     let named = who != "agent";
-                    let (place, chars) = match landed {
-                        pane::NotesLanded::Prompt(n) if named => (ui.doc_named_prompt, n),
-                        pane::NotesLanded::Prompt(n) => (ui.doc_agents_prompt, n),
-                        pane::NotesLanded::Composer(n) if named => (ui.doc_named_composer, n),
-                        pane::NotesLanded::Composer(n) => (ui.doc_agents_composer, n),
-                    };
-                    let prompt = lang::fill(place, &[("who", &who)]);
-                    // A send saves as it goes; this counts only what a
-                    // brief that cannot be saved into kept out of the file.
-                    let unsaved = match ev.unsaved {
-                        0 => String::new(),
-                        n => self.lang.count(&ui.doc_unsaved, n),
-                    };
-                    Said::Done(lang::fill(
-                        ui.doc_landed_in,
-                        &[
-                            ("place", &prompt),
-                            ("chars", &chars.to_string()),
-                            ("unsaved", &unsaved),
-                        ],
-                    ))
+                    let unsaved_n = ev.unsaved;
+                    Said::Done(Words::said(|l| {
+                        let ui = l.strings().ui;
+                        let (place, chars) = match landed {
+                            pane::NotesLanded::Prompt(n) if named => (ui.doc_named_prompt, n),
+                            pane::NotesLanded::Prompt(n) => (ui.doc_agents_prompt, n),
+                            pane::NotesLanded::Composer(n) if named => (ui.doc_named_composer, n),
+                            pane::NotesLanded::Composer(n) => (ui.doc_agents_composer, n),
+                        };
+                        let prompt = lang::fill(place, &[("who", &who)]);
+                        // A send saves as it goes; this counts only what a
+                        // brief that cannot be saved into kept out of the file.
+                        let unsaved = match unsaved_n {
+                            0 => String::new(),
+                            n => l.count(&ui.doc_unsaved, n),
+                        };
+                        lang::fill(
+                            ui.doc_landed_in,
+                            &[
+                                ("place", &prompt),
+                                ("chars", &chars.to_string()),
+                                ("unsaved", &unsaved),
+                            ],
+                        )
+                    }))
                 }
                 Err(why) => Said::Refused(why),
             },
@@ -11709,7 +11724,9 @@ impl Workspace {
                         (
                             h.id,
                             lang::fill(recover_line(self.lang, h.kind), &[("label", &h.label)]),
-                            h.left(now).map(hold::remaining_label).unwrap_or_default(),
+                            h.left(now)
+                                .map(|d| hold::remaining_label_in(self.lang, d))
+                                .unwrap_or_default(),
                         )
                     })
                     .collect();
@@ -14071,7 +14088,7 @@ impl Workspace {
                 if v.title.trim().is_empty() {
                     v.mode.label().to_string()
                 } else {
-                    v.title.clone()
+                    v.shown_title()
                 }
             });
             (label, v.shell_pid(), v.recent_lines(2).join(" · "))
@@ -14727,7 +14744,7 @@ impl Workspace {
                     .name
                     .clone()
                     .filter(|n| !n.is_empty())
-                    .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+                    .or_else(|| (!p.title.is_empty()).then(|| p.shown_title()))
                     .unwrap_or_else(|| mode.clone());
                 let gh = p.search_grid(&needle, CAP);
                 if gh.is_empty() {
@@ -15142,8 +15159,9 @@ impl Workspace {
     /// the strip does, a pane by the name a person gave it, else the title its
     /// program set, else its mode — so what is typed is what was seen.
     fn lookup_entries(&self, cx: &App) -> Vec<lookup::Entry<EntityId>> {
-        use lookup::{count, place, Entry, Kind, Target};
+        use lookup::{count_in, place, Entry, Kind, Noun, Target};
         let ui = self.lang.strings().ui;
+        let count = |n: usize, noun: Noun| count_in(self.lang, n, noun);
         let project = |id: Option<u32>| {
             id.and_then(|id| self.project_at(id))
                 .map(|p| p.label().to_uppercase())
@@ -15163,7 +15181,7 @@ impl Workspace {
                     out.push(Entry {
                         kind: Kind::Project,
                         text: project(Some(id)),
-                        place: place(&[], &count(tabs, "tab")),
+                        place: place(&[], &count(tabs, Noun::Tab)),
                         target: Target::Project(id),
                     });
                 }
@@ -15177,7 +15195,7 @@ impl Workspace {
                     out.push(Entry {
                         kind: Kind::Group,
                         text: group(Some(id)),
-                        place: place(&[&project(parent)], &count(tabs, "tab")),
+                        place: place(&[&project(parent)], &count(tabs, Noun::Tab)),
                         target: Target::Group(id),
                     });
                 }
@@ -15193,7 +15211,7 @@ impl Workspace {
                     out.push(Entry {
                         kind: Kind::Tab,
                         text: name.clone(),
-                        place: place(&[&proj, &grp], &count(leaves.len(), "pane")),
+                        place: place(&[&proj, &grp], &count(leaves.len(), Noun::Pane)),
                         target: Target::Tab(index),
                     });
                     for leaf in leaves {
@@ -15203,7 +15221,7 @@ impl Workspace {
                             .name
                             .clone()
                             .filter(|n| !n.is_empty())
-                            .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+                            .or_else(|| (!p.title.is_empty()).then(|| p.shown_title()))
                             .unwrap_or_else(|| mode.to_string());
                         out.push(Entry {
                             kind: Kind::Pane,
@@ -15373,7 +15391,7 @@ impl Workspace {
                             .text_size(px(9.))
                             .text_color(th.text.alpha(0.5))
                             .child(if q.trim().is_empty() {
-                                lookup::count(n, "name")
+                                lookup::count_in(self.lang, n, lookup::Noun::Name)
                             } else {
                                 self.lang.count(&ui.lk_match, n)
                             }),
@@ -15505,7 +15523,7 @@ impl Workspace {
                                 .text_size(px(9.))
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                 .text_color(kind_col)
-                                .child(e.kind.label()),
+                                .child(e.kind.label_in(self.lang)),
                         ),
                 )
                 .child(
@@ -16244,7 +16262,7 @@ impl Workspace {
                     sk.chip(h == lp.harness)
                         .cursor_pointer()
                         .text_size(px(11.))
-                        .child(h.label())
+                        .child(h.label_in(self.lang))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -16296,7 +16314,7 @@ impl Workspace {
                     sk.chip(e == lp.effort)
                         .cursor_pointer()
                         .text_size(px(11.))
-                        .child(e.label())
+                        .child(e.label_in(self.lang))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -16323,7 +16341,7 @@ impl Workspace {
                     sk.chip(r == lp.reach)
                         .cursor_pointer()
                         .text_size(px(11.))
-                        .child(r.label())
+                        .child(r.label_in(self.lang))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -17726,6 +17744,7 @@ impl Workspace {
         };
         let help_owner = cx.entity().downgrade();
         let delay = palette_help_delay(self.palette_help_seen, Instant::now());
+        let hover = terminal_state::hover_in(self.lang);
         palette_rule(label, on, &theme::theme(cx))
             .id("terminal-state-toggle")
             .tooltip_show_delay(delay)
@@ -17737,7 +17756,7 @@ impl Workspace {
                     });
                 }
                 cx.new(|_| SlotTooltip {
-                    lines: terminal_state::HOVER.iter().map(|s| (*s).into()).collect(),
+                    lines: hover.iter().map(|s| (*s).into()).collect(),
                 })
                 .into()
             })
@@ -23868,7 +23887,7 @@ impl Workspace {
                     div()
                         .text_size(px(8.5 * s))
                         .text_color(ink)
-                        .child(it.kind.label().to_uppercase()),
+                        .child(it.kind.label_in(self.lang).to_uppercase()),
                 )
                 .child(
                     div()
@@ -23890,7 +23909,7 @@ impl Workspace {
                     div()
                         .text_size(px(9.5 * s))
                         .text_color(sk.ink.ink_dim)
-                        .child(attention::age_label(it.age(now))),
+                        .child(attention::age_label_in(self.lang, it.age(now))),
                 );
             let row = div()
                 .pl(px(7. * s))
@@ -23916,7 +23935,7 @@ impl Workspace {
                     div()
                         .text_size(px(11. * s))
                         .text_color(sk.ink.ink)
-                        .child(it.reason()),
+                        .child(it.reason_in(self.lang)),
                 )
                 // What an ask is for: the setting in our words, then the
                 // agent's reason in its own, quoted the way the classifier's
@@ -23971,8 +23990,8 @@ impl Workspace {
                         .text_color(sk.ink.ink_dim)
                         .child(format!(
                             "{} \u{b7} {}",
-                            it.source(),
-                            attention::age_label(it.age(now))
+                            it.source_in(self.lang),
+                            attention::age_label_in(self.lang, it.age(now))
                         )),
                 )
                 // **The review tray, open on the cursor's row and shut on the
@@ -24002,35 +24021,39 @@ impl Workspace {
                             .flex()
                             .flex_col()
                             .gap(px(1. * s))
-                            .children(attention::review_evidence(it).into_iter().map(|e| {
-                                let missing = e.value.is_none();
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .gap(px(6. * s))
-                                    .text_size(px(9. * s))
-                                    .child(
+                            .children(
+                                attention::review_evidence_in(it, self.lang)
+                                    .into_iter()
+                                    .map(|e| {
+                                        let missing = e.value.is_none();
                                         div()
-                                            .w(px(64. * s))
-                                            .text_color(sk.ink.ink_dim)
-                                            .child(e.label),
-                                    )
-                                    .child(
-                                        div()
-                                            // An unavailable field is drawn
-                                            // dimmer than a known one and says
-                                            // the word. Two signals for one
-                                            // fact, because this is the fact
-                                            // the tray most needs not to be
-                                            // misread.
-                                            .text_color(if missing {
-                                                sk.ink.ink_dim.alpha(0.55)
-                                            } else {
-                                                sk.ink.ink
-                                            })
-                                            .child(e.text().to_string()),
-                                    )
-                            })),
+                                            .flex()
+                                            .flex_row()
+                                            .gap(px(6. * s))
+                                            .text_size(px(9. * s))
+                                            .child(
+                                                div()
+                                                    .w(px(64. * s))
+                                                    .text_color(sk.ink.ink_dim)
+                                                    .child(e.label),
+                                            )
+                                            .child(
+                                                div()
+                                                    // An unavailable field is drawn
+                                                    // dimmer than a known one and says
+                                                    // the word. Two signals for one
+                                                    // fact, because this is the fact
+                                                    // the tray most needs not to be
+                                                    // misread.
+                                                    .text_color(if missing {
+                                                        sk.ink.ink_dim.alpha(0.55)
+                                                    } else {
+                                                        sk.ink.ink
+                                                    })
+                                                    .child(e.text_in(self.lang).to_string()),
+                                            )
+                                    }),
+                            ),
                     )
                 })
                 .children(it.deliverable.as_ref().map(|d| {
@@ -24076,7 +24099,7 @@ impl Workspace {
                                 .text_size(px(8. * s))
                                 .text_color(sk.ink.ink_dim)
                                 .bg(sk.ink.ink.alpha(0.10))
-                                .child(kind.label()),
+                                .child(kind.label_in(self.lang)),
                         )
                         .child(d.label.clone())
                         // "⇲ beside": the same document in a pane beside the
@@ -24334,11 +24357,15 @@ impl Workspace {
             .items_start()
             .gap(px(paint::TILE_GAP))
             .max_w(px(paint::grid_w(self.last_win.map(|(_, _, w, _)| w))));
-        // "EFAULT" is the rest of DEFAULT after the tile's own `D` keycap: a
-        // fragment of an English word spelled around a hot key, so it stays
-        // English with the key it hangs from rather than becoming half of a
-        // translated word.
-        for e in paint::entries(cx, shelf, &worn, "EFAULT") {
+        // DEFAULT in the reader's language — the same word the header's worn
+        // value says for this look, so the tile and the header name it alike.
+        // The chord stays `D` in every language: a word that starts with it
+        // reads as D + the rest, any other sits whole under a bare `D`, which
+        // is how the pane's own card draws its DESKTOP tile.
+        let (lead, lead_second) = paint::split_lead(self.lang.strings().parts.paint_worn_default);
+        let mut entries = paint::entries(cx, shelf, &worn, &lead);
+        entries[0].second = lead_second;
+        for e in entries {
             let pick = e.pick.clone();
             grid = grid.child(paint::tile(&e, &th, &sk).on_mouse_down(
                 MouseButton::Left,
@@ -29099,7 +29126,7 @@ impl Render for Workspace {
                         .cursor_pointer()
                         .hover(move |s| s.border_color(color.alpha(0.78)))
                         .child(div().text_color(color).child(state.badge().to_string()))
-                        .child(state.label().to_uppercase())
+                        .child(state.label_in(self.lang).to_uppercase())
                         .child(
                             div()
                                 .text_color(th.text.alpha(0.4))
@@ -29210,7 +29237,7 @@ impl Render for Workspace {
                         .name
                         .clone()
                         .filter(|n| !n.is_empty())
-                        .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+                        .or_else(|| (!p.title.is_empty()).then(|| p.shown_title()))
                         .unwrap_or_else(|| p.mode.label().to_string());
                     let rt = p.runtime();
                     let exposed = mcp::should_expose(&self.mcp, is_agent, p.off_limits);
@@ -29394,7 +29421,7 @@ impl Render for Workspace {
                         badge_glyph
                     };
                     let status_label = if is_agent {
-                        status.state.label().to_uppercase()
+                        status.state.label_in(self.lang).to_uppercase()
                     } else {
                         ui.mcp_status_idle.to_string()
                     };
@@ -29446,6 +29473,7 @@ impl Render for Workspace {
                     // one of two directions. No yellow, no blue, no threshold
                     // flip — the video-game palette says "this is a category",
                     // and these are all one quantity.
+                    let bar_lang = self.lang;
                     let bar_row = |b: &vitals::Bar, track_w: f32, wide: bool| {
                         let end = match b.tone {
                             vitals::Tone::Bad => hsla(0.008, 0.72, 0.60, 1.0),
@@ -29475,9 +29503,9 @@ impl Render for Workspace {
                                     // A tiled pane gets narrow; the label drops
                                     // to its initial rather than eating the track.
                                     .child(if wide {
-                                        b.label.to_string()
+                                        b.label_in(bar_lang).to_string()
                                     } else {
-                                        b.label.chars().take(1).collect::<String>()
+                                        b.label_in(bar_lang).chars().take(1).collect::<String>()
                                     }),
                             )
                             .child(
@@ -29927,7 +29955,7 @@ impl Render for Workspace {
                                         if let Some(v) = vit.filter(|v| v.call.needs_you()) {
                                             stats = stats.child(stat_box(
                                                 ui.mcp_stat_call,
-                                                v.call.label().to_string(),
+                                                v.call.label_in(self.lang).to_string(),
                                                 hsla(0.008, 0.72, 0.62, 1.0),
                                             ));
                                         }
@@ -31018,14 +31046,14 @@ impl Render for Workspace {
                 ),
                 BarBranch::Unfiled => return None,
             };
-            let window_label = hold::remaining_label(hold::window_for(panes));
+            let window_label = hold::span_label_in(self.lang, hold::window_for(panes));
             let body = lang::fill(
                 body,
                 &[
                     ("name", &name),
                     ("tabs", &self.lang.count(&ui.del_tabs, tabs)),
                     ("panes", &self.lang.count(&ui.del_panes, panes)),
-                    ("window", window_label.trim_end_matches(" left")),
+                    ("window", &window_label),
                 ],
             );
             let confirm_btn = Self::bezel_btn(&sk, btn, false).on_mouse_down(

@@ -6118,12 +6118,14 @@ impl TerminalView {
         &mut self,
         map: &str,
         cx: &mut Context<Self>,
-    ) -> Result<NotesLanded, String> {
-        // Every refusal here is drawn in the notes bar and goes nowhere else,
-        // so it is written in the reader's language at the source.
-        let t = &crate::lang::current().strings().parts;
+    ) -> Result<NotesLanded, crate::docview::notes_ui::Words> {
+        // Every refusal here is drawn in the notes bar in the reader's
+        // language, and carried in English by the notes report.
+        use crate::docview::notes_ui::Words;
         if !self.mode.is_agent() {
-            return Err(t.pane_notes_err_no_agent.into());
+            return Err(Words::said(|l| {
+                l.strings().parts.pane_notes_err_no_agent.into()
+            }));
         }
         match self.bench.face() {
             crate::workbench::Face::Terminal => {}
@@ -6132,7 +6134,9 @@ impl TerminalView {
                 return Ok(NotesLanded::Composer(map.chars().count()));
             }
             crate::workbench::Face::Document => {
-                return Err(t.pane_notes_err_doc_face.into());
+                return Err(Words::said(|l| {
+                    l.strings().parts.pane_notes_err_doc_face.into()
+                }));
             }
         }
         let bracketed = self
@@ -6141,8 +6145,8 @@ impl TerminalView {
             .lock()
             .mode()
             .contains(TermMode::BRACKETED_PASTE);
-        let bytes =
-            notes_paste(map, bracketed).ok_or_else(|| t.pane_notes_err_no_paste.to_string())?;
+        let bytes = notes_paste(map, bracketed)
+            .ok_or_else(|| Words::said(|l| l.strings().parts.pane_notes_err_no_paste.into()))?;
         self.session.notifier.notify(bytes);
         Ok(NotesLanded::Prompt(map.chars().count()))
     }

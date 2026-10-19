@@ -220,6 +220,7 @@ impl<T> Trash<T> {
 /// Rounded down, and never to "0m": a holding with thirty seconds on it says
 /// "under a minute", because an offer reading "0m left" invites a click that
 /// will fail between the reading and the pressing.
+#[cfg(test)]
 pub fn remaining_label(left: Duration) -> String {
     let secs = left.as_secs();
     if secs < 60 {
@@ -234,18 +235,16 @@ pub fn remaining_label(left: Duration) -> String {
     }
 }
 
-/// [`remaining_label`] in `l`. The English function stays as it is, because
-/// main.rs trims its `" left"` to say the span in a sentence; this one and
-/// [`span_label_in`] are the two shapes a person reads.
-#[allow(dead_code)] // drawn by main.rs (the trash tray's offers, ~11574) once it adopts this
+/// "3h 41m left" in `l` — the trash tray's offers. This and
+/// [`span_label_in`] are the two shapes a person reads; the English
+/// [`remaining_label`] is kept for the tests that pin the wording.
 pub fn remaining_label_in(l: crate::lang::Lang, left: Duration) -> String {
     hm_in(l, left, false)
 }
 
 /// How long a holding lasts, with no "left": the span inside the delete
-/// dialog's "recoverable … for {span}", which main.rs builds today by
-/// trimming `" left"` off the English [`remaining_label`].
-#[allow(dead_code)] // drawn by main.rs (the delete confirmation, ~30599) once it adopts this
+/// dialog's "recoverable … for {window}" — a sentence of its own in each
+/// language, so the span is never cut out of the tray's wording.
 pub fn span_label_in(l: crate::lang::Lang, span: Duration) -> String {
     hm_in(l, span, true)
 }

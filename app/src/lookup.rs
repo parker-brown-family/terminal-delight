@@ -32,6 +32,7 @@ pub enum Kind {
 impl Kind {
     /// The word in the row's left column, in the left bar's own vocabulary —
     /// "group" is what every menu calls the middle layer.
+    #[cfg(test)]
     pub fn label(self) -> &'static str {
         match self {
             Kind::Project => "PROJECT",
@@ -43,7 +44,6 @@ impl Kind {
     }
 
     /// [`Self::label`] in `l`, for the row a person reads.
-    #[allow(dead_code)] // drawn by main.rs (the lookup row's kind column, ~15351) once it adopts this
     pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
         let t = &l.strings().parts;
         match self {
@@ -158,12 +158,12 @@ pub fn place(ancestors: &[&str], detail: &str) -> String {
 }
 
 /// `n` of a thing, in words: `1 tab`, `3 tabs`.
+#[cfg(test)]
 pub fn count(n: usize, thing: &str) -> String {
     format!("{n} {thing}{}", if n == 1 { "" } else { "s" })
 }
 
 /// The things [`count_in`] counts — the three nouns the lookup's rows say.
-#[allow(dead_code)] // passed by main.rs (~15010, ~15040, ~15219) once it adopts count_in
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Noun {
     Tab,
@@ -173,7 +173,6 @@ pub enum Noun {
 
 /// [`count`] in `l`, with the plural that language uses for `n` — English's
 /// trailing `s` is one rule among several, so each noun is a whole phrase.
-#[allow(dead_code)] // drawn by main.rs (~15010, ~15040, ~15219) once it adopts this
 pub fn count_in(l: crate::lang::Lang, n: usize, noun: Noun) -> String {
     let t = &l.strings().parts;
     let p = match noun {

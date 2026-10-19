@@ -638,6 +638,7 @@ pub fn now_epoch() -> i64 {
 /// "3h 47m", "12m", "6d 4h" — how long until `ts`. `None` when the stamp is
 /// unparseable or already past, so a stale window renders as nothing rather than
 /// as a confident negative.
+#[cfg(test)]
 pub fn until(ts: &str, now: i64) -> Option<String> {
     until_in(ts, now, crate::lang::Lang::En)
 }
@@ -653,6 +654,7 @@ pub fn until_in(ts: &str, now: i64, l: crate::lang::Lang) -> Option<String> {
 }
 
 /// "just now", "4m ago", "3h ago" — how long since `ts`.
+#[cfg(test)]
 pub fn since(ts: &str, now: i64) -> Option<String> {
     since_in(ts, now, crate::lang::Lang::En)
 }
@@ -672,6 +674,7 @@ pub fn since_in(ts: &str, now: i64, l: crate::lang::Lang) -> Option<String> {
 }
 
 /// "Mon", "Tue", … for a bare `YYYY-MM-DD`, empty when it isn't one.
+#[cfg(test)]
 pub fn weekday(date: &str) -> &'static str {
     weekday_in(date, crate::lang::Lang::En)
 }

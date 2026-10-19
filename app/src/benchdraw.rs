@@ -2653,7 +2653,10 @@ pub fn title_card(
         // THE ONE COUNTER: how long the agent has been like this. It replaces
         // an age on every rail row, which repeated one fact per row.
         micro(
-            crate::attention::age_label(Some(std::time::Duration::from_millis(in_state_ms))),
+            crate::attention::age_label_in(
+                crate::lang::current(),
+                Some(std::time::Duration::from_millis(in_state_ms)),
+            ),
             Step::Note,
             sk.ink.ink_faint,
             sk,

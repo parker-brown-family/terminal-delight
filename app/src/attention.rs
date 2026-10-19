@@ -161,7 +161,6 @@ impl AttentionKind {
     }
 
     /// [`Self::label`] as a person reads it, in `l`.
-    #[allow(dead_code)] // drawn by main.rs (the rail row's lane, ~23693 / ~23901) once it adopts this
     pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
         let t = &l.strings().parts;
         match self {
@@ -385,7 +384,6 @@ impl DocKind {
     }
 
     /// [`Self::label`] in `l`: the format names stay, `open` is a word.
-    #[allow(dead_code)] // drawn by main.rs (the deliverable chip on a rail row) once it adopts this
     pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
         match self {
             DocKind::Other => l.strings().parts.attention_doc_open,
@@ -503,6 +501,7 @@ impl AttentionItem {
     /// nobody has described, where "screen could not be read" would assert
     /// that a screen was read and failed. Nothing read anything: the census
     /// has no entry.
+    #[cfg(test)]
     pub fn reason(&self) -> &'static str {
         match (self.kind, self.pane_kind) {
             (AttentionKind::Unknown, PaneKind::Unknown) => "Not described by the host",
@@ -515,6 +514,7 @@ impl AttentionItem {
     /// A pane the host never described was not read by the screen parser. It
     /// was missed by the pane census, and naming that is what lets somebody
     /// tell a parser that is failing from a census that is incomplete.
+    #[cfg(test)]
     pub fn source(&self) -> &'static str {
         match (self.kind, self.pane_kind) {
             (AttentionKind::Unknown, PaneKind::Unknown) => "census",
@@ -523,7 +523,6 @@ impl AttentionItem {
     }
 
     /// [`Self::reason`] in `l`, for the row a person reads.
-    #[allow(dead_code)] // drawn by main.rs (the rail row's reason, ~23741) once it adopts this
     pub fn reason_in(&self, l: crate::lang::Lang) -> &'static str {
         match (self.kind, self.pane_kind) {
             (AttentionKind::Unknown, PaneKind::Unknown) => {
@@ -690,13 +689,13 @@ impl Evidence {
     /// "no changes" (a measurement) but "unavailable" (an admission). A reader
     /// who sees it knows to go and look, which is the correct next move and the
     /// opposite of what a zero would suggest.
+    #[cfg(test)]
     pub fn text(&self) -> &str {
         self.value.as_deref().unwrap_or("unavailable")
     }
 
     /// [`Self::text`] in `l`: a known value is the agent's or the
     /// instrument's own and stays as it is; the admission is a word.
-    #[allow(dead_code)] // drawn by main.rs (the review tray, ~23827) once it adopts this
     pub fn text_in(&self, l: crate::lang::Lang) -> &str {
         self.value
             .as_deref()
@@ -710,6 +709,7 @@ impl Evidence {
 /// therefore `unavailable` on every row — which is the point of shipping the
 /// tray now rather than waiting: the shape is visible, the gap is visible, and
 /// nobody can mistake an empty tray for a clean one.
+#[cfg(test)]
 pub fn review_evidence(it: &AttentionItem) -> Vec<Evidence> {
     vec![
         // The one field that HAS a source: the agent declared it. Everything
@@ -735,7 +735,6 @@ pub fn review_evidence(it: &AttentionItem) -> Vec<Evidence> {
 /// [`review_evidence`] with its labels, and the instrument named in the last
 /// row, in `l`. The same four rows in the same order; draw each value with
 /// [`Evidence::text_in`] so `unavailable` is in the same language.
-#[allow(dead_code)] // drawn by main.rs (the review tray, ~23827) once it adopts this
 pub fn review_evidence_in(it: &AttentionItem, l: crate::lang::Lang) -> Vec<Evidence> {
     let t = &l.strings().parts;
     vec![
@@ -901,6 +900,7 @@ pub fn move_cursor(cursor: usize, len: usize, key: &str) -> Option<usize> {
 /// The dash is the point: a row whose transition was never observed renders an
 /// absence, not a zero. Every caller goes through here so no surface can invent
 /// one.
+#[cfg(test)]
 pub fn age_label(d: Option<Duration>) -> String {
     match d {
         None => "\u{2014}".to_string(),
@@ -919,7 +919,6 @@ pub fn age_label(d: Option<Duration>) -> String {
 
 /// [`age_label`] in `l`: the same buckets and the same dash for an absence,
 /// with each language's own unit abbreviation.
-#[allow(dead_code)] // drawn by main.rs (~23715, ~23797) and benchdraw.rs (~2653) once they adopt this
 pub fn age_label_in(l: crate::lang::Lang, d: Option<Duration>) -> String {
     let t = &l.strings().parts;
     match d {
