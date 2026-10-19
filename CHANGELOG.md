@@ -146,6 +146,14 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **The agent wall says NO READING for a session it has not measured, instead
+  of calling it empty and healthy.** A session whose newest record carried no
+  context figure was drawn 0% full, 100% relevant and RUN, with thousands of
+  turns of headroom, even while holding 165,815 tokens. Its WINDOW and
+  RELEVANCE bars now draw as a grey track captioned with a dash, the verdict
+  reads NO READING, and the placeholder records Claude Code writes for an
+  interrupt or a session bridge no longer count as turns or as activity.
+
 - **A paste while a sticky note or a pane name is being written goes into it,
   not into the shell under it.** Ctrl+Shift+V was still the pane's paste, so it
   typed the clipboard into whatever ran behind the paper or the title, and a
