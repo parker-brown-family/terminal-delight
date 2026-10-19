@@ -321,6 +321,11 @@ fn frame_ask(since: Duration, pending: bool) -> FrameAsk {
 /// was read at. See `TerminalView::live_rows`.
 type LiveRowsMemo = ((u64, usize, usize), std::rc::Rc<Vec<String>>);
 
+/// A status-line parse and the live-screen copy it was read from. The copy is
+/// its key: [`TerminalView::live_rows`] hands out the same one until the
+/// screen changes. See `TerminalView::agent_status`.
+type StatusMemo = (std::rc::Rc<Vec<String>>, crate::hud::AgentStatus);
+
 /// The pane header's shadows: the bright inner edge that makes it read as
 /// solid, and, on a tube, its bloom.
 ///
@@ -2800,6 +2805,11 @@ pub struct TerminalView {
     /// The last live-screen copy and the content generation and size it was
     /// read at. See [`Self::live_rows`].
     live_rows_memo: std::cell::RefCell<Option<LiveRowsMemo>>,
+    /// The last status-line parse and the live-screen copy it was parsed from.
+    /// See [`Self::agent_status`].
+    status_memo: std::cell::RefCell<Option<StatusMemo>>,
+    #[cfg(test)]
+    status_parses: std::cell::Cell<usize>,
     styled_memo: std::cell::RefCell<Option<styling::Memo>>,
     grid_paint: gpui::Entity<grid_paint::GridPaint>,
     /// When this pane last asked for a frame, and whether one is already
@@ -5024,6 +5034,9 @@ impl TerminalView {
             offscreen_dirty: false,
             offscreen_flushed: Instant::now(),
             live_rows_memo: std::cell::RefCell::new(None),
+            status_memo: std::cell::RefCell::new(None),
+            #[cfg(test)]
+            status_parses: std::cell::Cell::new(0),
             styled_memo: std::cell::RefCell::new(None),
             grid_paint: cx.new(|_| grid_paint::GridPaint::default()),
             last_frame_ask: Instant::now(),
@@ -5297,11 +5310,29 @@ impl TerminalView {
     /// Parse this pane's live status line into an [`crate::hud::AgentStatus`] for
     /// the agent-wall HUD. Non-agent panes read Idle; an otherwise-idle agent with
     /// an unacknowledged finish bell is promoted to `Finished`.
+    ///
+    /// Parsed once per screen change and shared after (#1005). The sidebar's
+    /// agent counter asks for every agent pane on every frame, and each parse
+    /// lowercases and searches the whole screen: on Parker's window, with about
+    /// thirty agent panes, string scanning was 11% of the main thread, nearly
+    /// all of it on screens that had not changed. The bell is applied after the
+    /// memo, because it changes without the screen changing.
     pub fn agent_status(&self) -> crate::hud::AgentStatus {
         if !self.mode.is_agent() {
             return crate::hud::AgentStatus::default();
         }
-        let mut st = crate::hud::parse_status_line(&self.live_rows());
+        let rows = self.live_rows();
+        let cached = match self.status_memo.borrow().as_ref() {
+            Some((seen, st)) if std::rc::Rc::ptr_eq(seen, &rows) => Some(st.clone()),
+            _ => None,
+        };
+        let mut st = cached.unwrap_or_else(|| {
+            #[cfg(test)]
+            self.status_parses.set(self.status_parses.get() + 1);
+            let st = crate::hud::parse_status_line(&rows);
+            *self.status_memo.borrow_mut() = Some((rows, st.clone()));
+            st
+        });
         st.state = crate::hud::with_bell(st.state, self.bell);
         st
     }

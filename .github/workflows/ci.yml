@@ -147,11 +147,28 @@ jobs:
       - name: Check licenses and sources
         run: cargo deny check
 
+  # The release policy, proven on every pull request without a tag: what a
+  # candidate and a stable tag publish, and which tags publish nothing. The
+  # publish job runs the same script, so a change to the policy that this
+  # does not accept cannot reach a release.
+  release-policy:
+    name: Release policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Lint the release scripts
+        run: shellcheck scripts/release-meta.sh scripts/test-release-meta.sh
+      - name: Prove the release policy against fixtures
+        run: bash scripts/test-release-meta.sh
+
   package:
     name: AppImage (artifact)
     # Build the distributable MIT-clean AppImage on pushes to main and on version
-    # tags. On a tag it is also attached to the GitHub Release (one-command install
-    # for new users); on main it's just a downloadable run artifact.
+    # tags, as a run artifact with its digest. Building is all this job does:
+    # attaching it to a release is the publish job's, which waits for every
+    # check. Until 2026-10-19 this job published the release itself, beside the
+    # tests rather than after them, so a tag could ship before anyone knew
+    # whether its commit passed (#1002).
     if: github.event_name == 'push'
     # Pin to the OLDEST glibc we want to support: ubuntu-22.04 ships glibc 2.35, so
     # the AppImage runs on glibc >= 2.35 (Ubuntu 22.04+, Debian 12+, etc.). Building
@@ -159,7 +176,7 @@ jobs:
     # any older system — glibc is the one lib an AppImage can't bundle.
     runs-on: ubuntu-22.04
     permissions:
-      contents: write   # needed to attach the AppImage to the release on tags
+      contents: read
     steps:
       - uses: actions/checkout@v5
 
@@ -193,17 +210,88 @@ jobs:
       - name: Build AppImage
         run: ./scripts/build-appimage.sh
 
+      # The digest a person checks the downloaded file against, and the one the
+      # release candidate's validation is recorded against (RELEASING.md).
+      - name: Record the AppImage digest
+        run: |
+          cd dist
+          sha256sum terminal-delight-x86_64.AppImage > terminal-delight-x86_64.AppImage.sha256
+          cat terminal-delight-x86_64.AppImage.sha256
+
       - name: Upload AppImage (run artifact)
         uses: actions/upload-artifact@v4
         with:
           name: terminal-delight-x86_64.AppImage
-          path: dist/terminal-delight-x86_64.AppImage
+          path: |
+            dist/terminal-delight-x86_64.AppImage
+            dist/terminal-delight-x86_64.AppImage.sha256
           if-no-files-found: error
 
-      - name: Attach AppImage to the GitHub Release (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
+  publish:
+    name: Publish release (tags only)
+    # After every check, on the tagged commit, or not at all. A failed or
+    # skipped job above means `needs` is unmet and nothing is published.
+    needs: [rust, js, supply-chain, release-policy, package]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the release and attach the AppImage
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # A release is a snapshot of main, or of a release/* branch cut from it
+      # while a candidate takes fixes. A tag on any other commit publishes
+      # nothing, however green it is.
+      - name: The tagged commit is on main or a release branch
+        run: |
+          git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/release/*:refs/remotes/origin/release/*'
+          for ref in $(git for-each-ref --format='%(refname)' refs/remotes/origin/main 'refs/remotes/origin/release/*'); do
+            if git merge-base --is-ancestor "$GITHUB_SHA" "$ref"; then
+              echo "$GITHUB_SHA is on $ref"
+              exit 0
+            fi
+          done
+          echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is on neither main nor a release/* branch"
+          exit 1
+
+      - name: Classify the tag and assemble its notes
+        id: meta
+        run: bash scripts/release-meta.sh "$GITHUB_REF_NAME" | tee -a "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: terminal-delight-x86_64.AppImage
+          path: dist
+
+      - name: Verify the digest and record it in the notes
+        run: |
+          cd dist
+          sha256sum --check terminal-delight-x86_64.AppImage.sha256
+          # The backticks are Markdown for the release page, not shell.
+          # shellcheck disable=SC2016
+          {
+            printf '\n## Verify the download\n\n'
+            printf 'Built by CI from commit `%s`.\n\n```\n' "$GITHUB_SHA"
+            cat terminal-delight-x86_64.AppImage.sha256
+            printf '```\n\nCheck it with `sha256sum --check terminal-delight-x86_64.AppImage.sha256`.\n'
+          } >> release-body.md
+
+      - name: Create the release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/terminal-delight-x86_64.AppImage
+          name: Terminal Delight ${{ steps.meta.outputs.version }}
+          body_path: ${{ steps.meta.outputs.body_path }}
+          draft: ${{ steps.meta.outputs.draft }}
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          make_latest: ${{ steps.meta.outputs.make_latest }}
           generate_release_notes: true
+          target_commitish: ${{ github.sha }}
+          files: |
+            dist/terminal-delight-x86_64.AppImage
+            dist/terminal-delight-x86_64.AppImage.sha256
           fail_on_unmatched_files: true
