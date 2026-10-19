@@ -1,0 +1,9 @@
+ok
+ok
+baseline readiness: 0/30 host-classified agents
+baseline readiness: 30/30 host-classified agents
+ok
+ok
+candidate readiness: 21/30 host-classified agents
+candidate readiness: 30/30 host-classified agents
+PASS: two equal hidden windows, each with one visible quiet pane and thirty host-classified Codex fixtures; no CPU samples taken.

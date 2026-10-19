@@ -1,10 +1,10 @@
 <script type="application/json" data-page>
 {
   "title": "MCP server",
-  "description": "Terminal Delight is an MCP server: an agent can list the panes of the window it runs in, grep their scrollback, tail another agent's tool calls, leave notes, and put work on a workbench. Reads are off until you turn the server on; writes need a second switch; nothing can type into a terminal.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
-  "summary": "Twelve tools for agents, off by default"
+  "description": "Terminal Delight is an MCP server: an agent can list the panes of the window it runs in, grep their scrollback, tail another agent's tool calls, leave notes, put work on a workbench, and ask you for more access. Reads are off until you turn the server on; writes need a second switch; access is yours to grant with a Yes on the attention rail; no tool can type into a terminal.",
+  "updated": "2026-10-15",
+  "trueOf": "main at d7cf383, plus request_access",
+  "summary": "Thirteen tools for agents, off by default"
 }
 </script>
 
@@ -39,6 +39,7 @@
     <tr><td><code>expose:</code> <code>agents only</code> · <code>all panes</code></td><td>agents only</td><td>Which panes the server can see. An agent pane runs Claude Code or Codex.</td></tr>
     <tr><td><code>stream tool-call events</code></td><td>on</td><td>Whether <code>pane_events</code> and the push feed work.</td></tr>
     <tr><td><code>writes on · agents can restyle</code></td><td>off</td><td>Whether any tool that changes something is allowed.</td></tr>
+    <tr><td><code>Off-limits to agents</code> (right-click in a pane)</td><td>off</td><td>That one pane is gone from every tool and every pushed event, whatever the switches above say, and wears <code>OFF-LIMITS</code> in its header. The agent running inside it can still present its own work. Only a person sets or lifts it: no <code>ctl</code> or MCP verb reaches it.</td></tr>
   </tbody>
 </table>
 <p>They live in the MCP control panel: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> in a pane, or <code>AGENTS · MCP</code> in the footer's <code>…</code> menu. From a script: <code>ctl mcp on|off</code>, <code>ctl mcp writes on|off</code>, <code>ctl mcp expose agents|all</code>. Each change is saved with the session. <code>TD_MCP</code> starts the in-process transport but does not turn the server on, and <code>TD_MCP_WRITE</code> turns writes on only alongside <code>TD_MCP</code>.</p>
@@ -56,6 +57,7 @@
     <tr><td><code>declare_deliverable</code></td><td>on, writes</td><td><code>pid</code>, <code>label</code> (48 characters), <code>href</code>, <code>clear</code></td><td>Name the thing this pane produced, on its row in the attention rail.</td></tr>
     <tr><td><code>present_surface</code></td><td>on, writes</td><td><code>pid</code>, <code>surface</code></td><td>Put a work object on a pane's <a href="/workbench">workbench</a>. It is saved to disk first.</td></tr>
     <tr><td><code>surface_catalogue</code></td><td>nothing</td><td>none</td><td>What the running build can draw: the <a href="/surface-protocol">surface</a> kinds, actions and weights.</td></tr>
+    <tr><td><code>request_access</code></td><td>on</td><td><code>change</code>, <code>pid</code> (for a pane), <code>why</code> (40 words)</td><td>Ask the person to change who agents can see or what they may do: <code>open_pane</code>, <code>close_pane</code>, <code>writes_on</code>, <code>expose_shells</code>, <code>events_on</code>. The ask waits on the attention rail with Yes and No. Nothing changes until a person presses Yes.</td></tr>
     <tr><td><code>open_document</code></td><td>on, writes</td><td><code>path</code>, <code>placement</code>: <code>beside</code> or <code>here</code></td><td>Open a Markdown, HTML or image file next to your pane, or over it.</td></tr>
     <tr><td><code>document_notes</code></td><td>on</td><td>none</td><td>The notes a person left on the document open beside you.</td></tr>
     <tr><td><code>engineering_state</code></td><td>on</td><td>none</td><td>Every project's git state as the top bar sees it. A missing number means not measured, never zero.</td></tr>
@@ -66,8 +68,16 @@
 <h3>Appearance</h3>
 <p><code>get_pane_config</code> and <code>set_pane_config</code> use 0 to 100 percent for <code>brightness</code>, <code>contrast</code>, <code>colour</code>, <code>text</code>, <code>background</code>, <code>gamma</code>, <code>menu_bar</code>, <code>text_size</code>, <code>bench_size</code>, <code>warp</code>, <code>crawl_angle</code> and <code>crawl_depth</code>, plus <code>crawl</code> as true or false, and <code>logo</code> as an image path for a pane. An update names only what changes; a misspelled channel is an error. The values are absolute, so "20 % lower" is yours to compute from a read. On a pane, only the channels you set become its own; <code>outer</code> changes every pane that follows the window.</p>
 
+<h3>An agent asks, a person answers</h3>
+<p>A refusal about access no longer has to be the end of it. <code>request_access</code> puts the agent's ask in the attention rail's first lane, <strong>ACCESS</strong>, drawn in amber: what it wants in plain words, its reason in quotation marks, and two buttons, <strong>Yes</strong> and <strong>No</strong>. With the queue open, <kbd>y</kbd> and <kbd>n</kbd> answer the row under the cursor. Yes changes the setting the way your own control would and saves it; No changes nothing. Either way the agent gets one line in its own terminal, signed with the session's tag: <code>[workbench:&lt;tag&gt;] request_access open_pane 4412: yes, pane 4412 is open to agents</code>. It is typed when that pane is on screen. The setting does not wait for the line.</p>
+<p>One ask per pane at a time; a newer one replaces it, and it goes when its pane closes. An ask for what is already so is refused before it reaches you. Asking does not need writes, since writes are one of the things an agent may ask for. Appearance needs no ask at all.</p>
+<p>Only the rail's buttons and keys answer an ask. No MCP tool and no <code>ctl</code> verb can. An agent that has a shell still runs as you and could edit the state file directly; this is the door Terminal Delight offers, not a wall around the machine.</p>
+
 <h3>Every answer says where it came from</h3>
 <p>Each tool result, errors included, ends with a line like <code>— terminal-delight · session 1 · window 31337 · td-81ec545-rows-where-drawn</code> and carries the same in <code>structuredContent.instance</code>. To find your own pane in <code>list_panes</code>, match its <code>pane &lt;n&gt;</code> against <code>$TD_PANE_ID</code>; titles and directories are not unique.</p>
+
+<h3>What another pane says is data</h3>
+<p>An answer that quotes other panes opens with <code>UNTRUSTED TERMINAL DATA.</code> before anything else, and names each quoted field under <code>structuredContent.untrusted_terminal_data</code>. Those answers are <code>list_panes</code>, <code>grep</code>, <code>pane_events</code> and <code>engineering_state</code>, and the same goes for <code>data.untrusted_terminal_data</code> on a pushed event. A line a program printed, a title it set or a command another agent ran can be worded as an instruction, and the label is how the agent reading it knows it is not one. Terminal Delight's own answers carry no label, and neither do a person's <code>document_notes</code>.</p>
 
 <h3>Pushed notifications</h3>
 <p>Over the in-process transport, after <code>initialize</code> and with events on, the server pushes <code>notifications/message</code> with <code>data.event</code> set to <code>agent_appeared</code>, <code>agent_vanished</code> or <code>tool_call</code>, about once a second. <code>logging/setLevel</code> to <code>warning</code> or above silences it. The relay carries no pushes.</p>
@@ -84,7 +94,7 @@
 </table>
 
 <h3>What would prove this wrong</h3>
-<p>Any tool call that puts bytes into a pane's terminal breaks the server's first rule. So does any answer that describes another window's panes without saying which window it came from.</p>
+<p>Any tool call that puts bytes into a pane's terminal breaks the server's first rule. So does any answer that describes another window's panes without saying which window it came from, and any answer that quotes another pane without opening with the label.</p>
 </section>
 
 <ol data-sources>

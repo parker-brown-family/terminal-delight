@@ -44,7 +44,6 @@ const KIOSKS = [
   { id: 'agents',  path: '/agents.html',      root: true  },
   { id: 'tv',      path: '/tv.html',          root: false },
   { id: 'global',  path: '/global.html',      root: false },
-  { id: 'gamba',   path: '/gamba.html',       root: false },
   { id: 'crawl',   path: '/start-crawl.html', root: false },
 ];
 
@@ -147,13 +146,13 @@ for (const k of KIOSKS) {
   const carried2 = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
   check('the pick travels to omarchy', carried2 === 'tokyo-night', `data-theme=${carried2}`);
 
-  /* And the cabinets do NOT get repainted: GAMBA keeps its own red. A root
+  /* And the cabinets do NOT get repainted: the TV keeps its own brass. A root
      paint would have silently replaced it with the palette's. */
-  await page.goto(BASE + '/gamba.html', { waitUntil: 'domcontentloaded' });
-  const gamba = await page.evaluate(() => ({
-    red: getComputedStyle(document.documentElement).getPropertyValue('--red').trim(),
+  await page.goto(BASE + '/tv.html', { waitUntil: 'domcontentloaded' });
+  const cabinet = await page.evaluate(() => ({
+    brass: getComputedStyle(document.documentElement).getPropertyValue('--brass').trim(),
   }));
-  check('gamba keeps its own --red', gamba.red === '#f75a33', `--red=${gamba.red}`);
+  check('TV keeps its own --brass', cabinet.brass === '#caa84e', `--brass=${cabinet.brass}`);
 
   await page.evaluate(() => localStorage.clear());
   await page.close();

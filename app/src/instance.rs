@@ -192,18 +192,27 @@ pub fn sanitize_key(raw: &str) -> String {
     }
 }
 
-/// The workspace this window is on, in the form a session records as its
-/// `last_workspace` hint. `None` off Hyprland.
-///
-/// Cached, because this is read on every save and every save is a user action:
-/// closing a tab, toggling a setting, dragging a split. Uncached, each one paid
-/// a compositor round trip on the UI thread, with [`IPC_TIMEOUT`] as the tail. A
-/// tie-break hint does not need to be fresher than a few seconds — and a window
-/// dragged between workspaces is still recorded correctly, just a beat later.
+/// The focused workspace, used only to choose a session at launch.
 pub fn current_workspace() -> Option<String> {
     static CACHE: OnceLock<Mutex<Option<Cached>>> = OnceLock::new();
-    let ask = || hypr_active_workspace().map(|w| sanitize_key(&w));
-    let cell = CACHE.get_or_init(|| Mutex::new(None));
+    cached_workspace(&CACHE, || hypr_active_workspace().map(|w| sanitize_key(&w)))
+}
+
+/// The workspace containing this process's window. Focus elsewhere must not
+/// change a session's restore hint. An absent or ambiguous window stays unknown.
+pub fn window_workspace() -> Option<String> {
+    static CACHE: OnceLock<Mutex<Option<Cached>>> = OnceLock::new();
+    cached_workspace(&CACHE, || {
+        workspace_for_window(&hypr_reply("j/clients")?, std::process::id())
+    })
+}
+
+/// Cache each kind of workspace independently: launch focus is not window location.
+fn cached_workspace(
+    cache: &OnceLock<Mutex<Option<Cached>>>,
+    ask: impl Fn() -> Option<String>,
+) -> Option<String> {
+    let cell = cache.get_or_init(|| Mutex::new(None));
     // A poisoned cache is not worth a panic over a tie-break hint: just ask.
     let Ok(mut slot) = cell.lock() else {
         return ask();
@@ -573,12 +582,30 @@ fn legacy_master_live_at(path: &Path) -> bool {
 /// socket under its instance signature, so this needs no `hyprctl` on PATH and
 /// puts no subprocess in the boot path.
 fn hypr_active_workspace() -> Option<String> {
+    json_string(&hypr_reply("j/activeworkspace")?, "name")
+}
+
+fn hypr_reply(command: &str) -> Option<String> {
     let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
     let runtime = std::env::var("XDG_RUNTIME_DIR").ok();
     socket_candidates(&sig, runtime.as_deref())
         .into_iter()
-        .find_map(|sock| request(&sock, "j/activeworkspace"))
-        .and_then(|reply| json_string(&reply, "name"))
+        .find_map(|sock| request(&sock, command))
+}
+
+/// Read only the owning window's workspace, never another window's title or
+/// the active-workspace response. More than one match cannot identify a window.
+fn workspace_for_window(reply: &str, pid: u32) -> Option<String> {
+    let clients: Vec<serde_json::Value> = serde_json::from_str(reply).ok()?;
+    let mut windows = clients
+        .iter()
+        .filter(|client| client.get("pid").and_then(|v| v.as_u64()) == Some(u64::from(pid)));
+    let window = windows.next()?;
+    if windows.next().is_some() {
+        return None;
+    }
+    let name = window.get("workspace")?.get("name")?.as_str()?;
+    (!name.is_empty()).then(|| sanitize_key(name))
 }
 
 /// Hyprland ≥0.40 keeps its sockets under `$XDG_RUNTIME_DIR/hypr/<sig>/`; older
@@ -1344,6 +1371,45 @@ mod tests {
             rank(vec![cand("1", 300, Some("3")), cand("2", 5, None)], None),
             vec!["2", "1"]
         );
+    }
+
+    #[test]
+    fn a_save_records_the_window_workspace_while_focus_is_elsewhere() {
+        let clients = r#"[
+            {"pid": 11, "workspace": {"name": "2"}, "focusHistoryID": 0},
+            {"pid": 42, "workspace": {"name": "1"}, "focusHistoryID": 1,
+             "title": "workspace name 2"}
+        ]"#;
+        let hint = workspace_for_window(clients, 42);
+        assert_eq!(hint.as_deref(), Some("1"));
+        let config = tmp("window-workspace");
+        session(&config, "work", hint.as_deref(), 10);
+        session(&config, "demo", Some("2"), 0);
+        let resolved = resolve_hosted_in(
+            &config,
+            None,
+            Some("1"),
+            &|| vec!["work".into(), "demo".into()],
+            &|id| live(id, false),
+        );
+        assert_eq!(resolved.id, "work");
+        assert_eq!(resolved.route, Route::AttachLive);
+    }
+
+    #[test]
+    fn an_unresolved_window_has_no_workspace_hint() {
+        for clients in [
+            "not json",
+            "{}",
+            "[]",
+            r#"[{"pid":7,"workspace":{"name":"2"}}]"#,
+            r#"[{"pid":42}]"#,
+            r#"[{"pid":42,"workspace":{"name":""}}]"#,
+            r#"[{"pid":42,"workspace":{"id":0}}]"#,
+            r#"[{"pid":42,"workspace":{"name":"1"}},{"pid":42,"workspace":{"name":"2"}}]"#,
+        ] {
+            assert_eq!(workspace_for_window(clients, 42), None, "{clients}");
+        }
     }
 
     #[test]

@@ -1,0 +1,171 @@
+active = 0
+agent_tint = false
+anchor_top = false
+focus_inherit = false
+groups = []
+lang = "en"
+left_bar = true
+left_bar_w = 208.0
+panes = 4
+projects = []
+rail_pinned = false
+scale = 0.8500000238418579
+slot_remaining = true
+undo_hinted = false
+warp = 1.4299999475479126
+
+[mcp]
+enabled = true
+events = true
+expose = "all"
+writable = true
+
+[[tabs]]
+
+[tabs.node.Split]
+dir = "Row"
+ratio = 0.5
+
+[tabs.node.Split.a.Split]
+dir = "Col"
+ratio = 0.5
+
+[tabs.node.Split.a.Split.a.Leaf]
+cwd = "/tmp"
+name = "busy 1"
+pane_id = 1
+resume = "python3 /tmp/td-redraw-efficiency/saturated/output.py busy"
+
+[tabs.node.Split.a.Split.a.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Split.a.Split.a.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[tabs.node.Split.a.Split.b.Leaf]
+cwd = "/tmp"
+name = "busy 2"
+pane_id = 2
+resume = "python3 /tmp/td-redraw-efficiency/saturated/output.py busy"
+
+[tabs.node.Split.a.Split.b.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Split.a.Split.b.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[tabs.node.Split.a.Split.b.Leaf.note]
+pinned = false
+seed = 0
+text = "Two tabs named one conversation. The first kept it; this is a fresh shell."
+title = "DUPLICATE TAB"
+
+[tabs.node.Split.b.Split]
+dir = "Col"
+ratio = 0.5
+
+[tabs.node.Split.b.Split.a.Leaf]
+cwd = "/tmp"
+name = "busy 3"
+pane_id = 3
+resume = "python3 /tmp/td-redraw-efficiency/saturated/output.py busy"
+
+[tabs.node.Split.b.Split.a.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Split.b.Split.a.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[tabs.node.Split.b.Split.a.Leaf.note]
+pinned = false
+seed = 0
+text = "Two tabs named one conversation. The first kept it; this is a fresh shell."
+title = "DUPLICATE TAB"
+
+[tabs.node.Split.b.Split.b.Leaf]
+cwd = "/tmp"
+name = "busy 4"
+pane_id = 4
+resume = "python3 /tmp/td-redraw-efficiency/saturated/output.py busy"
+
+[tabs.node.Split.b.Split.b.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Split.b.Split.b.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[tabs.node.Split.b.Split.b.Leaf.note]
+pinned = false
+seed = 0
+text = "Two tabs named one conversation. The first kept it; this is a fresh shell."
+title = "DUPLICATE TAB"
+
+[theme]
+color = "on-theme"
+id = "custom"
+palette = "terminal-delight"
+syntax = true
+syntax_scheme = "agentic"
+
+[theme.grade]
+background = 0.5
+brightness = 0.25999999046325684
+colour = 1.0
+contrast = 0.75
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.8500000238418579
+text = 0.5
+text_size = 0.7365000247955322
+warp = 1.4299999475479126

@@ -343,17 +343,21 @@ pub enum Color {
     Indexed(u8),
 }
 
-/// An OSC 8 hyperlink. Only the tests read one: TD finds links in the text
-/// itself and does not act on OSC 8, but the cores parse it and the suite
-/// pins that they do.
-#[cfg(test)]
+/// An OSC 8 hyperlink: the target a program attached to a run of cells, which
+/// need not be the text those cells show. `ls --hyperlink` and
+/// `eza --hyperlink` put each file's absolute path behind its bare name.
+///
+/// Alt+click follows a `file://` one on this machine and nothing else
+/// (`pane.rs`, `hyperlink_reading`). A web address behind a label is left to
+/// the label, because a label can say anything. Two cells hold the same link
+/// when both the id and the address match: a program that opens one link and
+/// lets it wrap across rows gives every cell the same id.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Hyperlink {
     id: Arc<str>,
     uri: Arc<str>,
 }
 
-#[cfg(test)]
 impl Hyperlink {
     pub fn new(id: &str, uri: &str) -> Self {
         Self {
@@ -362,6 +366,7 @@ impl Hyperlink {
         }
     }
 
+    #[cfg(test)]
     pub fn id(&self) -> &str {
         &self.id
     }

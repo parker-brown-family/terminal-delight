@@ -1,0 +1,36 @@
+[
+  {
+    "width": 1100,
+    "scrollWidth": 1085,
+    "figures": 4,
+    "notable": 31,
+    "errors": []
+  },
+  {
+    "width": 720,
+    "scrollWidth": 705,
+    "figures": 4,
+    "notable": 31,
+    "errors": []
+  },
+  {
+    "width": 390,
+    "scrollWidth": 375,
+    "figures": 4,
+    "notable": 31,
+    "errors": []
+  },
+  {
+    "notes": {
+      "map": "NOTES — 2026-10-18-pane-sleep-preview.html\n1 notes on 1 elements · 1 concur.\nEach [anchor] is an element id in that file — search it to find the passage.\n\n[fig-01-one-hidden-pane] 01 · One hidden pane, two clocks\n  · QA: measured CPU note\n\n[ask-implemented-bounded-hidden-sleep] Implemented: bounded hidden sleep  ✓ concur\n",
+      "anchor": "fig-01-one-hidden-pane"
+    },
+    "save_and_reopen": {
+      "notes": "1",
+      "concurs": {
+        "ask-implemented-bounded-hidden-sleep": "2026-10-18 07:21"
+      }
+    },
+    "page_exceptions": []
+  }
+]

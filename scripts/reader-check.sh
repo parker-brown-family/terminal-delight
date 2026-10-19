@@ -6,6 +6,8 @@
 # `keys` is a space-separated list of chords sent to the hidden window before the
 # photograph: an xkb keysym, with modifiers before a plus — "Page_Up Page_Up" pages
 # the reader back, "ALT+k" flips the pane behind it to its workbench face.
+# FOCUS=0 starts on the terminal; ALT_SCREEN=1 makes the stand-in a full-screen
+# TUI. KEY_WAIT=0 sends consecutive chords without a delay between them.
 #
 # `document` puts a file on the narrow pane's Document face first, as a pane
 # opened with Ctrl+Alt+click on it would be, so the reader opens on a Markdown
@@ -29,8 +31,8 @@
 # A Codex rollout (one that opens with `session_meta`) is staged the Codex way:
 # laid under the scratch HOME's .codex/sessions with its directory rewritten to
 # the pane's, and resumed by a stand-in named `codex` (`codex resume <id>`);
-# app/tests/fixtures/reader/codex.jsonl is one. That stand-in draws nothing of
-# Codex's screen, which nobody here has a specimen of.
+# app/tests/fixtures/reader/codex.jsonl is one. The Codex stand-in draws its
+# unboxed composer marker, captured from the live pane on 2026-10-17.
 #
 # Stages the layout the reader is opened for: a 1,576 x 950 window (Parker's) with
 # a tab of three panes whose first is a quarter of the window wide, each running a
@@ -49,6 +51,8 @@ LABEL=${3:-reader}
 KEYS=${4:-}
 DOC=${5:-}
 SETTLE=${SETTLE:-4}
+FOCUS=${FOCUS:-1}
+KEY_WAIT=${KEY_WAIT:-0.6}
 AGENT=${AGENT:-}
 LATER=${LATER:-}
 LATER_WAIT=${LATER_WAIT:-2}
@@ -101,9 +105,22 @@ if [ -n "$AGENT" ]; then
     cat > "$BIN/codex" <<'STAND_IN'
 #!/bin/bash
 # reader-check's stand-in for Codex: its name and its resume line are what bind
-# the pane to a rollout. It draws nothing of Codex's own screen.
-printf '\033]0;codex\007\033[?25l\033[H\033[2J  (a stand-in for Codex)\n'
-while :; do sleep 1; done
+# the pane to a rollout. The bottom row carries its current composer marker.
+[ "${ALT_SCREEN:-}" = 1 ] && printf '\033[?1049h'
+draw() {
+  rows=$(stty size 2>/dev/null | cut -d' ' -f1)
+  case "$rows" in '' | 0 | *[!0-9]*) rows=28 ;; esac
+  printf '\033]0;codex\007\033[?25l\033[H\033[2J  (a stand-in for Codex)\n'
+  printf '\033[%s;1H› Ask Codex to do anything' "$((rows - 2))"
+}
+trap draw WINCH
+draw
+if [ -n "${KEY_LOG:-}" ]; then
+  stty raw -echo
+  cat > "$KEY_LOG"
+else
+  while :; do sleep 1; done
+fi
 STAND_IN
     chmod +x "$BIN/codex"
     echo "exec $BIN/codex resume $ID" > "$OUT/agent.sh"
@@ -133,10 +150,16 @@ draw() {
   printf '\n✻ Writing… (4m 12s · esc to interrupt)\n\n%s\n> \n%s\n  ⏵⏵ auto mode on (shift+tab to cycle)' "$rule" "$rule"
 }
 # Claude Code names its pane after the conversation's topic.
+[ "${ALT_SCREEN:-}" = 1 ] && printf '\033[?1049h'
 printf '\033]0;✳ Alt+R reader\007'
 trap draw WINCH
 draw
-while :; do sleep 1; done
+if [ -n "${KEY_LOG:-}" ]; then
+  stty raw -echo
+  cat > "$KEY_LOG"
+else
+  while :; do sleep 1; done
+fi
 STAND_IN
     chmod +x "$BIN/claude"
     echo "exec $BIN/claude --resume $ID" > "$OUT/agent.sh"
@@ -162,7 +185,13 @@ fi
 LOG="$OUT/$LABEL-window.log"
 {
   echo "export TD_SESSION=$SESSION XDG_CACHE_HOME=$OUT/cache XDG_STATE_HOME=$OUT/state"
-  echo "export SHELL=/bin/sh TD_DEMO_STATE=$OUT/state.toml TD_FOCUS_DEMO=1"
+  echo "export SHELL=/bin/sh TD_DEMO_STATE=$OUT/state.toml"
+  if [ "$FOCUS" = 1 ]; then
+    echo "export TD_FOCUS_DEMO=1"
+  else
+    echo "unset TD_FOCUS_DEMO"
+  fi
+  echo "export ALT_SCREEN=${ALT_SCREEN:-0} KEY_LOG=${KEY_LOG:-}"
   # With an agent, the window's HOME is the scratch one, so the transcripts it
   # can find are the one laid there; its config is still yours, read-only.
   echo "export HOME=$WINDOW_HOME XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -197,8 +226,9 @@ for chord in $KEYS; do
   mods=""; key=$chord
   case "$chord" in *+*) mods=${chord%+*}; key=${chord##*+} ;; esac
   hyprctl dispatch "hl.dsp.send_shortcut({ mods = '$mods', key = '$key', window = 'pid:$WIN' })" >/dev/null
-  sleep 0.6
+  sleep "$KEY_WAIT"
 done
+sleep "${AFTER_KEYS:-0.5}"
 if timeout 10 grim -T "$STABLE" "$OUT/$LABEL.png"; then
   echo "photographed $OUT/$LABEL.png (window $SIZE)"
 else

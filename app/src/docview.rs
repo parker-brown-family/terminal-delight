@@ -175,6 +175,8 @@ pub fn count_zoom_notches(counted: f32, notches: f32) -> (f32, i32) {
 
 /// A document on screen.
 pub struct DocumentView {
+    #[cfg(test)]
+    pub(crate) render_count: usize,
     target: DocTarget,
     /// Whatever draws the document: the picture, the Markdown file or the
     /// page. Made with the view and kept for its life; see [`backend`].
@@ -300,6 +302,13 @@ pub struct CannotShow {
     pub reason: String,
 }
 impl EventEmitter<CannotShow> for DocumentView {}
+
+/// A clip in the square played to its end. The pane closes it and puts back
+/// the square it covered: a video opened over a page, or handed over by an
+/// agent after a render, goes away by itself. A video on the Document face
+/// loops and never says this.
+pub struct Finished;
+impl EventEmitter<Finished> for DocumentView {}
 
 // ── the page engine, one per TD process ───────────────────────────────────
 
@@ -745,7 +754,10 @@ impl DocumentView {
             DocKind::Image => Box::new(image::ImageDoc::load(&target.path, cx)),
             DocKind::Markdown => Box::new(markdown::MarkdownDoc::new()),
             DocKind::Html => Box::new(page::PageDoc::new(&target.path, engine(cx))),
-            DocKind::Video => Box::new(video::VideoDoc::open(&target.path, cx)),
+            DocKind::Video => Box::new(video::VideoDoc::open(&target.path, mpv::Picture::Film, cx)),
+            DocKind::Audio => {
+                Box::new(video::VideoDoc::open(&target.path, mpv::Picture::Waves, cx))
+            }
             DocKind::Pdf => Box::new(pdf::PdfDoc::open(&target.path, cx)),
         };
         cx.on_release(|view, cx| view.give_back(cx)).detach();
@@ -755,6 +767,8 @@ impl DocumentView {
         let seen = backend.opened(&target.path, cx);
         let watch = backend.follows_its_file();
         let mut view = Self {
+            #[cfg(test)]
+            render_count: 0,
             target,
             backend,
             theme: None,
@@ -790,6 +804,7 @@ impl DocumentView {
         }
         self.seat = seat;
         self.frame.set(None);
+        self.backend.seated(seat);
         cx.notify();
     }
 
@@ -1204,6 +1219,10 @@ impl DocumentView {
 
 impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(test)]
+        {
+            self.render_count += 1;
+        }
         let th = self.theme(cx);
         // Nothing is known to be laid out until this render's last element
         // says so; the links are rebuilt below, as their text is.

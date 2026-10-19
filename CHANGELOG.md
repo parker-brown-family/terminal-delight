@@ -95,6 +95,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **A name in an `ls` listing opens by Alt+click.** When a listing puts each
+  file's path behind its name, as `ls --hyperlink` and `eza --hyperlink` do,
+  Alt+click opens exactly the file listed, in the floating square, or with
+  Ctrl+Alt in a pane beside, whichever folder was listed and wherever the shell
+  has gone since. A name with no hyperlink is tried in the pane's own folder and
+  opens only if that folder holds it. A hyperlink to a file that has gone, a
+  web address behind a label, or another machine's file is never swapped for a
+  guess from the name. Omarchy's `ls` alias writes no hyperlinks; adding
+  `--hyperlink=auto` to it makes every listing exact.
 - **A PDF opens in the floating square.** Alt+click on a `.pdf` path shows it
   there as one column of pages, the widest fitted to the width, with the page
   in view counted at the bottom right; Ctrl+Alt+click opens it in a pane beside.
@@ -148,6 +157,27 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **A paste while a sticky note or a pane name is being written goes into it,
+  not into the shell under it.** Ctrl+Shift+V was still the pane's paste, so it
+  typed the clipboard into whatever ran behind the paper or the title, and a
+  newline in it was a return; Ctrl+V and Shift+Insert reached the box and
+  vanished. All three now paste into the sticky note or the name, the way a
+  note in the square already did, and as one line: a line break or tab becomes
+  a space, because the paper draws only its first line and a name has one.
+- **The bench strip stops saying "Reading your answer" once the agent has
+  left.** The eight second reading window was not cleared when an agent quit
+  back to the shell, so the strip kept the words, and an agent started in that
+  pane inside the window was born on a rung that outranks a real question.
+- **An MCP pid too big for 32 bits is refused instead of landing on another
+  pane.** The pid was cut to its low 32 bits, so `4294967396` addressed pid
+  100: `pane_events`, `get_pane_config`, `set_pane_config`, `leave_note`,
+  `declare_deliverable` and `present_surface` could read or change a pane the
+  caller never named. They now answer "pid is out of range".
+- **A program cannot make a pane hold an unfinished escape forever.** The text
+  guard capped a half-arrived control sequence at 64 bytes, but ESC followed by
+  intermediate bytes (spaces, say) was held for as long as it stayed open, and
+  every read copied and rescanned the whole pile with the terminal locked. Those
+  bytes are never rewritten, so they now pass through as they arrive.
 - **Escape reaches a pane again after it closes the reader there.** Closing
   the FOCUS reader with Escape never told the pane it had been reading, so from
   then on Escape and the page keys in that pane went to a reader that was no

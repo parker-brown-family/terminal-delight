@@ -21,10 +21,23 @@
 //! Roots are scanned SYSTEM FIRST, USER LAST, so a theme the user installed into
 //! `~/.config/omarchy/themes` shadows a stock one of the same name — the same
 //! precedence Omarchy itself applies.
+//!
+//! **What resolves and what is offered are two lists.** Every palette found —
+//! the desktop's, over the copies TD carries — RESOLVES, so a pane wearing one
+//! keeps it whatever happens to the desktop. The pickers show the narrower
+//! [`offered`] list: Omarchy's own themes minus the ones it hides, which is the
+//! list Omarchy's picker shows. Parker, 2026-10-16: *"OVERRIDE the themes picker
+//! with the LIVE AND ACTUAL config from Omarchy!"* It is read live — [`init`]
+//! rescans whenever a theme is installed, removed, retuned or hidden.
+
+mod current;
+pub use current::{current, current_status};
 
 use gpui::{App, Global, Hsla};
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 /// A desktop colour scheme, resolved far enough to draw its own preview.
 pub struct Palette {
@@ -41,29 +54,50 @@ pub struct Palette {
     /// a palette turns into a theme — one set of defaulting/derivation rules for
     /// `$TD_PALETTE` and for these alike.
     pub toml: String,
-    /// Preview: the scheme's own screen colour, behind three of its hues.
+    /// Preview: the scheme's own screen colour, behind three of its hues. The
+    /// first chip is the theme's accent.
     pub bg: Hsla,
     pub chips: [Hsla; 3],
+    /// Read from one of the desktop's theme folders, rather than from a copy TD
+    /// carries in the binary.
+    pub desktop: bool,
+    /// On offer in the pickers. False for a theme the desktop hides, and — where
+    /// Omarchy is installed — for a copy TD carries that the desktop does not
+    /// have. Not offered is not gone: [`find`] still resolves it.
+    pub offered: bool,
 }
 
-/// Every palette found on this desktop, in display order (dark A–Z, then light).
+/// Every palette that resolves, in display order (dark A–Z, then light).
 #[derive(Default)]
 pub struct Library {
     pub items: Vec<Palette>,
 }
 impl Global for Library {}
 
-/// The palettes available to paint with. Empty when Omarchy isn't installed —
-/// which is a legitimate state, not an error: the colour-set shelf still works.
+/// Every palette that RESOLVES: the desktop's, over the copies TD carries. What
+/// a picker shows is the narrower [`offered`].
 pub fn all(cx: &App) -> &[Palette] {
     cx.try_global::<Library>()
         .map(|l| l.items.as_slice())
         .unwrap_or(&[])
 }
 
-/// Look a palette up by the id persisted in a pane's theme group.
+/// The palettes the pickers show: this desktop's themes, minus the ones it hides.
+pub fn offered(cx: &App) -> impl Iterator<Item = &Palette> {
+    all(cx).iter().filter(|p| p.offered)
+}
+
+/// Look a palette up by the id persisted in a pane's theme group. Hidden and
+/// unoffered palettes resolve too: a picker's list never takes a look off a pane
+/// that is already wearing it.
 pub fn find<'a>(cx: &'a App, id: &str) -> Option<&'a Palette> {
     all(cx).iter().find(|p| p.id == id)
+}
+
+/// [`find`], narrowed to what a picker may show — for a list of the user's own
+/// (the favourites) that should hide what the desktop hides.
+pub fn find_offered<'a>(cx: &'a App, id: &str) -> Option<&'a Palette> {
+    offered(cx).find(|p| p.id == id)
 }
 
 impl Palette {
@@ -99,14 +133,18 @@ impl Palette {
 /// theme actually named `zenburn` would keep its tile and its click and simply
 /// lose its chord — a collision costs one letter, never the shelf.
 pub fn next_for_letter(cx: &App, letter: char, current: Option<&str>) -> Option<String> {
-    next_in(all(cx), letter, current)
+    next_in(offered(cx), letter, current)
 }
 
 /// [`next_for_letter`] over an explicit list — the whole rule, testable without
 /// an app context.
-fn next_in(items: &[Palette], letter: char, current: Option<&str>) -> Option<String> {
+fn next_in<'a>(
+    items: impl IntoIterator<Item = &'a Palette>,
+    letter: char,
+    current: Option<&str>,
+) -> Option<String> {
     let group: Vec<&Palette> = items
-        .iter()
+        .into_iter()
         .filter(|p| p.paint_letter().eq_ignore_ascii_case(&letter))
         .collect();
     let at = current.and_then(|id| group.iter().position(|p| p.id == id));
@@ -135,10 +173,9 @@ pub struct Chip {
     pub chips: [Hsla; 3],
 }
 
-/// Draw-ready summaries of every palette, in display order.
+/// Draw-ready summaries of every offered palette, in display order.
 pub fn chips(cx: &App) -> Vec<Chip> {
-    all(cx)
-        .iter()
+    offered(cx)
         .map(|p| Chip {
             id: p.id.clone(),
             letter: p.paint_letter(),
@@ -167,20 +204,230 @@ const SHIPPED: &[(&str, &str)] = &[(
     include_str!("../palettes/terminal-delight.toml"),
 )];
 
+/// Omarchy's 22 stock themes, each `colors.toml` verbatim from Omarchy 4.0.4
+/// (MIT, `palettes/omarchy/LICENSE`).
+///
+/// They are for a machine with no Omarchy, which still opens on the same themes.
+/// Where Omarchy is installed its own copies shadow these and these are never
+/// offered: the desktop is the registry, and a copy here must not resurrect a
+/// theme Omarchy has dropped. `the_stock_copies_match_the_desktop_they_came_from`
+/// compares them with `/usr/share/omarchy/themes` wherever that exists.
+const STOCK: &[(&str, &str)] = &[
+    (
+        "catppuccin",
+        include_str!("../palettes/omarchy/catppuccin.toml"),
+    ),
+    (
+        "catppuccin-latte",
+        include_str!("../palettes/omarchy/catppuccin-latte.toml"),
+    ),
+    (
+        "ethereal",
+        include_str!("../palettes/omarchy/ethereal.toml"),
+    ),
+    (
+        "everforest",
+        include_str!("../palettes/omarchy/everforest.toml"),
+    ),
+    (
+        "flexoki-light",
+        include_str!("../palettes/omarchy/flexoki-light.toml"),
+    ),
+    ("gruvbox", include_str!("../palettes/omarchy/gruvbox.toml")),
+    (
+        "hackerman",
+        include_str!("../palettes/omarchy/hackerman.toml"),
+    ),
+    (
+        "kanagawa",
+        include_str!("../palettes/omarchy/kanagawa.toml"),
+    ),
+    (
+        "last-horizon",
+        include_str!("../palettes/omarchy/last-horizon.toml"),
+    ),
+    ("lumon", include_str!("../palettes/omarchy/lumon.toml")),
+    ("lupine", include_str!("../palettes/omarchy/lupine.toml")),
+    (
+        "matte-black",
+        include_str!("../palettes/omarchy/matte-black.toml"),
+    ),
+    ("miasma", include_str!("../palettes/omarchy/miasma.toml")),
+    ("nord", include_str!("../palettes/omarchy/nord.toml")),
+    (
+        "osaka-jade",
+        include_str!("../palettes/omarchy/osaka-jade.toml"),
+    ),
+    (
+        "retro-82",
+        include_str!("../palettes/omarchy/retro-82.toml"),
+    ),
+    (
+        "ristretto",
+        include_str!("../palettes/omarchy/ristretto.toml"),
+    ),
+    (
+        "rose-pine",
+        include_str!("../palettes/omarchy/rose-pine.toml"),
+    ),
+    (
+        "solitude",
+        include_str!("../palettes/omarchy/solitude.toml"),
+    ),
+    (
+        "tokyo-night",
+        include_str!("../palettes/omarchy/tokyo-night.toml"),
+    ),
+    (
+        "vantablack",
+        include_str!("../palettes/omarchy/vantablack.toml"),
+    ),
+    ("white", include_str!("../palettes/omarchy/white.toml")),
+];
+
 fn shipped() -> Vec<Palette> {
     SHIPPED
         .iter()
+        .chain(STOCK)
         .filter_map(|(id, src)| from_source(id, src))
         .collect()
 }
 
-/// Scan the desktop for palettes and publish them, over the ones TD ships.
-/// Called once at startup, beside `theme::init`; a desktop with no Omarchy
-/// publishes the shipped palettes alone.
+/// The ids of every palette TD carries — what a machine with no Omarchy is
+/// offered.
+#[cfg(test)]
+pub(crate) fn shipped_ids() -> impl Iterator<Item = &'static str> {
+    SHIPPED.iter().chain(STOCK).map(|(id, _)| *id)
+}
+
+/// One read of the desktop: the shipped palettes, the desktop's over them, and
+/// the hide list applied. A few dozen small files, so it is simply run again
+/// whenever anything it read has changed.
+fn scan() -> Vec<Palette> {
+    let roots = roots();
+    let desktop = roots.iter().any(|r| r.is_dir());
+    let mut items = load_over(shipped(), &roots);
+    mark_offered(&mut items, desktop, &hidden_names(hidden_path().as_deref()));
+    items
+}
+
+/// Which palettes a picker shows. With Omarchy installed that is the desktop's
+/// own list and nothing TD carries, bar the Terminal Delight palette, the house
+/// look, which has to be reachable on any desktop. Without Omarchy it is
+/// everything TD carries. Either way a hidden name is dropped, the house look
+/// included: hiding is the person's call.
+fn mark_offered(items: &mut [Palette], desktop: bool, hidden: &HashSet<String>) {
+    for p in items.iter_mut() {
+        p.offered = !hidden.contains(&p.id) && (!desktop || p.desktop || p.id == TERMINAL_DELIGHT);
+    }
+}
+
+/// `~/.config/omarchy/hidden-themes`, one theme name per line.
+///
+/// Omarchy 4.0.4 has no hide list of its own. This file is the one `theme-veil`
+/// keeps — it takes the named themes out of Omarchy's picker — so TD reads the
+/// same file the same way, and a theme hidden there is hidden here.
+/// `TD_OMARCHY_HIDDEN` points it elsewhere, for tests.
+fn hidden_path() -> Option<PathBuf> {
+    if let Some(over) = std::env::var("TD_OMARCHY_HIDDEN")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
+        return Some(PathBuf::from(over));
+    }
+    let config = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".config"))
+        })?;
+    Some(config.join("omarchy/hidden-themes"))
+}
+
+/// The names a hide list holds. A missing or unreadable file hides nothing.
+fn hidden_names(path: Option<&Path>) -> HashSet<String> {
+    path.and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| parse_hidden(&s))
+        .unwrap_or_default()
+}
+
+/// `theme-veil`'s own reading of the file: anything after a `#` is a comment,
+/// whitespace is removed, and a name holding a `/` or starting with `.` is
+/// refused rather than trusted.
+fn parse_hidden(src: &str) -> HashSet<String> {
+    src.lines()
+        .filter_map(|line| {
+            let name: String = line
+                .split('#')
+                .next()
+                .unwrap_or("")
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            (!name.is_empty() && !name.contains('/') && !name.starts_with('.')).then_some(name)
+        })
+        .collect()
+}
+
+/// What a rescan would read, as modification times: the hide list, each root,
+/// and each theme folder's colour files. A missing file is recorded as missing,
+/// so a theme gaining or losing its `colors.toml` counts as a change. Equal
+/// signatures mean an equal scan.
+fn signature() -> Vec<(PathBuf, Option<SystemTime>)> {
+    let mtime = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let mut out = Vec::new();
+    if let Some(h) = hidden_path() {
+        out.push((h.clone(), mtime(&h)));
+    }
+    for root in roots() {
+        out.push((root.clone(), mtime(&root)));
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        let mut dirs: Vec<PathBuf> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+        dirs.sort();
+        for dir in dirs {
+            for file in ["colors.toml", "alacritty.toml"] {
+                let p = dir.join(file);
+                let at = mtime(&p);
+                out.push((p, at));
+            }
+        }
+    }
+    out
+}
+
+/// Scan the desktop for palettes and publish them, over the ones TD ships, then
+/// keep them live.
+///
+/// Omarchy changes under a running window: a theme is installed, removed,
+/// retuned in place, or hidden. Twice a second the files the scan read are
+/// stat'ed, off the main thread, and the scan runs again only when one of them
+/// moved. Every pane then re-resolves, so a pane wearing a theme that was just
+/// retuned shows the new colours without anyone touching it.
 pub fn init(cx: &mut App) {
-    cx.set_global(Library {
-        items: load_over(shipped(), &roots()),
-    });
+    cx.set_global(Library { items: scan() });
+    let mut last = signature();
+    cx.spawn(async move |cx| loop {
+        cx.background_executor()
+            .timer(Duration::from_millis(500))
+            .await;
+        let now = cx.background_executor().spawn(async { signature() }).await;
+        if now == last {
+            continue;
+        }
+        last = now;
+        let items = cx.background_executor().spawn(async { scan() }).await;
+        cx.update(|cx| {
+            cx.set_global(Library { items });
+            crate::theme::palettes_changed(cx);
+        });
+    })
+    .detach();
+    current::init(cx);
 }
 
 /// Where Omarchy keeps themes, in precedence order (later roots win). The env
@@ -211,17 +458,20 @@ fn load(roots: &[PathBuf]) -> Vec<Palette> {
     load_over(Vec::new(), roots)
 }
 
-/// Publish only the palettes TD ships — a test's stand-in for [`init`], which
-/// would read whatever Omarchy themes the machine running the tests has.
+/// Publish only the palettes TD ships, as a desktop with no Omarchy sees them —
+/// a test's stand-in for [`init`], which would read whatever Omarchy themes the
+/// machine running the tests has.
 #[cfg(test)]
 pub(crate) fn init_shipped(cx: &mut App) {
-    cx.set_global(Library { items: shipped() });
+    let mut items = shipped();
+    mark_offered(&mut items, false, &HashSet::new());
+    cx.set_global(Library { items });
 }
 
-/// Read every `<root>/*/colors.toml` into a palette over `items`, later roots
-/// shadowing earlier ones — and `items` — by id. A theme whose file is missing,
-/// unreadable or malformed is SKIPPED rather than fatal — one bad third-party
-/// theme must not cost the user the other twenty-two.
+/// Read every theme folder under `roots` into a palette over `items`, later
+/// roots shadowing earlier ones — and `items` — by id. A theme whose files are
+/// missing, unreadable or malformed is SKIPPED rather than fatal — one bad
+/// third-party theme must not cost the user the other twenty-two.
 fn load_over(mut items: Vec<Palette>, roots: &[PathBuf]) -> Vec<Palette> {
     for root in roots {
         let Ok(entries) = std::fs::read_dir(root) else {
@@ -245,18 +495,90 @@ fn load_over(mut items: Vec<Palette>, roots: &[PathBuf]) -> Vec<Palette> {
 }
 
 /// One theme directory → one palette, or `None` if it isn't one.
+///
+/// A theme with no `colors.toml` is read from its `alacritty.toml`. Several
+/// published themes ship only that (Retro Fallout, RetroPC, Ayaka, Mars and
+/// Spectra among the most-starred), and Omarchy derives their colours when one
+/// is SET, into its staging copy rather than the theme's folder — so a
+/// `colors.toml` never appears for TD to find, and TD makes the same derivation.
 fn from_dir(dir: &Path) -> Option<Palette> {
     let id = dir.file_name()?.to_str()?.to_string();
     if id.starts_with('.') {
         return None;
     }
-    let source = std::fs::read_to_string(dir.join("colors.toml")).ok()?;
-    from_source(&id, &source)
+    let mut p = match std::fs::read_to_string(dir.join("colors.toml")) {
+        Ok(source) => from_source(&id, &source),
+        Err(_) => from_alacritty(
+            &id,
+            &std::fs::read_to_string(dir.join("alacritty.toml")).ok()?,
+        ),
+    }?;
+    p.desktop = true;
+    Some(p)
 }
 
 /// The translation itself, split out so a test can hold it against a real theme.
 pub(crate) fn from_source(id: &str, source: &str) -> Option<Palette> {
-    let c: OmarchyColors = toml::from_str(source).ok()?;
+    from_colors(id, toml::from_str(source).ok()?)
+}
+
+/// Omarchy's own `omarchy-theme-colors-from-alacritty`, as a translation into
+/// the same roles: all eight normal colours are required, a bright colour falls
+/// back to its normal twin, background and foreground fall back to normal black
+/// and white, and the accent is normal blue.
+fn from_alacritty(id: &str, source: &str) -> Option<Palette> {
+    const NAMES: [&str; 8] = [
+        "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+    ];
+    let v: toml::Value = toml::from_str(source).ok()?;
+    let colors = v.get("colors")?;
+    let hex = |section: &str, key: &str| first_hex(colors.get(section)?.get(key)?.as_str()?);
+    let normal: Vec<String> = NAMES
+        .iter()
+        .map(|n| hex("normal", n))
+        .collect::<Option<_>>()?;
+    let bright: Vec<String> = NAMES
+        .iter()
+        .zip(&normal)
+        .map(|(n, base)| hex("bright", n).unwrap_or_else(|| base.clone()))
+        .collect();
+    let at = |v: &[String], i: usize| Some(v[i].clone());
+    from_colors(
+        id,
+        OmarchyColors {
+            accent: at(&normal, 4),
+            background: hex("primary", "background").or_else(|| at(&normal, 0)),
+            foreground: hex("primary", "foreground").or_else(|| at(&normal, 7)),
+            muted: at(&bright, 0),
+            bright_foreground: at(&bright, 7),
+            red: at(&normal, 1),
+            green: at(&normal, 2),
+            yellow: at(&normal, 3),
+            blue: at(&normal, 4),
+            magenta: at(&normal, 5),
+            cyan: at(&normal, 6),
+            bright_red: at(&bright, 1),
+            bright_green: at(&bright, 2),
+            bright_yellow: at(&bright, 3),
+            bright_blue: at(&bright, 4),
+            bright_magenta: at(&bright, 5),
+            bright_cyan: at(&bright, 6),
+            ..OmarchyColors::default()
+        },
+    )
+}
+
+/// The first run of six hex digits, as Omarchy reads a colour: `"0x1A1B26"`,
+/// `"#1a1b26"` and `"1a1b26"` are all `#1a1b26`.
+fn first_hex(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    (0..b.len().saturating_sub(5))
+        .find(|&i| b[i..i + 6].iter().all(u8::is_ascii_hexdigit))
+        .map(|i| format!("#{}", s[i..i + 6].to_ascii_lowercase()))
+}
+
+/// Omarchy's roles → a Terminal Delight palette.
+fn from_colors(id: &str, c: OmarchyColors) -> Option<Palette> {
     // The five roles with no sensible stand-in. Anything else falls back, so a
     // theme that omits `orange`/`brown` (several stock ones do) still loads.
     let bg = c.background.clone()?;
@@ -307,6 +629,14 @@ pub(crate) fn from_source(id: &str, source: &str) -> Option<Palette> {
         })
     );
     let px = |s: &str| crate::theme::parse_hex(s);
+    // Validate every role, not just the preview chips. A malformed unseen ANSI
+    // colour must not replace a last-good live palette with unusable data.
+    for colour in [&bg, &surface, &fg, &accent, &muted, &bright_fg]
+        .into_iter()
+        .chain(ansi.iter())
+    {
+        px(colour)?;
+    }
     Some(Palette {
         label: split_label(id),
         id: id.to_string(),
@@ -314,6 +644,10 @@ pub(crate) fn from_source(id: &str, source: &str) -> Option<Palette> {
         bg: px(&bg)?,
         chips: [px(&accent)?, px(&ansi[1])?, px(&ansi[2])?],
         toml,
+        // Decided by the scan that loaded it: where it came from, then whether
+        // the desktop offers it.
+        desktop: false,
+        offered: false,
     })
 }
 
@@ -545,12 +879,11 @@ bright_magenta = "#bb9af7"
     #[test]
     fn the_shelf_key_is_not_a_chord_on_either_shelf() {
         // `z` is allowed to be a VERB (turn the shelf) only because nothing is
-        // spelled with one. The colour sets are ours, and theme.rs guards them;
-        // the palettes are the desktop's, so check what it actually ships.
-        assert!(
-            crate::theme::Dynamic::paint_chord("z").is_none(),
-            "no colour set may take the shelf key"
-        );
+        // spelled with one. The palettes are the desktop's, so check what it
+        // actually ships — and what TD carries for a desktop without it.
+        for p in shipped() {
+            assert_ne!(p.paint_letter(), 'Z', "{} takes the shelf key", p.id);
+        }
         for p in load(&[PathBuf::from("/usr/share/omarchy/themes")]) {
             assert_ne!(
                 p.paint_letter(),
@@ -573,19 +906,19 @@ bright_magenta = "#bb9af7"
     /// through a key that quietly stopped working.
     #[test]
     fn the_favourites_verb_shadows_only_what_we_agreed_it_would() {
-        assert!(
-            crate::theme::Dynamic::paint_chord("f").is_none(),
-            "no colour set may take the favourites key"
-        );
-        let shadowed: Vec<String> = load(&[PathBuf::from("/usr/share/omarchy/themes")])
+        // TD's own copies are the desktop a machine without Omarchy sees, so
+        // they are held to the same price as the real one.
+        let shadowed: Vec<String> = shipped()
             .into_iter()
+            .chain(load(&[PathBuf::from("/usr/share/omarchy/themes")]))
             .filter(|p| p.paint_letter() == 'F')
             .map(|p| p.id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
             .collect();
-        // Stock Omarchy, as of this writing, ships exactly one `f`. A desktop
-        // with no Omarchy installed shadows nothing, which is also fine.
+        // Stock Omarchy, as of this writing, ships exactly one `f`.
         assert!(
-            shadowed.is_empty() || shadowed == ["flexoki-light"],
+            shadowed == ["flexoki-light"],
             "the favourites key now shadows {shadowed:?} — these palettes keep \
              their tile and their click but lose their chord. Still the right \
              trade? See `paint_key`."
@@ -654,5 +987,170 @@ bright_magenta = "#bb9af7"
             "the desktop's copy beats the shipped one"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A scratch desktop: `<dir>/<id>/colors.toml` for each id, dark.
+    fn desktop(tag: &str, ids: &[&str]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("td-pal-{tag}-{}", std::process::id()));
+        for id in ids {
+            let t = dir.join(id);
+            std::fs::create_dir_all(&t).expect("mkdir");
+            std::fs::write(
+                t.join("colors.toml"),
+                "background = \"#101010\"\nforeground = \"#eeeeee\"\naccent = \"#ff8800\"\n",
+            )
+            .expect("write");
+        }
+        dir
+    }
+
+    fn offered_ids(items: &[Palette]) -> Vec<&str> {
+        items
+            .iter()
+            .filter(|p| p.offered)
+            .map(|p| p.id.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn with_omarchy_installed_the_desktop_list_is_what_is_offered() {
+        // Parker's desktop in miniature: two stock themes, one of his own, and
+        // one he has hidden.
+        let dir = desktop("offer", &["nord", "praus", "catppuccin", "tokyo-night"]);
+        let mut items = load_over(shipped(), std::slice::from_ref(&dir));
+        let hidden = parse_hidden("catppuccin\n");
+        mark_offered(&mut items, true, &hidden);
+        assert_eq!(
+            offered_ids(&items),
+            vec!["nord", "praus", "terminal-delight", "tokyo-night"],
+            "the desktop's themes minus the hidden one, plus the house look — and \
+             none of the stock copies the desktop does not have (gruvbox, kanagawa…)"
+        );
+        // Hidden is not gone: a pane wearing it still resolves its colours.
+        let cat = items
+            .iter()
+            .find(|p| p.id == "catppuccin")
+            .expect("resolves");
+        assert!(!cat.offered && cat.desktop);
+        // And a stock copy the desktop lacks still resolves too.
+        let gruv = items.iter().find(|p| p.id == "gruvbox").expect("resolves");
+        assert!(!gruv.offered && !gruv.desktop);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn without_omarchy_the_stock_themes_td_carries_are_offered() {
+        let mut items = load_over(shipped(), &[]);
+        mark_offered(&mut items, false, &HashSet::new());
+        assert_eq!(
+            offered_ids(&items).len(),
+            23,
+            "22 stock themes + the house look"
+        );
+        assert!(offered_ids(&items).contains(&"tokyo-night"));
+    }
+
+    #[test]
+    fn hiding_the_house_look_hides_it_too() {
+        let mut items = load_over(shipped(), &[]);
+        mark_offered(&mut items, true, &parse_hidden("terminal-delight\n"));
+        assert!(offered_ids(&items).is_empty());
+    }
+
+    #[test]
+    fn the_hide_list_is_read_the_way_theme_veil_reads_it() {
+        // Parker's own file, verbatim in shape: a comment header, then names.
+        let src = "# Themes kept installed but hidden from the Omarchy theme picker.\n\
+                   # One name per line.\n\
+                   ristretto\n  rose-pine  \nlupine # the wolf one\n\n\
+                   ../etc\nsub/dir\n.hidden\nwhite\n";
+        let got = parse_hidden(src);
+        let want: HashSet<String> = ["ristretto", "rose-pine", "lupine", "white"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(got, want);
+        assert!(hidden_names(Some(Path::new("/nonexistent/hidden-themes"))).is_empty());
+        assert!(hidden_names(None).is_empty());
+    }
+
+    #[test]
+    fn a_theme_with_only_alacritty_colours_loads_as_omarchy_would_derive_it() {
+        // RetroPC's shape: no colors.toml, an alacritty.toml with 0x colours and
+        // no bright section, so every bright colour falls back to its twin.
+        let dir = std::env::temp_dir().join(format!("td-pal-ala-{}", std::process::id()));
+        let t = dir.join("retropc");
+        std::fs::create_dir_all(&t).expect("mkdir");
+        std::fs::write(
+            t.join("alacritty.toml"),
+            "[colors.primary]\nbackground = '0x0A0A08'\nforeground = '0xD0D0C0'\n\
+             [colors.normal]\nblack = '0x000000'\nred = '0xAA0000'\ngreen = '0x00AA00'\n\
+             yellow = '0xAAAA00'\nblue = '0x0000AA'\nmagenta = '0xAA00AA'\n\
+             cyan = '0x00AAAA'\nwhite = '0xAAAAAA'\n",
+        )
+        .expect("write");
+        let items = load(std::slice::from_ref(&dir));
+        assert_eq!(items.len(), 1, "an alacritty-only theme is still a theme");
+        let p = &items[0];
+        assert!(p.desktop);
+        let px = |s: &str| crate::theme::parse_hex(s).unwrap();
+        assert_eq!(p.bg, px("#0a0a08"), "primary background");
+        assert_eq!(p.chips[0], px("#0000aa"), "the accent is normal blue");
+        assert!(
+            p.toml.contains("faint = \"#000000\""),
+            "muted is bright black, falling back to normal black"
+        );
+        // Without all eight normal colours Omarchy derives nothing, and neither do we.
+        std::fs::write(
+            t.join("alacritty.toml"),
+            "[colors.primary]\nbackground = '#000000'\n[colors.normal]\nred = '#ff0000'\n",
+        )
+        .expect("write");
+        assert!(load(std::slice::from_ref(&dir)).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_colour_is_its_first_six_hex_digits() {
+        assert_eq!(first_hex("0x1A1B26").as_deref(), Some("#1a1b26"));
+        assert_eq!(first_hex("#1a1b26").as_deref(), Some("#1a1b26"));
+        assert_eq!(first_hex("1a1b26").as_deref(), Some("#1a1b26"));
+        assert_eq!(first_hex("#fff"), None);
+        assert_eq!(first_hex(""), None);
+    }
+
+    #[test]
+    fn every_stock_copy_loads_on_a_machine_with_no_omarchy() {
+        assert_eq!(STOCK.len(), 22);
+        for (id, src) in STOCK {
+            let p = from_source(id, src).unwrap_or_else(|| panic!("{id} does not load"));
+            let base = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).expect("base");
+            crate::theme::overlay_palette(&base, &p.toml)
+                .unwrap_or_else(|e| panic!("{id} does not apply: {e}"));
+        }
+    }
+
+    /// The copies TD carries against the desktop they were copied from. Skipped
+    /// where Omarchy is not installed; where it is, a theme Omarchy has retuned
+    /// fails here by name instead of drifting. `palettes/omarchy/README.md`
+    /// has the one-line refresh.
+    #[test]
+    fn the_stock_copies_match_the_desktop_they_came_from() {
+        let root = PathBuf::from("/usr/share/omarchy/themes");
+        if !root.is_dir() {
+            return;
+        }
+        let drifted: Vec<&str> = STOCK
+            .iter()
+            .filter(|(id, src)| {
+                std::fs::read_to_string(root.join(id).join("colors.toml"))
+                    .is_ok_and(|on_disk| on_disk != *src)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        assert!(
+            drifted.is_empty(),
+            "Omarchy has changed {drifted:?}; refresh app/palettes/omarchy/ (see its README)"
+        );
     }
 }

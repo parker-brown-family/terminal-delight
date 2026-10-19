@@ -1478,6 +1478,63 @@ fn td_pids_in_workspace(clients: &serde_json::Value, sel: &str) -> Vec<u32> {
     out
 }
 
+/// The workspace a window is on, by its pid, as the id `td_pids_in_workspace`
+/// selects with. `None` when Hyprland does not list the pid — a window on no
+/// compositor, or one that has gone — which is an answer, not workspace 0.
+fn workspace_of(clients: &serde_json::Value, pid: u32) -> Option<String> {
+    clients
+        .as_array()?
+        .iter()
+        .find(|c| c["pid"].as_i64() == Some(i64::from(pid)))
+        .and_then(|c| c["workspace"]["id"].as_i64())
+        .map(|id| id.to_string())
+}
+
+/// A person folded the paint overlay in THIS window: fold it in every other
+/// terminal-delight window on the same Hyprland workspace too.
+///
+/// The overlay is raised per workspace (`paint on` with the default scope pokes
+/// every window there), so two tiles side by side each grew one. Folding only
+/// the window the key was pressed in left the other standing, and a second
+/// press of the hotkey then flipped the two out of step. One raise, one fold.
+///
+/// Off the UI thread: asking Hyprland and each window is socket I/O. The other
+/// windows receive a plain `paint off`, which sets their mode and broadcasts
+/// nothing, so this cannot echo back and forth.
+pub fn fold_paint_on_my_workspace() {
+    let me = std::process::id();
+    std::thread::spawn(move || {
+        let Some(clients) = hypr_request("j/clients")
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        else {
+            return;
+        };
+        let Some(ws) = workspace_of(&clients, me) else {
+            return;
+        };
+        for pid in td_pids_in_workspace(&clients, &ws) {
+            if pid != me {
+                let _ = send(&socket_path(pid), "paint off");
+            }
+        }
+    });
+}
+
+/// What a `paint toggle` sent to several windows at once should become.
+///
+/// Flipping each window on its own leaves two windows that disagree still
+/// disagreeing — one closed by hand, one still up — and the hotkey then can
+/// never bring them back together. So a broadcast toggle settles on one state:
+/// if any window has the overlay up, the press folds them all; only when none
+/// has it does it raise them all. A window that would not say counts as down.
+fn settle_paint_toggle(up: &[bool]) -> &'static str {
+    if up.iter().any(|&u| u) {
+        "paint off"
+    } else {
+        "paint on"
+    }
+}
+
 /// The `terminal-delight ctl …` entry point. Returns the process exit code:
 /// 0 when at least one terminal answered, 2 when nothing matched (with a hint
 /// on stderr), 1 on a usage error.
@@ -1576,6 +1633,18 @@ pub fn run_cli(args: &[String]) -> i32 {
         );
         return 2;
     }
+
+    // A toggle aimed at several windows is one gesture, so it settles on one
+    // state rather than flipping each window from wherever it happens to be.
+    let line = if line == "paint toggle" && targets.len() > 1 {
+        let up: Vec<bool> = targets
+            .iter()
+            .map(|(_, path)| send(path, "paint status").is_ok_and(|r| r == "on"))
+            .collect();
+        settle_paint_toggle(&up).to_string()
+    } else {
+        line
+    };
 
     let mut ok = 0;
     for (pid, path) in &targets {
@@ -2576,6 +2645,25 @@ mod tests {
         assert_eq!(td_pids_in_workspace(&clients, "2"), vec![200]);
         assert_eq!(td_pids_in_workspace(&clients, "web"), vec![200]);
         assert!(td_pids_in_workspace(&clients, "9").is_empty());
+
+        // …and the way back, from a window to its workspace.
+        assert_eq!(workspace_of(&clients, 200).as_deref(), Some("2"));
+        assert_eq!(workspace_of(&clients, 300).as_deref(), Some("2"));
+        assert_eq!(
+            workspace_of(&clients, 999),
+            None,
+            "an unlisted pid has no workspace"
+        );
+    }
+
+    /// Two windows, one painter closed by hand: the hotkey must bring them back
+    /// together, not flip each into the other's state.
+    #[test]
+    fn a_broadcast_paint_toggle_settles_on_one_state() {
+        assert_eq!(settle_paint_toggle(&[true, false]), "paint off");
+        assert_eq!(settle_paint_toggle(&[false, true]), "paint off");
+        assert_eq!(settle_paint_toggle(&[true, true]), "paint off");
+        assert_eq!(settle_paint_toggle(&[false, false]), "paint on");
     }
 
     #[test]

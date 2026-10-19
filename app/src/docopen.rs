@@ -7,16 +7,18 @@
 //! *is this a document TD can draw*, and *where does the square go*. Both are
 //! here, and neither needs a window to answer.
 //!
-//! **Drawable** means Markdown, HTML, an image, a video, or a PDF. The name
-//! decides for the first two. An image has to prove it: a `.png` that is really
-//! a log file would open as an empty square, so a raster name must also carry a
-//! raster signature in its first bytes, and a file with no extension at all
-//! counts as an image when it carries one (screenshot tools often drop the
+//! **Drawable** means Markdown, HTML, an image, a video, a sound, or a PDF. The
+//! name decides for the first two. An image has to prove it: a `.png` that is
+//! really a log file would open as an empty square, so a raster name must also
+//! carry a raster signature in its first bytes, and a file with no extension at
+//! all counts as an image when it carries one (screenshot tools often drop the
 //! suffix). SVG is text, so it has no signature to check and its name decides.
 //! A video has to prove it the same way, by its container's signature, but a
 //! video never goes by its bytes alone: an HEIC photo opens with the same
-//! `ftyp` box an MP4 does. A PDF proves it with `%PDF-`, which belongs to
-//! nothing else, so a file with no extension that starts with it is a PDF.
+//! `ftyp` box an MP4 does. A sound is the same again, and never goes by its
+//! bytes alone either: an MP3 with no tag opens on two bytes that plenty of
+//! other files open on. A PDF proves it with `%PDF-`, which belongs to nothing
+//! else, so a file with no extension that starts with it is a PDF.
 //!
 //! **Where it goes** is a square beside the line that was clicked: right-aligned,
 //! just below that line when it fits and above it when it does not, and never
@@ -42,11 +44,24 @@ pub enum DocKind {
     Markdown,
     Html,
     Image,
-    /// Played by libmpv (`docview/mpv.rs`), looping, with sound.
+    /// Played by libmpv (`docview/mpv.rs`), with sound: once, as a clip, in
+    /// the square, and looping on the Document face.
     Video,
+    /// Played the way a video is, with its sound drawn as a moving waveform
+    /// where a video's picture would be.
+    Audio,
     /// Drawn a tile at a time by poppler (`docview/poppler.rs`), as one
     /// column of pages.
     Pdf,
+}
+
+impl DocKind {
+    /// Whether it plays rather than sits still: a video or a sound. Either
+    /// one opens in the square as a clip, above whatever square is up, and
+    /// closes itself at its end.
+    pub fn plays(self) -> bool {
+        matches!(self, DocKind::Video | DocKind::Audio)
+    }
 }
 
 /// A document a click asked for: the file, and what it was recognised as.
@@ -69,6 +84,9 @@ pub fn doc_kind_by_name(path: &std::path::Path) -> Option<DocKind> {
         "html" | "htm" => Some(DocKind::Html),
         "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "svg" => Some(DocKind::Image),
         "mp4" | "m4v" | "mov" | "webm" | "mkv" | "ogv" | "avi" => Some(DocKind::Video),
+        "mp3" | "m4a" | "aac" | "flac" | "wav" | "ogg" | "oga" | "opus" | "weba" => {
+            Some(DocKind::Audio)
+        }
         "pdf" => Some(DocKind::Pdf),
         _ => None,
     }
@@ -95,6 +113,20 @@ fn video_signature(head: &[u8]) -> bool {
         || (head.len() >= 12 && head.starts_with(b"RIFF") && &head[8..12] == b"AVI ")
 }
 
+/// The containers and streams a sound's name is checked against: an ID3 tag
+/// or a bare MPEG frame (MP3, and AAC in ADTS, which shares the frame's eleven
+/// set bits), FLAC, WAVE, Ogg (Vorbis and Opus), ISO media (M4A), and WebM.
+fn audio_signature(head: &[u8]) -> bool {
+    let frame = head.len() >= 2 && head[0] == 0xff && head[1] & 0xe0 == 0xe0;
+    frame
+        || head.starts_with(b"ID3")
+        || head.starts_with(b"fLaC")
+        || head.starts_with(b"OggS")
+        || head.starts_with(b"\x1a\x45\xdf\xa3")
+        || (head.len() >= 8 && &head[4..8] == b"ftyp")
+        || (head.len() >= 12 && head.starts_with(b"RIFF") && &head[8..12] == b"WAVE")
+}
+
 /// The formats gpui decodes that announce themselves in their first bytes.
 fn raster_signature(head: &[u8]) -> bool {
     head.starts_with(b"\x89PNG\r\n\x1a\n")
@@ -110,8 +142,8 @@ fn raster_signature(head: &[u8]) -> bool {
 /// A raster name on bytes that are not a raster is not drawable. A name TD does
 /// not know, on bytes that are a raster, is an image. SVG, Markdown and HTML are
 /// by name only: they are text, and text has no signature worth trusting. A
-/// video name needs a container's signature, and a video is never found by its
-/// bytes alone (see the module notes). A PDF needs `%PDF-`, and with no
+/// video or sound name needs a container's signature, and neither is ever found
+/// by its bytes alone (see the module notes). A PDF needs `%PDF-`, and with no
 /// extension at all `%PDF-` is enough.
 pub fn doc_kind(path: &std::path::Path, head: &[u8]) -> Option<DocKind> {
     let is_svg = path
@@ -122,6 +154,7 @@ pub fn doc_kind(path: &std::path::Path, head: &[u8]) -> Option<DocKind> {
         Some(DocKind::Image) if is_svg => Some(DocKind::Image),
         Some(DocKind::Image) => raster_signature(head).then_some(DocKind::Image),
         Some(DocKind::Video) => video_signature(head).then_some(DocKind::Video),
+        Some(DocKind::Audio) => audio_signature(head).then_some(DocKind::Audio),
         Some(DocKind::Pdf) => pdf_signature(head).then_some(DocKind::Pdf),
         Some(kind) => Some(kind),
         None if path.extension().is_none() && raster_signature(head) => Some(DocKind::Image),
@@ -594,6 +627,50 @@ pub fn float_home(screen_w: f32, screen_h: f32, line_top: f32, line_bottom: f32)
     )
 }
 
+/// The square's strip: its file's name and its controls, across the top.
+pub const FLOAT_STRIP_H: f32 = 22.0;
+
+/// How far a clip's box sits inside the square it covers, on every side
+/// below the strip, so the square's own rim shows round it.
+const CLIP_INSET: f32 = 24.0;
+
+/// Pure. Where a clip's box opens over the square it covers: inside it, below
+/// the square's strip, with the square's rim still showing round it. It reads
+/// as a box on top of the page, which is what it is, rather than the page
+/// turning into a video. A square too small to leave a rim round a box of the
+/// smallest size a square can be resized to is covered whole.
+pub fn clip_home(below: FloatRect) -> FloatRect {
+    let inside = FloatRect {
+        x: below.x + CLIP_INSET,
+        y: below.y + FLOAT_STRIP_H + CLIP_INSET,
+        w: below.w - 2.0 * CLIP_INSET,
+        h: below.h - FLOAT_STRIP_H - 2.0 * CLIP_INSET,
+    };
+    if inside.w < FLOAT_MIN_W || inside.h < FLOAT_MIN_H {
+        below
+    } else {
+        inside
+    }
+}
+
+/// The shape of a sound's waveform, width over height: the picture mpv draws
+/// for a file that has only sound (`docview/mpv.rs`).
+pub const SOUND_SHAPE: f32 = 2.5;
+
+/// Pure. A sound's box, cut from the box a clip would get (`clip`): as wide,
+/// from the same top, and only as tall as its strip, a waveform of
+/// [`SOUND_SHAPE`] across the whole width, and `bar_h` for the bar below it.
+/// A sound has no picture to fill a square with, so the rest of whatever it
+/// covers stays in sight. Never taller than `clip`, never shorter than a
+/// square can be resized to.
+pub fn sound_box(clip: FloatRect, bar_h: f32) -> FloatRect {
+    let fits = FLOAT_STRIP_H + clip.w / SOUND_SHAPE + bar_h;
+    FloatRect {
+        h: fits.max(FLOAT_MIN_H).min(clip.h),
+        ..clip
+    }
+}
+
 /// Keep a square inside the screen, shrinking it first if the screen became
 /// smaller than the square.
 pub fn clamp_float(r: FloatRect, screen_w: f32, screen_h: f32) -> FloatRect {
@@ -774,6 +851,10 @@ pub enum FloatHit {
     /// Within a grip of the left, right or bottom edge: pressing here
     /// resizes the square.
     Resize(Edges),
+    /// The square a clip's box is covering, where the box is not. Drawn, and
+    /// deaf: a press here does nothing, rather than falling through to the
+    /// terminal under both of them.
+    Covered,
 }
 
 /// One region of the square as it was laid out, flat, in window pixels.
@@ -1021,6 +1102,9 @@ mod tests {
             ("clip.mp4", DocKind::Video),
             ("clip.WEBM", DocKind::Video),
             ("take.mov", DocKind::Video),
+            ("song.mp3", DocKind::Audio),
+            ("TAKE.OGG", DocKind::Audio),
+            ("take.opus", DocKind::Audio),
             ("paper.pdf", DocKind::Pdf),
             ("INVOICE.PDF", DocKind::Pdf),
         ] {
@@ -1091,6 +1175,64 @@ mod tests {
             doc_kind(Path::new("clip.avi"), b"RIFF\x24\0\0\0WEBPVP8 "),
             None
         );
+    }
+
+    /// A sound's name is drawable on its own container's first bytes, and on
+    /// nothing else: a log named `.mp3` would open a box mpv can never fill.
+    /// And no sound is found by its bytes alone: an MP3 with no tag opens on
+    /// two bytes that are not worth trusting by themselves.
+    #[test]
+    fn a_sound_name_needs_its_signature_and_a_sound_never_goes_by_bytes_alone() {
+        let id3 = b"ID3\x04\0\0\0\0\0\x23TSSE";
+        let mp3 = b"\xff\xfb\x90\x64\0\0\0\0";
+        let adts = b"\xff\xf1\x50\x80\x2f\xff\xfc";
+        let flac = b"fLaC\0\0\0\x22\x10\0";
+        let wav = b"RIFF\x24\0\0\0WAVEfmt ";
+        let ogg = b"OggS\0\x02\0\0\0\0\0\0";
+        let m4a = b"\0\0\0\x20ftypM4A \0\0\x02\0";
+        let weba = b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81";
+        for (name, head) in [
+            ("song.mp3", &id3[..]),
+            ("song.MP3", &mp3[..]),
+            ("song.aac", &adts[..]),
+            ("take.flac", &flac[..]),
+            ("take.wav", &wav[..]),
+            ("take.ogg", &ogg[..]),
+            ("take.oga", &ogg[..]),
+            ("take.opus", &ogg[..]),
+            ("song.m4a", &m4a[..]),
+            ("take.weba", &weba[..]),
+        ] {
+            assert_eq!(
+                doc_kind(Path::new(name), head),
+                Some(DocKind::Audio),
+                "{name}"
+            );
+        }
+        assert_eq!(doc_kind(Path::new("song.mp3"), b"not a sound at all"), None);
+        assert_eq!(doc_kind(Path::new("take.wav"), b""), None);
+        assert_eq!(
+            doc_kind(Path::new("take.wav"), b"RIFF\x24\0\0\0AVI LIST"),
+            None,
+            "a film named as a sound"
+        );
+        assert_eq!(doc_kind(Path::new("take"), &ogg[..]), None);
+        assert_eq!(doc_kind(Path::new("take"), &id3[..]), None);
+    }
+
+    /// A video and a sound both play, and open as a clip; nothing else does.
+    #[test]
+    fn only_a_video_or_a_sound_plays() {
+        assert!(DocKind::Video.plays());
+        assert!(DocKind::Audio.plays());
+        for still in [
+            DocKind::Markdown,
+            DocKind::Html,
+            DocKind::Image,
+            DocKind::Pdf,
+        ] {
+            assert!(!still.plays(), "{still:?}");
+        }
     }
 
     /// No video is found by its bytes alone: a photo from a phone opens with
@@ -1590,6 +1732,68 @@ mod tests {
         assert!(inside(c, 400.0, 300.0), "{c:?}");
         assert_eq!((c.w, c.h), (400.0, 300.0));
         assert!(c.contains(10.0, 10.0) && !c.contains(400.0, 10.0));
+    }
+
+    /// A clip's box opens inside the square it covers, leaving the square's
+    /// strip (its file's name and its ✕) and a rim of the square showing, so
+    /// the page plainly is still there underneath. A square too small for
+    /// that is covered whole rather than given a box smaller than any square
+    /// can be.
+    #[test]
+    fn a_clip_opens_inside_the_square_it_covers_below_its_strip() {
+        let page = FloatRect {
+            x: 300.0,
+            y: 40.0,
+            w: 600.0,
+            h: 600.0,
+        };
+        let clip = clip_home(page);
+        assert!(
+            clip.y >= page.y + FLOAT_STRIP_H,
+            "the strip shows: {clip:?}"
+        );
+        assert!(
+            clip.x > page.x && clip.x + clip.w < page.x + page.w,
+            "{clip:?}"
+        );
+        assert!(clip.y + clip.h < page.y + page.h, "{clip:?}");
+        assert!(clip.w >= FLOAT_MIN_W && clip.h >= FLOAT_MIN_H);
+        let small = FloatRect {
+            x: 10.0,
+            y: 10.0,
+            w: FLOAT_MIN_W + 20.0,
+            h: FLOAT_MIN_H + 20.0,
+        };
+        assert_eq!(clip_home(small), small);
+    }
+
+    /// A sound's box is a band: as wide as a clip's and from the same top,
+    /// but only tall enough for its strip, a waveform of the sound's shape
+    /// across the width, and its bar, so most of the page stays in sight.
+    /// It never grows past the clip's box, nor shrinks below a square.
+    #[test]
+    fn a_sounds_box_is_a_band_as_tall_as_its_waveform() {
+        let clip = FloatRect {
+            x: 324.0,
+            y: 86.0,
+            w: 552.0,
+            h: 530.0,
+        };
+        let band = sound_box(clip, 24.0);
+        assert_eq!((band.x, band.y, band.w), (clip.x, clip.y, clip.w));
+        let wave = band.h - FLOAT_STRIP_H - 24.0;
+        assert!(
+            (band.w / wave - SOUND_SHAPE).abs() < 0.01,
+            "the waveform keeps its shape: {band:?}"
+        );
+        assert!(band.h < clip.h, "{band:?}");
+        let low = FloatRect { h: 150.0, ..clip };
+        assert_eq!(sound_box(low, 24.0), low, "no taller than the clip's box");
+        let narrow = FloatRect { w: 200.0, ..clip };
+        assert_eq!(
+            sound_box(narrow, 24.0).h,
+            FLOAT_MIN_H.max(22.0 + 80.0 + 24.0)
+        );
     }
 
     fn tab(agents: &[bool]) -> Vec<SendLeaf> {

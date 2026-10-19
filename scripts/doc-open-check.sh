@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # `open_document`, driven the way an agent drives it, in a window nobody can
-# see: does a document open beside the agent that asked, through the same
-# router a Ctrl+Alt+click goes through, and nowhere else?
+# see: does delivery open inside the calling agent's pane by default, with
+# an explicit beside request still going through Ctrl+Alt+click's router?
 #
 # The agent is a stand-in: a script called `claude`, run by absolute path so no
 # `claude` on anyone's PATH is ever started, which records whatever reaches its
 # stdin. It asks through `ctl mcp from <session> <pane> rpc`, the line an
 # agent's relay sends, naming its own pane as the relay would:
 #
-#   1. a.md beside it                 -> a split in its tab
+#   0. a.md, default placement        -> a square in its pane, no split
+#   1. a.md, explicit beside          -> a split in its tab
 #   2. a.md again                     -> the pane already showing it is focused
 #   3. b.md, c.md                     -> two more splits: four panes
 #   4. d.md                           -> the tab is full, so it floats instead
@@ -125,11 +126,13 @@ done
 check "the stand-in is running as an agent (pane ${AGENT:-none})" test -n "$AGENT"
 
 echo "== the router, asked by the agent"
-opened "$(doc a.md)" "beside pane $AGENT — opened in pane"
-opened "$(doc a.md)" "focused pane"
-opened "$(doc b.md)" "beside pane $AGENT — opened in pane"
-opened "$(doc c.md)" "beside pane $AGENT — opened in pane"
-opened "$(doc d.md)" "float pane $AGENT — the tab has four panes"
+opened "$(doc a.md)" "float pane $AGENT"
+check "default delivery leaves the agent's tab at one pane" test "$(panes | grep -c '^1 ')" -eq 1
+opened "$(doc a.md ',"placement":"beside"')" "beside pane $AGENT — opened in pane"
+opened "$(doc a.md ',"placement":"beside"')" "focused pane"
+opened "$(doc b.md ',"placement":"beside"')" "beside pane $AGENT — opened in pane"
+opened "$(doc c.md ',"placement":"beside"')" "beside pane $AGENT — opened in pane"
+opened "$(doc d.md ',"placement":"beside"')" "float pane $AGENT — the tab has four panes"
 opened "$(doc e.md ',"placement":"here"')" "float pane $AGENT"
 
 echo "== what it refuses"

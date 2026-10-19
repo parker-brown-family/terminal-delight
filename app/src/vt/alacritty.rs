@@ -22,7 +22,6 @@ use alacritty_terminal::vte::ansi::{
     Color as AColor, CursorShape as AShape, Processor, Rgb as ARgb, StdSyncHandler,
 };
 
-#[cfg(test)]
 use super::Hyperlink;
 use super::{
     Backend, Cell, ClipboardType, Color, Column, Cursor, CursorShape, Event, Flags, Line, Listener,
@@ -304,7 +303,6 @@ impl Backend for Core {
 
     fn forget_pictures(&mut self) {}
 
-    #[cfg(test)]
     fn hyperlink(&self, point: Point) -> Option<Hyperlink> {
         let link = self.term.grid()[point_in(point)].hyperlink()?;
         Some(Hyperlink::new(link.id(), link.uri()))

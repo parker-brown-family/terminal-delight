@@ -103,7 +103,16 @@ const EVENT_SHUTDOWN: c_int = 1;
 const EVENT_END_FILE: c_int = 7;
 const EVENT_FILE_LOADED: c_int = 8;
 const EVENT_PROPERTY_CHANGE: c_int = 22;
+const END_FILE_EOF: c_int = 0;
 const END_FILE_ERROR: c_int = 4;
+
+/// Whether an `END_FILE` reason means the file played to its end. Only EOF
+/// does: a stop, a quit or a redirect is the player being told to stop, and
+/// an error is said in its own words. A clip in the square closes on this, so
+/// reading it the wrong way round closes a clip the moment it is replaced.
+fn played_out(reason: c_int) -> bool {
+    reason == END_FILE_EOF
+}
 
 type Callback = Option<unsafe extern "C" fn(*mut c_void)>;
 
@@ -146,7 +155,9 @@ impl Missing {
     /// Why, in a sentence, and nothing about what happened instead.
     pub fn reason(&self) -> String {
         match self {
-            Missing::NotFound => "No libmpv found (install mpv to play video in TD).".into(),
+            Missing::NotFound => {
+                "No libmpv found (install mpv to play video and sound in TD).".into()
+            }
             Missing::TooOld(name) => {
                 format!("The libmpv found has no {name}; it is older than TD needs.")
             }
@@ -272,6 +283,9 @@ pub struct Status {
     pub picture_h: Option<u32>,
     /// The file has been opened and its tracks read.
     pub loaded: bool,
+    /// The file played to its end. A video that loops never does, and one
+    /// that was stopped or failed has not.
+    pub ended: bool,
     /// Why nothing will play, in a sentence.
     pub error: Option<String>,
 }
@@ -296,6 +310,9 @@ pub enum Command {
     SeekBy(f64),
     /// A fraction of the whole, `0.0..=1.0`.
     SeekTo(f64),
+    /// Start again at the end, or stop there. A clip in the square plays
+    /// once; the same clip moved onto a pane's Document face loops.
+    Loop(bool),
 }
 
 impl Command {
@@ -310,6 +327,11 @@ impl Command {
                 "seek".into(),
                 format!("{:.3}", f.clamp(0.0, 1.0) * 100.0),
                 "absolute-percent+exact".into(),
+            ],
+            Command::Loop(on) => vec![
+                "set".into(),
+                "loop-file".into(),
+                if on { "inf" } else { "no" }.into(),
             ],
         }
     }
@@ -355,11 +377,43 @@ pub struct Player {
     shared: Arc<Mutex<Shared>>,
 }
 
+/// What a player draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Picture {
+    /// The file's own picture: a video.
+    Film,
+    /// The file's sound, drawn by mpv as a waveform [`WAVES`] pixels in size,
+    /// white on black, moving as it plays: a file that is only sound. Its own
+    /// picture, if it has one (an album's cover), is not shown.
+    Waves,
+}
+
+/// The size mpv draws a sound's waveform at, before it is scaled to the view.
+pub const WAVES: (u32, u32) = (1200, 480);
+
+/// The filter graph that draws a sound: its first sound track split in two,
+/// one half to the speakers and the other drawn as a line from the middle
+/// out, on a square-root scale so a quiet passage still moves.
+fn waves_graph() -> CString {
+    let (w, h) = WAVES;
+    CString::new(format!(
+        "[aid1] asplit [ao] [w]; \
+         [w] showwaves=s={w}x{h}:mode=cline:rate=30:draw=full:scale=sqrt:colors=white [vo]"
+    ))
+    .expect("no NUL in the graph")
+}
+
 impl Player {
-    /// Start playing `path`, looping, with sound. Answers at once: the file is
-    /// opened on the control thread, and anything that goes wrong there is
-    /// said in [`Status::error`], after a poke.
-    pub fn start(path: &Path, poke: Poke) -> Result<Player, String> {
+    /// Start playing `path`, with sound, once or `looping`, drawing what
+    /// `picture` says. Answers at once: the file is opened on the control
+    /// thread, and anything that goes wrong there is said in
+    /// [`Status::error`], after a poke.
+    pub fn start(
+        path: &Path,
+        looping: bool,
+        picture: Picture,
+        poke: Poke,
+    ) -> Result<Player, String> {
         let lib = lib().map_err(|why| why.reason())?;
         let path = CString::new(path.as_os_str().as_encoded_bytes())
             .map_err(|_| "The path has a NUL byte in it.".to_string())?;
@@ -374,6 +428,8 @@ impl Player {
                 control(
                     lib,
                     path,
+                    looping,
+                    picture,
                     Channels {
                         rx: control_rx,
                         wake,
@@ -488,13 +544,24 @@ const OPTIONS: [(&CStr, &CStr); 11] = [
     (c"load-scripts", c"no"),
     (c"ytdl", c"no"),
     (c"hwdec", c"no"),
-    // A clip loops, the way a GIF in the same square does.
-    (c"loop-file", c"inf"),
-    // A file with only sound draws nothing rather than its cover art.
+    // A file with only sound draws nothing rather than its cover art; one
+    // opened as a sound draws its waveform instead ([`Picture::Waves`]).
     (c"audio-display", c"no"),
+    // With no sound device, a clip plays to its end in silence and closes. A
+    // film did so already; a waveform, whose graph feeds the speakers, would
+    // otherwise end in an error and sit there saying so.
+    (c"audio-fallback-to-null", c"yes"),
 ];
 
-fn control(lib: &'static Lib, path: CString, ch: Channels, shared: Arc<Mutex<Shared>>, poke: Poke) {
+fn control(
+    lib: &'static Lib,
+    path: CString,
+    looping: bool,
+    picture: Picture,
+    ch: Channels,
+    shared: Arc<Mutex<Shared>>,
+    poke: Poke,
+) {
     // SAFETY: every call below is on the handle this thread created and
     // destroys, with C strings that outlive the call.
     unsafe {
@@ -504,6 +571,22 @@ fn control(lib: &'static Lib, path: CString, ch: Channels, shared: Arc<Mutex<Sha
         }
         for (name, value) in OPTIONS {
             (lib.set_option_string)(mpv, name.as_ptr(), value.as_ptr());
+        }
+        // The sound output mpv uses, when one is named: `null` plays every
+        // clip in silence without looking for a device at all, which is how
+        // the bench check plays them (`scripts/video-check.sh`).
+        if let Some(ao) = std::env::var_os("TD_MPV_AO")
+            .and_then(|v| CString::new(v.as_encoded_bytes().to_vec()).ok())
+        {
+            (lib.set_option_string)(mpv, c"ao".as_ptr(), ao.as_ptr());
+        }
+        // A video on a pane's Document face loops, the way a GIF does; a clip
+        // in the square plays once and reports its end, which closes it.
+        let times = if looping { c"inf" } else { c"no" };
+        (lib.set_option_string)(mpv, c"loop-file".as_ptr(), times.as_ptr());
+        if picture == Picture::Waves {
+            let graph = waves_graph();
+            (lib.set_option_string)(mpv, c"lavfi-complex".as_ptr(), graph.as_ptr());
         }
         let r = (lib.initialize)(mpv);
         if r < 0 {
@@ -630,6 +713,13 @@ fn control(lib: &'static Lib, path: CString, ch: Channels, shared: Arc<Mutex<Sha
                                 "mpv could not play this file: {}.",
                                 lib.error(end.error)
                             ));
+                            changed = true;
+                        } else if played_out(end.reason) {
+                            shared
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .status
+                                .ended = true;
                             changed = true;
                         }
                     }
@@ -845,6 +935,21 @@ mod tests {
             Command::SeekBy(-5.0).words(),
             vec!["seek", "-5.000", "relative"]
         );
+    }
+
+    /// A clip in the square closes when it plays out, so only the end of the
+    /// file counts as one. A clip replaced or closed is stopped (2) or quit
+    /// (3), a failed one errors (4), a playlist entry redirects (5): none of
+    /// those has played to its end, and closing on them would close a square
+    /// that is already being replaced.
+    #[test]
+    fn only_the_end_of_the_file_is_a_clip_playing_out() {
+        assert!(played_out(END_FILE_EOF));
+        for stopped in [2, 3, END_FILE_ERROR, 5] {
+            assert!(!played_out(stopped), "reason {stopped} is not an end");
+        }
+        assert_eq!(Command::Loop(true).words(), vec!["set", "loop-file", "inf"]);
+        assert_eq!(Command::Loop(false).words(), vec!["set", "loop-file", "no"]);
     }
 
     fn prop(format: c_int, data: *mut c_void) -> EventProperty {

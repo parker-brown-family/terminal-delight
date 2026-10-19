@@ -255,6 +255,7 @@ pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::
 
 /// Build a fresh snapshot from the live workspace (runs on the main thread).
 fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot {
+    ws.sync_coordination_scope(cx);
     mcp::Snapshot {
         config: ws.mcp.clone(),
         panes: ws.mcp_snapshot(cx),
@@ -263,7 +264,13 @@ fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot
         // Filled in by the transport that has a caller to name; the ticker
         // serves every transport and knows nothing about who asked.
         caller: None,
-        engineering: ws.eng_reports(),
+        engineering: if ws.coordination_full_scope() {
+            ws.eng_reports()
+        } else {
+            vec![]
+        },
+        coordination: Some(ws.coord_authorized.clone()),
+        engineering_allowed: ws.coordination_full_scope(),
         documents: ws.mcp_documents(cx),
     }
 }
@@ -524,6 +531,8 @@ mod tests {
             }),
             caller: None,
             engineering: vec![],
+            coordination: None,
+            engineering_allowed: false,
             documents: vec![],
         }
     }

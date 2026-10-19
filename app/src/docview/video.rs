@@ -31,6 +31,15 @@
 //! to [`Backend::press`]. A press on the picture pauses or plays it, as in
 //! every player. Space, ←/→ and M do the same on the Document face; over the
 //! terminal the square leaves every key but Escape to the prompt beside it.
+//!
+//! # A sound is a video whose picture is its waveform
+//!
+//! A file opened as a sound ([`DocKind::Audio`](crate::docopen::DocKind))
+//! plays here too, on the same player, bar and clip. mpv draws its sound as a
+//! moving waveform, white on black ([`Picture::Waves`]), and each frame is
+//! recoloured in the pane's accent as it arrives ([`ink`]), so the waveform
+//! wears the theme the way the rest of the square does, and a theme change
+//! reaches a paused one too.
 
 use std::any::Any;
 use std::path::Path;
@@ -43,8 +52,9 @@ use gpui::{
 };
 
 use super::backend::{Backend, Drawn};
-use super::mpv::{Command, Player, Status};
+use super::mpv::{Command, Picture, Player, Status};
 use super::DocumentView;
+use crate::docopen::DocSeat;
 use crate::theme::Theme;
 
 /// The bar's height, in logical pixels.
@@ -186,8 +196,40 @@ pub fn progress(s: &Status) -> Option<f64> {
     (d > 0.0 && p.is_finite()).then(|| (p / d).clamp(0.0, 1.0))
 }
 
-/// A frame from the render thread as a picture gpui can draw.
-fn picture_of(frame: super::mpv::Frame) -> Option<Arc<RenderImage>> {
+/// Pure. Whether a clip's end is news: it has played out, it is not looping,
+/// and nobody has been told yet. Told twice, the pane would close the square
+/// it had just put back.
+pub fn ends_now(ended: bool, looping: bool, told: bool) -> bool {
+    ended && !looping && !told
+}
+
+/// Pure. A white-on-black frame, in mpv's B G R A, recoloured in `rgb`: each
+/// pixel takes the colour at the strength of its brightest channel, so white
+/// becomes `rgb`, black stays black, and the grey edges mpv's scaling leaves
+/// fall in between.
+pub fn ink(bgra: &mut [u8], rgb: [u8; 3]) {
+    let at = |c: u8, v: u8| ((u16::from(c) * u16::from(v) + 127) / 255) as u8;
+    for px in bgra.as_chunks_mut::<4>().0 {
+        let v = px[0].max(px[1]).max(px[2]);
+        px[0] = at(rgb[2], v);
+        px[1] = at(rgb[1], v);
+        px[2] = at(rgb[0], v);
+    }
+}
+
+/// A theme colour as the three bytes [`ink`] takes.
+fn rgb_of(c: gpui::Hsla) -> [u8; 3] {
+    let c = gpui::Rgba::from(c);
+    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    [b(c.r), b(c.g), b(c.b)]
+}
+
+/// A frame from the render thread as a picture gpui can draw, recoloured in
+/// `rgb` when it is a sound's waveform.
+fn picture_of(mut frame: super::mpv::Frame, rgb: Option<[u8; 3]>) -> Option<Arc<RenderImage>> {
+    if let Some(rgb) = rgb {
+        ink(&mut frame.bgra, rgb);
+    }
     let buf = image::RgbaImage::from_raw(frame.width, frame.height, frame.bgra)?;
     Some(Arc::new(RenderImage::new(vec![image::Frame::new(buf)])))
 }
@@ -208,17 +250,37 @@ pub struct VideoDoc {
     scrubbing: bool,
     /// Whether a frame has been drawn yet, for `TD_DOCDEBUG`'s one line.
     drawn: bool,
+    /// It starts again at its end. Off in the square, where a video is a clip
+    /// that plays once and closes; on for the Document face.
+    looping: bool,
+    /// Its end has been told to the view, which says [`super::Finished`]
+    /// once and only once.
+    told_end: bool,
+    /// The file's own picture, or its sound drawn as a waveform.
+    picture: Picture,
+    /// The colour a waveform is drawn in: the pane's accent, as of the last
+    /// paint. `None` for a film, and for a waveform before its first paint,
+    /// which then stays white.
+    ink: Option<[u8; 3]>,
     _pump: Task<()>,
 }
 
 impl VideoDoc {
-    /// Start the video playing. The player wakes the view through a channel
-    /// whenever it leaves a frame or a change of status; the task that
-    /// listens is the view's, so it ends when the view does.
-    pub fn open(path: &Path, cx: &mut Context<DocumentView>) -> Self {
+    /// Start the video or sound playing, once: a new view sits in the
+    /// floating square, and a video there is a clip that closes at its end.
+    /// A view moved onto the Document face loops from then on
+    /// ([`Backend::seated`]).
+    ///
+    /// The player wakes the view through a channel whenever it leaves a frame
+    /// or a change of status; the task that listens is the view's, so it ends
+    /// when the view does.
+    pub fn open(path: &Path, picture: Picture, cx: &mut Context<DocumentView>) -> Self {
         let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
+        let looping = false;
         let player = Player::start(
             path,
+            looping,
+            picture,
             Arc::new(move || {
                 let _ = tx.unbounded_send(());
             }),
@@ -226,12 +288,15 @@ impl VideoDoc {
         let pump = cx.spawn(async move |this, cx| {
             while rx.next().await.is_some() {
                 let alive = this.update(cx, |view, cx| {
-                    let moved = view
+                    let (moved, ended) = view
                         .backend
                         .downcast_mut::<VideoDoc>()
-                        .is_some_and(|doc| doc.pull(cx));
+                        .map_or((false, false), |doc| (doc.pull(cx), doc.end_to_tell()));
                     if moved {
                         cx.notify();
+                    }
+                    if ended {
+                        cx.emit(super::Finished);
                     }
                 });
                 if alive.is_err() {
@@ -247,8 +312,21 @@ impl VideoDoc {
             asked: None,
             scrubbing: false,
             drawn: false,
+            looping,
+            told_end: false,
+            picture,
+            ink: None,
             _pump: pump,
         }
+    }
+
+    /// Whether the clip has just played out and nobody has been told: true
+    /// once, the first time it is asked after the end. A video that loops
+    /// never ends, so never answers true.
+    fn end_to_tell(&mut self) -> bool {
+        let tell = ends_now(self.status.ended, self.looping, self.told_end);
+        self.told_end |= tell;
+        tell
     }
 
     /// Take what the player left: the newest frame, and the status. Answers
@@ -263,7 +341,8 @@ impl VideoDoc {
             self.status = status;
             changed = true;
         }
-        if let Some(picture) = player.take_frame().and_then(picture_of) {
+        let rgb = self.ink;
+        if let Some(picture) = player.take_frame().and_then(|f| picture_of(f, rgb)) {
             // Through the page's door, deferred to the end of the effect
             // cycle: a window busy with its own event is out of gpui's list
             // while it is, and a drop made then would miss its atlas.
@@ -297,6 +376,22 @@ impl VideoDoc {
                 self.asked = Some(size);
                 player.size(size.0, size.1);
             }
+        }
+    }
+
+    /// A waveform takes the theme's accent. When that moved, the frame on
+    /// screen is drawn again, so a paused waveform changes colour too.
+    fn ink_in(&mut self, th: &Theme) {
+        if self.picture != Picture::Waves {
+            return;
+        }
+        let rgb = Some(rgb_of(th.accent));
+        if rgb == self.ink {
+            return;
+        }
+        self.ink = rgb;
+        if let (Ok(player), Some((w, h))) = (&self.player, self.asked) {
+            player.size(w, h);
         }
     }
 
@@ -403,6 +498,7 @@ impl VideoDoc {
         let Some((size, scale)) = view.frame else {
             return note("opening…".into());
         };
+        self.ink_in(th);
         self.ask_size(size, scale);
         let (w, h) = (f32::from(size.width), f32::from(size.height));
         let area = (w, (h - BAR_H).max(0.0));
@@ -522,6 +618,17 @@ impl Backend for VideoDoc {
         self.run(Command::Hold);
     }
 
+    /// In the square a video is a clip: it plays once, and its end closes it.
+    /// On the Document face it loops, as a video there always has, and a
+    /// clip split off into a pane of its own starts looping there.
+    fn seated(&mut self, seat: DocSeat) {
+        let looping = seat == DocSeat::Face;
+        if looping != self.looping {
+            self.looping = looping;
+            self.run(Command::Loop(looping));
+        }
+    }
+
     /// Space, ← and →, and M, on the Document face. A floating square takes
     /// none of them: over the terminal they belong to the prompt.
     fn key(&mut self, ks: &Keystroke, floating: bool, _cx: &mut Context<DocumentView>) -> bool {
@@ -544,6 +651,51 @@ impl Backend for VideoDoc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A clip's end is told once, and only for a clip: a video looping on
+    /// the Document face never closes, and an end already told is not told
+    /// again, or the pane would close the square it had just put back.
+    #[test]
+    fn a_waveform_is_drawn_in_the_ink_it_is_given_at_the_strength_of_its_white() {
+        // White, black, a grey edge, and a white pixel with a clear alpha,
+        // which recolouring must leave alone.
+        let mut px = vec![
+            255, 255, 255, 255, //
+            0, 0, 0, 255, //
+            128, 128, 128, 255, //
+            255, 255, 255, 0,
+        ];
+        let amber = [0xff, 0x9e, 0x3b];
+        ink(&mut px, amber);
+        assert_eq!(
+            &px[0..4],
+            &[0x3b, 0x9e, 0xff, 255],
+            "white is the ink, B G R"
+        );
+        assert_eq!(&px[4..8], &[0, 0, 0, 255], "black stays black");
+        assert_eq!(
+            &px[8..12],
+            &[30, 79, 128, 255],
+            "a grey edge is half the ink"
+        );
+        assert_eq!(px[15], 0, "the alpha is not ink's to touch");
+    }
+
+    /// A sound's waveform is drawn at the shape its box is cut to: the two
+    /// halves of one decision, in two files that cannot see each other.
+    #[test]
+    fn the_waveform_mpv_draws_is_the_shape_a_sounds_box_is_cut_to() {
+        let (w, h) = super::super::mpv::WAVES;
+        assert!((w as f32 / h as f32 - crate::docopen::SOUND_SHAPE).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_clip_says_it_finished_once_and_a_looping_video_never_does() {
+        assert!(ends_now(true, false, false));
+        assert!(!ends_now(false, false, false), "still playing");
+        assert!(!ends_now(true, true, false), "looping on the face");
+        assert!(!ends_now(true, false, true), "already told");
+    }
 
     /// A wide bar has every part, left to right, touching and inside the
     /// view; a narrow one drops the time and gives its room to the track.

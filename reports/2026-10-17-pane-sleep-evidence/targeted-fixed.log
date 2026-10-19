@@ -1,0 +1,53 @@
+   Compiling terminal-delight v0.3.0 (/home/parker/Work/terminal-delight/.worktrees/pane-sleep/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3m 58s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (/home/parker/Work/terminal-delight/app/target/debug/deps/terminal_delight-943fb19e4403fece)
+
+running 7 tests
+test pane::housekeeping_tests::hidden_completion_keeps_its_short_debounce_without_a_busy_loop ... ok
+test pane::housekeeping_tests::a_hidden_stream_and_colour_query_do_not_wait_for_housekeeping ... ok
+test pane::housekeeping_tests::hidden_housekeeping_sleeps_and_hosted_watchers_do_not_poll ... ok
+test pane::housekeeping_tests::hidden_reel_animation_uses_deferred_repaint ... ok
+test pane::housekeeping_tests::hidden_completion_waits_for_scroll_settle ... ok
+test pane::housekeeping_tests::hidden_prompt_is_detected_by_the_one_second_fallback ... ok
+test pane::housekeeping_tests::hidden_resize_interrupts_sleep_and_keeps_the_last_target ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 2306 filtered out; finished in 4.19s
+
+     Running tests/bench_adversarial.rs (/home/parker/Work/terminal-delight/app/target/debug/deps/bench_adversarial-70c42d96de7615db)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s
+
+     Running tests/broken_pipe.rs (/home/parker/Work/terminal-delight/app/target/debug/deps/broken_pipe-19ad20d8d2c1faff)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/dispatch_cli.rs (/home/parker/Work/terminal-delight/app/target/debug/deps/dispatch_cli-89135d7be97fc54d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+     Running tests/host_socket.rs (/home/parker/Work/terminal-delight/app/target/debug/deps/host_socket-3f774e4f5fb02eac)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/snapshot_engine.rs (/home/parker/Work/terminal-delight/app/target/debug/deps/snapshot_engine-7afa7e4aa9816391)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 75 filtered out; finished in 0.00s
+
+     Running tests/workbench_surface.rs (/home/parker/Work/terminal-delight/app/target/debug/deps/workbench_surface-7ed5b06c1dd6a716)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s
+

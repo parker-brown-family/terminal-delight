@@ -1,0 +1,21 @@
+diff --git i/crates/gpui_wgpu/src/wgpu_renderer.rs w/crates/gpui_wgpu/src/wgpu_renderer.rs
+index 4e8fb1d..57d02d3 100644
+--- i/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ w/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -1404,8 +1404,14 @@ impl WgpuRenderer {
+             }
+         };
+ 
+-        // Now that we know the surface is healthy, ensure intermediate textures exist
+-        self.ensure_intermediate_textures();
++        // Now that we know the surface is healthy, ensure intermediate textures
++        // exist — for a frame that draws a path, the only thing that reads them.
++        // td-lazy-path-targets: they are a surface-sized texture and a 4x MSAA
++        // one, ~73 MiB of GPU memory at 2518x1517, and a window that never draws
++        // a path never needs them (terminal-delight#953).
++        if !scene.paths.is_empty() {
++            self.ensure_intermediate_textures();
++        }
+ 
+         let frame_view = frame
+             .texture

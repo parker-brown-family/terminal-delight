@@ -1,0 +1,9 @@
+{
+  "phase": "efficiency-recheck",
+  "duration_s": 15.000385393970646,
+  "quickshell_pid": 1465098,
+  "own_cpu_percent_one_logical_cpu": 8.199789323375613,
+  "reaped_child_cpu_equivalent_percent": 258.3933611171047,
+  "desktop_service_cpu_percent": 157.21526734559143,
+  "limits": "Desktop scope includes compositor and other commands. Reaped-child CPU can include CPU accrued before this interval; workload is not controlled."
+}

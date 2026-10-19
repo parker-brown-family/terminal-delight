@@ -58,7 +58,7 @@ use super::cache::{self, CacheKey};
 use super::engine::ConcurSupport;
 use super::engine::{
     bands, layout_hash, Anchor, Band, DialogRender, EngineError, Geometry, Link, Opener,
-    PageEngine, PageId, PageLayout, PageRequest, RectCss, Unavailable, TILE_DEV,
+    PageEngine, PageId, PageLayout, PageRequest, PageVideo, RectCss, Unavailable, TILE_DEV,
 };
 use super::notes::{self, NotesRead};
 use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer, Pasting, Said};
@@ -227,6 +227,46 @@ pub fn hit_at(
         .find(|l| under(l.rect))
         .cloned()
         .map(PageHit::Link)
+}
+
+/// Pure. The file a `<video>` under a view-local point plays, through the
+/// same mapping the page was drawn with. Asked before the page's buttons and
+/// links: the photograph's ▶ is where a person presses to play, and it is
+/// part of the video. A video that names no file is not under anything, so a
+/// press there falls through to what is behind it.
+pub fn video_at(videos: &[PageVideo], map: &PageToView, at: Point<Pixels>) -> Option<String> {
+    videos
+        .iter()
+        .filter(|v| {
+            v.rect
+                .and_then(|rc| place(rc, map))
+                .is_some_and(|b| b.contains(&at))
+        })
+        .find_map(|v| v.src.clone())
+}
+
+/// Pure. Why a video under a view-local point that names no file cannot be
+/// opened, in words for the bar: a press there would otherwise do nothing
+/// at all, which reads as a press that never landed. `None` when no such
+/// video is under the point.
+pub fn unplayable_at(videos: &[PageVideo], map: &PageToView, at: Point<Pixels>) -> Option<String> {
+    let v = videos.iter().find(|v| {
+        v.src.is_none()
+            && v.rect
+                .and_then(|rc| place(rc, map))
+                .is_some_and(|b| b.contains(&at))
+    })?;
+    let (what, carried) = if v.sound {
+        ("this sound", "this sound")
+    } else {
+        ("this video", "this video's film")
+    };
+    Some(match &v.unkept {
+        Some(why) => format!("{carried} could not be kept as a file to play: {why}"),
+        None => format!(
+            "{what} is played by the page's own script, so there is no file to open it from"
+        ),
+    })
 }
 
 /// Pure. How far to move the view's content so its origin sits on a whole
@@ -688,8 +728,15 @@ impl PageDoc {
                     geometry: g,
                     expect: hash,
                 };
-                let (engine, still) = (engine.clone(), wanted.flag());
-                let opened = cx.background_spawn(async move { open_if_wanted(&*engine, &req, &still) });
+                let (engine, still, root) = (engine.clone(), wanted.flag(), root.clone());
+                // A film the page carries inside itself is kept as a file
+                // here, off the foreground, before anything can press it.
+                let opened = cx.background_spawn(async move {
+                    let mut l = open_if_wanted(&*engine, &req, &still)?;
+                    let why = l.videos.as_deref_mut().map(|v| cache::keep_clips(&root, v));
+                    l.diagnostics.extend(why.into_iter().flatten());
+                    Ok(l)
+                });
                 match opened.await {
                     Ok(l) => {
                         layout = Some(Ok(l));
@@ -1666,13 +1713,45 @@ impl PageDoc {
         let Some(map) = self.map_for(r) else {
             return Pressed::Nothing;
         };
+        let videos = r.layout.videos.as_deref().unwrap_or_default();
+        if let Some(src) = video_at(videos, &map, at) {
+            return self.play(&src);
+        }
         match hit_at(&r.layout.openers, &r.layout.links, &[], &map, at) {
             Some(PageHit::Opener(id)) => {
                 self.open_dialog(id, cx);
                 Pressed::Took
             }
             Some(PageHit::Link(l)) => self.follow(&l, cx),
-            Some(PageHit::Closer) | None => Pressed::Nothing,
+            Some(PageHit::Closer) => Pressed::Nothing,
+            // Nothing under the press but a video that names no file: say
+            // so in the bar, where a refused save says why.
+            None => match (unplayable_at(videos, &map, at), self.notes.as_mut()) {
+                (Some(why), Some(layer)) => {
+                    layer.say(Said::Refused(why));
+                    cx.notify();
+                    Pressed::Took
+                }
+                _ => Pressed::Nothing,
+            },
+        }
+    }
+
+    /// A video on the page was pressed: its file goes to the pane, as a
+    /// link's does, and the pane opens it as a clip over this page. A web
+    /// address goes the way any web link on a page goes.
+    fn play(&self, src: &str) -> Pressed {
+        let dir = self.path.parent().unwrap_or(Path::new("/"));
+        match resolve_link(dir, src) {
+            LinkTarget::Fragment(_) => Pressed::Took,
+            LinkTarget::File { path, .. } => Pressed::Follow(FollowLink {
+                target: path.to_string_lossy().into_owned(),
+                fragment: None,
+            }),
+            LinkTarget::Url(url) => Pressed::Follow(FollowLink {
+                target: url,
+                fragment: None,
+            }),
         }
     }
 
@@ -2665,5 +2744,95 @@ mod tests {
             hit_at(&under, &[], &[], &dialog, at(445., 70.)),
             Some(PageHit::Opener("d-books".into()))
         );
+    }
+
+    /// A press on a video's box, wherever the page is scrolled and zoomed,
+    /// finds the file it plays; a press beside it finds nothing; and a video
+    /// a script feeds, which names no file, is not under anything, so the
+    /// press goes on to whatever is behind it. Modelled on the welcome page:
+    /// one film, 1,100 CSS px wide, a third of the way down.
+    #[test]
+    fn a_press_on_a_videos_box_finds_the_file_it_plays() {
+        let film = "file:///r/campaigns/out/welcome-pass-one.mp4";
+        let videos = vec![
+            PageVideo {
+                sound: false,
+                src: Some(film.into()),
+                rect: Some(RectCss {
+                    x: 40.0,
+                    y: 1200.0,
+                    w: 1100.0,
+                    h: 620.0,
+                }),
+                unkept: None,
+            },
+            PageVideo {
+                sound: false,
+                src: None,
+                rect: Some(RectCss {
+                    x: 40.0,
+                    y: 2400.0,
+                    w: 600.0,
+                    h: 340.0,
+                }),
+                unkept: None,
+            },
+        ];
+        let view = Bounds {
+            origin: point(px(0.), px(0.)),
+            size: size(px(600.), px(800.)),
+        };
+        // Zoomed out to half, scrolled 400 logical px: the film's box starts
+        // at 600 - 400 = 200 and its left edge at 20.
+        let map = PageToView {
+            origin: point(px(0.), px(0.)),
+            px_per_css: 0.5,
+            scroll: px(400.),
+            clip: view,
+        };
+        let at = |x: f32, y: f32| point(px(x), px(y));
+        assert_eq!(video_at(&videos, &map, at(300., 350.)), Some(film.into()));
+        assert_eq!(video_at(&videos, &map, at(10., 350.)), None, "beside it");
+        assert_eq!(video_at(&videos, &map, at(300., 150.)), None, "above it");
+        // The fed video's box is at 1200 - 400 = 800: just off the bottom of
+        // the view, so scroll it into sight before asking.
+        let lower = PageToView {
+            scroll: px(900.),
+            ..map
+        };
+        assert_eq!(
+            video_at(&videos, &lower, at(100., 400.)),
+            None,
+            "a video that names no file opens nothing"
+        );
+        // ...but it is under the press, and says why it opens nothing.
+        let said = unplayable_at(&videos, &lower, at(100., 400.)).expect("the fed one");
+        assert!(said.contains("the page's own script"), "{said}");
+        assert_eq!(
+            unplayable_at(&videos, &map, at(300., 350.)),
+            None,
+            "the film"
+        );
+        assert_eq!(
+            unplayable_at(&videos, &lower, at(590., 400.)),
+            None,
+            "beside it"
+        );
+        let refused = vec![PageVideo {
+            unkept: Some("\"text/plain\" is not a video or sound TD plays".into()),
+            ..videos[1].clone()
+        }];
+        let said = unplayable_at(&refused, &lower, at(100., 400.)).expect("the unkept one");
+        assert!(
+            said.contains("could not be kept") && said.contains("text/plain"),
+            "{said}"
+        );
+        // A sound that names no file says so as a sound, not as a video.
+        let fed = vec![PageVideo {
+            sound: true,
+            ..videos[1].clone()
+        }];
+        let said = unplayable_at(&fed, &lower, at(100., 400.)).expect("the fed sound");
+        assert!(said.starts_with("this sound "), "{said}");
     }
 }

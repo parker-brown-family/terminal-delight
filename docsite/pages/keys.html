@@ -16,6 +16,8 @@
   <tbody>
     <tr><td><kbd>F1</kbd></td><td>help: every shortcut, and the language</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>K</kbd></td><td>terminal ⇄ workbench</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>A</kbd></td><td>launch an agent through the shared picker</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>L</kbd></td><td>look up a project, group, tab, pane or sticky note by name</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>V</kbd> / <kbd>Alt</kbd>+<kbd>H</kbd></td><td>split beside / below</td></tr>
     <tr><td><kbd>Alt</kbd>+arrows</td><td>move between panes</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>W</kbd> / <kbd>Ctrl</kbd>+<kbd>W</kbd></td><td>close a pane / a tab</td></tr>
@@ -32,7 +34,7 @@
 
 <section data-register="technical" data-headline="Every key">
 <h3>Where a keystroke goes</h3>
-<p>Checked in this order, and the first taker keeps it: <kbd>F1</kbd>, then <kbd>Alt</kbd>+<kbd>K</kbd>, then window chords, the paint overlay, open menus, the <a href="/focus-reader">focus reader</a>, pane chords, a sticky note being written, a rename box, a floating document, the document face, the workbench, and last the terminal. Window chords are <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+anything, and <kbd>Alt</kbd> with an arrow or <kbd>R</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>W</kbd> <kbd>K</kbd>. Pane chords are <kbd>Ctrl</kbd>+<kbd>Shift</kbd> with <kbd>T</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>K</kbd> <kbd>A</kbd> <kbd>B</kbd> <kbd>N</kbd> <kbd>M</kbd> <kbd>Z</kbd> <kbd>U</kbd> <kbd>Y</kbd> <kbd>D</kbd> <kbd>G</kbd> <kbd>F</kbd>, plus <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>F</kbd>, <kbd>Ctrl</kbd>+<kbd>X</kbd> and <kbd>Alt</kbd>+<kbd>S</kbd>. <kbd>Alt</kbd>+<kbd>B</kbd> and <kbd>Alt</kbd>+<kbd>F</kbd> stay with readline.</p>
+<p>Checked in this order, and the first taker keeps it: <kbd>F1</kbd>, then <kbd>Alt</kbd>+<kbd>K</kbd>, then window chords, the paint overlay, open menus, the <a href="/focus-reader">focus reader</a>, pane chords, a sticky note being written, a rename box, a floating document, the document face, the workbench, and last the terminal. Window chords are <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+anything, and <kbd>Alt</kbd> with an arrow or <kbd>R</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>W</kbd> <kbd>K</kbd> <kbd>L</kbd>. Pane chords are <kbd>Ctrl</kbd>+<kbd>Shift</kbd> with <kbd>T</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>K</kbd> <kbd>A</kbd> <kbd>B</kbd> <kbd>N</kbd> <kbd>M</kbd> <kbd>Z</kbd> <kbd>U</kbd> <kbd>Y</kbd> <kbd>D</kbd> <kbd>G</kbd> <kbd>F</kbd>, plus <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>F</kbd>, <kbd>Ctrl</kbd>+<kbd>X</kbd> and <kbd>Alt</kbd>+<kbd>A</kbd> / <kbd>Alt</kbd>+<kbd>S</kbd>. <kbd>Alt</kbd>+<kbd>B</kbd> and <kbd>Alt</kbd>+<kbd>F</kbd> stay with readline.</p>
 
 <h3>Panes and tabs</h3>
 <table class="keys">
@@ -87,9 +89,10 @@
     <tr><td><kbd>Ctrl</kbd>+<kbd>X</kbd></td><td>cut: copies the selection, and erases it if it's what you just typed; with nothing selected, the shell gets <code>^X</code></td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td>find in this pane</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></td><td>find in every pane</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>L</kbd></td><td>look a thing up by its name rather than by what it printed: a project, group or tab in the left bar, a pane by its title, a sticky note by its words. Folded branches are searched too</td></tr>
   </tbody>
 </table>
-<p>In find, <kbd>↓</kbd> <kbd>Tab</kbd> and <kbd>↑</kbd> move between hits, <kbd>Enter</kbd> jumps to one, <kbd>Esc</kbd> closes.</p>
+<p>In find and the lookup, <kbd>↓</kbd> <kbd>Tab</kbd> and <kbd>↑</kbd> move between hits, <kbd>Enter</kbd> jumps to one, <kbd>Esc</kbd> closes. <kbd>Alt</kbd>+<kbd>L</kbd> again also closes the lookup.</p>
 
 <h3>Panels</h3>
 <table class="keys">
@@ -101,6 +104,7 @@
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></td><td>the <a href="/attention">attention</a> queue</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></td><td>everything this pane's agent handed over, newest first</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>R</kbd></td><td>the <a href="/focus-reader">focus reader</a></td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>A</kbd></td><td>open the agent launcher for this pane, also available as ⌁ AGENT in its header</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>S</kbd></td><td>stick a <a href="/sticky-notes">note</a> on the pane; while writing, post it</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>Backspace</kbd></td><td>peel the note off, while there is one</td></tr>
     <tr><td><kbd>Esc</kbd></td><td>close the popup on top</td></tr>
@@ -157,6 +161,15 @@
 
 <h3>Paint overlay</h3>
 <p>Raised by <code>terminal-delight ctl paint on</code>. A set's first letter paints it; arrows walk the panes; <kbd>d</kbd> hands the pane back; <kbd>z</kbd> / <kbd>Shift</kbd>+<kbd>Z</kbd> turn the shelf; <kbd>f</kbd> jumps to favourites and <kbd>Shift</kbd>+<kbd>F</kbd> stars; <kbd>Esc</kbd> folds it. Other letters are swallowed, and chords with a modifier pass through. <a href="/themes#technical-paint">Themes</a> has more.</p>
+
+<h3>Size</h3>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd></td><td>the highlighted pane's text a step bigger / smaller; on the workbench, its type; on a document, its zoom; with the <a href="/focus-reader">focus reader</a> open, the reader's</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>-</kbd></td><td>the outer scale a step bigger / smaller: the menu bar, the tabs, the left bar, and every pane header that follows it</td></tr>
+  </tbody>
+</table>
+<p>Each press is one notch of <kbd>Ctrl</kbd>+wheel, the same step the wheel takes over a pane's screen or over the chrome. Both pairs are pane chords: nothing stacked on a pane keeps them, and the shell never receives them.</p>
 
 <h3>Mouse</h3>
 <table class="keys">

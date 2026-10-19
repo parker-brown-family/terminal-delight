@@ -64,7 +64,7 @@ use super::notes_ui::Said;
 use super::page::Measured;
 use super::progress::Reading;
 use super::{DocumentView, FileStamp, Frame, NotesCommand};
-use crate::docopen::DocScroll;
+use crate::docopen::{DocScroll, DocSeat};
 use crate::theme::Theme;
 
 /// The view as its last paint left it, lent to a backend for one call: the
@@ -249,6 +249,11 @@ pub trait Backend {
     /// does: a page and a PDF keep their place across any new size in
     /// [`Backend::measured`], and a picture has no place to keep.
     fn reseated(&mut self) {}
+
+    /// The view moved between the floating square and a pane's Document
+    /// face. Only a video cares: in the square it is a clip that plays once
+    /// and closes, and on the face it loops, as it always has.
+    fn seated(&mut self, _seat: DocSeat) {}
 
     // ── the file on disk ────────────────────────────────────────────────────
 

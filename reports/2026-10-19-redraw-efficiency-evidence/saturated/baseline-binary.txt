@@ -1,0 +1,1 @@
+0992f5c437442528d6420b381d30f996ebff8098fadd169bac0751c507b8162e  /tmp/td-redraw-efficiency/baseline

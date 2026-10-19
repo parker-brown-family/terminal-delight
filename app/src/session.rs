@@ -38,6 +38,15 @@ pub struct PaneRestore {
     /// that only lives as long as the window is a note you have to write again
     /// every morning.
     pub note: Option<crate::sticky::Saved>,
+    /// A program to run as the pane's process instead of the shell — the `-e`
+    /// of a launch through `xdg-terminal-exec`. When it is set nothing is typed
+    /// into the pane: `resume` is a line for a shell, and there is no shell.
+    /// Never saved: only a quick window carries one, and a quick window never
+    /// writes a session.
+    pub program: Option<(String, Vec<String>)>,
+    /// The mark the pane wears in its header for the app-id it was launched
+    /// under (`launch_mark` in main.rs). Never saved, for the same reason.
+    pub mark: Option<&'static str>,
 }
 
 /// What capture() learned about a live pane. Field-for-field what we persist.
@@ -542,12 +551,29 @@ fn codex_rollout_for(cwd: &str, home: &Path) -> Option<PathBuf> {
             .and_then(|m| m.modified())
             .unwrap_or(std::time::UNIX_EPOCH)
     });
-    rollouts.into_iter().rev().take(20).find(|p| {
-        let head = std::fs::read(p)
-            .map(|b| String::from_utf8_lossy(&b[..b.len().min(4096)]).into_owned())
-            .unwrap_or_default();
-        head.contains(cwd)
-    })
+    rollouts
+        .into_iter()
+        .rev()
+        .take(20)
+        .find(|p| rollout_head(p).contains(cwd))
+}
+
+/// How much of a rollout's start [`codex_rollout_for`] matches a cwd against:
+/// the `session_meta` line, which names it, comes first.
+const ROLLOUT_HEAD: u64 = 4096;
+
+/// The first [`ROLLOUT_HEAD`] bytes of a rollout, and never more.
+///
+/// This used to read the whole file and then look at its first 4 KiB. A long
+/// Codex conversation runs to tens of megabytes, the binding sweep asks once a
+/// second for every Codex pane, and a cwd no recent rollout names reads all
+/// twenty: Parker's window read 470 MB/s doing it, with a 51 MB rollout open in
+/// one poll of every ten (#964).
+fn rollout_head(p: &Path) -> String {
+    use std::io::Read;
+    let mut head = Vec::new();
+    let _ = File::open(p).and_then(|f| f.take(ROLLOUT_HEAD).read_to_end(&mut head));
+    String::from_utf8_lossy(&head).into_owned()
 }
 
 // `claude_transcript(cwd, resume, home)` used to live here: the pane's session
@@ -1142,6 +1168,29 @@ mod tests {
         let dir = crate::testsync::Scratch::new(&format!("sess-{tag}"));
         std::fs::create_dir_all(dir.join(".claude")).unwrap();
         dir
+    }
+
+    /// A rollout is matched on its head, and only its head is read: a 51 MB
+    /// rollout read whole once a second per Codex pane was most of what the
+    /// window did with its time (#964).
+    #[test]
+    fn a_rollout_is_matched_on_its_head_and_only_the_head_is_read() {
+        let home = tmp_home("rollout-head");
+        let day = home.join(".codex/sessions/2026/10/16");
+        std::fs::create_dir_all(&day).unwrap();
+        let id = "01a14581-4fbb-74a1-ad94-917f70be457b";
+        let rollout = day.join(format!("rollout-2026-10-16T09-17-44-{id}.jsonl"));
+        let meta = r#"{"type":"session_meta","payload":{"cwd":"/work/here"}}"#;
+        // The body names another directory, past the head, the way a long
+        // conversation's later lines mention every path it touched.
+        let body = format!("{meta}\n{}\n/work/elsewhere\n", "x".repeat(64 * 1024));
+        std::fs::write(&rollout, body).unwrap();
+
+        let head = rollout_head(&rollout);
+        assert_eq!(head.len() as u64, ROLLOUT_HEAD, "the head, not the file");
+        assert!(head.starts_with(meta));
+        assert_eq!(codex_transcript("/work/here", &home), Some(rollout));
+        assert_eq!(codex_transcript("/work/elsewhere", &home), None);
     }
 
     fn history_line(ts_ms: u64, project: &str, id: &str) -> String {

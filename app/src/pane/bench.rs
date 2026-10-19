@@ -123,15 +123,22 @@ impl TerminalView {
         )
     }
 
-    /// `ctl bench probe`: every zone the bench recorded, every text run that
-    /// carries a link, and every Markdown link label with the target it
-    /// hides, each with its flat rectangle — where a scripted click has to
-    /// aim. A label that wraps is given its run's rectangle.
+    /// `ctl bench probe`: every zone the bench recorded, every zone the
+    /// floating square over it recorded (a clip's covered square included),
+    /// every text run that carries a link, and every Markdown link label with
+    /// the target it hides, each with its flat rectangle — where a scripted
+    /// click has to aim. A label that wraps is given its run's rectangle.
     pub(crate) fn bench_probe(&self) -> String {
         let mut out = Vec::new();
         for z in self.wb_zones.borrow().iter() {
             out.push(format!(
                 "zone {:.0} {:.0} {:.0} {:.0} {:?}",
+                z.x, z.y, z.w, z.h, z.hit
+            ));
+        }
+        for z in self.float_zones.borrow().iter() {
+            out.push(format!(
+                "float {:.0} {:.0} {:.0} {:.0} {:?}",
                 z.x, z.y, z.w, z.h, z.hit
             ));
         }
@@ -3263,6 +3270,18 @@ impl TerminalView {
             self.wb_queued.push(bytes);
         }
         cx.notify();
+    }
+
+    /// One signed line for the agent in this pane, from a person's answer given
+    /// elsewhere in the window: the rail's Yes or No to its `request_access`.
+    ///
+    /// Through [`Self::bench_deliver`] and so under its rules — typed only
+    /// while this pane is on screen and its far end is a line editor, held in
+    /// order until then. The answer is a person's act, but the line still lands
+    /// in a terminal, and the house rule for that does not bend for a good
+    /// reason. The setting itself does not wait for the line.
+    pub(crate) fn tell_agent(&mut self, line: String, cx: &mut Context<Self>) {
+        self.bench_deliver(crate::workbench::typed_line(&line), cx);
     }
 
     /// The bytes, into the pseudoterminal, stamped. No rules — the callers

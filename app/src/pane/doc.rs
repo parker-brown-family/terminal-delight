@@ -84,8 +84,11 @@ fn float_hit_through_glass(
     let (fx, fy) = crate::workbench::unwarp(screen, k.0, k.1, pos.0, pos.1);
     let zone = crate::docopen::float_hit_at(zones, fx, fy);
     // A button keeps its whole face, even the pixels that lie in an edge's
-    // grip; past the buttons, an edge outranks the strip and the document.
-    if let Some(z) = zone.filter(|z| !matches!(z.hit, FloatHit::Strip | FloatHit::Body)) {
+    // grip; past the buttons, an edge outranks the strip, the document, and
+    // the square a clip is covering.
+    if let Some(z) =
+        zone.filter(|z| !matches!(z.hit, FloatHit::Strip | FloatHit::Body | FloatHit::Covered))
+    {
         return Some((z, (fx, fy)));
     }
     let (x, y, w, h) = screen;
@@ -173,23 +176,9 @@ impl TerminalView {
         Some((f32::from(b.size.width), f32::from(b.size.height)))
     }
 
-    /// Open a document in a floating square beside the painted row it was
-    /// clicked on, or at the top of the screen when there is no row (the
-    /// control socket has none). A square already open is replaced, and the
-    /// one it replaces gives its texture back as it is dropped.
-    ///
-    /// A document with nothing on this machine to draw it — an HTML page with
-    /// no engine, a video with no libmpv — is handed to the desktop instead,
-    /// and the answer is the sentence saying why ([`Self::engine_refused`]).
-    pub(crate) fn open_float(
-        &mut self,
-        target: crate::docopen::DocTarget,
-        row: Option<usize>,
-        cx: &mut Context<Self>,
-    ) -> Result<(), String> {
-        if let Some(why) = self.engine_refused(&target, row, cx) {
-            return Err(why);
-        }
+    /// Where a square opens for the painted row it was clicked on, or at the
+    /// top of the screen when there is no row (the control socket has none).
+    fn float_home_for(&self, row: Option<usize>) -> crate::docopen::FloatRect {
         let (w, h) = self.screen_size().unwrap_or((640.0, 480.0));
         let (k1, k2) = self.warp_k;
         let (_, pad_y) = grid_pad_drawn(w, h, k1, k2, self.scale);
@@ -200,12 +189,44 @@ impl TerminalView {
             ),
             None => (0.0, 0.0),
         };
-        // A square already open with notes not yet saved stays, and says so;
-        // the click that asked for another document is answered by that line.
-        if self.float.is_some() && !self.request_close_float(cx) {
+        crate::docopen::float_home(w, h, top, bottom)
+    }
+
+    /// Open a document in a floating square beside the painted row it was
+    /// clicked on, or at the top of the screen when there is no row (the
+    /// control socket has none). A square already open is replaced, and the
+    /// one it replaces gives its texture back as it is dropped.
+    ///
+    /// A video or a sound is the exception: it opens as a clip over whatever
+    /// square is up, and replaces nothing ([`Self::open_clip`]).
+    ///
+    /// A document with nothing on this machine to draw it — an HTML page with
+    /// no engine, a video or sound with no libmpv — is handed to the desktop
+    /// instead, and the answer is the sentence saying why
+    /// ([`Self::engine_refused`]).
+    pub(crate) fn open_float(
+        &mut self,
+        target: crate::docopen::DocTarget,
+        row: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if let Some(why) = self.engine_refused(&target, row, cx) {
+            return Err(why);
+        }
+        if target.kind.plays() {
+            self.open_clip(target, row, cx);
             return Ok(());
         }
-        let rect = crate::docopen::float_home(w, h, top, bottom);
+        // A square already open with notes not yet saved stays, and says so;
+        // the click that asked for another document is answered by that line.
+        // Asked of each box in turn, top first: a clip goes, and then the
+        // square it was covering is asked too.
+        while self.float.is_some() {
+            if !self.request_close_float(cx) {
+                return Ok(());
+            }
+        }
+        let rect = self.float_home_for(row);
         let opened = target.path.clone();
         self.float = Some(Self::float_doc(target, None, rect, cx));
         // Whichever road brought it — the chip, an Alt+click on its path, the
@@ -213,6 +234,56 @@ impl TerminalView {
         self.note_opened_path(&opened);
         cx.notify();
         Ok(())
+    }
+
+    /// Open a video or a sound as a clip: in a glowing box of its own, above
+    /// whatever square is up, playing once and closing itself at its end.
+    ///
+    /// The square it covers is not closed, asked, re-read or scrolled. It is
+    /// kept whole underneath ([`FloatingDoc::below`]) and comes back on top,
+    /// exactly as it was, when the clip goes. That is the whole point of a
+    /// clip: a page whose video was pressed is still the page, and an agent
+    /// showing off a render does not take away whatever its person was
+    /// reading. A clip already up is replaced, and what it covered stays.
+    ///
+    /// A sound's box is a band only as tall as its waveform
+    /// ([`crate::docopen::sound_box`]): it has no picture to fill a square
+    /// with, so the page under it stays in sight.
+    fn open_clip(
+        &mut self,
+        target: crate::docopen::DocTarget,
+        row: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let below = match self.float.take() {
+            Some(mut top) if Self::is_clip(&top, cx) => top.below.take(),
+            Some(top) => Some(Box::new(top)),
+            None => None,
+        };
+        let rect = match &below {
+            Some(b) => {
+                let (w, h) = self.screen_size().unwrap_or((640.0, 480.0));
+                crate::docopen::clip_home(crate::docopen::clamp_float(b.rect, w, h))
+            }
+            None => self.float_home_for(row),
+        };
+        let rect = if target.kind == crate::docopen::DocKind::Audio {
+            crate::docopen::sound_box(rect, crate::docview::video::BAR_H)
+        } else {
+            rect
+        };
+        let opened = target.path.clone();
+        let mut clip = Self::float_doc(target, None, rect, cx);
+        clip.below = below;
+        self.float = Some(clip);
+        self.note_opened_path(&opened);
+        cx.notify();
+    }
+
+    /// Whether a square is a clip: a video or a sound, which plays once and
+    /// closes.
+    fn is_clip(float: &FloatingDoc, cx: &App) -> bool {
+        float.view.read(cx).target().kind.plays()
     }
 
     /// The floating square, drawn with the hyperglow every surface that floats
@@ -226,17 +297,44 @@ impl TerminalView {
     /// moves the square when dragged. No element here carries a gpui handler:
     /// each control records its flat rectangle as it paints ([`float_zone`]),
     /// and the pane's own press un-bends the pointer and looks it up.
+    ///
+    /// A clip is drawn over the square it covers, which is drawn first, dimmed
+    /// and deaf: it records one zone, [`crate::docopen::FloatHit::Covered`],
+    /// and none of its controls, so only the clip on top answers a press.
     pub(super) fn float_el(
         &self,
         th: &Theme,
         face: crate::workbench::Face,
         cx: &Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        use crate::docopen::FloatHit;
         let float = self.float.as_ref()?;
         if !float_shows_on(face) {
             return None;
         }
+        let top = self.square_el(float, true, th, cx);
+        Some(match float.below.as_deref() {
+            None => top,
+            Some(below) => div()
+                .absolute()
+                .inset_0()
+                .child(self.square_el(below, false, th, cx))
+                .child(top)
+                .into_any_element(),
+        })
+    }
+
+    /// One square, as [`Self::float_el`] draws it. `live` is the box on top:
+    /// its strip, its controls and its body record the zones a press finds.
+    /// The square under a clip is not live: it is drawn as it was, dimmed,
+    /// with the single zone that swallows a press on it.
+    fn square_el(
+        &self,
+        float: &FloatingDoc,
+        live: bool,
+        th: &Theme,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        use crate::docopen::FloatHit;
         let s = crate::lang::current().strings();
         let (w, h) = self.screen_size().unwrap_or((0.0, 0.0));
         let r = crate::docopen::clamp_float(float.rect, w, h);
@@ -249,6 +347,9 @@ impl TerminalView {
             .unwrap_or_default();
         let zoom = view.zoom_now();
         let zones = self.float_zones.clone();
+        // The zone a part of a live square records; a covered square records
+        // none of its own.
+        let zone = |hit: FloatHit| live.then(|| float_zone(zones.clone(), hit));
         let acc = th.accent;
         let button = |label: gpui::SharedString, hit: FloatHit| {
             div()
@@ -258,12 +359,12 @@ impl TerminalView {
                 .rounded(px(3.))
                 .when(float.hover == Some(hit), |d| d.bg(acc.alpha(0.22)))
                 .child(label)
-                .child(float_zone(zones.clone(), hit))
+                .children(zone(hit))
         };
         let mut strip = div()
             .relative()
             .flex_none()
-            .h(px(22.))
+            .h(px(crate::docopen::FLOAT_STRIP_H))
             .px(px(8.))
             .flex()
             .items_center()
@@ -273,7 +374,7 @@ impl TerminalView {
             .text_size(px(11.))
             .text_color(acc)
             // First, so every control recorded after it is found over it.
-            .child(float_zone(zones.clone(), FloatHit::Strip))
+            .children(zone(FloatHit::Strip))
             .child(
                 div()
                     .flex_1()
@@ -305,36 +406,42 @@ impl TerminalView {
             .child(button(s.float_split.into(), FloatHit::Split))
             .child(button(s.float_desktop.into(), FloatHit::Desktop))
             .child(button("✕ esc".into(), FloatHit::Close));
-        Some(
-            div()
-                .absolute()
-                .left(px(r.x))
-                .top(px(r.y))
-                .w(px(r.w))
-                .h(px(r.h))
-                .flex()
-                .flex_col()
-                .bg(th.bg)
-                .border_2()
-                .border_color(th.accent)
-                .rounded(px(6.))
-                .shadow(crate::float_shadows(th.accent, th.grade.phosphor))
-                .overflow_hidden()
-                .child(strip)
-                .child(
-                    div()
-                        .relative()
-                        .flex_1()
-                        .min_h(px(0.))
-                        .child(float_zone(zones, FloatHit::Body))
-                        .child(if self.lends(&float.view) {
-                            being_read(th.text)
-                        } else {
-                            float.view.clone().into_any_element()
-                        }),
-                )
-                .into_any_element(),
-        )
+        div()
+            .absolute()
+            .left(px(r.x))
+            .top(px(r.y))
+            .w(px(r.w))
+            .h(px(r.h))
+            .flex()
+            .flex_col()
+            .bg(th.bg)
+            .border_2()
+            .border_color(th.accent)
+            .rounded(px(6.))
+            .shadow(crate::float_shadows(th.accent, th.grade.phosphor))
+            .overflow_hidden()
+            .child(strip)
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .children(zone(FloatHit::Body))
+                    .child(if self.lends(&float.view) {
+                        being_read(th.text)
+                    } else {
+                        gpui::AnyView::from(float.view.clone())
+                            .cached(gpui::StyleRefinement::default().size_full())
+                            .into_any_element()
+                    }),
+            )
+            // Under a clip: dimmed, so the eye goes to the box on top, and
+            // one zone over the whole of it that a press lands on and stops.
+            .when(!live, |d| {
+                d.child(div().absolute().inset_0().bg(gpui::hsla(0., 0., 0., 0.45)))
+                    .child(float_zone(zones.clone(), FloatHit::Covered))
+            })
+            .into_any_element()
     }
 
     /// A square's contents: the document's view, and the subscription that
@@ -371,7 +478,32 @@ impl TerminalView {
         });
         let gave_up = Self::hand_over_on_give_up(&view, cx);
         let send = Self::ask_to_send(&view, crate::docopen::DocSeat::Float, cx);
-        FloatingDoc::new(view, rect, links, gave_up, send)
+        let finished = Self::close_when_played_out(&view, cx);
+        FloatingDoc::new(view, rect, links, gave_up, send, finished)
+    }
+
+    /// A square and the one it covers, back from a replica repair: the same
+    /// views, subscribed again here on the pane that now owns them.
+    pub(super) fn float_back(carry: FloatCarry, cx: &mut Context<Self>) -> FloatingDoc {
+        let mut float = Self::float_of(carry.view, carry.rect, cx);
+        float.note = carry.note;
+        float.below = carry.below.map(|b| Box::new(Self::float_back(*b, cx)));
+        float
+    }
+
+    /// A clip that plays out closes, the way Escape closes it, and the square
+    /// it was covering is on top again. Only the box on top closes: a view
+    /// that finished somewhere else (a split, the FOCUS reader) is not this
+    /// square's to close.
+    fn close_when_played_out(
+        view: &gpui::Entity<crate::docview::DocumentView>,
+        cx: &mut Context<Self>,
+    ) -> gpui::Subscription {
+        cx.subscribe(view, |pane, view, _: &crate::docview::Finished, cx| {
+            if pane.float.as_ref().is_some_and(|top| top.view == view) {
+                pane.request_close_float(cx);
+            }
+        })
     }
 
     /// ↪ pressed in a document's notes bar goes to the workspace, which can
@@ -458,7 +590,7 @@ impl TerminalView {
                 let why = crate::docview::html_ready(cx).err()?;
                 (why.sentence(), why.short_reason())
             }
-            crate::docopen::DocKind::Video => {
+            crate::docopen::DocKind::Video | crate::docopen::DocKind::Audio => {
                 let why = crate::docview::video_ready(cx).err()?;
                 (why.sentence(), why.short_reason())
             }
@@ -486,6 +618,11 @@ impl TerminalView {
     /// ctrl+click on a path does. Any other scheme is refused: the decision is
     /// `docopen::link_route`. A heading in the same document never comes here;
     /// the view scrolls to it itself.
+    ///
+    /// A video or a sound is the exception in the square: pressed on a page,
+    /// or linked from one, it opens as a clip over the page and takes nothing's place
+    /// ([`Self::open_clip`]). On the Document face it still takes the page's
+    /// place, as before; a clip over the face is not built yet.
     fn follow_doc_link(
         &mut self,
         link: &crate::docview::FollowLink,
@@ -506,6 +643,10 @@ impl TerminalView {
                 // draw one: the linked file goes to the desktop, and the
                 // document that linked to it stays.
                 if self.engine_refused(&target, None, cx).is_some() {
+                    return;
+                }
+                if seat == crate::docopen::DocSeat::Float && target.kind.plays() {
+                    self.open_clip(target, None, cx);
                     return;
                 }
                 // The old view is dropped here, and gives its textures back
@@ -616,6 +757,10 @@ impl TerminalView {
     /// close`, an Alt+click or a link that would put another document in its
     /// place, a split of a file already split — as Escape already did. Only a
     /// pane or tab closing drops it without asking. Answers whether it closed.
+    ///
+    /// It closes the box on top. A clip that closes, by any of these or by
+    /// playing out, puts the square it covered back on top, and the next ask
+    /// is that square's.
     pub(crate) fn request_close_float(&mut self, cx: &mut Context<Self>) -> bool {
         let kept = self
             .float
@@ -629,15 +774,17 @@ impl TerminalView {
         self.close_float(cx)
     }
 
-    /// Close the floating square, unsaved notes and all. Answers whether one
-    /// was open. Callers that a person drives go through
+    /// Close the floating square on top, unsaved notes and all, and put back
+    /// the square it was covering, if it was a clip over one. Answers whether
+    /// one was open. Callers that a person drives go through
     /// [`Self::request_close_float`] instead.
     pub(crate) fn close_float(&mut self, cx: &mut Context<Self>) -> bool {
-        let was_open = self.float.take().is_some();
-        if was_open {
-            cx.notify();
-        }
-        was_open
+        let Some(mut top) = self.float.take() else {
+            return false;
+        };
+        self.float = top.below.take().map(|below| *below);
+        cx.notify();
+        true
     }
 
     /// Say in the square's strip why it is a square: a split was asked for
@@ -651,12 +798,14 @@ impl TerminalView {
 
     /// Take the square down and hand back its view, alive: the view is on
     /// its way to a pane of its own. Nothing is released — the texture goes
-    /// with the view, and the view is still wanted.
+    /// with the view, and the view is still wanted. A clip split off this way
+    /// leaves the square it was covering on top.
     pub(crate) fn release_float(
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Entity<crate::docview::DocumentView>> {
-        let float = self.float.take()?;
+        let mut float = self.float.take()?;
+        self.float = float.below.take().map(|below| *below);
         cx.notify();
         Some(float.view)
     }
@@ -954,7 +1103,9 @@ impl TerminalView {
         let body = if self.lends(&doc.view) {
             being_read(ink)
         } else {
-            doc.view.clone().into_any_element()
+            gpui::AnyView::from(doc.view.clone())
+                .cached(gpui::StyleRefinement::default().size_full())
+                .into_any_element()
         };
         Some(
             div()
@@ -1071,6 +1222,9 @@ impl TerminalView {
                 let mods = ev.modifiers;
                 float.holding = view.update(cx, |v, cx| v.press(at, mods, window, cx));
             }
+            // The page under a clip: taken, so it starts no selection in the
+            // grid behind it, and nothing else. The clip is what is live.
+            FloatHit::Covered => {}
         }
     }
 
@@ -1193,7 +1347,9 @@ impl TerminalView {
         let over = self.float_hit(pos).map(|(z, _)| z.hit).filter(|h| {
             !matches!(
                 h,
-                crate::docopen::FloatHit::Strip | crate::docopen::FloatHit::Body
+                crate::docopen::FloatHit::Strip
+                    | crate::docopen::FloatHit::Body
+                    | crate::docopen::FloatHit::Covered
             )
         });
         if let Some(float) = self.float.as_mut() {
@@ -1281,6 +1437,7 @@ impl TerminalView {
                         }
                         crate::docopen::DocKind::Image => "an image takes no notes",
                         crate::docopen::DocKind::Video => "a video takes no notes",
+                        crate::docopen::DocKind::Audio => "a sound takes no notes",
                         crate::docopen::DocKind::Pdf => "a PDF takes no notes",
                     }
                     .to_string()

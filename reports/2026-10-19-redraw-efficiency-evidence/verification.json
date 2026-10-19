@@ -1,0 +1,153 @@
+{
+  "integrated-default": {
+    "exit": 0,
+    "test_suites": [
+      {
+        "result": "ok",
+        "passed": 2359,
+        "failed": 0,
+        "ignored": 8
+      },
+      {
+        "result": "ok",
+        "passed": 9,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "result": "ok",
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "result": "ok",
+        "passed": 4,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "result": "ok",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "result": "ok",
+        "passed": 74,
+        "failed": 0,
+        "ignored": 1
+      },
+      {
+        "result": "ok",
+        "passed": 9,
+        "failed": 0,
+        "ignored": 0
+      }
+    ],
+    "log": "/tmp/td-redraw-efficiency/integrated-default.log",
+    "last_lines": [
+      "test a_bench_verb_with_nothing_to_say_is_refused_rather_than_sent_empty ... ok",
+      "",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      ""
+    ]
+  },
+  "integrated-fallback": {
+    "exit": 0,
+    "test_suites": [
+      {
+        "result": "ok",
+        "passed": 2312,
+        "failed": 0,
+        "ignored": 8
+      },
+      {
+        "result": "ok",
+        "passed": 9,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "result": "ok",
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "result": "ok",
+        "passed": 4,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "result": "ok",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "result": "ok",
+        "passed": 74,
+        "failed": 0,
+        "ignored": 1
+      },
+      {
+        "result": "ok",
+        "passed": 9,
+        "failed": 0,
+        "ignored": 0
+      }
+    ],
+    "log": "/tmp/td-redraw-efficiency/integrated-fallback.log",
+    "last_lines": [
+      "test a_bench_verb_with_nothing_to_say_is_refused_rather_than_sent_empty ... ok",
+      "",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      ""
+    ]
+  },
+  "integrated-clippy-default": {
+    "exit": 0,
+    "test_suites": [],
+    "log": "/tmp/td-redraw-efficiency/integrated-clippy-default.log",
+    "last_lines": [
+      "    Checking terminal-delight v0.3.0 (/home/parker/Work/terminal-delight/.worktrees/redraw-efficiency/app)",
+      "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.67s",
+      "warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1",
+      "note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`"
+    ]
+  },
+  "integrated-clippy-fallback": {
+    "exit": 0,
+    "test_suites": [],
+    "log": "/tmp/td-redraw-efficiency/integrated-clippy-fallback.log",
+    "last_lines": [
+      "    Checking terminal-delight v0.3.0 (/home/parker/Work/terminal-delight/.worktrees/redraw-efficiency/app)",
+      "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.31s",
+      "warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1",
+      "note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`"
+    ]
+  },
+  "integrated-format": {
+    "exit": 0,
+    "test_suites": [],
+    "log": "/tmp/td-redraw-efficiency/integrated-format.log",
+    "last_lines": []
+  },
+  "integrated-build": {
+    "exit": 0,
+    "test_suites": [],
+    "log": "/tmp/td-redraw-efficiency/integrated-build.log",
+    "last_lines": [
+      "   Compiling terminal-delight v0.3.0 (/home/parker/Work/terminal-delight/.worktrees/redraw-efficiency/app)",
+      "    Finished `release` profile [optimized] target(s) in 1m 15s",
+      "warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1",
+      "note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`"
+    ]
+  },
+  "pipeline": {
+    "exit": 0,
+    "note": "An initial bash -n probe used the wrong cwd and failed; the subsequent independent cargo command chain completed successfully. bash -n on the absolute script path then passed."
+  }
+}

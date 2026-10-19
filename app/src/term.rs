@@ -9,7 +9,7 @@
 
 use std::fs::File;
 use std::io;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::vt::{self, Event as TermEvent, Listener, Notifier, TermSize, WindowSize};
@@ -38,6 +38,7 @@ impl GridSize {
 pub struct EventProxy {
     events: UnboundedSender<TermEvent>,
     generation: Arc<AtomicU64>,
+    screen_wakeups: Arc<AtomicBool>,
     /// Whether a program's question to the terminal is answered from here.
     answers_here: bool,
 }
@@ -67,6 +68,7 @@ impl EventProxy {
         Self {
             events,
             generation,
+            screen_wakeups: Arc::new(AtomicBool::new(true)),
             answers_here: answers == Answers::Here,
         }
     }
@@ -79,6 +81,12 @@ impl Listener for EventProxy {
         // answer still means the emulation has moved on. A replica whose
         // generation stopped advancing would freeze every cache built on it.
         self.generation.fetch_add(1, Ordering::Relaxed);
+        // A hidden pane reads the grid on its existing housekeeping clock.
+        // Do not schedule a UI task for each chunk of invisible output. The
+        // generation still advances, and every non-screen event still travels.
+        if matches!(event, TermEvent::Wakeup) && !self.screen_wakeups.load(Ordering::Relaxed) {
+            return;
+        }
         // `CSI 14 t` travels as its own event rather than as a `PtyWrite`, so
         // it has to be named: the host answers it from the geometry it holds,
         // and a pane answering it too would type a second reply at the program.
@@ -125,6 +133,9 @@ pub struct Session {
     /// changed generation merely *permits* change (title/bell events bump it
     /// too), which errs on the safe side for cache invalidation.
     pub generation: Arc<AtomicU64>,
+    /// Visibility gate for screen-only events. Parsing and protocol events
+    /// are independent; activation renders the latest grid before waiting.
+    pub screen_wakeups: Arc<AtomicBool>,
 }
 
 impl Session {
@@ -161,20 +172,27 @@ pub struct SpawnSpec {
     /// failing the pane.
     pub cwd: Option<std::path::PathBuf>,
     pub env: Vec<(String, String)>,
+    /// A program to run as the terminal's child instead of the user's shell,
+    /// with its arguments — what `-e` asks for on a launch through
+    /// `xdg-terminal-exec`. Run directly, never typed into a shell, so nothing
+    /// in its arguments is ever read by one.
+    pub program: Option<(String, Vec<String>)>,
 }
 
 /// Spawn the user's default shell on a PTY, emulation wired, I/O thread running.
 #[allow(dead_code)]
 pub fn spawn(size: GridSize, cell_width: u16, cell_height: u16) -> io::Result<Session> {
-    spawn_in(size, cell_width, cell_height, None)
+    spawn_in(size, cell_width, cell_height, None, None)
 }
 
-/// `spawn`, but the shell starts in `cwd` (session restore).
+/// `spawn`, but the shell starts in `cwd` (session restore) — or, given a
+/// `program`, that program runs there instead of the shell.
 pub fn spawn_in(
     size: GridSize,
     cell_width: u16,
     cell_height: u16,
     cwd: Option<std::path::PathBuf>,
+    program: Option<&(String, Vec<String>)>,
 ) -> io::Result<Session> {
     let spec = SpawnSpec {
         size,
@@ -182,6 +200,7 @@ pub fn spawn_in(
         cell_height,
         cwd,
         env: vec![],
+        program: program.cloned(),
     };
     let pty = spawn_pty(&spec)?;
     // Read before the pseudoterminal is handed to the loop, which takes
@@ -207,6 +226,7 @@ pub fn spawn_pty(spec: &SpawnSpec) -> io::Result<vt::pty::PtySource> {
     for (name, value) in &spec.env {
         options.env.insert(name.clone(), value.clone());
     }
+    options.shell = spec.program.clone();
     // A demo window runs THIS binary as every pane's program — a frozen screen of
     // lorem-ipsum styled like a real agent session — instead of the user's shell.
     // So a shared demo shows no real shell, cwd, scrollback, or secret, yet flows
@@ -242,7 +262,8 @@ pub fn wire_pump(
 ) -> io::Result<Session> {
     let (tx, rx) = unbounded();
     let generation = Arc::new(AtomicU64::new(0));
-    let proxy: Arc<dyn Listener> = Arc::new(EventProxy::new(tx, generation.clone(), answers));
+    let proxy = Arc::new(EventProxy::new(tx, generation.clone(), answers));
+    let screen_wakeups = proxy.screen_wakeups.clone();
     let term = vt::shared(vt::Term::new(size, proxy.clone()));
     // The loop owns its thread and lives as long as the program it reads.
     let (notifier, _thread) = vt::pump::spawn(term.clone(), proxy, source, tap)?;
@@ -254,6 +275,7 @@ pub fn wire_pump(
         master,
         shell_pid,
         generation,
+        screen_wakeups,
     })
 }
 
@@ -1754,6 +1776,31 @@ mod correctness {
         let (mut term, _) = term80();
         feed(&mut term, b"plain");
         assert!(term.hyperlink(Point::new(Line(0), Column(0))).is_none());
+    }
+
+    /// A link longer than the row wraps, and the half on the next row is the
+    /// same link, id and all: the pane reads one file from either half and
+    /// frames both rows. A long name `ls --hyperlink` prints in a narrow pane
+    /// is this, and the link carries no id of its own, as eza's and ls's do not.
+    #[test]
+    fn osc8_link_wrapped_across_rows_is_one_link_on_both() {
+        let (mut term, _) = harness(10, 4);
+        feed(
+            &mut term,
+            b"\x1b]8;;file:///tmp/a-long-name.md\x1b\\a-long-name.md\x1b]8;;\x1b\\",
+        );
+        let head = term
+            .hyperlink(Point::new(Line(0), Column(9)))
+            .expect("the first row carries it");
+        let tail = term
+            .hyperlink(Point::new(Line(1), Column(0)))
+            .expect("the wrapped row carries it");
+        assert_eq!(head, tail, "one link on both rows");
+        assert_eq!(tail.uri(), "file:///tmp/a-long-name.md");
+        assert!(
+            term.hyperlink(Point::new(Line(1), Column(4))).is_none(),
+            "the link closes after the name"
+        );
     }
 
     // ----------------------------------------------------------------------

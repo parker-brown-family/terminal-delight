@@ -173,6 +173,8 @@ pub struct Key<'a> {
 /// nothing to say about `route(k, a, b, c, d, e, f, g)`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Up {
+    /// The terminal belongs to an agent with human turns to navigate.
+    pub agent: bool,
     pub paint: bool,
     pub ctx_menu: bool,
     pub header_menu: bool,
@@ -242,7 +244,17 @@ type Rung = (Layer, fn(&Key, &Up) -> bool);
 const LADDER: [Rung; 13] = [
     (Layer::Help, |k, _| k.key == "f1"),
     (Layer::Face, |k, _| k.alt && !k.control && k.key == "k"),
-    (Layer::Window, |k, _| window_chord(k.key, k.alt, k.control)),
+    (Layer::Window, |k, u| {
+        window_chord(k.key, k.alt, k.control)
+            || (human_turn_chord(k)
+                && u.agent
+                && !u.paint
+                && !u.sticky
+                && !u.rename
+                && !note_caret(u)
+                && !u.document
+                && !u.bench)
+    }),
     (Layer::Paint, |k, u| u.paint && paints(k)),
     (Layer::CtxMenu, |k, u| u.ctx_menu && k.key == "escape"),
     (Layer::HeaderMenu, |k, u| u.header_menu && k.key == "escape"),
@@ -270,6 +282,12 @@ pub fn route(k: &Key, up: &Up) -> Layer {
         }
     }
     Layer::Terminal
+}
+
+/// Ctrl+Up/Down steps through human turns. The routing table claims it only
+/// on an agent terminal; shell programs and editing surfaces keep their keys.
+pub fn human_turn_chord(k: &Key) -> bool {
+    k.control && !k.alt && !k.shift && !k.platform && !k.function && matches!(k.key, "up" | "down")
 }
 
 /// Chords the WINDOW owns — never a pane's content, on either of its faces.
@@ -314,10 +332,12 @@ pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
     if !alt {
         return false;
     }
-    matches!(
-        key,
-        "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w" | "k"
-    )
+    // `l` is LOOKUP; `g` is Git coordination. Neither belongs to a pane.
+    key.eq_ignore_ascii_case("g")
+        || matches!(
+            key,
+            "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w" | "k" | "l"
+        )
 }
 
 /// Chords the PANE owns, on either of its faces.
@@ -343,28 +363,41 @@ pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
 /// nothing to cut, which is what makes bare `ctrl+x` still readline's prefix key
 /// (`C-x C-e` opens your editor).
 ///
-/// `ctrl+shift+v` is conditional on a note being written. The pane's paste
-/// writes the clipboard into the terminal, and a note box is drawn OVER that
-/// terminal: claimed here, the chord pasted into the shell or agent under the
-/// square while the person was writing a note, which is the one thing a note
-/// being written promised not to let happen
-/// (`a_note_being_written_in_a_float_takes_every_key_but_the_chords`). The
-/// pane's other chords still work over a note: they close, find and open
-/// panels, and none of them writes into the terminal.
+/// `ctrl+shift+v` is conditional on a caret being written over the terminal.
+/// The pane's paste writes the clipboard into the terminal. A note box is
+/// drawn OVER that terminal, a sticky note being written is the same caret over
+/// the same terminal, and the header rename box owns the keyboard while it is
+/// open: claimed here, the chord pasted into the shell or agent under the
+/// square, the paper or the title, which is the one thing a box with a caret
+/// promised not to let happen
+/// (`a_note_being_written_in_a_float_takes_every_key_but_the_chords`,
+/// `a_sticky_note_being_written_takes_every_paste_chord`,
+/// `a_header_being_renamed_takes_every_paste_chord`). The pane's other chords
+/// still work over any of those boxes: they close, find and open panels, and
+/// none of them writes into the terminal.
+///
+/// The four size chords ([`size_chord`]) are claimed over every box too, and
+/// the shifted pair for the same reason as `ctrl+shift+t`: the window is what
+/// acts on it, but only the pane can keep it out of the shell on its way up.
 pub fn pane_chord(k: &Key, up: &Up) -> bool {
     if k.platform || k.function {
         return false;
     }
+    // Ahead of the shift arm below, which would refuse the shifted pair: on the
+    // desktop it arrives with its shift already dropped.
+    if size_chord(k).is_some() {
+        return true;
+    }
     if k.alt && !k.control && !k.shift {
         return match k.key {
-            "s" => true,
+            "a" | "s" => true,
             "backspace" => up.note,
             _ => false,
         };
     }
     if k.control && !k.alt {
         if k.shift {
-            if k.key == "v" && note_caret(up) {
+            if k.key == "v" && (note_caret(up) || up.sticky || up.rename) {
                 return false;
             }
             // The panels and the clipboard. Shift is what keeps raw ctrl+a / ^D /
@@ -383,13 +416,65 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
     false
 }
 
+/// A size step from the keyboard, and what it sizes.
+///
+/// ctrl+wheel sizes whatever the pointer is standing on. A key has no pointer,
+/// so the keyboard names the two places instead, one notch per press so that
+/// both hands travel alike.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Size {
+    /// `ctrl+=` / `ctrl+-`: the highlighted pane's own content, as ctrl+wheel
+    /// over its screen turns it.
+    Pane(f32),
+    /// `ctrl+shift+=` / `ctrl+shift+-`: the outer scale, as ctrl+wheel over the
+    /// chrome turns it.
+    Outer(f32),
+}
+
+/// Which size chord this keystroke is, if any, in signed wheel notches.
+///
+/// The shifted pair arrives spelled two ways, and both are the same press. The
+/// desktop names a shifted symbol by what it types and drops the shift
+/// (gpui keeps shift only on letters), so ctrl+shift+= reaches a pane as ctrl
+/// and `+`, and ctrl+shift+- as ctrl and `_`. gpui's parser, which is how a
+/// test or a keymap writes a chord, keeps the shift and the unshifted key. A
+/// table that knew one spelling would pass its tests and do nothing on the
+/// desktop, or the other way round.
+///
+/// Nothing a program could ask for is taken. With no keyboard protocol, ctrl+=
+/// and ctrl+- reached the shell as a bare `=` and `-`, and the `^_` of
+/// ctrl+shift+- carries no character, so the encoder sent nothing for it.
+pub fn size_chord(k: &Key) -> Option<Size> {
+    if !k.control || k.alt || k.platform || k.function {
+        return None;
+    }
+    Some(match (k.key, k.shift) {
+        ("=", false) => Size::Pane(1.0),
+        ("-", false) => Size::Pane(-1.0),
+        ("+", _) | ("=", true) => Size::Outer(1.0),
+        ("_", _) | ("-", true) => Size::Outer(-1.0),
+        _ => return None,
+    })
+}
+
+/// The plain named keys that TYPE into a program — the overlay swallows them
+/// so they never reach the terminal or the workbench composer behind it.
+/// Enter is not here: it is a verb (done), handled beside escape.
+///
+/// Parker, 2026-10-16: *"RETURN from the active painter interface should not get
+/// consumed by the terminal OR WORKBENCH!"* — Return passed straight through,
+/// because the overlay claimed only single characters, and this table was
+/// written so the next key like it is not found the same way.
+pub const PAINT_SWALLOWS: [&str; 4] = ["tab", "space", "backspace", "delete"];
+
 /// Does the raised paint overlay claim this keystroke?
 ///
-/// Mirrors what `TerminalView::paint_key` would do with it: escape folds the
-/// overlay, a plain arrow walks the wall, and a plain single character is either
-/// a chord on the shelf or a deliberate no-op. Everything else passes, so the
-/// overlay is never a trap — a modified chord still reaches its owner while the
-/// cards are up.
+/// Mirrors what `TerminalView::paint_key` would do with it: escape and enter
+/// fold the overlay, a plain arrow walks the wall, a plain single character is
+/// either a chord on the shelf or a deliberate no-op, and a plain key that would
+/// type ([`PAINT_SWALLOWS`]) is eaten. Everything else passes, so the overlay is
+/// never a trap — a modified chord still reaches its owner while the cards are
+/// up, and so do the function and paging keys.
 fn paints(k: &Key) -> bool {
     if k.key == "escape" {
         return true;
@@ -397,7 +482,9 @@ fn paints(k: &Key) -> bool {
     if k.control || k.alt || k.platform {
         return false;
     }
-    matches!(k.key, "left" | "right" | "up" | "down") || k.key.chars().count() == 1
+    matches!(k.key, "left" | "right" | "up" | "down" | "enter")
+        || PAINT_SWALLOWS.contains(&k.key)
+        || k.key.chars().count() == 1
 }
 
 /// A paging gesture, independent of which view answers it.
@@ -495,6 +582,63 @@ mod tests {
         }
     }
 
+    #[test]
+    fn human_turn_arrows_belong_only_to_agent_terminals() {
+        for key in ["up", "down"] {
+            let agent = Up {
+                agent: true,
+                ..Up::default()
+            };
+            assert_eq!(route(&ctrl(key), &agent), Layer::Window);
+            assert_eq!(route(&ctrl(key), &Up::default()), Layer::Terminal);
+            assert_eq!(route(&alt(key), &agent), Layer::Window);
+            assert!(!human_turn_chord(&alt(key)));
+            assert!(!human_turn_chord(&ctrl_shift(key)));
+            for up in [
+                Up {
+                    sticky: true,
+                    ..agent
+                },
+                Up {
+                    rename: true,
+                    ..agent
+                },
+                Up {
+                    document: true,
+                    ..agent
+                },
+                Up {
+                    bench: true,
+                    ..agent
+                },
+                Up {
+                    float: true,
+                    float_caret: true,
+                    ..agent
+                },
+                Up {
+                    paint: true,
+                    ..agent
+                },
+            ] {
+                assert_ne!(route(&ctrl(key), &up), Layer::Window);
+            }
+            assert_eq!(
+                route(
+                    &ctrl(key),
+                    &Up {
+                        reader: true,
+                        ..agent
+                    }
+                ),
+                Layer::Window
+            );
+        }
+        for key in ["left", "right", "c", "home", "end", "pageup", "pagedown"] {
+            assert!(!human_turn_chord(&ctrl(key)));
+        }
+    }
+
     // ── the ladder, as a whole ──────────────────────────────────────────────
 
     /// Nothing up, nothing claimed: the key is the terminal's.
@@ -553,8 +697,9 @@ mod tests {
             ctrl_shift("v"),
             shift_insert(),
         ];
-        for bits in 0u16..8192 {
+        for bits in 0u16..16384 {
             let up = Up {
+                agent: bits & 8192 != 0,
                 paint: bits & 1 != 0,
                 ctx_menu: bits & 2 != 0,
                 header_menu: bits & 4 != 0,
@@ -629,6 +774,180 @@ mod tests {
                     route(&k, &both),
                     alone_i,
                     "with {alone_i:?} and {alone_j:?} both claiming, the earlier one must take it"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_launcher_chord_belongs_to_the_pane_on_every_face() {
+        for up in [
+            Up::default(),
+            Up {
+                bench: true,
+                ..Up::default()
+            },
+            Up {
+                document: true,
+                ..Up::default()
+            },
+            Up {
+                sticky: true,
+                ..Up::default()
+            },
+            Up {
+                rename: true,
+                ..Up::default()
+            },
+        ] {
+            assert_eq!(route(&alt("a"), &up), Layer::PaneChord);
+        }
+        assert_eq!(route(&ctrl("a"), &Up::default()), Layer::Terminal);
+        assert_eq!(route(&ch("a"), &Up::default()), Layer::Terminal);
+        assert_eq!(route(&ctrl_shift("a"), &Up::default()), Layer::PaneChord);
+        assert!(!pane_chord(
+            &Key {
+                shift: true,
+                ..alt("a")
+            },
+            &Up::default()
+        ));
+    }
+
+    /// Alt+L and Alt+G inspect the whole window, so no surface a pane can stack — a
+    /// bench, a document, a note being written, a rename box — may keep it.
+    /// The shell never sees it either: `keystroke_bytes` refuses every window
+    /// chord, which is what keeps `ESC l` out of the PTY.
+    #[test]
+    fn the_window_inspection_chords_belong_to_the_window_on_every_face() {
+        for up in [
+            Up::default(),
+            Up {
+                bench: true,
+                ..Up::default()
+            },
+            Up {
+                document: true,
+                ..Up::default()
+            },
+            Up {
+                sticky: true,
+                ..Up::default()
+            },
+            Up {
+                rename: true,
+                ..Up::default()
+            },
+            Up {
+                float: true,
+                float_caret: true,
+                ..Up::default()
+            },
+        ] {
+            for key in ["l", "g"] {
+                assert_eq!(route(&alt(key), &up), Layer::Window, "alt+{key}: {up:?}");
+            }
+            assert_eq!(route(&alt("G"), &up), Layer::Window, "alt+G: {up:?}");
+        }
+        assert_eq!(route(&ch("l"), &Up::default()), Layer::Terminal);
+        assert_eq!(route(&ch("g"), &Up::default()), Layer::Terminal);
+        assert_eq!(
+            route(&ctrl("l"), &Up::default()),
+            Layer::Terminal,
+            "ctrl+l clears"
+        );
+    }
+
+    // ── the size chords ─────────────────────────────────────────────────────
+
+    /// ctrl with `=` or `-` is a size step, in both spellings of the shifted
+    /// pair, and nothing that merely shares a key with one is.
+    #[test]
+    fn the_size_chords_are_ctrl_with_equals_or_minus() {
+        // As the desktop reports them: the shifted pair by what it types.
+        assert_eq!(size_chord(&ctrl("=")), Some(Size::Pane(1.0)));
+        assert_eq!(size_chord(&ctrl("-")), Some(Size::Pane(-1.0)));
+        assert_eq!(size_chord(&ctrl("+")), Some(Size::Outer(1.0)));
+        assert_eq!(size_chord(&ctrl("_")), Some(Size::Outer(-1.0)));
+        // As gpui's parser spells the same two presses.
+        assert_eq!(size_chord(&ctrl_shift("=")), Some(Size::Outer(1.0)));
+        assert_eq!(size_chord(&ctrl_shift("-")), Some(Size::Outer(-1.0)));
+
+        let ctrl_and = |key, alt, platform| Key {
+            key,
+            control: true,
+            alt,
+            platform,
+            ..Key::default()
+        };
+        for k in [
+            ch("="),
+            ch("-"),
+            ch("+"),
+            ch("_"),
+            alt("="),
+            alt("-"),
+            // ctrl+alt is the window's, and super is the desktop's.
+            ctrl_and("=", true, false),
+            ctrl_and("-", false, true),
+        ] {
+            assert_eq!(size_chord(&k), None, "{k:?} is not a size chord");
+        }
+    }
+
+    /// A size chord is the pane's whatever is stacked on it. A box with a
+    /// caret, a document, the bench and the paint overlay all let it past, so
+    /// it types into neither the thing on top nor the shell underneath, and
+    /// the keys it is made of still type.
+    #[test]
+    fn the_size_chords_are_the_panes_over_everything_it_stacks() {
+        let stacks = [
+            Up::default(),
+            on_bench(),
+            floating(),
+            Up {
+                float: true,
+                float_caret: true,
+                ..Up::default()
+            },
+            Up {
+                document: true,
+                doc_caret: true,
+                ..Up::default()
+            },
+            Up {
+                sticky: true,
+                ..Up::default()
+            },
+            Up {
+                rename: true,
+                ..Up::default()
+            },
+            Up {
+                paint: true,
+                ..Up::default()
+            },
+            Up {
+                reader: true,
+                ..Up::default()
+            },
+        ];
+        for up in stacks {
+            for k in [
+                ctrl("="),
+                ctrl("-"),
+                ctrl("+"),
+                ctrl("_"),
+                ctrl_shift("="),
+                ctrl_shift("-"),
+            ] {
+                assert_eq!(route(&k, &up), Layer::PaneChord, "{k:?} over {up:?}");
+            }
+            for k in [ch("="), ch("-"), ch("+"), ch("_")] {
+                assert_ne!(
+                    route(&k, &up),
+                    Layer::PaneChord,
+                    "{k:?} still types, over {up:?}"
                 );
             }
         }
@@ -771,6 +1090,53 @@ mod tests {
         );
     }
 
+    /// A sticky note being written is a third caret over the terminal. The
+    /// paste chords go to it, the same as a note in the square, and the
+    /// pane's other chords still do.
+    #[test]
+    fn a_sticky_note_being_written_takes_every_paste_chord() {
+        let up = Up {
+            sticky: true,
+            ..Up::default()
+        };
+        for k in [ctrl("v"), ctrl_shift("v"), shift_insert()] {
+            assert_eq!(route(&k, &up), Layer::Sticky, "{k:?}");
+        }
+        assert_eq!(
+            route(&ctrl_shift("c"), &up),
+            Layer::PaneChord,
+            "copy stays the pane's"
+        );
+        assert_eq!(
+            route(&ctrl_shift("v"), &Up::default()),
+            Layer::PaneChord,
+            "with no note being written the paste is the pane's"
+        );
+    }
+
+    /// The header rename box is a caret over the terminal too. Paste goes to
+    /// the name, and the pane's other chords still do.
+    #[test]
+    fn a_header_being_renamed_takes_every_paste_chord() {
+        let up = Up {
+            rename: true,
+            ..Up::default()
+        };
+        for k in [ctrl("v"), ctrl_shift("v"), shift_insert()] {
+            assert_eq!(route(&k, &up), Layer::Rename, "{k:?}");
+        }
+        assert_eq!(
+            route(&ctrl_shift("c"), &up),
+            Layer::PaneChord,
+            "copy stays the pane's"
+        );
+        assert_eq!(
+            route(&ctrl_shift("v"), &Up::default()),
+            Layer::PaneChord,
+            "with the box closed the paste is the pane's"
+        );
+    }
+
     /// A caret somewhere else on the pane keeps its own Escape: a note being
     /// written or a name being typed is reverted first, the square second.
     #[test]
@@ -894,6 +1260,17 @@ mod tests {
             Layer::Paint,
             "the overlay is drawn across every pane, so it outranks one pane's face"
         );
+        assert_eq!(
+            route(
+                &named("enter"),
+                &Up {
+                    paint: true,
+                    ..bench
+                }
+            ),
+            Layer::Paint,
+            "return over the cards never reaches the bench composer"
+        );
     }
 
     /// What the bench is asked for, it is still asked for first.
@@ -928,10 +1305,10 @@ mod tests {
 
     #[test]
     fn the_windows_chords_are_never_a_panes_to_take() {
-        for key in ["left", "right", "up", "down", "r", "v", "h", "w"] {
+        for key in ["left", "right", "up", "down", "r", "v", "h", "w", "l", "g"] {
             assert!(
                 window_chord(key, true, false),
-                "alt+{key} is the window's: focus, split, close, FOCUS"
+                "alt+{key} is the window's: focus, split, close, FOCUS, LOOKUP"
             );
         }
         assert!(window_chord("up", true, true));
@@ -1050,10 +1427,24 @@ mod tests {
             Layer::PaneChord,
             "a modified chord passes, so the overlay is never a trap"
         );
+        // Return is the overlay's: it folds it. It used to fall through to the
+        // terminal, and a press meant to finish painting ran a command.
         assert_eq!(
             route(&named("enter"), &up),
+            Layer::Paint,
+            "return finishes painting"
+        );
+        for key in PAINT_SWALLOWS {
+            assert_eq!(
+                route(&named(key), &up),
+                Layer::Paint,
+                "{key} would type into the program behind the overlay"
+            );
+        }
+        assert_eq!(
+            route(&named("pageup"), &up),
             Layer::Terminal,
-            "and so does a named key the overlay has no chord for"
+            "a named key that types nothing still passes"
         );
     }
 
@@ -1205,6 +1596,7 @@ mod tests {
     #[test]
     fn the_help_modal_is_reachable_from_under_everything() {
         let everything = Up {
+            agent: true,
             paint: true,
             ctx_menu: true,
             header_menu: true,

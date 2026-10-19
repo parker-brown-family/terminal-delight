@@ -165,6 +165,39 @@ pub struct PageLayout {
     pub dialogs: Vec<String>,
     /// Page errors, dead openers, dialogs that overflowed.
     pub diagnostics: Vec<String>,
+    /// Every `<video>` and `<audio>` outside a dialog, in document order.
+    /// `None` from a probe too old to report them, which is unknown, not
+    /// "has none".
+    #[serde(default)]
+    pub videos: Option<Vec<PageVideo>>,
+}
+
+/// A `<video>` or `<audio>` on a page. The page is a photograph, so the
+/// player in it is a picture of a player; a press on its box opens the file
+/// it plays as a clip over the page instead.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PageVideo {
+    /// An `<audio>`: a sound, not a film. Absent in a layout from a probe
+    /// that reported only `<video>`s, where every one is a film, so false
+    /// there is what the probe saw rather than a guess.
+    #[serde(default)]
+    pub sound: bool,
+    /// The file it plays, as the browser resolved it against the page:
+    /// the source it chose, else its first `<source>`, else its `src`.
+    /// A film the page carries inside itself arrives as its `data:` address,
+    /// and the page cache swaps that for a file it keeps
+    /// (`cache::keep_clips`) before a view adopts the layout. `None` for a
+    /// video a script feeds (a blob, a stream), which names no file anything
+    /// else could open.
+    #[serde(default)]
+    pub src: Option<String>,
+    #[serde(default, deserialize_with = "rect_or_none")]
+    pub rect: Option<RectCss>,
+    /// Why a film the page carried was not kept, when it was not: with no
+    /// `src`, this is what a press on it says. Absent, a video with no `src`
+    /// is one a script feeds.
+    #[serde(default)]
+    pub unkept: Option<String>,
 }
 
 impl PageLayout {
@@ -215,6 +248,7 @@ impl PageLayout {
             openers: vec![],
             dialogs: vec![],
             diagnostics: vec![],
+            videos: Some(vec![]),
         }
     }
 }
