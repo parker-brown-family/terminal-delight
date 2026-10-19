@@ -175,6 +175,8 @@ pub fn count_zoom_notches(counted: f32, notches: f32) -> (f32, i32) {
 
 /// A document on screen.
 pub struct DocumentView {
+    #[cfg(test)]
+    pub(crate) render_count: usize,
     target: DocTarget,
     /// Whatever draws the document: the picture, the Markdown file or the
     /// page. Made with the view and kept for its life; see [`backend`].
@@ -765,6 +767,8 @@ impl DocumentView {
         let seen = backend.opened(&target.path, cx);
         let watch = backend.follows_its_file();
         let mut view = Self {
+            #[cfg(test)]
+            render_count: 0,
             target,
             backend,
             theme: None,
@@ -1215,6 +1219,10 @@ impl DocumentView {
 
 impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(test)]
+        {
+            self.render_count += 1;
+        }
         let th = self.theme(cx);
         // Nothing is known to be laid out until this render's last element
         // says so; the links are rebuilt below, as their text is.

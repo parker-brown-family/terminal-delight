@@ -5538,14 +5538,7 @@ mod tests {
         // a magenta bench and the ink said nothing. Any theme, four hues plus
         // a grey — checked on every builtin, since a palette that separates on
         // one theme and collapses on another is the same failure a week later.
-        for id in [
-            "quiet-command",
-            "field-command",
-            "tactical-overdrive",
-            "gamba",
-            "deco",
-            "hacker",
-        ] {
+        for id in crate::theme::builtin_ids() {
             let toml = crate::theme::builtin_toml(id).expect("a builtin theme");
             let th = crate::theme::parse(toml).expect("a builtin theme parses");
             let inks: Vec<Hsla> = [

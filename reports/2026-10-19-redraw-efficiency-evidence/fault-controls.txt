@@ -1,0 +1,297 @@
+   Compiling terminal-delight v0.3.0 (/home/parker/Work/terminal-delight/.worktrees/redraw-efficiency/app)
+warning: unused variable: `height`
+     --> src/pane.rs:11630:29
+      |
+11630 |                         let height = self.cell_h * lines.len() as f32 + 2.0 * grid_pad_y;
+      |                             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_height`
+      |
+      = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `terminal-delight` (bin "terminal-delight" test) generated 1 warning (run `cargo fix --bin "terminal-delight" -p terminal-delight --tests` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 1m 11s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (/home/parker/Work/terminal-delight/app/target/release/deps/terminal_delight-eb272b5d24031ab7)
+
+running 249 tests
+test pane::behaviour::a_departed_agent_does_not_leave_the_bar_reading_an_answer ... ok
+test pane::behaviour::a_deliverable_line_read_from_the_transcript_is_kept_like_one_read_off_the_screen ... ok
+test pane::behaviour::a_header_being_renamed_takes_a_paste_instead_of_the_shell ... ok
+test pane::behaviour::a_hyperlinked_name_is_never_replaced_by_a_guess ... ok
+test pane::behaviour::a_launched_pane_runs_its_program_and_types_nothing ... ok
+test pane::behaviour::a_document_face_lends_its_view_to_the_reader_and_gets_it_back ... ok
+test pane::behaviour::a_link_the_terminal_itself_wrapped_is_read_whole ... ok
+terminal-delight: a saved pane named /tmp/td-pane-restore-2475524/notes.xyz as its document, which is not a kind TD draws; it comes back as its terminal
+test pane::behaviour::a_missing_document_keeps_its_pane_on_restore ... ok
+test pane::behaviour::a_markdown_block_opens_its_note_box_from_the_button_under_the_pointer ... ok
+test pane::behaviour::a_note_being_written_wraps_at_the_width_of_its_box ... ok
+test pane::behaviour::a_paste_while_writing_a_note_lands_in_the_note_and_never_the_terminal ... ok
+test pane::behaviour::a_handover_is_on_its_page_and_opens_into_the_pane_from_there ... ok
+test pane::behaviour::a_link_claude_wrapped_opens_whole_from_its_second_half ... ok
+test pane::behaviour::a_file_dropped_on_the_terminal_is_pasted_into_it ... ok
+terminal-delight: not following ftp://example.com/refused from a document: only files, web and mail links open
+test pane::behaviour::a_link_out_of_a_document_is_routed_by_the_pane ... ok
+test pane::behaviour::a_brief_in_the_reader_takes_notes_and_stamps_and_sends_them ... ok
+test pane::behaviour::a_paste_while_writing_a_note_on_the_document_face_lands_in_the_note ... ok
+test pane::behaviour::a_pdf_alt_clicked_floats_as_its_pages ... ok
+terminal-delight: /tmp/td-pane-no-poppler-2475524/paper.pdf: No pdfinfo on PATH (install poppler to read PDFs in TD). Opened with the desktop.
+terminal-delight: /tmp/td-pane-no-poppler-2475524/paper.pdf: No pdfinfo on PATH (install poppler to read PDFs in TD). Opened with the desktop.
+test pane::behaviour::a_pdf_nothing_can_draw_goes_to_the_desktop_and_says_why ... ok
+test pane::behaviour::a_picture_a_program_draws_is_shown_and_then_forgotten_when_hidden ... ok
+test pane::behaviour::a_picture_pasted_into_a_note_is_attached_to_its_block ... ok
+test pane::behaviour::a_picture_pasted_into_a_note_on_a_brief_leaves_the_brief_untouched ... ok
+test pane::behaviour::a_press_on_a_film_that_could_not_be_kept_says_why_in_the_bar ... ok
+test pane::behaviour::a_press_on_a_sound_in_a_page_opens_it_as_a_band_over_the_page ... ok
+test pane::behaviour::a_press_on_a_video_a_script_feeds_says_why_in_the_bar ... ok
+test pane::behaviour::a_press_on_a_video_in_a_page_opens_it_as_a_clip_over_the_page ... ok
+test pane::behaviour::a_press_on_a_video_the_page_carries_inside_itself_opens_it_as_a_clip ... ok
+test pane::behaviour::a_press_on_the_square_is_the_squares_even_over_a_path_or_a_note ... ok
+test pane::behaviour::a_press_or_a_drop_on_the_document_face_never_reaches_the_grid ... ok
+test pane::behaviour::a_printed_handover_is_read_off_the_screen_and_becomes_the_needs_me_link ... ok
+test pane::behaviour::a_program_asking_a_colour_is_told_the_one_the_pane_draws ... ok
+test pane::behaviour::a_program_asking_the_text_area_size_is_told_it_in_device_pixels ... ok
+test pane::behaviour::a_repaired_replica_keeps_its_document_and_its_square ... ok
+test pane::behaviour::a_square_let_go_outside_the_pane_does_not_follow_the_next_drag ... ok
+test pane::behaviour::a_square_with_unsaved_notes_is_kept_once_then_closes ... ok
+test pane::behaviour::a_sticky_note_being_written_takes_a_paste_instead_of_the_shell ... ok
+terminal-delight: /tmp/td-pane-no-libmpv-2475524/clip.mp4: No libmpv found (install mpv to play video and sound in TD). Opened with the desktop.
+terminal-delight: /tmp/td-pane-no-libmpv-2475524/clip.mp4: No libmpv found (install mpv to play video and sound in TD). Opened with the desktop.
+test pane::behaviour::a_video_nothing_can_play_goes_to_the_desktop_and_says_why ... ok
+test pane::behaviour::a_video_opens_as_a_clip_over_the_square_and_its_end_puts_the_square_back ... ok
+test pane::behaviour::alt_click_on_a_bare_name_opens_it_from_the_panes_folder ... ok
+test pane::behaviour::alt_click_on_a_canvas_programs_alternate_screen_copies_nothing ... ok
+test pane::behaviour::alt_click_on_a_command_claude_wrapped_copies_it_whole ... ok
+test pane::behaviour::alt_click_on_a_command_cut_mid_word_copies_the_word_whole ... ok
+test pane::behaviour::alt_click_on_a_command_in_a_fullscreen_claude_pane_copies_it_whole ... ok
+test pane::behaviour::alt_click_on_a_command_line_copies_it_and_opens_nothing ... ok
+test pane::behaviour::alt_click_on_a_name_eza_hyperlinked_opens_it_whole ... ok
+test pane::behaviour::alt_click_on_a_name_ls_hyperlinked_opens_the_file_it_listed ... ok
+test pane::behaviour::alt_click_on_a_printed_picture_opens_a_square_and_escape_closes_it ... ok
+test pane::behaviour::alt_click_on_an_indented_command_copies_it_without_the_margin ... ok
+test pane::behaviour::alt_over_a_brief_outlines_its_anchors ... ok
+test pane::behaviour::alt_over_a_markdown_file_outlines_every_block_and_a_press_in_one_opens_it ... ok
+terminal-delight: /tmp/td-pane-no-engine-2475524/brief.html: HTML is set to open with the desktop (engine = "off" in documents.toml). Opened with the desktop.
+terminal-delight: /tmp/td-pane-no-engine-2475524/brief.html: HTML is set to open with the desktop (engine = "off" in documents.toml). Opened with the desktop.
+terminal-delight: /tmp/td-pane-no-engine-2475524/brief.html: HTML is set to open with the desktop (engine = "off" in documents.toml). Opened with the desktop.
+terminal-delight: /tmp/td-pane-no-engine-2475524/readme.md: the browser would not start Opened with the desktop.
+terminal-delight: /tmp/td-pane-no-engine-2475524/readme.md: the browser would not start Opened with the desktop.
+test pane::behaviour::an_html_file_nothing_can_draw_goes_to_the_desktop_and_says_why ... ok
+test pane::behaviour::backspace_over_a_mouse_selection_erases_it_from_the_line ... ok
+test pane::behaviour::codex_relative_html_reference_opens_the_panes_file ... ok
+test pane::behaviour::brief_launch_local_notes_reach_composer_and_prompt ... ok
+test pane::behaviour::codex_wrapped_file_reference_answers_alt_and_ctrl_click ... ok
+test pane::behaviour::ctrl_shift_enter_over_a_brief_sends_its_notes_as_the_button_does ... ok
+test pane::behaviour::ctrl_wheel_over_a_brief_lays_it_out_again_at_the_zoom ... ok
+test pane::behaviour::delete_over_a_keyboard_selection_takes_the_word_and_not_the_space ... ok
+test pane::behaviour::every_modified_click_on_a_path_does_what_the_click_table_says ... ok
+test pane::behaviour::human_prompt_navigation_recognises_alternate_screen_turns ... ok
+test pane::behaviour::human_prompt_navigation_walks_claude_and_codex_turns ... ok
+test pane::behaviour::human_turn_chords_keep_shell_bytes_and_never_leak_from_agents ... ok
+test pane::behaviour::leaving_the_pane_puts_out_the_control_the_pointer_lit ... ok
+test pane::behaviour::notes_sent_to_an_agent_on_its_bench_land_in_the_composer ... ok
+test pane::behaviour::terminal_launcher_alt_a_and_header_share_the_bench_event ... ok
+test pane::behaviour::the_agents_own_card_for_a_file_replaces_the_one_filed_for_its_declaration ... ok
+test pane::bench::hidden_link_tests::a_caret_on_a_label_finds_its_target ... ok
+test pane::bench::hidden_link_tests::a_target_resolves_against_the_panes_directory ... ok
+test pane::bench::hidden_link_tests::two_labels_side_by_side_are_told_apart ... ok
+test pane::bench::press_pick_tests::a_link_in_the_text_beats_the_row_and_the_card ... ok
+test pane::bench::press_pick_tests::a_served_copy_of_the_cards_file_opens_the_file ... ok
+test pane::bench::press_pick_tests::with_no_link_a_row_then_the_card_and_never_a_control ... ok
+test pane::doc::tests::a_press_on_a_bent_float_is_found_where_the_glass_shows_it ... ok
+test pane::doc::tests::an_edge_resizes_the_square_but_never_steals_a_button ... ok
+test pane::behaviour::the_alternate_screen_erases_a_selection_only_in_an_agent_pane ... ok
+test pane::behaviour::the_document_face_comes_only_with_a_document ... ok
+test pane::handed::tests::a_long_name_is_cut_with_an_ellipsis_and_a_short_one_is_left_alone ... ok
+test pane::handed::tests::a_missing_file_is_gone_and_a_present_one_has_a_time ... ok
+test pane::behaviour::the_document_face_swallows_typing_and_pasting ... ok
+test pane::behaviour::the_off_limits_toggle_marks_and_unmarks_the_pane_and_says_so ... ok
+test pane::behaviour::the_reader_joins_a_shells_lines_where_the_terminal_wrapped_them ... ok
+test pane::behaviour::the_size_chords_leave_a_pane_being_read_to_the_reader ... ok
+test pane::behaviour::the_size_chords_on_the_document_face_zoom_the_document ... ok
+test pane::behaviour::the_size_chords_on_the_workbench_size_its_type ... ok
+test pane::behaviour::the_size_chords_step_the_text_and_never_type ... ok
+test pane::behaviour::the_split_gestures_ask_the_workspace ... ok
+test pane::behaviour::the_square_moves_by_its_strip_and_resizes_by_its_edge ... ok
+test pane::behaviour::the_square_paints_in_the_panes_own_theme ... ok
+test pane::styling::tests::styled_viewport_benchmark ... ignored
+test pane::behaviour::the_wheel_on_the_document_face_moves_the_document ... ok
+test pane::tests::a_bare_name_is_offered_from_the_token_under_the_click ... ok
+test pane::tests::a_bare_name_resolves_against_the_panes_folder_or_not_at_all ... ok
+test pane::tests::a_blank_past_the_end_of_the_text_is_not_erased ... ok
+test pane::tests::a_colour_question_is_answered_with_the_colour_the_pane_draws ... ok
+test pane::tests::a_conversation_is_read_only_where_its_records_fold ... ok
+test pane::tests::a_file_url_is_decoded_before_it_is_classified ... ok
+test pane::tests::a_flat_screen_gets_no_header_bloom_and_a_tube_keeps_it ... ok
+test pane::tests::a_held_square_takes_its_move_and_its_release_first ... ok
+test pane::tests::a_hyperlink_is_read_as_its_file_only_when_the_file_is_here ... ok
+test pane::tests::a_hyperlink_spans_the_unbroken_rows_that_hold_it ... ok
+test pane::tests::a_keystroke_does_not_clear_a_question_the_channel_still_holds ... ok
+test pane::tests::a_link_an_app_broke_at_column_zero_opens_whole ... ok
+test pane::tests::a_link_anywhere_on_the_bench_answers_alt_and_ctrl_alt ... ok
+test pane::tests::a_link_broken_over_three_rows_under_a_hanging_indent_opens_whole ... ok
+test pane::tests::a_link_claude_broke_behind_its_margin_opens_whole_from_either_half ... ok
+test pane::tests::a_link_in_bench_text_is_found_at_a_layout_byte_offset ... ok
+test pane::tests::a_modified_click_says_what_the_click_table_decided ... ok
+test pane::tests::a_nerd_font_build_of_the_requested_family_is_that_family ... ok
+test pane::tests::a_neutral_grade_leaves_the_palette_untouched ... ok
+test pane::tests::a_paste_cannot_close_its_own_bracket ... ok
+test pane::tests::a_paste_keeps_its_text_and_its_line_endings ... ok
+test pane::tests::a_paste_of_nothing_but_controls_writes_nothing ... ok
+test pane::tests::a_paste_takes_out_every_control_but_the_line_breaks_and_tab ... ok
+test pane::tests::a_press_on_the_document_face_is_un_bent_and_held_first ... ok
+test pane::tests::a_row_is_found_where_gpui_draws_it_at_any_scale ... ok
+test pane::tests::a_shown_panes_output_asks_for_at_most_one_frame_per_gap ... ok
+test pane::tests::a_soft_wrapped_url_opens_whole_from_either_row ... ok
+test pane::tests::a_square_holding_unsaved_notes_is_not_closed_by_any_deliberate_close ... ok
+test pane::tests::a_synthetic_wheel_notch_is_a_mouse_report_not_a_cursor_key ... ok
+test pane::tests::a_tubes_header_bloom_follows_the_pane_phosphor_gauge ... ok
+test pane::tests::a_wide_character_is_one_key_not_two ... ok
+test pane::tests::agentic_marks_callouts_tools_links_and_structure ... ok
+test pane::tests::anchor_top_atomic_round_trips_and_gates_the_bottom_pad ... ok
+test pane::tests::bottom_anchor_rows_pushes_content_to_the_bottom ... ok
+test pane::tests::brightness_lights_the_screen_without_whitening_text ... ok
+test pane::tests::budget_range_takes_the_newest_lines_and_clamps_to_history ... ok
+test pane::tests::chrome_glyphs_the_ui_font_lacks_come_from_a_named_face ... ok
+test pane::tests::classify_line_tags_each_token_class ... ok
+test pane::tests::classify_recognises_the_phosphor_quartet ... ok
+test pane::tests::codex_parenthesized_path_rejoins_indented_rows_before_the_right_edge ... ok
+test pane::tests::ctrl_wheel_over_a_pane_sizes_that_pane_and_goes_no_further ... ok
+test pane::tests::default_foreground_is_the_text_colour_in_every_mode ... ok
+test pane::tests::each_region_of_a_pane_turns_its_own_dial ... ok
+test pane::tests::erase_run_keys_walk_the_caret_past_the_run_then_rub_it_out ... ok
+test pane::tests::every_bench_write_goes_through_the_gate ... ok
+test pane::tests::every_chip_the_bench_can_press_lights_under_the_pointer ... ok
+test pane::tests::every_light_the_pointer_sets_has_a_way_out ... ok
+test pane::tests::every_paste_goes_through_paste_bytes ... ok
+test pane::tests::every_wheel_handler_on_a_pane_answers_the_size_chord ... ok
+test pane::tests::file_uri_escapes_what_would_truncate_it ... ok
+test pane::tests::fuzzy_match_scores_ranks_and_locates ... ok
+test pane::tests::grade_coeffs_match_graded ... ok
+test pane::tests::grade_neutral_is_identity_and_channels_are_independent ... ok
+test pane::tests::grid_pad_floors_then_scales_then_compensates_curvature ... ok
+test pane::tests::hidden_panes_stream_their_updates_through_repaint ... ok
+test pane::tests::highlight_tints_only_the_selected_span ... ok
+test pane::tests::hue_fold_keeps_colours_inside_the_seed_arc ... ok
+test pane::tests::idx_color_cube_and_ramp_boundaries ... ok
+test pane::tests::invert_logical_read_block_mode_keeps_a_multistep_turn_in_order ... ok
+test pane::tests::invert_logical_read_block_mode_keeps_agent_input_box_upright ... ok
+test pane::tests::invert_logical_read_keeps_wrapped_lines_in_order ... ok
+test pane::tests::invert_run_range_swaps_only_selected_cells ... ok
+test pane::tests::inverted_anchor_top_puts_the_prompt_on_top_with_older_descending ... ok
+test pane::tests::is_agent_includes_an_explicitly_configured_local_program ... ok
+test pane::tests::keystroke_bytes_encodes_the_pty_protocol ... ok
+test pane::tests::link_at_finds_urls_and_paths_and_trims_delimiters ... ok
+test pane::tests::logs_marks_levels_timestamps_and_numbers ... ok
+test pane::tests::markdown_marks_headings_spans_and_links ... ok
+test pane::tests::mode_theme_per_mode_palette ... ok
+test pane::tests::no_bench_method_is_defined_in_pane_rs ... ok
+test pane::tests::nothing_in_the_bench_half_flips_the_pane_off_the_bench ... ok
+test pane::tests::on_key_decides_nothing_it_can_decide_in_the_table ... ok
+test pane::tests::only_a_missing_non_ascii_glyph_needs_the_chain ... ok
+test pane::tests::only_a_press_on_the_notes_bar_reaches_send_notes ... ok
+test pane::tests::only_show_document_puts_a_pane_on_its_document_face ... ok
+test pane::tests::only_the_body_that_is_drawn_is_built ... ok
+test pane::tests::padded_grid_rows_must_be_trimmed_before_reflow ... ok
+test pane::tests::paging_keys_map_and_modified_ones_fall_through ... ok
+test pane::tests::paint_row_to_grid_row_inverts_the_paint_transform ... ok
+test pane::tests::pane_registers_every_button_its_mouse_handler_branches_on ... ok
+test pane::tests::reflow_does_not_merge_indented_or_rule_rows ... ok
+test pane::tests::reflow_glues_mid_token_softwrap_with_no_space ... ok
+test pane::tests::reflow_leaves_narrow_wrapped_text_untouched ... ok
+test pane::tests::reflow_preserves_blank_lines_and_short_distinct_lines ... ok
+test pane::tests::reflow_reads_a_margin_two_rows_share_as_a_margin_and_not_as_structure ... ok
+test pane::tests::reflow_rebuilds_a_wrapped_shell_command ... ok
+test pane::tests::reflow_rejoins_word_wrapped_prose_at_pane_width ... ok
+test pane::tests::resolve_path_expands_home_and_anchors_relatives ... ok
+test pane::tests::reveal_script_asks_dbus_first_then_falls_back_to_the_folder ... ok
+test pane::tests::reveal_target_accepts_paths_and_local_file_uris ... ok
+test pane::tests::role_color_responds_to_program_color ... ok
+test pane::tests::send_notes_pastes_bracketed_and_never_sends_a_carriage_return ... ok
+test pane::tests::shape_three_modes_and_grey_guard ... ok
+test pane::tests::shell_quote_survives_a_quote_in_the_name ... ok
+test pane::tests::should_invert_truth_table_preserves_codex_alt_screen ... ok
+test pane::tests::should_open_a_new_turn_only_on_the_idle_to_working_edge ... ok
+test pane::behaviour::the_wheel_over_a_square_on_the_bench_is_the_documents ... ok
+test pane::tests::spans_keep_distinct_lines_and_blank_rows_apart ... ok
+test pane::tests::spans_rejoin_the_command_that_kept_failing_to_paste ... ok
+test pane::tests::spans_report_rows_for_a_mid_token_glue ... ok
+test pane::tests::sizing_a_pane_past_its_stop_leaves_it_following_outer ... ok
+test pane::tests::submit_answers_is_not_gated_on_how_much_of_the_round_is_answered ... ok
+test pane::tests::syntax_colors_match_line_length_for_every_scheme ... ok
+test pane::tests::terminal_state_changes_return_to_live_outer_and_respect_manual_panes ... ok
+test pane::tests::terminal_state_uses_the_observed_program_not_a_filename ... ok
+test pane::tests::the_agent_tint_preference_is_off_until_published_on ... ok
+test pane::tests::the_alt_chip_offers_open_here_on_a_line_that_is_not_a_command ... ok
+test pane::tests::the_bench_palette_is_graded_exactly_as_a_cell_would_be ... ok
+test pane::tests::the_bench_says_what_it_took_and_never_stops_the_event ... ok
+test pane::tests::the_bench_opens_documents_in_td_and_keeps_its_card ... ok
+test pane::tests::the_chip_says_open_here_over_a_document_and_copy_over_a_command ... ok
+test pane::tests::the_bench_takes_the_size_chord_before_it_bails ... ok
+test pane::tests::the_copy_gate_offers_commands_and_refuses_prose_and_elisions ... ok
+test pane::tests::the_colour_grade_is_spent_once_and_the_other_dials_survive ... ok
+test pane::tests::the_copy_gate_offers_line_initial_urls ... ok
+test pane::tests::the_desktop_font_is_the_head_of_the_alias_list ... ok
+test pane::tests::the_disk_decides_whether_a_path_at_the_edge_was_broken_or_finished ... ok
+test pane::tests::the_departure_lets_go_of_every_field_that_names_the_conversation ... ok
+test pane::tests::the_float_is_drawn_inside_the_screen_after_the_note ... ok
+test pane::tests::the_focus_reader_never_mirrors_the_bench ... ok
+test pane::tests::the_font_diagnostic_is_silent_about_a_family_that_resolves ... ok
+test pane::tests::the_grid_fallback_chain_waits_for_a_glyph_its_own_font_lacks ... ok
+test pane::tests::the_document_face_never_declines_a_key_and_asks_its_view_first ... ok
+test pane::tests::the_grid_is_positioned_by_its_drawn_padding ... ok
+test pane::tests::the_idle_font_cuts_stay_wired ... ok
+test pane::tests::the_link_menu_rows_come_from_the_table ... ok
+test pane::tests::the_mode_tint_needs_both_the_pane_following_and_the_window_asking ... ok
+test pane::tests::the_manifest_counts_every_write_to_a_terminal ... ok
+test pane::tests::the_readers_foot_is_the_agents_input_box_and_its_status ... ok
+test pane::tests::the_pane_takes_the_laid_out_row_height_not_the_themes ... ok
+test pane::tests::the_row_rounding_is_still_the_rule_gpui_lays_out_with ... ok
+test pane::tests::the_second_half_of_a_broken_link_wears_the_link_colour ... ok
+test pane::tests::the_shelf_strip_wraps_so_every_shelf_stays_reachable ... ok
+test pane::tests::the_text_wrapper_agrees_with_the_span_core ... ok
+test pane::tests::the_refusal_chip_is_drawn_over_the_square ... ok
+test pane::tests::this_machines_own_name_is_a_local_authority ... ok
+test pane::tests::two_links_that_meet_at_the_edge_stay_two_links ... ok
+test pane::tests::visual_selection_spans_block_is_rectangular ... ok
+test pane::tests::visual_selection_spans_fills_visually_contiguous_rows ... ok
+test pane::tests::visual_selection_spans_single_row_is_a_column_range ... ok
+test pane::tests::warp_hit_test_round_trips_even_at_the_bottom_of_a_tall_pane ... ok
+test pane::tests::warp_matches_the_shader_and_is_identity_when_flat ... ok
+test pane::tests::what_shelf_you_are_on_never_catches_a_keystroke ... ok
+test pane::tests::the_wheel_finds_the_square_through_the_glass ... ok
+test pane::tests::writing_a_note_sends_nothing_to_the_agent ... ok
+test pane::behaviour::the_wheel_over_the_square_moves_its_document_and_nothing_else ... ok
+test pane::grid_paint::tests::grid_cursor_selection_scroll_theme_and_geometry_invalidate ... ok
+
+thread 'pane::grid_paint::tests::quiet_grid_skips_layout_but_refresh_and_output_repaint' (2478402) panicked at src/pane/grid_paint.rs:96:9:
+assertion `left == right` failed: quiet grid rebuilt on parent frames
+  left: 14
+ right: 6
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test pane::grid_paint::tests::quiet_grid_skips_layout_but_refresh_and_output_repaint ... FAILED
+test pane::housekeeping_tests::a_hidden_stream_and_colour_query_do_not_wait_for_housekeeping ... ok
+test pane::housekeeping_tests::hidden_completion_keeps_its_short_debounce_without_a_busy_loop ... ok
+test pane::housekeeping_tests::hidden_completion_waits_for_scroll_settle ... ok
+test pane::housekeeping_tests::hidden_housekeeping_sleeps_and_visibility_edges_wake_it ... ok
+
+thread 'pane::housekeeping_tests::hidden_output_does_not_dispatch_ui_events_and_activation_reads_latest' (2478875) panicked at src/pane/housekeeping_tests.rs:62:5:
+assertion `left == right` failed: hidden output dispatched screen events
+  left: 40
+ right: 0
+test pane::housekeeping_tests::hidden_output_does_not_dispatch_ui_events_and_activation_reads_latest ... FAILED
+test pane::housekeeping_tests::hidden_prompt_is_detected_by_the_one_second_fallback ... ok
+test pane::housekeeping_tests::hidden_resize_interrupts_sleep_and_keeps_the_last_target ... ok
+test pane::housekeeping_tests::only_locally_owned_ptys_get_a_foreground_watcher ... ok
+test pane::styling::tests::covered_faces_skip_grid_styling_and_terminal_return_catches_up ... ok
+test pane::styling::tests::quiet_documents_reuse_paint_and_changes_invalidate_it ... ok
+test pane::styling::tests::styled_viewport_reuses_only_identical_cells_and_view_state ... ok
+
+failures:
+
+failures:
+    pane::grid_paint::tests::quiet_grid_skips_layout_but_refresh_and_output_repaint
+    pane::housekeeping_tests::hidden_output_does_not_dispatch_ui_events_and_activation_reads_latest
+
+test result: FAILED. 246 passed; 2 failed; 1 ignored; 0 measured; 2105 filtered out; finished in 11.78s
+
+error: test failed, to rerun pass `--bin terminal-delight`

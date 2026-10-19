@@ -1,0 +1,405 @@
+{
+  "file": "reports/2026-10-18-git-coordination-rail.html",
+  "subject": "Redesign Terminal Delight\u2019s Git rail to reveal shared checkouts and overlapping files through project, cluster and evidence views.",
+  "reader": "Parker supervises many agents in Terminal Delight and supplied the current rail screenshot; he wants to judge the proposed UI and plan without reading Rust or knowing internal identifiers.",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.64
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.8
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "journey",
+      "probabilities": {
+        "journey": 0.9,
+        "catalogue": 0.01,
+        "argument": 0.07,
+        "report": 0.01,
+        "none_of_the_above": 0.01
+      },
+      "confidence": 0.87
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Git Coordination",
+      "text": "Your screenshot shows one shared checkout, with its writers cut off at the right edge. Who might be getting in each other\u2019s way? The handoff proposes connecting shared checkouts and files, then inspecting that evidence in three depths. This brief draws the route. \n\n Proposal \u00b7 4/10 About 6 minutes Native Rust / GPUI",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.65,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.36,
+            "2": 0.53,
+            "3": 0.08
+          },
+          "confidence": 0.5
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.13
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.58
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.13,
+            "complication": 0.34,
+            "turn": 0.49,
+            "consequence": 0,
+            "resolution": 0.04,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.4
+        }
+      },
+      "latency_ms": 411.7715370375663,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "The Glance",
+      "text": "Keep the Git summary. A fixed coordination signal stays visible while the ticker rotates; clicking it opens all projects with your current project marked. \n 01 \u00b7 A stable signal \n\nCURRENT \u00b7 redrawn from your screenshot measured \n\n 1 WORKTREE \u00b7 1 SHARED \u25cf \u25cf \u25cf \u25b0 \u00a0 1 lines of work, one shared \u00b7 quiet for an hour \n\nPROJECT RAIL \u00b7 the badge, unfolded \nTERMINAL DELIGHT read 18s ago in 664ms \n\n line uncommitted vs main writing here \n\n usage-pace-burndown SHARED 1 dirty +5 \u22121 \u21919 \u219379 claude (gliff initiative), claude (Efficie\u2026 \n\n51 worktrees of terminal-delight on disk, 1 in use \n\nPROPOSED \u00b7 yellow = the amendments inferred \n\n 1 CHECKOUT \u00b7 1 SHARED \u25c7 COORDINATION \u00b7 1 cluster read 18s ago \n\n NARROW \u00b7 320 CSS px \n 1 CHECKOUT \u25c7 1 CLUSTER \nCoverage becomes \u201cpartial\u201d beside the count when a required scan is missing. \n\n A fixed overlap signal gives the ticker a separate job. The current numbers come from your image; the proposed cluster is illustrative. \u201c51 on disk\u201d remains inventory, separate from the checkout in use. Widths are proposed CSS sizes, pending native font testing. \n\nThe badge is scoped to the selected project. Other projects\u2019 Git signals live inside the overlay; the existing needs-input queue keeps its own meaning.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.9,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.16,
+            "2": 0.75,
+            "3": 0.08
+          },
+          "confidence": 0.74
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.41
+        },
+        "seam": {
+          "type": "score",
+          "score": 1,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.22,
+            "1": 0.58,
+            "2": 0.18,
+            "3": 0.02
+          },
+          "confidence": 0.56
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.14
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0.01,
+            "turn": 0.8,
+            "consequence": 0.05,
+            "resolution": 0.11,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.77
+        }
+      },
+      "latency_ms": 411.08987998450175,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "The Connection",
+      "text": "Four worktrees touching one file share one hotspot . Work connected through shared files or checkouts forms a cluster , which can be inspected together. \n 02 \u00b7 Count the shared place \n\n The same checkout contributes once to file overlap. Its two panes also form a shared-checkout hotspot. This diagram follows the handoff\u2019s grouping rule; it makes no claim that either pane authored a particular change. \n\nToday\u2019s scanner compares branch pairs and omits untracked paths from overlap. Collect committed, staged, unstaged and untracked paths separately before building the groups. \n Source checks & handoff amendments \u2197",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.53,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.07,
+            "1": 0.35,
+            "2": 0.56,
+            "3": 0.02
+          },
+          "confidence": 0.49
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.14
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.19,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.74,
+            "2": 0.21,
+            "3": 0.01
+          },
+          "confidence": 0.73
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.55
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.02,
+            "turn": 0.88,
+            "consequence": 0.08,
+            "resolution": 0.01,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.86
+        }
+      },
+      "latency_ms": 422.0322929904796,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "The Drill-Down",
+      "text": "Open a project, choose the connected work, then inspect its files and panes. Keep the checkout table one tab away. Cluster titles name the shared place; internal IDs stay in the evidence. \n 03 \u00b7 Three depths, one overlay \n\nINTERACTIVE MOCKUP \u00b7 fictional data \u00b7 yellow = the proposed surface \n\n GIT COORDINATION snapshot 91 \u00b7 read 4s ago \n All projects / Terminal Delight / Shared host code \n\nPROJECTS IN THIS WINDOW severity \u00b7 coverage \n \u25c7 WARNING Terminal Delight CURRENT 2 clusters \u00b7 7 checkouts in use \u00b7 8 panes Shared host code \u00b7 shared palette file PARTIAL\n 1 footprint unavailable \u203a \n\n \u25c7 CAUTION BFS Website 1 cluster \u00b7 4 checkouts in use \u00b7 4 panes COMPLETE \n\n \u2713 CLEAR Client Portal 0 clusters \u00b7 4 checkouts in use \u00b7 4 panes COMPLETE \n\n ? UNKNOWN Music Prototype Footprints unavailable \u00b7 cluster count unknown UNAVAILABLE \n\nRank observed alerts first; surface unread projects ahead of clear ones. Each project carries its own scan age. Only Terminal Delight opens in this prototype. \n\n TERMINAL DELIGHT \u25c7 WARNING \u00b7 PARTIAL \n\n7 checkouts in use \u00b7 8 panes \u00b7 distinct agents unknown \u00b7 1 footprint unavailable \n\n Clusters (2) Checkouts (7) \n\n \u25c7 WARNING Shared host code 4 panes \u00b7 3 checkouts \u00b7 2 hotspots relay.rs across 3 checkouts \u00b7 host checkout shared by 2 panes \u203a \n\n \u25c7 CAUTION Shared palette file 2 panes \u00b7 2 checkouts \u00b7 1 hotspot palette.rs \u00b7 shared file \u00b7 line overlap not checked \n\n NO OBSERVED OVERLAP docs \u00b7 1 pane \u00b7 footprint complete \n\n UNMEASURED packaging \u00b7 1 pane \u00b7 footprint unavailable \n\n | \n | Checkout / branch | Uncommitted | vs main | Panes \n\n | render / feature/render | 2 tracked \u00b7 +12 \u22124 | \u21913 \u21931 | A \n | host / feature/host | 1 tracked \u00b7 +8 \u22122 | \u21912 \u21931 | B, C \u00b7 shared \n | cli / feature/cli | 1 staged \u00b7 +5 \u22120 | \u21911 \u21931 | D \n | theme / feature/theme | 1 tracked \u00b7 +4 \u22121 | \u21911 \u21930 | E \n | ui / feature/ui | 1 tracked \u00b7 +6 \u22122 | \u21912 \u21930 | F \n | docs / docs/help | 1 tracked \u00b7 +3 \u22120 | \u21911 \u21930 | G \n | packaging / feature/pkg | unavailable | unavailable | H \n\n51 worktrees on disk \u00b7 7 in use \u00b7 remaining inventory stays separate. No file footprint is inferred for packaging. \n\n SHARED HOST CODE \u25c7 WARNING \u00b7 COMPLETE\u00b9 \n\n4 panes \u00b7 3 checkouts \u00b7 agent identities unknown \u00b7 2 hotspots \n\n FILE HOTSPOT app/src/host/relay.rs render: committed + unstaged \u00a0 / \u00a0 host: unstaged \u00a0 / \u00a0 cli: staged \n\n SHARED CHECKOUT /work/td-host Panes B and C are present here. Which pane wrote each change is unknown. \n\n Line overlap Not checked Conflict with selected main Not observed in this sample Committed comparison origin/main \u00b7 assumed target Observation Sampled, not an atomic snapshot \n\n Focus render \u00b7 A \u2197 Focus host \u00b7 B \u2197 Focus host \u00b7 C \u2197 Focus cli \u00b7 D \u2197 \n\nPrototype only: navigation is simulated. Native TD will revalidate the pane before focusing it. \n\n\u00b9 Complete for this cluster\u2019s required checkout/path observations; optional line analysis is unmeasured. The project remains partial because packaging is unavailable. Internal cluster ID: fc-12. \n\n Close Esc: back one level, then close \u00b7 prototype \n\n A group\u2019s title tells you where to look before you open it. Click Terminal Delight \u2192 Shared host code; try Checkouts and the breadcrumb. All names, counts and times in this prototype are illustrative. The project\u2019s missing scan stays visible at every relevant depth. \n\n 04 \u00b7 Coverage survives the glance \n\n \u2713 CLEAR 0 clusters Required checks complete \n\n \u25c7 WARNING 1 observed cluster Partial \u00b7 1 footprint missing \n\n ? UNKNOWN Cluster count unknown Initial scan / unavailable \n\n \u25f7 STALE Last observed: warning Keep age visible \u00b7 recheck due \n\n A failed scan cannot erase observed overlap or manufacture \u201cclear\u201d. These are proposed states. Required coverage means checkout occupancy and the declared path sources; line comparison is explicitly optional. A conflict with main appears as its own finding even when only one checkout is involved.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.41,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.09,
+            "1": 0.43,
+            "2": 0.47,
+            "3": 0.01
+          },
+          "confidence": 0.38
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.44
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.7,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.32,
+            "1": 0.66,
+            "2": 0.02,
+            "3": 0
+          },
+          "confidence": 0.66
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.15
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.01,
+            "turn": 0.53,
+            "consequence": 0.31,
+            "resolution": 0.13,
+            "aside": 0.02,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.45
+        }
+      },
+      "latency_ms": 381.3288420205936,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "The Build",
+      "text": "These views can share the scanner TD already runs in the background. Add the data in steps, derive connected groups once, and reuse that result for native rendering and permission-scoped MCP reads. \n 05 \u00b7 Collect \n\n Keep one Git worker. Extend its observations with source-labelled paths and stable checkout/pane identities. The legacy engineering report keeps its keys and meanings. Source: current scanner/cache seams plus proposed modules. 06 \u00b7 Group \n\n Derive connected work once per reading. Cache the graph and render it in the native overlay. No separate UI severity formula or scanner is needed. Source: current scanner/cache seams plus proposed modules. 07 \u00b7 Expose \n\n Apply permissions before deriving agent-visible groups. The MCP branch uses the same pure algorithm on authorized facts. Filtering a finished all-pane cluster would leak through its counts and paths. Source: current scanner/cache seams plus proposed modules. \n\nThe existing two-second scheduling beat and twenty-second stale threshold are starting points. Each project retains its actual scan time; neither interval promises that every project is freshly measured. No Git subprocess runs during paint or an MCP request. \n 08 \u00b7 Prove one route before expanding \n\n 1 \n Tracer: one shared checkout \nStable pane/context identity \u2192 badge \u2192 project \u2192 evidence \u2192 focus, plus a permission-scoped MCP read of the same fixture. Keep unavailable fields visible. Pass: two panes become one shared-checkout hotspot; hidden panes change no visible aggregate. \n\n 2 \n Trustworthy file groups \nCollect four path sources with NUL-safe parsing; add multiway file hotspots and connected clusters. Preserve the legacy touched field. Pass: four worktrees sharing a file yield one hotspot; a bridge joins groups; a missing base qualifies committed overlap. \n\n 3 \n All projects and incremental reads \nRank projects, retain Checkouts, reconcile cluster identity, bound history, then add the changes API. Add push only if polling proves inadequate. Pass: UI and MCP agree for the same scope/version; expired cursors request a reset; split/merge lineage is explicit. \n\n 4 \n Native acceptance \nExercise empty, partial and stale states; keyboard and pane loss; flat/warped hit testing; a sparse 100-worktree fixture and both supported core suites. Pass: no frame-time Git, bounded results with partial coverage on caps, measured scan cost, real screenshots and sample MCP output. \n\n The first slice proves the entire read-and-focus route. This changes the handoff\u2019s ordering: privacy and MCP parity start with the tracer, before the full graph. No duration estimate is established. \n\n Data contract, acceptance cases & file map \u2197",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 2.17,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0,
+            "1": 0.05,
+            "2": 0.73,
+            "3": 0.22
+          },
+          "confidence": 0.73
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.4
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.05,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.08,
+            "1": 0.79,
+            "2": 0.13,
+            "3": 0
+          },
+          "confidence": 0.79
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.4
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0.12,
+            "consequence": 0.21,
+            "resolution": 0.63,
+            "aside": 0.04,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.57
+        }
+      },
+      "latency_ms": 371.8853060272522,
+      "failure": null
+    },
+    {
+      "index": 6,
+      "heading": "The Decisions",
+      "text": "Recommended: keep the Git ticker, add a stable coordination badge, and build checkout/file evidence through the existing background scanner. Ship source-labelled path overlap first; keep line overlap for a later decision. \n\n Entry Point \nBadge opens all projects, current project marked. Selecting a project opens its clusters and Checkouts tab. \nRecommended \u00b7 the top row stays local; one click reveals the wider picture. \n\n Signal Policy \nAdopt the handoff\u2019s evidence-based caution, warning and alert levels, with coverage shown separately. Shared panes remain distinct from known agent sessions. \nRecommended \u00b7 show evidence and coverage separately; keep the rule version in MCP metadata. \n\n First Release \nShip native views, reliable footprints and permission-scoped MCP reads through the existing relay. Defer line analysis and push notifications. \nRecommended \u00b7 retain engineering_state keys and meanings, with the exposure audit completed before release. \n\nAnnotate a picture or decision; concur approves its recommendation. Save into the file to return your notes. No application code has changed. \n\nBasis: your two screenshots; the 18 October handoff; fetched main f1d99f922b09 . The working checkout remains ef6dcde524a1 . Illustrations are HTML/SVG proposals, not captures of implemented UI. Evidence & limits \u2197 \n\n . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.89,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.16,
+            "2": 0.76,
+            "3": 0.07
+          },
+          "confidence": 0.75
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.4
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.41,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.54,
+            "2": 0.39,
+            "3": 0.03
+          },
+          "confidence": 0.51
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.23
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0,
+            "consequence": 0,
+            "resolution": 1,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 1
+        }
+      },
+      "latency_ms": 398.70613999664783,
+      "failure": null
+    }
+  ]
+}

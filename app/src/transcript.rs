@@ -746,6 +746,56 @@ impl<'a> Line<'a> {
 pub struct Drawn {
     pub doc: Document,
     pub opens: Vec<Option<usize>>,
+    /// Logical document line at each submitted human turn, oldest first.
+    /// These come from typed transcript entries, never from a painted caret.
+    pub turns: Vec<usize>,
+}
+
+/// An indexed destination in the chat, independent of how many rows a turn
+/// occupies. Live is distinct from the last submitted human message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TurnTarget {
+    Turn(usize),
+    Live,
+}
+
+/// Key presses may arrive before the transcript's first background read.
+/// Keep every press, then resolve them together against the human-turn index.
+#[derive(Default)]
+pub struct TurnNav {
+    selected: Option<usize>,
+    pending: Vec<bool>,
+}
+
+impl TurnNav {
+    pub fn active(&self) -> bool {
+        self.selected.is_some() || !self.pending.is_empty()
+    }
+
+    pub fn queue(&mut self, next: bool) {
+        self.pending.push(next);
+    }
+
+    pub fn resolve(&mut self, turns: &[usize]) -> Option<TurnTarget> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        for next in self.pending.drain(..) {
+            self.selected = match (self.selected, next, turns.len()) {
+                (_, _, 0) => None,
+                (None, false, len) => Some(len - 1),
+                (None, true, _) => None,
+                (Some(at), false, _) => Some(at.saturating_sub(1)),
+                (Some(at), true, len) => (at + 1 < len).then_some(at + 1),
+            };
+        }
+        Some(
+            self.selected
+                .and_then(|at| turns.get(at).copied())
+                .map(TurnTarget::Turn)
+                .unwrap_or(TurnTarget::Live),
+        )
+    }
 }
 
 /// The words a drawn conversation carries, in the reader's language.
@@ -765,6 +815,7 @@ pub fn draw(conv: &Conversation, ink: &Ink, words: &Words, open: &HashSet<usize>
     let mut out = Drawn {
         doc: Document::default(),
         opens: Vec::new(),
+        turns: Vec::new(),
     };
     fn push(out: &mut Drawn, line: DocLine, opens: Option<usize>) {
         out.doc.lines.push(line);
@@ -793,6 +844,9 @@ pub fn draw(conv: &Conversation, ink: &Ink, words: &Words, open: &HashSet<usize>
         let joined = matches!((entry, last), (Entry::Tool(_), Some(Entry::Tool(_))));
         if last.is_some() && !joined {
             push(&mut out, DocLine::default(), None);
+        }
+        if matches!(entry, Entry::Prompt(_)) {
+            out.turns.push(out.doc.lines.len());
         }
         if let Some(label) = label {
             push(
@@ -1402,6 +1456,70 @@ mod tests {
             you: "YOU",
             agent,
             empty: "Nothing has been said here yet.",
+        }
+    }
+
+    #[test]
+    fn three_fast_previous_presses_jump_three_human_turns_without_scrolling() {
+        let mut nav = TurnNav::default();
+        for _ in 0..3 {
+            nav.queue(false);
+        }
+        let turns = [0, 80, 900, 12000];
+        assert_eq!(nav.resolve(&turns), Some(TurnTarget::Turn(80)));
+        assert_eq!(
+            nav.resolve(&turns),
+            None,
+            "no repeat work on the next frame"
+        );
+        nav.queue(true);
+        assert_eq!(nav.resolve(&turns), Some(TurnTarget::Turn(900)));
+        nav.queue(true);
+        assert_eq!(nav.resolve(&turns), Some(TurnTarget::Turn(12000)));
+        nav.queue(true);
+        assert_eq!(nav.resolve(&turns), Some(TurnTarget::Live));
+        for _ in 0..20 {
+            nav.queue(false);
+        }
+        assert_eq!(nav.resolve(&turns), Some(TurnTarget::Turn(0)));
+    }
+
+    #[test]
+    fn both_transcript_formats_index_human_turns_and_their_final_replies() {
+        for codex in [false, true] {
+            let mut c = Conversation::new();
+            for i in 0..4 {
+                let (prompt, reply) = if codex {
+                    (
+                        serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":format!("human {i}")}],"internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}}}),
+                        serde_json::json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":format!("final remark {i}")}]}}),
+                    )
+                } else {
+                    (
+                        serde_json::json!({"type":"user","message":{"role":"user","content":format!("human {i}")}}),
+                        serde_json::json!({"type":"assistant","message":{"id":format!("a{i}"),"role":"assistant","content":[{"type":"text","text":format!("final remark {i}")}]}}),
+                    )
+                };
+                c.fold(&prompt.to_string());
+                c.fold(&reply.to_string());
+            }
+            let drawn = draw(
+                &c,
+                &ink(),
+                &words(if codex { "CODEX" } else { "CLAUDE" }),
+                &HashSet::new(),
+            );
+            assert_eq!(drawn.turns.len(), 4, "codex={codex}");
+            let mut nav = TurnNav::default();
+            for _ in 0..3 {
+                nav.queue(false);
+            }
+            let Some(TurnTarget::Turn(line)) = nav.resolve(&drawn.turns) else {
+                panic!("a human turn");
+            };
+            let region = &drawn.doc.lines[line..drawn.turns[2]];
+            assert!(region.iter().any(|l| l.text == "human 1"));
+            assert!(region.iter().any(|l| l.text == "final remark 1"));
         }
     }
 

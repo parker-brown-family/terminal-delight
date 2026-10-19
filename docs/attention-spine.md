@@ -15,11 +15,24 @@ record. This page is the map you need before changing any of it.
 
 These are not omissions. Each one was decided, and each is load-bearing:
 
-- **It never acts on an agent.** It routes attention; it does not answer
-  prompts, retry, merge, or send. Every specimen worth copying — Warp's review
-  pane, HumanLayer's gates — replies to the agent from the rail. This terminal
-  writes no bytes to any PTY, so ours cannot, and the constraint has held
-  through every slice.
+- **It never acts on an agent — with one exception, decided on 2026-10-15.** It
+  routes attention; it does not answer prompts, retry, merge, or send. Every
+  specimen worth copying — Warp's review pane, HumanLayer's gates — replies to
+  the agent from the rail, and for a long time this terminal wrote no bytes to
+  any PTY, so ours could not.
+
+  **The exception is an agent's ask for access.** Parker, on the Splinterm
+  scuttle brief: *"the agent spine will now allow requests to show up with a
+  SIMPEL YES NO if they are trying to modify TERMINAL DELIGHT SETTING THAt
+  require human provenance (agent behaviour and access)"*. An agent calls
+  `request_access`; its row lands in the ACCESS lane with Yes and No; a person's
+  press changes the setting and tells the agent in one signed line. It is the
+  one thing the rail answers, because it is the one thing only a person may
+  answer, and the line goes through the bench's own held-until-visible path
+  (the bench has typed tagged lines into agents' terminals since the surface
+  protocol, so "no bytes to any PTY" stopped being true of the window before it
+  stopped being true here). Prompts, retries, merges and sends are still not the
+  rail's. See `docs/mcp.md`, *An agent asks, a person answers*.
 - **It never invents a number.** No zero stands in for a measurement nobody
   took. An unobserved age draws a dash, an unsourced review field prints
   `unavailable`, and a screen that could not be read says exactly that and
@@ -55,8 +68,11 @@ These are not omissions. Each one was decided, and each is load-bearing:
   ┌─────────────────────────────────────────────┐
   │ Observation  { pane, kind, priority,        │  built per pane per frame
   │                origin, observed_at,         │  in Workspace::rail_build
-  │                evidence, deliverable }      │
+  │                evidence, deliverable, ask } │
   └─────────────────────────────────────────────┘
+        ▲
+        │  an ask (request_access) outranks the badge: kind = Access
+        │  — said by the agent, not read off its screen
         │
         │  attention::project()   sort: level → lane → age → pane
         ▼
@@ -82,6 +98,8 @@ These are not omissions. Each one was decided, and each is load-bearing:
 | Painting | `app/src/main.rs` — `render_spine`, `rail_panel`, `render_rail`, `render_rail_docked` |
 | Levels on the tree | `app/src/main.rs` — `level_of`, `set_branch_level`, `level_rows` |
 | The declaring channel | `app/src/mcp.rs` — `declare_deliverable`, `validate_deliverable` |
+| The asking channel | `app/src/mcp.rs` — `request_access`; the rules and words in `app/src/access.rs` |
+| Answering an ask | `app/src/main.rs` — `rail_answer`, reached only from the row's buttons and `rail_key`'s `y` / `n` |
 
 `attention.rs` is deliberately the only file with no dependencies on the rest.
 If a rule can live there, it should: that is where it gets tested without a
@@ -123,6 +141,15 @@ broken.
     `the_overlay_is_not_in_the_row_that_sizes_the_panes`
 12. **The projection is built once per frame.** →
     `the_projection_is_computed_once_per_frame`
+13. **An ask comes first and is counted, from any kind of pane.** A script in a
+    plain shell that asked is still asking (it can ask only while shells are
+    exposed, the same policy that lets it call anything). →
+    `an_ask_sorts_above_every_other_lane_and_is_counted`,
+    `an_ask_from_a_plain_shell_still_gets_its_row`
+14. **Only a person answers an ask.** The row's two buttons and the queue's `y`
+    and `n` are the only callers of `rail_answer`, and neither agent-facing file
+    can name it. → `an_ask_is_answered_only_by_the_rails_buttons_and_keys`,
+    `no_agent_facing_surface_can_answer_an_ask`
 
 ## How to change it
 

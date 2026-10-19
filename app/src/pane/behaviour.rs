@@ -15,6 +15,103 @@ use super::harness::{
 use crate::docopen::{Asker, DocSeat, FloatHit};
 use crate::workbench::Face;
 
+/// Observe bytes at the host socket, after real GPUI key dispatch. A final
+/// letter fences the claimed chords: if they leaked, it would not arrive first.
+#[gpui::test]
+fn human_turn_chords_keep_shell_bytes_and_never_leak_from_agents(cx: &mut TestAppContext) {
+    use std::io::Read;
+    for mode in [
+        super::PaneMode::Shell,
+        super::PaneMode::Claude,
+        super::PaneMode::Codex,
+    ] {
+        let mut attached = Pane::attached(cx);
+        attached
+            .host
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        attached.pane.running_as(mode.clone());
+        // The startup input guard is 150 ms of wall time.
+        attached.pane.view.update(attached.pane.cx, |v, _| {
+            v.spawned = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        });
+        attached
+            .pane
+            .keys("alt-up alt-down ctrl-up ctrl-down ctrl-left ctrl-right x");
+        let expected: &[u8] = if mode.is_agent() {
+            b"\x1b[1;5D\x1b[1;5Cx"
+        } else {
+            b"\x1b[1;5A\x1b[1;5B\x1b[1;5D\x1b[1;5Cx"
+        };
+        let mut got = vec![0; expected.len()];
+        attached.host.read_exact(&mut got).unwrap();
+        assert_eq!(got, expected, "{mode:?}");
+    }
+}
+
+/// Both CLI carets must lead to the human's turns, skipping replies and the
+/// empty composer. The window's key dispatch is held in main.rs beside its
+/// other chord wiring tests.
+#[gpui::test]
+fn human_prompt_navigation_walks_claude_and_codex_turns(cx: &mut TestAppContext) {
+    for (mode, caret) in [
+        (super::PaneMode::Claude, "❯"),
+        (super::PaneMode::Codex, "›"),
+    ] {
+        let mut pane = Pane::running(cx, &format!(
+            "for n in 1 2 3; do printf '%s\\n' '{caret} human turn' 'agent reply'; for i in $(seq 1 40); do echo output; done; done; printf '%s\\n' '{caret} ' 'ready'; exec cat"
+        ));
+        pane.wait_for("ready");
+        pane.running_as(mode);
+        let turns = pane.read(|v| v.human_line_indices());
+        assert_eq!(turns.len(), 3, "{caret}: only submitted human turns");
+        assert!(turns.iter().all(|line| *line < 0));
+        let mut jump = |next, expected| {
+            pane.view
+                .update(pane.cx, |v, cx| v.scroll_to_human(next, cx));
+            assert_eq!(
+                pane.read(|v| v.session.term.lock().display_offset()),
+                expected
+            );
+        };
+        jump(false, -turns[2] as usize);
+        jump(false, -turns[1] as usize);
+        jump(false, -turns[0] as usize);
+        jump(false, -turns[0] as usize); // oldest holds
+        jump(true, -turns[1] as usize);
+        jump(true, -turns[2] as usize);
+        jump(true, 0); // beyond newest returns to live
+    }
+}
+
+/// The full-screen CLI's scroll walk stops on a submitted turn, never on
+/// its blank input box, for both current prompt glyphs.
+#[gpui::test]
+fn human_prompt_navigation_recognises_alternate_screen_turns(cx: &mut TestAppContext) {
+    for caret in ["❯", "›"] {
+        for text in ["", "human turn"] {
+            let mut pane = Pane::running(
+                cx,
+                &format!("printf '\\033[?1049h\\033[H{caret} {text}\\033[5;1Hready'; exec cat"),
+            );
+            pane.wait_for("ready");
+            assert!(pane.read(|v| v
+                .session
+                .term
+                .lock()
+                .mode()
+                .contains(crate::vt::TermMode::ALT_SCREEN)));
+            for coarse in [false, true] {
+                assert_eq!(
+                    pane.read(|v| v.top_is_human(coarse)),
+                    !text.is_empty(),
+                    "{caret} {text}"
+                );
+            }
+        }
+    }
+}
+
 /// A picture of the repository's own, and the words printed around it.
 const PICTURE: &str = "assets/img/logo-mark.png";
 
@@ -138,6 +235,149 @@ fn codex_relative_html_reference_opens_the_panes_file(cx: &mut TestAppContext) {
     pane.click(missing, Pane::alt());
     assert_eq!(pane.float_path(), None, "a missing path opens nothing");
     assert_eq!(desktop_launches(), Vec::<String>::new());
+}
+
+/// A shell command that prints `name` with `uri` behind it, the way eza and
+/// `ls --hyperlink` do: OSC 8 and the address, ST, the name as shown, then the
+/// link closed. The address goes in as an argument, so a `%20` in it is never
+/// read as a printf directive.
+fn hyperlinked(uri: &str, name: &str) -> String {
+    format!(r#"printf '\033]8;;%s\033\\%s\033]8;;\033\\\n' "{uri}" "{name}""#)
+}
+
+/// A folder holding a `README.md` of its own and a `docs/` with another: the
+/// shape that makes a bare name from a listing ambiguous.
+fn a_folder_with_two_readmes(tag: &str) -> Scratch {
+    let dir = Scratch::new(tag);
+    std::fs::create_dir_all(dir.join("docs")).expect("docs/");
+    std::fs::write(dir.join("README.md"), "# The folder's own\n").expect("README.md");
+    std::fs::write(dir.join("docs/README.md"), "# The one listed\n").expect("docs/README.md");
+    dir
+}
+
+/// A shell script that runs `then` from inside `dir`, as a person's shell sits
+/// in a folder, then says it is ready.
+fn in_folder(dir: &Scratch, then: &str) -> String {
+    format!(
+        "cd '{}' && {then}; echo ready; exec cat",
+        dir.join("").display()
+    )
+}
+
+/// GNU `ls --hyperlink` puts each name's absolute path behind it, naming this
+/// machine (`file://<hostname>/…`). An Alt+click on a name it listed opens the
+/// file that was listed, even with a file of the same name in the pane's own
+/// folder.
+///
+/// Parker, 2026-10-15: *"We would love to get an LS from the raw terminal to
+/// be alt clickable and open a glow pane in Terminal Delight."* Asked what
+/// that pane should be, he chose Terminal Delight's own view over the glow
+/// program.
+#[gpui::test]
+fn alt_click_on_a_name_ls_hyperlinked_opens_the_file_it_listed(cx: &mut TestAppContext) {
+    let dir = a_folder_with_two_readmes("ls-hyperlink");
+    let mut pane = Pane::running(cx, &in_folder(&dir, "ls --hyperlink=always docs"));
+    pane.wait_for("ready");
+    let at = pane.point_at("README.md");
+    pane.click(at, Pane::alt());
+    let listed = std::fs::canonicalize(dir.join("docs/README.md")).expect("docs/README.md");
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(listed.as_path()),
+        "the listed file opens, never the folder's own README.md"
+    );
+    assert_eq!(desktop_launches(), Vec::<String>::new());
+}
+
+/// eza quotes a name with a space and puts the path behind it with no machine
+/// named (`file:///…/my%20notes.md`). Either word of the name opens the one
+/// file, and a name the pane's edge breaks over two rows opens from either
+/// row.
+#[gpui::test]
+fn alt_click_on_a_name_eza_hyperlinked_opens_it_whole(cx: &mut TestAppContext) {
+    let dir = Scratch::new("eza-hyperlink");
+    let spaced = dir.join("my notes.md");
+    let long = dir.join("a-name-long-enough-to-wrap.md");
+    for file in [&spaced, &long] {
+        std::fs::write(file, "# A note\n").expect("a note");
+    }
+    let uri = |p: &std::path::Path| super::path_to_file_uri(p.to_str().expect("UTF-8"));
+    // Eighty columns of a hundred are taken before the long name starts, so
+    // its last nine characters wrap onto the next row.
+    let listing = format!(
+        "{} && printf '%80s' '' && {}",
+        hyperlinked(&uri(&spaced), "'my notes.md'"),
+        hyperlinked(&uri(&long), "a-name-long-enough-to-wrap.md"),
+    );
+    let mut pane = Pane::running(cx, &in_folder(&dir, &listing));
+    pane.wait_for("ready");
+    for (word, file) in [
+        ("'my", &spaced),
+        ("notes.md'", &spaced),
+        ("a-name-long", &long),
+        ("o-wrap.md", &long),
+    ] {
+        let at = pane.point_at(word);
+        pane.click(at, Pane::alt());
+        assert_eq!(pane.float_path().as_deref(), Some(file.as_path()), "{word}");
+        pane.keys("escape");
+    }
+    assert_eq!(desktop_launches(), Vec::<String>::new());
+}
+
+/// A name printed with no hyperlink, as plain `ls` and an agent's tool output
+/// print them, is tried in the pane's own folder. There it opens, and a name
+/// the folder does not hold opens nothing.
+#[gpui::test]
+fn alt_click_on_a_bare_name_opens_it_from_the_panes_folder(cx: &mut TestAppContext) {
+    let dir = a_folder_with_two_readmes("ls-bare");
+    let mut pane = Pane::running(
+        cx,
+        &in_folder(&dir, "printf '%s\\n' 'docs  README.md  missing.md'"),
+    );
+    pane.wait_for("ready");
+    let at = pane.point_at("README.md");
+    pane.click(at, Pane::alt());
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(dir.join("README.md").as_path())
+    );
+    pane.keys("escape");
+    let at = pane.point_at("missing.md");
+    pane.click(at, Pane::alt());
+    assert_eq!(
+        pane.float_path(),
+        None,
+        "a name the folder does not hold opens nothing"
+    );
+    assert_eq!(desktop_launches(), Vec::<String>::new());
+}
+
+/// A hyperlink the click does not follow is never swapped for a guess from the
+/// name it sits on. A link to a file that has gone, a web address behind a
+/// file's name, and another machine's file each sit on `README.md`, in a
+/// folder whose own `README.md` is right there. None of them opens it, by Alt
+/// or by Ctrl.
+#[gpui::test]
+fn a_hyperlinked_name_is_never_replaced_by_a_guess(cx: &mut TestAppContext) {
+    let dir = a_folder_with_two_readmes("ls-no-guess");
+    let gone = super::path_to_file_uri(dir.join("gone/README.md").to_str().expect("UTF-8"));
+    let listing = [
+        hyperlinked(&gone, "README.md"),
+        hyperlinked("https://example.com/README.md", "README.md"),
+        hyperlinked("file://elsewhere.invalid/README.md", "README.md"),
+    ]
+    .join(" && ");
+    let mut pane = Pane::running(cx, &in_folder(&dir, &listing));
+    pane.wait_for("ready");
+    let names = pane.points_at_all("README.md");
+    assert_eq!(names.len(), 3, "three names, one to a row");
+    for at in names {
+        pane.click(at, Pane::alt());
+        assert_eq!(pane.float_path(), None, "nothing opens in the square");
+        let got = launched_by(&mut pane, at, held(false, true, false, false));
+        assert_eq!(got, Vec::<String>::new(), "nothing goes to the desktop");
+    }
 }
 
 /// The square's strip moves it with the hand, and its edge resizes it with the
@@ -1791,6 +2031,183 @@ fn the_wheel_on_the_document_face_moves_the_document(cx: &mut TestAppContext) {
     assert_eq!(pane.scrolled_back(), 0, "the hidden scrollback does not");
 }
 
+/// One of the four size chords as the desktop hands it to a pane: ctrl held,
+/// the shifted pair named by what it types with its shift dropped, and the
+/// character each would type carried along, as Linux carries it. `^_` is a
+/// control character, so ctrl+shift+- carries none.
+fn size_chord_as_typed(key: &str) -> gpui::Keystroke {
+    gpui::Keystroke {
+        modifiers: gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        },
+        key: key.into(),
+        key_char: (key != "_").then(|| key.to_string()),
+    }
+}
+
+/// The pane's own dial, wherever the pane keeps it: `TextSize` for the grid,
+/// `BenchSize` for the workbench's type.
+fn dial(pane: &mut Pane, key: crate::theme::GradeKey) -> f32 {
+    pane.view.read_with(pane.cx, |v, cx| {
+        v.appearance
+            .effective(&crate::theme::outer_choice(cx))
+            .grade
+            .get(key)
+            .expect("a size dial always has a position")
+    })
+}
+
+/// Parker, 2026-10-16: *"highlighted window will now use ctrl + = and ctrl + -
+/// to zoom in increase and decrease text size ... ctrl+shift+= and
+/// ctrl+shift+- to increase decrease OUTTER scale (tracks to ctrl + scroll
+/// wheel up or down)"*.
+///
+/// On the terminal face the unshifted pair steps the highlighted pane's text
+/// one ctrl+wheel notch a press. The shifted pair is the outer scale, the
+/// window's to act on, so this pane's text stays where it is. And none of the
+/// four types into the shell, which is where each went before: ctrl+= typed a
+/// bare `=`.
+#[gpui::test]
+fn the_size_chords_step_the_text_and_never_type(cx: &mut TestAppContext) {
+    use crate::theme::GradeKey;
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    // Settled first: a terminal still being born refuses every key, and
+    // "nothing typed" would then pass on a pane that took nothing at all.
+    pane.settle();
+    let notch = GradeKey::WHEEL_STEP;
+    let was = dial(&mut pane, GradeKey::TextSize);
+
+    pane.keystroke(size_chord_as_typed("="));
+    let up = dial(&mut pane, GradeKey::TextSize);
+    assert!(
+        (up - (was + notch)).abs() < 1e-4,
+        "ctrl+= is a notch up: {was} → {up}"
+    );
+    pane.keystroke(size_chord_as_typed("-"));
+    pane.keystroke(size_chord_as_typed("-"));
+    let down = dial(&mut pane, GradeKey::TextSize);
+    assert!(
+        (down - (was - notch)).abs() < 1e-4,
+        "ctrl+- is a notch down a press: {was} → {down}"
+    );
+
+    pane.keystroke(size_chord_as_typed("+"));
+    pane.keystroke(size_chord_as_typed("_"));
+    pane.keys("ctrl-shift-= ctrl-shift--");
+    assert_eq!(
+        dial(&mut pane, GradeKey::TextSize),
+        down,
+        "the shifted pair sizes the outer chrome, never this pane's text"
+    );
+
+    pane.keys("o k enter");
+    pane.wait_for("ok");
+    let rows = pane.rows();
+    assert!(
+        !rows.iter().any(|r| r.contains(['=', '-', '+', '_', '^'])),
+        "no size chord typed into the shell:\n{}",
+        rows.join("\n")
+    );
+}
+
+/// On the workbench the unshifted pair turns the bench's own type, the dial
+/// ctrl+wheel over the bench turns, and leaves the grid's text alone.
+#[gpui::test]
+fn the_size_chords_on_the_workbench_size_its_type(cx: &mut TestAppContext) {
+    use crate::theme::GradeKey;
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    pane.view
+        .update(pane.cx, |v, cx| v.set_face(Face::Workbench, cx));
+    pane.redraw();
+    let text = dial(&mut pane, GradeKey::TextSize);
+    let bench = dial(&mut pane, GradeKey::BenchSize);
+
+    pane.keystroke(size_chord_as_typed("="));
+    let now = dial(&mut pane, GradeKey::BenchSize);
+    assert!(
+        (now - (bench + GradeKey::WHEEL_STEP)).abs() < 1e-4,
+        "ctrl+= is a notch up on the bench: {bench} → {now}"
+    );
+    assert_eq!(
+        dial(&mut pane, GradeKey::TextSize),
+        text,
+        "and the grid's text stays"
+    );
+}
+
+/// On the Document face the unshifted pair zooms the document a step each
+/// way, as ctrl+wheel there does, and leaves the pane's text dial alone.
+#[gpui::test]
+fn the_size_chords_on_the_document_face_zoom_the_document(cx: &mut TestAppContext) {
+    use crate::theme::GradeKey;
+    let (mut pane, _dir, _md) = pane_on_its_document_face(cx, "face-size-chords");
+    let view = pane.face_view().expect("the face's view");
+    let zoom = |pane: &mut Pane| view.read_with(pane.cx, |v, _| v.zoom_now());
+    let text = dial(&mut pane, GradeKey::TextSize);
+    assert_eq!(
+        zoom(&mut pane),
+        Some(crate::docview::ImageZoom::Scale(1.0)),
+        "a Markdown document opens at 100%"
+    );
+
+    pane.keystroke(size_chord_as_typed("="));
+    pane.redraw();
+    assert_eq!(
+        zoom(&mut pane),
+        Some(crate::docview::ImageZoom::Scale(1.1)),
+        "ctrl+= zooms the document in a step"
+    );
+    pane.keystroke(size_chord_as_typed("-"));
+    pane.keystroke(size_chord_as_typed("-"));
+    pane.redraw();
+    assert_eq!(
+        zoom(&mut pane),
+        Some(crate::docview::ImageZoom::Scale(0.9)),
+        "ctrl+- zooms it out a step a press"
+    );
+    assert_eq!(
+        dial(&mut pane, GradeKey::TextSize),
+        text,
+        "and the text dial stays"
+    );
+}
+
+/// While the pane is open in the FOCUS reader the unshifted pair is not the
+/// pane's, as ctrl+wheel over the reader is not: the pane declines it, so its
+/// letters stay and nothing reaches its shell. The window takes it from there
+/// and steps the reader's own zoom (`Workspace::on_key`).
+#[gpui::test]
+fn the_size_chords_leave_a_pane_being_read_to_the_reader(cx: &mut TestAppContext) {
+    use crate::theme::GradeKey;
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    pane.settle();
+    let text = dial(&mut pane, GradeKey::TextSize);
+    let reader = pane.open_reader((900.0, 700.0));
+
+    // Read after each press: a step up and a step down would cancel, and
+    // the pane would look untouched after both even if each had sized it.
+    for key in ["=", "-"] {
+        pane.keystroke(size_chord_as_typed(key));
+        assert_eq!(
+            dial(&mut pane, GradeKey::TextSize),
+            text,
+            "ctrl+{key} leaves the pane behind the reader its letters"
+        );
+    }
+    reader.close(&mut pane);
+
+    pane.keys("o k enter");
+    pane.wait_for("ok");
+    assert!(
+        !pane.rows().iter().any(|r| r.contains(['=', '-'])),
+        "and nothing reached its shell"
+    );
+}
+
 /// The Document face comes only with a document: asked for without one, the
 /// pane stays on its terminal; `show_document` puts both up together; and a
 /// square's view carried onto the face is that same view, seated on the face,
@@ -1933,6 +2350,40 @@ fn a_file_dropped_on_the_terminal_is_pasted_into_it(cx: &mut TestAppContext) {
     let at = pane.point_at("ready");
     pane.drop_files(at, vec![png]);
     pane.wait_for("dropped.png");
+}
+
+/// A pane launched with a program — `-e` through xdg-terminal-exec — runs that
+/// program as its process and types nothing into it, and wears its launch mark.
+///
+/// The resume line is the discriminator: were it typed, `cat` would echo it
+/// back onto the screen. The arithmetic is the other one: only a shell that
+/// was handed these exact arguments prints 42, where the person's own shell
+/// would print a prompt.
+///
+/// Mutation-tested: typing the resume line regardless of a program, and
+/// dropping `options.shell = spec.program`, each fail this.
+#[gpui::test]
+fn a_launched_pane_runs_its_program_and_types_nothing(cx: &mut TestAppContext) {
+    let restore = crate::session::PaneRestore {
+        program: Some((
+            "/bin/sh".into(),
+            vec!["-c".into(), "echo launched-$((6*7)); exec cat".into()],
+        )),
+        resume: Some("echo typed-into-a-shell".into()),
+        mark: Some("LOCAL MODEL"),
+        ..Default::default()
+    };
+    let mut pane = Pane::launched(cx, restore);
+    pane.wait_for("launched-42");
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    pane.redraw();
+    let rows = pane.rows();
+    assert!(
+        !rows.iter().any(|r| r.contains("typed-into-a-shell")),
+        "a line was typed into the program:\n{}",
+        rows.join("\n")
+    );
+    assert_eq!(pane.read(|v| v.launch_mark), Some("LOCAL MODEL"));
 }
 
 /// The first reply the terminal typed back that starts with `start`, from
@@ -2780,6 +3231,37 @@ fn the_reader_joins_a_shells_lines_where_the_terminal_wrapped_them(cx: &mut Test
     );
 }
 
+/// The person's toggle marks the pane off-limits and lifts the mark again, and
+/// says so each time — the event the workspace saves the layout on, which is
+/// how the mark outlives the window.
+///
+/// Mutation-tested: a toggle that forgets to emit fails this.
+#[gpui::test]
+fn the_off_limits_toggle_marks_and_unmarks_the_pane_and_says_so(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    let said = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = said.clone();
+    let view = pane.view.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, _: &super::OffLimitsChanged, _| {
+            seen.set(seen.get() + 1)
+        })
+        .detach();
+    });
+    assert!(
+        !pane.read(|v| v.off_limits),
+        "a pane starts visible to agents"
+    );
+    pane.view.update(pane.cx, |v, cx| v.toggle_off_limits(cx));
+    pane.redraw();
+    assert!(pane.read(|v| v.off_limits));
+    pane.view.update(pane.cx, |v, cx| v.toggle_off_limits(cx));
+    pane.redraw();
+    assert!(!pane.read(|v| v.off_limits));
+    assert_eq!(said.get(), 2, "each change is announced, for the save");
+}
+
 /// Every [`super::CloseFocusRead`] the pane raises from now on, counted: the
 /// pane asking the workspace to close the reader, which is what Escape in the
 /// reader does once nothing in the document wants it.
@@ -3426,6 +3908,64 @@ fn a_header_being_renamed_takes_a_paste_instead_of_the_shell(cx: &mut TestAppCon
     );
 }
 
+/// The terminal and bench ask the workspace for the same launcher. The key
+/// never reaches the running program and opening it does not flip the face.
+#[gpui::test]
+fn terminal_launcher_alt_a_and_header_share_the_bench_event(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    pane.settle();
+    let launches = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log = launches.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&pane.view, move |view, _: &super::OpenAgentLauncher, cx| {
+            log.borrow_mut()
+                .push((view.entity_id(), view.read(cx).bench.face()));
+        })
+        .detach();
+    });
+    let id = pane.view.entity_id();
+    for face in [Face::Terminal, Face::Workbench] {
+        pane.view.update(pane.cx, |v, cx| v.set_face(face, cx));
+        pane.redraw();
+        pane.keys("alt-a");
+        assert_eq!(pane.face(), face);
+        let bounds = pane
+            .cx
+            .debug_bounds("launch-agent")
+            .expect("header button is drawn");
+        pane.click(bounds.center(), gpui::Modifiers::default());
+        assert_eq!(pane.face(), face);
+    }
+    assert_eq!(
+        *launches.borrow(),
+        vec![
+            (id, Face::Terminal),
+            (id, Face::Terminal),
+            (id, Face::Workbench),
+            (id, Face::Workbench)
+        ],
+        "each gesture emits exactly once, naming its own pane and face"
+    );
+    pane.view
+        .update(pane.cx, |v, cx| v.set_face(Face::Terminal, cx));
+    // The workspace returns focus after closing its popup. This harness only
+    // records the launch event, so return it explicitly before checking PTY input.
+    pane.cx.update(|window, cx| {
+        let focus = pane.view.read(cx).focus_handle.clone();
+        window.focus(&focus, cx);
+    });
+    pane.redraw();
+    pane.keys("z enter");
+    pane.wait_for("z");
+    let rows = pane.rows().join("\n");
+    assert!(!rows.contains("^[a"), "Alt+A leaked into the PTY: {rows}");
+    assert!(
+        !pane.read(|v| v.wb_compose.is_some()),
+        "the launcher leaves no composer draft"
+    );
+}
+
 /// The strip stops saying an agent is reading an answer once that agent has
 /// left, and the next agent in the pane does not inherit the stamp.
 ///
@@ -3471,4 +4011,102 @@ fn a_departed_agent_does_not_leave_the_bar_reading_an_answer(cx: &mut TestAppCon
         crate::workbench::AgentState::Reading,
         "the next agent is not born reading the answer the last one was given"
     );
+}
+
+/// A real line editor at a prompt, on the alternate screen when `alt`:
+/// readline with no rc file and no history file, so what it does with a key
+/// is readline's default and nothing on this machine.
+fn pane_at_a_prompt(cx: &mut TestAppContext, alt: bool) -> Pane {
+    let screen = if alt { "printf '\\033[?1049h'; " } else { "" };
+    let mut pane = Pane::running(
+        cx,
+        &format!(
+            "{screen}INPUTRC=/dev/null HISTFILE= PS1='ready> ' exec bash --norc --noprofile -i"
+        ),
+    );
+    pane.wait_for("ready>");
+    pane.settle();
+    pane
+}
+
+/// Typed at the prompt, one key per character, and echoed back.
+fn type_line(pane: &mut Pane, line: &str) {
+    let keys: Vec<String> = line
+        .chars()
+        .map(|c| {
+            if c == ' ' {
+                "space".to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect();
+    pane.keys(&keys.join(" "));
+    pane.wait_for(&format!("ready> {line}"));
+}
+
+/// Backspace over a word selected with the mouse, in the middle of the line
+/// being typed, takes the whole word — not the one character before the
+/// caret, which is what it took before.
+#[gpui::test]
+fn backspace_over_a_mouse_selection_erases_it_from_the_line(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    type_line(&mut pane, "echo hello world foo");
+
+    // From the left quarter of the w to the right quarter of the d.
+    let cell_w = pane.read(|v| v.cell_w);
+    let w = pane.point_at("w");
+    let d = pane.point_at("ld");
+    pane.press(point(w.x - px(cell_w / 4.0), w.y));
+    pane.drag_to(point(d.x + px(cell_w / 4.0), d.y));
+    pane.release(point(d.x + px(cell_w / 4.0), d.y));
+    assert_eq!(
+        pane.read(|v| v.selection_clipboard_text()).as_deref(),
+        Some("world"),
+        "the drag selects the word"
+    );
+
+    pane.keys("backspace");
+    pane.wait_for("ready> echo hello  foo");
+    assert!(
+        !pane.read(|v| v.has_selection()),
+        "the selection went with the text"
+    );
+    pane.keys("enter");
+    pane.wait_for_row("hello foo");
+}
+
+/// Ctrl+Shift+Left at the end of the line selects the last word and the blank
+/// cell the caret sits on; Delete takes the word and leaves the space before
+/// it.
+#[gpui::test]
+fn delete_over_a_keyboard_selection_takes_the_word_and_not_the_space(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    type_line(&mut pane, "echo abc def");
+    pane.keys("ctrl-shift-left");
+    assert!(pane.read(|v| v.has_selection()), "the word is selected");
+
+    pane.keys("delete");
+    pane.keys("z enter");
+    pane.wait_for("ready> echo abc z");
+    pane.wait_for_row("abc z");
+}
+
+/// Claude Code draws its prompt on the alternate screen, so an agent pane
+/// erases a selection there; a full-screen program that is not an agent —
+/// `less`, `vim` — is not a line being typed, and Backspace stays one key.
+#[gpui::test]
+fn the_alternate_screen_erases_a_selection_only_in_an_agent_pane(cx: &mut TestAppContext) {
+    let mut agent = pane_at_a_prompt(cx, true);
+    agent.running_as(crate::pane::PaneMode::Claude);
+    type_line(&mut agent, "echo abc def");
+    agent.keys("ctrl-shift-left backspace z enter");
+    agent.wait_for("ready> echo abc z");
+    agent.wait_for_row("abc z");
+
+    let mut other = pane_at_a_prompt(cx, true);
+    type_line(&mut other, "echo abc def");
+    other.keys("ctrl-shift-left backspace z enter");
+    other.wait_for("ready> echo abc dez");
+    other.wait_for_row("abc dez");
 }

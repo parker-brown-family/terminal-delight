@@ -26,7 +26,7 @@ pub const DEFAULT_THEME_TOML: &str = include_str!("../themes/hacker.toml");
 
 /// (id, embedded toml) for every built-in. The user file at
 /// ~/.config/terminal-delight/theme.toml stays hot-reloaded as id "custom".
-const BUILTIN_THEMES: &[(&str, &str)] = &[
+pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
     (
         "quiet-command",
         include_str!("../themes/quiet-command.toml"),
@@ -39,7 +39,6 @@ const BUILTIN_THEMES: &[(&str, &str)] = &[
         "tactical-overdrive",
         include_str!("../themes/tactical-overdrive.toml"),
     ),
-    ("gamba", include_str!("../themes/gamba.toml")),
     ("deco", include_str!("../themes/deco.toml")),
     ("hacker", DEFAULT_THEME_TOML),
 ];
@@ -108,7 +107,7 @@ struct PaletteFile {
     colors: FileColors,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Theme {
     /// Kept for theme-file authors; the UI shows `icon` instead.
     #[allow(dead_code)]
@@ -143,6 +142,9 @@ pub struct Theme {
     pub syntax: bool,
     /// Which grammar the overlay highlights when `syntax` is on (the SYNTAX tray).
     pub syntax_scheme: SyntaxScheme,
+    /// Which of the theme's colours a sticky note's paper takes (the STICKY
+    /// NOTE row). Read by `pane.rs` through [`crate::sticky::paper_for`].
+    pub note_paper: NotePaper,
     /// Monitor-OSD grading baked from the scope's [`ThemeChoice::grade`], applied
     /// to final cell colours at paint time (see `pane::graded`).
     pub grade: Grade,
@@ -300,6 +302,47 @@ impl SyntaxScheme {
             SyntaxScheme::Logs => "\u{2261}",     // ≡
             SyntaxScheme::Markdown => "\u{00b6}", // ¶
         }
+    }
+}
+
+/// Which of the theme's own colours a sticky note is drawn in (the STICKY NOTE
+/// row under the wheel). Parker named and ordered them: "Contrast Accent Mute".
+/// The arithmetic is [`crate::notepaper::papers`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum NotePaper {
+    /// The theme's named hue farthest from its accent, weighted by how vivid it
+    /// is: praus's bruised-wine purple, bright-future's mint. The default,
+    /// because a note is there to be seen first.
+    #[default]
+    Contrast,
+    /// The theme's accent: praus's sage, bright-future's hot pink.
+    Accent,
+    /// The theme's text colour (its surface, on a light screen): praus's linen.
+    Mute,
+}
+
+/// Lenient on load, like [`ColorMode`]. The words the first STICKY NOTE row
+/// wrote (2026-10-16, PR 970) map to their nearest successor — `primary` was
+/// the theme's own colour, `complement` its opposite — and anything unknown
+/// folds to the default, so a state file from another build keeps loading.
+impl<'de> Deserialize<'de> for NotePaper {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match String::deserialize(d)?.as_str() {
+            "accent" | "primary" => NotePaper::Accent,
+            "mute" => NotePaper::Mute,
+            _ => NotePaper::Contrast,
+        })
+    }
+}
+
+impl NotePaper {
+    /// Picker order, as Parker gave it.
+    pub const ALL: [NotePaper; 3] = [NotePaper::Contrast, NotePaper::Accent, NotePaper::Mute];
+
+    /// `true` for the serde/skip default (contrast).
+    pub fn is_default(&self) -> bool {
+        matches!(self, NotePaper::Contrast)
     }
 }
 
@@ -496,7 +539,7 @@ pub struct Grade {
     /// theme's own glare**.
     ///
     /// `None` is not `0`. Glare is authored per theme — `hacker` shines at
-    /// 0.42, `gamba` at 0.50, most themes not at all — and every grade written
+    /// 0.42, most themes not at all — and every grade written
     /// before this dial existed was showing exactly that. Reading the absent
     /// key as zero would wipe the reflection off every hacker pane the first
     /// time this build opened its session. Turning the GAUGES slider writes
@@ -1138,6 +1181,18 @@ pub struct ThemeChoice {
     /// theme group; `false` by default for back-compat.
     #[serde(default, skip_serializing_if = "is_false")]
     pub invert: bool,
+    /// The sticky note's paper: contrast, accent or mute. Part of the theme
+    /// group, so a pane that follows outer wears outer's note colour. Absent
+    /// reads as `Contrast`, the default Parker chose — every note, old state
+    /// files included, takes the theme's contrast colour until a button says
+    /// otherwise.
+    #[serde(default, skip_serializing_if = "NotePaper::is_default")]
+    pub note: NotePaper,
+    /// Persistently follow Omarchy's active palette. Manual colours stay retained.
+    /// None is an undeclared preference in old state; Some(false) is an explicit
+    /// choice to use manual colours. Both retain the manual colour settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_omarchy: Option<bool>,
 }
 
 impl Default for ThemeChoice {
@@ -1155,6 +1210,8 @@ impl Default for ThemeChoice {
             complement: None,
             human: None,
             invert: false,
+            note: NotePaper::Contrast,
+            follow_omarchy: None,
         }
     }
 }
@@ -1209,6 +1266,8 @@ pub fn house_outer() -> ThemeChoice {
         complement: None,
         human: None,
         invert: false,
+        note: NotePaper::Contrast,
+        follow_omarchy: None,
     }
 }
 
@@ -1242,6 +1301,8 @@ pub fn house_terminal() -> ThemeChoice {
         complement: None,
         human: None,
         invert: false,
+        note: NotePaper::Contrast,
+        follow_omarchy: None,
     }
 }
 
@@ -1272,6 +1333,13 @@ pub struct ThemeGroup {
     pub human: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub invert: bool,
+    #[serde(default, skip_serializing_if = "NotePaper::is_default")]
+    pub note: NotePaper,
+    /// Persistently follow Omarchy's active palette. Manual colours stay retained.
+    /// None is an undeclared preference in old state; Some(false) is an explicit
+    /// choice to use manual colours. Both retain the manual colour settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_omarchy: Option<bool>,
 }
 
 impl Default for ThemeGroup {
@@ -1288,11 +1356,24 @@ impl Default for ThemeGroup {
             complement: None,
             human: None,
             invert: false,
+            note: NotePaper::Contrast,
+            follow_omarchy: None,
         }
     }
 }
 
 impl ThemeChoice {
+    /// The live desktop supplies these roles while manual settings stay parked.
+    fn without_manual_colours(mut self) -> Self {
+        self.palette = None;
+        self.dynamic = Dynamic::Plain;
+        self.seed = None;
+        self.text = None;
+        self.complement = None;
+        self.human = None;
+        self
+    }
+
     /// This choice with its theme group replaced and its `grade` kept — the
     /// inverse of [`ThemeGroup::of`], for the scopes that hold a whole choice
     /// rather than a group beside a grade (the outer is the only one).
@@ -1310,6 +1391,8 @@ impl ThemeChoice {
             complement: g.complement,
             human: g.human,
             invert: g.invert,
+            note: g.note,
+            follow_omarchy: g.follow_omarchy,
         }
     }
 }
@@ -1329,6 +1412,8 @@ impl ThemeGroup {
             complement: c.complement.clone(),
             human: c.human.clone(),
             invert: c.invert,
+            note: c.note,
+            follow_omarchy: c.follow_omarchy,
         }
     }
 }
@@ -1446,6 +1531,8 @@ impl PaneTheme {
             complement: g.complement,
             human: g.human,
             invert: g.invert,
+            note: g.note,
+            follow_omarchy: g.follow_omarchy,
         }
     }
 
@@ -1707,7 +1794,7 @@ pub enum Dynamic {
     Pineapple,
     /// RETRO: a 1970s game-show / slot-machine palette — warm amber-gold anchor,
     /// robin-egg teal complement, vivid game-board greens and cinnabar reds.
-    /// Maximum good vibes; the colour half of the GAMBA look (theme `gamba`).
+    /// Legacy gold palette retained for saved-state compatibility.
     Retro,
     /// BAT: a nocturnal electric-purple monitor — near-black violet field, bright
     /// magenta phosphor letters, pale-orchid title. The flying-mouse, not baseball.
@@ -1757,25 +1844,19 @@ pub enum Dynamic {
 }
 
 impl Dynamic {
-    /// The named colour sets shown in the tray and the paint overlay — ONE
-    /// vocabulary, shared with the desktop.
+    /// The named colour sets — the eleven the theme tray and the paint overlay
+    /// offered until 2026-10-16, when Omarchy's own themes replaced them in
+    /// both pickers ([`crate::palette::offered`]).
     ///
     /// These are exactly the variants the Omarchy theme set ships
     /// (`omarchy-terminal-delight-theme/variants.toml` → the
-    /// `terminal-delight-<key>` themes in `~/.config/omarchy/themes`), so a
-    /// terminal painted from the bar and a pane painted from inside TD are
-    /// speaking the same language. The desktop is the registry; this array
-    /// follows it.
+    /// `terminal-delight-<key>` themes in `~/.config/omarchy/themes`).
     ///
-    /// Order is ALPHABETICAL, not by hue, because the first letter of each
-    /// label is its keyboard chord in the paint overlay — reading order and
-    /// key order have to agree or the letters are a memory test. Every label
-    /// therefore starts with a DISTINCT letter, and none of them may be `d`
-    /// (desktop), `s`/`S` (saturate) or `R` (reset), which the overlay owns.
-    /// Guarded by `named_sets_spell_a_unique_paint_alphabet`.
-    ///
-    /// Colour sets outside this list still exist and still load from saved
-    /// state — they are simply not offered any more. Re-adding one is a line.
+    /// Nothing offers them now, and the list stays because files still name
+    /// them: a pane's saved state can wear one and keeps it, and a `set:` line
+    /// in favourites.toml is still read — and kept when the file is rewritten —
+    /// rather than dropped as a typo. Colour sets outside this list still load
+    /// from saved state too.
     pub const NAMED: [Dynamic; 11] = [
         Dynamic::Army,      // a · olive
         Dynamic::Badger,    // b · greyscale
@@ -1832,11 +1913,8 @@ impl Dynamic {
             Dynamic::Bolt => "bolt",
             Dynamic::Amber => "amber",
             Dynamic::Pineapple => "pineapple",
-            // `gamba`, not `retro`: the desktop's `retro` variant is TD's
-            // Cyberpunk set (variants.toml says so), and two sets may not
-            // answer to one name. This one has always been the colour half
-            // of the GAMBA theme.
-            Dynamic::Retro => "gamba",
+            // Retained only for existing saved colour sets.
+            Dynamic::Retro => "gold",
             Dynamic::Bat => "violet",
             Dynamic::Cherry => "cherry",
             Dynamic::CottonClowndy => "cotton-clowndy",
@@ -1853,40 +1931,6 @@ impl Dynamic {
             Dynamic::Badger => "badger",
             Dynamic::Custom(_) => "custom",
         }
-    }
-
-    /// The keyboard chord that paints this set — its label's first letter,
-    /// upper-cased. Unique across [`Dynamic::NAMED`] by construction, which is
-    /// what lets the overlay be driven letter-by-letter with no mouse.
-    pub fn paint_letter(&self) -> char {
-        self.label()
-            .chars()
-            .next()
-            .map(|c| c.to_ascii_uppercase())
-            .unwrap_or('?')
-    }
-
-    /// Resolve a paint-overlay keystroke to what it paints.
-    ///
-    /// `Some(None)` hands the pane back to the desktop (`d`), `Some(Some(set))`
-    /// paints that set, `None` means the key is not a paint chord at all. One
-    /// function so the overlay's legend, the key handler and the tests are all
-    /// reading the same table — the alternative is a `match` in the handler
-    /// that drifts from the tiles it claims to describe.
-    pub fn paint_chord(key: &str) -> Option<Option<Dynamic>> {
-        let mut ch = key.chars();
-        let (c, rest) = (ch.next()?, ch.next());
-        if rest.is_some() {
-            return None; // "escape", "left", … are not chords
-        }
-        if c.eq_ignore_ascii_case(&'d') {
-            return Some(None);
-        }
-        Dynamic::NAMED
-            .iter()
-            .find(|d| d.paint_letter().eq_ignore_ascii_case(&c))
-            .cloned()
-            .map(Some)
     }
 
     /// The signature palette this colour set seeds, if it's a named one. The
@@ -2318,6 +2362,18 @@ pub fn apply_seed(base: &Theme, seed: Hsla) -> Theme {
 
 /// Resolve a choice to a concrete theme: registry lookup + seed recolour.
 pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
+    let desktop = (choice.follow_omarchy == Some(true))
+        .then(|| crate::palette::current(cx))
+        .flatten();
+    // Suspend manual colour modifiers only in this resolved copy; switching
+    // INHERIT off restores the exact settings kept in the state file.
+    let inherited;
+    let choice = if desktop.is_some() {
+        inherited = choice.clone().without_manual_colours();
+        &inherited
+    } else {
+        choice
+    };
     let reg = cx.global::<ThemeRegistry>();
     let base = if choice.id == "custom" {
         reg.custom.clone()
@@ -2338,10 +2394,13 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     // A palette id that no longer resolves — the theme was uninstalled since the
     // state file was written — leaves the theme's own colours standing. Losing
     // the borrowed look is the right failure; losing the pane is not.
-    let base = match choice
-        .palette
-        .as_deref()
-        .and_then(|id| crate::palette::find(cx, id))
+    let base = match desktop
+        .or_else(|| {
+            choice
+                .palette
+                .as_deref()
+                .and_then(|id| crate::palette::find(cx, id))
+        })
         .and_then(|p| overlay_palette(&base, &p.toml).ok())
     {
         Some(painted) => Arc::new(painted),
@@ -2390,6 +2449,7 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         && !choice.invert
         && mode.is_default()
         && !choice.syntax
+        && choice.note.is_default()
         && choice.grade.is_neutral()
         && choice.grade.warp.abs() < 1e-3
         && choice.grade.glare.is_none()
@@ -2440,6 +2500,7 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     th.color_mode = mode;
     th.syntax = choice.syntax;
     th.syntax_scheme = choice.syntax_scheme;
+    th.note_paper = choice.note;
     th.grade = choice.grade;
     // Warp, glare and tracking ride the grade group, so they resolve per-pane
     // (own override else inherited outer) — each pane bends by its own
@@ -2664,6 +2725,19 @@ fn bump_theme_gen(cx: &mut App) {
     cx.set_global(ThemeGen(n));
 }
 
+/// The desktop's palettes were re-read ([`crate::palette::init`]'s watcher): a
+/// theme installed, removed, hidden or retuned. Every scope that borrows one
+/// re-resolves — the per-pane memos through the generation, the cabinet here —
+/// so a retuned theme repaints whatever is wearing it, and the pickers redraw
+/// with the new list.
+pub fn palettes_changed(cx: &mut App) {
+    bump_theme_gen(cx);
+    let outer = outer_choice(cx);
+    let th = resolve(cx, &outer);
+    cx.set_global(ActiveTheme(th));
+    cx.refresh_windows();
+}
+
 /// PAINT mode — the palette overlay raised over EVERY pane at once by the
 /// control socket (`terminal-delight ctl paint …`, wired to the Omarchy bar's
 /// palette widget) and dismissed by Esc or a second toggle. App-global rather
@@ -2703,20 +2777,24 @@ pub fn set_paint_mode(cx: &mut App, on: bool) {
 /// [`PaintMode`] is — you flip the shelf once and every pane's overlay turns
 /// with you, so a wall can be painted from one vocabulary in one pass.
 ///
-/// Held as a NAME, never an index. Two of the three shelves can be absent (no
-/// Omarchy, no favourites), so the visible shelves are not a contiguous prefix
-/// of anything, and an index would have to mean "the second one that exists" —
-/// a number that is silently wrong the moment a theme is installed.
+/// Held as a NAME, never an index. The favourites shelf can be absent (nothing
+/// starred that this desktop offers), so an index would have to mean "the
+/// second one that exists" — a number that is silently wrong the moment a
+/// favourite is starred.
+///
+/// There were three shelves. The middle one, Terminal Delight's own COLOUR SETS,
+/// went on 2026-10-16 — Parker: *"TD themes suck! Omarchy themes are GOLD… Do
+/// away with the COLOUR SETS painter"*. The sets still load from saved state, so
+/// a pane wearing one keeps it; they are simply no longer offered.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Shelf {
-    /// The user's own shortlist, mixing both vocabularies ([`crate::fav`]).
-    /// First, and the default, because it is the shelf that gets worn.
+    /// The user's own shortlist of Omarchy themes ([`crate::fav`]). First, and
+    /// the default, because it is the shelf that gets worn.
     #[default]
     Favourites,
-    /// Terminal Delight's own colour sets ([`Dynamic::NAMED`]). Always present:
-    /// they are compiled in, so there is always somewhere to stand.
-    Sets,
-    /// The desktop's palettes ([`crate::palette`]).
+    /// The desktop's themes, as Omarchy's own picker lists them
+    /// ([`crate::palette::offered`]). Always present: TD carries palettes of
+    /// its own, so there is always somewhere to stand.
     Palettes,
 }
 
@@ -2725,8 +2803,7 @@ impl Shelf {
     pub fn label(self) -> &'static str {
         match self {
             Shelf::Favourites => "FAVOURITES",
-            Shelf::Sets => "COLOUR SETS",
-            Shelf::Palettes => "DESKTOP PALETTES",
+            Shelf::Palettes => "OMARCHY THEMES",
         }
     }
 }
@@ -2737,18 +2814,15 @@ impl Global for PaintShelf {}
 
 /// The shelves this desktop can actually show, in cycle order.
 ///
-/// A shelf with nothing on it is OMITTED rather than shown empty — an empty
-/// shelf you can still land on reads as a bug. `Sets` is unconditional, so the
-/// result is never empty and callers may index `[0]`.
+/// A favourites shelf with nothing on it is OMITTED rather than shown empty —
+/// an empty shelf you can still land on reads as a bug. `Palettes` is
+/// unconditional, so the result is never empty and callers may index `[0]`.
 pub fn shelves(cx: &App) -> Vec<Shelf> {
-    let mut v = Vec::with_capacity(3);
+    let mut v = Vec::with_capacity(2);
     if crate::fav::any_visible(cx) {
         v.push(Shelf::Favourites);
     }
-    v.push(Shelf::Sets);
-    if !crate::palette::all(cx).is_empty() {
-        v.push(Shelf::Palettes);
-    }
+    v.push(Shelf::Palettes);
     v
 }
 
@@ -2968,6 +3042,7 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         color_mode: ColorMode::default(),
         syntax: false,
         syntax_scheme: SyntaxScheme::Code,
+        note_paper: NotePaper::Contrast,
         grade: Grade::default(),
         scanline_opacity: file.effects.scanline_opacity.unwrap_or(0.).clamp(0., 0.6),
         scanline_step: file.effects.scanline_step.unwrap_or(4.).max(2.),
@@ -3022,7 +3097,7 @@ mod tests {
             assert_eq!(&th.name, id, "theme file name must match registry id");
             icons.push(th.icon);
         }
-        assert_eq!(BUILTIN_THEMES.len(), 6);
+        assert_eq!(BUILTIN_THEMES.len(), 5);
         // The tray is glyph-only, so two themes sharing an icon are two themes
         // nobody can tell apart. This test has always collected the icons; it now
         // also reads them, which is what its name has always claimed.
@@ -3032,84 +3107,6 @@ mod tests {
             icons.len(),
             "two builtins share an icon: {icons:?}"
         );
-    }
-
-    #[test]
-    fn dynamic_tray_entries_have_distinct_glyphs_and_labels() {
-        // The tray is glyph-only (no captions/hover), so each entry must be
-        // visually distinct — the cog (Custom) is appended after the named sets.
-        let mut entries: Vec<&Dynamic> = Dynamic::NAMED.iter().collect();
-        let custom = Dynamic::Custom(Box::default());
-        entries.push(&custom);
-        let glyphs: std::collections::HashSet<_> = entries.iter().map(|d| d.glyph()).collect();
-        let labels: std::collections::HashSet<_> = entries.iter().map(|d| d.label()).collect();
-        assert_eq!(
-            glyphs.len(),
-            entries.len(),
-            "every dynamic needs its own glyph"
-        );
-        assert_eq!(
-            labels.len(),
-            entries.len(),
-            "every dynamic needs its own label"
-        );
-        assert_eq!(
-            entries.len(),
-            12,
-            "the eleven Omarchy variants plus the custom cog"
-        );
-    }
-
-    #[test]
-    fn named_sets_spell_a_unique_paint_alphabet() {
-        // The paint overlay is driven by first letters, so the alphabet has to
-        // hold: one set per letter, and never a letter the overlay itself owns.
-        // Case matters — the sets paint on LOWERCASE, so only the overlay's own
-        // lowercase chords are off-limits: `d` (desktop) and `s` (saturate).
-        // `S` (saturate all) and `R` (reset all) are shifted, so `retro` may
-        // keep its `r`. A collision would make a keystroke silently paint the
-        // wrong set — no compile error, no panic, just the wrong colour on the
-        // wrong terminal. (`surfwood` is exactly how this bit us: it shipped,
-        // it started with `s`, and it ate the saturate chord.)
-        const RESERVED: [char; 2] = ['d', 's'];
-        let mut seen = std::collections::HashMap::new();
-        for d in Dynamic::NAMED.iter() {
-            let k = d.paint_letter();
-            assert!(
-                !RESERVED.contains(&k.to_ascii_lowercase()),
-                "{} claims {k}, which the overlay reserves",
-                d.label()
-            );
-            if let Some(prev) = seen.insert(k, d.label()) {
-                panic!("{k} is claimed by both {prev} and {}", d.label());
-            }
-        }
-        assert_eq!(seen.len(), Dynamic::NAMED.len());
-    }
-
-    #[test]
-    fn paint_chord_resolves_the_overlay_keyboard() {
-        // Every tile the overlay draws must be reachable by the letter it wears
-        // — that is the entire promise of "letter paints".
-        for d in Dynamic::NAMED.iter() {
-            let key = d.paint_letter().to_ascii_lowercase().to_string();
-            let got = Dynamic::paint_chord(&key)
-                .unwrap_or_else(|| panic!("{key} paints nothing"))
-                .unwrap_or_else(|| panic!("{key} resolved to DESKTOP, not {}", d.label()));
-            assert!(got.same_kind(d), "{key} painted {}", got.label());
-        }
-        // `d` is the ⟲ DESKTOP tile, not a colour set.
-        assert!(matches!(Dynamic::paint_chord("d"), Some(None)));
-        // Named keys are not chords: the overlay must never read the arrow that
-        // moves the selection as a letter that paints it.
-        for k in ["escape", "left", "right", "up", "down", "enter", ""] {
-            assert!(Dynamic::paint_chord(k).is_none(), "{k:?} is not a chord");
-        }
-        // A letter no set claims is simply a miss.
-        assert!(Dynamic::paint_chord("z").is_none());
-        // Case-insensitive: shift+letter paints the same set, so a capitals-on
-        // keyboard is not a broken one.
-        assert!(matches!(Dynamic::paint_chord("W"), Some(Some(_))));
     }
 
     #[test]
@@ -4292,6 +4289,83 @@ warp = 1.5
             assert_eq!(tube.screen_glare, hacker.screen_glare);
             assert_eq!(tube.bloom, hacker.bloom);
             assert!(tube.scanline_opacity > 0.0 && tube.screen_glare > 0.0);
+        });
+    }
+
+    /// The STICKY NOTE choice is part of the theme group: absent is the default
+    /// (contrast), it survives the round trip through the state file and
+    /// through a pane's pinned group, the first row's words still load, and an
+    /// unknown word from another build folds to the default instead of failing
+    /// the whole choice.
+    #[test]
+    fn the_note_paper_choice_persists_and_absent_is_contrast() {
+        let old: ThemeChoice = toml::from_str("id = \"hacker\"\n").unwrap();
+        assert_eq!(old.note, NotePaper::Contrast, "a file with no note field");
+
+        let c = ThemeChoice {
+            note: NotePaper::Mute,
+            ..Default::default()
+        };
+        let wire = toml::to_string(&c).unwrap();
+        assert!(wire.contains("note = \"mute\""), "{wire}");
+        let back: ThemeChoice = toml::from_str(&wire).unwrap();
+        assert_eq!(back.note, NotePaper::Mute);
+
+        let dflt = toml::to_string(&ThemeChoice::default()).unwrap();
+        assert!(!dflt.contains("note"), "the default is omitted: {dflt}");
+
+        let g = ThemeGroup::of(&ThemeChoice {
+            note: NotePaper::Accent,
+            ..Default::default()
+        });
+        assert_eq!(g.note, NotePaper::Accent, "lifted into the group");
+        let pane = PaneTheme {
+            theme: Some(g.clone()),
+            inherit_theme: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            pane.effective(&ThemeChoice::default()).note,
+            NotePaper::Accent,
+            "a pane's own group carries its note"
+        );
+        assert_eq!(ThemeChoice::default().with_group(g).note, NotePaper::Accent);
+
+        // The words this morning's build (PR 970) wrote.
+        for (word, now) in [
+            ("primary", NotePaper::Accent),
+            ("complement", NotePaper::Contrast),
+            ("contrast", NotePaper::Contrast),
+            ("plaid", NotePaper::Contrast),
+        ] {
+            let c: ThemeChoice =
+                toml::from_str(&format!("id = \"hacker\"\nnote = \"{word}\"\n")).unwrap();
+            assert_eq!(c.note, now, "{word}");
+        }
+    }
+
+    /// A stock theme with nothing else changed takes resolve's fast path, which
+    /// hands back the authored theme untouched — and the authored theme says
+    /// the default. Picking a different paper has to knock it off that path, or
+    /// the button lights and the note stays the colour it was.
+    #[gpui::test]
+    fn a_note_paper_alone_still_resolves(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            crate::palette::init_shipped(cx);
+            init_embedded(cx, house_outer());
+            let plain = ThemeChoice {
+                syntax: false,
+                grade: Grade::neutral(),
+                ..ThemeChoice::default()
+            };
+            assert_eq!(resolve(cx, &plain).note_paper, NotePaper::Contrast);
+            for mode in NotePaper::ALL {
+                let c = ThemeChoice {
+                    note: mode,
+                    ..plain.clone()
+                };
+                assert_eq!(resolve(cx, &c).note_paper, mode, "{mode:?}");
+            }
         });
     }
 

@@ -1,0 +1,3 @@
+terminal-delight: attached to the session host for session 'tdsleep-1792303830-2421032-baseline'
+terminal-delight: GPU NVIDIA GeForce RTX 3080 Laptop GPU (driver NVIDIA 610.57.04)
+terminal-delight: REFUSED a session shrink (31->1 panes, 31->1 tabs) — the session host kept what was on disk

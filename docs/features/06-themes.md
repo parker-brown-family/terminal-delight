@@ -15,13 +15,13 @@ one terminal can be hacker-green while the next is tactical-cyan — no global f
 | Feature | What it does | Evidence | Control |
 |---|---|---|---|
 | **Hot-reload** | Edit `~/.config/terminal-delight/theme.toml`, ~300 ms mtime poll swaps it live | theme watcher | `TD_THEME` path |
-| **Built-in pack** | hacker (phosphor) · tactical-overdrive (cyan) · field-command (olive) · quiet-command (light, effects off) · gamba (satire) | `BUILTIN_THEMES` | picker |
+| **Built-in pack** | hacker (phosphor) · tactical-overdrive (cyan) · field-command (olive) · quiet-command (light, effects off) · deco (quiet brass) | `BUILTIN_THEMES` | picker |
 | **Colour-set presets** | army · badger · cherry · ember · glacier · nuclear · pineapple · retro · tide · violet · wood — the 11 sets the Omarchy variant pack ships, w/ per-set swatch glyph | dynamic palette + `swatch()` | tray |
 | **Paint overlay (keyboard-first)** | `ctl paint on` raises a palette over every pane at once; the focused pane is spotlit, bare **arrows** walk the wall, a set's **first letter** paints it, `d` returns it to the desktop, `esc` folds | `Dynamic::paint_chord` | `terminal-delight ctl paint` / the Omarchy 🎨 bar widget |
-| **Seed colour wheel** | Pick an accent on a canvas HSV wheel → harmonic palette auto-generated; 3-marker | wheel + `hsla_to_hex` | breakout picker |
+| **Palette groups** | Three open glass areas: Theme and Sticky Note; Style; Rules. The theme wheel is hidden; saved colour overrides remain valid | theme tray | palette |
 | **Colour modes** | Default (real ANSI) · Monochrome (phosphor ramp) · OnTheme (harmonic around seed) | `ColorMode` enum | cycle |
 | **Syntax overlay** | 4 schemes (code/agentic/logs/markdown) on a 6-role palette; orthogonal to colour mode | `SyntaxScheme` | SYNTAX tray |
-| **Human-input colour** | Your own turns in an agent TUI get a distinct colour (whole wrapped message) | `Theme::human`, `human_input_rows` | 👤 pip |
+| **Human-input colour** | Your own turns in an agent TUI get a distinct colour (whole wrapped message) | `Theme::human`, `human_input_rows` | selected palette / theme file |
 | **Per-pane theme + grade independence** | Theme group and grade group inherit from the outer **independently**; live "follow outer" toggle, non-destructive | `PaneTheme` | per-pane toggles |
 | **Monitor-OSD grade** | 6 sliders — brightness/contrast/colour/text/background/gamma — applied as HSLA at paint time | `Grade`, `GradeKey` | ⛭ DISPLAY tray |
 | **Text-size channel** | Scales a pane's terminal grid — font + cell height, so the shell reflows. Per-pane; sizing one pane detaches no other dial from outer | `GradeKey::TextSize` | DISPLAY tray / **ctrl+wheel over the grid** |
@@ -29,12 +29,12 @@ one terminal can be hacker-green while the next is tactical-cyan — no global f
 | **Menu-bar size channel** | Scales chrome — outer bar, tabs, pane headers — and never the grid. Per-pane like the rest, so one pane can wear a bigger header | `GradeKey::Scale` | bezel scrubber / **ctrl+wheel over the outer chrome, or over a pane's header** |
 | **Warp / crawl channels** | Per-pane curvature + crawl angle/depth as grade channels | `GradeKey::{Warp,Crawl*}` | DISPLAY tray |
 | **TOML format** | Human-readable: `[colors]` hex, `[effects]` 0..1 floats, `[font]`, optional icon glyph; lenient parse | `ThemeFile` | edit by hand |
-| **Picker UI** | Browse built-ins + custom, glyph icon, hover tooltip, "open in editor" for custom | theme picker | right-click |
+| **Picker UI** | Browse built-ins + custom, glyph icon, 800ms initial / 180ms nearby help, "open in editor" for custom | theme picker | right-click |
 
 ## The model
 
-Appearance = **Texture × Colour-set × global Warp toggle**, with a 3-marker HSL
-wheel and a two-axis text-colour stack (SOURCE × SYNTAX). The MCP `set_pane_config`
+Appearance = **Texture × Colour-set × global Warp toggle**, with retained colour-role overrides
+and a two-axis text-colour stack (SOURCE × SYNTAX). The MCP `set_pane_config`
 can remote-drive any grade channel (appearance only — never a PTY).
 
 ## Status

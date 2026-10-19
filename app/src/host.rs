@@ -3025,6 +3025,17 @@ mod owning {
         let host = Host::with_shell("session-under-test", Some("/bin/cat".into()));
         let info = spawn_guarded(&host);
 
+        // Until exec, /proc still exposes the test parent's environment.
+        // Wait for the executable transition, independently of the identity
+        // assertions below: a missing identity must still fail after exec.
+        let executable = std::fs::canonicalize("/bin/cat").expect("fixture executable");
+        assert!(
+            crate::testsync::soon(
+                || std::fs::read_link(format!("/proc/{}/exe", info.shell_pid))
+                    .is_ok_and(|path| path == executable)
+            ),
+            "the fixture child did not exec"
+        );
         let environ = std::fs::read(format!("/proc/{}/environ", info.shell_pid))
             .expect("read the child's environment");
         let environ = String::from_utf8_lossy(&environ);

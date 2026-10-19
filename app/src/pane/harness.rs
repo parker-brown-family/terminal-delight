@@ -111,28 +111,17 @@ pub(super) struct Pane {
     pub(super) cx: &'static mut VisualTestContext,
 }
 
+pub(super) struct Attached {
+    pub(super) pane: Pane,
+    pub(super) host: std::os::unix::net::UnixStream,
+    pub(super) resizes: std::sync::Arc<std::sync::Mutex<Vec<crate::vt::WindowSize>>>,
+}
+
 impl Pane {
     /// A pane whose terminal runs `/bin/sh -c script`, focused, in a window of
     /// its own, laid out once.
     pub(super) fn running(cx: &mut TestAppContext, script: &str) -> Pane {
-        take_the_turn();
-        // The pseudoterminal's reader is a real thread, and its events wake
-        // the pane's pump from there. gpui's test scheduler reads a wake from
-        // another thread as nondeterminism unless it is told to expect one.
-        cx.executor().allow_parking();
-        cx.update(|cx| {
-            let mut outer = crate::theme::house_outer();
-            outer.grade.warp = 0.0;
-            // The house sizes, but no colour grading: the house brightness and
-            // contrast take every near-black background to exactly black, and
-            // a test asking which colour a pane draws needs two it can tell
-            // apart.
-            outer.grade.brightness = 0.5;
-            outer.grade.contrast = 0.5;
-            outer.grade.colour = 0.5;
-            crate::theme::init_embedded(cx, outer);
-            crate::skin::init_embedded(cx);
-        });
+        Self::prepare(cx);
         let grid = term::GridSize {
             cols: 100,
             rows: 28,
@@ -159,6 +148,96 @@ impl Pane {
                 cx,
             )
         });
+        Self::shown(window, cx)
+    }
+
+    /// A real socket-fed replica, including its byte pump and resize control seam.
+    pub(super) fn attached(cx: &mut TestAppContext) -> Attached {
+        Self::prepare(cx);
+        let (host, client) = std::os::unix::net::UnixStream::pair().unwrap();
+        let resizes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let heard = resizes.clone();
+        let grid = term::GridSize {
+            cols: 100,
+            rows: 28,
+        };
+        let (session, guard) = term::attach_in(
+            grid.with_cell(super::BORN_CELL_PX.0, super::BORN_CELL_PX.1),
+            term::AttachStreams {
+                bytes: client,
+                announce_resize: Box::new(move |size| heard.lock().unwrap().push(size)),
+            },
+            Some(4242),
+        )
+        .unwrap();
+        let reader = session.notifier.clone();
+        cx.on_quit(move || reader.shutdown());
+        let window = cx.open_window(size(px(WINDOW.0), px(WINDOW.1)), move |_, cx| {
+            TerminalView::around(
+                session,
+                Some(guard),
+                Some(99),
+                &crate::session::PaneRestore::default(),
+                grid,
+                super::BORN_CELL_PX,
+                cx,
+            )
+        });
+        Attached {
+            pane: Self::shown(window, cx),
+            host,
+            resizes,
+        }
+    }
+
+    /// A pane built the way a launch builds one — `TerminalView::new_restored`
+    /// with the restore it is handed, so whatever `restore.program` names is
+    /// what the terminal runs — focused, in a window of its own, laid out once.
+    pub(super) fn launched(cx: &mut TestAppContext, restore: crate::session::PaneRestore) -> Pane {
+        Self::prepare(cx);
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(WINDOW.0), px(WINDOW.1)), move |_, cx| {
+                TerminalView::new_restored(restore, cx)
+            })
+        };
+        // The same reason as `running`: a window-owned terminal is ended by
+        // its child, and the child may never end.
+        let reader = window
+            .root(cx)
+            .expect("the pane is the window's root view")
+            .read_with(cx, |v, _| v.session.notifier.clone());
+        cx.on_quit(move || {
+            reader.shutdown();
+        });
+        Self::shown(window, cx)
+    }
+
+    /// Everything a harness pane needs before its window opens: the turn, a
+    /// scheduler that expects the reader thread, and a flat, ungraded theme.
+    fn prepare(cx: &mut TestAppContext) {
+        take_the_turn();
+        // The pseudoterminal's reader is a real thread, and its events wake
+        // the pane's pump from there. gpui's test scheduler reads a wake from
+        // another thread as nondeterminism unless it is told to expect one.
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            let mut outer = crate::theme::house_outer();
+            outer.grade.warp = 0.0;
+            // The house sizes, but no colour grading: the house brightness and
+            // contrast take every near-black background to exactly black, and
+            // a test asking which colour a pane draws needs two it can tell
+            // apart.
+            outer.grade.brightness = 0.5;
+            outer.grade.contrast = 0.5;
+            outer.grade.colour = 0.5;
+            crate::theme::init_embedded(cx, outer);
+            crate::skin::init_embedded(cx);
+        });
+    }
+
+    /// Focus the pane its window holds, lay it out once, and check it is flat.
+    fn shown(window: gpui::WindowHandle<TerminalView>, cx: &mut TestAppContext) -> Pane {
         let view = window.root(cx).expect("the pane is the window's root view");
         let vcx = VisualTestContext::from_window(window.into(), cx).into_mut();
         vcx.update(|window, cx| {
@@ -211,10 +290,20 @@ impl Pane {
     /// Waits on the machine's clock, because the terminal's reader runs on
     /// it, and fails with the screen as it stands after [`PATIENCE`].
     pub(super) fn wait_for(&mut self, needle: &str) {
+        self.wait_until(needle, |row| row.contains(needle));
+    }
+
+    /// Wait for a row that reads exactly `row`, trailing blanks aside: what a
+    /// command printed, told apart from the command line that contains it.
+    pub(super) fn wait_for_row(&mut self, row: &str) {
+        self.wait_until(row, |r| r == row);
+    }
+
+    fn wait_until(&mut self, needle: &str, found: impl Fn(&str) -> bool) {
         let deadline = Instant::now() + PATIENCE;
         loop {
             self.cx.run_until_parked();
-            if self.rows().iter().any(|r| r.contains(needle)) {
+            if self.rows().iter().any(|r| found(r)) {
                 // The grid can hold the text a moment before the pane hears
                 // about it; draw a frame from the grid as it is now, so where
                 // the rows are painted matches what a click will read.
@@ -403,6 +492,17 @@ impl Pane {
     /// Keys, as gpui spells them: `"escape"`, `"alt-k"`, `"a b c"`.
     pub(super) fn keys(&mut self, keys: &str) {
         self.cx.simulate_keystrokes(keys);
+    }
+
+    /// One keystroke exactly as the desktop hands it over, the character it
+    /// types included. [`Self::keys`] cannot spell that for a ctrl chord:
+    /// gpui's parser leaves the character empty under ctrl, where Linux fills
+    /// it in, so ctrl+= arrives carrying the `=` it would type.
+    pub(super) fn keystroke(&mut self, ks: gpui::Keystroke) {
+        self.cx.update(|window, cx| {
+            window.dispatch_keystroke(ks, cx);
+        });
+        self.cx.run_until_parked();
     }
 
     /// The file the floating square is showing, if one is up.

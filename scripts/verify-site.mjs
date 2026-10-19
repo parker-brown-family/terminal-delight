@@ -128,8 +128,8 @@ for (const [path, name] of [['/info', 'info'], [DOCS + '/', 'docs-index'], [DOCS
   const paperState = await page.evaluate(glassState);
   ok('paper takes the curve and the glass down', !paperState.shown && !paperState.curved && paperState.tube === null, JSON.stringify(paperState));
   ok('paper paints hero window quiet-command', await page.evaluate(() => document.getElementById('win').dataset.wear === 'quiet-command'));
-  await page.click('.wear button[data-wear="gamba"]');
-  ok('theme chip paints both windows', await page.evaluate(() => [...document.querySelectorAll('#win,[data-wear-follow]')].every(e => e.dataset.wear === 'gamba')));
+  await page.click('.wear button[data-wear="deco"]');
+  ok('theme chip paints both windows', await page.evaluate(() => [...document.querySelectorAll('#win,[data-wear-follow]')].every(e => e.dataset.wear === 'deco')));
   // TERM/BENCH flip
   await page.evaluate(() => document.getElementById('bench').scrollIntoView());
   await page.click('label[for="face-term"]');
@@ -313,8 +313,10 @@ for (const path of ['/info', DOCS + '/', DOCS + '/workbench', DOCS + '/install']
   const before = await page.evaluate(() => ({ p: document.documentElement.dataset.palette, css: document.getElementById('td-palette').textContent }));
   await page.keyboard.press('t');
   ok('docs: t opens the theme tray', await page.evaluate(() => document.getElementById('td-tray').classList.contains('on')));
-  ok('docs: the tray has a line drawing for every theme', await page.evaluate(() => [...document.querySelectorAll('.td-chip')].every(c => c.querySelector('svg path, svg rect, svg circle'))) && await page.evaluate(() => document.querySelectorAll('.td-chip').length === 8));
-  await page.click('.td-chip[data-i="3"]');
+  ok('docs: the tray has a line drawing for every theme', await page.evaluate(() => [...document.querySelectorAll('.td-chip')].every(c => c.querySelector('svg path, svg rect, svg circle'))) && await page.evaluate(() => document.querySelectorAll('.td-chip').length === TD_KIOSK.PALETTES.length));
+  /* by name, not by slot: a theme added at the front moves every index */
+  const tokyo = await page.evaluate(() => TD_KIOSK.PALETTES.findIndex((p) => p.name === 'tokyo-night'));
+  await page.click(`.td-chip[data-i="${tokyo}"]`);
   await page.waitForTimeout(900);
   const after = await page.evaluate(() => ({ p: document.documentElement.dataset.palette, css: document.getElementById('td-palette').textContent, stored: localStorage.getItem('td-kiosk-theme'),
     wall: (document.querySelector('.backdrop .layer.on') || { style: {} }).style.backgroundImage || '', name: document.querySelector('.td-themebtn .nm').textContent }));

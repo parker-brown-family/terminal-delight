@@ -72,6 +72,15 @@ pub enum PaneKind {
 /// which is why the variants are written in this sequence and not alphabetically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AttentionKind {
+    /// An agent has asked, through `request_access`, for a setting only a
+    /// person may change — and the row itself carries Yes and No.
+    ///
+    /// First, because it is the one lane the queue can settle without leaving
+    /// it: one press, and an agent that may be blocked on it carries on. Not a
+    /// [`AttentionKind::Decision`] wearing another name: a decision is answered
+    /// in the agent's terminal, this is answered here, and a row that looked
+    /// the same as one it is not would send a person to the wrong place.
+    Access,
     /// An agent is asking the human something and has stopped.
     Decision,
     /// A check, a rate limit or an API said no.
@@ -101,6 +110,7 @@ impl AttentionKind {
 
     pub fn label(self) -> &'static str {
         match self {
+            AttentionKind::Access => "access",
             AttentionKind::Decision => "decision",
             AttentionKind::Failure => "failed",
             AttentionKind::ReviewReady => "review",
@@ -122,6 +132,7 @@ impl AttentionKind {
     /// row match the glyph its tab is wearing.
     pub fn reason(self) -> &'static str {
         match self {
+            AttentionKind::Access => "Asks you to change its access",
             AttentionKind::Decision => "Stopped at a prompt",
             AttentionKind::Failure => "Finished against a wall",
             AttentionKind::ReviewReady => "Finished, not yet seen",
@@ -138,6 +149,9 @@ impl AttentionKind {
     /// [`AttentionKind::reason`] is.
     pub fn source(self) -> &'static str {
         match self {
+            // Asked through the MCP verb, in so many words — not read off a
+            // screen, which is what every other instrument here does.
+            AttentionKind::Access => "request_access",
             AttentionKind::Decision => "prompt",
             // A finish and a finish-against-a-wall are the same bell; what
             // separates them is the screen it rang against.
@@ -355,6 +369,20 @@ pub fn doc_kind(href: &str) -> DocKind {
     }
 }
 
+/// An agent's ask, as the rail draws it: what it wants, in the person's words,
+/// and the agent's own reason for wanting it.
+///
+/// Two strings and nothing to act on. What Yes and No do lives with the ask on
+/// the pane (`access::Ask`), and the rail reaches it through the pane, so a row
+/// cannot be answered by anything that only holds the projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskRow {
+    /// `access::Change::ask_words` — ours, about the setting.
+    pub what: String,
+    /// The agent's reason, already flattened to one line. Theirs.
+    pub why: String,
+}
+
 /// One thing seen about one pane. Slice 1 synthesises these; slice 2 observes
 /// them.
 #[derive(Debug, Clone)]
@@ -374,6 +402,9 @@ pub struct Observation {
     pub evidence: Option<String>,
     /// What this turn produced, if the agent declared anything.
     pub deliverable: Option<Deliverable>,
+    /// The ask waiting on this pane, if its agent has made one. Present only
+    /// alongside `kind: Some(AttentionKind::Access)`.
+    pub ask: Option<AskRow>,
 }
 
 /// A row in the queue.
@@ -413,6 +444,8 @@ pub struct AttentionItem {
     /// Opened by a plain click, and never by focusing the pane. Reading a row
     /// and visiting its terminal are two different acts.
     pub deliverable: Option<Deliverable>,
+    /// What the agent asked for, on an [`AttentionKind::Access`] row.
+    pub ask: Option<AskRow>,
 }
 
 impl AttentionItem {
@@ -470,7 +503,11 @@ pub struct Counts {
 pub fn project(observations: &[Observation]) -> Vec<AttentionItem> {
     let mut items: Vec<AttentionItem> = observations
         .iter()
-        .filter(|o| o.pane_kind != PaneKind::Shell)
+        // A shell wants nothing — unless something in it has ASKED. A script
+        // calling `request_access` from a plain shell is still asking, and a
+        // filter that dropped it would leave the ask waiting where nobody can
+        // see it.
+        .filter(|o| o.pane_kind != PaneKind::Shell || o.kind == Some(AttentionKind::Access))
         .filter_map(|o| {
             o.kind.map(|kind| AttentionItem {
                 pane: o.pane,
@@ -481,6 +518,7 @@ pub fn project(observations: &[Observation]) -> Vec<AttentionItem> {
                 observed_at: o.observed_at,
                 evidence: o.evidence.clone(),
                 deliverable: o.deliverable.clone(),
+                ask: o.ask.clone(),
             })
         })
         .collect();
@@ -803,6 +841,7 @@ mod tests {
             observed_at: secs_ago.map(|s| Instant::now() - Duration::from_secs(s)),
             evidence: None,
             deliverable: None,
+            ask: None,
         }
     }
 
@@ -818,6 +857,7 @@ mod tests {
             observed_at: None,
             evidence: None,
             deliverable: None,
+            ask: None,
         }
     }
 
@@ -1153,7 +1193,7 @@ mod tests {
     #[test]
     fn every_lane_has_words_and_an_instrument_and_they_are_its_own() {
         use AttentionKind::*;
-        let lanes = [Decision, Failure, ReviewReady, Unknown];
+        let lanes = [Access, Decision, Failure, ReviewReady, Unknown];
         for k in lanes {
             assert!(!k.reason().is_empty(), "{k:?} needs words");
             assert!(!k.source().is_empty(), "{k:?} needs an instrument");
@@ -1163,7 +1203,13 @@ mod tests {
         let mut seen: Vec<&str> = lanes.iter().map(|k| k.reason()).collect();
         seen.sort_unstable();
         seen.dedup();
-        assert_eq!(seen.len(), 4, "each lane says something of its own");
+        assert_eq!(
+            seen.len(),
+            lanes.len(),
+            "each lane says something of its own"
+        );
+        // An ask was not read off a screen, and its row must not say it was.
+        assert_ne!(Access.source(), Decision.source());
 
         // The unknown lane must never claim the agent is doing anything. This
         // exact wording was a defect once: "agent running, screen unreadable"
@@ -1177,6 +1223,54 @@ mod tests {
         // A finish and a finish-against-a-wall are one bell read two ways.
         assert_eq!(Failure.source(), ReviewReady.source());
         assert_ne!(Decision.source(), Failure.source());
+    }
+
+    fn asking(pane: u64, pane_kind: PaneKind, secs_ago: u64) -> Observation {
+        Observation {
+            pane_kind,
+            kind: Some(AttentionKind::Access),
+            ask: Some(AskRow {
+                what: "Let agents see \u{201c}prod\u{201d}".into(),
+                why: "read the deploy log".into(),
+            }),
+            ..obs(pane, None, Some(secs_ago))
+        }
+    }
+
+    /// An ask comes first, whatever has waited longer: it is the one row the
+    /// queue can settle without leaving it, and an agent may be stopped on it.
+    #[test]
+    fn an_ask_sorts_above_every_other_lane_and_is_counted() {
+        let items = project(&[
+            obs(1, Some(AttentionKind::Decision), Some(900)),
+            obs(2, Some(AttentionKind::Failure), Some(600)),
+            asking(3, PaneKind::Agent, 5),
+        ]);
+        assert_eq!(items[0].pane, 3);
+        assert_eq!(items[0].kind, AttentionKind::Access);
+        assert_eq!(counts(&items).wanting, 3);
+        assert_eq!(lane_counts(&items)[0], (AttentionKind::Access, 1));
+    }
+
+    /// A shell is dropped because a shell wants nothing. A script in one that
+    /// called `request_access` wants something, and its ask must not be the
+    /// one thing the filter throws away.
+    #[test]
+    fn an_ask_from_a_plain_shell_still_gets_its_row() {
+        let items = project(&[
+            asking(4, PaneKind::Shell, 3),
+            Observation {
+                pane_kind: PaneKind::Shell,
+                ..obs(5, None, None)
+            },
+        ]);
+        assert_eq!(items.len(), 1, "{items:?}");
+        assert_eq!(items[0].pane, 4);
+        assert_eq!(
+            items[0].ask.as_ref().map(|a| a.why.as_str()),
+            Some("read the deploy log"),
+            "the agent's reason survives the projection"
+        );
     }
 
     #[test]

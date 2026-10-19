@@ -84,6 +84,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **A name in an `ls` listing opens by Alt+click.** When a listing puts each
+  file's path behind its name, as `ls --hyperlink` and `eza --hyperlink` do,
+  Alt+click opens exactly the file listed, in the floating square, or with
+  Ctrl+Alt in a pane beside, whichever folder was listed and wherever the shell
+  has gone since. A name with no hyperlink is tried in the pane's own folder and
+  opens only if that folder holds it. A hyperlink to a file that has gone, a
+  web address behind a label, or another machine's file is never swapped for a
+  guess from the name. Omarchy's `ls` alias writes no hyperlinks; adding
+  `--hyperlink=auto` to it makes every listing exact.
 - **A PDF opens in the floating square.** Alt+click on a `.pdf` path shows it
   there as one column of pages, the widest fitted to the width, with the page
   in view counted at the bottom right; Ctrl+Alt+click opens it in a pane beside.

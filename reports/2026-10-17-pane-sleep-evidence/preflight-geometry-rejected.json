@@ -1,0 +1,32 @@
+[
+  {
+    "pid": 2509081,
+    "at": [
+      1612,
+      38
+    ],
+    "size": [
+      1056,
+      1870
+    ],
+    "workspace": {
+      "id": -98,
+      "name": "special:tdsleep-1792304129-2508485-baseline"
+    }
+  },
+  {
+    "pid": 2513906,
+    "at": [
+      12,
+      38
+    ],
+    "size": [
+      1576,
+      950
+    ],
+    "workspace": {
+      "id": -97,
+      "name": "special:tdsleep-1792304129-2508485-candidate"
+    }
+  }
+]

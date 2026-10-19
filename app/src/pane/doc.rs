@@ -430,7 +430,9 @@ impl TerminalView {
                     .child(if self.lends(&float.view) {
                         being_read(th.text)
                     } else {
-                        float.view.clone().into_any_element()
+                        gpui::AnyView::from(float.view.clone())
+                            .cached(gpui::StyleRefinement::default().size_full())
+                            .into_any_element()
                     }),
             )
             // Under a clip: dimmed, so the eye goes to the box on top, and
@@ -1101,7 +1103,9 @@ impl TerminalView {
         let body = if self.lends(&doc.view) {
             being_read(ink)
         } else {
-            doc.view.clone().into_any_element()
+            gpui::AnyView::from(doc.view.clone())
+                .cached(gpui::StyleRefinement::default().size_full())
+                .into_any_element()
         };
         Some(
             div()

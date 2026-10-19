@@ -446,37 +446,27 @@ pub fn layout(content: Bounds<Pixels>, tilt: f32) -> Option<Layout> {
 pub struct Paper {
     pub base: Hsla,
     pub ink: Hsla,
-    /// The pushpin's head. The paper's OPPOSITE hue, which is the one colour
-    /// guaranteed to survive whatever the sheet turned out to be: a red pin is
-    /// the physical object, but a red pin on the hot-pink paper a pink theme
-    /// produces is a bump, not a flag.
+    /// The pushpin's head: the theme's red, unless the sheet is red-ish, then
+    /// its accent — a red pin on a terracotta note is a bump, not a flag.
     pub pin: Hsla,
 }
 
-/// The note's palette: a saturated sheet in the theme's own voice, written on in
-/// black.
-///
-/// The hue comes from the theme's PRIMARY TEXT — the colour that pane is already
-/// speaking in — and is then driven to full chroma at pad lightness. Saturation
-/// is the point: a pastel note dissolves into a dark terminal, and the thing on
-/// the desk this imitates is a hot pink or lime pad, not a cream one. The ink is
-/// near-black, holding a trace of the same hue so it reads as ink on that paper
-/// rather than a UI label dropped on top.
-///
-/// A theme whose text has no chroma at all (white on black) falls through to its
-/// accent, and then to a classic sticky yellow. Grey paper reads as a dialog.
-pub fn paper(text: Hsla, accent: Hsla) -> Paper {
-    let hue = if text.s >= 0.10 {
-        text.h
-    } else if accent.s >= 0.10 {
-        accent.h
-    } else {
-        0.128
-    };
+/// The paper a pane's note is drawn on, in the colour its theme asks for.
+pub fn paper_for(th: &crate::theme::Theme) -> Paper {
+    paper(th.note_paper, &crate::notepaper::ThemeColours::of(th))
+}
+
+/// The note's palette, from the theme's OWN colours — see [`crate::notepaper`]
+/// for which colour each mode takes and why. The sheet is that colour, faintly
+/// see-through so it reads as laid ON the glass; the writing is the theme's own
+/// ink (its background or its text), which the rule has already checked reads
+/// on it at 4.5:1.
+pub fn paper(mode: crate::theme::NotePaper, t: &crate::notepaper::ThemeColours) -> Paper {
+    let sheet = crate::notepaper::papers(t).get(mode);
     Paper {
-        base: hsla(hue, 0.88, 0.63, PAPER_ALPHA),
-        ink: hsla(hue, 0.24, 0.085, 0.95),
-        pin: hsla((hue + 0.5).fract(), 0.86, 0.52, 1.0),
+        base: sheet.paper.hsla(PAPER_ALPHA),
+        ink: sheet.ink.hsla(0.95),
+        pin: crate::notepaper::pin(t, sheet.paper).hsla(1.0),
     }
 }
 
@@ -1300,6 +1290,7 @@ pub fn seed() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::NotePaper;
 
     fn content() -> Bounds<Pixels> {
         Bounds {
@@ -1750,49 +1741,21 @@ mod tests {
         }
     }
 
-    /// The paper takes the theme's own voice and is SATURATED — a pastel note
-    /// dissolves into a dark terminal — and it is written on in black. A theme
-    /// with no colour in its text must not yield a grey note: grey reads as a
-    /// dialog box, not as paper.
-    #[test]
-    fn the_paper_is_saturated_theme_colour_written_on_in_black() {
-        let white = hsla(0.0, 0.0, 0.92, 1.0);
-        let amber = hsla(0.11, 0.62, 0.60, 1.0);
-        let cyan = hsla(0.52, 0.70, 0.55, 1.0);
-
-        let p = paper(amber, white);
-        assert!((p.base.h - 0.11).abs() < 1e-4, "hue comes from the text");
-        assert!(p.base.s > 0.8, "the sheet is saturated, got {}", p.base.s);
-        assert!(p.ink.l < 0.15, "the writing is black, got l={}", p.ink.l);
-        assert!(
-            (p.ink.h - p.base.h).abs() < 1e-4,
-            "the ink still belongs to the paper"
-        );
-
-        // white text, coloured accent -> the accent's hue, never grey
-        let p = paper(white, cyan);
-        assert!(
-            (p.base.h - 0.52).abs() < 1e-4,
-            "falls through to the accent"
-        );
-        assert!(p.base.s > 0.8);
-
-        // nothing coloured anywhere -> a sticky yellow, still not grey
-        let p = paper(white, hsla(0.0, 0.0, 0.5, 1.0));
-        assert!(p.base.s > 0.8, "a colourless theme still gets paper");
-        assert!((p.base.h - 0.128).abs() < 1e-4);
-    }
-
     /// You must be able to see the terminal through it, faintly. This is the one
     /// property that makes it read as laid ON the screen rather than cut into it.
+    /// Which colour the sheet is belongs to `notepaper`; how solid it is, here.
     #[test]
     fn the_paper_is_slightly_see_through() {
-        let p = paper(hsla(0.11, 0.62, 0.60, 1.0), hsla(0.0, 0.0, 0.9, 1.0));
-        assert!(
-            (0.78..0.92).contains(&p.base.a),
-            "paper alpha {} is outside 'faintly see-through'",
-            p.base.a
-        );
-        assert!(p.ink.a > 0.9, "the writing itself stays legible");
+        let th = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
+        let t = crate::notepaper::ThemeColours::of(&th);
+        for mode in NotePaper::ALL {
+            let p = paper(mode, &t);
+            assert!(
+                (0.78..0.92).contains(&p.base.a),
+                "{mode:?} paper alpha {} is outside 'faintly see-through'",
+                p.base.a
+            );
+            assert!(p.ink.a > 0.9, "the writing itself stays legible");
+        }
     }
 }

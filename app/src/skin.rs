@@ -2712,14 +2712,7 @@ mod tests {
         const FLOOR: f32 = 0.08;
         for (sid, ssrc) in BUILTIN_SKINS {
             let spec = parse(ssrc).unwrap();
-            for tid in [
-                "quiet-command",
-                "field-command",
-                "tactical-overdrive",
-                "gamba",
-                "deco",
-                "hacker",
-            ] {
+            for tid in crate::theme::builtin_ids() {
                 let th = theme::parse(theme::builtin_toml(tid).expect("a builtin theme")).unwrap();
                 let ink = spec.bake(&th, 1.0).ink;
                 for (name, c) in [
