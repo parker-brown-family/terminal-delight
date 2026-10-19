@@ -84,6 +84,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **The usage card says whether the week is on pace.** Under the session and
+  weekly bars, a TOKEN USAGE PACE line reads the week as banked, on pace,
+  behind or way over, with a bar whose width is the room left to adjust:
+  whichever of the week's remaining time and remaining tokens is smaller, drawn
+  blue when banked, green on pace and red when running hot. Today's tokens, the
+  seven-day history and the by-model breakdown fold shut beneath it, and the
+  left bar shades each provider's own logo along the same blue-to-red ramp,
+  staying neutral when there is no reading to shade it by.
+
 - **A name in an `ls` listing opens by Alt+click.** When a listing puts each
   file's path behind its name, as `ls --hyperlink` and `eza --hyperlink` do,
   Alt+click opens exactly the file listed, in the floating square, or with
