@@ -144,7 +144,12 @@ function buildModel(rows) {
 
   for (const r of rows) {
     const ts = r.timestamp ? Date.parse(r.timestamp) : null;
-    if (ts) {
+    // A `<synthetic>` record is not the session doing anything, and the session
+    // bridge one is stamped when the BRIDGE happened — which can be days after
+    // the last real turn. Counting it put a session whose work ended on the 6th
+    // at 307.9 hours old and pegged FATIGUE's age component at its maximum.
+    const synthetic = r.type === "assistant" && r.message?.model === "<synthetic>";
+    if (ts && !synthetic) {
       if (started === null || ts < started) started = ts;
       if (ended === null || ts > ended) ended = ts;
     }
@@ -171,14 +176,30 @@ function buildModel(rows) {
       const u = r.message.usage;
       if (r.message.model && r.message.model !== "<synthetic>") model = r.message.model;
       if (u) {
-        turns.push({
-          ts,
-          model: r.message.model,
-          ctx: (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0),
-          created: u.cache_creation_input_tokens || 0,
-          read: u.cache_read_input_tokens || 0,
-          out: u.output_tokens || 0,
-        });
+        const ctx =
+          (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+        // A turn that re-sent nothing did not happen. Every real call re-sends
+        // the whole conversation, so a context of zero is not a small prompt —
+        // it is a `<synthetic>` record with no measurement in it, written for
+        // an interrupt, an API failure, or a session bridge.
+        //
+        // Counted as a turn it becomes the NEWEST one, so WINDOW reports it as
+        // the current context: a session holding 165,815 tokens read 0% full
+        // with "~2144 turns of headroom". Mid-transcript it is quieter and no
+        // better — the dip to zero and the jump back are one huge positive
+        // delta in the growth median, and growth is the headroom divisor.
+        //
+        // 59 of 705 live transcripts carry one; 7 carry it as the last turn.
+        if (ctx > 0) {
+          turns.push({
+            ts,
+            model: r.message.model,
+            ctx,
+            created: u.cache_creation_input_tokens || 0,
+            read: u.cache_read_input_tokens || 0,
+            out: u.output_tokens || 0,
+          });
+        }
       }
       for (const c of r.message.content || []) {
         if (c.type !== "tool_use") continue;
@@ -319,8 +340,11 @@ function windowStat(m, override = null) {
   const last = turns[turns.length - 1];
   const peak = turns.reduce((a, t) => Math.max(a, t.ctx), 0);
   const limit = contextLimit(m, peak, override);
-  const ctx = last ? last.ctx : 0;
-  const fill = limit > 0 ? ctx / limit : 0;
+  // null, not 0. Zero is a reading — an empty window with tens of thousands of
+  // turns of headroom — and "no turn measured this" is a different fact the
+  // wall has to be able to draw. Everything downstream keeps the distinction.
+  const ctx = last ? last.ctx : null;
+  const fill = ctx === null || limit <= 0 ? null : ctx / limit;
 
   // Growth per turn, over the recent tail only. An early-session average is
   // meaningless: the first turns load a system prompt and the working set,
@@ -333,10 +357,13 @@ function windowStat(m, override = null) {
   }
   const growth = deltas.length ? median(deltas) : 0;
   const ceiling = limit * AUTOCOMPACT_FLOOR;
-  const turnsLeft = growth > 0 ? Math.max(0, Math.floor((ceiling - ctx) / growth)) : null;
+  // Headroom needs a rate AND a place to start from. Substituting zero for the
+  // missing half is how a session holding 166k tokens was promised 2,144 turns.
+  const turnsLeft =
+    growth > 0 && ctx !== null ? Math.max(0, Math.floor((ceiling - ctx) / growth)) : null;
 
   return {
-    score: clamp01(fill) * 100,
+    score: fill === null ? null : clamp01(fill) * 100,
     tokens: ctx,
     limit,
     fill,
@@ -599,6 +626,24 @@ function relevanceStat(m, win) {
   // So walk back from the newest call, accumulating weight until it fills the
   // measured window, and score that. What falls off the back has fallen out
   // of the context too.
+  // With no window reading there is no tail to walk back over, and the loop
+  // below would stop at the first result and score the whole session on it.
+  // That is how a single 36-token result came to stand for a 100% relevant
+  // window on a session 100 turns long.
+  if (win.tokens === null) {
+    return {
+      score: null,
+      buckets: { live: 0, stale: 0, superseded: 0, errored: 0 },
+      totalResultTokens: 0,
+      summaryTokens,
+      residentCalls: 0,
+      focusSize: focus.size,
+      focus: files.slice(0, 10),
+      drift: driftStat(m),
+      ballastTokens: null,
+    };
+  }
+
   const resident = [];
   let acc = summaryTokens;
   for (let i = m.calls.length - 1; i >= 0; i--) {
@@ -634,7 +679,11 @@ function relevanceStat(m, win) {
   }
 
   const useful = bucket.live + STALE_CREDIT * bucket.stale;
-  const score = total ? (useful / total) * 100 : 100;
+  // Nothing resident is not "all of it is relevant". It is a window with no
+  // tool results in it yet — the ordinary state of a session three turns old —
+  // and it used to render as a full green bar reading 100%, which is the most
+  // reassuring thing this card can say.
+  const score = total ? (useful / total) * 100 : null;
 
   return {
     score,
@@ -649,7 +698,7 @@ function relevanceStat(m, win) {
     drift: driftStat(m),
     // The number the shutdown call actually uses: tokens the window is
     // carrying that a fresh agent on this task would not load.
-    ballastTokens: Math.round(total ? (1 - useful / total) * win.tokens : 0),
+    ballastTokens: total ? Math.round((1 - useful / total) * win.tokens) : null,
   };
 }
 
@@ -724,6 +773,42 @@ function verdict(win, fat, rel) {
       call: "STOP",
       colour: "red",
       why: `fatigue ${Math.round(f)} — ${topFatigue(fat)}. A fresh session on the same task starts cleaner than this one continues.`,
+    };
+  }
+  // Every rung below divides by the window. Without one there is no call to
+  // make, and the honest answer is to say so — the alternative, which is what
+  // this did, is to substitute zero and arrive at RUN with 2,144 turns of
+  // imaginary headroom on a session whose window had held 165,815 tokens.
+  if (fill === null) {
+    return {
+      call: "NO READING",
+      colour: "dim",
+      why: "no turn in this transcript carries a context reading — nothing measured to judge.",
+    };
+  }
+  // The relevance rungs are skipped whole when nothing is resident, rather than
+  // run against a stand-in.
+  if (r === null) {
+    if (fill >= 85) {
+      // Which of COMPACT and HAND OFF a full window wants is exactly the
+      // question relevance answers, so this stops at WATCH rather than guessing.
+      return { call: "WATCH", colour: "amber", why: `${pct(fill)} full, and nothing resident to judge it by.` };
+    }
+    if (win.turnsLeft !== null && win.turnsLeft <= 10) {
+      return {
+        call: "WATCH",
+        colour: "amber",
+        why: `about ${win.turnsLeft} turns of headroom at the current rate (${fmt(win.growthPerTurn)}/turn).`,
+      };
+    }
+    if (fill >= 60 || f >= 45) {
+      return { call: "WATCH", colour: "amber", why: `${pct(fill)} full, fatigue ${Math.round(f)}. Nothing wrong yet.` };
+    }
+    const room = win.turnsLeft === null ? "room to spare" : `~${win.turnsLeft} turns of headroom`;
+    return {
+      call: "RUN",
+      colour: "green",
+      why: `${pct(fill)} full with ${room}. Nothing resident to judge relevance on yet.`,
     };
   }
   if (fill >= 85 && r >= 65) {
@@ -815,13 +900,19 @@ const c = (name, s) => (useColour ? C[name] + s + C.reset : s);
 const BAR_W = 28;
 
 function bar(value, tone) {
+  // An unmeasured stat draws the full track in the dim glyph and carries no
+  // colour, because colour is a reading and there is nothing to read. A short
+  // bar would say the number is small and an empty one would say it is zero;
+  // this matches no real bar, which is the point.
+  if (value === null) return c("dim", "╌".repeat(BAR_W));
   const filled = Math.round((clamp01(value / 100) * BAR_W));
   return c(tone, "█".repeat(filled)) + c("dim", "░".repeat(BAR_W - filled));
 }
 
-// WINDOW and FATIGUE are bad when high; RELEVANCE is bad when low.
-const toneHigh = (v) => (v >= 85 ? "red" : v >= 60 ? "amber" : "green");
-const toneLow = (v) => (v <= 40 ? "red" : v <= 65 ? "amber" : "green");
+// WINDOW and FATIGUE are bad when high; RELEVANCE is bad when low. A stat with
+// no measurement has no direction to be bad in.
+const toneHigh = (v) => (v === null ? "dim" : v >= 85 ? "red" : v >= 60 ? "amber" : "green");
+const toneLow = (v) => (v === null ? "dim" : v <= 40 ? "red" : v <= 65 ? "amber" : "green");
 
 function render(v) {
   const L = [];
@@ -868,15 +959,20 @@ function render(v) {
 
 // Worst first. Matches the wall's own rule that the agents needing you are
 // drawn ahead of the ones that do not.
-const URGENCY = ["STOP", "HAND OFF", "COMPACT", "WATCH", "RUN"];
+// NO READING sorts last, below RUN. A pane nobody could measure is not an
+// emergency, and an unknown left out of this list ranks -1 — which put it at
+// the top, ahead of STOP.
+const URGENCY = ["STOP", "HAND OFF", "COMPACT", "WATCH", "RUN", "NO READING"];
 
 // One line for a fleet of seventeen, because scrolling seventeen cards to
 // find the one that needs a decision is the problem, not the answer.
 function fleetSummary(out) {
   const n = (call) => out.filter((v) => v.call.call === call).length;
-  const tone = { STOP: "red", "HAND OFF": "red", COMPACT: "amber", WATCH: "amber", RUN: "green" };
+  const tone = { STOP: "red", "HAND OFF": "red", COMPACT: "amber", WATCH: "amber", RUN: "green", "NO READING": "dim" };
   const parts = URGENCY.filter((k) => n(k)).map((k) => c(tone[k], `${n(k)} ${k.toLowerCase()}`));
-  const ballast = out.reduce((a, v) => a + v.rel.ballastTokens, 0);
+  // Unmeasured panes contribute no ballast — they are skipped, not counted as
+  // zero, so the fleet total stays a sum over what was actually measured.
+  const ballast = out.reduce((a, v) => a + (v.rel.ballastTokens ?? 0), 0);
   return `  ${c("bold", `${out.length} agents`)}  ${parts.join(c("dim", " · "))}  ${c("dim", `· ${fmt(ballast)} ballast across the fleet`)}\n`;
 }
 
@@ -1388,8 +1484,11 @@ function toJson(v) {
 
 const clamp01 = (x) => (Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0);
 const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
-const round = (x, n = 2) => Number(x.toFixed(n));
-const pct = (x) => `${Math.round(x)}%`;
+const round = (x, n = 2) => (x === null || x === undefined ? null : Number(x.toFixed(n)));
+// `Math.round(null)` is 0, so an unmeasured stat formatted the old way came out
+// as a confident "0%". The em dash is the one glyph here that cannot be read as
+// a quantity.
+const pct = (x) => (x === null || x === undefined ? "—" : `${Math.round(x)}%`);
 
 function median(a) {
   if (!a.length) return 0;
@@ -1497,7 +1596,13 @@ async function main() {
   // Worst first, the way the wall draws blocked and errored agents ahead of
   // the rest: the reason to run this is to find the agent that needs a
   // decision, and that agent should not be twelfth.
-  out.sort((a, b) => URGENCY.indexOf(a.call.call) - URGENCY.indexOf(b.call.call) || b.win.score - a.win.score);
+  // `null - null` is NaN, which a comparator reads as "equal" and which makes
+  // the order depend on where the unmeasured panes happened to sit. They tie at
+  // -1 instead, below every real reading, inside their own NO READING group.
+  const fullness = (v) => v.win.score ?? -1;
+  out.sort(
+    (a, b) => URGENCY.indexOf(a.call.call) - URGENCY.indexOf(b.call.call) || fullness(b) - fullness(a)
+  );
 
   if (json) {
     process.stdout.write(JSON.stringify(out.map(toJson), null, 2) + "\n");

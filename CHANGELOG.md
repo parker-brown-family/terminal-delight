@@ -105,13 +105,6 @@ the changes you may notice in the first hour.
 
 ### Added
 
-- **Release candidates, and a digest on every download.** Each stable release is
-  now preceded by a candidate (`vX.Y.Z-rc.N`), marked *Pre-release* on the
-  releases page, that people can try before it becomes the download the install
-  page serves. Every release lists the AppImage's SHA-256 and the commit it was
-  built from, and is published only after every check passed for that commit.
-  The schedule and the checks are in `RELEASING.md`. (#1008)
-
 - **Alt+click on a file path opens it inside Terminal Delight.** Pictures (PNG,
   JPEG, WebP, GIF, BMP, SVG), Markdown, HTML pages, PDFs, video and sound open
   in a floating square over the pane, next to the line that printed them, and
@@ -347,6 +340,22 @@ the changes you may notice in the first hour.
   look and points readers to the docs. (#790, #794, #805, #815, #823, #831,
   #835, #841, #848, #854)
 
+- **The usage card says whether the week is on pace.** Under the session and
+  weekly bars, a TOKEN USAGE PACE line reads the week as banked, on pace,
+  behind or way over, with a bar whose width is the room left to adjust:
+  whichever of the week's remaining time and remaining tokens is smaller, drawn
+  blue when banked, green on pace and red when running hot. Today's tokens, the
+  seven-day history and the by-model breakdown fold shut beneath it, and the
+  left bar shades each provider's own logo along the same blue-to-red ramp,
+  staying neutral when there is no reading to shade it by. (#1011)
+
+- **Release candidates, and a digest on every download.** Each stable release is
+  now preceded by a candidate (`vX.Y.Z-rc.N`), marked *Pre-release* on the
+  releases page, that people can try before it becomes the download the install
+  page serves. Every release lists the AppImage's SHA-256 and the commit it was
+  built from, and is published only after every check passed for that commit.
+  The schedule and the checks are in `RELEASING.md`. (#1008)
+
 ### Changed
 
 - **The terminal emulator core is rio-vt, the core inside the Rio terminal.**
@@ -512,6 +521,14 @@ the changes you may notice in the first hour.
   primary button no longer glows over its word. (#555)
 
 ### Fixed
+
+- **The agent wall says NO READING for a session it has not measured, instead
+  of calling it empty and healthy.** A session whose newest record carried no
+  context figure was drawn 0% full, 100% relevant and RUN, with thousands of
+  turns of headroom, even while holding 165,815 tokens. Its WINDOW and
+  RELEVANCE bars now draw as a grey track captioned with a dash, the verdict
+  reads NO READING, and the placeholder records Claude Code writes for an
+  interrupt or a session bridge no longer count as turns or as activity.
 
 - **A paste while a sticky note or a pane name is being written goes into it,
   not into the shell under it.** Ctrl+Shift+V typed the clipboard into whatever
