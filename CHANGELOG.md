@@ -506,6 +506,14 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
+- **The agent wall says NO READING for a session it has not measured, instead
+  of calling it empty and healthy.** A session whose newest record carried no
+  context figure was drawn 0% full, 100% relevant and RUN, with thousands of
+  turns of headroom, even while holding 165,815 tokens. Its WINDOW and
+  RELEVANCE bars now draw as a grey track captioned with a dash, the verdict
+  reads NO READING, and the placeholder records Claude Code writes for an
+  interrupt or a session bridge no longer count as turns or as activity.
+
 - **A paste while a sticky note or a pane name is being written goes into it,
   not into the shell under it.** Ctrl+Shift+V typed the clipboard into whatever
   ran behind, a newline included, and Ctrl+V and Shift+Insert vanished. All

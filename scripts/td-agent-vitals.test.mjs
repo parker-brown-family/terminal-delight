@@ -226,6 +226,79 @@ test("window size is the sum of the last turn's three input figures", () => {
   assert.equal(Math.round(w.score), 30);
 });
 
+// A `<synthetic>` assistant record: all-zero usage, no content. Claude Code
+// writes these for interrupts, API failures and session bridging, and 59 of 705
+// live transcripts carry at least one.
+//
+// Written out rather than built from `assistant()`, which hardcodes
+// `input_tokens: 2` and so cannot express a record with no measurement in it.
+// Routed through the helper this fixture scored a context of 2 and agreed that
+// the bug was fixed while testing nothing.
+const synthetic = () => ({
+  type: "assistant",
+  timestamp: ts(),
+  isApiErrorMessage: false,
+  message: {
+    model: "<synthetic>",
+    usage: {
+      input_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      output_tokens: 0,
+    },
+    content: [],
+  },
+});
+
+test("a trailing synthetic record is not the current context", () => {
+  // The shape of session 092de24b as it sat on the wall: 165,815 tokens of real
+  // context, then a session-bridge record. Counted as a turn it is the NEWEST
+  // one, so the window read it as live and reported 0% full with ~2144 turns of
+  // headroom on a session that was 83% full.
+  const w = windowStat(model([assistant({ ctx: 160_000 }), assistant({ ctx: 165_815 }), synthetic()]));
+  assert.equal(w.tokens, 165_815);
+  assert.equal(Math.round(w.score), 83);
+});
+
+test("a transcript of nothing but a synthetic record measures nothing, rather than zero", () => {
+  // Two live transcripts are in exactly this state. `null`, not 0 — zero is a
+  // reading, and it says the window is empty with tens of thousands of turns to
+  // spare.
+  const w = windowStat(model([synthetic()]));
+  assert.equal(w.tokens, null);
+  assert.equal(w.score, null);
+  assert.equal(w.turnsLeft, null, "no headroom without a place to start from");
+});
+
+test("a window with no tool results in it is unmeasured, not 100% relevant", () => {
+  const m = model([prompt("do the thing"), assistant({ ctx: 60_000 }), assistant({ ctx: 62_000 })]);
+  const rel = relevanceStat(m, windowStat(m));
+  assert.equal(rel.score, null, "an empty ratio is not a full one");
+  assert.equal(rel.ballastTokens, null);
+});
+
+test("an absent window is not a call to RUN", () => {
+  const v = at(50, 50);
+  v.win.score = null;
+  v.win.tokens = null;
+  v.win.turnsLeft = null;
+  v.rel.score = null;
+  v.rel.ballastTokens = null;
+  const out = verdict(v.win, v.fat, v.rel);
+  assert.equal(out.call, "NO READING");
+  assert.ok(!/headroom/.test(out.why), `why promised headroom: ${out.why}`);
+});
+
+test("a full window with nothing resident stops short of guessing which fix it wants", () => {
+  // COMPACT versus HAND OFF is exactly the question relevance answers.
+  const v = at(90, 50);
+  v.rel.score = null;
+  v.rel.ballastTokens = null;
+  const out = verdict(v.win, v.fat, v.rel);
+  assert.equal(out.call, "WATCH");
+  assert.ok(!/ballast/.test(out.why), `claimed a ballast figure: ${out.why}`);
+});
+
 test("headroom is counted in turns at the recent growth rate, ignoring compaction drops", () => {
   const rows = [];
   let ctx = 10_000;
