@@ -9,7 +9,7 @@
 
 use std::fs::File;
 use std::io;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::vt::{self, Event as TermEvent, Listener, Notifier, TermSize, WindowSize};
@@ -38,6 +38,7 @@ impl GridSize {
 pub struct EventProxy {
     events: UnboundedSender<TermEvent>,
     generation: Arc<AtomicU64>,
+    screen_wakeups: Arc<AtomicBool>,
     /// Whether a program's question to the terminal is answered from here.
     answers_here: bool,
 }
@@ -67,6 +68,7 @@ impl EventProxy {
         Self {
             events,
             generation,
+            screen_wakeups: Arc::new(AtomicBool::new(true)),
             answers_here: answers == Answers::Here,
         }
     }
@@ -79,6 +81,12 @@ impl Listener for EventProxy {
         // answer still means the emulation has moved on. A replica whose
         // generation stopped advancing would freeze every cache built on it.
         self.generation.fetch_add(1, Ordering::Relaxed);
+        // A hidden pane reads the grid on its existing housekeeping clock.
+        // Do not schedule a UI task for each chunk of invisible output. The
+        // generation still advances, and every non-screen event still travels.
+        if matches!(event, TermEvent::Wakeup) && !self.screen_wakeups.load(Ordering::Relaxed) {
+            return;
+        }
         // `CSI 14 t` travels as its own event rather than as a `PtyWrite`, so
         // it has to be named: the host answers it from the geometry it holds,
         // and a pane answering it too would type a second reply at the program.
@@ -125,6 +133,9 @@ pub struct Session {
     /// changed generation merely *permits* change (title/bell events bump it
     /// too), which errs on the safe side for cache invalidation.
     pub generation: Arc<AtomicU64>,
+    /// Visibility gate for screen-only events. Parsing and protocol events
+    /// are independent; activation renders the latest grid before waiting.
+    pub screen_wakeups: Arc<AtomicBool>,
 }
 
 impl Session {
@@ -251,7 +262,8 @@ pub fn wire_pump(
 ) -> io::Result<Session> {
     let (tx, rx) = unbounded();
     let generation = Arc::new(AtomicU64::new(0));
-    let proxy: Arc<dyn Listener> = Arc::new(EventProxy::new(tx, generation.clone(), answers));
+    let proxy = Arc::new(EventProxy::new(tx, generation.clone(), answers));
+    let screen_wakeups = proxy.screen_wakeups.clone();
     let term = vt::shared(vt::Term::new(size, proxy.clone()));
     // The loop owns its thread and lives as long as the program it reads.
     let (notifier, _thread) = vt::pump::spawn(term.clone(), proxy, source, tap)?;
@@ -263,6 +275,7 @@ pub fn wire_pump(
         master,
         shell_pid,
         generation,
+        screen_wakeups,
     })
 }
 
