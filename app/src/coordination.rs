@@ -26,11 +26,12 @@ pub enum Coverage {
 }
 
 impl Coverage {
-    pub fn label(self) -> &'static str {
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        let t = l.strings().gc;
         match self {
-            Self::Complete => "complete",
-            Self::Partial => "partial",
-            Self::Unavailable => "unavailable",
+            Self::Complete => t.cov_complete,
+            Self::Partial => t.cov_partial,
+            Self::Unavailable => t.cov_unavailable,
         }
     }
 }
@@ -45,12 +46,13 @@ pub enum Severity {
 }
 
 impl Severity {
-    pub fn label(self) -> &'static str {
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        let t = l.strings().gc;
         match self {
-            Self::Clear => "CLEAR",
-            Self::Caution => "CAUTION",
-            Self::Warning => "WARNING",
-            Self::Alert => "ALERT",
+            Self::Clear => t.sev_clear,
+            Self::Caution => t.sev_caution,
+            Self::Warning => t.sev_warning,
+            Self::Alert => t.sev_alert,
         }
     }
     pub fn glyph(self) -> &'static str {
@@ -144,12 +146,13 @@ pub enum Source {
 }
 
 impl Source {
-    pub fn label(self) -> &'static str {
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        let t = l.strings().gc;
         match self {
-            Self::Committed => "committed",
-            Self::Staged => "staged",
-            Self::Unstaged => "unstaged",
-            Self::Untracked => "untracked",
+            Self::Committed => t.src_committed,
+            Self::Staged => t.src_staged,
+            Self::Unstaged => t.src_unstaged,
+            Self::Untracked => t.src_untracked,
         }
     }
 }
@@ -1138,17 +1141,21 @@ impl Store {
                         } else {
                             meaning::Condition::Unverified
                         };
+                        let earlier = meaning::Line::EarlierObservation;
                         if retained.kind == meaning::Kind::TargetConflict {
-                            retained.headline="The last merge check reported a conflict; the current result is unknown.".into();
+                            retained.headline =
+                                meaning::Line::LastMergeUnknown.say(crate::lang::Lang::En);
                         }
-                        retained
-                            .limitations
-                            .retain(|l| !l.starts_with("Showing an earlier observation"));
-                        retained.limitations.insert(
-                            0,
-                            "Showing an earlier observation; a current check is unavailable."
-                                .into(),
-                        );
+                        let earlier_en = earlier.say(crate::lang::Lang::En);
+                        retained.limitations.retain(|l| *l != earlier_en);
+                        retained.limitations.insert(0, earlier_en);
+                        if let Some(said) = &mut retained.said {
+                            if retained.kind == meaning::Kind::TargetConflict {
+                                said.headline = meaning::Line::LastMergeUnknown;
+                            }
+                            said.limitations.retain(|l| *l != earlier);
+                            said.limitations.insert(0, earlier);
+                        }
                         project.meanings.push(retained);
                     }
                 }
@@ -1228,6 +1235,13 @@ impl Store {
     }
 
     pub fn attention_summary(&self) -> String {
+        self.attention_summary_in(crate::lang::Lang::En)
+    }
+
+    /// The HUD chip in the reader's language. [`Store::attention_summary`] is
+    /// the English one, which MCP serves.
+    pub fn attention_summary_in(&self, l: crate::lang::Lang) -> String {
+        let t = l.strings().gc;
         let new = self
             .snapshot
             .projects
@@ -1245,21 +1259,16 @@ impl Store {
                 .iter()
                 .any(|f| f.kind == meaning::Kind::ObservationGap)
         });
-        if new > 0 {
-            format!(
-                "Git · {new} project{} with new findings",
-                if new == 1 { "" } else { "s" }
-            )
+        let tail = if new > 0 {
+            l.count(&t.hud_new, new)
         } else if conflicts > 0 {
-            format!(
-                "Git · {conflicts} project{} with a conflict · seen",
-                if conflicts == 1 { "" } else { "s" }
-            )
+            format!("{} · {}", l.count(&t.hud_conflict, conflicts), t.hud_seen)
         } else if incomplete {
-            "Git · No new findings · scan incomplete".into()
+            format!("{} · {}", t.hud_no_new, t.hud_scan_incomplete)
         } else {
-            "Git · No new findings".into()
-        }
+            t.hud_no_new.into()
+        };
+        format!("{} · {tail}", t.hud_git)
     }
 }
 

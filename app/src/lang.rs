@@ -12,6 +12,13 @@
 
 use serde::{Deserialize, Serialize};
 
+mod chrome;
+mod coord;
+mod parts;
+pub use chrome::Chrome;
+pub use coord::Coord;
+pub use parts::Parts;
+
 /// A UI language. Serialised lowercase into `state.toml` (`lang = "zh"`); an
 /// unknown value falls back to English so old/foreign files always load.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
@@ -398,6 +405,76 @@ pub struct Strings {
     pub dead: &'static str,
     pub no_recoverable: &'static str,
     pub dead_hint: &'static str,
+    // ── surfaces with their own table (lang/<surface>.rs) ──
+    /// The Git coordination overlay, its HUD chip and its finding sentences.
+    pub gc: &'static Coord,
+    /// Window chrome main.rs draws: the paint tray, menus, dialogs, panels.
+    pub ui: &'static Chrome,
+    /// What the pane, workbench, document viewer and the other modules draw.
+    pub parts: &'static Parts,
+}
+
+/// A counted phrase in every form a language can need, by CLDR plural
+/// category. Languages without a distinction repeat one string across all
+/// four, so a table never has a hole; [`Lang::count`] picks the form.
+#[derive(Clone, Copy, Debug)]
+pub struct Plural {
+    pub one: &'static str,
+    pub few: &'static str,
+    pub many: &'static str,
+    pub other: &'static str,
+}
+
+impl Lang {
+    /// The plural form of `p` this language uses for `n`, with `{n}` filled.
+    /// Russian has three forms (1 / 2–4 / 5+, by the last two digits); French
+    /// and Hindi treat zero as singular; Chinese, Japanese and Korean have no
+    /// grammatical plural at all.
+    pub fn count(self, p: &Plural, n: usize) -> String {
+        let form = match self {
+            Lang::Ru => match (n % 10, n % 100) {
+                (1, h) if h != 11 => p.one,
+                (2..=4, h) if !(12..=14).contains(&h) => p.few,
+                _ => p.many,
+            },
+            Lang::Fr | Lang::Hi if n <= 1 => p.one,
+            Lang::Zh | Lang::Ja | Lang::Ko => p.other,
+            _ if n == 1 => p.one,
+            _ => p.other,
+        };
+        form.replace("{n}", &n.to_string())
+    }
+}
+
+/// Fill a template's `{name}` placeholders. A translation moves a placeholder
+/// wherever its grammar needs it, so arguments go by name, never by position.
+/// One pass, so a filled value that itself contains `{path}` (a file can be
+/// named anything) is never filled again.
+pub fn fill(template: &str, args: &[(&str, &str)]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let tail = &rest[open + 1..];
+        let hit = tail.find('}').and_then(|close| {
+            let name = &tail[..close];
+            args.iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| (close, *v))
+        });
+        match hit {
+            Some((close, value)) => {
+                out.push_str(value);
+                rest = &tail[close + 1..];
+            }
+            None => {
+                out.push('{');
+                rest = tail;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -654,6 +731,9 @@ pub const EN: Strings = Strings {
     dead: "dead",
     no_recoverable: "No recoverable agents \u{2014} every saved session is either live or already gone.",
     dead_hint: "click a row to resurrect it \u{2014} or \u{2b07} .cdx to harvest its context into a portable package",
+    gc: &coord::EN,
+    ui: &chrome::EN,
+    parts: &parts::EN,
 };
 
 /// Español.
@@ -893,6 +973,9 @@ pub const ES: Strings = Strings {
     dead: "muertos",
     no_recoverable: "No hay agentes recuperables \u{2014} cada sesión guardada está activa o ya desaparecida.",
     dead_hint: "haz clic en una fila para resucitarla \u{2014} o \u{2b07} .cdx para extraer su contexto a un paquete portátil",
+    gc: &coord::ES,
+    ui: &chrome::ES,
+    parts: &parts::ES,
 };
 
 /// Deutsch.
@@ -1132,6 +1215,9 @@ pub const DE: Strings = Strings {
     dead: "tot",
     no_recoverable: "Keine wiederherstellbaren Agenten \u{2014} jede gespeicherte Sitzung ist entweder aktiv oder bereits weg.",
     dead_hint: "Klicke auf eine Zeile, um sie wiederzubeleben \u{2014} oder \u{2b07} .cdx, um ihren Kontext in ein portables Paket zu sichern",
+    gc: &coord::DE,
+    ui: &chrome::DE,
+    parts: &parts::DE,
 };
 
 /// 中文 (简体).
@@ -1371,6 +1457,9 @@ pub const ZH: Strings = Strings {
     dead: "已死",
     no_recoverable: "没有可恢复的代理 \u{2014} 每个已保存的会话要么仍在运行，要么已经消失。",
     dead_hint: "点击某一行即可复活它 \u{2014} 或点击 \u{2b07} .cdx 将其上下文导出为可移植的包",
+    gc: &coord::ZH,
+    ui: &chrome::ZH,
+    parts: &parts::ZH,
 };
 
 /// Français.
@@ -1610,6 +1699,9 @@ pub const FR: Strings = Strings {
     dead: "morts",
     no_recoverable: "Aucun agent récupérable \u{2014} chaque session enregistrée est soit active, soit déjà disparue.",
     dead_hint: "cliquez sur une ligne pour la ressusciter \u{2014} ou \u{2b07} .cdx pour exporter son contexte dans un paquet portable",
+    gc: &coord::FR,
+    ui: &chrome::FR,
+    parts: &parts::FR,
 };
 
 /// Русский.
@@ -1849,6 +1941,9 @@ pub const RU: Strings = Strings {
     dead: "мёртвых",
     no_recoverable: "Нет восстановимых агентов \u{2014} каждая сохранённая сессия либо активна, либо уже исчезла.",
     dead_hint: "нажмите на строку, чтобы воскресить её \u{2014} или \u{2b07} .cdx, чтобы выгрузить её контекст в переносимый пакет",
+    gc: &coord::RU,
+    ui: &chrome::RU,
+    parts: &parts::RU,
 };
 
 /// 日本語.
@@ -2088,6 +2183,9 @@ pub const JA: Strings = Strings {
     dead: "停止",
     no_recoverable: "復元可能なエージェントはありません \u{2014} 保存済みセッションはすべて稼働中か、すでに消失しています。",
     dead_hint: "行をクリックして復活させる \u{2014} または \u{2b07} .cdx でそのコンテキストを可搬パッケージに取り込む",
+    gc: &coord::JA,
+    ui: &chrome::JA,
+    parts: &parts::JA,
 };
 
 /// 한국어.
@@ -2327,6 +2425,9 @@ pub const KO: Strings = Strings {
     dead: "종료됨",
     no_recoverable: "복구할 수 있는 에이전트가 없습니다 \u{2014} 저장된 모든 세션은 실행 중이거나 이미 사라졌습니다.",
     dead_hint: "행을 클릭해 되살리거나 \u{2014} \u{2b07} .cdx로 컨텍스트를 이식 가능한 패키지로 내보내세요",
+    gc: &coord::KO,
+    ui: &chrome::KO,
+    parts: &parts::KO,
 };
 
 /// हिन्दी.
@@ -2567,6 +2668,9 @@ pub const HI: Strings = Strings {
     dead: "मृत",
     no_recoverable: "कोई पुनर्प्राप्त करने योग्य एजेंट नहीं \u{2014} हर सहेजा गया सत्र या तो सक्रिय है या पहले ही समाप्त हो चुका है।",
     dead_hint: "किसी पंक्ति पर क्लिक करके उसे पुनर्जीवित करें \u{2014} या \u{2b07} .cdx से उसके संदर्भ को एक पोर्टेबल पैकेज में सहेजें",
+    gc: &coord::HI,
+    ui: &chrome::HI,
+    parts: &parts::HI,
 };
 
 #[cfg(test)]

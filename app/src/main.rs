@@ -24912,7 +24912,7 @@ impl Workspace {
         let sk = skin::skin(cx, s);
         let snapshot = &self.coordination_store().snapshot;
         let status = snapshot.attention_severity();
-        let label = self.coordination_store().attention_summary();
+        let label = self.coordination_store().attention_summary_in(self.lang);
         let ink = match status {
             Some(coordination::Severity::Alert) => th.ansi[1],
             Some(coordination::Severity::Warning) => th.ansi[3],
@@ -24991,7 +24991,10 @@ impl Workspace {
             .pt(px(6. * s))
             .text_size(px(8.5 * s))
             .text_color(th.accent.alpha(0.8))
-            .child("Escape: back, then close · click outside to close");
+            .child({
+                let t = self.lang.strings().gc;
+                format!("{} · {}", t.footer_escape, t.footer_click_outside)
+            });
         self.over_the_glass(
             div()
                 .id(SharedString::from(format!(
