@@ -28,9 +28,14 @@ into `lang.rs`), so no separate gate was taken.
 - [x] Git coordination overlay, HUD chip and footer wired; findings carry `meaning::Line` /
       `attention::Why` keys so MCP keeps its English
 - [x] Batch 1 (git coordination, 216) translated by ChatGPT Pro, validated, committed
-- [ ] Batch 2 (main.rs chrome, 297) + glossary + fixes — sent
-- [ ] Batches 3a / 3b (modules, 223 + 224) and 4 (document viewer, 228)
-- [ ] Wiring: main.rs (worktree `i18n-wire-main`), other modules (`i18n-wire-parts`)
+- [x] Batch 2 (main.rs chrome, 305 incl. additions) + one glossary; 231 help-menu corrections
+      applied, 16 refused (the translated brand and the localized FOCUS name are decisions)
+- [ ] Batch 3a (modules, 218 + the four lost help-menu headers) — answered in ChatGPT, not yet
+      collected (the Chrome extension disconnected)
+- [ ] Batches 3b (224) and 4 (document viewer, 157)
+- [ ] Shorten pass: 29 ids over their width budget (scratchpad `td-shorten-batch.json`)
+- [x] Wiring: main.rs and every other module, merged; main.rs adopts the modules' display
+      accessors; the notes control-socket report stays English (2498 tests pass)
 - [ ] The four stale help-menu fields re-translated; a test refuses English in a non-English
       flat field outside a cognate allowlist
 - [ ] Merge the three branches, regenerate all tables, full gates, one PR
