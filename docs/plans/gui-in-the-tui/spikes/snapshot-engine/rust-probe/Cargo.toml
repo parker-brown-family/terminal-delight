@@ -1,0 +1,16 @@
+# Spike probe, not Terminal Delight code. Pins the same wgpu git revision and png/image
+# versions TD's Cargo.lock resolves, so the numbers are the ones TD would see.
+# Build: CARGO_TARGET_DIR=/tmp/claude-1000/td-snapshot-spike/rust-target cargo build --release --offline
+[package]
+name = "td-snapshot-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+wgpu = { git = "https://github.com/zed-industries/wgpu.git", rev = "357a0c56e0070480ad9daea5d2eaa83150b79e88", default-features = false, features = ["std", "parking_lot", "vulkan", "wgsl"] }
+pollster = "0.4"
+png = "=0.18.1"
+image = { version = "=0.25.10", default-features = false, features = ["png"] }

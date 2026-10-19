@@ -1,0 +1,8 @@
+parker-brown-family/agent-skills 8c2c755
+decision-brief/{assets,reference,scripts/brief-wall}
+
+Copied byte for byte from that commit (git archive), every file but this one
+and SKILL.md, which is Terminal Delight's own Workbench edition. The binary
+embeds every file here (app/src/briefkit.rs) and a test fails if one is
+missing from that list. Do not edit the copied files by hand: change the
+skill, then run scripts/sync-brief-skill and name the new commit above.

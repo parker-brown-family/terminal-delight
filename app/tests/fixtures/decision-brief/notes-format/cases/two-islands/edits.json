@@ -1,0 +1,17 @@
+{
+ "rev": "2026-09-24T20:05:00.000Z",
+ "edits": [
+  {
+   "op": "add",
+   "nid": "callout-a-callout-that-takes",
+   "title": "A callout that takes a note.",
+   "text": "Written into the first island.",
+   "ts": "2026-09-24 20:00"
+  },
+  {
+   "op": "concur",
+   "nid": "ask-stamp-a-revision-on",
+   "ts": "2026-09-24 20:01"
+  }
+ ]
+}

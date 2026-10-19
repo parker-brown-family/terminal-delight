@@ -10,7 +10,7 @@
 //! PROJECT, so switching tabs does not change it and switching projects does.
 //!
 //! ```text
-//!   TERMINAL DELIGHT   [4 WT · 1 SHARED]   │  3 dirty · +641 −188 · 19 files
+//!   [4 WORKTREES · 1 SHARED]   │  ● ○ ○  3 dirty · +641 −188 · 19 files
 //! ```
 //!
 //! Two truths are compared and neither is allowed to overrule the other:
@@ -51,6 +51,8 @@ use std::time::{Duration, Instant};
 /// gather time — display only, never an identity (tabs slide).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Writer {
+    /// Stable observation identity; absent only for legacy callers/fixtures.
+    pub participant: Option<crate::coordination::Participant>,
     pub tab: usize,
     /// The tab's name, or the shell's title when it has none.
     pub tab_name: String,
@@ -62,6 +64,10 @@ pub struct Writer {
 /// Everything a scan needs, gathered on the main thread.
 #[derive(Clone, Debug, Default)]
 pub struct ScanInput {
+    pub coordination_key: Option<String>,
+    pub scope_key: String,
+    /// Panes whose current directory has not been measured yet.
+    pub unlocated: Vec<crate::coordination::Participant>,
     /// The declared project being drawn, and what the tree calls it.
     pub project: Option<u32>,
     pub name: Option<String>,
@@ -182,6 +188,8 @@ pub struct Visitor {
 /// The engineering state of one declared project, as of one scan.
 #[derive(Clone, Debug)]
 pub struct ProjectState {
+    /// Rich path observations collected by the same background scan.
+    pub coordination: Option<crate::coordination::Reading>,
     pub project: Option<u32>,
     pub name: Option<String>,
     pub scanned_at: Instant,
@@ -262,9 +270,26 @@ pub struct Segment {
     pub tone: Tone,
 }
 
+/// What the rail calls a checkout: the word, not the abbreviation, singular
+/// or plural.
+///
+/// `WT` saved four letters in the window's busiest row and cost every reader a
+/// lookup — Parker, on the corner badge: *"1 WT -- should just say worktree"*.
+/// One function for every place that names one, so the badge and the table it
+/// unfolds into cannot drift apart again: the first cut of the badge fix left
+/// the table saying `WT` one click away.
+pub fn worktree_noun(n: usize) -> &'static str {
+    if n == 1 {
+        "WORKTREE"
+    } else {
+        "WORKTREES"
+    }
+}
+
 /// What kind of fact a ticker frame carries — so a renderer can pick a glyph,
 /// and a test can say which frames appeared without matching prose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg(test)]
 pub enum FrameKind {
     Dirty,
     Branches,
@@ -282,13 +307,11 @@ pub enum FrameKind {
     Collision,
     /// Idle worktrees carrying work.
     Idle,
-    /// What happened between two readings — assembled by the window from
-    /// [`events`], since a single reading cannot know what changed.
-    Events,
 }
 
 /// One frame of the rotating ticker.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg(test)]
 pub struct Frame {
     pub kind: FrameKind,
     pub text: String,
@@ -311,23 +334,69 @@ pub struct Frame {
 /// reports the field as *unmeasured* — a reading git was perfectly able to
 /// give. See `a_wordy_git_is_still_measured`.
 fn run_git(dir: &Path, args: &[&str], budget: Duration) -> Option<(i32, String)> {
+    let (code, bytes) = run_git_bytes(dir, args, budget, 16 * 1024 * 1024).ok()?;
+    Some((code, String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+/// Bounded byte-preserving runner shared by the legacy report and footprints.
+/// Oversized output is drained, then rejected, so a full pipe cannot deadlock.
+pub(crate) fn run_git_bytes(
+    dir: &Path,
+    args: &[&str],
+    budget: Duration,
+    limit: usize,
+) -> Result<(i32, Vec<u8>), String> {
+    use std::os::unix::process::CommandExt;
+    let started = Instant::now();
     let mut child = Command::new("git")
         .args(args)
         .current_dir(dir)
+        .process_group(0)
         .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .ok()?;
-    let pipe = child.stdout.take()?;
+        .map_err(|e| format!("Git could not start: {e}"))?;
+    let group = child.id() as i32;
+    let mut pipe = child.stdout.take().ok_or("Git stdout unavailable")?;
+    use std::os::fd::AsRawFd;
+    let fd = pipe.as_raw_fd();
+    // A helper can detach from the process group while retaining stdout.
+    // Nonblocking reads give the reader its own deadline even in that case.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("Git stdout could not be bounded".into());
+    }
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
     let reader = std::thread::spawn(move || {
-        let mut out = String::new();
         use std::io::Read;
-        let _ = std::io::BufReader::new(pipe).read_to_string(&mut out);
-        out
+        let mut out = Vec::new();
+        let mut buffer = [0_u8; 16384];
+        let result = loop {
+            if started.elapsed() >= budget {
+                break Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Git stdout deadline reached",
+                ));
+            }
+            match pipe.read(&mut buffer) {
+                Ok(0) => break Ok(out),
+                Ok(n) => {
+                    let keep = n.min(limit.saturating_add(1).saturating_sub(out.len()));
+                    out.extend_from_slice(&buffer[..keep]);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(1))
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => break Err(e),
+            }
+        };
+        let _ = tx.send(result);
     });
-    let started = Instant::now();
     // Poll with a short backoff rather than a fixed tick. These calls really
     // cost two to seven milliseconds each; a flat 15 ms sleep rounded every
     // one of them up to 15, which across a whole scan was more time asleep
@@ -342,15 +411,47 @@ fn run_git(dir: &Path, args: &[&str], budget: Duration) -> Option<(i32, String)>
                 nap = (nap * 2).min(POLL_CEILING);
             }
             _ => {
+                // The group belongs to this command; helpers retaining stdout
+                // must die as well or the reader could outlive the deadline.
+                unsafe {
+                    libc::kill(-group, libc::SIGKILL);
+                }
                 let _ = child.kill();
                 let _ = child.wait();
                 break None;
             }
         }
     };
-    // Always join: the reader ends when the pipe closes, which a kill also does.
-    let out = reader.join().unwrap_or_default();
-    Some((status?.code().unwrap_or(-1), out))
+    let result = rx.recv_timeout(budget.saturating_sub(started.elapsed()));
+    if result.is_err() {
+        unsafe {
+            libc::kill(-group, libc::SIGKILL);
+        }
+    }
+    let _ = reader.join();
+    let status = status.ok_or("Git scan deadline reached")?;
+    let out = result
+        .map_err(|_| "Git stdout deadline reached")?
+        .map_err(|e| format!("Git stdout failed: {e}"))?;
+    if out.len() > limit {
+        return Err("Git output limit reached".into());
+    }
+    let code = status.code().ok_or("Git was interrupted")?;
+    Ok((code, out))
+}
+
+pub(crate) fn git_bytes(
+    dir: &Path,
+    args: &[&str],
+    budget: Duration,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    let (code, out) = run_git_bytes(dir, args, budget, limit)?;
+    if code == 0 {
+        Ok(out)
+    } else {
+        Err(format!("Git exited with status {code}"))
+    }
 }
 
 /// The longest one poll may sleep. Small enough that a fast git is not rounded
@@ -936,7 +1037,130 @@ pub fn scan(input: &ScanInput) -> ProjectState {
     // Checkouts in tab order, so the table reads the way the tree does.
     checkouts.sort_by_key(|c| c.writers.iter().map(|w| w.tab).min().unwrap_or(usize::MAX));
 
+    // A project cannot hide an overlap just because the other checkout is
+    // filed under a different project. Candidate roots are narrowed by the
+    // existing repository census, then verified by physical common-dir below.
+    let mut coordination_checkouts = checkouts.clone();
+    for (_, writer) in &input.others {
+        let Some(root) = root_of.get(&writer.cwd).and_then(|r| r.as_ref()) else {
+            continue;
+        };
+        if coordination_checkouts.iter().any(|c| &c.root == root) {
+            continue;
+        }
+        let Some(repo) = repo_of_root
+            .get(root)
+            .filter(|repo| checkouts.iter().any(|c| &c.repo == *repo))
+        else {
+            continue;
+        };
+        let mut candidate = checkouts
+            .iter()
+            .find(|c| &c.repo == repo)
+            .expect("candidate repository")
+            .clone();
+        candidate.root = root.clone();
+        candidate.writers.clear();
+        candidate.branch = None;
+        candidate.dirty = None;
+        candidate.untracked = None;
+        candidate.delta = None;
+        candidate.ahead_behind = None;
+        coordination_checkouts.push(candidate);
+    }
+    let mut contexts = parallel_map(
+        coordination_checkouts
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (i, c.clone()))
+            .collect(),
+        |(i, c)| {
+            let mut context = if i < crate::coordination::MAX_CONTEXTS {
+                crate::coordination::measure(&c, main_of.get(c.repo.as_str()).map(String::as_str))
+            } else {
+                crate::coordination::Context {
+                    id: crate::coordination::stable_id("checkout", &[&c.root.to_string_lossy()]),
+                    root: c.root.to_string_lossy().into_owned(),
+                    repository: Some(c.repo.clone()),
+                    branch: None,
+                    participants: c
+                        .writers
+                        .iter()
+                        .filter_map(|w| w.participant.clone())
+                        .collect(),
+                    footprint: crate::coordination::Footprint {
+                        errors: vec!["Checkout scan limit reached".into()],
+                        ..Default::default()
+                    },
+                    dirty: None,
+                    untracked: None,
+                    delta: None,
+                    ahead_behind: None,
+                    target_conflicts: None,
+                }
+            };
+            for (_, writer) in &input.others {
+                if root_of.get(&writer.cwd).and_then(|r| r.as_ref()) == Some(&c.root) {
+                    if let Some(p) = &writer.participant {
+                        if !context.participants.iter().any(|other| other.id == p.id) {
+                            context.participants.push(p.clone());
+                        }
+                    }
+                }
+            }
+            context
+        },
+    );
+    let owned_roots: std::collections::BTreeSet<_> = checkouts
+        .iter()
+        .map(|c| c.root.to_string_lossy().into_owned())
+        .collect();
+    let commons: std::collections::BTreeSet<_> = contexts
+        .iter()
+        .filter(|c| owned_roots.contains(&c.root))
+        .filter_map(|c| c.footprint.common_dir.clone())
+        .collect();
+    contexts.retain(|c| {
+        owned_roots.contains(&c.root)
+            || c.footprint
+                .common_dir
+                .as_ref()
+                .is_some_and(|common| commons.contains(common))
+    });
+    let facts = crate::coordination::Facts {
+        contexts,
+        unlocated: input
+            .unlocated
+            .iter()
+            .cloned()
+            .chain(no_git.iter().filter_map(|w| w.participant.clone()))
+            .collect(),
+        truncated: coordination_checkouts.len() > crate::coordination::MAX_CONTEXTS,
+    };
+    let project_key = input.coordination_key.clone().unwrap_or_else(|| {
+        input
+            .project
+            .map(|p| format!("project:{p}"))
+            .unwrap_or_else(|| "unfiled".into())
+    });
+    let coordination = crate::coordination::derive(
+        &project_key,
+        input.name.as_deref().unwrap_or("Unfiled"),
+        &facts,
+        false,
+    )
+    .map(|operator| crate::coordination::Reading {
+        operator,
+        authorized: crate::coordination::derive(
+            &project_key,
+            input.name.as_deref().unwrap_or("Unfiled"),
+            &facts,
+            true,
+        ),
+        scope_key: input.scope_key.clone(),
+    });
     ProjectState {
+        coordination,
         project: input.project,
         name: input.name.clone(),
         scanned_at: started,
@@ -987,6 +1211,7 @@ impl ProjectState {
 
     /// Files and lines changed across the primary's checkouts, or `None` when
     /// any checkout is unmeasured.
+    #[cfg(test)]
     pub fn churn(&self) -> Option<(u32, u32, u32)> {
         self.primary()?;
         let cs = self.primary_checkouts();
@@ -1005,8 +1230,9 @@ impl ProjectState {
     /// Nothing here is worth interrupting for: one repository, every
     /// checkout isolated, nothing uncommitted anywhere, no drift, nothing
     /// that would conflict or converge, no idle worktree carrying work. The
-    /// badge says `N WT ✓` and the ticker says nothing — silence means
+    /// badge says `N WORKTREES ✓` and the ticker says nothing — silence means
     /// healthy, and the rail earns trust by not screaming continuously.
+    #[cfg(test)]
     pub fn is_calm(&self) -> bool {
         self.primary().is_some()
             && self.repos.len() == 1
@@ -1049,10 +1275,11 @@ impl ProjectState {
         let n = self.primary_checkouts().len();
         let shared = self.shared_count();
         let foreign = self.foreign.len();
+        let noun = worktree_noun(n);
         let wt = if shared == 0 && foreign == 0 && n > 0 {
-            format!("{n} WT \u{2713}")
+            format!("{n} {noun} \u{2713}")
         } else {
-            format!("{n} WT")
+            format!("{n} {noun}")
         };
         out.push(Segment {
             text: wt,
@@ -1086,6 +1313,7 @@ impl ProjectState {
 
     /// The rotating frames, in the order they cycle. Empty is the healthy
     /// silence — nothing here was worth interrupting for.
+    #[cfg(test)]
     pub fn frames(&self) -> Vec<Frame> {
         let mut out = Vec::new();
         let Some(primary) = self.primary() else {
@@ -1929,6 +2157,7 @@ mod tests {
 
     fn w(tab: usize, label: &str, cwd: &Path) -> Writer {
         Writer {
+            participant: None,
             tab,
             tab_name: format!("tab {tab}"),
             label: label.into(),
@@ -2096,6 +2325,9 @@ mod tests {
     fn a_pane_outside_any_repository_is_no_git_not_zero_dirty() {
         let rig = Rig::new("nogit");
         let st = scan(&ScanInput {
+            coordination_key: None,
+            scope_key: String::new(),
+            unlocated: vec![],
             project: Some(1),
             name: Some("PLAIN".into()),
             mine: vec![w(0, "SHELL", &rig.outside)],
@@ -2119,6 +2351,9 @@ mod tests {
         let rig = Rig::new("shared");
         std::fs::write(rig.wt.join("a.txt"), "one\ntwo\n").unwrap();
         let st = scan(&ScanInput {
+            coordination_key: None,
+            scope_key: String::new(),
+            unlocated: vec![],
             project: Some(1),
             name: Some("REPO".into()),
             mine: vec![
@@ -2148,7 +2383,7 @@ mod tests {
         assert!(st.primary().unwrap().pulse.is_some());
 
         let badge: Vec<String> = st.badge().into_iter().map(|s| s.text).collect();
-        assert_eq!(badge, vec!["2 WT", "1 SHARED"]);
+        assert_eq!(badge, vec!["2 WORKTREES", "1 SHARED"]);
         let kinds: Vec<FrameKind> = st.frames().iter().map(|f| f.kind).collect();
         assert!(kinds.contains(&FrameKind::Dirty));
         assert!(kinds.contains(&FrameKind::Branches));
@@ -2174,6 +2409,32 @@ mod tests {
         assert!(s.contains("main is clean"), "{s}");
     }
 
+    /// The badge spells the word, in the singular when there is one.
+    ///
+    /// It read `1 WT`, and the abbreviation was the whole complaint: Parker,
+    /// looking at the corner, *"1 WT -- should just say worktree"*. One
+    /// checkout is the count a project has most often, so the singular is the
+    /// case a person actually reads.
+    #[test]
+    fn one_checkout_says_one_worktree_in_words() {
+        let rig = Rig::new("oneworktree");
+        let st = scan(&ScanInput {
+            coordination_key: None,
+            scope_key: String::new(),
+            unlocated: vec![],
+            project: Some(1),
+            name: Some("REPO".into()),
+            mine: vec![w(0, "CLAUDE", &rig.main)],
+            others: vec![],
+        });
+        let badge: Vec<String> = st.badge().into_iter().map(|s| s.text).collect();
+        assert_eq!(badge, vec!["1 WORKTREE \u{2713}"]);
+        assert!(
+            badge.iter().all(|b| !b.contains(" WT")),
+            "the abbreviation is gone: {badge:?}"
+        );
+    }
+
     #[test]
     fn one_line_that_is_the_shared_one_is_not_one_lines() {
         // Seen on the bar: "1 lines of work, one shared". Every other count in
@@ -2195,13 +2456,16 @@ mod tests {
     fn isolated_and_clean_is_a_tick_and_near_silence() {
         let rig = Rig::new("clean");
         let st = scan(&ScanInput {
+            coordination_key: None,
+            scope_key: String::new(),
+            unlocated: vec![],
             project: Some(1),
             name: Some("REPO".into()),
             mine: vec![w(0, "CLAUDE", &rig.main), w(1, "CODEX", &rig.wt)],
             others: vec![],
         });
         let badge: Vec<String> = st.badge().into_iter().map(|s| s.text).collect();
-        assert_eq!(badge, vec!["2 WT \u{2713}"]);
+        assert_eq!(badge, vec!["2 WORKTREES \u{2713}"]);
         let kinds: Vec<FrameKind> = st.frames().iter().map(|f| f.kind).collect();
         assert!(
             !kinds.contains(&FrameKind::Dirty),
@@ -2233,6 +2497,9 @@ mod tests {
         let b = Rig::new("drift-b");
         // project A holds two panes in repo A and one pane that wandered into repo B
         let st = scan(&ScanInput {
+            coordination_key: None,
+            scope_key: String::new(),
+            unlocated: vec![],
             project: Some(1),
             name: Some("A".into()),
             mine: vec![
@@ -2254,7 +2521,7 @@ mod tests {
         assert_eq!(st.visitors.len(), 1);
         assert_eq!(st.visitors[0].filed_under.as_deref(), Some("B"));
         let badge: Vec<String> = st.badge().into_iter().map(|s| s.text).collect();
-        assert_eq!(badge, vec!["2 REPOS", "2 WT", "\u{26a0} 1 FOREIGN"]);
+        assert_eq!(badge, vec!["2 REPOS", "2 WORKTREES", "\u{26a0} 1 FOREIGN"]);
         let f = st.frames();
         let foreign = f.iter().find(|f| f.kind == FrameKind::Foreign).unwrap();
         assert_eq!(
@@ -2272,6 +2539,9 @@ mod tests {
     #[test]
     fn a_directory_that_has_gone_away_is_a_fact_not_a_panic() {
         let st = scan(&ScanInput {
+            coordination_key: None,
+            scope_key: String::new(),
+            unlocated: vec![],
             project: None,
             name: None,
             mine: vec![w(0, "SHELL", Path::new("/nonexistent/td-engstate/gone"))],
@@ -2285,6 +2555,7 @@ mod tests {
     fn reading(checkouts: Vec<Checkout>, foreign: usize, visitors: usize) -> ProjectState {
         let wr = |n: usize| w(n, "SHELL", Path::new("/x"));
         ProjectState {
+            coordination: None,
             project: Some(1),
             name: Some("P".into()),
             scanned_at: Instant::now(),
@@ -2457,6 +2728,9 @@ mod tests {
         commit_file(&rig.wt, "b.txt", "more\n", "unpushed");
 
         let st = scan(&ScanInput {
+            coordination_key: None,
+            scope_key: String::new(),
+            unlocated: vec![],
             project: Some(1),
             name: Some("REPO".into()),
             mine: vec![w(0, "CLAUDE", &rig.main), w(1, "CODEX", &rig.wt)],
@@ -2516,7 +2790,7 @@ mod tests {
             ]
         );
         let badge: Vec<String> = st.badge().into_iter().map(|s| s.text).collect();
-        assert_eq!(badge, vec!["2 WT \u{2713}", "\u{2717} 1 CONFLICT"]);
+        assert_eq!(badge, vec!["2 WORKTREES \u{2713}", "\u{2717} 1 CONFLICT"]);
         let kinds: Vec<FrameKind> = st.frames().iter().map(|f| f.kind).collect();
         assert!(kinds.contains(&FrameKind::Landing));
         assert!(kinds.contains(&FrameKind::Collision));
@@ -2689,6 +2963,9 @@ mod tests {
     fn the_checkouts_come_back_in_tab_order() {
         let rig = Rig::new("order");
         let st = scan(&ScanInput {
+            coordination_key: None,
+            scope_key: String::new(),
+            unlocated: vec![],
             project: Some(1),
             name: None,
             mine: vec![w(4, "SHELL", &rig.wt), w(1, "SHELL", &rig.main)],

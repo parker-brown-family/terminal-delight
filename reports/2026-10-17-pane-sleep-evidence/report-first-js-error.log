@@ -1,0 +1,8 @@
+file:///home/parker/Work/terminal-delight/.worktrees/pane-sleep/reports/2026-10-17-pane-sleep-evidence/report-qa.mjs:35
+  if(!ready)throw Error('notes initialization did not finish '+JSON.stringify({exceptions,dom:await evaluate("({figures:document.querySelectorAll('figure').length,noted:document.querySelectorAll('figure.notable').length,scripts:document.scripts.length,body:document.body.innerText.slice(0,150)})")}));
+                  ^
+
+Error: notes initialization did not finish {"exceptions":[{"timestamp":1792307933172.681,"exceptionDetails":{"exceptionId":1,"text":"Uncaught","lineNumber":964,"columnNumber":52,"scriptId":"4","url":"http://127.0.0.1:46579/","exception":{"type":"object","subtype":"error","className":"SyntaxError","description":"SyntaxError: Invalid regular expression: /<\\/g, '&lt;').replace(/: Unmatched ')'","objectId":"2481750176630404205.2.1","preview":{"type":"object","subtype":"error","description":"SyntaxError: Invalid regular expression: /<\\/g, '&lt;').replace(/: Unmatched ')'","overflow":false,"properties":[{"name":"stack","type":"string","value":"SyntaxError: Invalid regular expression: /<\\/g, '&lt;').replace(/: Unmatched ')'"},{"name":"message","type":"string","value":"Invalid regular expression: /<\\/g, '&lt;').replace(/: Unmatched ')'"}]}},"executionContextId":2}}],"dom":{"figures":4,"noted":0,"scripts":5,"body":"TERMINAL DELIGHT · VALIDATED CANDIDATE · INSTALLATION PENDING\n\nHidden panes wake less often.\nCPU savings remain uncertain.\n\nWith thirty hidden synthet"}}
+    at file:///home/parker/Work/terminal-delight/.worktrees/pane-sleep/reports/2026-10-17-pane-sleep-evidence/report-qa.mjs:35:19
+
+Node.js v26.7.0

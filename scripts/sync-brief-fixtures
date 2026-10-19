@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Copy the decision-brief notes-format fixtures from the skill into TD, or check
+# that TD's copy is what it says it is.
+#
+# TD writes notes into Parker's briefs, and the brief's own save button writes
+# them too. The two are held to one format by shared fixtures that live in the
+# skill (parker-brown-family/agent-skills, decision-brief/fixtures/notes-format/)
+# and are vendored here byte for byte, with SOURCE naming the commit. A copy
+# that someone edits by hand, or one the skill has moved past, stops holding
+# TD's writer to anything. This is the one way the copy changes, and the check
+# that it has not changed any other way.
+#
+#   scripts/sync-brief-fixtures [--from <agent-skills checkout>] [--ref <commit>]
+#   scripts/sync-brief-fixtures --check [--from <checkout>] [--ref <commit>]
+#
+# The source is always a COMMIT, read with `git archive`, never a working tree:
+# uncommitted edits in the skill are not the skill. --from defaults to the local
+# checkout if there is one, otherwise a fresh clone of the public repository.
+# --ref defaults to origin/main when syncing, and to the commit SOURCE names
+# when checking, so a bare --check asks "is our copy exactly that commit's?"
+# and `--check --ref origin/main` asks "has the skill moved on?".
+#
+# Exit 0: in step (or synced). 1: the copy differs from the ref. 2: bad input.
+set -uo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+DEST="$ROOT/app/tests/fixtures/decision-brief/notes-format"
+SUBDIR="decision-brief/fixtures/notes-format"
+REPO="parker-brown-family/agent-skills"
+FROM=""
+REF=""
+CHECK=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check) CHECK=1; shift ;;
+    --from) FROM=$2; shift 2 ;;
+    --ref) REF=$2; shift 2 ;;
+    *) echo "unknown argument $1"; exit 2 ;;
+  esac
+done
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+if [ -z "$FROM" ]; then
+  local_checkout="$HOME/BROWN-FAMILY-SPORTS/Software/agent-skills"
+  if git -C "$local_checkout" rev-parse --git-dir >/dev/null 2>&1; then
+    FROM=$local_checkout
+  else
+    git clone -q "https://github.com/$REPO.git" "$TMP/agent-skills" || { echo "could not clone $REPO"; exit 2; }
+    FROM="$TMP/agent-skills"
+  fi
+fi
+git -C "$FROM" fetch -q origin 2>/dev/null || true
+
+if [ -z "$REF" ]; then
+  if [ "$CHECK" -eq 1 ]; then
+    REF=$(awk 'NR==1 {print $2}' "$DEST/SOURCE" 2>/dev/null)
+    [ -n "$REF" ] || { echo "no commit named in $DEST/SOURCE"; exit 2; }
+  else
+    REF=origin/main
+  fi
+fi
+COMMIT=$(git -C "$FROM" rev-parse --verify --quiet "$REF^{commit}") || { echo "$REF is not a commit in $FROM"; exit 2; }
+SHORT=$(git -C "$FROM" rev-parse --short "$COMMIT")
+
+mkdir -p "$TMP/theirs"
+git -C "$FROM" archive "$COMMIT" "$SUBDIR" | tar -x -C "$TMP/theirs" || { echo "$SUBDIR is not in $REPO at $SHORT"; exit 2; }
+THEIRS="$TMP/theirs/$SUBDIR"
+
+if [ "$CHECK" -eq 1 ]; then
+  if diff -r -q --exclude=SOURCE "$DEST" "$THEIRS" >"$TMP/diff" 2>&1; then
+    echo "in step: TD's copy is byte-identical to $REPO@$SHORT"
+    exit 0
+  fi
+  echo "differs from $REPO@$SHORT ($(wc -l <"$TMP/diff") paths):"
+  sed "s|$DEST|td|; s|$THEIRS|skill|" "$TMP/diff" | head -40
+  exit 1
+fi
+
+find "$DEST" -mindepth 1 -maxdepth 1 ! -name SOURCE -exec rm -rf {} +
+cp -a "$THEIRS/." "$DEST/"
+{
+  echo "$REPO $SHORT"
+  echo "$SUBDIR/"
+  echo ""
+  echo "Copied byte for byte from that commit (git archive), every file but this one."
+  echo "TD's notes tests loop over every case under cases/. Do not edit anything here"
+  echo "by hand: change the skill, then run scripts/sync-brief-fixtures and name the new"
+  echo "commit above."
+} >"$DEST/SOURCE"
+echo "synced from $REPO@$SHORT; run cargo test docview::notes before committing"

@@ -1,0 +1,10 @@
+NOTES — brief.html
+3 notes on 2 elements.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[finding-the-island-is-the] The island is the record
+  · Second note on the same finding.
+
+[verdict-reference-writer] Reference writer
+  · A note on the card.
+  · Added later, by the writer.

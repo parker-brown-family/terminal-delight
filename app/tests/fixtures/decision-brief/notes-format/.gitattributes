@@ -1,0 +1,2 @@
+# The cases are bytes: never convert their line endings.
+cases/** -text

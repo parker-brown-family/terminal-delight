@@ -1,0 +1,12 @@
+{
+  "exit": 101,
+  "expected_failure_messages": {
+    "quiet grid rebuilt on parent frames": true,
+    "hidden output dispatched screen events": true
+  },
+  "method": "both production optimizations disabled together; independent tests must each fail at their efficiency assertion",
+  "restored_sha256": {
+    "app/src/pane.rs": "b8614c51da15292ec4bd060369613618af4502a323a7b7376f8fd12af9d4968e",
+    "app/src/term.rs": "517210c6dd55bde41f90140f9bacaefffac06489c49730154632f911a58b0016"
+  }
+}

@@ -1,0 +1,33 @@
+{
+ "release": "current",
+ "pins": "Note text that would end the island (</script>, </SCRIPT >), open a comment or the double-escaped script state (<!--, <!--<script>, <![CDATA[), end the mirror (-->, --!>), plus ---, non-ASCII, emoji and newlines. The file already holds two notes another writer baked in with a CR, a bell and U+2028. Every one round-trips exactly.",
+ "notes_file": "brief.html",
+ "concur_support": "supported",
+ "format": "1",
+ "rev_before": "2026-09-24T19:02:00.000Z",
+ "notes_text": "{\n \"callout-a-callout-that-takes\": [\n  {\n   \"text\": \"crlf line\\r\\nnext, a bell \\u0007 and a line separator   here\",\n   \"title\": \"A callout that takes a note.\",\n   \"ts\": \"2026-09-24 19:00\"\n  },\n  {\n   \"text\": \"<\\/script> baked by another writer, with \\u003c!-- and --> inside\",\n   \"title\": \"A callout that takes a note.\",\n   \"ts\": \"2026-09-24 19:01\"\n  }\n ]\n}",
+ "refuse": null,
+ "shown_before": {
+  "note_count": "2",
+  "concur_count": "0",
+  "notes": {
+   "callout-a-callout-that-takes": "2"
+  },
+  "concurs": []
+ },
+ "shown_after": {
+  "note_count": "7",
+  "concur_count": "0",
+  "notes": {
+   "finding-the-island-is-the": "3",
+   "fig-01-two-writers-one": "2",
+   "callout-a-callout-that-takes": "2"
+  },
+  "concurs": []
+ },
+ "writes": [
+  "notes-island",
+  "concurs-island",
+  "mirror-replaced"
+ ]
+}

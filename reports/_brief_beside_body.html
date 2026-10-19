@@ -1,0 +1,110 @@
+<div class="wrap">
+
+<p class="kicker">Terminal Delight &middot; plan &middot; difficulty 5 of 10 &middot; 2026-09-24</p>
+
+<h1>Brief Beside</h1>
+
+<p class="lede">You read an agent&rsquo;s brief beside it, note it, and save. Then the agent re-reads the whole file to find
+what you wrote. This plan hands it your notes alone, and puts the brief beside the agent without a click.</p>
+
+<h2 class="sec">The loop</h2>
+
+<figure>
+  <span class="lbl">01 &middot; A brief and its agent, side by side</span>
+  <div class="scroller">
+    <svg viewBox="0 0 760 250" role="img" aria-label="An agent pane on the left and a brief pane on the right. Arrow 1, from the agent to the brief: the agent opens its brief beside itself. Step 2, on the brief: you note it and save. Arrow 3, from the brief to the agent: the send button pastes the notes map into the agent's prompt and you press Enter. Dashed arrow 4: the agent can instead ask for the notes itself." font-family="ui-monospace, monospace">
+      <defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8b8a80"/></marker></defs>
+      <rect x="20" y="20" width="250" height="210" rx="9" fill="#10231a" stroke="#3ecf8e"/>
+      <text x="36" y="46" font-size="13" fill="#fff">agent pane</text>
+      <text x="36" y="66" font-size="11" fill="#8b8a80">claude · writes the brief</text>
+      <text x="36" y="200" font-size="11" fill="#3ecf8e">&gt; [notes map, pasted]&#9612;</text>
+      <text x="36" y="218" font-size="10" fill="#8b8a80">Enter is yours</text>
+      <rect x="490" y="20" width="250" height="210" rx="9" fill="#152130" stroke="#3987e5"/>
+      <text x="506" y="46" font-size="13" fill="#fff">brief pane</text>
+      <text x="506" y="66" font-size="11" fill="#8b8a80">the page, drawn by Chromium</text>
+      <text x="506" y="200" font-size="11" fill="#6fa8ee">2 &#8226; note it, save</text>
+      <line x1="272" y1="70" x2="486" y2="70" stroke="#8b8a80" marker-end="url(#a1)"/>
+      <text x="290" y="60" font-size="11" fill="#e9e8e2">1 &#8226; open_document</text>
+      <line x1="488" y1="150" x2="274" y2="150" stroke="#3ecf8e" stroke-width="2" marker-end="url(#a1)"/>
+      <text x="290" y="140" font-size="11" fill="#3ecf8e">3 &#8226; &#8618; send: notes map</text>
+      <line x1="274" y1="180" x2="488" y2="180" stroke="#8b8a80" stroke-dasharray="5 4" marker-start="url(#a1)"/>
+      <text x="290" y="172" font-size="10" fill="#8b8a80">4 &#8226; or it asks: document_notes</text>
+    </svg>
+  </div>
+  <figcaption>Drawn from <code>01-plan.md</code>. <b>The agent reads what you wrote, not the page around it</b>: the map TD
+  saved into tonight&rsquo;s build log was 33 words, and the page runs to about 2,000.</figcaption>
+</figure>
+
+<figure>
+  <span class="lbl">02 &middot; One new button in the notes bar</span>
+  <div class="scroller">
+    <div class="hk" role="img" aria-label="A reconstruction in the hacker theme: a brief's notes bar reads 1 note, 0 concurs, copy map, save into file, and a new button, send to agent. The agent pane's prompt holds the pasted notes map with the cursor after it." style="height:228px">
+      <div class="hdr"><span>&#9679; claude</span><span>~/Work/td</span></div>
+      <div class="scr"><span class="dim">&gt;</span> NOTES — 2026-09-24-floating-square.html
+  1 notes on 1 elements.
+  Each [anchor] is an element id in that file — search it to find the passage.
+  [fig-02-gpu-memory-after] 02 · GPU memory after each close
+    · test comment&#9612;</div>
+      <div class="sq" style="top:auto;bottom:12px;height:auto;width:62%;padding:6px 10px;font-size:11px;color:#22c55e">1 note &middot; 0 concurs &nbsp; &#9112; copy map &nbsp; &#128190; save into file &nbsp; <b style="border:1px solid #f5c95f;color:#f5c95f;border-radius:4px;padding:1px 6px">&#8618; send to agent</b></div>
+      <span class="tag" style="top:34px;bottom:auto;right:12px;left:auto">reconstruction · amber = new</span>
+    </div>
+  </div>
+  <figcaption>Your real note from tonight, as it would arrive. <b>&#8618; pastes; it never presses Enter</b>, so the prompt
+  holds it until you send it or edit it first.</figcaption>
+</figure>
+
+<h2 class="sec">Why it is safe</h2>
+
+<figure>
+  <span class="lbl">03 &middot; The terminal-input manifest, before and after</span>
+  <div class="scroller">
+    <table class="wide">
+      <thead><tr><th>#</th><th>What writes to the terminal</th><th>Who starts it</th><th>Enter pressed?</th></tr></thead>
+      <tbody>
+        <tr><td>6</td><td>paste, from the clipboard</td><td>your keypress or right-click</td><td>no</td></tr>
+        <tr><td style="color:#f5c95f">9</td><td style="color:#f5c95f">&#8618; send to agent, the notes map</td><td style="color:#f5c95f">your click on &#8618;</td><td style="color:#f5c95f">no</td></tr>
+        <tr><td>&ndash;</td><td>any MCP verb, including the two new ones</td><td>&ndash;</td><td>writes nothing</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figcaption>From <code>docs/security/terminal-input.md</code>; the amber row is proposed. <b>The one new write has the
+  same shape as paste</b>, and TD still never types into a running terminal on its own.</figcaption>
+</figure>
+
+<h2 class="sec">Three slices</h2>
+
+<figure>
+  <span class="lbl">04 &middot; Built in this order, each its own pull request</span>
+  <div class="scroller">
+    <div class="board" style="grid-template-columns:repeat(3,minmax(0,1fr))" role="img" aria-label="Three slices. One: document_notes, a read-only MCP verb. Two: the send-to-agent button, row nine of the manifest. Three: open_document, and open beside on the rail.">
+      <div class="s"><b>1 &middot; document_notes</b>the agent asks for the notes beside it; reads only<em>MCP, read-only</em></div>
+      <div class="s"><b>2 &middot; &#8618; send to agent</b>the map pasted into the prompt; Enter is yours<em>manifest row 9</em></div>
+      <div class="s"><b>3 &middot; open_document</b>the agent opens its brief beside itself; &ldquo;open beside&rdquo; on the rail<em>own tab only</em></div>
+    </div>
+  </div>
+  <figcaption>From the plan&rsquo;s slice list. <b>Slice 1 alone ends the re-reading</b>; slices 2 and 3 take the clicks
+  out.</figcaption>
+</figure>
+
+<div class="grill">
+  <div class="ask">
+    <h3>1 &middot; &#8618; pastes without pressing Enter?</h3>
+    <p>Pressing Enter would make TD type into a live conversation, which the manifest forbids.</p>
+    <p class="rec"><b>Recommendation:</b> paste only; the send stays yours.</p>
+  </div>
+  <div class="ask">
+    <h3>2 &middot; Agents open their own brief beside themselves?</h3>
+    <p>It changes the layout while you may be looking elsewhere. The alternative is the rail&rsquo;s button alone.</p>
+    <p class="rec"><b>Recommendation:</b> yes, in the agent&rsquo;s own tab only, floating instead at four panes.</p>
+  </div>
+  <div class="ask">
+    <h3>3 &middot; Approve the plan, or what should change?</h3>
+    <p>Approving starts slice 1.</p>
+    <p class="rec"><b>Recommendation:</b> approve.</p>
+  </div>
+</div>
+
+<p class="foot">The plan is <code>docs/plans/brief-beside-agent/01-plan.md</code> on the branch
+<code>plan/brief-beside-agent</code>.</p>
+
+</div>

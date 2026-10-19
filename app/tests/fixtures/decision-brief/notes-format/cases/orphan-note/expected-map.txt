@@ -1,0 +1,12 @@
+NOTES — brief.html
+4 notes on 4 elements.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[finding-the-island-is-the] The island is the record
+  · An older finding note.
+
+[fig-01-two-writers-one] 01 · Two writers, one file
+  · Figure note one.
+
+[callout-a-callout-that-takes] A callout that takes a note.
+  · New note beside an orphan.

@@ -1,0 +1,2 @@
+{"mutation": "key-routing-bypass", "exit": 101, "expected_assertion_failures": ["on_key_decides_nothing_it_can_decide_in_the_table"], "observed": ["on_key_decides_nothing_it_can_decide_in_the_table"], "rejected_by_behavior": true, "required_assertion_text": "on_key looks at `key.as_str()` itself", "production_sources_sha256": {"app/src/pane.rs": "54c0f86d38cc4863218310f87682dd0b6ea2fcaa3a744b67f47f2564e48cd6a1"}, "log_sha256": "a8e3863827bdc918711d8bbaf89d4968795755859b5e15660dab03505caff36e"}
+All faults rejected and production sources byte-restored.

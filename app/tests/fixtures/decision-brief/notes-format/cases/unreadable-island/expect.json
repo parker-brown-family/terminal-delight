@@ -1,0 +1,18 @@
+{
+ "release": "current",
+ "pins": "The notes island is cut off mid-string. The page shows no notes and throws nothing; a write is refused, Unreadable, rather than replacing what it could not read.",
+ "notes_file": "brief.html",
+ "concur_support": "supported",
+ "format": "1",
+ "rev_before": null,
+ "notes_text": "{\n \"finding-the-island-is-the\": [\n  {\n   \"text\": \"cut off",
+ "refuse": "Unreadable",
+ "shown_before": {
+  "note_count": "0",
+  "concur_count": "0",
+  "notes": {},
+  "concurs": []
+ },
+ "shown_after": null,
+ "writes": null
+}

@@ -16,6 +16,13 @@
 //! asserts on lock ownership takes it for its duration. It is deliberately not
 //! a lock around "the filesystem" or "the environment" — naming what it
 //! actually protects is what stops it becoming a mutex everything grabs.
+//!
+//! **It cannot be complete,** because the code under test starts processes too:
+//! the engstate tests run `git` dozens of times without it, and beside them the
+//! instance tests' "released on drop" failed in 14 runs of 150 (#908). So a test
+//! that drops a descriptor and asserts what the kernel says about it next waits
+//! for the close to land, through [`soon`], and a descriptor never closed still
+//! fails it.
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -27,6 +34,30 @@ pub fn forks_and_locks() -> MutexGuard<'static, ()> {
         // A test that panicked while holding it poisoned it; the next test
         // still needs the guard, and the panic has already been reported.
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Whether `done` comes true within two seconds: for asserting what follows a
+/// dropped descriptor, a lock that is free again or a socket that is gone.
+///
+/// The drop closes the descriptor at once in this process, and not always in
+/// the kernel's eyes: a test on another thread that starts a process hands the
+/// child a copy of every open descriptor until the child execs, and the lock or
+/// the socket lives until the last copy closes. Measured on 2026-10-07 (#908),
+/// 150 runs of the instance tests each: alone, "released on drop" never failed;
+/// beside the engstate tests it failed in 14; beside the channel tests, in 1.
+/// A descriptor that is never closed still fails, two seconds later.
+#[cfg(test)]
+pub fn soon(mut done: impl FnMut() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        if done() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 
 /// A directory of this test's own, taken away when the test ends.

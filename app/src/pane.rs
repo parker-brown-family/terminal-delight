@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::crt;
-use crate::doc::{wrap_join, DocLine, Document, DocumentSource, RowBudget, WrapJoin};
+use crate::doc::{wrap_join, DocLine, Document, DocumentSource, GridRow, RowBudget, WrapJoin};
 use crate::screenread::{
     blocked_row, clip_evidence, human_input_rows, is_human_input_line, looks_blocked,
     rows_fingerprint, wants_human_row, wants_human_unless_answered, PROMPT_TAIL_ROWS,
@@ -15,17 +15,24 @@ use crate::screenread::{
 /// The workbench half of this view — every method that draws or drives the
 /// bench. A child module so it keeps private access; see `pane/bench.rs`.
 mod bench;
+/// The document half of this view — the floating square and the Document
+/// face. A child module for the same reason; see `pane/doc.rs`.
+mod doc;
+mod grid_paint;
+/// What this pane's agent handed over: the header chip, the history page and
+/// the screen scan. A child module for the same reason; see `pane/handed.rs`.
+mod handed;
+/// Visibility-aware housekeeping deadlines and wakeups.
+mod housekeeping;
+/// Bounded reuse of the viewport's styled text.
+mod styling;
 use crate::term;
 use crate::theme::{self, PaneTheme, Theme};
-use alacritty_terminal::{
-    event::{Event as TermEvent, Notify},
-    grid::{Dimensions, Scroll},
-    index::{Column, Line, Point as TermPoint, Side},
-    selection::{Selection, SelectionType},
-    term::{cell::Flags, viewport_to_point, TermMode},
-    vte::ansi::{Color as AnsiColor, NamedColor},
+use crate::vt::{
+    viewport_to_point, Color as AnsiColor, Column, Event as TermEvent, Flags, Line, NamedColor,
+    Point as TermPoint, Scroll, SelectionType, Side, TermMode, WindowSize,
 };
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use gpui::{
     anchored, canvas, deferred, div, font, point, prelude::*, px, rgb, Animation, AnimationExt,
     App, Bounds, BoxShadow, ClipboardItem, Context, FocusHandle, Focusable, Font, FontStyle,
@@ -100,6 +107,7 @@ impl PaneMode {
             PaneMode::Claude => "CLAUDE",
             PaneMode::Codex => "CODEX",
             PaneMode::Remote => "REMOTE",
+            PaneMode::Other(name) if name == crate::launcher::LOCAL_AGENT_MODE => "LOCAL",
             PaneMode::Other(name) => name,
             // What `list_panes` hands an agent asking about its own fleet. A
             // reader that sees this knows the census could not describe the
@@ -119,6 +127,9 @@ impl PaneMode {
             PaneMode::Remote => Cow::Borrowed(st.ph_remote),
             PaneMode::Claude => Cow::Borrowed("CLAUDE"),
             PaneMode::Codex => Cow::Borrowed("CODEX"),
+            PaneMode::Other(name) if name == crate::launcher::LOCAL_AGENT_MODE => {
+                Cow::Borrowed("LOCAL")
+            }
             PaneMode::Other(name) => Cow::Owned(name.clone()),
             // Untranslated for the same reason CLAUDE and CODEX are: it is a
             // placeholder rather than a word about the pane's contents, and a
@@ -128,10 +139,20 @@ impl PaneMode {
         }
     }
 
-    /// True when this pane is running a conversational agent (Claude or Codex) —
+    /// True for Claude, Codex or a program declared by the local launch adapter —
     /// the modes where "your own input" is a meaningful, navigable, colourable
     /// thing distinct from the agent's replies.
     pub fn is_agent(&self) -> bool {
+        matches!(self, PaneMode::Claude | PaneMode::Codex)
+            || matches!(self, PaneMode::Other(name) if name == crate::launcher::LOCAL_AGENT_MODE)
+    }
+
+    /// True when the FOCUS reader can read this agent's conversation from
+    /// its transcript: an agent whose records `transcript::Conversation`
+    /// folds — Claude Code's transcripts and Codex's rollouts. Another agent
+    /// arriving is read from its screen until its records fold too, rather
+    /// than bound to a file the reader would read as an empty conversation.
+    pub fn reads_transcript(&self) -> bool {
         matches!(self, PaneMode::Claude | PaneMode::Codex)
     }
 
@@ -176,7 +197,17 @@ fn foreground_mode(master: &std::fs::File, shell_pid: u32) -> PaneMode {
     if pgid as u32 == shell_pid {
         return PaneMode::Shell;
     }
-    PaneMode::classify(&comm, &cmdline)
+    let mode = PaneMode::classify(&comm, &cmdline);
+    if !matches!(mode, PaneMode::Claude | PaneMode::Codex | PaneMode::Remote)
+        && std::fs::read(format!("/proc/{pgid}/environ"))
+            .ok()
+            .as_deref()
+            .is_some_and(crate::launcher::local_agent_environment)
+    {
+        PaneMode::Other(crate::launcher::LOCAL_AGENT_MODE.into())
+    } else {
+        mode
+    }
 }
 
 /// The consistent header icon size (≈2× the old glyphs).
@@ -221,24 +252,410 @@ pub fn eq_icon(accent: gpui::Hsla, scale: f32) -> gpui::Div {
     row
 }
 
-/// The Alt-held copy affordance: one reconstructed logical line and the PAINTED
-/// rows it occupies. The text is what lands on the clipboard — wrap seams already
-/// healed — and the row span is where the border is drawn, in painted order so it
-/// frames the text where the eye actually sees it.
+/// The Alt-held chip: one reconstructed logical line, the PAINTED rows it
+/// occupies, and what an Alt+click there would do. The text is what lands on
+/// the clipboard for a copy — wrap seams already healed — and the row span is
+/// where the border is drawn, in painted order so it frames the text where the
+/// eye actually sees it.
 #[derive(Debug, Clone, PartialEq)]
 struct CopyHint {
     text: String,
     first_paint: usize,
     last_paint: usize,
+    does: crate::docopen::AltClick,
 }
+
+/// A few words the pane shows for [`SAID_FOR`], in a chip where the click
+/// that prompted them landed: why a click did something other than what its
+/// chip promised. TD has no toast, and this is where the person is looking.
+#[derive(Debug, Clone, PartialEq)]
+struct Said {
+    text: String,
+    /// The painted row the click landed on. `None` when it did not land on
+    /// the grid (a link in a document, a `ctl` caller); the chip then sits
+    /// on the top row.
+    row: Option<usize>,
+    /// When it was said: a later saying replaces it, and only its own timer
+    /// takes it down.
+    at: Instant,
+}
+
+/// How long a [`Said`] chip stays up.
+const SAID_FOR: Duration = Duration::from_secs(8);
+
+/// How often a pane in a tab that is not being shown asks for a frame for
+/// what changed on its screen (#964). Parker: panes not on screen only need to
+/// refresh every few seconds, and showing one draws it at once, which nobody
+/// can perceive.
+pub const OFFSCREEN_REFRESH: Duration = Duration::from_secs(5);
+
+/// The shortest gap between frames a shown pane's OUTPUT asks for: about 30 a
+/// second (#964). Parker: drawing within ~30 ms is not something a person can
+/// perceive. Keystroke echoes skip it (`TerminalView::frame_now`).
+pub const OUTPUT_FRAME_GAP: Duration = Duration::from_millis(33);
+
+/// What a shown pane's output does about a frame.
+#[derive(Debug, PartialEq, Eq)]
+enum FrameAsk {
+    /// The gap has passed: ask now.
+    Now,
+    /// Inside the gap, nothing scheduled: ask when it ends.
+    After(Duration),
+    /// Inside the gap, and the end of it is already booked.
+    AlreadyScheduled,
+}
+
+/// The cap, pure: `since` the pane last asked, and whether a frame is already
+/// scheduled for the end of the gap.
+fn frame_ask(since: Duration, pending: bool) -> FrameAsk {
+    if since >= OUTPUT_FRAME_GAP {
+        FrameAsk::Now
+    } else if pending {
+        FrameAsk::AlreadyScheduled
+    } else {
+        FrameAsk::After(OUTPUT_FRAME_GAP - since)
+    }
+}
+
+/// A live-screen copy, keyed by the content generation, rows and columns it
+/// was read at. See `TerminalView::live_rows`.
+type LiveRowsMemo = ((u64, usize, usize), std::rc::Rc<Vec<String>>);
+
+/// The pane header's shadows: the bright inner edge that makes it read as
+/// solid, and, on a tube, its bloom.
+///
+/// The bloom is an outer shadow in the header's own ink, blurred 16 px and cast
+/// one pixel down, so it falls onto the top of the screen below the header. On
+/// a CRT that is phosphor glow and the scanlines and vignette sit over it. On a
+/// flat screen nothing does, and it showed as a coloured haze under every
+/// header — magenta on the Terminal Delight palette. So the bloom follows the
+/// CRT switch, and the glow everywhere else (text, cursor, bench cards) stays.
+///
+/// On a tube, the bloom then goes through the pane's `phosphor` gauge like
+/// every other border halo; the inner reflection is a bevel, not light, and
+/// stays at every setting.
+pub(crate) fn header_shadows(ink: Hsla, glow: f32, crt: bool, phosphor: f32) -> Vec<BoxShadow> {
+    let mut shadows = vec![
+        // the reflection: bright inner top edge
+        BoxShadow {
+            color: gpui::white().alpha(0.16),
+            offset: point(px(1.), px(1.)),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+            inset: true,
+        },
+    ];
+    if crt && glow > 0.001 {
+        shadows.extend(crate::theme::phosphor(
+            phosphor,
+            BoxShadow {
+                color: ink.alpha(glow * 0.5),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(16.),
+                spread_radius: px(0.),
+                inset: false,
+            },
+        ));
+    }
+    shadows
+}
+
+/// The Alt chip, decided from what is under the pointer.
+///
+/// `line` is the logical line under the pointer as `(text, first painted row,
+/// last painted row)`; `pointer_row` is the painted row the pointer is on; `doc`
+/// is the document under the pointer, when a bare Alt is held. A document
+/// arms the chip on any line, a prose line or the alt screen included, because
+/// the pointer is on the path. A command line arms it for a copy, never on the
+/// alt screen. On the alt screen the frame is the one row under the pointer:
+/// its rows are a canvas, and "the logical line" means nothing there.
+fn alt_hint(
+    alt_screen: bool,
+    pointer_row: usize,
+    line: Option<(&str, usize, usize)>,
+    doc: Option<crate::docopen::DocTarget>,
+) -> Option<CopyHint> {
+    let is_command = !alt_screen && line.is_some_and(|(text, _, _)| is_copyable_command(text));
+    let does = crate::docopen::alt_click(alt_screen, is_command, doc)?;
+    // The margin an agent draws its reply behind is not part of the command.
+    let (text, first_paint, last_paint) = match line {
+        Some((text, first, last)) if !alt_screen => (text.trim().to_string(), first, last),
+        _ => (String::new(), pointer_row, pointer_row),
+    };
+    Some(CopyHint {
+        text,
+        first_paint,
+        last_paint,
+        does,
+    })
+}
+
+/// What the chip says. Glyph, gesture, verb; the verb in the reader's language.
+fn chip_label(
+    does: &crate::docopen::AltClick,
+    copied: bool,
+    s: &'static crate::lang::Strings,
+) -> &'static str {
+    match does {
+        crate::docopen::AltClick::OpenHere(_) => s.chip_open_here,
+        crate::docopen::AltClick::Copy if copied => s.chip_copied,
+        crate::docopen::AltClick::Copy => s.chip_copy,
+    }
+}
+
+/// A document floating over the terminal face, opened by Alt+clicking its path.
+///
+/// Not saved with the layout: a square is for reading something beside the
+/// prompt that printed it, and it goes when you are done with it. Dropping
+/// this drops the view, and the view gives its texture back as it goes (see
+/// [`crate::docview`]), so closing is nothing more than `self.float = None`.
+///
+/// # A clip over a square
+///
+/// A video opens as a clip in a box of its own, above whatever square is
+/// already up, and closes itself when it plays out. The square it covers is
+/// not closed: it rides in [`FloatingDoc::below`], drawn and deaf, and comes
+/// back on top when the clip goes. `self.float` is always the top box, so
+/// every press, key and control keeps reaching the box a person sees on top
+/// without knowing there is anything beneath it. The stack is two deep at
+/// most: a second clip replaces the first, and any other document replaces
+/// both.
+pub(crate) struct FloatingDoc {
+    view: gpui::Entity<crate::docview::DocumentView>,
+    /// Flat, relative to the screen's top-left, in logical pixels. Clamped to
+    /// the screen again at every paint, so a pane that shrank keeps it inside.
+    rect: crate::docopen::FloatRect,
+    /// The strip, pressed and perhaps moving.
+    drag: Option<crate::docopen::FloatDrag>,
+    /// The document's body is held: the press went to the view, and so do the
+    /// moves until the button comes up.
+    holding: bool,
+    /// Which control the pointer is over, for the wash that says it is one.
+    hover: Option<crate::docopen::FloatHit>,
+    /// A link pressed in the document comes back here to be routed
+    /// ([`TerminalView::follow_doc_link`]). Dropped with the square.
+    _links: gpui::Subscription,
+    /// Why the square is up when a split was asked for, said in its strip.
+    note: Option<crate::docopen::FloatNote>,
+    /// The document's engine gave up (a browser that will not start): the
+    /// file goes to the desktop. Dropped with the square.
+    _gave_up: gpui::Subscription,
+    /// ↪ pressed in the brief's notes bar comes back here, to be sent on to
+    /// the workspace. Dropped with the square.
+    _send: gpui::Subscription,
+    /// A clip played out: the pane closes it and puts back what it covered.
+    /// Dropped with the square.
+    _finished: gpui::Subscription,
+    /// The square this one is a clip over, kept whole and put back on top
+    /// when the clip closes. `None` for every square that is not a clip, and
+    /// for a clip opened over the bare terminal.
+    below: Option<Box<FloatingDoc>>,
+}
+
+impl FloatingDoc {
+    fn new(
+        view: gpui::Entity<crate::docview::DocumentView>,
+        rect: crate::docopen::FloatRect,
+        links: gpui::Subscription,
+        gave_up: gpui::Subscription,
+        send: gpui::Subscription,
+        finished: gpui::Subscription,
+    ) -> Self {
+        Self {
+            view,
+            rect,
+            drag: None,
+            holding: false,
+            hover: None,
+            _links: links,
+            note: None,
+            _gave_up: gave_up,
+            _send: send,
+            _finished: finished,
+            below: None,
+        }
+    }
+
+    /// This square, and the one it covers, on their way across a replica
+    /// repair.
+    fn carry(&self) -> FloatCarry {
+        FloatCarry {
+            view: self.view.clone(),
+            rect: self.rect,
+            note: self.note,
+            below: self.below.as_ref().map(|b| Box::new(b.carry())),
+        }
+    }
+}
+
+/// What a pane's Document face is showing.
+///
+/// Set only by [`TerminalView::show_document`], which sets the face in the
+/// same breath: a pane on the Document face always has one of these, and
+/// `set_face(Document)` on a pane without one is refused. The target is kept
+/// beside the view so the workspace can ask which file a pane shows without
+/// reaching into the view.
+pub(crate) struct DocFace {
+    view: gpui::Entity<crate::docview::DocumentView>,
+    target: crate::docopen::DocTarget,
+    /// A link pressed in the document comes back here to be routed, as the
+    /// square's do. Made when the view arrives on the face, so a promoted
+    /// square's view is subscribed exactly once: its square's subscription
+    /// went with the square.
+    _links: gpui::Subscription,
+    /// The document's engine gave up: the file goes to the desktop, as a
+    /// square's does. `None` for a pane that came back after a restart,
+    /// which says why in its own body and opens nothing by itself.
+    _gave_up: Option<gpui::Subscription>,
+    /// ↪ pressed in the brief's notes bar, as the square's is.
+    _send: gpui::Subscription,
+}
+
+/// ↪ in the notes bar of a brief on this pane: the pane asks the workspace to
+/// hand the map to the agent pane the brief sits beside — its own pane for a
+/// floating square, the pane a split was opened beside, else the nearest agent
+/// pane in the tab ([`crate::docopen::send_to`]). Only the workspace can see
+/// the tab. `seat` says which of the pane's documents was pressed, so the
+/// answer goes back into the right bar.
+pub struct SendNotesBeside {
+    pub map: String,
+    pub unsaved: usize,
+    pub seat: crate::docopen::DocSeat,
+}
+
+impl gpui::EventEmitter<SendNotesBeside> for TerminalView {}
+
+/// Where ↪ put a brief's notes map, and how many characters of it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum NotesLanded {
+    /// Pasted into the agent's prompt on its terminal face, not sent.
+    Prompt(usize),
+    /// Written into the bench's composer as a draft: nothing reached the
+    /// terminal, and the composer's own send is what delivers it.
+    Composer(usize),
+}
+
+/// The bytes ↪ writes into an agent's prompt, or `None` when it must write
+/// nothing. Pure, so the one property that matters is held by a test.
+///
+/// **No Enter, ever.** The map goes in as a bracketed paste, which a program
+/// that asked for bracketing treats as text however many newlines it holds, and
+/// every control character is taken out of it first but the newline and the
+/// tab — a carriage return included, and every ESC, so no text in a brief can
+/// close the bracket early and have what follows read as keys. A program that
+/// has NOT asked for bracketed paste gets nothing: there every newline in the
+/// map would be an Enter, and the answer is to say so rather than type.
+pub(crate) fn notes_paste(map: &str, bracketed: bool) -> Option<Vec<u8>> {
+    if !bracketed {
+        return None;
+    }
+    let clean: String = map
+        .replace("\r\n", "\n")
+        .chars()
+        .filter(|c| matches!(c, '\n' | '\t') || !c.is_control())
+        .collect();
+    let clean = clean.trim_end();
+    if clean.is_empty() {
+        return None;
+    }
+    Some([b"\x1b[200~", clean.as_bytes(), b"\x1b[201~"].concat())
+}
+
+/// The bytes a paste writes — the clipboard, the context menu's *Paste*, a
+/// dropped file's path. Pure, so what it lets through is held by a test.
+///
+/// Every control character comes out of the text first except the newline,
+/// the carriage return and the tab, and the reason is ESC. A program that
+/// asked for bracketed paste reads everything between `ESC[200~` and
+/// `ESC[201~` as text, so a clipboard carrying its own `ESC[201~` closes the
+/// bracket early and whatever follows it is read as keys: copy a line off a
+/// web page and the page can type `rm -rf ~` and an Enter into your shell.
+/// The rest of C0 goes for the same reason with or without a bracket — a
+/// `^C` or `^Z` in a paste reaches the line discipline as a signal — and so
+/// do DEL and C1 (U+0080 to U+009F, among them the one-byte CSI), none of
+/// which is text.
+///
+/// Unlike ↪'s `notes_paste`, line endings stay exactly as they came and an
+/// unbracketed program still gets the paste: this is the person pasting, and
+/// a multi-line paste behaves as it always has. Text that is nothing but
+/// control characters writes nothing, not an empty bracket.
+pub(crate) fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
+    let clean: String = text
+        .chars()
+        .filter(|c| matches!(c, '\n' | '\r' | '\t') || !c.is_control())
+        .collect();
+    if clean.is_empty() {
+        return Vec::new();
+    }
+    if bracketed {
+        [b"\x1b[200~", clean.as_bytes(), b"\x1b[201~"].concat()
+    } else {
+        clean.into_bytes()
+    }
+}
+
+/// A flat rectangle in window pixels, `(x, y, w, h)`: where something was
+/// laid out before the barrel pass bent it.
+type FlatRect = (f32, f32, f32, f32);
+
+/// A document asked to open BESIDE this pane: Ctrl+Alt+click, the menu's
+/// "Open beside", the floating square's "⇲ split", or `ctl doc beside`.
+///
+/// The pane cannot split itself — the tree is the workspace's — so it asks.
+/// The workspace answers by focusing a pane in the tab already showing the
+/// file, by splitting, or, at four panes, by floating the document here with
+/// a sentence saying why.
+pub struct OpenDoc {
+    pub target: crate::docopen::DocTarget,
+    /// The floating square's own view when the square is being promoted, so
+    /// the new pane takes it over instead of opening the file a second time.
+    pub carry: Option<gpui::Entity<crate::docview::DocumentView>>,
+    pub by: crate::docopen::Asker,
+    /// The painted row the click landed on, so a square opened instead of a
+    /// split opens beside the line, as Alt+click's does.
+    pub row: Option<usize>,
+    /// Where `ctl doc beside` waits for the outcome. `None` for a gesture.
+    pub reply: Option<std::sync::mpsc::Sender<String>>,
+}
+
+impl gpui::EventEmitter<OpenDoc> for TerminalView {}
 
 /// A shift-clickable target lifted out of the grid: a web/file URL handed
 /// straight to the system opener, or a filesystem path resolved against the
 /// pane's cwd before opening.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Link {
     Url(String),
     Path(String),
+}
+
+/// The modifiers a click was made with, as the `[doc-hit]` trace prints them:
+/// `ctrl+alt`, `shift`, or `none`.
+fn held_mods(m: crate::docopen::Mods) -> String {
+    let held: Vec<&str> = [
+        (m.control, "ctrl"),
+        (m.alt, "alt"),
+        (m.shift, "shift"),
+        (m.platform, "super"),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect();
+    if held.is_empty() {
+        "none".into()
+    } else {
+        held.join("+")
+    }
+}
+
+/// The click table's modifiers, from the ones gpui hands a press.
+fn click_mods(m: gpui::Modifiers) -> crate::docopen::Mods {
+    crate::docopen::Mods {
+        alt: m.alt,
+        control: m.control,
+        shift: m.shift,
+        platform: m.platform,
+    }
 }
 
 /// Peel wrapping brackets/quotes and trailing sentence punctuation off a token
@@ -300,9 +717,18 @@ fn lexical_normalize(path: &str) -> String {
     out.to_string_lossy().into_owned()
 }
 
+/// The link under byte `byte` of a run of bench text — the offset gpui's
+/// layout answers a point with. [`link_at`] counts CHARACTERS, and bench text
+/// is full of multi-byte glyphs (`→`, `◳`, `·`) ahead of the paths it quotes,
+/// so the offset is converted here, once, rather than at each caller. `None`
+/// for an offset that is not on a character boundary.
+fn run_link(text: &str, byte: usize) -> Option<Link> {
+    link_at(text, text.get(..byte)?.chars().count())
+}
+
 /// The link sitting under column `col` of a row of terminal text, if any. Pure:
 /// expands the whitespace-delimited token, trims delimiters, then classifies it
-/// as a URL (known scheme or `www.`) or a filesystem path (`/`, `~/`, `./`, `..`).
+/// as a URL (known scheme or `www.`) or a filesystem path (absolute, home-relative or containing a slash).
 fn link_at(line: &str, col: usize) -> Option<Link> {
     let chars: Vec<char> = line.chars().collect();
     if chars.is_empty() {
@@ -320,7 +746,13 @@ fn link_at(line: &str, col: usize) -> Option<Link> {
     while end + 1 < chars.len() && !chars[end + 1].is_whitespace() {
         end += 1;
     }
-    let tok = trim_link_delims(&chars[start..=end].iter().collect::<String>());
+    link_of_token(&chars[start..=end].iter().collect::<String>())
+}
+
+/// Classify one whitespace-free token as a link: trim delimiters, then a URL
+/// (known scheme or `www.`) or a filesystem path (absolute, home-relative or containing a slash).
+fn link_of_token(raw: &str) -> Option<Link> {
+    let tok = trim_link_delims(raw);
     if tok.is_empty() {
         return None;
     }
@@ -340,67 +772,351 @@ fn link_at(line: &str, col: usize) -> Option<Link> {
         || tok.starts_with("~/")
         || tok.starts_with("./")
         || tok.starts_with("../")
+        // Codex displays repo-relative references without a leading "./".
+        // pick_link still requires an anchored path that exists on disk.
+        || (tok.contains('/') && !tok.contains(':'))
     {
         return Some(Link::Path(tok));
     }
     None
 }
 
-/// Does grid row `r` flow into `r+1` as one logical token? Two signals: the
-/// terminal's own soft-wrap (`wraps[r]`, the `WRAPLINE` flag), OR a *width-wrap*
-/// — an app (Claude Code, and our own Links tables) that hard-wraps a long
-/// URL/path to the pane width emits real rows with NO `WRAPLINE`, but the token
-/// runs edge-to-edge: row `r` has no trailing space (its last cell is filled)
-/// and row `r+1` begins with a non-space char. Links/paths carry no interior
-/// spaces, so an edge-filled boundary is exactly a mid-token break. A row that
-/// wrapped at a word boundary keeps its trailing space, so prose never trips this.
-fn row_flows_into_next(rows: &[Vec<char>], wraps: &[bool], r: usize) -> bool {
-    if r + 1 >= rows.len() {
-        return false;
+/// The column where a token broken at the end of grid row `r` carries on in row
+/// `r+1`, or `None` when nothing runs across that boundary.
+///
+/// Row `r` must be filled to its last cell: a token that stopped short of the
+/// edge was not broken by width. Then there are two ways a line gets broken. The
+/// terminal's own soft wrap sets `WRAPLINE` (`wraps[r]`) and carries on at column
+/// 0, so a space there means the token ended. An app that breaks its own lines
+/// sets no flag and carries on at its margin: Claude Code indents every row of a
+/// reply by two columns, so the second half of a path it broke begins at the
+/// first cell with ink in it, never at column 0. Reading column 0 there is why a
+/// wrapped link in a Claude pane opened as its first half, or not at all.
+fn continuation_start(rows: &[Vec<char>], wraps: &[bool], r: usize) -> Option<usize> {
+    let next = rows.get(r + 1)?;
+    if !rows[r].last().is_some_and(|c| !c.is_whitespace()) {
+        return None;
     }
     if wraps.get(r).copied().unwrap_or(false) {
-        return true;
+        return next
+            .first()
+            .is_some_and(|c| !c.is_whitespace())
+            .then_some(0);
     }
-    let filled = rows[r].last().is_some_and(|c| !c.is_whitespace());
-    let continues = rows[r + 1].first().is_some_and(|c| !c.is_whitespace());
-    filled && continues
+    next.iter().position(|c| !c.is_whitespace())
 }
 
-/// Stitch a click on a wrapped row back into its full logical line. A terminal
-/// wraps a long URL/path mid-token with no space; the break is carried either by
-/// the `WRAPLINE` flag (`wraps[r]`) or, for app-hard-wrapped output, by the token
-/// running edge-to-edge (see `row_flows_into_next`). We walk up while the row
-/// above flows into us and down while we keep flowing, concatenate those rows,
-/// and return the stitched line together with the absolute column of the original
-/// click within it — so `link_at` sees the whole token instead of a truncated
-/// fragment. Pure: testable without a live grid.
-fn stitch_wrapped_line(
+/// The whitespace-free run of `row` that holds column `col`, as `start..end`.
+fn token_span(row: &[char], col: usize) -> Option<(usize, usize)> {
+    if !row.get(col).is_some_and(|c| !c.is_whitespace()) {
+        return None;
+    }
+    let mut start = col;
+    while start > 0 && !row[start - 1].is_whitespace() {
+        start -= 1;
+    }
+    let mut end = col + 1;
+    while end < row.len() && !row[end].is_whitespace() {
+        end += 1;
+    }
+    Some((start, end))
+}
+
+/// One reading of the link under a click, and the grid rows it covers.
+#[derive(Debug, Clone, PartialEq)]
+struct LinkSpan {
+    link: Link,
+    first: usize,
+    last: usize,
+}
+
+/// Codex renders file references as parenthesized paths across indented rows,
+/// sometimes breaking at a slash before the edge. The delimiters establish
+/// that join without a width heuristic; blank rows and interior spaces stop it.
+fn delimited_wrapped_link(rows: &[Vec<char>], vrow: usize, vcol: usize) -> Option<LinkSpan> {
+    let last = vrow.min(rows.len().checked_sub(1)?);
+    (0..=last).rev().find_map(|top| {
+        rows[top]
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, ch)| **ch == '(')
+            .find_map(|(start, _)| wrapped_link_from(rows, top, start, vrow, vcol))
+    })
+}
+
+/// Read one explicit reference, discarding only the padding between its rows.
+fn wrapped_link_from(
+    rows: &[Vec<char>],
+    top: usize,
+    start: usize,
+    vrow: usize,
+    vcol: usize,
+) -> Option<LinkSpan> {
+    let head: String = rows[top][start + 1..].iter().collect();
+    link_at(head.trim_end(), 0)?;
+    let mut text = String::new();
+    let mut clicked = false;
+    let mut depth = 0;
+    for (r, row) in rows.iter().enumerate().skip(top) {
+        let begin = if r == top {
+            start
+        } else {
+            row.iter().position(|c| !c.is_whitespace())?
+        };
+        let end = row.iter().rposition(|c| !c.is_whitespace())? + 1;
+        for (c, ch) in row.iter().enumerate().take(end).skip(begin) {
+            if ch.is_whitespace() {
+                return None;
+            }
+            clicked |= r == vrow && c == vcol;
+            text.push(*ch);
+            match ch {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+            if depth == 0 {
+                return (r > top && clicked)
+                    .then(|| {
+                        Some(LinkSpan {
+                            link: link_of_token(&text)?,
+                            first: top,
+                            last: r,
+                        })
+                    })
+                    .flatten();
+            }
+        }
+    }
+    None
+}
+
+/// Every reading of the link under a click on grid row `vrow`, column `vcol`,
+/// the most-joined first. Pure: testable without a live grid.
+///
+/// The clicked token is extended upward while it begins where its row carries
+/// on from the row above (see [`continuation_start`]), and downward while it
+/// runs to its row's last cell and the next row carries it on. Each half is only
+/// the token at that edge, never the whole row, so a margin, a `Target:` label
+/// or the prose after the link stays out of it.
+///
+/// Every join is offered rather than the longest alone, because the width alone
+/// cannot tell a path broken at the edge from a path that ended exactly at the
+/// edge with the next word starting the row below. [`pick_link`] asks the disk.
+/// A join that holds two schemes is two links that happened to meet, and is
+/// dropped here.
+fn wrapped_link_candidates(
     rows: &[Vec<char>],
     wraps: &[bool],
     vrow: usize,
     vcol: usize,
-) -> (String, usize) {
-    if rows.is_empty() {
-        return (String::new(), vcol);
+) -> Vec<LinkSpan> {
+    let Some((start, end)) = rows.get(vrow).and_then(|row| token_span(row, vcol)) else {
+        return Vec::new();
+    };
+    let text = |r: usize, a: usize, b: usize| rows[r][a..b].iter().collect::<String>();
+    // The halves above, nearest first.
+    let mut ups: Vec<String> = Vec::new();
+    let (mut r, mut from) = (vrow, start);
+    while r > 0 && continuation_start(rows, wraps, r - 1) == Some(from) {
+        let above = &rows[r - 1];
+        let Some((a, b)) = token_span(above, above.len() - 1) else {
+            break;
+        };
+        ups.push(text(r - 1, a, b));
+        (r, from) = (r - 1, a);
     }
-    let vrow = vrow.min(rows.len() - 1);
-    // first row of the logical line: walk up while the row above flows into us
-    let mut top = vrow;
-    while top > 0 && row_flows_into_next(rows, wraps, top - 1) {
-        top -= 1;
+    // The halves below, nearest first.
+    let mut downs: Vec<String> = Vec::new();
+    let (mut r, mut to) = (vrow, end);
+    while to == rows[r].len() {
+        let Some(c) = continuation_start(rows, wraps, r) else {
+            break;
+        };
+        let Some((a, b)) = token_span(&rows[r + 1], c) else {
+            break;
+        };
+        downs.push(text(r + 1, a, b));
+        (r, to) = (r + 1, b);
     }
-    // last row: walk down while the current row flows into the next
-    let mut bot = vrow;
-    while bot + 1 < rows.len() && row_flows_into_next(rows, wraps, bot) {
-        bot += 1;
+    let middle = text(vrow, start, end);
+    let mut out: Vec<LinkSpan> = delimited_wrapped_link(rows, vrow, vcol)
+        .into_iter()
+        .collect();
+    for up in (0..=ups.len()).rev() {
+        for down in (0..=downs.len()).rev() {
+            let mut tok: String = ups[..up].iter().rev().map(String::as_str).collect();
+            tok.push_str(&middle);
+            downs[..down].iter().for_each(|d| tok.push_str(d));
+            if up + down > 0 && tok.matches("://").count() > 1 {
+                continue;
+            }
+            let Some(link) = link_of_token(&tok) else {
+                continue;
+            };
+            if out.iter().all(|c| c.link != link) {
+                out.push(LinkSpan {
+                    link,
+                    first: vrow - up,
+                    last: vrow + down,
+                });
+            }
+        }
     }
-    let mut line = String::new();
-    for row in &rows[top..=bot] {
-        line.extend(row.iter());
+    out
+}
+
+/// The link a click opens, chosen from its readings most-joined first, as the
+/// target and the grid rows it covers.
+///
+/// Anything on this disk is checked on this disk: a path or a `file://` link
+/// is taken only if what it names exists, so a path that ended at the edge
+/// before an ordinary word opens as itself rather than as the two glued
+/// together. A web address cannot be checked and the most-joined one is taken.
+/// With nothing confirmed, a `file://` link is still handed on as the old click
+/// did, and a bare path that names nothing is not a link at all.
+fn pick_link(
+    readings: &[LinkSpan],
+    cwd: Option<&str>,
+    exists: impl Fn(&str) -> bool,
+) -> Option<(String, usize, usize)> {
+    for c in readings {
+        let target = match &c.link {
+            Link::Url(u) => match reveal_target(u) {
+                Some(path) if !exists(&path) => continue,
+                _ => u.clone(),
+            },
+            Link::Path(p) => match resolve_path(p, cwd).filter(|a| exists(a)) {
+                Some(abs) => abs,
+                None => continue,
+            },
+        };
+        return Some((target, c.first, c.last));
     }
-    // click column within the stitched line = chars in the rows above it + vcol
-    let offset: usize = rows[top..vrow].iter().map(|r| r.len()).sum();
-    (line, offset + vcol)
+    match readings.first() {
+        Some(LinkSpan {
+            link: Link::Url(u),
+            first,
+            last,
+        }) => Some((u.clone(), *first, *last)),
+        _ => None,
+    }
+}
+
+/// A bare file name under a click, such as `README.md` in a listing `ls`
+/// printed. It has no slash, so [`link_of_token`] passes it by, and it names a
+/// file only relative to some folder the screen does not say. It is offered
+/// last, so [`pick_link`] takes it only when no other reading held and the
+/// pane's own folder holds a file by that name.
+///
+/// Read at a click and never for colour: every word on the screen is a
+/// possible file name, and only the disk can say which ones are.
+fn bare_name_reading(rows: &[Vec<char>], vrow: usize, vcol: usize) -> Option<LinkSpan> {
+    let row = rows.get(vrow)?;
+    let (start, end) = token_span(row, vcol)?;
+    let tok = trim_link_delims(&row[start..end].iter().collect::<String>());
+    let bare = !matches!(tok.as_str(), "" | "." | "..")
+        && !tok.contains('/')
+        && !tok.starts_with('~')
+        && link_of_token(&tok).is_none();
+    bare.then_some(LinkSpan {
+        link: Link::Path(tok),
+        first: vrow,
+        last: vrow,
+    })
+}
+
+/// What the cell under a click links to by OSC 8, the escape a program uses
+/// to put a target behind the text it prints.
+#[derive(Debug, Clone, PartialEq)]
+enum CellLink {
+    /// No hyperlink: the text on the screen is all there is to read.
+    Text,
+    /// A link TD does not follow: a web address, which its label may
+    /// misstate, or a file on another machine. The text decides, as before.
+    Unfollowed,
+    /// A file on this machine, as the one reading a click takes.
+    File(LinkSpan),
+}
+
+/// What an OSC 8 link `uri` on grid rows `first..=last` gives a click: the file
+/// it names, when it is a `file://` link on this machine (`host` is this
+/// machine's name), and otherwise [`CellLink::Unfollowed`].
+///
+/// `eza --hyperlink` writes `file:///home/…/my%20notes.md` behind
+/// `'my notes.md'`, and GNU `ls --hyperlink` writes `file://legion/home/…`
+/// behind a name: an exact path whichever folder was listed and wherever the
+/// shell has been since, which the bare name alone cannot give.
+fn hyperlink_reading(uri: &str, host: Option<&str>, first: usize, last: usize) -> CellLink {
+    match uri
+        .starts_with("file://")
+        .then(|| reveal_target_on(uri, host))
+        .flatten()
+    {
+        Some(path) => CellLink::File(LinkSpan {
+            link: Link::Path(path),
+            first,
+            last,
+        }),
+        None => CellLink::Unfollowed,
+    }
+}
+
+/// The grid rows a hyperlink on row `row` covers: that row, and every row
+/// above and below it that `holds` the same link without a break. A name
+/// wrapped at the pane's edge is one link on two rows, and the Alt frame takes
+/// in both.
+fn hyperlink_rows(row: usize, rows: usize, holds: impl Fn(usize) -> bool) -> (usize, usize) {
+    let mut first = row;
+    while first > 0 && holds(first - 1) {
+        first -= 1;
+    }
+    let mut last = row;
+    while last + 1 < rows && holds(last + 1) {
+        last += 1;
+    }
+    (first, last)
+}
+
+/// Paint the rest of a link the width broke in the colour of its first half.
+///
+/// The overlay classifies one row at a time, so a fragment on the row below
+/// was coloured only when it looked like a link by itself: Claude's
+/// `es/HANDOFF-….md` has a slash and lit up, `ascade-and-….md` has none and
+/// stayed prose. Here, a row whose last token is a link (or the carried-on half
+/// of one) and fills the row to its edge hands the colour of its last cell to
+/// the token that carries it on, and a row that is nothing but that half hands
+/// it further down. Colour only — [`wrapped_link_candidates`] decides what a
+/// click opens.
+fn carry_link_colour(rows: &[Vec<char>], wraps: &[bool], palettes: &mut [Vec<Hsla>]) {
+    // The span of the carried-on half on the current row, if one arrived.
+    let mut carried: Option<(usize, usize)> = None;
+    for r in 0..rows.len() {
+        let came = carried.take();
+        let Some(c) = continuation_start(rows, wraps, r) else {
+            continue;
+        };
+        let row = &rows[r];
+        let Some((a, b)) = token_span(row, row.len() - 1) else {
+            continue;
+        };
+        let inside =
+            came == Some((a, b)) || link_of_token(&row[a..b].iter().collect::<String>()).is_some();
+        let (Some(ink), Some((na, nb))) = (
+            palettes.get(r).and_then(|p| p.get(b - 1)).copied(),
+            token_span(&rows[r + 1], c),
+        ) else {
+            continue;
+        };
+        if !inside {
+            continue;
+        }
+        if let Some(next) = palettes.get_mut(r + 1) {
+            next.iter_mut().take(nb).skip(na).for_each(|h| *h = ink);
+        }
+        carried = Some((na, nb));
+    }
 }
 
 /// Smart-reflow selected terminal text for the clipboard. TUI agents like Claude
@@ -474,14 +1190,15 @@ fn reflow_wrapped_copy_spans(rows: &[&str], cols: usize) -> Vec<LogicalLine> {
     }
     let mut out: Vec<LogicalLine> = Vec::new();
     // The logical line under construction: its text, the char-width of the last
-    // raw row appended (the row the wrap test is applied against), and the span
-    // of input rows it has consumed so far.
-    let mut cur: Option<(String, usize, usize, usize)> = None;
+    // raw row appended (the row the wrap test is applied against), that row's
+    // margin, and the span of input rows it has consumed so far.
+    let mut cur: Option<(String, usize, usize, usize, usize)> = None;
     for (i, raw) in rows.iter().enumerate() {
         let raw = *raw;
         let row_len = raw.chars().count();
+        let indent = raw.len() - raw.trim_start_matches(' ').len();
         if raw.trim().is_empty() {
-            if let Some((text, _, first, last)) = cur.take() {
+            if let Some((text, _, _, first, last)) = cur.take() {
                 out.push(LogicalLine { text, first, last });
             }
             out.push(LogicalLine {
@@ -492,29 +1209,39 @@ fn reflow_wrapped_copy_spans(rows: &[&str], cols: usize) -> Vec<LogicalLine> {
             continue;
         }
         match cur.take() {
-            None => cur = Some((raw.to_string(), row_len, i, i)),
-            Some((mut acc, prev_len, first, last)) => match wrap_join(&acc, prev_len, raw, cols) {
-                WrapJoin::Glue => {
-                    acc.push_str(raw);
-                    cur = Some((acc, row_len, first, i));
+            None => cur = Some((raw.to_string(), row_len, indent, i, i)),
+            Some((mut acc, prev_len, prev_indent, first, last)) => {
+                // Claude Code starts every row of a reply two columns in. An
+                // indent that two rows share is a margin, not structure, so the
+                // pair is judged as if it were not there; an indent that differs
+                // from the row above is still structure and still breaks. Every
+                // joined row shares the margin, so `acc` opens with it too.
+                let m = if indent == prev_indent { indent } else { 0 };
+                let joined = wrap_join(&acc[m..], prev_len - m, &raw[m..], cols.saturating_sub(m));
+                let raw = &raw[m..];
+                match joined {
+                    WrapJoin::Glue => {
+                        acc.push_str(raw);
+                        cur = Some((acc, row_len, indent, first, i));
+                    }
+                    WrapJoin::Space => {
+                        acc.push(' ');
+                        acc.push_str(raw);
+                        cur = Some((acc, row_len, indent, first, i));
+                    }
+                    WrapJoin::Break => {
+                        out.push(LogicalLine {
+                            text: acc,
+                            first,
+                            last,
+                        });
+                        cur = Some((rows[i].to_string(), row_len, indent, i, i));
+                    }
                 }
-                WrapJoin::Space => {
-                    acc.push(' ');
-                    acc.push_str(raw);
-                    cur = Some((acc, row_len, first, i));
-                }
-                WrapJoin::Break => {
-                    out.push(LogicalLine {
-                        text: acc,
-                        first,
-                        last,
-                    });
-                    cur = Some((raw.to_string(), row_len, i, i));
-                }
-            },
+            }
         }
     }
-    if let Some((text, _, first, last)) = cur.take() {
+    if let Some((text, _, _, first, last)) = cur.take() {
         out.push(LogicalLine { text, first, last });
     }
     out
@@ -631,7 +1358,7 @@ fn is_copyable_command(line: &str) -> bool {
 }
 
 /// Turn a path link into an absolute path: expand a leading `~`, and join a
-/// relative `./`/`../` onto the pane's cwd. Returns None if it can't be anchored.
+/// relative path onto the pane's cwd. Returns None if it can't be anchored.
 fn resolve_path(p: &str, cwd: Option<&str>) -> Option<String> {
     let expanded = if p == "~" {
         std::env::var("HOME").ok()?
@@ -654,7 +1381,22 @@ fn resolve_path(p: &str, cwd: Option<&str>) -> Option<String> {
 
 /// Spawn a helper detached from us — its own session, no inherited stdio — so
 /// it outlives the click and never blocks the UI.
+///
+/// A test build starts nothing: a pane driven by the harness that reached the
+/// desktop would open a file manager or a browser on the machine running
+/// `cargo test`. The launch is written down in [`DESKTOP_LAUNCHES`] instead,
+/// so a test can say what would have gone to the desktop. Decided with
+/// `cfg!` rather than a cfg attribute because the source scans in this file's
+/// tests cut it at the first such attribute they find.
 fn spawn_detached(program: &str, args: &[&str]) {
+    if cfg!(test) {
+        let line = std::iter::once(program)
+            .chain(args.iter().copied())
+            .collect::<Vec<_>>()
+            .join(" ");
+        DESKTOP_LAUNCHES.with(|l| l.borrow_mut().push(line));
+        return;
+    }
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
     let mut cmd = Command::new(program);
@@ -669,6 +1411,13 @@ fn spawn_detached(program: &str, args: &[&str]) {
         });
     }
     let _ = cmd.spawn();
+}
+
+thread_local! {
+    /// What [`spawn_detached`] would have started, in a test build; always
+    /// empty in one that ships. Per thread because gpui runs a test's work on
+    /// the test's own thread, and tests run beside each other.
+    static DESKTOP_LAUNCHES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Is this session managed by uwsm (Omarchy's, and any `uwsm start`ed Wayland
@@ -704,23 +1453,43 @@ pub(crate) fn open_with_system(target: &str) {
 /// The filesystem item a clicked link points at, or None when there is nothing
 /// on this disk to show — an `http(s)` link, or a `file://` URI naming another
 /// host. Accepts what `link_under` hands back: an already-absolute path, or a
-/// URL. Pure, so the tricky half (percent-decoding, the `localhost` authority)
-/// is testable without a file manager.
+/// URL. The tricky half (percent-decoding, which authorities mean this
+/// machine) is [`reveal_target_on`], testable without a file manager.
 fn reveal_target(target: &str) -> Option<String> {
+    reveal_target_on(target, this_host())
+}
+
+/// [`reveal_target`], told the name this machine goes by. Pure.
+///
+/// `file://<authority>/path`: an empty authority or `localhost` means this
+/// machine, and so does this machine's own name, which GNU `ls --hyperlink`
+/// writes into every link it prints (`file://legion/home/…`). Any other
+/// authority is someone else's disk and there is nothing here to reveal.
+fn reveal_target_on(target: &str, host: Option<&str>) -> Option<String> {
     if target.starts_with('/') {
         return Some(target.to_string());
     }
     let rest = target.strip_prefix("file://")?;
-    // file://<authority>/path — empty or "localhost" means this machine; any
-    // other authority is someone else's disk and we have nothing to reveal.
-    let path = if let Some(p) = rest.strip_prefix("localhost/") {
-        format!("/{p}")
-    } else if rest.starts_with('/') {
-        rest.to_string()
-    } else {
-        return None;
-    };
-    Some(percent_decode(&path))
+    let (authority, path) = rest.split_at(rest.find('/')?);
+    let here = authority.is_empty()
+        || authority.eq_ignore_ascii_case("localhost")
+        || host.is_some_and(|h| authority.eq_ignore_ascii_case(h));
+    here.then(|| percent_decode(path))
+}
+
+/// The name this machine goes by, read once: the kernel's, which is what
+/// `gethostname` answers and so what `ls --hyperlink` writes into its links.
+/// `None` where it cannot be read, and then only an empty or `localhost`
+/// authority counts as this machine.
+fn this_host() -> Option<&'static str> {
+    static HOST: OnceLock<Option<String>> = OnceLock::new();
+    HOST.get_or_init(|| {
+        std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .ok()
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
+    })
+    .as_deref()
 }
 
 /// Decode `%XX` escapes in a URI path. Leaves a malformed escape as written —
@@ -822,21 +1591,12 @@ pub(crate) fn warp_screen_to_content(sx: f32, sy: f32, k1: f32, k2: f32) -> (f32
 
 /// Apply the mode's screen colour over the structural theme.
 ///
-/// Agents are two of the three: `Remote` rides the same rule, because "you are
-/// not local" is program identity in exactly the same sense. Gated by
-/// [`maybe_mode_theme`] — nothing here decides *whether* the tint applies.
+/// The catalog includes remote clients, providers, editors, monitors and
+/// consoles. Gated by [`maybe_mode_theme`]; recognition grants no capabilities.
 fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
     let mut th = base.clone();
-    let (accent, text, faint, cursor) = match mode {
-        // A tube nobody has classified keeps the base palette rather than
-        // wearing a phosphor that would claim something about its contents.
-        PaneMode::Shell | PaneMode::Other(_) | PaneMode::Unknown => return th,
-        // amber phosphor — Claude (P3 tube, Anthropic-warm)
-        PaneMode::Claude => (0xf59e0bu32, 0xfbe3b0u32, 0x4a3410u32, 0xfbbf24u32),
-        // ice cyan — Codex
-        PaneMode::Codex => (0x22d3eeu32, 0xc3f4fcu32, 0x0e3a44u32, 0x67e8f9u32),
-        // violet — Remote: you are NOT local
-        PaneMode::Remote => (0xc084fcu32, 0xead9fcu32, 0x3b2354u32, 0xd8b4feu32),
+    let Some([accent, text, faint, cursor]) = crate::terminal_state::colours(mode) else {
+        return th;
     };
     let acc: gpui::Hsla = gpui::rgb(accent).into();
     th.accent = acc;
@@ -858,7 +1618,7 @@ fn mode_theme(base: &Theme, mode: &PaneMode) -> Theme {
 }
 
 /// Whether a pane wears the phosphor of the PROGRAM inside it, or the theme it
-/// inherited — the whole of the AGENT THEME decision, as a pure function.
+/// inherited — the whole of the TERMINAL STATE decision, as a pure function.
 ///
 /// Two conditions, and they answer different questions. `inherit` is the pane's:
 /// a pane carrying its own theme chose that look deliberately and the tint must
@@ -877,6 +1637,21 @@ fn maybe_mode_theme(base: &Theme, mode: &PaneMode, inherit: bool, tint: bool) ->
     } else {
         base.clone()
     }
+}
+
+/// The faces a floating document square is drawn over, hit-tested on, and
+/// closed from with Escape: the terminal and the bench. Not the document face,
+/// which is already a document filling the pane.
+///
+/// It was the terminal alone, and the bench was the one place an agent's
+/// artifacts are listed — so a click on one handed the file to the desktop and
+/// emptied the bench behind it. Parker, 2026-09-25: *"clicking on it wipes the
+/// screen (which it shouldn't)"*.
+fn float_shows_on(face: crate::workbench::Face) -> bool {
+    matches!(
+        face,
+        crate::workbench::Face::Terminal | crate::workbench::Face::Workbench
+    )
 }
 
 const HEADER_H: f32 = 40.0;
@@ -913,6 +1688,50 @@ const DEEP_ASK_ROWS: i32 = 2000;
 /// pane (`k1=k2=0`) collapses term 2 and keeps just the breathing border.
 /// Used by the renderer, [`Self::sync_size`] (grid fit) and
 /// [`Self::viewport_cell`] (hit-test) so all three agree on where the grid sits.
+/// A length as gpui lays it out: rounded to whole device pixels, ties toward
+/// zero, the rule gpui applies to every authored size before layout
+/// (`round_to_device_pixel` in gpui's util.rs). Returned in logical pixels.
+pub(crate) fn laid_out_length(logical: f32, scale: f32) -> f32 {
+    if scale <= 0.0 {
+        return logical;
+    }
+    let device = logical * scale;
+    (device.abs() - 0.5).ceil().copysign(device) / scale
+}
+
+/// A picture's pixels as a gpui texture: cropped to the part the program asked
+/// to show, and turned from RGBA into the BGRA gpui uploads. Takes the pixels
+/// by value, because they were copied out of the core to be converted here.
+fn picture_texture(data: crate::vt::PictureData, crop: [f32; 4]) -> Option<Arc<gpui::RenderImage>> {
+    let mut pixels = image::RgbaImage::from_raw(data.width, data.height, data.rgba)?;
+    if crop != [0.0, 0.0, 1.0, 1.0] {
+        let (w, h) = (data.width as f32, data.height as f32);
+        let x = (crop[0] * w).round().clamp(0.0, w) as u32;
+        let y = (crop[1] * h).round().clamp(0.0, h) as u32;
+        let right = (crop[2] * w).round().clamp(0.0, w) as u32;
+        let bottom = (crop[3] * h).round().clamp(0.0, h) as u32;
+        if right <= x || bottom <= y {
+            return None;
+        }
+        pixels = image::imageops::crop_imm(&pixels, x, y, right - x, bottom - y).to_image();
+    }
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        pixel.swap(0, 2);
+    }
+    Some(Arc::new(gpui::RenderImage::new(vec![image::Frame::new(
+        pixels,
+    )])))
+}
+
+/// The grid's padding as gpui lays it out: [`grid_pad`], rounded to whole
+/// device pixels the way gpui rounds every authored padding before layout.
+/// Anything that turns a row into a position adds this, not the raw padding,
+/// or it lands up to half a device pixel off the drawn grid.
+fn grid_pad_drawn(w: f32, h: f32, k1: f32, k2: f32, scale: f32) -> (f32, f32) {
+    let (x, y) = grid_pad(w, h, k1, k2);
+    (laid_out_length(x, scale), laid_out_length(y, scale))
+}
+
 fn grid_pad(w: f32, h: f32, k1: f32, k2: f32) -> (f32, f32) {
     let over = 0.5 * (0.25 * k1 + 0.0625 * k2) * 1.15;
     (
@@ -1037,6 +1856,42 @@ fn ansi_to_hsla(color: AnsiColor, th: &Theme, default: Hsla) -> Hsla {
             th,
         ),
         AnsiColor::Indexed(i) => shape(idx_color(i), th),
+    }
+}
+
+/// What a program asking this pane for a colour (`OSC 4 ; n ; ?`, `OSC 10`,
+/// `11` or `12 ; ?`) is told: the colour the pane draws it in, graded as the
+/// pane grades it, so a program choosing light or dark styling sees the
+/// background it will actually be drawn on. `index` is alacritty's: a palette
+/// entry below 256, then the default foreground, background and cursor.
+/// `None` for an index TD draws nothing in, which is left unanswered.
+///
+/// A palette entry is answered as ink. It can be drawn as either, and a
+/// program asking for one is almost always about to write text in it.
+///
+/// TD draws from the theme and ignores colours a program sets for itself
+/// (`OSC 4`/`10`/`11` with a value), so the answer is the theme's and never
+/// the program's own override. Anything else would describe a colour nobody
+/// can see.
+fn asked_colour(index: usize, th: &Theme) -> Option<Hsla> {
+    let g = &th.grade;
+    Some(match index {
+        i if i < 256 => graded(shape(idx_color(i as u8), th), g, Channel::Text),
+        i if i == NamedColor::Foreground as usize => graded(th.text, g, Channel::Text),
+        i if i == NamedColor::Background as usize => graded(th.bg, g, Channel::Bg),
+        i if i == NamedColor::Cursor as usize => graded(th.cursor, g, Channel::Text),
+        _ => return None,
+    })
+}
+
+/// A colour as the eight-bit channels a colour reply carries.
+fn rgb8(c: Hsla) -> crate::vt::Rgb {
+    let c = c.to_rgb();
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    crate::vt::Rgb {
+        r: byte(c.r),
+        g: byte(c.g),
+        b: byte(c.b),
     }
 }
 
@@ -1790,7 +2645,7 @@ impl GradeCoeffs {
 }
 
 /// Cached `resolved_theme` result + the inputs it was computed from
-/// (effective choice, mode, inherit_theme, the AGENT THEME preference, theme
+/// (effective choice, mode, inherit_theme, the TERMINAL STATE preference, theme
 /// generation).
 ///
 /// The preference is a memo input and not a generation bump because it is a
@@ -1801,7 +2656,7 @@ type ThemeMemo = Option<(theme::ThemeChoice, PaneMode, bool, bool, u64, Theme)>;
 
 /// Cache key for [`TerminalView::mirror_document`]. Matching keys guarantee a
 /// byte-identical document: `generation` moves on every terminal event, the
-/// grid dimensions cover resizes, and the remaining fields are exactly what
+/// grid dimensions cover resizes, and `style` is exactly what
 /// [`TerminalView::resolved_theme`]'s memo keys on — its guarantee is what makes
 /// comparing these enough, with no hash over the resolved palette.
 #[derive(Clone, PartialEq)]
@@ -1809,6 +2664,14 @@ struct MirrorDocKey {
     generation: u64,
     cols: usize,
     rows: usize,
+    style: ReadStyle,
+}
+
+/// What decides how a grid row reads in the FOCUS reader's styled runs: the
+/// inputs [`TerminalView::resolved_theme`]'s memo keys on, and nothing else. The
+/// document's memo and the kept history rows both key on it.
+#[derive(Clone, PartialEq)]
+struct ReadStyle {
     eff: theme::ThemeChoice,
     mode: PaneMode,
     inherit: bool,
@@ -1840,7 +2703,49 @@ pub struct Presentation {
     appearance: PaneTheme,
     note: Option<crate::sticky::Sticky>,
     peeled: Option<String>,
+    /// The document on the pane's Document face, and whether that face was
+    /// the one showing. The view itself travels, so the page is not opened,
+    /// decoded or laid out again and keeps its place.
+    doc: Option<(DocCarry, bool)>,
+    /// The floating square, where it was and what its strip was saying.
+    float: Option<FloatCarry>,
+    /// Who the document pane was opened beside: a repaired document pane is
+    /// still beside the same agent.
+    doc_opened_by: Option<u64>,
 }
+
+/// A document view on its way from a pane being replaced to its replacement.
+/// The view and the file it shows; its link subscription belonged to the old
+/// pane and is made again on the new one.
+#[derive(Clone)]
+pub(crate) struct DocCarry {
+    view: gpui::Entity<crate::docview::DocumentView>,
+    target: crate::docopen::DocTarget,
+}
+
+/// A floating square on its way across a replica repair.
+#[derive(Clone)]
+pub(crate) struct FloatCarry {
+    view: gpui::Entity<crate::docview::DocumentView>,
+    rect: crate::docopen::FloatRect,
+    note: Option<crate::docopen::FloatNote>,
+    /// The square a clip covers, carried with it.
+    below: Option<Box<FloatCarry>>,
+}
+
+/// What a pseudoterminal is told about its size: the grid, and one cell in
+/// device pixels. Compared whole, so a window moving to a monitor with another
+/// scale factor re-announces the size even when the grid has not changed.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct PtySize {
+    grid: term::GridSize,
+    cell_px: (u16, u16),
+}
+
+/// The cell a window-owned pane's shell is spawned with, before the first
+/// layout pass measures one: the same numbers a hosted pane is born at
+/// (`main.rs`, `born_geom`).
+const BORN_CELL_PX: (u16, u16) = (8, 20);
 
 pub struct TerminalView {
     focus_handle: FocusHandle,
@@ -1866,6 +2771,46 @@ pub struct TerminalView {
     /// window is a process away from the terminal, and a reading that comes
     /// back empty is not evidence that the recipe was wrong.
     staged: crate::session::PaneRestore,
+    /// A person marked this pane off-limits to agents: no agent reads it or
+    /// writes to it through MCP, except the one running inside it acting on
+    /// its own pane (see `mcp::may_write`), and the control socket's bench
+    /// verbs never pick it. Set and cleared ONLY by a person: the terminal's
+    /// right-click menu, or a Yes on the rail to an agent's `request_access`
+    /// — no control-socket or MCP verb reaches it, because both answer
+    /// agents, and a lock an agent can lift is decoration. Persisted per leaf
+    /// in the state file.
+    pub off_limits: bool,
+    /// Whether this pane is in the tab being shown, written by the workspace
+    /// on every draw (`Workspace::render`). An atomic so the workspace can set
+    /// it while only reading the pane, and so it is never a frame stale.
+    shown: Arc<std::sync::atomic::AtomicBool>,
+    hidden_generation: u64,
+    #[cfg(test)]
+    output_events: usize,
+    housekeeping_wake: RefCell<futures::channel::mpsc::Sender<()>>,
+    #[cfg(test)]
+    housekeeping_ticks: usize,
+    #[cfg(test)]
+    foreground_polls: usize,
+    /// Something changed while the pane was not shown, not yet drawn. See
+    /// [`Self::repaint`].
+    offscreen_dirty: bool,
+    /// When a hidden pane last asked for a frame.
+    offscreen_flushed: Instant,
+    /// The last live-screen copy and the content generation and size it was
+    /// read at. See [`Self::live_rows`].
+    live_rows_memo: std::cell::RefCell<Option<LiveRowsMemo>>,
+    styled_memo: std::cell::RefCell<Option<styling::Memo>>,
+    grid_paint: gpui::Entity<grid_paint::GridPaint>,
+    /// When this pane last asked for a frame, and whether one is already
+    /// scheduled for the end of the gap. See [`Self::repaint`].
+    last_frame_ask: Instant,
+    frame_pending: bool,
+    /// The ask this pane's agent has made through `request_access`, waiting
+    /// on the rail for a person's Yes or No. One at a time: a second ask
+    /// replaces the first, so one agent cannot fill the rail. Never saved — an
+    /// ask lives as long as the window that drew it, and dies with its pane.
+    pub access_ask: Option<crate::access::Ask>,
     /// The OSC-driven shell title (apps overwrite it via the title sequence).
     pub title: String,
     /// A user-set name (right-click the header to rename). Wins over `title`
@@ -1876,6 +2821,10 @@ pub struct TerminalView {
     /// of the program label; click the logo (or the `＋ logo`
     /// placeholder when unset) to pick one. Persisted per leaf in the state file.
     pub logo: Option<String>,
+    /// The mark this pane wears beside its mode label for the app-id it was
+    /// launched under — `LOCAL MODEL` for a pane Omarchy's Local AI opened
+    /// (`launch_mark` in main.rs). Display state from the launch, never saved.
+    pub launch_mark: Option<&'static str>,
     /// The logo INHERITED from the pane's cwd via the per-directory map
     /// (`dirlogo`), resolved by the workspace's sweep — display state, never
     /// persisted (the map itself is the durable record). Shadowed by `logo`.
@@ -1892,6 +2841,10 @@ pub struct TerminalView {
     grid: term::GridSize,
     cell_w: f32,
     cell_h: f32,
+    /// The window's scale factor, as `sync_size` last saw it. The hit-test has
+    /// no window to ask, and it has to snap the grid's padding the way gpui
+    /// does for the rows to land where they are drawn.
+    scale: f32,
     scroll_accum: f32,
     selecting: bool,
     /// Drag-select auto-scroll: signed lines/tick (>0 = up into history), 0 idle.
@@ -1933,8 +2886,12 @@ pub struct TerminalView {
     /// Per-pane appearance: retained theme/grade overrides plus two independent
     /// follow-outer switches. A pristine pane inherits both groups (+ mode tint).
     pub appearance: PaneTheme,
-    /// Debounced PTY resize: (target grid, when it stabilized).
-    pending_grid: Option<(term::GridSize, Instant)>,
+    /// Debounced PTY resize: (what the PTY is to be told, when it stabilized).
+    pending_pty: Option<(PtySize, Instant)>,
+    /// The cell, in device pixels, the PTY was last told — beside `grid`, the
+    /// grid it was last told. Together they are the kernel's winsize, and a
+    /// window-owned pane answers `CSI 14 t` from them.
+    cell_px: (u16, u16),
     /// Scroll-settle debounce: (display_offset, when last seen). Prevents spurious
     /// agent-done notifications when ▲/▼ message navigation scrolls away from the prompt.
     last_scroll_offset: Option<(i32, Instant)>,
@@ -1953,6 +2910,10 @@ pub struct TerminalView {
     /// downstream caches (the reader's layout) can key on it safely where an
     /// `Arc` pointer would be unsound (a freed allocation's address can recur).
     mirror_doc: RefCell<Option<(MirrorDocKey, u64, Arc<Document>)>>,
+    /// The history rows the FOCUS reader has read, kept while it reads this pane
+    /// so a streaming pane costs the rows that arrived rather than the whole
+    /// history (see `readrows`). Dropped when the reader closes.
+    read_history: RefCell<Option<crate::readrows::ReadHistory<ReadStyle>>>,
     /// Right-click context menu (Copy / Paste / Open link) anchor, window-space.
     ctx_menu: Option<gpui::Point<Pixels>>,
     /// An agent in this pane finished and nobody has looked yet: the ping has
@@ -2018,28 +2979,74 @@ pub struct TerminalView {
     /// what it just produced is precisely the stale claim this surface exists
     /// to avoid.
     deliverable: Option<crate::attention::Deliverable>,
+    /// Everything this pane's agent handed over in this conversation, which the
+    /// header chip names and the history page lists. Rebuilt from the
+    /// conversation's record when the pane is bound to one, so it outlives a
+    /// window restart where `deliverable` deliberately does not. See
+    /// [`crate::handover`].
+    handovers: crate::handover::Ledger,
     /// The live player child for this pane's ping (hard-killed on stop/drop).
     bell_player: crate::bell::BellPlayer,
     /// Responsive header: when the pane narrows, controls tuck into a ⋯ overflow
     /// menu. `Some(pos)` = that menu is open, anchored at the ⋯ click. None = shut.
     hdr_overflow: Option<gpui::Point<Pixels>>,
-    /// The Alt-held copy affordance for the line under the pointer, or None when
-    /// Alt is up or the line does not read as a command. Recomputed only while
-    /// Alt is down, so ordinary mousing costs nothing.
+    /// The Alt-held chip for the line under the pointer, or None when Alt is
+    /// up or an Alt+click there would do nothing. It says which of the two it
+    /// would do: open the document under the pointer, or copy a command line.
+    /// Recomputed only while Alt is down, so ordinary mousing costs nothing.
     copy_hint: Option<CopyHint>,
+    /// The bench's Alt chip: the flat rectangle of the document link a held
+    /// bare Alt would open, as [`TerminalView::bench_alt_hint`] resolved it
+    /// on the last move. The grid's `copy_hint`, on the bench's face.
+    wb_alt_hint: Option<(f32, f32, f32, f32)>,
     /// When the last Alt+click copy landed — drives the brief "copied"
     /// confirmation in the chip. No timer: the next pointer move repaints it.
     copy_flash: Option<Instant>,
+    /// What the pane is saying about the last click, while it says it.
+    said: Option<Said>,
+    /// The document floating over the terminal face, if one is open.
+    float: Option<FloatingDoc>,
+    /// Where the floating square's strip, buttons and body were laid out,
+    /// flat, recorded as they paint. Cleared at the top of every render.
+    float_zones: std::rc::Rc<std::cell::RefCell<Vec<crate::docopen::FloatZone>>>,
+    /// The last link asked whether it is a document, and the answer. The Alt
+    /// chip asks on every Alt-held move, and the answer reads the file's first
+    /// bytes, so the same link under a still pointer is not read twice.
+    doc_memo: std::cell::RefCell<Option<(String, Option<crate::docopen::DocTarget>)>>,
+    /// The document this pane was opened to show, on its Document face. See
+    /// [`DocFace`].
+    doc: Option<DocFace>,
+    /// The host id of the pane this one was split off to show a document
+    /// beside, when this window made the split. `None` for every other pane,
+    /// and for a document pane restored from a saved layout, which does not
+    /// remember: "not recorded" rather than "nobody".
+    doc_opened_by: Option<u64>,
+    /// Who ↪ in the notes bar sends to, for the floating square's document
+    /// and the Document face's: "agent", a pane's name, or `None` for no
+    /// button. Set by the workspace, which can see the tab; handed to the
+    /// views every frame, as the theme is.
+    notes_beside: (Option<String>, Option<String>),
+    /// Where the Document face's view was laid out, flat, in window pixels:
+    /// `(x, y, w, h)`, recorded as it paints. `None` until it has painted.
+    doc_rect: std::rc::Rc<std::cell::Cell<Option<FlatRect>>>,
+    /// The document on the Document face is held: a press went to the view,
+    /// and so do the moves until the button comes up.
+    doc_holding: bool,
     /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
     was_focused: bool,
-    /// 🎰 GAMBA slot-machine reels — rolled while an agent in this pane is
-    /// "thinking", on the gamba DESIGN texture only (not any colour set). Satire.
-    gamba: crate::gamba::Reels,
+    /// Last observed agent working state; absent until the first settled scan.
+    agent_thinking: Option<bool>,
     /// Throttle for the (cheap) grid scan that detects the agent spinner.
     last_think_scan: Instant,
     /// True while this pane is the one mirrored in the FOCUS modal — a plain Esc
     /// then closes the modal instead of reaching the PTY. Set by the workspace.
     being_read: bool,
+    /// The document view this pane has lent to the FOCUS reader, by entity:
+    /// the reader draws it, and this pane draws "being read" where it would
+    /// have. Named by entity rather than by seat, so a document replaced while
+    /// it is read is never taken for the one that was lent. `None` while
+    /// nothing is lent. See [`TerminalView::reader_document`].
+    lent: Option<gpui::EntityId>,
     /// The sticky note pinned to this pane's glass, if any. See [`crate::sticky`]
     /// — in particular why Esc does NOT take it down.
     note: Option<crate::sticky::Sticky>,
@@ -2058,6 +3065,11 @@ pub struct TerminalView {
     /// selection); cleared whenever a normal key or a fresh mouse-down resets the
     /// selection.
     kbd_sel: Option<(TermPoint, TermPoint)>,
+    /// The pictures programs have drawn in this pane, as gpui textures, keyed by
+    /// image and crop. Built the first frame a picture is on screen, dropped the
+    /// frame it leaves, and all dropped when the pane's tab is hidden: pictures
+    /// in Terminal Delight are attentional, not kept.
+    pictures: std::collections::HashMap<(crate::vt::PictureKey, [u32; 4]), Arc<gpui::RenderImage>>,
     /// When the current agent "thinking" spell began — used to ring the bell on
     /// the thinking→done edge (agents don't reliably emit a terminal BEL).
     think_since: Option<Instant>,
@@ -2068,8 +3080,13 @@ pub struct TerminalView {
     /// Agent-wall HUD token accounting (agent panes only). `tokens_banked` sums
     /// the peak token count of every *completed* turn this session;
     /// `turn_peak_tokens` is the running peak of the turn in flight;
-    /// `tok_was_working` edge-detects turn end to bank the peak. Fed by
-    /// [`TerminalView::accrue_tokens`], read by the agent-wall HUD.
+    /// `tok_was_working` edge-detects turn end to bank the peak, AND (a second
+    /// consumer, added later) gates `should_open_a_new_turn`'s spinner
+    /// fallback on the idle→working edge rather than the working level. Fed
+    /// by [`TerminalView::accrue_tokens`]; the first two are read by the
+    /// agent-wall HUD. All three are reset in `set_mode`'s `departed` branch —
+    /// a pane can outlive the agent that set them, and each has its own
+    /// concrete failure mode if left stale for the next one.
     tokens_banked: u64,
     turn_peak_tokens: u64,
     tok_was_working: bool,
@@ -2260,6 +3277,14 @@ pub struct TerminalView {
     /// hand in the terminal genuinely has no answer here, and storing a
     /// plausible one would invent a fact about what is being billed.
     wb_model: Option<String>,
+    /// The model id this pane's agent last ANSWERED on, as its transcript
+    /// records it — `claude-opus-5-5`. Pushed by the window's 2s tool sweep,
+    /// which already reads the transcript's tail for the header's tool glyph.
+    /// Not the vitals sweep: that one only runs while the wall is open.
+    ///
+    /// The one source that knows a version. [`Self::wb_model`] is what the
+    /// agent was told, which is an alias; this is what it resolved to.
+    wb_running_model: Option<String>,
     /// The effort level this pane's agent was told to use. `None` for the same
     /// reason as [`Self::wb_model`], and never the harness's default: a level
     /// nobody chose and a level someone chose are different facts.
@@ -2369,13 +3394,16 @@ impl gpui::EventEmitter<PaneRenamed> for TerminalView {}
 pub struct StickyChanged;
 impl gpui::EventEmitter<StickyChanged> for TerminalView {}
 
-/// The ⌁ LAUNCH AGENT button on an empty workbench — the workspace opens the
-/// launcher, scoped to this pane's own directory.
-///
-/// A pane with no agent in it is the one place the offer belongs: it is where
-/// a person is already looking when they discover the bench has nothing on it,
-/// and it answers the question that state raises instead of leaving them to
-/// find a keybinding.
+/// A person marked this pane off-limits to agents, or lifted the mark — the
+/// workspace persists the layout so the mark is still there after a restart
+/// (same contract as [`StickyChanged`]).
+pub struct OffLimitsChanged;
+impl gpui::EventEmitter<OffLimitsChanged> for TerminalView {}
+
+/// Alt+A, the pane header's ⌁ AGENT button, and the empty workbench's launch
+/// offer all open the same workspace launcher, scoped to this pane's directory.
+/// The workspace decides whether a known shell prompt can receive the command
+/// or the launch needs a new tab; the entry point never writes to the PTY.
 pub struct OpenAgentLauncher;
 impl gpui::EventEmitter<OpenAgentLauncher> for TerminalView {}
 
@@ -2504,29 +3532,157 @@ fn budget_range(oldest: i32, newest: i32, lines: usize) -> (i32, i32) {
 pub struct PaneSource<'a> {
     pub pane: &'a TerminalView,
     pub theme: &'a Theme,
+    style: &'a ReadStyle,
 }
 
 impl DocumentSource for PaneSource<'_> {
     fn document(&self, budget: RowBudget) -> Document {
-        self.pane.document_with(budget, self.theme)
+        self.pane.document_with(budget, self.theme, self.style)
     }
 }
 
 impl TerminalView {
-    /// Build a [`Document`] from this pane's grid, reading back up to
-    /// `budget.lines` rows into scrollback. Clamped to what history actually
-    /// holds, so a fresh pane simply yields fewer lines rather than blank filler.
-    pub fn document_with(&self, budget: RowBudget, th: &Theme) -> Document {
-        let (first, last) = {
+    /// Build a [`Document`] from this pane's grid: its history, kept between
+    /// reads (see `readrows`), then its live screen — the newest `budget.lines`
+    /// rows of them, clamped to what the terminal holds.
+    ///
+    /// A shell's rows join exactly where the terminal soft-wrapped them. An
+    /// agent's screen still goes through the width guess, because its TUI broke
+    /// its own lines and left no flag to join on. Blank rows under the last line
+    /// are dropped, so a short screen does not push its content off the top of a
+    /// reader that follows the bottom.
+    fn document_with(&self, budget: RowBudget, th: &Theme, style: &ReadStyle) -> Document {
+        let mut kept = self.read_history.borrow_mut();
+        let screen = {
             let term = self.session.term.lock();
-            // Line 0 is the top of the screen; history runs negative from there.
-            let oldest = term.grid().topmost_line().0;
-            let newest = (self.grid.rows as i32 - 1).max(0);
-            budget_range(oldest, newest, budget.lines)
+            crate::readrows::ReadHistory::refresh(&mut kept, &term, style, |cells| {
+                grid_row(cells, th)
+            });
+            crate::readrows::screen_rows(&term, |cells| grid_row(cells, th))
         };
-        let rows = self.grid_rows_in(first, last, th);
-        Document::from_grid_rows(&rows, self.grid.cols)
+        let history = kept.as_ref().map(|h| h.rows());
+        let held = history.map_or(0, |h| h.len()) as i32;
+        // Line 0 is the top of the screen; history runs negative from there.
+        let (first, last) = budget_range(-held, screen.len() as i32 - 1, budget.lines);
+        let (skip, take) = ((first + held) as usize, (last - first + 1).max(0) as usize);
+        let rows = history
+            .into_iter()
+            .flatten()
+            .chain(screen.iter())
+            .skip(skip)
+            .take(take);
+        let mut doc = if self.mode.is_agent() {
+            let lines: Vec<DocLine> = rows.map(|r| r.line.clone()).collect();
+            Document::from_grid_rows(&lines, self.grid.cols)
+        } else {
+            Document::from_wrapped_rows(rows)
+        };
+        while doc.lines.last().is_some_and(|l| l.text.trim().is_empty()) {
+            doc.lines.pop();
+        }
+        doc
     }
+}
+
+/// One grid row as the FOCUS reader reads it: the characters, their foreground
+/// colours, and the terminal's own soft-wrap flag.
+///
+/// Colour comes from the cells, so history keeps the ANSI colours the program
+/// emitted; TD's own overlays (the syntax pass, human-input tinting, selection,
+/// cursor) are viewport-only and deliberately not reproduced — they are
+/// decoration on the live screen, not properties of the text. A wide
+/// character's spacer cells are skipped, including the one it leaves at the end
+/// of a row it did not fit on, or the join would put a blank inside the line.
+fn grid_row(cells: &[crate::vt::Cell], th: &Theme) -> GridRow {
+    let mut text = String::with_capacity(cells.len());
+    let mut runs: Vec<TextRun> = Vec::new();
+    let mut wrapped = false;
+    for cell in cells {
+        wrapped |= cell.flags.contains(Flags::WRAPLINE);
+        if cell
+            .flags
+            .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+        {
+            continue;
+        }
+        let ch = if cell.c == '\0' { ' ' } else { cell.c };
+        let color = ansi_to_hsla(cell.fg, th, th.text);
+        let len = ch.len_utf8();
+        text.push(ch);
+        // coalesce identical adjacent styles so a row is a handful of runs
+        match runs.last_mut() {
+            Some(prev) if prev.color == color => prev.len += len,
+            _ => runs.push(TextRun {
+                len,
+                font: reader_grid_font(th, FontWeight::default()),
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }),
+        }
+    }
+    GridRow {
+        line: DocLine::new(text, runs),
+        wrapped,
+    }
+}
+
+/// The most rows the FOCUS reader's foot shows: a pasted wall of input still
+/// leaves the conversation room.
+const INPUT_ROWS_MAX: usize = 12;
+
+/// Where an agent's input box is on a screen: from the status line just above
+/// its top border to the last row with anything on it. `None` when the screen
+/// draws no box.
+///
+/// A border is a row whose every mark is box drawing — Claude Code's two long
+/// rules, or a rounded box's top and bottom — at least ten of them, so a short
+/// rule inside a reply is not taken for one. The box is the lowest border and the
+/// one above it. Within two rows above the top border, the status line is kept —
+/// where Claude Code says what it is doing, behind its spinner
+/// ("✻ Writing… (4m 12s · esc to interrupt)") — and nothing else is: with the
+/// agent at rest those rows are the end of its reply, which the transcript
+/// already shows.
+fn input_box(rows: &[GridRow]) -> Option<std::ops::Range<usize>> {
+    let border = |r: &GridRow| {
+        let marks = r.line.text.chars().filter(|c| !c.is_whitespace());
+        let mut n = 0;
+        for c in marks {
+            if !matches!(c, '─' | '━' | '╭' | '╮' | '╰' | '╯' | '├' | '┤') {
+                return false;
+            }
+            n += 1;
+        }
+        n >= 10
+    };
+    let blank = |r: &GridRow| r.line.text.trim().is_empty();
+    let status = |r: &GridRow| {
+        let t = r.line.text.trim_start();
+        t.starts_with(['·', '✢', '✳', '✶', '✻', '✽']) || t.contains("esc to interrupt")
+    };
+    let Some(bottom) = rows.iter().rposition(border) else {
+        // Current Codex has an unboxed composer. This is its live placeholder
+        // captured from the reporting pane: "› Ask Codex to do anything".
+        let start = rows
+            .iter()
+            .rposition(|r| r.line.text.trim_start().starts_with("› "))?;
+        let end = rows.iter().rposition(|r| !blank(r)).map(|i| i + 1)?;
+        if end - start > INPUT_ROWS_MAX {
+            return None;
+        }
+        return Some(start..end);
+    };
+    let top = rows[..bottom].iter().rposition(border).unwrap_or(bottom);
+    let start = (top.saturating_sub(2)..top)
+        .find(|&k| status(&rows[k]))
+        .unwrap_or(top);
+    let end = rows
+        .iter()
+        .rposition(|r| !blank(r))
+        .map_or(bottom + 1, |e| e + 1);
+    let end = end.max(bottom + 1).min(start + INPUT_ROWS_MAX);
+    Some(start..end)
 }
 
 /// One matched line inside a pane's grid: its absolute grid line index, the line
@@ -2589,10 +3745,8 @@ pub(crate) fn fuzzy_match(hay: &str, needle: &str) -> Option<(i64, Vec<usize>)> 
 /// width on the terminal instead of on controls. The pane header now keeps only
 /// 🎨 (theme) and 📊 (display).
 ///
-/// The BEHAVIOUR is untouched in both cases — only the glyph goes. The ▲/▼
-/// header buttons still walk your own messages in an agent pane (Alt+↑/↓ is
-/// pane focus everywhere now), and Alt+R still opens the FOCUS
-/// reader. Flip either back to `true` to restore its glyph and its ⋯ entry.
+/// Ctrl+↑/↓ walks your own messages in an agent pane, and Alt+R opens the
+/// FOCUS reader. Flip either back to `true` to restore its glyph and its ⋯ entry.
 const SHOW_HUMAN_NAV_GLYPH: bool = false;
 const SHOW_FOCUS_GLYPH: bool = false;
 
@@ -2675,6 +3829,15 @@ pub struct MirrorSnapshot {
     pub k1: f32,
     pub k2: f32,
     pub glare: f32,
+    /// An agent runs in the pane — Claude, Codex — so the screen it draws
+    /// stands in for a conversation the reader could not read.
+    pub agent: bool,
+    /// The agent's conversation is one the reader can read from its
+    /// transcript ([`PaneMode::reads_transcript`]).
+    pub talk: bool,
+    /// A program has the alternate screen (vim, htop), which keeps no history:
+    /// the reader says so on its chip.
+    pub alt_screen: bool,
 }
 
 /// Which size dial a ctrl+wheel at `pos` is turning, given where this pane's
@@ -2713,7 +3876,7 @@ fn size_dial_at(
 impl TerminalView {
     /// The theme this pane actually renders with: each appearance group
     /// (theme, grade) resolved to the pane's own override or the live outer
-    /// scope, then — when the window's AGENT THEME preference is on and the
+    /// scope, then — when the window's TERMINAL STATE preference is on and the
     /// theme group follows outer — tinted by what's running (mode).
     pub fn resolved_theme(&self, cx: &App) -> Theme {
         let outer = theme::outer_choice(cx);
@@ -2768,18 +3931,21 @@ impl TerminalView {
     /// [`Self::resolved_theme`]'s own memo keys on. Same key ⇒ same colours went
     /// into every run, by that memo's guarantee — no hashing of the theme itself.
     ///
-    /// A mouse-move frame therefore costs one Arc clone; only real PTY output,
-    /// a resize, or a theme change pays for the 10k-line rebuild.
+    /// A mouse-move frame therefore costs one Arc clone; real PTY output reads
+    /// the rows that arrived plus the screen, and only a resize or a theme change
+    /// reads the whole history again (see `readrows`).
     fn mirror_document(&self, th: &Theme, cx: &App) -> (Arc<Document>, u64) {
         let key = MirrorDocKey {
             generation: self.session.content_generation(),
             cols: self.grid.cols,
             rows: self.grid.rows,
-            eff: self.appearance.effective(&theme::outer_choice(cx)),
-            mode: self.mode.clone(),
-            inherit: self.appearance.inherit_theme,
-            tint: agent_tint(),
-            theme_gen: theme::theme_gen(cx),
+            style: ReadStyle {
+                eff: self.appearance.effective(&theme::outer_choice(cx)),
+                mode: self.mode.clone(),
+                inherit: self.appearance.inherit_theme,
+                tint: agent_tint(),
+                theme_gen: theme::theme_gen(cx),
+            },
         };
         let next_rev = {
             let cache = self.mirror_doc.borrow();
@@ -2793,6 +3959,7 @@ impl TerminalView {
             PaneSource {
                 pane: self,
                 theme: th,
+                style: &key.style,
             }
             .document(RowBudget::all()),
         );
@@ -2800,13 +3967,16 @@ impl TerminalView {
         (doc, next_rev)
     }
 
-    /// What the FOCUS reader shows for this pane.
+    /// What the FOCUS reader shows for this pane when it reads the terminal.
+    /// Which it reads is [`crate::docopen::read_from`]'s to say: a pane showing
+    /// a document, or with a square floating over it, lends that document to
+    /// the reader instead ([`Self::reader_document`]).
     ///
-    /// **The GRID, on both faces — deliberately.** A pane has two of them now,
-    /// and until `alt+r` started reaching the bench again (#524) nobody had to
-    /// decide which one FOCUS mirrors. The answer is the terminal, and the
-    /// reason is that it is the one a person cannot otherwise read: the bench
-    /// hides the agent's scrollback by default (`shows.mirror` is off unless
+    /// **The GRID on the workbench face — deliberately.** Until `alt+r`
+    /// started reaching the bench again (#524) nobody had to decide which of
+    /// the two faces FOCUS mirrors. The answer is the terminal, and the reason
+    /// is that it is the one a person cannot otherwise read: the bench hides
+    /// the agent's scrollback by default (`shows.mirror` is off unless
     /// `TD_BENCHMIRROR=1`), and the bench itself is already drawn at whatever
     /// size its owner set. Mirroring the bench would enlarge the thing that is
     /// legible and keep hiding the thing that is not.
@@ -2814,7 +3984,7 @@ impl TerminalView {
     /// So on the workbench face, `alt+r` is how you see what the bench is
     /// holding back. That is a feature and it is written down here because it
     /// was an accident first — pinned by
-    /// `the_focus_reader_mirrors_the_grid_on_both_faces`.
+    /// `the_focus_reader_never_mirrors_the_bench`, and by `read_from`'s table.
     pub fn mirror_snapshot(&self, cx: &App) -> MirrorSnapshot {
         let th = self.resolved_theme(cx);
         // Mirror the live pane's anchor-to-top inverted read: bottom-anchor the
@@ -2834,6 +4004,7 @@ impl TerminalView {
         let agent_mode = self.mode.is_agent();
         let inverted = should_invert(anchor_top(), th.crawl, alt_screen_active, agent_mode);
         let mut lines = self.styled_lines(&th, inverted);
+        arm_grid_fallbacks(&mut lines, cx.text_system());
         if inverted {
             let wraps = if agent_mode {
                 Vec::new()
@@ -2879,13 +4050,136 @@ impl TerminalView {
             k1,
             k2,
             glare: th.screen_glare,
+            agent: agent_mode,
+            talk: self.mode.reads_transcript(),
+            alt_screen: alt_screen_active,
         }
     }
 
     /// Toggle whether this pane is the one currently mirrored in the FOCUS modal.
-    /// When set, a plain Esc closes the modal instead of reaching the PTY.
-    pub fn set_being_read(&mut self, on: bool) {
+    /// When set, a plain Esc closes the modal instead of reaching the PTY. When
+    /// cleared, a document lent to the reader comes back to this pane, and the
+    /// history rows the reader kept are let go: up to ten thousand styled rows
+    /// are worth holding while someone reads them, and not after.
+    pub fn set_being_read(&mut self, on: bool, cx: &mut Context<Self>) {
         self.being_read = on;
+        if !on {
+            self.take_back(cx);
+            *self.read_history.get_mut() = None;
+        }
+    }
+
+    /// The document the FOCUS reader draws for this pane this frame, lent to
+    /// it; `None` when the reader reads the terminal.
+    ///
+    /// Asked every frame the reader is up, and the only place a document is
+    /// lent: a face flipped with alt+k, a square opened or closed, or a
+    /// document replaced while the reader is up all change what it reads at
+    /// the next frame, and whatever was lent before comes back first. The
+    /// workspace keeps no handle between frames, so it holds nothing that can
+    /// go stale.
+    pub fn reader_document(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+        let want = if self.being_read {
+            self.read_document()
+        } else {
+            None
+        };
+        let want_id = want.as_ref().map(|v| v.entity_id());
+        if want_id != self.lent {
+            self.take_back(cx);
+            if let Some(view) = &want {
+                view.update(cx, |v, cx| v.lend(true, cx));
+            }
+            self.lent = want_id;
+            cx.notify();
+        }
+        want
+    }
+
+    /// The document [`crate::docopen::read_from`] names for this pane now,
+    /// while the pane holds one there.
+    fn read_document(&self) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+        use crate::docopen::{DocSeat, ReadFrom};
+        let face = self.bench.face();
+        let square_up = self.float.is_some() && float_shows_on(face);
+        match crate::docopen::read_from(face, square_up) {
+            ReadFrom::Document(DocSeat::Float) => self.float.as_ref().map(|f| f.view.clone()),
+            ReadFrom::Document(DocSeat::Face) => self.doc.as_ref().map(|d| d.view.clone()),
+            ReadFrom::Grid => None,
+        }
+    }
+
+    /// The document this pane has lent to the FOCUS reader, while it still
+    /// holds it.
+    pub fn lent_view(&self) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+        let id = self.lent?;
+        let float = self.float.as_ref().map(|f| &f.view);
+        let face = self.doc.as_ref().map(|d| &d.view);
+        [float, face]
+            .into_iter()
+            .flatten()
+            .find(|v| v.entity_id() == id)
+            .cloned()
+    }
+
+    /// Whether `view` is lent to the reader, which draws it; this pane then
+    /// does not. A view drawn in two places measures two boxes, and a page
+    /// laid out at each in turn never settles.
+    fn lends(&self, view: &gpui::Entity<crate::docview::DocumentView>) -> bool {
+        self.lent == Some(view.entity_id())
+    }
+
+    /// Take back whatever was lent to the reader, if this pane still holds
+    /// it. A view it no longer holds was handed back where it went:
+    /// `show_document` and `float_of` hand back any view they are given.
+    fn take_back(&mut self, cx: &mut Context<Self>) {
+        let view = self.lent_view();
+        self.lent = None;
+        if let Some(view) = view {
+            view.update(cx, |v, cx| v.lend(false, cx));
+            cx.notify();
+        }
+    }
+
+    /// The pane's own paper, ink and accent, which the FOCUS reader's glass
+    /// wears whatever it reads.
+    pub fn reader_palette(&self, cx: &App) -> (gpui::Hsla, gpui::Hsla, gpui::Hsla) {
+        let th = self.resolved_theme(cx);
+        (th.bg, th.text, th.accent)
+    }
+
+    /// The pane's font and palette in the roles the FOCUS reader draws a
+    /// conversation in ([`crate::transcript::Ink`]): the pane's own, so the
+    /// agent's words read in the reader as they do in its pane.
+    pub fn reader_ink(&self, cx: &App) -> crate::transcript::Ink {
+        let th = self.resolved_theme(cx);
+        crate::transcript::Ink {
+            font: reader_grid_font(&th, FontWeight::default()),
+            text: th.text,
+            human: th.human,
+            faint: th.faint,
+            accent: th.accent,
+            error: th.ansi[1],
+        }
+    }
+
+    /// The pane's input rows, live, for the FOCUS reader's foot: the agent's
+    /// input box from its top border down, with the status line above it where
+    /// Claude Code says what it is doing. A transcript holds a reply only once
+    /// each block of it is finished, and never what is being typed, so the foot
+    /// carries the turn in flight. Empty when the screen draws no input box.
+    pub fn input_rows(&self, cx: &App) -> Vec<DocLine> {
+        let th = self.resolved_theme(cx);
+        let rows = {
+            let term = self.session.term.lock();
+            crate::readrows::screen_rows(&term, |cells| grid_row(cells, &th))
+        };
+        input_box(&rows)
+            .map(|at| rows[at].iter().map(|r| r.line.clone()).collect())
+            .unwrap_or_default()
     }
 
     /// What this pane is doing right now — cwd + resumable agent session —
@@ -2965,6 +4259,17 @@ impl TerminalView {
             appearance: self.appearance.clone(),
             note: self.note.clone(),
             peeled: self.peeled.clone(),
+            doc: self.doc.as_ref().map(|d| {
+                (
+                    DocCarry {
+                        view: d.view.clone(),
+                        target: d.target.clone(),
+                    },
+                    self.bench.face() == crate::workbench::Face::Document,
+                )
+            }),
+            float: self.float.as_ref().map(FloatingDoc::carry),
+            doc_opened_by: self.doc_opened_by,
         }
     }
 
@@ -2977,7 +4282,7 @@ impl TerminalView {
     /// was the visible half of the repair — a pane that re-fired its ignition
     /// and came back in the house colours, every couple of minutes, while the
     /// user watched.
-    pub fn adopt_presentation(&mut self, from: Presentation) {
+    pub fn adopt_presentation(&mut self, from: Presentation, cx: &mut Context<Self>) {
         // `born` first and on purpose: it drives the one-shot CRT ignition and
         // nothing else, so inheriting it is the whole of "this is not a birth".
         self.born = from.born;
@@ -2987,6 +4292,21 @@ impl TerminalView {
         self.appearance = from.appearance;
         self.note = from.note;
         self.peeled = from.peeled;
+        // The document and the square are the window's decisions too, and a
+        // replica repair used to drop both: the page someone was reading beside
+        // their prompt turned back into a shell. The same views move across —
+        // nothing re-opened — and are subscribed again here, on the pane that
+        // now owns them.
+        if let Some((doc, on_face)) = from.doc {
+            self.show_document(doc.target, Some(doc.view), cx);
+            if !on_face {
+                self.bench.set_face(crate::workbench::Face::Terminal);
+            }
+        }
+        if let Some(f) = from.float {
+            self.float = Some(Self::float_back(f, cx));
+        }
+        self.doc_opened_by = from.doc_opened_by;
     }
 
     /// Whether this pane has reported an ending that has not been explained yet.
@@ -3046,6 +4366,7 @@ impl TerminalView {
             // exist yet — is on opus at high, and the whole rule for these two
             // is that they never say anything nobody said to them.
             self.wb_model = None;
+            self.wb_running_model = None;
             self.wb_effort = None;
             self.wb_dial = None;
             // And the conversation with it. The next agent in this pane is a
@@ -3069,6 +4390,10 @@ impl TerminalView {
             // record is the cross-conversation write this key exists to stop.
             // Nothing on disk is touched — the record outlives the process.
             self.wb_conv = None;
+            // And what it handed over: the chip names the agent in this pane,
+            // and the next one has handed over nothing yet. The record keeps
+            // the departed conversation's list for the day it is resumed.
+            self.handovers = crate::handover::Ledger::default();
             self.wb_conv_bond = crate::vitals::Bond::Guess;
             self.wb_writer = None;
             // Anything held for a conversation that never got named belongs to
@@ -3125,6 +4450,34 @@ impl TerminalView {
             // it is one of four ways an agent leaves a pane and the only one
             // that goes through the strip.
             self.wb_paused_ms = None;
+            // `wb_delivered_ms` is the eight-second window in which the strip
+            // says "Reading your answer", and that rung outranks a question.
+            // It names the agent the bench just typed to. Left set, a pane
+            // whose agent has gone keeps those words until the window ends,
+            // and the next agent started inside it is born reading, so a
+            // question it asks is not shown.
+            self.wb_delivered_ms = None;
+            // And the HUD token-accounting trio, for the same reason as
+            // `wb_paused_ms`: nothing else corrects them, because
+            // `accrue_tokens` returns early on a non-agent pane and so never
+            // reaches its own reset. Left alone, a NEXT agent in this pane
+            // inherits two different faults from ONE stale bit.
+            // `tok_was_working` is also `turn_seen_working`'s idle→working
+            // edge-guard (`accrue_tokens`) — stuck at `true` from whatever the
+            // departed agent was doing, the next agent's very first working
+            // poll reads `live().is_none() && !tok_was_working` as
+            // `true && false`, and the fallback that is supposed to open its
+            // live-turn card never fires: the workbench shows no live turn
+            // for a visibly-working agent, the exact symptom this field's
+            // guard exists to prevent, reintroduced by the one path that was
+            // never supposed to leave it stale. And `turn_peak_tokens`,
+            // uncleared, is a departed agent's leftover peak waiting to be
+            // banked onto whichever agent starts here next the first time it
+            // goes idle — its spend, attributed to a session that never spent
+            // it.
+            self.tok_was_working = false;
+            self.tokens_banked = 0;
+            self.turn_peak_tokens = 0;
         }
         cx.notify();
     }
@@ -3155,10 +4508,29 @@ impl TerminalView {
     /// [`crate::warp::set_suppressed`]: a pane popup bows with the barrel warp
     /// while gpui keeps hit-testing its flat layout box, so the glass must read
     /// flat while one is up. Any new pane-owned floating MENU belongs in this OR
-    /// — decoration that carries no click target (the 🎰 reels, the bell toast)
+    /// — decoration that carries no click target (the bell toast)
     /// deliberately does not, since bending costs nothing there.
     pub fn popup_open(&self) -> bool {
         self.hdr_overflow.is_some() || self.ctx_menu.is_some()
+    }
+
+    /// The person's right-click: mark this pane off-limits to agents, or let
+    /// agents see it again. The only writer of [`Self::off_limits`] outside a
+    /// restore, on purpose — see the field.
+    pub(crate) fn toggle_off_limits(&mut self, cx: &mut Context<Self>) {
+        self.off_limits = !self.off_limits;
+        cx.emit(OffLimitsChanged);
+        cx.notify();
+    }
+
+    /// The same mark, set to a value rather than flipped: a person's Yes on
+    /// the rail to an agent that asked for this pane to be opened or closed
+    /// (`Workspace::rail_answer`). A person's press either way, which is the
+    /// whole rule of the field. Emits nothing when the mark is already so.
+    pub(crate) fn set_off_limits(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.off_limits != on {
+            self.toggle_off_limits(cx);
+        }
     }
 
     /// Plain spawn (no restore context); kept for `cx.new(TerminalView::new)`.
@@ -3170,17 +4542,26 @@ impl TerminalView {
     /// Spawn with session-restore context: shell starts in `restore.cwd`, and
     /// a resumable agent (`claude --resume <id>` / `codex resume <id>`) is
     /// typed into the PTY — the kernel queues it until the first prompt reads.
+    ///
+    /// With `restore.program` the pane runs that program instead of a shell,
+    /// and nothing is typed: a resume line is for a shell, and there is none.
     pub fn new_restored(restore: crate::session::PaneRestore, cx: &mut Context<Self>) -> Self {
         let grid = term::GridSize {
             cols: 100,
             rows: 28,
         };
         let cwd = restore.cwd.clone().map(std::path::PathBuf::from);
-        let session = term::spawn_in(grid, 8, 20, cwd).expect("spawn shell");
-        if let Some(cmd) = restore.resume.as_deref() {
+        let (cell_w, cell_h) = BORN_CELL_PX;
+        let session = term::spawn_in(grid, cell_w, cell_h, cwd, restore.program.as_ref())
+            .expect("spawn shell");
+        if let Some(cmd) = restore
+            .resume
+            .as_deref()
+            .filter(|_| restore.program.is_none())
+        {
             session.notifier.notify(format!("{cmd}\n").into_bytes());
         }
-        Self::around(session, None, None, &restore, grid, cx)
+        Self::around(session, None, None, &restore, grid, BORN_CELL_PX, cx)
     }
 
     /// A pane showing a terminal this window does not own.
@@ -3191,24 +4572,39 @@ impl TerminalView {
     /// differs is what the pane may assume about the process at the far end:
     /// there is no descriptor to ask the kernel through, and the pid it has is
     /// somebody else's child.
+    ///
+    /// `grid` and `cell_px` are the size the host holds the terminal at, so the
+    /// pane re-announces a size only once its own layout measures a different
+    /// one.
     pub fn new_attached(
         session: term::Session,
         guard: crate::gridwire::ReplicaGuard,
         pane_id: u64,
         restore: crate::session::PaneRestore,
         grid: term::GridSize,
+        cell_px: (u16, u16),
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::around(session, Some(guard), Some(pane_id), &restore, grid, cx)
+        Self::around(
+            session,
+            Some(guard),
+            Some(pane_id),
+            &restore,
+            grid,
+            cell_px,
+            cx,
+        )
     }
 
     /// Everything a pane is once its terminal exists, whichever kind it is.
+    /// `grid` and `cell_px` are what its pseudoterminal was last told.
     fn around(
         session: term::Session,
         guard: Option<crate::gridwire::ReplicaGuard>,
         pane_id: Option<u64>,
         restore: &crate::session::PaneRestore,
         grid: term::GridSize,
+        cell_px: (u16, u16),
         cx: &mut Context<Self>,
     ) -> Self {
         let mut session = session;
@@ -3254,60 +4650,86 @@ impl TerminalView {
         // for an answer that already existed in the right process (#336), and
         // the reason it was here at all is that the host had no way to say it.
         // It has one now: `set_host_mode`, fed by the push feed.
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(800))
-                .await;
-            let alive = this
-                .update(cx, |view: &mut TerminalView, cx| {
-                    let detected = match (view.session.master.as_ref(), view.session.shell_pid) {
-                        (Some(master), Some(pid)) => Some(foreground_mode(master, pid)),
-                        // Somebody else's terminal, or nobody's: not this
-                        // window's question to answer.
-                        _ => None,
-                    };
-                    if let Some(detected) = detected {
-                        // Sticky agent detection (spec §4): an agent runs child
-                        // processes (bash/node/rg) as the terminal's foreground group
-                        // while working, momentarily reclassifying the pane as Shell —
-                        // which FLICKERS the anchor-top inversion frame to frame (the
-                        // "sometimes / middle-screen prompt" bug). Keep the agent mode
-                        // through that, but only while the ALTERNATE SCREEN is active
-                        // (the agent's live TUI); when the agent exits and the plain
-                        // shell returns on the normal screen, we correctly demote.
-                        let on_alt = view
-                            .session
-                            .term
-                            .lock()
-                            .mode()
-                            .contains(TermMode::ALT_SCREEN);
-                        let mode = if view.mode.is_agent() && !detected.is_agent() && on_alt {
-                            view.mode.clone()
-                        } else {
-                            detected
+        if session.master.is_some() && session.shell_pid.is_some() {
+            cx.spawn(async move |this, cx| loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(800))
+                    .await;
+                let alive = this
+                    .update(cx, |view: &mut TerminalView, cx| {
+                        #[cfg(test)]
+                        {
+                            view.foreground_polls += 1;
+                        }
+                        let detected = match (view.session.master.as_ref(), view.session.shell_pid)
+                        {
+                            (Some(master), Some(pid)) => Some(foreground_mode(master, pid)),
+                            // Somebody else's terminal, or nobody's: not this
+                            // window's question to answer.
+                            _ => None,
                         };
-                        view.set_mode(mode, cx);
-                    }
-                    !view.exited
-                })
-                .unwrap_or(false);
-            if !alive {
-                break;
-            }
-        })
-        .detach();
+                        if let Some(detected) = detected {
+                            // Sticky agent detection (spec §4): an agent runs child
+                            // processes (bash/node/rg) as the terminal's foreground group
+                            // while working, momentarily reclassifying the pane as Shell —
+                            // which FLICKERS the anchor-top inversion frame to frame (the
+                            // "sometimes / middle-screen prompt" bug). Keep the agent mode
+                            // through that, but only while the ALTERNATE SCREEN is active
+                            // (the agent's live TUI); when the agent exits and the plain
+                            // shell returns on the normal screen, we correctly demote.
+                            let on_alt = view
+                                .session
+                                .term
+                                .lock()
+                                .mode()
+                                .contains(TermMode::ALT_SCREEN);
+                            let mode = if view.mode.is_agent() && !detected.is_agent() && on_alt {
+                                view.mode.clone()
+                            } else {
+                                detected
+                            };
+                            view.set_mode(mode, cx);
+                        }
+                        !view.exited
+                    })
+                    .unwrap_or(false);
+                if !alive {
+                    break;
+                }
+            })
+            .detach();
+        }
 
-        // per-pane effects clock
+        // per-pane effects clock. Visibility and a staged resize may interrupt
+        // its sleep, but output keeps using the independent terminal event pump.
+        let (housekeeping_wake, mut housekeeping_wakes) = futures::channel::mpsc::channel(1);
         cx.spawn(async move |this, cx| {
             loop {
-                let active = this.update(cx, |view: &mut TerminalView, cx| {
+                let delay = this.update(cx, |view: &mut TerminalView, cx| {
+                    #[cfg(test)]
+                    {
+                        view.housekeeping_ticks += 1;
+                    }
                     let th = theme::theme(cx);
                     if view.fx.tick(&th) {
-                        cx.notify();
+                        view.repaint(cx);
                     }
-                    // 🎰 GAMBA: poll the grid (throttled) for the agent
-                    // spinner, then advance the reel stack while it rolls.
-                    if view.last_think_scan.elapsed() > std::time::Duration::from_millis(120) {
+                    view.flush_offscreen(cx);
+                    // Poll the grid (throttled) for the agent
+                    // spinner and its working-state transitions.
+                    // A hidden pane is checked once a second: its badge and its
+                    // bell stay timely well inside OFFSCREEN_REFRESH, and the
+                    // checks read the screen (#964).
+                    let every = if view.shown.load(std::sync::atomic::Ordering::Relaxed) {
+                        std::time::Duration::from_millis(120)
+                    } else {
+                        housekeeping::HIDDEN_INTERVAL
+                    };
+                    if view.last_think_scan.elapsed() >= every
+                        || view
+                            .completion_deadline()
+                            .is_some_and(|at| Instant::now() >= at)
+                    {
                         view.last_think_scan = Instant::now();
                         // Agent-wall HUD: accrue per-turn → session token totals off
                         // the live status line every tick (independent of the bell's
@@ -3327,7 +4749,7 @@ impl TerminalView {
                         // moves the "esc to interrupt" line off-screen and would trip
                         // a false agent-done bell. Only run the thinking-scan once the
                         // display offset has held steady for 200ms.
-                        let cur_offset = view.session.term.lock().grid().display_offset() as i32;
+                        let cur_offset = view.session.term.lock().display_offset() as i32;
                         let scroll_settled = match view.last_scroll_offset {
                             Some((off, since)) if off == cur_offset => {
                                 since.elapsed() > std::time::Duration::from_millis(200)
@@ -3339,8 +4761,9 @@ impl TerminalView {
                         };
                         if scroll_settled {
                             let thinking = view.agent_is_thinking();
-                            if thinking != view.gamba.is_thinking() {
-                                view.gamba.set_thinking(thinking);
+                            let was_thinking = view.agent_thinking == Some(true);
+                            view.agent_thinking = Some(thinking);
+                            if thinking != was_thinking {
                                 // repaint the mother bar: the tab 🤖 pulse
                                 // starts/stops on this edge
                                 cx.emit(AgentWorkingChanged);
@@ -3423,7 +4846,8 @@ impl TerminalView {
                             // the original thinking period was real (> 1200ms).
                             if !thinking && view.mode.is_agent() {
                                 if let Some(not_since) = view.not_thinking_since {
-                                    if not_since.elapsed() > std::time::Duration::from_millis(300) {
+                                    if not_since.elapsed() >= std::time::Duration::from_millis(300)
+                                    {
                                         // "Real" = the thinking spell itself lasted
                                         // > 1200ms (measure start→end, not start→now,
                                         // so the debounce delay doesn't skew it).
@@ -3479,7 +4903,7 @@ impl TerminalView {
                     // anything on screen moving.
                     let badge_now = crate::agent_badge(
                         view.needs_input,
-                        view.gamba.is_thinking(),
+                        view.agent_thinking == Some(true),
                         view.bell,
                         view.bell && view.bell_blocked,
                     );
@@ -3491,41 +4915,43 @@ impl TerminalView {
                         None => view.last_rail_badge = Some(badge_now),
                         Some(_) => {}
                     }
-                    if view.gamba.tick() {
-                        cx.notify();
-                    }
                     // reap a finished bell clip so ffplay zombies don't pile up
                     view.bell_player.reap();
-                    // debounced PTY resize: fire once the drag settles
-                    if let Some((grid, since)) = view.pending_grid {
-                        if since.elapsed() > std::time::Duration::from_millis(140) {
-                            view.pending_grid = None;
-                            view.grid = grid;
+                    // debounced PTY resize: fire once the drag settles. The
+                    // cell goes over in device pixels, as `sync_size` staged it.
+                    if let Some((size, since)) = view.pending_pty {
+                        if since.elapsed() >= housekeeping::RESIZE_SETTLE {
+                            view.pending_pty = None;
+                            view.grid = size.grid;
+                            view.cell_px = size.cell_px;
                             view.session
-                                .resize(grid, view.cell_w as u16, view.cell_h as u16);
+                                .resize(size.grid, size.cell_px.0, size.cell_px.1);
                             cx.notify();
                         }
                     }
                     // Stay at frame-rate only while something is actually
-                    // moving — CRT fx, or GAMBA reels/FX/rumble in motion.
-                    // A landed-but-thinking board falls through to the idle
-                    // cadence (no 30fps repaint of a static slot grid).
-                    view.fx.active() || view.gamba.is_animating()
+                    // moving — CRT effects. Agent status uses the idle cadence.
+                    // And never for a pane whose tab is not being shown: its
+                    // frames are not drawn, so thirty a second is all cost
+                    // (#964). The scans below still run at the idle cadence,
+                    // which is what keeps its badge and its bell timely.
+                    view.housekeeping_delay()
                 });
                 // `this` is weak: once this pane's TerminalView is dropped (close
                 // a pane / tab / window) the update errors — break so the ticker
                 // ends instead of waking forever on a dead entity. Without this,
                 // every closed pane leaks a permanent background loop and idle
                 // CPU climbs over a session.
-                let Ok(active) = active else { break };
-                let ms = if active { 33 } else { 150 };
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(ms))
-                    .await;
+                let Ok(delay) = delay else { break };
+                futures::select_biased! {
+                    _ = housekeeping_wakes.next().fuse() => {},
+                    _ = cx.background_executor().timer(delay).fuse() => {},
+                }
             }
         })
         .detach();
 
+        let shown = session.screen_wakeups.clone();
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64 ^ d.as_secs())
@@ -3536,10 +4962,12 @@ impl TerminalView {
             pane_id,
             guard,
             superseded: false,
+            off_limits: false,
             staged: restore.clone(),
             title: "shell".into(),
             name: None,
             logo,
+            launch_mark: restore.mark,
             dir_logo: None,
             tool_face: None,
             renaming: None,
@@ -3547,6 +4975,7 @@ impl TerminalView {
             grid,
             cell_w: 8.4,
             cell_h: 20.,
+            scale: 1.0,
             scroll_accum: 0.,
             selecting: false,
             autoscroll: 0.,
@@ -3583,26 +5012,58 @@ impl TerminalView {
             bell_blocked: false,
             bell_line: None,
             needs_input_line: None,
+            shown,
+            hidden_generation: 0,
+            #[cfg(test)]
+            output_events: 0,
+            housekeeping_wake: RefCell::new(housekeeping_wake),
+            #[cfg(test)]
+            housekeeping_ticks: 0,
+            #[cfg(test)]
+            foreground_polls: 0,
+            offscreen_dirty: false,
+            offscreen_flushed: Instant::now(),
+            live_rows_memo: std::cell::RefCell::new(None),
+            styled_memo: std::cell::RefCell::new(None),
+            grid_paint: cx.new(|_| grid_paint::GridPaint::default()),
+            last_frame_ask: Instant::now(),
+            frame_pending: false,
             deliverable: None,
+            access_ask: None,
+            handovers: crate::handover::Ledger::default(),
             bell_player: crate::bell::BellPlayer::default(),
             hdr_overflow: None,
             copy_hint: None,
+            wb_alt_hint: None,
             copy_flash: None,
+            said: None,
+            float: None,
+            float_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            doc_memo: std::cell::RefCell::new(None),
+            doc: None,
+            doc_opened_by: None,
+            notes_beside: (None, None),
+            doc_rect: std::rc::Rc::new(std::cell::Cell::new(None)),
+            doc_holding: false,
             was_focused: false,
-            pending_grid: None,
+            pending_pty: None,
+            cell_px,
             last_scroll_offset: None,
             seeking: false,
             theme_cache: RefCell::new(None),
             mirror_doc: RefCell::new(None),
-            gamba: crate::gamba::Reels::new(seed),
+            read_history: RefCell::new(None),
+            agent_thinking: None,
             last_think_scan: Instant::now()
                 .checked_sub(std::time::Duration::from_secs(1))
                 .unwrap_or_else(Instant::now),
             being_read: false,
+            lent: None,
             note,
             peeled: None,
             note_hover: None,
             kbd_sel: None,
+            pictures: Default::default(),
             think_since: None,
             not_thinking_since: None,
             tokens_banked: 0,
@@ -3637,6 +5098,7 @@ impl TerminalView {
             wb_dial_sent: None,
             wb_asked: Vec::new(),
             wb_model: None,
+            wb_running_model: None,
             wb_effort: None,
             wb_had_agent: false,
             wb_channel: crate::channel::State::new(),
@@ -3655,7 +5117,6 @@ impl TerminalView {
     /// Is the agent in this pane "thinking" right now? We scan the visible grid
     /// for the furniture Claude/Codex print while a turn runs — the footer's
     /// "esc to interrupt", or the spinner line above it.
-    /// `TD_GAMBA_DEMO=1` forces it on for demos/screenshots.
     ///
     /// The needles themselves live in [`crate::hud::rows_say_working`], which is
     /// also what the rail's parser asks. They were two lists until 2026-09-17,
@@ -3670,9 +5131,6 @@ impl TerminalView {
     /// still working at the buffer bottom, so detection must read the live screen
     /// regardless of how far the user has scrolled up.
     fn agent_is_thinking(&self) -> bool {
-        if std::env::var("TD_GAMBA_DEMO").is_ok() {
-            return true;
-        }
         if !self.mode.is_agent() {
             return false;
         }
@@ -3685,14 +5143,41 @@ impl TerminalView {
 
     /// Snapshot the live bottom screen as plain-text rows (top→bottom) — the same
     /// region [`TerminalView::agent_is_thinking`] scans. Feeds the HUD parser.
-    fn live_rows(&self) -> Vec<String> {
+    ///
+    /// Copied once per change and shared after (#964). Seventeen readers ask
+    /// for this — the thinking check, the status line, the prompt watch, the
+    /// bench — several of them on every tick of every pane's clock, and perf
+    /// on Parker's window found the copy itself (`Term::row_into`, `live_rows`)
+    /// taking about 30% of the main thread, nearly all of it re-reading screens
+    /// that had not changed since the last read.
+    fn live_rows(&self) -> std::rc::Rc<Vec<String>> {
+        let key = {
+            let term = self.session.term.lock();
+            (
+                self.session.content_generation(),
+                term.screen_lines(),
+                term.columns(),
+            )
+        };
+        if let Some((k, rows)) = self.live_rows_memo.borrow().as_ref() {
+            if *k == key {
+                return rows.clone();
+            }
+        }
+        let rows = std::rc::Rc::new(self.read_live_rows());
+        *self.live_rows_memo.borrow_mut() = Some((key, rows.clone()));
+        rows
+    }
+
+    /// The copy [`Self::live_rows`] shares: every cell of the live screen.
+    fn read_live_rows(&self) -> Vec<String> {
         let term = self.session.term.lock();
-        let grid = term.grid();
+        let grid = &*term;
         let rows = grid.screen_lines();
         let cols = grid.columns();
         let mut out = Vec::with_capacity(rows);
         for line in 0..rows as i32 {
-            let row = &grid[Line(line)];
+            let row = grid.row(Line(line));
             let mut s = String::with_capacity(cols);
             for col in 0..cols {
                 let cell = &row[Column(col)];
@@ -3712,7 +5197,7 @@ impl TerminalView {
     pub fn recent_lines(&self, n: usize) -> Vec<String> {
         let mut lines: Vec<String> = self
             .live_rows()
-            .into_iter()
+            .iter()
             .map(|r| r.trim_end().to_string())
             .filter(|r| !r.trim().is_empty())
             .collect();
@@ -3728,7 +5213,7 @@ impl TerminalView {
     /// blank input window.
     pub fn last_human_message(&self, max_lines: usize) -> Vec<String> {
         let term = self.session.term.lock();
-        let grid = term.grid();
+        let grid = &*term;
         let cols = grid.columns();
         let screen = grid.screen_lines() as i32;
         // BOUNDED, where it used to be the whole history.
@@ -3743,7 +5228,7 @@ impl TerminalView {
         // the prompt is found even when the agent's reply has scrolled it off the
         // visible screen (the whole point: an idle agent's last ask).
         let read = |line: i32| -> String {
-            let row = &grid[Line(line)];
+            let row = grid.row(Line(line));
             let mut s = String::with_capacity(cols);
             for col in 0..cols {
                 let cell = &row[Column(col)];
@@ -3827,6 +5312,35 @@ impl TerminalView {
         self.tokens_banked.saturating_add(self.turn_peak_tokens)
     }
 
+    /// Should a working poll open a new live-turn via the spinner fallback?
+    ///
+    /// `live_is_none` alone (the pre-existing rule) is a LEVEL check, and a
+    /// turn's own response surface can reach `Bench::apply` — retiring
+    /// `self.live` — before the turn has actually finished: the agent can
+    /// keep working after presenting it, e.g. to compose its closing reply.
+    /// A level check reads that as a brand new turn beginning on the very
+    /// next poll, opens a phantom `LiveTurn` for the tail end of the SAME
+    /// turn, and then has nothing left to retire it, since the one response
+    /// surface that turn will ever present already went by. The pane's
+    /// screen was never wrong here — it was continuously working the whole
+    /// time — only the `live()->None` reading was premature, and re-opening
+    /// on a level rather than an EDGE turned that momentary staleness into a
+    /// workbench stuck forever saying "no reply has landed" over a turn that
+    /// answered minutes ago.
+    ///
+    /// Requiring `!was_working` — the idle→working edge, not merely `working`
+    /// this poll — means a turn already in flight, however `self.live` reads,
+    /// is never mistaken for a new one: the fallback only fires for a spinner
+    /// that just started. `was_working` is `tok_was_working`, an edge bit
+    /// already tracked for token-banking one poll away; callers of THIS
+    /// function are responsible for resetting it on every path that can end
+    /// an agent's tenancy in a pane (see `set_mode`'s `departed` branch) —
+    /// a stale `true` surviving a departed agent silently disables this
+    /// fallback for whichever agent starts in that pane next.
+    fn should_open_a_new_turn(live_is_none: bool, was_working: bool) -> bool {
+        live_is_none && !was_working
+    }
+
     /// Drive HUD token accounting off the live status line: track the current
     /// turn's peak token count and, on the working→idle edge, bank it into the
     /// session total. Called (throttled) from the per-pane effects clock.
@@ -3845,8 +5359,9 @@ impl TerminalView {
             // neither. The latched message is offered as a headline because it
             // is the best this side has; the voice stays unknown, because a
             // screen cannot tell a person typing from a task notification
-            // being pasted in.
-            if self.bench.live().is_none() {
+            // being pasted in. See `should_open_a_new_turn`'s own doc for why
+            // this is gated on an edge rather than a level.
+            if Self::should_open_a_new_turn(self.bench.live().is_none(), self.tok_was_working) {
                 let headline = self.wb_asked.first().cloned();
                 self.bench
                     .turn_seen_working(headline, crate::surfacefeed::now_ms());
@@ -3870,7 +5385,7 @@ impl TerminalView {
 
     /// Is the agent in this pane actively working RIGHT NOW? Reads the cached
     /// thinking state the 120ms effects-clock scan maintains — the same signal
-    /// that rolls the GAMBA reels and arms the bell edge — so the mother-bar 🤖
+    /// that arms the bell edge — so the mother-bar 🤖
     /// pulse can ask every frame for free. Flips are announced via
     /// [`AgentWorkingChanged`].
     /// This pane's screen rect as it was last painted, in window coordinates.
@@ -3881,7 +5396,7 @@ impl TerminalView {
     }
 
     pub fn agent_working(&self) -> bool {
-        self.mode.is_agent() && self.gamba.is_thinking()
+        self.mode.is_agent() && self.agent_thinking == Some(true)
     }
 
     /// Is the agent stopped WAITING ON A HUMAN right now (picker / permission
@@ -3896,17 +5411,232 @@ impl TerminalView {
         self.bell && self.bell_blocked
     }
 
+    /// The pictures on this pane's screen, as elements to lay over the grid:
+    /// those under the text (a negative z), then those over it.
+    ///
+    /// Positioned in the grid's own cells: the core reports each picture's
+    /// cell and its size in device pixels, and this converts with the ratio
+    /// between the cell the pane lays out and the cell it told the core.
+    /// Nothing is drawn while the rows are permuted (the anchor-to-top
+    /// inverted read) or in crawl, where a picture would have no one cell to
+    /// sit in; the pictures are still held and come back with the plain read.
+    fn picture_elements(
+        &mut self,
+        pad: (f32, f32),
+        crawl: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Vec<gpui::AnyElement>, Vec<gpui::AnyElement>) {
+        let (cell_px_w, cell_px_h) = self.cell_px;
+        let placed = if crawl || self.paint_inverted || cell_px_w == 0 || cell_px_h == 0 {
+            Vec::new()
+        } else {
+            // Read under the terminal's lock; convert after letting it go. The
+            // lock is the read loop's too, and turning a large picture into a
+            // texture takes long enough to hold up the program's output.
+            let wanted: Vec<_> = {
+                let term = self.session.term.lock();
+                let mut fetched = std::collections::HashSet::new();
+                term.pictures()
+                    .into_iter()
+                    .map(|picture| {
+                        let key = (picture.key, picture.crop.map(f32::to_bits));
+                        let data = (!self.pictures.contains_key(&key) && fetched.insert(key))
+                            .then(|| term.picture_data(picture.key))
+                            .flatten();
+                        (key, picture, data)
+                    })
+                    .collect()
+            };
+            let mut placed = Vec::with_capacity(wanted.len());
+            for (key, picture, data) in wanted {
+                let texture = match self.pictures.get(&key) {
+                    Some(texture) => texture.clone(),
+                    None => {
+                        let Some(texture) =
+                            data.and_then(|data| picture_texture(data, picture.crop))
+                        else {
+                            continue;
+                        };
+                        self.pictures.insert(key, texture.clone());
+                        texture
+                    }
+                };
+                placed.push((key, picture, texture));
+            }
+            placed
+        };
+        // A texture whose picture has left the screen goes now, not later.
+        let gone: Vec<_> = self
+            .pictures
+            .keys()
+            .filter(|key| !placed.iter().any(|(k, ..)| k == *key))
+            .copied()
+            .collect();
+        for key in gone {
+            if let Some(texture) = self.pictures.remove(&key) {
+                cx.drop_image(texture, Some(window));
+            }
+        }
+        let (sx, sy) = (
+            self.cell_w / cell_px_w.max(1) as f32,
+            self.cell_h / cell_px_h.max(1) as f32,
+        );
+        let (mut under, mut over) = (Vec::new(), Vec::new());
+        for (_, picture, texture) in placed {
+            let row = picture.line + self.paint_offset as i32;
+            let left = pad.0 + picture.column as f32 * self.cell_w + picture.offset.0 * sx;
+            let top = pad.1 + row as f32 * self.cell_h + picture.offset.1 * sy;
+            let el = gpui::img(gpui::ImageSource::Render(texture))
+                .absolute()
+                .left(px(left))
+                .top(px(top))
+                .w(px(picture.size.0 * sx))
+                .h(px(picture.size.1 * sy))
+                .into_any_element();
+            if picture.z < 0 {
+                under.push(el);
+            } else {
+                over.push(el);
+            }
+        }
+        (under, over)
+    }
+
+    /// Forget every picture this pane holds — the textures here and the images
+    /// in the core. Called when its tab stops being shown.
+    pub fn forget_pictures(&mut self, cx: &mut Context<Self>) {
+        let held = {
+            let mut term = self.session.term.lock();
+            let held = term.pictures().len();
+            term.forget_pictures();
+            held
+        };
+        let textures = self.pictures.len();
+        for (_, texture) in self.pictures.drain() {
+            cx.drop_image(texture, None);
+        }
+        // What a hidden tab let go of, for a window being checked by script:
+        // there is no pointer to switch tabs with there, and no other way to
+        // see that a picture went.
+        if std::env::var_os("TD_PICTUREDEBUG").is_some() && (held > 0 || textures > 0) {
+            eprintln!("[pictures] hidden: forgot {held} picture(s), dropped {textures} texture(s)");
+        }
+    }
+
+    /// Ask for a frame for something that changed on this pane's screen —
+    /// now if the pane is shown, otherwise at most every [`OFFSCREEN_REFRESH`].
+    ///
+    /// The workspace reads every pane while it draws (tab badges, the rail),
+    /// so gpui redraws the WHOLE window whenever any pane notifies, shown or
+    /// not. Twenty-five agents' spinners in tabs nobody was looking at kept one
+    /// core busy redrawing the tab somebody was (#964). Edges — a mode change,
+    /// a bell, an agent starting or stopping — still notify at once from their
+    /// own sites; only the stream of screen updates waits.
+    ///
+    /// A shown pane asks for at most one frame per [`OUTPUT_FRAME_GAP`]: a
+    /// frame redraws the whole window, and an agent streaming into the tab
+    /// being watched asked for every one the panel could show. What arrives
+    /// inside the gap is drawn when it ends, so nothing is lost and nothing
+    /// waits longer than one gap. Output answering a keystroke does not come
+    /// through here — see [`Self::frame_now`].
+    pub(crate) fn repaint(&mut self, cx: &mut Context<Self>) {
+        if !self.shown.load(std::sync::atomic::Ordering::Relaxed) {
+            self.offscreen_dirty = true;
+            return;
+        }
+        let wait = match frame_ask(self.last_frame_ask.elapsed(), self.frame_pending) {
+            FrameAsk::Now => {
+                self.frame_now(cx);
+                return;
+            }
+            FrameAsk::AlreadyScheduled => return,
+            FrameAsk::After(wait) => wait,
+        };
+        self.frame_pending = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            let _ = this.update(cx, |view: &mut TerminalView, cx| {
+                if view.frame_pending {
+                    view.frame_now(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Ask for a frame now, and start the next [`OUTPUT_FRAME_GAP`] from here.
+    fn frame_now(&mut self, cx: &mut Context<Self>) {
+        self.frame_pending = false;
+        self.last_frame_ask = Instant::now();
+        cx.notify();
+    }
+
+    /// The hidden half of [`Self::repaint`]: draw what changed while hidden,
+    /// once [`OFFSCREEN_REFRESH`] has passed. Called by the pane's own clock.
+    fn flush_offscreen(&mut self, cx: &mut Context<Self>) {
+        if !self.shown.load(std::sync::atomic::Ordering::Relaxed) {
+            let generation = self.session.content_generation();
+            if generation != self.hidden_generation {
+                self.hidden_generation = generation;
+                self.offscreen_dirty = true;
+            }
+        }
+        if self.offscreen_dirty && self.offscreen_flushed.elapsed() >= OFFSCREEN_REFRESH {
+            self.offscreen_dirty = false;
+            self.offscreen_flushed = Instant::now();
+            cx.notify();
+        }
+    }
+
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
         match event {
             TermEvent::Wakeup => {
-                if let Some(t) = self.pending_input.take() {
+                #[cfg(test)]
+                {
+                    self.output_events += 1;
+                }
+                let typed = self.pending_input.take();
+                if let Some(t) = typed {
                     if self.latency_log {
                         eprintln!("td_latency_us={}", t.elapsed().as_micros());
                     }
                 }
-                cx.notify();
+                // The echo of a keystroke is drawn at once — typing is the one
+                // thing a person feels a frame late. Everything else streams
+                // through the capped path.
+                if typed.is_some() && self.shown.load(std::sync::atomic::Ordering::Relaxed) {
+                    self.frame_now(cx);
+                } else {
+                    self.repaint(cx);
+                }
             }
             TermEvent::PtyWrite(text) => self.session.notifier.notify(text.into_bytes()),
+            // A program asking for the text area in pixels (`CSI 14 t`). Only a
+            // terminal this window owns gets here: on a replica the host has
+            // answered and `term::EventProxy` swallows the question. `CSI 16 t`
+            // is not heard at all in a window-owned pane — vte drops it, and the
+            // scanner that hears it runs in the host's tee.
+            TermEvent::TextAreaSizeRequest(format) => self
+                .session
+                .notifier
+                .notify(format(self.pty_window_size()).into_bytes()),
+            // A program asking what colour something is drawn in: the
+            // background most often, to choose light or dark styling. Codex
+            // asks for the foreground and the background as it starts, and
+            // waits 100 ms for replies that never came.
+            //
+            // Answered HERE in both modes, which is why a replica forwards
+            // this question instead of swallowing it. The host has no theme
+            // and answers nothing; this pane is the one place that knows the
+            // colours it draws. The reply goes back through the notifier the
+            // way a hosted pane's keystrokes do, so no host has to be
+            // restarted for it.
+            TermEvent::ColorRequest(index, format) => {
+                if let Some(c) = asked_colour(index, &self.resolved_theme(cx)) {
+                    self.session.notifier.notify(format(rgb8(c)).into_bytes());
+                }
+            }
             TermEvent::Title(title) => {
                 self.title = title;
                 cx.notify();
@@ -3969,8 +5699,19 @@ impl TerminalView {
     /// size is fixed (the global scrubber now sizes the menu bar, not the grid),
     /// so this always measures at the theme's native cell/font metrics.
     fn sync_size(&mut self, th: &Theme, window: &mut Window) {
-        self.cell_h = th.cell_h;
-        let font = grid_font(th, FontWeight::NORMAL);
+        // The row pitch gpui actually draws, not the theme's number. Every row
+        // is a div of this height, and gpui rounds an authored height to whole
+        // device pixels before layout; at a fractional cell and a scale like
+        // 1.6 each row lands a fraction of a pixel lower than `row × cell_h`
+        // says. Everything that turns a row into a position — the click's
+        // hit-test, the Alt chip's box, where a floating document opens, the
+        // grid fit — reads `cell_h`, so it has to be the laid-out value, or
+        // they drift up from the text by half a row by the bottom of a tall pane.
+        self.scale = window.scale_factor();
+        self.cell_h = laid_out_length(th.cell_h, self.scale);
+        // The face alone: resolving a font that carries the fallback chain is
+        // what loads every family in it, and 'M' is the primary's own glyph.
+        let font = grid_face(th, FontWeight::NORMAL);
         if let Ok(w) = window.text_system().advance(
             window.text_system().resolve_font(&font),
             px(th.font_size),
@@ -3995,19 +5736,30 @@ impl TerminalView {
                 )
             }
         };
-        let (pad_x, pad_y) = grid_pad(tube_w, tube_h, k1, k2);
+        let (pad_x, pad_y) = grid_pad_drawn(tube_w, tube_h, k1, k2, self.scale);
         let (avail_w, avail_h) = (tube_w - pad_x * 2., tube_h - pad_y * 2.);
         let cols = ((avail_w / self.cell_w).floor() as usize).max(10);
         let rows = ((avail_h / self.cell_h).floor() as usize).max(3);
-        let target = term::GridSize { cols, rows };
-        if target.cols != self.grid.cols || target.rows != self.grid.rows {
-            // stage it; the effects clock applies once the size stops moving
-            match self.pending_grid {
-                Some((g, _)) if g.cols == cols && g.rows == rows => {}
-                _ => self.pending_grid = Some((target, Instant::now())),
-            }
-        } else {
-            self.pending_grid = None;
+        // The cell in device pixels: what a program drawing an image into this
+        // terminal actually has, and what `14 t` and `16 t` report. The scale
+        // is read here because this runs with the window every frame, and the
+        // resize ticker that applies it has none.
+        let target = PtySize {
+            grid: term::GridSize { cols, rows },
+            cell_px: crate::ptyscan::device_cell(self.cell_w, self.cell_h, window.scale_factor()),
+        };
+        self.stage_pty_size(target);
+    }
+
+    /// The size this pane's pseudoterminal was last told, in the shape a size
+    /// question's formatter takes. It is the kernel's winsize, so an answer
+    /// built from it agrees with what `TIOCGWINSZ` says.
+    fn pty_window_size(&self) -> WindowSize {
+        WindowSize {
+            num_lines: self.grid.rows as u16,
+            num_cols: self.grid.cols as u16,
+            cell_width: self.cell_px.0,
+            cell_height: self.cell_px.1,
         }
     }
 
@@ -4047,7 +5799,7 @@ impl TerminalView {
         );
         // Same frame the renderer laid the grid into, so a click maps to the
         // cell shown under it (the grid starts at pad_x/pad_y inside the tube).
-        let (pad_x, pad_y) = grid_pad(bw, bh, k1, k2);
+        let (pad_x, pad_y) = grid_pad_drawn(bw, bh, k1, k2, self.scale);
         let fx = (lx * bw - pad_x) / self.cell_w;
         let y = ((ly * bh - pad_y) / self.cell_h).max(0.) as usize;
         let col = (fx.max(0.) as usize).min(self.grid.cols.saturating_sub(1));
@@ -4129,111 +5881,92 @@ impl TerminalView {
         let (row, col, side) = self.viewport_cell(pos);
         let row = self.paint_row_to_grid_row(row);
         (
-            viewport_to_point(display_offset, TermPoint::new(row, Column(col))),
+            viewport_to_point(
+                display_offset,
+                TermPoint::new(Line(row as i32), Column(col)),
+            ),
             side,
         )
     }
 
-    /// The shift-clickable link under a screen point, if any: read the clicked
-    /// row out of the visible grid, scan around the column, and resolve a path
-    /// against the pane's cwd (only returning paths that actually exist).
-    /// Read grid rows as styled text over an arbitrary line range, INCLUDING
-    /// scrollback. `first`/`last` are alacritty grid line indices, where negative
-    /// lines are history — `grid.topmost_line()` is the oldest row retained.
+    /// Resolve the Alt chip for a pointer position: what an Alt+click there
+    /// would do, and the painted rows to frame. See [`alt_hint`] for the rule.
     ///
-    /// This is the scrollback counterpart to [`Self::styled_lines`], which can only
-    /// ever see the visible viewport because it walks `display_iter`. Colour comes
-    /// from the cells themselves, so history keeps the ANSI colours the program
-    /// emitted; TD's own overlays (the syntax pass, human-input tinting, selection,
-    /// cursor) are viewport-only and deliberately not reproduced here — they are
-    /// decoration on the live screen, not properties of the text.
-    fn grid_rows_in(&self, first: i32, last: i32, th: &Theme) -> Vec<DocLine> {
-        let term = self.session.term.lock();
-        let grid = term.grid();
-        let cols = self.grid.cols;
-        let mut out = Vec::with_capacity((last - first + 1).max(0) as usize);
-        for l in first..=last {
-            let row = &grid[alacritty_terminal::index::Line(l)];
-            let mut text = String::with_capacity(cols);
-            let mut runs: Vec<TextRun> = Vec::new();
-            for c in 0..cols {
-                let cell = &row[alacritty_terminal::index::Column(c)];
-                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    continue;
-                }
-                let ch = if cell.c == '\0' { ' ' } else { cell.c };
-                let color = ansi_to_hsla(cell.fg, th, th.text);
-                let len = ch.len_utf8();
-                text.push(ch);
-                // coalesce identical adjacent styles so a row is a handful of runs
-                match runs.last_mut() {
-                    Some(prev) if prev.color == color => prev.len += len,
-                    _ => runs.push(TextRun {
-                        len,
-                        font: grid_font(th, FontWeight::default()),
-                        color,
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
-                    }),
-                }
-            }
-            out.push(DocLine::new(text, runs));
+    /// `doc` is the document under the pointer when a bare Alt is held — the
+    /// caller resolves it, because the click needs it anyway and Ctrl+Alt must
+    /// not offer "open here" for a click that will not open here. `None`
+    /// whenever nothing should be offered: off the terminal face, over the
+    /// floating square (a press there is the square's), or on nothing.
+    /// Callers gate on Alt being held.
+    fn alt_hint_at(
+        &self,
+        pos: gpui::Point<Pixels>,
+        doc: Option<crate::docopen::DocTarget>,
+    ) -> Option<CopyHint> {
+        if self.bench.face() != crate::workbench::Face::Terminal {
+            return None;
         }
-        out
+        if self.float_hit(pos).is_some() {
+            return None;
+        }
+        // Alt-screen apps (vim, htop) lay their rows out as a canvas, not as
+        // flowed text, so "rejoin what the width broke" means nothing there.
+        // An agent drawing fullscreen is on the alternate screen too — Claude
+        // Code with `"tui": "fullscreen"` always is — but what it draws is a
+        // conversation, flowed behind a margin, and its commands copy as they
+        // do on the normal screen. Treating it as a canvas switched the chip
+        // off in every Claude pane the day that setting went on.
+        let alt_screen = !self.mode.is_agent()
+            && self
+                .session
+                .term
+                .lock()
+                .mode()
+                .contains(TermMode::ALT_SCREEN);
+        let (prow, _, _) = self.viewport_cell(pos);
+        // A drag-selection owns the pointer, so no line is offered for a copy
+        // while there is one — a document under the pointer still is, since
+        // Alt+click opens it whatever is selected.
+        let line = if alt_screen || self.selecting || self.has_selection() {
+            None
+        } else {
+            let grow = self.paint_row_to_grid_row(prow);
+            self.grid_logical_lines()
+                .into_iter()
+                .find(|l| l.first <= grow && grow <= l.last)
+        };
+        // A document's frame takes in every row its path was broken across. The
+        // copy reflow keeps a Claude reply's indented rows apart, so the logical
+        // line alone would frame one half of the path the click is about to open.
+        let rows = line.as_ref().map(|line| {
+            let link = doc
+                .as_ref()
+                .and_then(|_| self.link_span_under(pos))
+                .map_or((line.first, line.last), |(_, a, b)| (a, b));
+            (line.first.min(link.0), line.last.max(link.1))
+        });
+        // Map the GRID span back to painted rows. The paint transform can be an
+        // arbitrary permutation (anchor-to-top reverses in groups), so invert it
+        // by scanning every row rather than assuming the identity mapping.
+        let span = line.as_ref().zip(rows).and_then(|(line, (first, last))| {
+            let painted: Vec<usize> = (0..self.grid.rows)
+                .filter(|p| {
+                    let g = self.paint_row_to_grid_row(*p);
+                    first <= g && g <= last
+                })
+                .collect();
+            Some((line.text.as_str(), *painted.first()?, *painted.last()?))
+        });
+        alt_hint(alt_screen, prow, span, doc)
     }
 
     /// Read the whole visible grid as characters plus per-row soft-wrap flags,
     /// both in grid-viewport order. One term lock, one `display_iter` pass.
     ///
     /// Rows are space-padded to the full column count — that is what
-    /// `stitch_wrapped_line` wants, since it maps a click column into the
-    /// concatenated line. Anything doing width arithmetic (the copy reflow) must
-    /// trim the padding first; see [`grid_logical_lines`].
-    /// Resolve the copy affordance for a pointer position: the logical line under
-    /// it, if that line reads as a command, plus the painted rows it covers.
-    /// `None` whenever nothing should be offered. Callers gate on Alt being held.
-    fn copy_hint_at(&self, pos: gpui::Point<Pixels>) -> Option<CopyHint> {
-        // A drag-selection owns the pointer — never compete with it.
-        if self.selecting || self.has_selection() {
-            return None;
-        }
-        // Alt-screen apps (vim, htop) lay their rows out as a canvas, not as
-        // flowed text, so "rejoin what the width broke" means nothing there.
-        if self
-            .session
-            .term
-            .lock()
-            .mode()
-            .contains(TermMode::ALT_SCREEN)
-        {
-            return None;
-        }
-        let (prow, _, _) = self.viewport_cell(pos);
-        let grow = self.paint_row_to_grid_row(prow);
-        let line = self
-            .grid_logical_lines()
-            .into_iter()
-            .find(|l| l.first <= grow && grow <= l.last)?;
-        if !is_copyable_command(&line.text) {
-            return None;
-        }
-        // Map the GRID span back to painted rows. The paint transform can be an
-        // arbitrary permutation (anchor-to-top reverses in groups), so invert it
-        // by scanning every row rather than assuming the identity mapping.
-        let painted: Vec<usize> = (0..self.grid.rows)
-            .filter(|p| {
-                let g = self.paint_row_to_grid_row(*p);
-                line.first <= g && g <= line.last
-            })
-            .collect();
-        Some(CopyHint {
-            text: line.text,
-            first_paint: *painted.first()?,
-            last_paint: *painted.last()?,
-        })
-    }
-
+    /// [`wrapped_link_candidates`] wants, since a row filled to its last cell is
+    /// how it tells a broken token. Anything doing width arithmetic (the copy
+    /// reflow) must trim the padding first; see [`grid_logical_lines`].
     fn grid_snapshot(&self) -> (Vec<Vec<char>>, Vec<bool>) {
         let term = self.session.term.lock();
         let content = term.renderable_content();
@@ -4281,23 +6014,228 @@ impl TerminalView {
     }
 
     fn link_under(&self, pos: gpui::Point<Pixels>) -> Option<String> {
+        self.link_span_under(pos).map(|(target, _, _)| target)
+    }
+
+    /// What a click at `pos` opens, and the grid rows its link covers. A path
+    /// is resolved against the pane's cwd; see [`pick_link`] for which of the
+    /// readings of a broken link is taken.
+    fn link_span_under(&self, pos: gpui::Point<Pixels>) -> Option<(String, usize, usize)> {
+        let cwd = self.runtime().cwd;
+        pick_link(&self.link_readings_under(pos), cwd.as_deref(), |p| {
+            std::path::Path::new(p).exists()
+        })
+    }
+
+    /// The URL or path token under the pointer, as the grid spells it, before
+    /// a path is resolved against the pane's cwd and checked on disk. Kept
+    /// apart from [`Self::link_under`] so the `[doc-hit]` trace can tell a
+    /// click on no token from a click on a path that did not resolve.
+    fn link_token_under(&self, pos: gpui::Point<Pixels>) -> Option<Link> {
+        self.link_readings_under(pos)
+            .into_iter()
+            .next()
+            .map(|c| c.link)
+    }
+
+    /// Every reading of the link under the pointer, the most-joined first.
+    ///
+    /// A cell carrying an OSC 8 link to a file on this machine is read as that
+    /// file and nothing else. The program said which file it meant, so when
+    /// that file is gone the click opens nothing rather than a guess from the
+    /// text. Any other hyperlink leaves the text to speak, as before. With no
+    /// hyperlink at all, a bare name is offered last, against the pane's
+    /// folder.
+    fn link_readings_under(&self, pos: gpui::Point<Pixels>) -> Vec<LinkSpan> {
         let (vrow, vcol, _) = self.viewport_cell(pos);
         // Map the painted/visual row back to the grid viewport row it shows
         // (identity in the default un-anchored path; inverts the anchor-to-top
         // flip + any bottom-anchor offset otherwise).
         let vrow = self.paint_row_to_grid_row(vrow);
-        // Read the whole visible grid plus per-row soft-wrap flags, then stitch
-        // the clicked row to its neighbours so a URL/path wrapped across rows is
-        // recognised as one token (see `stitch_wrapped_line`).
+        let cell = self.cell_link_at(vrow, vcol);
+        if let CellLink::File(file) = cell {
+            return vec![file];
+        }
+        // Read the whole visible grid plus per-row soft-wrap flags, so a
+        // URL/path broken across rows is read as one token.
         let (grid, wraps) = self.grid_snapshot();
-        let (line, col) = stitch_wrapped_line(&grid, &wraps, vrow, vcol);
-        match link_at(&line, col)? {
-            Link::Url(u) => Some(u),
-            Link::Path(p) => {
-                let cwd = self.runtime().cwd;
-                resolve_path(&p, cwd.as_deref()).filter(|a| std::path::Path::new(a).exists())
+        let mut readings = wrapped_link_candidates(&grid, &wraps, vrow, vcol);
+        if cell == CellLink::Text {
+            readings.extend(bare_name_reading(&grid, vrow, vcol));
+        }
+        readings
+    }
+
+    /// The OSC 8 link on grid row `vrow`, column `vcol`, and the rows it
+    /// runs across. One term lock, held only while the cells are asked.
+    fn cell_link_at(&self, vrow: usize, vcol: usize) -> CellLink {
+        let term = self.session.term.lock();
+        let offset = term.display_offset() as i32;
+        let cols = self.grid.cols;
+        let at =
+            |r: usize, c: usize| term.hyperlink(TermPoint::new(Line(r as i32 - offset), Column(c)));
+        let Some(link) = at(vrow, vcol) else {
+            return CellLink::Text;
+        };
+        let (first, last) = hyperlink_rows(vrow, self.grid.rows, |r| {
+            (0..cols).any(|c| at(r, c).as_ref() == Some(&link))
+        });
+        hyperlink_reading(link.uri(), this_host(), first, last)
+    }
+
+    /// Alt+click on a chip armed for a copy: the command line goes to both
+    /// clipboards, and the chip says so until the pointer next moves.
+    fn copy_chip(&mut self, hint: CopyHint, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(hint.text.clone()));
+        cx.write_to_primary(ClipboardItem::new_string(hint.text.clone()));
+        self.copy_flash = Some(Instant::now());
+        self.copy_hint = Some(hint);
+        cx.notify();
+    }
+
+    /// ↪ send to agent: a brief's notes map, pasted into this pane's prompt
+    /// and NOT sent. Row #9 of `docs/security/terminal-input.md`.
+    ///
+    /// Started only by a press on ↪ in a brief's notes bar, which the
+    /// workspace routes here from the pane the brief is on — the one way a
+    /// pointer gesture in one pane reaches the prompt beside it. The bytes are
+    /// [`notes_paste`]'s: a bracketed paste with no carriage return and no
+    /// escape inside it, so the person reads the notes in the prompt and
+    /// presses Enter themselves. Answers where the map went and how many
+    /// characters, or why nothing did.
+    ///
+    /// On the WORKBENCH face the map goes into the bench's composer instead,
+    /// as a draft, and nothing reaches the terminal at all: the composer's own
+    /// send is the write, when the person makes it. That is where a brief
+    /// opened from a bench card sits — floating over the bench — and a ↪
+    /// that answered "turn it to its prompt first" there broke the one loop
+    /// the Workbench asks agents to build briefs for.
+    pub(crate) fn send_notes(
+        &mut self,
+        map: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<NotesLanded, String> {
+        if !self.mode.is_agent() {
+            return Err("the pane beside this brief is not running an agent now".into());
+        }
+        match self.bench.face() {
+            crate::workbench::Face::Terminal => {}
+            crate::workbench::Face::Workbench => {
+                self.bench_type(map, cx);
+                return Ok(NotesLanded::Composer(map.chars().count()));
+            }
+            crate::workbench::Face::Document => {
+                return Err(
+                    "the agent's pane is showing a document, so nobody would see the notes land — turn it to its prompt or its bench first"
+                        .into(),
+                );
             }
         }
+        let bracketed = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::BRACKETED_PASTE);
+        let bytes = notes_paste(map, bracketed).ok_or_else(|| {
+            "the agent's prompt is not taking a paste right now, and typed without one every line of the map would press Enter — ⎘ copy map instead"
+                .to_string()
+        })?;
+        self.session.notifier.notify(bytes);
+        Ok(NotesLanded::Prompt(map.chars().count()))
+    }
+
+    /// Put a [`Said`] chip up on `row`, and take it down after [`SAID_FOR`]
+    /// unless something newer has been said by then.
+    fn say(&mut self, text: String, row: Option<usize>, cx: &mut Context<Self>) {
+        let at = Instant::now();
+        self.said = Some(Said { text, row, at });
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SAID_FOR).await;
+            let _ = this.update(cx, |view, cx| {
+                if view.said.as_ref().is_some_and(|s| s.at == at) {
+                    view.said = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The screen (the warp tube) in window pixels, once it has been laid out.
+    pub(crate) fn tube_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        let b = (*self.content_bounds.lock().ok()?)?;
+        Some((
+            f32::from(b.origin.x),
+            f32::from(b.origin.y),
+            f32::from(b.size.width),
+            f32::from(b.size.height),
+        ))
+    }
+
+    /// The pointer is no longer over this pane, so whatever it lit here goes
+    /// out: the square's strip controls, a brief's note buttons, the bench's
+    /// chips and its drop target, the peel corner.
+    ///
+    /// Every one of those is set from [`Self::on_mouse_move`], and gpui runs
+    /// that only while the pane is hovered. The move that leaves the pane is
+    /// the one move the pane never hears, so the last control under the
+    /// pointer stayed lit until the pointer came back. Called from
+    /// [`Self::pointer_leave_hook`]. Notifies only when something was lit;
+    /// each document repaints itself only if a note button goes out.
+    fn pointer_left(&mut self, cx: &mut Context<Self>) {
+        let mut out = false;
+        if let Some(float) = self.float.as_mut() {
+            out |= float.hover.take().is_some();
+        }
+        out |= self.note_hover.take().is_some();
+        out |= self.wb_hover.take().is_some();
+        out |= std::mem::take(&mut self.wb_drop);
+        out |= std::mem::take(&mut self.wb_pointer) != crate::workbench::Pointer::Arrow;
+        let float_doc = self.float.as_ref().map(|f| f.view.clone());
+        let face_doc = self.doc_on_face().map(|d| d.view.clone());
+        for view in [float_doc, face_doc].into_iter().flatten() {
+            view.update(cx, |v, cx| v.hover(None, cx));
+        }
+        if out {
+            cx.notify();
+        }
+    }
+
+    /// Hears the pointer leave this pane, which the pane's own
+    /// `on_mouse_move` never can.
+    ///
+    /// There are two ways out. A move to anywhere this hitbox is not hovered:
+    /// a neighbouring pane, the left bar, a menu drawn over the pane. And the
+    /// pointer leaving the window, which gpui passes on as its own event with
+    /// no move and no new position, so no hitbox test would notice it. Both
+    /// listen in the capture phase, ahead of any bubble handler that stops
+    /// the event (the window's resize edges do).
+    ///
+    /// It is the root's LAST child, so its hitbox has the root's bounds and
+    /// lies above every child's. Anything that stops it being hovered stops
+    /// the root being hovered too, so it acts only on a move the root's own
+    /// handler did not get, and the two never both act on one move.
+    fn pointer_leave_hook(&self, weak: gpui::WeakEntity<Self>) -> impl IntoElement {
+        canvas(
+            |bounds, window, _cx| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
+            move |_bounds, hitbox, window, _cx| {
+                let moved = weak.clone();
+                window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
+                    if phase == gpui::DispatchPhase::Capture && !hitbox.is_hovered(window) {
+                        let _ = moved.update(cx, |view, cx| view.pointer_left(cx));
+                    }
+                });
+                window.on_mouse_event(move |_: &gpui::MouseExitEvent, phase, _window, cx| {
+                    if phase == gpui::DispatchPhase::Capture {
+                        let _ = weak.update(cx, |view, cx| view.pointer_left(cx));
+                    }
+                });
+            },
+        )
+        .absolute()
+        .inset_0()
     }
 
     /// While drag-selecting, the signed scroll rate (lines/tick) for cursor
@@ -4347,11 +6285,9 @@ impl TerminalView {
                             .term
                             .lock()
                             .scroll_display(Scroll::Delta(lines));
-                        let offset = view.session.term.lock().grid().display_offset();
+                        let offset = view.session.term.lock().display_offset();
                         let (point, side) = view.cell_at(view.last_mouse, offset);
-                        if let Some(sel) = view.session.term.lock().selection.as_mut() {
-                            sel.update(point, side);
-                        }
+                        view.session.term.lock().update_selection(point, side);
                         cx.notify();
                     }
                     true
@@ -4372,7 +6308,7 @@ impl TerminalView {
     fn send(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
         {
             let mut term = self.session.term.lock();
-            term.selection = None;
+            term.clear_selection();
             term.scroll_display(Scroll::Bottom);
         }
         // a real keystroke ends any keyboard selection in progress
@@ -4448,10 +6384,22 @@ impl TerminalView {
         let m = &ks.modifiers;
         let plain = !m.control && !m.alt && !m.platform;
         let key = ks.key.as_str();
-        if key == "escape" {
+        // Escape and Return both mean DONE. Folding here folds every other
+        // window on this workspace too: the hotkey raised the overlay in all of
+        // them, and one left standing beside a closed one is what the second
+        // press of the hotkey could never bring back into step.
+        if key == "escape" || (plain && key == "enter") {
             theme::set_paint_mode(cx, false);
+            crate::ctl::fold_paint_on_my_workspace();
             cx.notify();
-            return PaintKey::Bubble;
+            // Escape bubbles so the workspace closes anything of its own
+            // underneath; Return stops here — it must reach neither the
+            // terminal nor the bench composer behind the cards.
+            return if key == "escape" {
+                PaintKey::Bubble
+            } else {
+                PaintKey::Took
+            };
         }
         if !plain {
             // Modified chords still pass, so the overlay is never a trap.
@@ -4523,8 +6471,9 @@ impl TerminalView {
         }
         // Anything else printable is swallowed rather than typed: the overlay is
         // modal, and a miss should be a no-op, not a keystroke into whatever is
-        // running behind it.
-        if key.chars().count() == 1 {
+        // running behind it. The named keys that type (tab, space, backspace,
+        // delete) are the same miss, and `keylayer` routes them here for it.
+        if key.chars().count() == 1 || crate::keylayer::PAINT_SWALLOWS.contains(&key) {
             return PaintKey::Took;
         }
         PaintKey::Pass
@@ -4572,7 +6521,10 @@ impl TerminalView {
         // The note is not lost, it is one keystroke away on the face where it
         // belongs, and the `Corner` machinery built to place it here went with
         // this decision rather than staying as an option nobody takes.
-        if self.bench.face() == crate::workbench::Face::Workbench {
+        //
+        // Nor on a document, for the same reason turned round: the note is
+        // the terminal's, and a page being read is not where it belongs.
+        if self.bench.face() != crate::workbench::Face::Terminal {
             return None;
         }
         let note = self.note.as_ref()?;
@@ -4742,6 +6694,24 @@ impl TerminalView {
         let Some(edit) = note.edit.as_mut() else {
             return false;
         };
+        // A paste is the paper's, by the same three chords a document note
+        // takes. ctrl+shift+v used to stay the pane's, and the pane typed the
+        // clipboard into the shell under the note; ctrl+v and shift+insert
+        // reached here and then vanished, because `apply` drops ctrl chords
+        // and has no arm for insert. The paper draws one line, so the paste
+        // arrives as one: typing can never put a line break here, since Enter
+        // posts the note.
+        let m = &ks.modifiers;
+        if crate::workbench::is_paste_chord(ks.key.as_str(), m.control, m.shift) {
+            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                edit.buf.insert_capped(
+                    &crate::workbench::pasted_as_one_line(&text),
+                    crate::sticky::MAX_CHARS,
+                );
+            }
+            cx.notify();
+            return true;
+        }
         match crate::sticky::press(true, ks.key.as_str()) {
             crate::sticky::Press::Pass => return false,
             crate::sticky::Press::Post => self.sticky_commit(cx),
@@ -4925,7 +6895,7 @@ impl TerminalView {
                 cx.notify();
                 Handled::Declined
             }
-            crate::keylayer::Layer::Reader => self.reader_key(&k, cx),
+            crate::keylayer::Layer::Reader => self.reader_key(&k, ks, cx),
             crate::keylayer::Layer::Sticky => {
                 // A note holding the cursor owns the keyboard, rename-box style:
                 // every keystroke writes on the paper instead of reaching the
@@ -4936,6 +6906,25 @@ impl TerminalView {
                 Handled::Consumed
             }
             crate::keylayer::Layer::Rename => self.rename_key(&k, ks, cx),
+            // Escape over a floating document closes it, and nothing else about
+            // the key is the square's — unless a note is being written in it,
+            // when `keylayer` routes every key here for the note box to take.
+            // The document is asked first: the note box, then a brief's own
+            // dialog, is what Escape puts away before the square itself.
+            crate::keylayer::Layer::Float => {
+                let took = self
+                    .float
+                    .as_ref()
+                    .map(|f| f.view.clone())
+                    .is_some_and(|view| view.update(cx, |doc, cx| doc.key(ks, cx)));
+                if !took {
+                    self.request_close_float(cx);
+                }
+                Handled::Consumed
+            }
+            // The Document face: its own keys move the document, and every
+            // other key it was handed stops there — the shell is hidden.
+            crate::keylayer::Layer::Document => self.doc_key(ks, cx),
             crate::keylayer::Layer::PaneChord => self.pane_chord_key(&k, ks, cx),
             // ── the WORKBENCH face, in one of its modes ─────────────────────
             //
@@ -4973,29 +6962,66 @@ impl TerminalView {
     ///
     /// One read per keystroke, so every layer is judged against the same instant
     /// — the alternative is a ladder whose rungs disagree about what is open.
-    fn layers_up(&self, cx: &mut Context<Self>) -> crate::keylayer::Up {
+    pub(crate) fn layers_up(&self, cx: &mut Context<Self>) -> crate::keylayer::Up {
         crate::keylayer::Up {
+            agent: self.mode.is_agent(),
             paint: theme::paint_mode(cx),
             ctx_menu: self.ctx_menu.is_some(),
             header_menu: self.hdr_overflow.is_some(),
-            reader: self.being_read,
+            // A note being written in the document lent to the reader takes
+            // every key, as it does on the pane — Escape puts the note box
+            // away, and a page key is the note's — so the reader claims none
+            // until the box is closed.
+            reader: self.being_read && !self.lent_view().is_some_and(|v| v.read(cx).has_caret()),
             sticky: self.sticky_composing(),
             rename: self.renaming.is_some(),
             note: self.note.is_some(),
             bench: self.bench.face() == crate::workbench::Face::Workbench,
+            float: self.float.is_some() && float_shows_on(self.bench.face()),
+            document: self.bench.face() == crate::workbench::Face::Document,
+            float_caret: self
+                .float
+                .as_ref()
+                .is_some_and(|f| f.view.read(cx).has_caret()),
+            float_sends: self.float.as_ref().is_some_and(|f| f.view.read(cx).sends()),
+            doc_caret: self
+                .doc_on_face()
+                .is_some_and(|d| d.view.read(cx).has_caret()),
         }
     }
 
     /// This pane, mirrored large in the FOCUS modal.
     ///
-    /// The workspace owns the modal; this is the pane asking it to close, and it
-    /// is left in place because the workspace's own capture-phase handler does
-    /// not run when no popup is open. The paging keys drive the READER's view —
+    /// The workspace owns the modal; this is the pane asking it to close. The
+    /// workspace's capture-phase Escape leaves the reader to this pane while the
+    /// pane holds the keyboard (`escape_closes_the_reader`), because only the
+    /// pane can clear its own read flag and take back what it lent; a reader
+    /// closed over its head left Escape dead here. The paging keys drive the READER's view —
     /// page through the mirrored convo, jump to its ends — rather than the pane's
     /// own scrollback, because that is the surface you are actually reading.
     /// Every other keystroke flows past to the terminal, so you keep directing
     /// the agent while you read it big.
-    fn reader_key(&mut self, k: &crate::keylayer::Key, cx: &mut Context<Self>) -> Handled {
+    ///
+    /// A document lent to the reader is the surface being read, so it pages
+    /// itself, by its own height in the reader's glass; and Escape is offered
+    /// to it first, because a brief's own dialog closes before the reader does.
+    /// A note being written never gets here: the reader claims no key while one
+    /// is (see `layers_up`).
+    fn reader_key(
+        &mut self,
+        k: &crate::keylayer::Key,
+        ks: &Keystroke,
+        cx: &mut Context<Self>,
+    ) -> Handled {
+        if let Some(view) = self.lent_view() {
+            if let Some(paging) = crate::keylayer::paging(k) {
+                view.update(cx, |v, cx| v.page(paging, cx));
+                return Handled::Consumed;
+            }
+            if view.update(cx, |v, cx| v.key(ks, cx)) {
+                return Handled::Consumed;
+            }
+        }
         match read_nav(k) {
             Some(nav) => cx.emit(FocusReadNav(nav)),
             None => cx.emit(CloseFocusRead),
@@ -5016,6 +7042,26 @@ impl TerminalView {
         let Some(mut buf) = self.renaming.take() else {
             return Handled::Declined;
         };
+        // A paste is the name's, by the same three chords a note takes.
+        // ctrl+shift+v used to stay the pane's, and the pane typed the
+        // clipboard into the shell under the header. ctrl+v and shift+insert
+        // reached here and vanished, because a modified key is not a character.
+        let m = &ks.modifiers;
+        if crate::workbench::is_paste_chord(k.key, m.control, m.shift) {
+            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                // A name is one line, kept to the 24 characters a typed name
+                // stops at.
+                for ch in crate::workbench::pasted_as_one_line(&text).chars() {
+                    if buf.chars().count() >= 24 {
+                        break;
+                    }
+                    buf.push(ch);
+                }
+            }
+            self.renaming = Some(buf);
+            cx.notify();
+            return Handled::Consumed;
+        }
         match k.key {
             "enter" => {
                 self.renaming = Some(buf);
@@ -5067,8 +7113,12 @@ impl TerminalView {
         ks: &Keystroke,
         cx: &mut Context<Self>,
     ) -> Handled {
+        if let Some(size) = crate::keylayer::size_chord(k) {
+            return self.size_key(size, cx);
+        }
         if k.alt {
             match k.key {
+                "a" => cx.emit(OpenAgentLauncher),
                 // Alt+S sticks a note to this pane, picks the pen back up on the
                 // one already there, and — pressed again while writing — posts
                 // it. Taken in the pane because the note belongs to the pane: at
@@ -5117,6 +7167,10 @@ impl TerminalView {
                 "b" => cx.emit(ToggleLeftBar),
                 // N for "needs me": the attention rail's queue.
                 "n" => cx.emit(ToggleRail),
+                // M for made: what this pane's agent handed over, as a page
+                // over the pane. The pane's own, so it is acted on here rather
+                // than sent up to the workspace.
+                "m" => self.toggle_handover_page(cx),
                 // The most recently closed thing comes back.
                 "z" => cx.emit(ReopenClosed),
                 // Two keys for one panel, and the second is not redundant.
@@ -5195,6 +7249,23 @@ impl TerminalView {
             self.extend_kbd_selection(k.key == "right", k.control, cx);
             return Handled::Declined;
         }
+        // Backspace or Delete over a selection on the line being typed takes
+        // the whole selection, the way it does in any text box, rather than the
+        // one character beside the caret. The terminal cannot edit that line
+        // itself, so it types the edit (see `erase_selection_keys`). A selection
+        // anywhere else is not text being typed, and the key goes through as it
+        // always has.
+        if !k.control
+            && !k.alt
+            && !k.shift
+            && !k.platform
+            && matches!(k.key, "backspace" | "delete")
+        {
+            if let Some(keys) = self.erase_selection_keys() {
+                self.send(keys, cx);
+                return Handled::Declined;
+            }
+        }
         // Paging the pane itself. PageUp/PageDown page the scrollback in AGENT
         // panes — a Claude/Codex session keeps its whole convo in our history and
         // never binds the keys itself, while a shell keeps them (Arch's inputrc
@@ -5210,7 +7281,7 @@ impl TerminalView {
         if let Some(nav) = read_nav(k) {
             let paging = matches!(nav, ReadNav::PageUp | ReadNav::PageDown);
             if !paging || self.mode.is_agent() {
-                let tmode = *self.session.term.lock().mode();
+                let tmode = self.session.term.lock().mode();
                 if !tmode.contains(TermMode::ALT_SCREEN) && !tmode.intersects(TermMode::MOUSE_MODE)
                 {
                     let scroll = match nav {
@@ -5260,7 +7331,7 @@ impl TerminalView {
             let (anchor, active) = match self.kbd_sel {
                 Some(ae) => ae,
                 None => {
-                    if let Some(r) = term.selection.as_ref().and_then(|s| s.to_range(&*term)) {
+                    if let Some(r) = term.selection_range() {
                         (r.start, r.end)
                     } else {
                         let c = term.renderable_content().cursor.point;
@@ -5297,16 +7368,31 @@ impl TerminalView {
             } else {
                 (Side::Right, Side::Left)
             };
-            let mut sel = Selection::new(SelectionType::Simple, anchor, a_side);
-            sel.update(active, e_side);
-            term.selection = Some(sel);
+            term.start_selection(SelectionType::Simple, anchor, a_side);
+            term.update_selection(active, e_side);
             (anchor, active)
         };
         self.kbd_sel = Some(next);
         cx.notify();
     }
 
+    /// The pane's own wheel: over the floating square it pans the document,
+    /// anywhere else it scrolls. Ctrl+wheel sizes whatever is under the
+    /// pointer — the document over a document, the pane's region anywhere
+    /// else — so it is decided first.
+    ///
+    /// The square is asked HERE and not in [`Self::scroll_by_wheel`], which
+    /// the FOCUS modal also calls with pointers over the modal: a square
+    /// hidden under the modal would otherwise take turns meant for the mirror.
     fn on_wheel(&mut self, ev: &ScrollWheelEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        if self.size_by_wheel(ev, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if self.doc_wheel(ev, cx) {
+            cx.stop_propagation();
+            return;
+        }
         self.scroll_by_wheel(ev, cx);
     }
 
@@ -5326,7 +7412,11 @@ impl TerminalView {
     pub fn nudge_size(&mut self, key: theme::GradeKey, notches: f32, cx: &mut Context<Self>) {
         let outer = theme::outer_choice(cx);
         let mut grade = self.appearance.effective(&outer).grade;
-        let from = grade.get(key);
+        // A size dial always holds its own position; a dial left to the theme
+        // has no position here to step from, so the turn does nothing.
+        let Some(from) = grade.get(key) else {
+            return;
+        };
         let next = key.nudged(from, notches);
         if (next - from).abs() < f32::EPSILON {
             return;
@@ -5338,6 +7428,46 @@ impl TerminalView {
         // workspace just writes the layout down so the size survives a restart.
         cx.emit(PaintApplied);
         cx.notify();
+    }
+
+    /// ctrl+= / ctrl+- and the shifted pair: ctrl+wheel, from the keyboard.
+    ///
+    /// A key has no pointer, so the pane it sizes is the highlighted one, the
+    /// pane holding the keyboard, and the dial is the one ctrl+wheel over its
+    /// screen turns: the grid's text on the terminal face, the bench's type on
+    /// the workbench, the document's zoom on the Document face.
+    ///
+    /// Two presses go up to the window instead, declined so they bubble: the
+    /// shifted pair, because the outer scale is the window's, and any press
+    /// while this pane is open in the FOCUS reader. The reader has a size of
+    /// its own, and ctrl+wheel over it already steps that rather than this
+    /// pane's text, which nobody can see behind the scrim.
+    fn size_key(&mut self, size: crate::keylayer::Size, cx: &mut Context<Self>) -> Handled {
+        let crate::keylayer::Size::Pane(notches) = size else {
+            return Handled::Declined;
+        };
+        if self.being_read {
+            return Handled::Declined;
+        }
+        match self.bench.face() {
+            crate::workbench::Face::Terminal => {
+                self.nudge_size(theme::GradeKey::TextSize, notches, cx);
+            }
+            crate::workbench::Face::Workbench => {
+                self.nudge_size(theme::GradeKey::BenchSize, notches, cx);
+            }
+            crate::workbench::Face::Document => {
+                if let Some(view) = self.doc_on_face().map(|d| d.view.clone()) {
+                    let step = if notches > 0.0 {
+                        crate::docview::ZoomStep::In
+                    } else {
+                        crate::docview::ZoomStep::Out
+                    };
+                    view.update(cx, |v, cx| v.zoom(step, cx));
+                }
+            }
+        }
+        Handled::Consumed
     }
 
     /// Which of this pane's size dials sits under `pos`, if the pane has been
@@ -5367,9 +7497,28 @@ impl TerminalView {
     /// Sizing nothing is still taking the turn. A pane with no measured rect
     /// yet resolves no dial, and letting that fall through would size whatever
     /// happened to be behind it.
+    ///
+    /// A document under the pointer is what is under it, so it is asked
+    /// first, and takes the turn as its own zoom. It used to be the pane's
+    /// text dial there too, and the text behind the square grew while the
+    /// brief in it stayed the size it was. Parker, 2026-09-25: *"When I am
+    /// hovering over a floating doc to read the ctl+mouse wheel should resize
+    /// THE DOC! not the pane underneath!"* Asking here rather than in one
+    /// handler is what reaches the square over the workbench as well, whose
+    /// capture hook ([`Self::bench_wheel`]) runs before the pane root's.
+    ///
+    /// The position is trusted to be over this pane. The FOCUS reader is the
+    /// one caller whose pointer is over something else, and it never hands
+    /// over a chord: it names the grid's dial itself.
     pub fn size_by_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) -> bool {
         if !ev.modifiers.control {
             return false;
+        }
+        if let Some(view) = self.doc_under(ev.position) {
+            let notches = theme::wheel_notches(ev.delta);
+            view.update(cx, |v, cx| v.zoom_by_wheel(notches, cx));
+            cx.notify();
+            return true;
         }
         if let Some(key) = self.size_dial_under(ev.position) {
             self.nudge_size(key, theme::wheel_notches(ev.delta), cx);
@@ -5409,7 +7558,7 @@ impl TerminalView {
         let up = (lines > 0) ^ self.paint_inverted; // true = reveal OLDER (app "up")
         let count = (lines.unsigned_abs() as usize).clamp(1, 8);
 
-        let mode = *self.session.term.lock().mode();
+        let mode = self.session.term.lock().mode();
         // Diagnostic for the anchor-top read (see docs/spec/anchor-top-read.md §7).
         if std::env::var("TD_ANCHORDEBUG").is_ok() {
             eprintln!(
@@ -5478,7 +7627,7 @@ impl TerminalView {
             return Vec::new();
         }
         let term = self.session.term.lock();
-        let grid = term.grid();
+        let grid = &*term;
         let cols = grid.columns();
         let bot = grid.bottommost_line().0;
         let start = (bot - cap as i32 + 1).max(grid.topmost_line().0);
@@ -5486,7 +7635,7 @@ impl TerminalView {
         let mut buf = String::with_capacity(cols);
         for l in start..=bot {
             buf.clear();
-            let row = &grid[Line(l)];
+            let row = grid.row(Line(l));
             for c in 0..cols {
                 let ch = row[Column(c)].c;
                 buf.push(if ch == '\0' { ' ' } else { ch });
@@ -5518,7 +7667,7 @@ impl TerminalView {
         }
         let ndl: Vec<char> = needle.chars().collect();
         let term = self.session.term.lock();
-        let grid = term.grid();
+        let grid = &*term;
         let cols = grid.columns();
         let bot = grid.bottommost_line().0;
         let start = (bot - cap as i32 + 1).max(grid.topmost_line().0);
@@ -5526,7 +7675,7 @@ impl TerminalView {
         let mut buf = String::with_capacity(cols);
         for l in start..=bot {
             buf.clear();
-            let row = &grid[Line(l)];
+            let row = grid.row(Line(l));
             for c in 0..cols {
                 let ch = row[Column(c)].c;
                 buf.push(if ch == '\0' { ' ' } else { ch });
@@ -5572,16 +7721,15 @@ impl TerminalView {
     ) {
         {
             let mut term = self.session.term.lock();
-            let hist = term.grid().history_size() as i32;
+            let hist = term.history_size() as i32;
             let off = (-line).clamp(0, hist);
-            let cur = term.grid().display_offset() as i32;
+            let cur = term.display_offset() as i32;
             term.scroll_display(Scroll::Delta(off - cur));
             if let Some((lo, hi)) = sel {
                 let a = TermPoint::new(Line(line), Column(lo));
                 let b = TermPoint::new(Line(line), Column(hi));
-                let mut s = Selection::new(SelectionType::Simple, a, Side::Left);
-                s.update(b, Side::Right);
-                term.selection = Some(s);
+                term.start_selection(SelectionType::Simple, a, Side::Left);
+                term.update_selection(b, Side::Right);
             }
         }
         cx.notify();
@@ -5593,17 +7741,18 @@ impl TerminalView {
     /// cheap even on deep history. Agent panes only — call sites gate on mode.
     fn human_line_indices(&self) -> Vec<i32> {
         let term = self.session.term.lock();
-        let grid = term.grid();
+        let grid = &*term;
         let cols = grid.columns().min(24); // prompt caret is near the start
         let mut out = Vec::new();
         for l in grid.topmost_line().0..=grid.bottommost_line().0 {
-            let row = &grid[Line(l)];
+            let row = grid.row(Line(l));
             let mut s = String::with_capacity(cols);
             for c in 0..cols {
                 let ch = row[Column(c)].c;
                 s.push(if ch == '\0' { ' ' } else { ch });
             }
-            if is_human_input_line(&s) {
+            if is_human_input_line(&s) && s.trim_start().chars().skip(1).any(|c| !c.is_whitespace())
+            {
                 out.push(l);
             }
         }
@@ -5614,8 +7763,7 @@ impl TerminalView {
     /// (`next = true`) of *your own* messages. The viewport top is grid line
     /// `-display_offset`; we step to the nearest human line above/below it and
     /// scroll so it lands at the top. Stepping past the newest snaps to live.
-    /// Driven by the ▲/▼ header buttons. NOT by Alt+↑/↓: all four Alt+arrows move
-    /// pane focus, so the only gesture for this is the one drawn on the pane.
+    /// Driven by the optional ▲/▼ header buttons; Ctrl+↑/↓ opens transcript turns.
     pub fn scroll_to_human(&mut self, next: bool, cx: &mut Context<Self>) {
         // In the anchor-top INVERTED read the newest message sits at the TOP, so
         // the ▲/▼ directions flip: "up" steps toward NEWER, "down"
@@ -5641,7 +7789,7 @@ impl TerminalView {
             return;
         }
         let mut term = self.session.term.lock();
-        let top = -(term.grid().display_offset() as i32);
+        let top = -(term.display_offset() as i32);
         let target = if next {
             idx.iter().copied().filter(|&l| l > top).min()
         } else {
@@ -5649,9 +7797,9 @@ impl TerminalView {
         };
         match target {
             Some(l) => {
-                let hist = term.grid().history_size() as i32;
+                let hist = term.history_size() as i32;
                 let off = (-l).clamp(0, hist);
-                let cur = term.grid().display_offset() as i32;
+                let cur = term.display_offset() as i32;
                 term.scroll_display(Scroll::Delta(off - cur));
             }
             // Already at/below the newest message → snap to the live bottom.
@@ -5675,7 +7823,7 @@ impl TerminalView {
         if self.seeking {
             return;
         }
-        let mode = *self.session.term.lock().mode();
+        let mode = self.session.term.lock().mode();
         let up = !next; // "previous message" = scroll toward OLDER output
         let (step, coarse) = if mode.intersects(TermMode::MOUSE_MODE) {
             (
@@ -5746,7 +7894,7 @@ impl TerminalView {
     fn screen_signature(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        for row in self.live_rows() {
+        for row in self.live_rows().iter() {
             row.hash(&mut h);
         }
         h.finish()
@@ -5765,7 +7913,7 @@ impl TerminalView {
                 && !r
                     .trim_start()
                     .trim_start_matches(|c| {
-                        matches!(c, '\u{276f}' | '>' | '\u{258c}' | '\u{00b7}' | ' ')
+                        matches!(c, '\u{276f}' | '›' | '>' | '\u{258c}' | '\u{00b7}' | ' ')
                     })
                     .trim()
                     .is_empty()
@@ -5804,14 +7952,14 @@ impl TerminalView {
     ) {
         let (start, end, is_block, display_offset) = {
             let term = self.session.term.lock();
-            let Some(range) = term.selection.as_ref().and_then(|s| s.to_range(&*term)) else {
+            let Some(range) = term.selection_range() else {
                 return;
             };
             (
                 range.start,
                 range.end,
                 range.is_block,
-                term.grid().display_offset(),
+                term.display_offset(),
             )
         };
         let a = self.point_to_painted(start, perm, display_offset);
@@ -5837,7 +7985,7 @@ impl TerminalView {
         let cols = self.grid.cols;
         let (start, end, is_block, display_offset, grid) = {
             let term = self.session.term.lock();
-            let range = term.selection.as_ref().and_then(|s| s.to_range(&*term))?;
+            let range = term.selection_range()?;
             let content = term.renderable_content();
             let display_offset = content.display_offset;
             let mut grid = vec![vec![' '; cols]; rows];
@@ -5908,16 +8056,12 @@ impl TerminalView {
             }
         }
     }
-    /// Cut: copy the selection to the clipboard, then — only when it's safe to —
-    /// delete it from the live shell input line. Scrollback is read-only, so the
-    /// delete fires *only* when the selection sits on the on-screen input line
-    /// (display at bottom) and ends right at the cursor, i.e. it's the run of
-    /// characters immediately to the cursor's left. In that case `n` DELs erase
-    /// exactly those cells (readline backspaces the chars before the cursor and
-    /// shifts the tail left — a true cut). Anywhere else it's a plain copy, so a
-    /// cut over history or a mid-line non-adjacent selection can never corrupt
-    /// the buffer. Bound to Ctrl+X, and only when something is selected (so a bare
-    /// Ctrl+X still reaches the shell as the readline prefix key).
+    /// Cut: copy the selection to the clipboard, then erase it from the line
+    /// being typed when it lies on that line — the same erase Backspace makes
+    /// over a selection ([`Self::erase_selection_keys`]). Anywhere else it is a
+    /// plain copy, so a cut over history can never touch the buffer. Bound to
+    /// Ctrl+X, and only when something is selected (so a bare Ctrl+X still
+    /// reaches the shell as the readline prefix key).
     fn cut_selection(&mut self, cx: &mut Context<Self>) {
         let text = match self.selection_clipboard_text() {
             Some(t) => t,
@@ -5925,35 +8069,53 @@ impl TerminalView {
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
         cx.write_to_primary(ClipboardItem::new_string(text));
-        // Decide whether the selection is the trailing run on the live input line.
-        let erase = {
-            let term = self.session.term.lock();
-            let content = term.renderable_content();
-            let cur = content.cursor.point;
-            if content.display_offset != 0 {
-                None
-            } else {
-                term.selection
-                    .as_ref()
-                    .and_then(|s| s.to_range(&*term))
-                    // single row, on the cursor's row, ending immediately left of it
-                    .filter(|r| {
-                        r.start.line == r.end.line
-                            && r.end.line == cur.line
-                            && r.end.column.0 + 1 == cur.column.0
-                    })
-                    .map(|r| r.end.column.0 - r.start.column.0 + 1)
-            }
-        };
-        if let Some(n) = erase {
-            self.session.notifier.notify(vec![0x7f; n]); // n × DEL (erase char left)
-            self.session.term.lock().selection = None;
-            self.kbd_sel = None;
+        if let Some(keys) = self.erase_selection_keys() {
+            self.send(keys, cx);
         }
         cx.notify();
     }
+
+    /// The keys that erase the selection from the line being typed, or `None`
+    /// when the selection is not on that line.
+    ///
+    /// On it means: one row, the cursor's row, with the view at the bottom —
+    /// scrollback is history, and a selection there is something to copy. And
+    /// not a full-screen program unless it is an agent: in `less` or `vim` the
+    /// arrow keys scroll or move rather than walk a caret through a line, but
+    /// Claude Code draws its prompt on the alternate screen too, with the
+    /// cursor parked at its caret, and that prompt is exactly where a person
+    /// selects and deletes.
+    fn erase_selection_keys(&self) -> Option<Vec<u8>> {
+        let term = self.session.term.lock();
+        let range = term.selection_range()?;
+        let mode = term.mode();
+        if term.display_offset() != 0
+            || (mode.contains(TermMode::ALT_SCREEN) && !self.mode.is_agent())
+        {
+            return None;
+        }
+        let caret = term.cursor().point;
+        if range.start.line != caret.line || range.end.line != caret.line {
+            return None;
+        }
+        let row = term.row(caret.line).0;
+        erase_run_keys(
+            &row,
+            range.start.column.0,
+            range.end.column.0,
+            caret.column.0,
+            mode.contains(TermMode::APP_CURSOR),
+        )
+    }
     /// Paste the clipboard into the PTY, honouring bracketed-paste mode.
+    ///
+    /// Not while the Document face is showing: the shell is hidden behind the
+    /// document, and a paste would land where nobody can see it — the same
+    /// reason a file dropped on a document is not typed into it.
     fn paste_clipboard(&self, cx: &mut Context<Self>) {
+        if self.bench.face() == crate::workbench::Face::Document {
+            return;
+        }
         if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
             self.paste_text(&text);
         }
@@ -5965,6 +8127,7 @@ impl TerminalView {
     /// Bracketed because the far end asked to be told: an editor that turns
     /// paste bracketing on is an editor that will treat these bytes as
     /// content rather than as keys, which is exactly what a dropped path is.
+    /// What the text may carry is `paste_bytes`'s decision, not this one's.
     fn paste_text(&self, text: &str) {
         let bracketed = self
             .session
@@ -5972,11 +8135,10 @@ impl TerminalView {
             .lock()
             .mode()
             .contains(TermMode::BRACKETED_PASTE);
-        let bytes = if bracketed {
-            [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat()
-        } else {
-            text.as_bytes().to_vec()
-        };
+        let bytes = paste_bytes(text, bracketed);
+        if bytes.is_empty() {
+            return;
+        }
         self.session.notifier.notify(bytes);
     }
     fn has_selection(&self) -> bool {
@@ -5992,7 +8154,7 @@ impl TerminalView {
     fn clear_scrollback(&self, cx: &mut Context<Self>) {
         {
             let mut term = self.session.term.lock();
-            term.grid_mut().clear_history();
+            term.clear_history();
             term.scroll_display(Scroll::Bottom);
         }
         cx.notify();
@@ -6109,6 +8271,21 @@ impl TerminalView {
         true
     }
 
+    /// `TD_HITDEBUG`: a press that stopped at `branch` before it reached the
+    /// click table. A modified click that never printed its `[doc-hit]`
+    /// decision still says where it went, so "Alt+click did nothing" can be
+    /// told apart from "something on the glass took the press first". Nothing
+    /// is read or printed unless the variable is set.
+    fn trace_press_taken(branch: &str, ev: &MouseDownEvent) {
+        if std::env::var_os("TD_HITDEBUG").is_some() {
+            eprintln!(
+                "[doc-hit] taken by {branch} before the click table: button={:?} held={}",
+                ev.button,
+                held_mods(click_mods(ev.modifiers))
+            );
+        }
+    }
+
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         // Any press that is not the rename box itself (which stops propagation)
         // closes the rename and saves it — including a press inside this pane's
@@ -6128,6 +8305,35 @@ impl TerminalView {
         // latched while this pane already held idle focus froze the ✅ badge —
         // the edge never came). ack_bell is a no-op when nothing is latched.
         self.ack_bell(cx);
+        // THE DOCUMENT FACE, through the same inverse. The whole screen is the
+        // document, so every press on it is the document's — a selection in
+        // the hidden grid, or the copy/paste tray offering the hidden shell's
+        // links, would be acting on something nobody can see. First of all,
+        // because nothing else is drawn on that face: no square, no bench.
+        if self.doc_face_press(ev, window, cx) {
+            Self::trace_press_taken("the document face", ev);
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        // THE FLOATING SQUARE lies over the grid, over the note and over the
+        // bench, so a press on it is its own and never the surface's behind
+        // it: a click on a picture must not start a selection nobody can see,
+        // and on the bench it must not press the card the square covers. Asked
+        // FIRST for that reason — the bench branch below takes every press on
+        // its face. Found through the warp's inverse for the bench's reason,
+        // against zones its strip and body recorded as they painted. A right
+        // press is the square's too: the copy/paste tray would otherwise offer
+        // the link HIDDEN under it.
+        if let Some((zone, flat)) = self.float_hit(ev.position) {
+            Self::trace_press_taken("the floating square", ev);
+            if ev.button == MouseButton::Left {
+                self.float_press(zone, flat, ev, window, cx);
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         // THE BENCH, through the warp's inverse.
         //
         // The bench is bent by the same barrel post-pass as the grid, and gpui
@@ -6146,7 +8352,25 @@ impl TerminalView {
             // because a click on the bench's empty background lands on no
             // zone and would otherwise never be seen at all.
             if self.bench_dismiss_dial(landed.as_ref().map(|(hit, _)| hit), cx) {
+                Self::trace_press_taken("the bench's open dial menu", ev);
                 cx.stop_propagation();
+                return;
+            }
+            // Alt or Ctrl on an artifact: the terminal's click table, so Alt
+            // means the floating square and Ctrl+Alt a pane beside, here as on
+            // the grid. Shift is left to the bench, where it extends a
+            // selection. See `bench_doc_click`.
+            if (ev.modifiers.alt || ev.modifiers.control)
+                && self.bench_doc_click(
+                    ev.position,
+                    click_mods(ev.modifiers),
+                    landed.as_ref().map(|(hit, _)| hit),
+                    cx,
+                )
+            {
+                Self::trace_press_taken("a document on the bench", ev);
+                cx.stop_propagation();
+                cx.notify();
                 return;
             }
             // Every press on the bench goes through here now, including one
@@ -6155,6 +8379,7 @@ impl TerminalView {
             // selection in the TERMINAL GRID behind the bench — invisible,
             // and the slot this takes.
             if self.bench_press_at(ev.position, landed, window, cx) {
+                Self::trace_press_taken("the bench", ev);
                 cx.stop_propagation();
                 return;
             }
@@ -6165,6 +8390,7 @@ impl TerminalView {
         // gpui click target for the same reason as the copy chip below — the
         // paper is tilted, and gpui would hit-test its flat layout box.
         if ev.button == MouseButton::Left && self.sticky_click(ev.position, cx) {
+            Self::trace_press_taken("the sticky note", ev);
             cx.stop_propagation();
             return;
         }
@@ -6176,23 +8402,6 @@ impl TerminalView {
         if ev.button == MouseButton::Right && self.sticky_right_click(ev.position, cx) {
             cx.stop_propagation();
             return;
-        }
-        // Alt+click on the armed copy chip takes the reconstructed line. Handled
-        // here rather than as a click target on the chip element: the chip is
-        // painted inside the warped tube, so gpui would hit-test it flat and land
-        // beside it, whereas `viewport_cell` (which `copy_hint_at` goes through)
-        // already inverts the warp. Falls through untouched when no chip is armed,
-        // so Alt+click still reaches an app that asked for mouse reporting.
-        if ev.button == MouseButton::Left && ev.modifiers.alt {
-            if let Some(hint) = self.copy_hint_at(ev.position) {
-                cx.write_to_clipboard(ClipboardItem::new_string(hint.text.clone()));
-                cx.write_to_primary(ClipboardItem::new_string(hint.text.clone()));
-                self.copy_flash = Some(Instant::now());
-                self.copy_hint = Some(hint);
-                cx.stop_propagation();
-                cx.notify();
-                return;
-            }
         }
         // right-click → copy/paste context menu at the cursor
         if ev.button == MouseButton::Right {
@@ -6207,41 +8416,149 @@ impl TerminalView {
         if self.hdr_overflow.take().is_some() {
             cx.notify();
         }
-        // Super+Ctrl-click REVEALS the file instead of opening it: the file
-        // manager comes up with the item selected, which is the other question a
-        // printed path provokes ("where does this live?", "what else is beside
-        // it?"). Tested before the plain Ctrl-click branch below, because that
-        // one also matches when Super is held. A target with nothing on disk to
-        // show — an http link — falls through and simply opens, as before.
-        if ev.button == MouseButton::Left && ev.modifiers.platform && ev.modifiers.control {
-            if let Some(item) = self
-                .link_under(ev.position)
-                .as_deref()
-                .and_then(reveal_target)
-            {
-                reveal_with_system(&item);
+        // EVERY MODIFIED CLICK ON A PATH OR LINK, decided in one table:
+        // `docopen::click_intent`. Alt on a document opens it in a floating
+        // square beside the line; Alt on an armed chip copies the command
+        // line; Shift on a file reveals it in the file manager, Super+Ctrl
+        // too; Shift or Ctrl on anything else opens it with the desktop. A
+        // modified click on nothing falls through to a selection, and so does
+        // Alt+click with no chip armed, so it still reaches an app that asked
+        // for mouse reporting.
+        //
+        // Resolved here rather than as click targets on the chip or the
+        // link: both are painted inside the warped tube, so gpui would
+        // hit-test them flat and land beside them, whereas `viewport_cell`
+        // (which `link_under` and `alt_hint_at` go through) inverts the warp.
+        // The grid is read only when a modifier is held, so a plain click
+        // costs what it always did.
+        if ev.button == MouseButton::Left
+            && (ev.modifiers.alt || ev.modifiers.shift || ev.modifiers.control)
+        {
+            let mods = click_mods(ev.modifiers);
+            let link = self.link_under(ev.position);
+            let revealable = link.as_deref().and_then(reveal_target);
+            let doc = (mods.alt && self.bench.face() == crate::workbench::Face::Terminal)
+                .then(|| link.as_deref().and_then(|l| self.document_of(l)))
+                .flatten();
+            // The chip a copy would take, asked without the document: it is
+            // armed for a copy exactly when the line is a command line.
+            let copy = mods
+                .alt
+                .then(|| self.alt_hint_at(ev.position, None))
+                .flatten()
+                .filter(|h| h.does == crate::docopen::AltClick::Copy);
+            let intent = crate::docopen::click_intent(
+                mods,
+                doc.is_some(),
+                link.is_some(),
+                revealable.is_some(),
+                copy.is_some(),
+            );
+            // TD_HITDEBUG: one line per modified left press, saying what the
+            // table was handed and what it chose. An Alt+click that does
+            // nothing in one pane and works in the next is otherwise silent;
+            // this line shows whether the pointer found no token, a path that
+            // did not resolve against the pane's cwd, a file that is not a
+            // document, or a grid on the alternate screen with an app reading
+            // the mouse. `unasked` is not `none`: the document and the chip
+            // are only asked for with Alt held, the document only on the
+            // terminal face. Nothing extra is read unless the variable is set.
+            if std::env::var_os("TD_HITDEBUG").is_some() {
+                let (row, col, _) = self.viewport_cell(ev.position);
+                let mode = self.session.term.lock().mode();
+                let face = self.bench.face();
+                let doc_seen = match (&doc, mods.alt && face == crate::workbench::Face::Terminal) {
+                    (Some(d), _) => format!("{:?}", d.kind),
+                    (None, true) => "none".to_string(),
+                    (None, false) => "unasked".to_string(),
+                };
+                let chip = match (&copy, mods.alt) {
+                    (Some(_), _) => "armed",
+                    (None, true) => "none",
+                    (None, false) => "unasked",
+                };
+                eprintln!(
+                    "[doc-hit] cell=(r{row},c{col}) grid_row={} alt_screen={} mouse_mode={} face={face:?} held={} token={:?} cwd={:?} link={:?} doc={doc_seen} chip={chip} intent={intent:?}",
+                    self.paint_row_to_grid_row(row),
+                    mode.contains(TermMode::ALT_SCREEN),
+                    mode.intersects(TermMode::MOUSE_MODE),
+                    held_mods(mods),
+                    self.link_token_under(ev.position),
+                    self.runtime().cwd,
+                    link,
+                );
+            }
+            use crate::docopen::ClickIntent;
+            // What the click did, if anything. The Alt gestures stop the event
+            // here, as the chip always has; opening and revealing let it
+            // bubble, as they always have.
+            enum Took {
+                Stop,
+                Bubble,
+            }
+            let took = match intent {
+                // A second Alt+click on the path the square is already
+                // showing promotes the square to a split: the click said
+                // "this one" twice. Any other path opens in the square.
+                ClickIntent::OpenHere => {
+                    if let Some(target) = doc {
+                        let floating = self.float_path(cx);
+                        if crate::docopen::promotes(floating.as_deref(), &target.path) {
+                            self.promote_float(cx);
+                        } else {
+                            let (row, _, _) = self.viewport_cell(ev.position);
+                            // Refused only for HTML with no engine, which has
+                            // already gone to the desktop and said why.
+                            let _ = self.open_float(target, Some(row), cx);
+                        }
+                    }
+                    Some(Took::Stop)
+                }
+                // A pane beside this one, and focus stays here. The workspace
+                // owns the tree, so the pane asks; see `OpenDoc`.
+                ClickIntent::OpenBeside => {
+                    if let Some(target) = doc {
+                        let (row, _, _) = self.viewport_cell(ev.position);
+                        self.request_beside(
+                            target,
+                            Some(row),
+                            crate::docopen::Asker::Click,
+                            None,
+                            cx,
+                        );
+                    }
+                    Some(Took::Stop)
+                }
+                ClickIntent::CopyChip => copy.map(|hint| {
+                    self.copy_chip(hint, cx);
+                    Took::Stop
+                }),
+                ClickIntent::Reveal => revealable.map(|item| {
+                    reveal_with_system(&item);
+                    Took::Bubble
+                }),
+                ClickIntent::OpenWithDesktop => link.map(|target| {
+                    open_with_system(&target);
+                    Took::Bubble
+                }),
+                ClickIntent::Pass => None,
+            };
+            if let Some(took) = took {
+                if matches!(took, Took::Stop) {
+                    cx.stop_propagation();
+                }
                 cx.notify();
                 return;
             }
         }
-        // Shift- or Ctrl-click opens a link/path under the cursor with the system
-        // default tool, instead of starting a selection. A modified click that
-        // isn't on a link falls through to normal selection behaviour.
-        if (ev.modifiers.shift || ev.modifiers.control) && ev.button == MouseButton::Left {
-            if let Some(target) = self.link_under(ev.position) {
-                open_with_system(&target);
-                cx.notify();
-                return;
-            }
-        }
-        let offset = self.session.term.lock().grid().display_offset();
+        let offset = self.session.term.lock().display_offset();
         let (point, side) = self.cell_at(ev.position, offset);
         let ty = match ev.click_count {
             2 => SelectionType::Semantic,
             n if n >= 3 => SelectionType::Lines,
             _ => SelectionType::Simple,
         };
-        self.session.term.lock().selection = Some(Selection::new(ty, point, side));
+        self.session.term.lock().start_selection(ty, point, side);
         // a fresh mouse selection supersedes any keyboard-extension anchor; the
         // next shift-arrow re-seeds from this new selection's range.
         self.kbd_sel = None;
@@ -6257,15 +8574,45 @@ impl TerminalView {
         // only, like the two below.
         if self.bench.face() == crate::workbench::Face::Workbench {
             self.bench_hover(ev.position, cx);
+            // The bench's Alt chip, on the grid's terms: only while a bare
+            // Alt is held, so ordinary mousing reads nothing.
+            let bare_alt = ev.modifiers.alt && !ev.modifiers.control && !ev.modifiers.platform;
+            let hint = bare_alt.then(|| self.bench_alt_hint(ev.position)).flatten();
+            if hint != self.wb_alt_hint {
+                self.wb_alt_hint = hint;
+                cx.notify();
+            }
         }
+        // A held strip or a held document owns the pointer, ahead of anything
+        // else that reads a move: the square follows the hand, or the picture
+        // in it does, and the grid behind builds no selection.
+        if self.float_drag_move(ev, cx) {
+            return;
+        }
+        // The same for a document held on the Document face: a picture being
+        // panned follows the hand, and the hidden grid builds nothing.
+        if self.doc_face_drag_move(ev, cx) {
+            return;
+        }
+        // The square's controls light under the pointer. Notifies on a change.
+        self.float_hover(ev.position, cx);
+        // A brief's note buttons show under the pointer, as a browser shows
+        // them: the document is told where the pointer is, un-bent.
+        self.doc_hover(ev.position, cx);
+        // Alt held over a document outlines what takes a note. Read on every
+        // move, so a pane that was not focused when Alt went down still sees it.
+        self.doc_alt(&ev.modifiers, cx);
         // The peel corner curls under the pointer. No-op with no note stuck here,
         // and it only notifies on a change, so ordinary mousing costs nothing.
         self.sticky_hover(ev.position, cx);
-        // The Alt-held copy affordance. Gated on the modifier so the grid is only
-        // re-read while Alt is actually down — ordinary mousing costs nothing, and
-        // nothing can arm by accident.
+        // The Alt-held chip. Gated on the modifier so the grid is only re-read
+        // while Alt is actually down — ordinary mousing costs nothing, and
+        // nothing can arm by accident. A document is asked about only for a
+        // bare Alt, the only Alt that opens one here.
         let hint = if ev.modifiers.alt {
-            self.copy_hint_at(ev.position)
+            let bare = !ev.modifiers.control && !ev.modifiers.platform;
+            let doc = bare.then(|| self.document_under(ev.position)).flatten();
+            self.alt_hint_at(ev.position, doc)
         } else {
             None
         };
@@ -6290,11 +8637,9 @@ impl TerminalView {
             return;
         }
         self.last_mouse = ev.position;
-        let offset = self.session.term.lock().grid().display_offset();
+        let offset = self.session.term.lock().display_offset();
         let (point, side) = self.cell_at(ev.position, offset);
-        if let Some(sel) = self.session.term.lock().selection.as_mut() {
-            sel.update(point, side);
-        }
+        self.session.term.lock().update_selection(point, side);
         // dragging to/over an edge arms the auto-scroll ticker (which keeps
         // scrolling even if the cursor then holds still at the edge).
         self.autoscroll = self.autoscroll_rate(ev.position);
@@ -6305,6 +8650,14 @@ impl TerminalView {
     }
 
     fn on_mouse_up(&mut self, _ev: &MouseUpEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        // A held strip or document lets go first; the press was the square's,
+        // so its release is too.
+        if self.float_drag_end(cx) {
+            return;
+        }
+        if self.doc_face_release(cx) {
+            return;
+        }
         // The bench first: a press it deferred either fires now as a click or
         // settles as a selection. Returns false on the terminal face and on
         // any press it did not take, so the grid's own release still runs.
@@ -6327,12 +8680,30 @@ impl TerminalView {
     /// caller re-applies it in painted/visual order after the permutation (#149).
     /// In the default path `sel_visual` is false and this is byte-identical.
     fn styled_lines(&self, th: &Theme, sel_visual: bool) -> Vec<(String, Vec<TextRun>)> {
-        let term = self.session.term.lock();
-        let content = term.renderable_content();
+        let content = self.session.term.lock().renderable_content();
         let display_offset = content.display_offset;
         let selection = content.selection;
         let cursor = content.cursor;
         let show_cursor = content.mode.contains(TermMode::SHOW_CURSOR) && display_offset == 0;
+        let key = styling::Key {
+            cells: content.display_iter.collect(),
+            selection,
+            cursor,
+            display_offset,
+            show_cursor,
+            cols: self.grid.cols,
+            rows: self.grid.rows,
+            agent: self.mode.is_agent(),
+            sel_visual,
+            fallbacks_armed: GRID_FALLBACKS.armed(),
+            theme: th.clone(),
+        };
+        if let Some(memo) = self.styled_memo.borrow().as_ref() {
+            if memo.key == key {
+                return (*memo.lines).clone();
+            }
+        }
+        let cells = &key.cells;
 
         // Each row fills toward `cols` chars and at most `cols` style runs, so
         // size both buffers up front — a row never reallocates mid-paint.
@@ -6345,16 +8716,16 @@ impl TerminalView {
         // row up front. Collect the cells once, build per-row colour palettes,
         // then paint cell-by-cell with a per-row cursor that stays in lock-step
         // with pass one (identical row-clamp + spacer skip ⇒ ordinals line up).
-        let cells: Vec<_> = content.display_iter.collect();
         let syntax = th.syntax;
         // In an agent (claude/codex) pane, the user's own input lines are painted
         // in `th.human` so they stand out from the agent's replies (Part 2).
         let agent = self.mode.is_agent();
         // Build per-row literal text once if either the syntax overlay or the
         // human-input highlighting needs it.
+        let mut wraps = vec![false; self.grid.rows];
         let rows_text: Vec<String> = if syntax || agent {
             let mut rows_text = vec![String::new(); self.grid.rows];
-            for indexed in &cells {
+            for indexed in cells {
                 let row = indexed.point.line.0 + display_offset as i32;
                 if row < 0 || row as usize >= self.grid.rows {
                     continue;
@@ -6363,6 +8734,9 @@ impl TerminalView {
                 if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
                     continue;
                 }
+                if cell.flags.contains(Flags::WRAPLINE) {
+                    wraps[row as usize] = true;
+                }
                 rows_text[row as usize].push(if cell.c == '\0' { ' ' } else { cell.c });
             }
             rows_text
@@ -6370,7 +8744,11 @@ impl TerminalView {
             Vec::new()
         };
         let palettes: Vec<Vec<Hsla>> = if syntax {
-            rows_text.iter().map(|t| syntax_colors(t, th)).collect()
+            let mut palettes: Vec<Vec<Hsla>> =
+                rows_text.iter().map(|t| syntax_colors(t, th)).collect();
+            let rows: Vec<Vec<char>> = rows_text.iter().map(|t| t.chars().collect()).collect();
+            carry_link_colour(&rows, &wraps, &mut palettes);
+            palettes
         } else {
             Vec::new()
         };
@@ -6387,7 +8765,7 @@ impl TerminalView {
         // computes the gamma exponent and channel scalars once, not per cell.
         let grade = GradeCoeffs::new(&th.grade);
 
-        for indexed in &cells {
+        for indexed in cells {
             let row = indexed.point.line.0 + display_offset as i32;
             if row < 0 || row as usize >= self.grid.rows {
                 continue;
@@ -6484,6 +8862,10 @@ impl TerminalView {
                 });
             }
         }
+        *self.styled_memo.borrow_mut() = Some(styling::Memo {
+            key,
+            lines: std::rc::Rc::new(lines.clone()),
+        });
         lines
     }
 }
@@ -6510,7 +8892,7 @@ pub fn anchor_top() -> bool {
     ANCHOR_TOP.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Global AGENT THEME toggle: whether a pane that FOLLOWS OUTER wears the
+/// Global TERMINAL STATE toggle: whether a pane that FOLLOWS OUTER wears the
 /// phosphor of the program running in it (claude amber · codex cyan · remote
 /// violet) instead of the theme it inherited. Default `false` — inherit.
 ///
@@ -6520,13 +8902,13 @@ pub fn anchor_top() -> bool {
 /// so flipping it repaints quiet panes rather than waiting for their next byte.
 static AGENT_TINT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Publish the live global AGENT THEME preference (called from `Workspace::render`
+/// Publish the live global TERMINAL STATE preference (called from `Workspace::render`
 /// each frame, beside [`set_anchor_top`]).
 pub fn set_agent_tint(on: bool) {
     AGENT_TINT.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Read the global AGENT THEME preference. `true` ⇒ an inheriting pane is tinted
+/// Read the global TERMINAL STATE preference. `true` ⇒ an inheriting pane is tinted
 /// by what is running in it; `false` (default) ⇒ an inherited theme is inherited.
 pub fn agent_tint() -> bool {
     AGENT_TINT.load(std::sync::atomic::Ordering::Relaxed)
@@ -6967,6 +9349,60 @@ pub fn resolve_family(requested: &str) -> String {
     requested.to_string()
 }
 
+/// The family the chrome's fullwidth glyphs are drawn from (see
+/// [`chrome_glyph_family`]).
+///
+/// The font search lands on Noto Sans CJK JP Regular for them, and naming that
+/// family would load all seven of its weights — seven `.ttc` files, 4.3 MiB
+/// mapped on Parker's box — for one glyph. Its monospaced sibling lives in the
+/// same Regular and Bold files only, and carries the same glyph: for U+FF0B the
+/// same glyph id (59057), advance, ascent and descent, and a byte-identical
+/// rasterisation through swash (what gpui rasterises with) at 13 px times every
+/// scale from 1 to 2.5, checked 2026-10-15.
+const CHROME_CJK_FAMILY: &str = "Noto Sans Mono CJK JP";
+
+/// The family a chrome glyph has to be drawn from, named, when the UI font has
+/// no shape for it.
+///
+/// A glyph the element's font lacks goes to cosmic-text's fallback, and when no
+/// preset fallback covers it, cosmic-text tries every installed font in turn —
+/// mapping each file, parsing its tables and keeping it for the life of the
+/// process. Two glyphs on an idle window's chrome did that on Parker's box
+/// (#953): the logo placeholder's FULLWIDTH PLUS SIGN (U+FF0B), which the search
+/// found in Noto Sans CJK JP Regular after 242 fonts, and the agent counter's
+/// robot (U+F06A9, a Nerd Font icon), found in JetBrainsMono Nerd Font Regular
+/// after 233 — between them 236 font files held open, about 8 MiB mapped and
+/// 4 MiB of parsed tables, for two glyphs. Naming the face the search ends on
+/// (or, for the plus, a family carrying the identical glyph — see
+/// [`CHROME_CJK_FAMILY`]) draws the same glyph without the search.
+///
+/// - A Nerd Font icon (the private use areas) comes from the grid's resolved
+///   family, which is the Nerd Font TD dresses the grid in. A grid font without
+///   the glyph searches from there exactly as the UI font would have.
+/// - A fullwidth form comes from [`CHROME_CJK_FAMILY`] when it is installed, and
+///   is left to the search when it is not.
+/// - Anything else is the UI font's to draw: `None`.
+pub(crate) fn chrome_glyph_family(
+    ch: char,
+    grid_family: &str,
+    installed: impl Fn(&str) -> bool,
+) -> Option<String> {
+    match ch {
+        '\u{E000}'..='\u{F8FF}' | '\u{F0000}'..='\u{FFFFD}' | '\u{100000}'..='\u{10FFFD}' => {
+            Some(grid_family.to_string())
+        }
+        '\u{FF01}'..='\u{FF60}' | '\u{FFE0}'..='\u{FFE6}' => {
+            installed(CHROME_CJK_FAMILY).then(|| CHROME_CJK_FAMILY.to_string())
+        }
+        _ => None,
+    }
+}
+
+/// [`chrome_glyph_family`] against this box's fonts and a theme's grid family.
+pub(crate) fn chrome_glyph_font(ch: char, th: &Theme) -> Option<String> {
+    chrome_glyph_family(ch, &resolve_family(&th.font_family), font_available)
+}
+
 /// Startup diagnostic: if the ACTIVE font family isn't installed, describe the
 /// fallback that will be used (so a silent substitution can never hide again).
 /// Returns None when the wanted family is present. Call after
@@ -7027,7 +9463,134 @@ pub(crate) fn script_fallbacks() -> Option<gpui::FontFallbacks> {
     .clone()
 }
 
-fn grid_font(th: &Theme, weight: FontWeight) -> Font {
+/// When the grid starts handing gpui its per-glyph fallback chain.
+///
+/// A font that carries [`script_fallbacks`] makes gpui load every face of every
+/// family in the chain the first time the font is resolved — on Parker's box
+/// seven weights each of the Noto Sans CJK families, six of Noto Sans Mono and
+/// seven of Noto Sans Devanagari, about 5 MiB of mapped font files and parsed
+/// tables in an idle window that has not drawn one CJK glyph (#953). The chain
+/// only ever changes a glyph the run's own font has no shape for: gpui gives
+/// every other character to the primary font, with or without a chain. So the
+/// chain is withheld until the first frame whose rows hold such a glyph, put on
+/// every run of that frame, and carried by every grid font from then on, which
+/// is exactly what the grid did before.
+///
+/// One per process, like the chain itself; the tests build their own.
+pub(crate) struct FallbackLatch(std::sync::atomic::AtomicBool);
+
+static GRID_FALLBACKS: FallbackLatch = FallbackLatch::new();
+
+impl FallbackLatch {
+    pub(crate) const fn new() -> Self {
+        Self(std::sync::atomic::AtomicBool::new(false))
+    }
+
+    fn armed(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The chain a grid font carries right now: none until a row has needed it.
+    fn chain(&self) -> Option<gpui::FontFallbacks> {
+        if self.armed() {
+            script_fallbacks()
+        } else {
+            None
+        }
+    }
+
+    /// Read a frame's rows before they are shaped. If any holds a glyph its own
+    /// run's font does not carry, switch the chain on and hang it on every run
+    /// of the frame, so the row that needed it is drawn with it. Returns whether
+    /// this call is the one that switched it on.
+    ///
+    /// `face` names a run's font as the coverage check knows it, and `covers`
+    /// answers whether that face has a glyph for a character. ASCII is never
+    /// asked about: gpui gives it to the primary font whatever the chain says.
+    fn arm<K: Copy>(
+        &self,
+        lines: &mut [(String, Vec<TextRun>)],
+        face: impl FnMut(&Font) -> K,
+        covers: impl FnMut(K, char) -> bool,
+    ) -> bool {
+        if self.armed() || !rows_need_fallbacks(lines, face, covers) {
+            return false;
+        }
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        let chain = script_fallbacks();
+        for (_, runs) in lines.iter_mut() {
+            for run in runs {
+                run.font.fallbacks = chain.clone();
+            }
+        }
+        true
+    }
+}
+
+/// Whether any run holds a non-ASCII character its own font has no glyph for.
+/// A row whose runs do not tile its text is answered yes, which is the old
+/// behaviour, rather than guessed at.
+fn rows_need_fallbacks<K: Copy>(
+    lines: &[(String, Vec<TextRun>)],
+    mut face: impl FnMut(&Font) -> K,
+    mut covers: impl FnMut(K, char) -> bool,
+) -> bool {
+    for (text, runs) in lines {
+        if text.is_ascii() {
+            continue;
+        }
+        let mut at = 0;
+        for run in runs {
+            let Some(span) = text.get(at..at + run.len) else {
+                return true;
+            };
+            at += run.len;
+            if span.is_ascii() {
+                continue;
+            }
+            let key = face(&run.font);
+            if span.chars().any(|ch| !ch.is_ascii() && !covers(key, ch)) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Whether a font's own face — its fallbacks ignored — has a glyph for `ch`.
+/// The grid asks about the same box-drawing and prompt glyphs every frame until
+/// the chain is armed, so a yes is remembered; a no arms the chain at once and
+/// is never asked again.
+fn face_has_glyph(ts: &gpui::TextSystem, face: gpui::FontId, ch: char) -> bool {
+    thread_local! {
+        static HAS: RefCell<std::collections::HashSet<(gpui::FontId, char)>> =
+            RefCell::default();
+    }
+    if HAS.with(|h| h.borrow().contains(&(face, ch))) {
+        return true;
+    }
+    let yes = ts.advance(face, px(16.), ch).is_ok();
+    if yes {
+        HAS.with(|h| h.borrow_mut().insert((face, ch)));
+    }
+    yes
+}
+
+/// [`FallbackLatch::arm`] for the grid, against gpui's own fonts.
+fn arm_grid_fallbacks(lines: &mut [(String, Vec<TextRun>)], ts: &gpui::TextSystem) {
+    GRID_FALLBACKS.arm(
+        lines,
+        |f| {
+            let mut bare = f.clone();
+            bare.fallbacks = None;
+            ts.resolve_font(&bare)
+        },
+        |id, ch| face_has_glyph(ts, id, ch),
+    );
+}
+
+/// The grid's face for a theme and weight, with no fallback chain at all.
+fn grid_face(th: &Theme, weight: FontWeight) -> Font {
     // Crawl mode swaps the whole grid to the bundled News-Gothic crawl font,
     // italic, for that iconic recede-into-the-distance look. The perspective
     // itself is the renderer's job (the tube's crawl warp); here we only change
@@ -7040,12 +9603,26 @@ fn grid_font(th: &Theme, weight: FontWeight) -> Font {
     };
     let mut f = font(family);
     f.weight = weight;
-    // Per-glyph fallback so CJK / Devanagari content renders real glyphs instead
-    // of tofu boxes; only fires for glyphs the primary mono font is missing.
-    f.fallbacks = script_fallbacks();
     if th.crawl {
         f.style = FontStyle::Italic;
     }
+    f
+}
+
+/// The live grid's font: per-glyph fallback so CJK / Devanagari content renders
+/// real glyphs instead of tofu boxes, once a row has needed it (see
+/// [`FallbackLatch`]); it only fires for glyphs the primary mono font is missing.
+fn grid_font(th: &Theme, weight: FontWeight) -> Font {
+    let mut f = grid_face(th, weight);
+    f.fallbacks = GRID_FALLBACKS.chain();
+    f
+}
+
+/// The grid's font for the FOCUS reader, which draws a transcript the live grid
+/// may never have shown: it carries the chain from the start, as before.
+fn reader_grid_font(th: &Theme, weight: FontWeight) -> Font {
+    let mut f = grid_face(th, weight);
+    f.fallbacks = script_fallbacks();
     f
 }
 
@@ -7153,6 +9730,59 @@ pub(crate) fn cursor_key_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     })
 }
 
+/// The keys that erase columns `from..=to` of `row` from the line being typed
+/// on it, with the cursor at column `caret`: walk the caret to just past the
+/// run, then rub out each character of it with DEL, which is what Backspace
+/// sends and what readline, zsh and Claude Code all read as "delete the
+/// character before the caret".
+///
+/// The walk and the count are in characters, not cells, so a wide
+/// character's spacer is skipped. Left of the caret every cell is text,
+/// typed spaces included. Right of it, a blank past the row's last printed
+/// character is not text at all — a keyboard selection grown leftwards takes
+/// the blank cell the caret sits on at the end of a line — and counting one
+/// would rub out a real character in its place, so the run stops at the
+/// text. A run that holds no text erases nothing: `None`.
+///
+/// What it cannot see is where the line editor's text begins. A run reaching
+/// back over a prompt sends a DEL for each prompt glyph too, and those land
+/// at the start of the line, where a line editor ignores them.
+fn erase_run_keys(
+    row: &[crate::vt::Cell],
+    from: usize,
+    to: usize,
+    caret: usize,
+    app_cursor: bool,
+) -> Option<Vec<u8>> {
+    let counts = |c: &crate::vt::Cell| {
+        !c.flags
+            .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+    };
+    let printed = row
+        .iter()
+        .rposition(|c| counts(c) && !matches!(c.c, ' ' | '\0'));
+    let text_end = printed.max(caret.checked_sub(1))?;
+    let to = to.min(text_end).min(row.len().checked_sub(1)?);
+    if from > to {
+        return None;
+    }
+    let chars = |cells: std::ops::Range<usize>| row[cells].iter().filter(|c| counts(c)).count();
+    let erase = chars(from..to + 1);
+    if erase == 0 {
+        return None;
+    }
+    let past = to + 1;
+    let (walk, arrow): (usize, &[u8]) = match (caret > past, app_cursor) {
+        (true, false) => (chars(past..caret), b"\x1b[D"),
+        (true, true) => (chars(past..caret), b"\x1bOD"),
+        (false, false) => (chars(caret..past), b"\x1b[C"),
+        (false, true) => (chars(caret..past), b"\x1bOC"),
+    };
+    let mut keys = arrow.repeat(walk);
+    keys.resize(keys.len() + erase, 0x7f);
+    Some(keys)
+}
+
 /// One synthetic wheel notch, encoded the way the running app asked for its
 /// mouse reports: SGR when it negotiated 1006, otherwise the legacy X10 form.
 /// Row and column are reported as 1,1 — the app scrolls its own view, so where
@@ -7174,7 +9804,7 @@ fn wheel_step_bytes(up: bool, sgr: bool) -> Vec<u8> {
 /// keystroke type a character* is answered once. gpui fills `key_char` for
 /// `alt+r` with `"r"`, which is how a chord came to read as a letter in two
 /// different surfaces before [`crate::workbench::types_a_character`] existed.
-fn keylayer_key(ks: &Keystroke) -> crate::keylayer::Key<'_> {
+pub(crate) fn keylayer_key(ks: &Keystroke) -> crate::keylayer::Key<'_> {
     let m = &ks.modifiers;
     crate::keylayer::Key {
         key: ks.key.as_str(),
@@ -7290,7 +9920,15 @@ impl Focusable for TerminalView {
 // in that module and are tested there; this is the wiring.
 impl TerminalView {
     /// Show a face. Idempotent, so a click on the chip already lit is free.
+    ///
+    /// The Document face is refused to a pane with no document: there would be
+    /// nothing to draw, and a face that shows nothing while swallowing every
+    /// key is a pane that has silently stopped working. The only way onto it
+    /// is [`Self::show_document`], which brings the document with it.
     pub fn set_face(&mut self, face: crate::workbench::Face, cx: &mut Context<Self>) {
+        if face == crate::workbench::Face::Document && self.doc.is_none() {
+            return;
+        }
         if self.bench.face() != face {
             self.bench.set_face(face);
             // A pane whose face changed has changed what its keystrokes mean,
@@ -7299,8 +9937,11 @@ impl TerminalView {
         }
     }
 
+    /// alt+k. On a pane showing a document it moves between the document and
+    /// its shell; anywhere else it swaps the terminal and the bench. See
+    /// [`crate::workbench::next_face`].
     pub fn toggle_face(&mut self, cx: &mut Context<Self>) {
-        self.bench.toggle_face();
+        self.bench.toggle_face(self.doc.is_some());
         cx.notify();
     }
 
@@ -7351,6 +9992,13 @@ impl TerminalView {
                 self.wb_channel.saw_response();
             }
         }
+        // An artifact the agent presented is something it handed over, and the
+        // header chip names it. Read before the bench takes the post.
+        if let Some(s) = post.surface.as_ref() {
+            if post.op != crate::surface::Op::Retire {
+                self.handover_presented(s);
+            }
+        }
         if self.bench.apply(post).is_some() {
             cx.notify();
         }
@@ -7360,6 +10008,8 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.resolved_theme(cx);
+        // The floating square re-records where its controls are as it paints.
+        self.float_zones.borrow_mut().clear();
         // right-click context menu (Copy / Paste / Open link), anchored at the cursor
         let ctx_menu_el = self.ctx_menu.map(|pos| {
             let link = self.link_under(pos);
@@ -7384,6 +10034,22 @@ impl Render for TerminalView {
                     .hover(move |s| s.bg(acc.alpha(0.22)))
                     .child(label.to_string())
             };
+            // A link row: the action, and the click that does the same thing
+            // without the menu, dim at the right edge.
+            let link_row = |label: &str, keys: &'static str| {
+                div()
+                    .px(px(13.))
+                    .py(px(5.))
+                    .flex()
+                    .justify_between()
+                    .gap(px(18.))
+                    .cursor_pointer()
+                    .text_color(txt)
+                    .hover(move |s| s.bg(acc.alpha(0.22)))
+                    .child(label.to_string())
+                    .child(div().text_color(faint).child(keys))
+            };
+            let s = crate::lang::current().strings();
             let mut menu = div()
                 .flex()
                 .flex_col()
@@ -7398,32 +10064,98 @@ impl Render for TerminalView {
                 .font_family(ff)
                 .shadow_md();
             if let Some(l) = link {
-                // Reveal is offered only where there is a file to point at, so
-                // the item never appears dead on an http link.
+                // The rows come from `docopen::link_menu`, so a row is offered
+                // only where it does something: Open here on a document TD can
+                // draw, Reveal where there is a file to point at, never on an
+                // http link. Copy link copies what the click resolved — the
+                // absolute path, or the URL.
                 let item = reveal_target(&l);
-                menu = menu.child(row("Open link  ↗", true).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |v, _, _, cx| {
-                        open_with_system(&l);
-                        v.ctx_menu = None;
-                        cx.stop_propagation();
-                        cx.notify();
-                    }),
-                ));
-                if let Some(item) = item {
-                    menu = menu.child(row("Reveal in folder  ⌖", true).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |v, _, _, cx| {
-                            reveal_with_system(&item);
-                            v.ctx_menu = None;
-                            cx.stop_propagation();
-                            cx.notify();
-                        }),
-                    ));
+                // The square floats over the terminal face only.
+                let doc = (self.bench.face() == crate::workbench::Face::Terminal)
+                    .then(|| self.document_of(&l))
+                    .flatten();
+                let (row_at, _, _) = self.viewport_cell(pos);
+                for entry in crate::docopen::link_menu(doc.is_some(), item.is_some()) {
+                    let el = match entry {
+                        crate::docopen::LinkItem::OpenHere => {
+                            let doc = doc.clone();
+                            link_row(s.m_open_here, "alt+click").on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    if let Some(doc) = doc.clone() {
+                                        let _ = v.open_float(doc, Some(row_at), cx);
+                                    }
+                                    v.ctx_menu = None;
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                        }
+                        crate::docopen::LinkItem::OpenBeside => {
+                            let doc = doc.clone();
+                            link_row(s.m_open_beside, "ctrl+alt+click").on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    if let Some(doc) = doc.clone() {
+                                        v.request_beside(
+                                            doc,
+                                            Some(row_at),
+                                            crate::docopen::Asker::Menu,
+                                            None,
+                                            cx,
+                                        );
+                                    }
+                                    v.ctx_menu = None;
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                        }
+                        crate::docopen::LinkItem::OpenWithDesktop => {
+                            let l = l.clone();
+                            link_row(s.m_open_desktop, "ctrl+click").on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    open_with_system(&l);
+                                    v.ctx_menu = None;
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                        }
+                        crate::docopen::LinkItem::Reveal => {
+                            let item = item.clone().unwrap_or_default();
+                            link_row(s.m_reveal, "shift+click").on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    reveal_with_system(&item);
+                                    v.ctx_menu = None;
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                        }
+                        crate::docopen::LinkItem::CopyLink => {
+                            let l = l.clone();
+                            link_row(s.m_copy_link, "").on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(l.clone()));
+                                    cx.write_to_primary(ClipboardItem::new_string(l.clone()));
+                                    v.ctx_menu = None;
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                        }
+                    };
+                    menu = menu.child(el);
                 }
+                // A rule between what the link offers and what the pane does.
+                menu = menu.child(div().my(px(3.)).h(px(1.)).bg(faint.alpha(0.35)));
             }
             menu = menu
-                .child(row("Copy", has_sel).on_mouse_down(
+                .child(row(s.m_copy, has_sel).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         if !v.bench_copy(cx) {
@@ -7434,7 +10166,7 @@ impl Render for TerminalView {
                         cx.notify();
                     }),
                 ))
-                .child(row("Paste", true).on_mouse_down(
+                .child(row(s.m_paste, true).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         v.paste_clipboard(cx);
@@ -7443,7 +10175,7 @@ impl Render for TerminalView {
                         cx.notify();
                     }),
                 ))
-                .child(row("Clear scrollback", true).on_mouse_down(
+                .child(row(s.m_clear, true).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         v.clear_scrollback(cx);
@@ -7451,17 +10183,39 @@ impl Render for TerminalView {
                         cx.stop_propagation();
                         cx.notify();
                     }),
-                ));
+                ))
+                // What agents may see of this pane. A pointer gesture on the
+                // pane itself, and deliberately nowhere else: the control socket
+                // and MCP both answer agents, and a mark an agent could lift
+                // would be decoration.
+                .child(div().my(px(3.)).h(px(1.)).bg(faint.alpha(0.35)))
+                .child(
+                    row(
+                        if self.off_limits {
+                            "Let agents see this pane"
+                        } else {
+                            "Off-limits to agents"
+                        },
+                        true,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|v, _, _, cx| {
+                            v.ctx_menu = None;
+                            cx.stop_propagation();
+                            v.toggle_off_limits(cx);
+                        }),
+                    ),
+                );
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
         // PAINT mode — the wall-wide palette overlay (raised by `terminal-delight
         // ctl paint …`, e.g. the Omarchy bar's palette widget). EVERY pane draws
         // its own glyph grid at once, so a wall of terminals recolours like
         // dipping a brush: paint this one, arrow to the next, Esc when the wall
-        // reads right. The tiles are the theme tray's own colour-set vocabulary
-        // (Dynamic::NAMED + signatures) — which is also, deliberately, the
-        // desktop's variant set — so a paint pick produces exactly what the tray
-        // would have, and exactly what the bar would have.
+        // reads right. The tiles are the desktop's own themes — the list
+        // Omarchy's picker shows ([`crate::palette::offered`]) — so a pane can
+        // match every other window on the machine.
         //
         // It plays like Omarchy's own picker, mouse optional: the SELECTED pane
         // is spotlit (everything else keeps the scrim), bare arrows walk the
@@ -7469,16 +10223,13 @@ impl Render for TerminalView {
         // the way it is pressed — bigger, bolder, underlined — so the keyboard
         // is legible from the tile itself instead of a legend somewhere else.
         //
-        // TWO SHELVES of vocabulary, cycled with `z` (`shift+z` back) or by
-        // clicking a pill:
-        //  · COLOUR SETS — `Dynamic::NAMED`, which is also the desktop's variant
-        //    set, so a pick produces what the tray and the bar would have.
-        //  · DESKTOP PALETTES — every Omarchy theme installed on the machine
-        //    ([`crate::palette`]), which replaces the colours outright and leaves
-        //    the theme's texture, so a pane can match every other window.
-        // `z` can be the shelf key precisely because no set and no theme is
-        // spelled with one (guarded by `named_sets_spell_a_unique_paint_alphabet`
-        // and `the_shelf_key_is_not_a_chord_on_either_shelf`).
+        // TWO SHELVES, cycled with `z` (`shift+z` back) or by clicking a pill:
+        // FAVOURITES, and OMARCHY THEMES. A pick replaces the colours outright
+        // and leaves the theme's texture. `z` can be the shelf key because no
+        // theme is spelled with one (`the_shelf_key_is_not_a_chord_on_either_shelf`).
+        //
+        // Each pane's grid sits on the cabinet's own card ([`crate::paint::card`]),
+        // the one recipe both scopes wear.
         let paint_el = theme::paint_mode(cx).then(|| {
             // the spotlight: only the focused pane is lit, and only IT answers
             // the letters — so the keyboard always has one unambiguous target.
@@ -7492,7 +10243,6 @@ impl Render for TerminalView {
             // where a letter-cycle starts, and whether `⇧F` has anything to say.
             let worn = self.worn(cx);
             let txt = th.text;
-            let ff = th.font_family.clone();
             // This pane's own skin: the tiles and pills are chrome, so their
             // corners follow the skin, and a pane wearing its own palette gets
             // a card baked against THAT rather than against the window's.
@@ -7565,42 +10315,45 @@ impl Render for TerminalView {
                     d.border(px(3.)).border_color(txt.alpha(0.9))
                 })
                 .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(8.))
-                        // unselected cards fade back: same layout, quieter ink,
-                        // so the wall still shows what every pane is wearing.
-                        .opacity(if sel { 1.0 } else { 0.34 })
-                        .font_family(ff)
+                    // The tiles' own sizes are unscaled, so the card is too.
+                    crate::paint::card(&th, &card_sk, 1.0, sel)
+                        .child(crate::paint::card_head(
+                            &th,
+                            1.0,
+                            sel,
+                            "PAINT THIS PANE",
+                            &worn,
+                        ))
                         .child(
                             div()
-                                .text_size(px(11.))
-                                .font_weight(if sel {
-                                    gpui::FontWeight::EXTRA_BOLD
-                                } else {
-                                    gpui::FontWeight::NORMAL
-                                })
-                                .text_color(txt)
-                                .child("PAINT THIS PANE"),
-                        )
-                        .children(pills)
-                        .child(grid)
-                        .child(
-                            // The legend is the contract: everything named here
-                            // works, and nothing that works is unnamed. `↑ outer`
-                            // is the whole discovery path for the card hanging
-                            // above the wall, so it is named here rather than
-                            // only on the card nobody has looked up at yet.
-                            div().text_size(px(9.)).text_color(th.faint).child(
-                                crate::paint::legend(
-                                    cx,
-                                    &["↔ select", "↑ outer"],
-                                    "d desktop",
-                                    &worn,
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .gap(px(8.))
+                                // Unselected cards fade back: same layout, quieter
+                                // tiles, so the wall still shows what every pane is
+                                // wearing. The CONTENTS fade and the card stays
+                                // opaque — a card you can see the terminal through
+                                // is the decal the cabinet's card learned not to be.
+                                .opacity(if sel { 1.0 } else { 0.34 })
+                                .children(pills)
+                                .child(grid)
+                                .child(
+                                    // The legend is the contract: everything named
+                                    // here works, and nothing that works is unnamed.
+                                    // `↑ outer` is the whole discovery path for the
+                                    // card hanging above the wall, so it is named
+                                    // here rather than only on the card nobody has
+                                    // looked up at yet.
+                                    div().text_size(px(9.)).text_color(th.faint).child(
+                                        crate::paint::legend(
+                                            cx,
+                                            &["↔ select", "↑ outer"],
+                                            "d desktop",
+                                            &worn,
+                                        ),
+                                    ),
                                 ),
-                            ),
                         ),
                 )
         });
@@ -7692,7 +10445,15 @@ impl Render for TerminalView {
                 inverted
             );
         }
-        let mut lines = self.styled_lines(&th, inverted);
+        // Covered faces still receive terminal output, but no grid pixels are
+        // drawn there. The next terminal frame snapshots the current viewport.
+        let mut lines =
+            if self.bench.face() == crate::workbench::Face::Workbench || self.has_doc_face() {
+                Vec::new()
+            } else {
+                self.styled_lines(&th, inverted)
+            };
+        arm_grid_fallbacks(&mut lines, window.text_system());
         if std::env::var("TD_ANCHORDEBUG").is_ok() {
             // The last few non-blank grid rows + whether each is detected as the
             // human prompt line — reveals a caret we don't recognise or a leading
@@ -7790,15 +10551,23 @@ impl Render for TerminalView {
             .unwrap()
             .map(|b| f32::from(b.size.width))
             .unwrap_or(f32::MAX);
-        let show_human = SHOW_HUMAN_NAV_GLYPH && pane_w >= 470.; // 1st: 👤 ▲▼ nav
-        let show_eq = pane_w >= 410.; //    2nd: EQ / display
-        let show_theme = pane_w >= 360.; //  3rd: 🎨 theme
-        let show_focus = SHOW_FOCUS_GLYPH && pane_w >= 264.; // 4th & last: 👓 FOCUS
-                                                             // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
+        // Reserve the launch button before deciding which optional controls fit.
+        let controls_w = pane_w - 64. * scale;
+        let show_human = SHOW_HUMAN_NAV_GLYPH && controls_w >= 470.; // 1st: 👤 ▲▼ nav
+        let show_eq = controls_w >= 410.; //    2nd: EQ / display
+        let show_theme = controls_w >= 360.; //  3rd: 🎨 theme
+        let show_focus = SHOW_FOCUS_GLYPH && controls_w >= 264.; // 4th & last: 👓 FOCUS
+                                                                 // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
+                                                                 // The handover chip shrinks before anything tucks: its name above
+                                                                 // 470, the word for its list down to 264, and below that it is a row
+                                                                 // in the ⋯ menu like every other control here.
+        let handover_name = controls_w >= 470.;
+        let show_handover = controls_w >= 264. && self.has_handovers();
         let overflow = (SHOW_FOCUS_GLYPH && !show_focus)
             || !show_theme
             || !show_eq
-            || (SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent());
+            || (SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent())
+            || (!show_handover && self.has_handovers());
 
         // The ⋯ overflow menu lists exactly the controls hidden at this width, in
         // the same order they collapse. Mirrors the right-click menu's look.
@@ -7872,6 +10641,18 @@ impl Render for TerminalView {
                         .child(step("▲", false, cx))
                         .child(step("▼", true, cx)),
                 );
+            }
+            if !show_handover && self.has_handovers() {
+                let word = crate::lang::current().strings().artifacts_word;
+                menu = menu.child(item("▤", word).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        v.toggle_handover_page(cx);
+                        cx.notify();
+                    }),
+                ));
             }
             if !show_eq {
                 menu = menu.child(item("📊", "Display").on_mouse_down(
@@ -7961,13 +10742,19 @@ impl Render for TerminalView {
                         }),
                     )
             };
+            // DOC · TERM · BENCH on a pane opened to show a document: the
+            // document is what that pane is for, so it leads.
+            let mut slider = sk.slider();
+            if self.doc.is_some() {
+                slider = slider.child(half(crate::workbench::Face::Document, cx));
+            }
             div()
                 .flex()
                 .flex_row()
                 .items_center()
                 .gap(px(2.))
                 .child(
-                    sk.slider()
+                    slider
                         .child(half(crate::workbench::Face::Terminal, cx))
                         .child(half(crate::workbench::Face::Workbench, cx)),
                 )
@@ -8015,6 +10802,9 @@ impl Render for TerminalView {
         // because building it needs `&mut self` and the tree below borrows the
         // pane for the rest of the frame.
         let on_bench = face_now == crate::workbench::Face::Workbench;
+        // The sticky note and the crawl are the terminal's alone: not on the
+        // bench (Parker's rule, see `note_layout`), and not on a document.
+        let on_terminal = face_now == crate::workbench::Face::Terminal;
         let pane_h = self
             .content_bounds
             .lock()
@@ -8132,7 +10922,14 @@ impl Render for TerminalView {
                         s.text_color(bar_fg.alpha(0.85))
                             .border_color(sk.ink.edge_strong)
                     })
-                    .child(div().text_size(px(13. * scale)).child("\u{ff0b}"))
+                    .child(
+                        div()
+                            .text_size(px(13. * scale))
+                            .when_some(chrome_glyph_font('\u{ff0b}', &th), |d, family| {
+                                d.font_family(family)
+                            })
+                            .child("\u{ff0b}"),
+                    )
                     .child(div().text_size(px(9.5 * scale)).child("logo"))
                     .into_any_element()
             }
@@ -8182,7 +10979,19 @@ impl Render for TerminalView {
                 // the title doubles as the drag handle: grab it to move this
                 // sub-tab onto another tab, or drop it on a pane to split there.
                 // Right-click renames it (custom name wins over the OSC title).
-                let label = self.name.clone().unwrap_or_else(|| self.title.clone());
+                // On the Document face the title is the file's name, unless the
+                // pane was renamed: the shell's own title describes a terminal
+                // that is not on screen.
+                let shown = (face_now == crate::workbench::Face::Document)
+                    .then(|| self.document_path())
+                    .flatten()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned());
+                let label = self
+                    .name
+                    .clone()
+                    .or(shown)
+                    .unwrap_or_else(|| self.title.clone());
                 div()
                     .flex_1()
                     // min-width:0 lets the title actually shrink (a nowrap flex
@@ -8197,6 +11006,20 @@ impl Render for TerminalView {
                     .gap_2()
                     .cursor_pointer()
                     .child(logo_el)
+                    // The launch mark rides before the label rather than after
+                    // it: the title clips on a narrow pane, and the mark is the
+                    // part that says how this pane came to be here.
+                    .children(self.launch_mark.map(|mark| {
+                        div()
+                            .flex_none()
+                            .px(px(5. * scale))
+                            .rounded(sk.rad(4.))
+                            .border_1()
+                            .border_color(th.accent.alpha(0.6))
+                            .text_color(th.accent)
+                            .text_size(px(9.5 * scale))
+                            .child(mark)
+                    }))
                     .child(format!("▸ {} · {label}", self.mode.label_i18n()))
                     .on_mouse_down(
                         MouseButton::Left,
@@ -8234,6 +11057,29 @@ impl Render for TerminalView {
                     // roomier spacing between the header glyphs — scales with the bar
                     .gap(hpad)
                     .child(face_toggle)
+                    .child(
+                        sk.chip(false)
+                            .id("launch-agent")
+                            .debug_selector(|| "launch-agent".into())
+                            .cursor_pointer()
+                            .text_size(px((hicon * 0.42).max(8.5)))
+                            .whitespace_nowrap()
+                            .child(if pane_w >= 470. { "⌁ AGENT" } else { "⌁" })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    cx.emit(OpenAgentLauncher);
+                                }),
+                            ),
+                    )
+                    // What this pane's agent handed over: the newest one's
+                    // name, and the list behind ▾. See `pane/handed.rs`.
+                    .children(
+                        show_handover
+                            .then(|| self.handover_chip(&sk, hicon, handover_name, cx))
+                            .flatten(),
+                    )
                     // Part 1: only in an agent (claude/codex) pane — jump between
                     // *your own* messages. Coloured like your input (`th.human`).
                     // FIRST control to tuck into the ⋯ overflow as the pane narrows.
@@ -8371,6 +11217,20 @@ impl Render for TerminalView {
                                 ),
                         )
                     })
+                    // Off-limits sits with the controls on the right, which a
+                    // narrow pane keeps while its title clips: it is the one
+                    // thing on this header that changes what an agent may do.
+                    .children(self.off_limits.then(|| {
+                        div()
+                            .flex_none()
+                            .px(px(5. * scale))
+                            .rounded(sk.rad(4.))
+                            .border_1()
+                            .border_color(bar_fg.alpha(0.75))
+                            .text_color(bar_fg)
+                            .text_size(px(9.5 * scale))
+                            .child("OFF-LIMITS")
+                    }))
                     .child(status)
                     .child(
                         // close just this sub-tab (×): ends this pane's shell.
@@ -8405,43 +11265,10 @@ impl Render for TerminalView {
                             ),
                     ),
             );
-        {
-            let mut shadows = vec![
-                // the reflection: bright inner top edge
-                BoxShadow {
-                    color: gpui::white().alpha(0.16),
-                    offset: point(px(1.), px(1.)),
-                    blur_radius: px(0.),
-                    spread_radius: px(0.),
-                    inset: true,
-                },
-            ];
-            if glow > 0.001 {
-                shadows.push(BoxShadow {
-                    color: bar_fg.alpha(glow * 0.5),
-                    offset: point(px(0.), px(1.)),
-                    blur_radius: px(16.),
-                    spread_radius: px(0.),
-                    inset: false,
-                });
-            }
-            header = header.shadow(shadows);
-        }
+        header = header.shadow(header_shadows(bar_fg, glow, th.crt, th.grade.phosphor));
 
         let jiggle = self.fx.jiggle_px;
-        // 🎰 GAMBA reels — shown only on the gamba DESIGN texture while the agent
-        // thinks. The colour set (incl. RETRO/🎰) never triggers the reels.
-        let gamba_look = crate::gamba::look_active(&th);
-        let gamba_overlay = gamba_look
-            .then(|| crate::gamba::overlay(&self.gamba, &th))
-            .flatten();
-        // a win rumbles the whole terminal for 3s as the coins spill
-        let (rumble_dx, rumble_dy) = if gamba_look {
-            self.gamba.rumble_offset()
-        } else {
-            (0.0, 0.0)
-        };
-        let shake_y = jiggle + rumble_dy;
+        let shake_y = jiggle;
         // The frame the grid sits in: a 2%/4px breathing border plus a
         // curvature-proportional inset so the bottom prompt clears the barrel
         // overscan. Same `grid_pad` the fit + hit-test use, so they stay locked.
@@ -8453,7 +11280,7 @@ impl Render for TerminalView {
                 .map(|b| (f32::from(b.size.width), f32::from(b.size.height)))
                 .unwrap_or((0.0, 0.0));
             let (k1, k2) = theme::warp_coeffs(th.warp);
-            grid_pad(w, h, k1, k2)
+            grid_pad_drawn(w, h, k1, k2, window.scale_factor())
         };
         // The Alt-held copy affordance: a border around the logical line under the
         // pointer with a ⎘ chip at its right edge. Painted INSIDE the tube, so it
@@ -8489,11 +11316,90 @@ impl Render for TerminalView {
                         .rounded(px(4.))
                         .text_color(acc)
                         .text_size(px(11.))
-                        .child(if copied {
-                            "✓ copied"
-                        } else {
-                            "⎘ alt+click"
-                        }),
+                        .child(chip_label(
+                            &hint.does,
+                            copied,
+                            crate::lang::current().strings(),
+                        )),
+                )
+        });
+        // The bench's Alt chip: the run a held bare Alt would open, outlined,
+        // with the grid's own label. Drawn in the screen's coordinates, which
+        // are the flat ones the bench's text was recorded in, less the
+        // screen's origin — so the tube bends it exactly as it bends the text
+        // it sits on.
+        //
+        // The label hangs from whichever end of the outline has room: from
+        // its right end when the outline reaches past the screen's middle,
+        // as a whole line of text does, and from its left end otherwise. A
+        // Markdown link's words are outlined alone, and a short label near a
+        // card's left edge would otherwise push the label off the bench.
+        let bench_hint_el = self
+            .wb_alt_hint
+            .filter(|_| on_bench)
+            .and_then(|(x, y, w, h)| {
+                let b = (*self.content_bounds.lock().ok()?)?;
+                let (ox, oy) = (f32::from(b.origin.x), f32::from(b.origin.y));
+                let (acc, surf) = (th.accent, th.surface);
+                let from_right = x - ox + w > f32::from(b.size.width) / 2.0;
+                Some(
+                    div()
+                        .absolute()
+                        .left(px(x - ox - 3.))
+                        .top(px(y - oy - 2.))
+                        .w(px(w + 6.))
+                        .h(px(h + 4.))
+                        .border_1()
+                        .border_color(acc.alpha(0.75))
+                        .rounded(px(4.))
+                        .child(
+                            div()
+                                .absolute()
+                                .when(from_right, |d| d.right(px(2.)))
+                                .when(!from_right, |d| d.left(px(2.)))
+                                .top(px(-14.))
+                                .px(px(6.))
+                                .bg(surf)
+                                .border_1()
+                                .border_color(acc.alpha(0.75))
+                                .rounded(px(4.))
+                                .text_color(acc)
+                                .text_size(px(11.))
+                                .whitespace_nowrap()
+                                .child(crate::lang::current().strings().chip_open_here),
+                        ),
+                )
+            });
+        // What the pane is saying about the last click, in the Alt chip's own
+        // shape and place: at the right end of the row the click landed on,
+        // where the eye already is. Cut short with an ellipsis rather than
+        // run off a narrow pane; the whole sentence is in the log. Nothing
+        // on the bench face, where no click on the grid or in a document
+        // could have prompted it.
+        let said_el = self.said.as_ref().filter(|_| !on_bench).map(|said| {
+            let (acc, surf) = (th.accent, th.surface);
+            let row = said.row.unwrap_or(0) as f32;
+            div()
+                .absolute()
+                .left(px(grid_pad_x))
+                .right(px(grid_pad_x))
+                .top(px(grid_pad_y + row * self.cell_h - 2.))
+                .flex()
+                .justify_end()
+                .child(
+                    div()
+                        .min_w(px(0.))
+                        .px(px(6.))
+                        .bg(surf)
+                        .border_1()
+                        .border_color(acc.alpha(0.75))
+                        .rounded(px(4.))
+                        .text_color(acc)
+                        .text_size(px(11.))
+                        .whitespace_nowrap()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(said.text.clone()),
                 )
         });
         // The sticky note. Its geometry comes from the same `content_bounds` the
@@ -8501,9 +11407,9 @@ impl Render for TerminalView {
         // INVERSE of that tube's distortion and the two must be measuring the
         // same rectangle or the cancellation is against the wrong curve.
         // Nothing on the bench face — see [`Self::note_layout`].
-        let note_el = self.note.clone().filter(|_| !on_bench).map(|note| {
+        let note_el = self.note.clone().filter(|_| on_terminal).map(|note| {
             let store = self.content_bounds.clone();
-            let pal = crate::sticky::paper(th.text, th.accent);
+            let pal = crate::sticky::paper_for(&th);
             let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
             // The pane's own curvature, and zero while a modal has flattened the
             // whole screen — the note un-bends with everything else that frame
@@ -8530,9 +11436,54 @@ impl Render for TerminalView {
             )
         });
 
+        // The document inside the square paints in THIS pane's resolved theme,
+        // which a pane can hold apart from the window's. Handed down every
+        // frame the square is up; the view repaints only when the palette or
+        // the text size actually moved.
+        // Who each document's ↪ sends to rides down the same way.
+        if let Some(float) = &self.float {
+            let theme = Arc::new(th.clone());
+            let beside = self.notes_beside.0.clone();
+            float.view.update(cx, |v, cx| {
+                v.set_theme(theme, cx);
+                v.set_beside(beside, cx);
+            });
+        }
+        // The Document face's view, the same way.
+        if let Some(doc) = self.doc_on_face() {
+            let theme = Arc::new(th.clone());
+            let beside = self.notes_beside.1.clone();
+            doc.view.update(cx, |v, cx| {
+                v.set_theme(theme, cx);
+                v.set_beside(beside, cx);
+            });
+        }
+        let float_el = self.float_el(&th, face_now, cx);
+        let float_cursor = float_shows_on(face_now)
+            .then(|| self.float_resize_cursor())
+            .flatten();
+        // Inside the same padding the grid keeps off the bent edges, so the
+        // corners of a page are not the part the barrel pass pushes out of
+        // the tube.
+        let doc_el = self.doc_face_el((grid_pad_x, grid_pad_y), th.text);
+        // The pictures programs drew, over the grid in its own cells — and only
+        // over the grid: the bench and a document face show no terminal.
+        let (pictures_under, pictures_over) = if on_bench || doc_el.is_some() {
+            (Vec::new(), Vec::new())
+        } else {
+            self.picture_elements((grid_pad_x, grid_pad_y), th.crawl, window, cx)
+        };
+
         div()
             .track_focus(&self.focus_handle(cx))
             .on_key_down(cx.listener(Self::on_key))
+            // Alt pressed or let go with the pointer still: the document's
+            // note boxes show and go at once, not on the next move.
+            .on_modifiers_changed(
+                cx.listener(|this, ev: &gpui::ModifiersChangedEvent, _, cx| {
+                    this.doc_alt(&ev.modifiers, cx)
+                }),
+            )
             .on_scroll_wheel(cx.listener(Self::on_wheel))
             // BOTH buttons, and the second one is not optional. gpui's
             // `on_mouse_down` filters on the button it is registered with
@@ -8547,6 +11498,12 @@ impl Render for TerminalView {
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            // A square dragged against the pane's edge leaves the pointer
+            // outside it, and gpui hands this pane its mouse-up only while the
+            // pointer is over it. The release that ends the drag is caught
+            // here instead, or the square stays stuck to the hand. Guarded by
+            // `the_pane_releases_a_float_drag_outside_itself`.
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_float_release_out))
             // A FILE DROPPED ON THIS PANE, and it is registered HERE for the
             // same reason every other bench gesture is: gpui hit-tests the
             // flat layout tree, the bench is drawn bent, and a drop target
@@ -8571,8 +11528,6 @@ impl Render for TerminalView {
             .text_color(th.text)
             .pt(px(shake_y.max(0.)))
             .pb(px((-shake_y).max(0.)))
-            .pl(px(rumble_dx.max(0.)))
-            .pr(px((-rumble_dx).max(0.)))
             .child(header)
             .child(
                 div()
@@ -8617,7 +11572,7 @@ impl Render for TerminalView {
                                     // pane's own crawl perspective (grade.crawl →
                                     // th.crawl/angle/depth). Identity when off, so
                                     // a crawling pane and a plain pane coexist.
-                                    let crawl = if th.crawl && !on_bench {
+                                    let crawl = if th.crawl && on_terminal {
                                         let (a, d) = crate::theme::crawl_coeffs(
                                             th.crawl_angle,
                                             th.crawl_depth,
@@ -8664,43 +11619,32 @@ impl Render for TerminalView {
                     // row shaped and measured every frame for pixels nobody can
                     // see. The terminal itself keeps running — an agent whose
                     // output stopped being watched is not an agent that stopped.
+                    // A document the same way: it fills the screen in the
+                    // grid's place, and the shell under it keeps running.
+                    .children(pictures_under)
                     .child(if on_bench {
                         bench_el
+                    } else if let Some(doc_el) = doc_el {
+                        doc_el
                     } else {
-                        div()
-                            .px(px(grid_pad_x))
-                            .py(px(grid_pad_y))
-                            .flex()
-                            .flex_col()
-                            .children(lines.into_iter().map(|(text, runs)| {
-                                // Crawl mode centres each row: alacritty fills a row
-                                // to full width with blank cells, so we trim the
-                                // trailing blanks (clamping the runs to match) and let
-                                // the flex row justify-centre the remaining shaped
-                                // text. gpui measures the real glyph run, so this
-                                // centres correctly even in the proportional crawl
-                                // font. The grid model is unchanged (visual only).
-                                if th.crawl {
-                                    return match crawl_centered_runs(text, runs) {
-                                        Some((t, cut)) => div()
-                                            .h(px(self.cell_h))
-                                            .flex()
-                                            .justify_center()
-                                            .whitespace_nowrap()
-                                            .child(StyledText::new(t).with_runs(cut)),
-                                        None => div().h(px(self.cell_h)).whitespace_nowrap(),
-                                    };
-                                }
-                                let line = div().h(px(self.cell_h)).whitespace_nowrap();
-                                if text.is_empty() {
-                                    line
-                                } else {
-                                    line.child(StyledText::new(text).with_runs(runs))
-                                }
-                            }))
+                        let height = self.cell_h * lines.len() as f32 + 2.0 * grid_pad_y;
+                        grid_paint::GridPaint::replace_if_changed(
+                            &mut self.grid_paint,
+                            grid_paint::Snapshot {
+                                lines,
+                                cell_h: self.cell_h,
+                                pad: (grid_pad_x, grid_pad_y),
+                                crawl: th.crawl,
+                            },
+                            cx,
+                        );
+                        gpui::AnyView::from(self.grid_paint.clone())
+                            .cached(gpui::StyleRefinement::default().w_full().h(px(height)))
                             .into_any_element()
                     })
+                    .children(pictures_over)
                     .children(copy_el)
+                    .children(bench_hint_el)
                     // The sticky note, INSIDE the screen and therefore inside the
                     // registered warp tube. It has to be: the note is drawn
                     // pre-distorted so the barrel pass straightens it out, and
@@ -8711,6 +11655,16 @@ impl Render for TerminalView {
                     // right too, now that the note shares the tube's curve: it
                     // takes the same scanlines and glare as everything else on it.
                     .children(note_el)
+                    // The floating document, over the grid and the note and
+                    // INSIDE the screen, for the note's reason: the screen is
+                    // the warp tube, so the square bends with the glass like
+                    // everything else on it, and `overflow_hidden` keeps its
+                    // glow from smearing over the header, where the barrel pass
+                    // never straightens anything.
+                    .children(float_el)
+                    .children(float_cursor)
+                    // Over the square: a link in it can be what prompted it.
+                    .children(said_el)
                     // The tube fires. Last child of the SCREEN, so it paints
                     // over the grid but stays inside the registered warp tube —
                     // the curvature and scanlines in the effect are the shader
@@ -8739,18 +11693,241 @@ impl Render for TerminalView {
             })
             // raised bezel frame sits above the glass, framing the whole pane
             .when(th.bezel > 0.001, |el| el.child(crt::bezel(&th)))
-            // 🎰 the slot reels ride above the bezel, below the menus
-            .children(gamba_overlay)
             .children(ctx_menu_el)
             .children(overflow_el)
             // the paint overlay is the topmost surface — painted last, above
             // every menu and tray, matching its Esc-first place in on_key
             .children(paint_el)
+            // Draws nothing. Last so its hitbox lies above every child's:
+            // see `pointer_leave_hook`.
+            .child(self.pointer_leave_hook(cx.entity().downgrade()))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    /// A grid run in the font the tests pretend is the grid's, with no chain.
+    fn grid_run(len: usize) -> gpui::TextRun {
+        gpui::TextRun {
+            len,
+            font: gpui::font("JetBrainsMono Nerd Font"),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }
+    }
+
+    /// #953. Resolving a grid font that carries the fallback chain loads every
+    /// face of every family in it, so the chain waits for a row that needs it.
+    /// Unarmed, the grid gets no chain; a frame whose glyphs its font all carries
+    /// leaves it unarmed; the first frame holding one it lacks arms it, and that
+    /// frame's runs carry the chain so the row that needed it is drawn with it.
+    #[test]
+    fn the_grid_fallback_chain_waits_for_a_glyph_its_own_font_lacks() {
+        use super::{script_fallbacks, FallbackLatch};
+        let chain = script_fallbacks();
+        assert!(
+            chain.is_some(),
+            "with no font registry every family counts as installed"
+        );
+        let latch = FallbackLatch::new();
+        assert_eq!(latch.chain(), None, "nothing has needed the chain yet");
+
+        // The primary carries ASCII, box drawing and the prompt's arrow, not 中.
+        let covers = |_: (), ch: char| ch != '中';
+        let prompt = "╭─ ~/Work ❯ ls";
+        let mut quiet = vec![(prompt.to_string(), vec![grid_run(prompt.len())])];
+        assert!(
+            !latch.arm(&mut quiet, |_| (), covers),
+            "every glyph is the font's own"
+        );
+        assert_eq!(latch.chain(), None, "so the grid still carries no chain");
+        assert!(quiet[0].1.iter().all(|r| r.font.fallbacks.is_none()));
+
+        let cjk = "echo 中文";
+        let mut frame = vec![
+            ("ok".to_string(), vec![grid_run(2)]),
+            (cjk.to_string(), vec![grid_run(5), grid_run(cjk.len() - 5)]),
+        ];
+        assert!(
+            latch.arm(&mut frame, |_| (), covers),
+            "中 is not the font's"
+        );
+        assert!(
+            frame
+                .iter()
+                .flat_map(|(_, runs)| runs)
+                .all(|r| r.font.fallbacks == chain),
+            "every run of the frame that armed it carries the chain"
+        );
+        assert_eq!(
+            latch.chain(),
+            chain,
+            "and every grid font after it, as before #953"
+        );
+        assert!(!latch.arm(&mut quiet, |_| (), |_, _| false), "it arms once");
+    }
+
+    /// The coverage check never asks about ASCII, which gpui gives to the
+    /// primary whatever the chain says, and a row whose runs do not tile its
+    /// text is answered "needs it" — the old behaviour — rather than guessed.
+    #[test]
+    fn only_a_missing_non_ascii_glyph_needs_the_chain() {
+        use super::rows_need_fallbacks;
+        let nothing = |_: (), _: char| false;
+        let plain = vec![("cargo build".to_string(), vec![grid_run(11)])];
+        assert!(
+            !rows_need_fallbacks(&plain, |_| (), nothing),
+            "ASCII is never asked about"
+        );
+        let box_row = vec![("│ é │".to_string(), vec![grid_run("│ é │".len())])];
+        assert!(!rows_need_fallbacks(&box_row, |_| (), |_, _| true));
+        assert!(rows_need_fallbacks(&box_row, |_| (), nothing));
+        let torn = vec![("│ é │".to_string(), vec![grid_run(1)])];
+        assert!(
+            rows_need_fallbacks(&torn, |_| (), |_, _| true),
+            "a run that ends inside a character is not trusted"
+        );
+    }
+
+    /// #953: two chrome glyphs the UI font has no shape for sent cosmic-text
+    /// through every installed font. Each is drawn from the face that search
+    /// ended on, named.
+    #[test]
+    fn chrome_glyphs_the_ui_font_lacks_come_from_a_named_face() {
+        use super::chrome_glyph_family as family;
+        let all = |_: &str| true;
+        let none = |_: &str| false;
+        let grid = "JetBrainsMono Nerd Font";
+        assert_eq!(
+            family('\u{f06a9}', grid, all).as_deref(),
+            Some(grid),
+            "the agent counter's robot is the grid's Nerd Font glyph"
+        );
+        assert_eq!(
+            family('\u{e0b0}', grid, none).as_deref(),
+            Some(grid),
+            "a Nerd Font icon does not wait on CJK being installed"
+        );
+        assert_eq!(
+            family('\u{ff0b}', grid, all).as_deref(),
+            Some("Noto Sans Mono CJK JP"),
+            "the logo placeholder's fullwidth plus is the CJK face's"
+        );
+        assert_eq!(
+            family('\u{ff0b}', grid, none),
+            None,
+            "with no CJK face installed it is left to the search, as before"
+        );
+        for ch in ['+', '✕', '☐', '▶', '—', 'é', '🎨'] {
+            assert_eq!(family(ch, grid, all), None, "{ch} is the UI font's to draw");
+        }
+    }
+
+    /// The three places #953 changed only work while they stay wired: the
+    /// glyphs that triggered the search name their face, the per-frame 'M'
+    /// measurement resolves the bare face (resolving the chained font is what
+    /// loads the chain), and both readers of the grid's rows arm the chain
+    /// before shaping them.
+    #[test]
+    fn the_idle_font_cuts_stay_wired() {
+        let cut = |src: &'static str| {
+            src.split_once("\n#[cfg(test)]\nmod tests {")
+                .map_or(src, |(c, _)| c)
+        };
+        // The text in the `n` bytes before `at`, from a character boundary.
+        let before = |src: &'static str, at: usize, n: usize| {
+            let mut from = at.saturating_sub(n);
+            while !src.is_char_boundary(from) {
+                from -= 1;
+            }
+            &src[from..at]
+        };
+        let pane = cut(include_str!("pane.rs"));
+        let main = cut(include_str!("main.rs"));
+        for (src, glyph, file) in [
+            (pane, ".child(\"\\u{ff0b}\")", "pane.rs"),
+            (main, ".child(\"\\u{f06a9}\")", "main.rs"),
+        ] {
+            let at = src
+                .find(glyph)
+                .unwrap_or_else(|| panic!("{glyph} is drawn in {file}"));
+            assert!(
+                before(src, at, 400).contains("chrome_glyph_font("),
+                "{glyph} in {file} names its face with chrome_glyph_font"
+            );
+        }
+        let measure = pane.find("'M',\n").expect("the cell-width measurement");
+        assert!(
+            before(pane, measure, 700).contains("let font = grid_face("),
+            "the 'M' advance is measured on the bare face, not the chained font"
+        );
+        assert_eq!(
+            pane.matches("arm_grid_fallbacks(&mut lines,").count(),
+            2,
+            "the live grid and the FOCUS mirror both arm the chain before shaping"
+        );
+    }
+
+    #[test]
+    fn a_flat_screen_gets_no_header_bloom_and_a_tube_keeps_it() {
+        let ink = gpui::rgb(0xd070ff).into();
+        let outer = |s: &[gpui::BoxShadow]| s.iter().filter(|b| !b.inset).count();
+        let flat = super::header_shadows(ink, 0.85, false, 1.0);
+        assert_eq!(
+            outer(&flat),
+            0,
+            "nothing falls onto the glass of a flat screen"
+        );
+        assert_eq!(flat.len(), 1, "the header still reads as solid");
+        let tube = super::header_shadows(ink, 0.85, true, 1.0);
+        assert_eq!(outer(&tube), 1, "a tube keeps its phosphor bloom");
+        assert_eq!(
+            outer(&super::header_shadows(ink, 0.0, true, 1.0)),
+            0,
+            "and a theme with no glow has none to cast"
+        );
+    }
+
+    /// On a tube the header's bloom is phosphor like any other border halo, so
+    /// the pane's gauge turns it down to nothing — and the bevel that makes the
+    /// header read as solid stays, because it is not light.
+    #[test]
+    fn a_tubes_header_bloom_follows_the_pane_phosphor_gauge() {
+        let ink = gpui::rgb(0xd070ff).into();
+        let outer = |s: &[gpui::BoxShadow]| s.iter().filter(|b| !b.inset).count();
+        let dark = super::header_shadows(ink, 0.85, true, 0.0);
+        assert_eq!(outer(&dark), 0, "turned all the way down, no bloom");
+        assert_eq!(dark.len(), 1, "the bevel stays");
+        let hot = super::header_shadows(ink, 0.85, true, crate::theme::PHOSPHOR_MAX);
+        let house = super::header_shadows(ink, 0.85, true, 1.0);
+        let bloom = |s: &[gpui::BoxShadow]| s.iter().find(|b| !b.inset).cloned().expect("a bloom");
+        assert!(
+            bloom(&hot).color.a > bloom(&house).color.a
+                && bloom(&hot).blur_radius > bloom(&house).blur_radius,
+            "turned up, the bloom is hotter and wider than the house"
+        );
+    }
+
+    #[test]
+    fn should_open_a_new_turn_only_on_the_idle_to_working_edge() {
+        use super::TerminalView;
+        // The default, common case: no live turn, and the poll before this
+        // one was not working — a genuine idle→working edge. Open it.
+        assert!(TerminalView::should_open_a_new_turn(true, false));
+        // A turn was already in flight (self.live is Some): never open a
+        // second one regardless of the edge.
+        assert!(!TerminalView::should_open_a_new_turn(false, false));
+        assert!(!TerminalView::should_open_a_new_turn(false, true));
+        // THE BUG THIS GUARDS: self.live reads None (a response surface
+        // retired it early) but the pane was ALREADY working last poll too —
+        // this is the tail of the SAME turn, not a new one starting. Must
+        // stay false, or a phantom live-turn opens with nothing left to
+        // retire it.
+        assert!(!TerminalView::should_open_a_new_turn(true, true));
+    }
+
     /// [`read_nav`], from the parts these tests have to hand.
     ///
     /// Inside the test module on purpose: a file-scope `#[cfg(test)]` item above
@@ -8784,12 +11961,23 @@ mod tests {
     }
 
     /// The bench's source, comments stripped, the same way [`shipped_code`]
-    /// treats this file. A pane's wheel handling lives in two files.
+    /// treats this file. A pane's wheel handling lives in three files.
     fn bench_code() -> String {
         let there = include_str!("pane/bench.rs");
         let (code, _tests) = there
             .split_once("\n#[cfg(test)]")
             .unwrap_or((there, "no test module yet"));
+        code.lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The document half's source — the floating square and the Document
+    /// face, in `pane/doc.rs` — comments stripped the same way.
+    fn doc_code() -> String {
+        let there = include_str!("pane/doc.rs");
+        let (code, _tests) = there.split_once("\n#[cfg(test)]").expect("a test module");
         code.lines()
             .filter(|l| !l.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
@@ -9099,16 +12287,22 @@ mod tests {
         };
         for field in [
             "wb_model",
+            "wb_running_model",
             "wb_effort",
             "wb_dial",
             "wb_dial_sent",
             "wb_asked",
             "wb_channel",
             "wb_asked_by_hook",
+            "wb_woken",
             "wb_recall",
             "wb_live_q",
             "wb_queued",
             "wb_paused_ms",
+            // The reading window. A stamp left here keeps the strip saying
+            // "Reading your answer" after the agent has gone, and the next
+            // agent in this pane is born on that rung, which hides a question.
+            "wb_delivered_ms",
             // The four the transcript store brought, added when this branch
             // met main. They were already cleared correctly by the author who
             // added them — the point is that the LIST did not know, and a list
@@ -9120,6 +12314,17 @@ mod tests {
             "wb_conv_bond",
             "wb_writer",
             "wb_unfiled",
+            // The HUD token-accounting trio, added alongside a fix for the
+            // exact failure this gate exists to catch: `tok_was_working`
+            // stuck `true` past a departure silently disabled the very
+            // fallback that fix relied on for the NEXT agent, and
+            // `turn_peak_tokens` survived to be banked onto a session that
+            // never spent it. Named here so a future edit that drops one of
+            // these three lines fails loud instead of shipping the same bug
+            // a third time.
+            "tok_was_working",
+            "tokens_banked",
+            "turn_peak_tokens",
         ] {
             assert!(
                 cleared(field),
@@ -9151,8 +12356,13 @@ mod tests {
     /// which is the moment to decide what the chord means there.
     #[test]
     fn every_wheel_handler_on_a_pane_answers_the_size_chord() {
-        // (file, source) for the two files a pane's wheel handling lives in.
-        let files = [("pane.rs", shipped_code()), ("pane/bench.rs", bench_code())];
+        // (file, source) for the three files a pane's wheel handling lives in.
+        // The document half first, which is where `doc_wheel` sat in pane.rs.
+        let files = [
+            ("pane/doc.rs", doc_code()),
+            ("pane.rs", shipped_code()),
+            ("pane/bench.rs", bench_code()),
+        ];
 
         let mut found: Vec<(String, String)> = Vec::new();
         for (name, code) in &files {
@@ -9190,8 +12400,11 @@ mod tests {
             "the two handlers that actually consume a turn are {names:?}"
         );
 
-        // Four named handlers and one closure. A fifth is not forbidden — it
+        // Five named handlers and one closure. A sixth is not forbidden — it
         // is unreviewed, and the chord is what it has to be reviewed against.
+        // `doc_wheel` is the floating square's: ctrl+wheel over it zooms the
+        // document, which the chord decides, and it asks the chord itself
+        // rather than trusting that its caller always asked first.
         let named: Vec<&str> = names
             .iter()
             .copied()
@@ -9200,6 +12413,7 @@ mod tests {
         assert_eq!(
             named,
             vec![
+                "doc_wheel",
                 "on_wheel",
                 "size_by_wheel",
                 "scroll_by_wheel",
@@ -9513,25 +12727,26 @@ mod tests {
     ///
     /// Its methods live in `pane/bench.rs` because the retro named their
     /// burial here as the first thing it would undo. This scans the SOURCE of
-    /// pane.rs for a bench method being defined — not a list of names, since a
-    /// list guards only the names on it — and fails on the first one.
+    /// pane.rs, and of pane/doc.rs beside it, for a bench method being defined
+    /// — not a list of names, since a list guards only the names on it — and
+    /// fails on the first one.
     #[test]
     fn no_bench_method_is_defined_in_pane_rs() {
-        let here = include_str!("pane.rs");
-        let (code, _tests) = here.split_once("#[cfg(test)]").expect("a test module");
-        let strays: Vec<&str> = code
-            .lines()
-            .filter(|l| {
+        let mut strays: Vec<&str> = Vec::new();
+        for here in [include_str!("pane.rs"), include_str!("pane/doc.rs")] {
+            let (code, _tests) = here.split_once("\n#[cfg(test)]").expect("a test module");
+            strays.extend(code.lines().filter(|l| {
                 let t = l.trim_start();
                 (t.starts_with("fn bench_")
                     || t.starts_with("pub fn bench_")
+                    || t.starts_with("pub(super) fn bench_")
                     || t.starts_with("pub(crate) fn bench_"))
                     && !t.contains("fn bench_key(")
-            })
-            .collect();
+            }));
+        }
         assert!(
             strays.is_empty(),
-            "bench methods defined in pane.rs instead of pane/bench.rs: {strays:?}"
+            "bench methods defined in pane.rs or pane/doc.rs instead of pane/bench.rs: {strays:?}"
         );
     }
 
@@ -9552,7 +12767,7 @@ mod tests {
     fn every_bench_write_goes_through_the_gate() {
         let bench = include_str!("pane/bench.rs");
         let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((bench, "no test module yet"));
         // Which function each write sits in, by the nearest `fn` above it.
         let mut owner = "<file>";
@@ -9634,7 +12849,7 @@ mod tests {
     fn the_bench_says_what_it_took_and_never_stops_the_event() {
         let bench = include_str!("pane/bench.rs");
         let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((bench, "no test module yet"));
         let at = code.find("fn bench_key(").expect("bench_key");
         let end = code[at..].find("\n    }\n").expect("end of bench_key") + at;
@@ -9690,7 +12905,7 @@ mod tests {
     fn writing_a_note_sends_nothing_to_the_agent() {
         let bench = include_str!("pane/bench.rs");
         let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((bench, "no test module yet"));
         // Comments stripped first. This file explains at length that a note
         // must not call `bench_keystroke`, and a scan that its own explanation
@@ -9772,7 +12987,7 @@ mod tests {
     fn what_shelf_you_are_on_never_catches_a_keystroke() {
         let bench = include_str!("pane/bench.rs");
         let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((bench, "no test module yet"));
         // Comments stripped, or the paragraph explaining this rule — which
         // names the shelf it used to check — would trip the scan guarding it.
@@ -9832,7 +13047,7 @@ mod tests {
     fn the_shelf_strip_wraps_so_every_shelf_stays_reachable() {
         let bench = include_str!("pane/bench.rs");
         let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((bench, "no test module yet"));
         let stripped: String = code
             .lines()
@@ -9888,7 +13103,7 @@ mod tests {
     fn nothing_in_the_bench_half_flips_the_pane_off_the_bench() {
         let bench = include_str!("pane/bench.rs");
         let (code, _tests) = bench
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((bench, "no test module yet"));
         let code: String = code
             .lines()
@@ -9919,17 +13134,119 @@ mod tests {
         );
     }
 
-    /// FOCUS mirrors the grid whichever face the pane is showing.
+    fn screen(rows: &[&str]) -> Vec<GridRow> {
+        rows.iter()
+            .map(|s| GridRow {
+                line: DocLine::new(s.to_string(), Vec::new()),
+                wrapped: false,
+            })
+            .collect()
+    }
+
+    /// The reader reads a conversation only where it can fold the agent's
+    /// records: Claude Code's transcripts and Codex's rollouts. Anything else
+    /// the sweep might one day bind would fold to an empty conversation, so it
+    /// keeps its screen until its records fold too.
+    #[test]
+    fn a_conversation_is_read_only_where_its_records_fold() {
+        assert!(PaneMode::Claude.reads_transcript());
+        assert!(PaneMode::Codex.reads_transcript());
+        assert!(!PaneMode::Other("aider".into()).reads_transcript());
+        assert!(!PaneMode::Shell.reads_transcript());
+        assert!(!PaneMode::Unknown.reads_transcript());
+    }
+
+    const RULE: &str = "────────────────────────────────────────────────";
+
+    /// The reader's foot finds Claude Code's input box by its two long rules,
+    /// and carries the status line above it while the agent works — and only
+    /// that: at rest, the rows above the box are the end of a reply the
+    /// transcript already shows. A rule inside a reply is too short to be taken
+    /// for a border, and a screen with no box has no foot at all.
+    #[test]
+    fn the_readers_foot_is_the_agents_input_box_and_its_status() {
+        let busy = screen(&[
+            "  and the reader borrows the view.",
+            "",
+            "✻ Writing… (4m 12s · esc to interrupt)",
+            "",
+            RULE,
+            "> █",
+            RULE,
+            "  ? for shortcuts",
+            "",
+            "",
+        ]);
+        assert_eq!(
+            input_box(&busy),
+            Some(2..8),
+            "status, box and hint; no trailing blanks"
+        );
+
+        let resting = screen(&["  the last line of a reply", "", RULE, "> ", RULE, ""]);
+        assert_eq!(
+            input_box(&resting),
+            Some(2..5),
+            "the reply is not the foot's"
+        );
+
+        let rounded = screen(&[
+            "╭──────────────────────────────────────╮",
+            "│ > what now                            │",
+            "╰──────────────────────────────────────╯",
+        ]);
+        assert_eq!(
+            input_box(&rounded),
+            Some(0..3),
+            "a rounded box is a box too"
+        );
+
+        let codex = screen(&["A final remark", "", "› Ask Codex to do anything", ""]);
+        assert_eq!(
+            input_box(&codex),
+            Some(2..3),
+            "Codex's live unboxed composer"
+        );
+        let mut resized_codex = codex.clone();
+        for _ in 0..40 {
+            resized_codex.extend(screen(&[""]));
+        }
+        assert_eq!(
+            input_box(&resized_codex),
+            Some(2..3),
+            "resize padding is not composer content"
+        );
+        let mut old_prompt = screen(&["› submitted human turn"]);
+        for _ in 0..=INPUT_ROWS_MAX {
+            old_prompt.extend(screen(&["output"]));
+        }
+        assert_eq!(
+            input_box(&old_prompt),
+            None,
+            "an old human turn is not the composer"
+        );
+
+        let reply_rule = screen(&["Heading", "───", "text", "$ ls"]);
+        assert_eq!(input_box(&reply_rule), None, "a short rule is not a border");
+        assert_eq!(input_box(&screen(&["$ cargo test", "ok"])), None);
+    }
+
+    /// FOCUS mirrors the grid, never the bench, when it reads the terminal.
     ///
     /// An undeclared case until `alt+r` could reach a bench pane at all
     /// (#524), and the kind that gets decided by accident: `mirror_snapshot`
     /// reads `styled_lines` because that is what it has always read, not
-    /// because anyone weighed it against the alternative. Weighed now — the
+    /// because anyone weighed it against the alternative. Weighed then — the
     /// bench hides the scrollback and is already sized to be read, so the grid
     /// is the thing worth enlarging — and pinned here, so flipping it becomes
     /// a decision somebody makes rather than a line somebody changes.
+    ///
+    /// This was "the grid on both faces" until the Document face arrived and
+    /// the reader learned to read a document it shows. Which source a face
+    /// reads is now `docopen::read_from`'s table, tested over every face; this
+    /// keeps the half about the bench.
     #[test]
-    fn the_focus_reader_mirrors_the_grid_on_both_faces() {
+    fn the_focus_reader_never_mirrors_the_bench() {
         let src = include_str!("pane.rs");
         let at = src
             .find("pub fn mirror_snapshot(")
@@ -9976,7 +13293,7 @@ mod tests {
     fn on_key_decides_nothing_it_can_decide_in_the_table() {
         let src = include_str!("pane.rs");
         let (code, _tests) = src
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]")
             .unwrap_or((src, "no test module yet"));
         let at = code
             .find("fn on_key(&mut self, ev: &KeyDownEvent")
@@ -10285,6 +13602,126 @@ mod tests {
         assert_eq!(reveal_target("file://otherhost/home/x"), None);
     }
 
+    /// GNU `ls --hyperlink` names this machine in every link it prints, so the
+    /// machine's own name is as local as `localhost`, in any case. Any other
+    /// name is still someone else's disk, and with no name known only the
+    /// empty and `localhost` authorities are here.
+    #[test]
+    fn this_machines_own_name_is_a_local_authority() {
+        let here = Some("legion");
+        assert_eq!(
+            reveal_target_on("file://legion/home/parker/notes.md", here),
+            Some("/home/parker/notes.md".into())
+        );
+        assert_eq!(
+            reveal_target_on("file://LEGION/home/parker/my%20notes.md", here),
+            Some("/home/parker/my notes.md".into())
+        );
+        assert_eq!(reveal_target_on("file://otherhost/home/x", here), None);
+        assert_eq!(reveal_target_on("file://legion/home/x", None), None);
+        assert_eq!(
+            reveal_target_on("file:///home/x", None),
+            Some("/home/x".into())
+        );
+        // An authority with no path after it names no file.
+        assert_eq!(reveal_target_on("file://legion", here), None);
+    }
+
+    /// A hyperlink is followed only to a file on this machine, read as that
+    /// file's decoded path over the rows it runs across. A web address behind
+    /// a label, another machine's file, and anything that is not a `file://`
+    /// link at all are left to the text.
+    #[test]
+    fn a_hyperlink_is_read_as_its_file_only_when_the_file_is_here() {
+        let here = Some("legion");
+        assert_eq!(
+            hyperlink_reading("file:///tmp/ls/my%20notes.md", here, 3, 4),
+            CellLink::File(LinkSpan {
+                link: Link::Path("/tmp/ls/my notes.md".into()),
+                first: 3,
+                last: 4,
+            })
+        );
+        assert_eq!(
+            hyperlink_reading("file://legion/tmp/ls/docs/README.md", here, 2, 2),
+            CellLink::File(LinkSpan {
+                link: Link::Path("/tmp/ls/docs/README.md".into()),
+                first: 2,
+                last: 2,
+            })
+        );
+        for unfollowed in [
+            "https://example.com/README.md",
+            "file://elsewhere/tmp/ls/README.md",
+            "/tmp/ls/README.md",
+            "mailto:a@b.c",
+        ] {
+            assert_eq!(
+                hyperlink_reading(unfollowed, here, 0, 0),
+                CellLink::Unfollowed,
+                "{unfollowed}"
+            );
+        }
+    }
+
+    /// A link runs across every unbroken row that holds it, up and down from
+    /// the clicked one, and stops at the first row that does not or at the
+    /// screen's edge.
+    #[test]
+    fn a_hyperlink_spans_the_unbroken_rows_that_hold_it() {
+        let holds = |set: &'static [usize]| move |r: usize| set.contains(&r);
+        assert_eq!(hyperlink_rows(3, 10, holds(&[3])), (3, 3));
+        assert_eq!(hyperlink_rows(3, 10, holds(&[2, 3, 4])), (2, 4));
+        // Row 0 holds the same link, but row 1 does not.
+        assert_eq!(hyperlink_rows(3, 10, holds(&[0, 2, 3])), (2, 3));
+        assert_eq!(hyperlink_rows(0, 2, holds(&[0, 1, 2])), (0, 1));
+    }
+
+    /// A bare name is offered from the token under the click, trimmed as any
+    /// link is, and only where nothing else reads it: a name with a slash is
+    /// already a path, a web address is a URL, and `~`, `.` and `..` are
+    /// places rather than names.
+    #[test]
+    fn a_bare_name_is_offered_from_the_token_under_the_click() {
+        let rows = padded_grid(
+            60,
+            &[
+                ".rw-r--r-- 1.2k parker 15 Oct 10:00 \u{f48a} README.md",
+                "docs  'notes.md'  ~  ..  docs/plan.md  www.example.com",
+            ],
+        );
+        let bare = |row: usize, needle: &str| {
+            let text: String = rows[row].iter().collect();
+            let col = text[..text.find(needle).expect(needle)].chars().count();
+            bare_name_reading(&rows, row, col).map(|s| s.link)
+        };
+        assert_eq!(bare(0, "README.md"), Some(Link::Path("README.md".into())));
+        assert_eq!(bare(1, "docs "), Some(Link::Path("docs".into())));
+        assert_eq!(bare(1, "'notes.md'"), Some(Link::Path("notes.md".into())));
+        assert_eq!(bare(1, "~ "), None);
+        assert_eq!(bare(1, ".. "), None);
+        assert_eq!(bare(1, "docs/plan.md"), None);
+        assert_eq!(bare(1, "www.example.com"), None);
+        // A press between two names is on no name at all.
+        assert_eq!(bare_name_reading(&rows, 1, 4), None);
+    }
+
+    /// A bare name is a file only in the pane's folder, only when the folder
+    /// holds it, and never when there is no folder to ask.
+    #[test]
+    fn a_bare_name_resolves_against_the_panes_folder_or_not_at_all() {
+        let rows = padded_grid(20, &["docs  README.md"]);
+        let mut readings = wrapped_link_candidates(&rows, &[false], 0, 8);
+        assert_eq!(readings, Vec::new(), "no slash, so no path reading");
+        readings.extend(bare_name_reading(&rows, 0, 8));
+        assert_eq!(
+            pick_link(&readings, Some("/tmp/ls"), |p| p == "/tmp/ls/README.md"),
+            Some(("/tmp/ls/README.md".to_string(), 0, 0))
+        );
+        assert_eq!(pick_link(&readings, Some("/tmp/ls"), |_| false), None);
+        assert_eq!(pick_link(&readings, None, |_| true), None);
+    }
+
     #[test]
     fn file_uri_escapes_what_would_truncate_it() {
         assert_eq!(
@@ -10357,94 +13794,321 @@ mod tests {
             link_at("./README.md", 2),
             Some(Link::Path("./README.md".into()))
         );
+        assert_eq!(
+            link_at("(reports/brief.html)", 10),
+            Some(Link::Path("reports/brief.html".into()))
+        );
+        // An unrecognised scheme must not become a relative filesystem path.
+        assert_eq!(link_at("javascript:reports/brief.html", 15), None);
         // plain words and whitespace are not links
         assert_eq!(link_at("just some words", 5), None);
         assert_eq!(link_at("a b", 1), None); // the space
         assert_eq!(link_at("", 0), None);
     }
 
-    #[test]
-    fn stitch_wrapped_line_rejoins_a_url_split_across_rows() {
-        // a narrow 8-col terminal; the URL fills row 0 (wraps) and spills into row 1
-        let cols = 8;
-        let pad = |s: &str| {
-            let mut v: Vec<char> = s.chars().collect();
-            v.resize(cols, ' ');
-            v
-        };
-        let rows = vec![
-            pad("https://"), // wraps into the next row (full width)
-            pad("a.dev/x "), // tail of the URL, then padding
-            pad("next    "),
-        ];
-        let wraps = vec![true, false, false];
+    /// Grid rows as `grid_snapshot` reads them: space-padded to `cols`.
+    fn padded_grid(cols: usize, rows: &[&str]) -> Vec<Vec<char>> {
+        rows.iter()
+            .map(|s| {
+                let mut v: Vec<char> = s.chars().collect();
+                assert!(v.len() <= cols, "fixture row wider than the grid: {s:?}");
+                v.resize(cols, ' ');
+                v
+            })
+            .collect()
+    }
 
-        // click on the first row → stitched line + adjusted column find the whole URL
-        let (line, col) = stitch_wrapped_line(&rows, &wraps, 0, 2);
-        assert_eq!(line, "https://a.dev/x ");
-        assert_eq!(col, 2);
-        assert_eq!(
-            link_at(&line, col),
-            Some(Link::Url("https://a.dev/x".into()))
-        );
-
-        // click on the *continuation* row → walks up, same URL, column offset by cols
-        let (line, col) = stitch_wrapped_line(&rows, &wraps, 1, 3);
-        assert_eq!(line, "https://a.dev/x ");
-        assert_eq!(col, cols + 3);
-        assert_eq!(
-            link_at(&line, col),
-            Some(Link::Url("https://a.dev/x".into()))
-        );
-
-        // a non-wrapping row stitches to just itself
-        let (line, col) = stitch_wrapped_line(&rows, &wraps, 2, 1);
-        assert_eq!(line, "next    ");
-        assert_eq!(col, 1);
-
-        // empty grid is harmless
-        assert_eq!(stitch_wrapped_line(&[], &[], 0, 4), (String::new(), 4));
+    /// The link a click at `(row, col)` opens, with every file taken to exist.
+    fn opens(
+        rows: &[Vec<char>],
+        wraps: &[bool],
+        row: usize,
+        col: usize,
+    ) -> Option<(String, usize, usize)> {
+        pick_link(
+            &wrapped_link_candidates(rows, wraps, row, col),
+            None,
+            |_| true,
+        )
     }
 
     #[test]
-    fn stitch_rejoins_an_app_hard_wrapped_link_without_wrapline() {
-        // Claude Code / our Links tables hard-wrap a long file:// path to the pane
-        // width: real rows, NO WRAPLINE flag, but the token runs edge-to-edge.
-        let cols = 12;
-        let pad = |s: &str| {
-            let mut v: Vec<char> = s.chars().collect();
-            v.resize(cols, ' ');
-            v
-        };
-        let rows = vec![
-            pad("file:///home"), // filled to the edge → flows into next
-            pad("/pbrown/a.js"), // filled to the edge → flows into next
-            pad("onl next"),     // ends with a space before "next"
-        ];
-        let wraps = vec![false, false, false]; // <-- the app hard-wrapped; no flag
+    fn codex_parenthesized_path_rejoins_indented_rows_before_the_right_edge() {
+        let rows = padded_grid(
+            100,
+            &[
+                "  Deliverable: Song comparison with listening links and notes (/home/parker/Work/",
+                "  reports/2026-10-13-omarchy-theme-songs.html)",
+                "",
+                "  unrelated.md",
+            ],
+        );
+        let whole = Some((
+            "/home/parker/Work/reports/2026-10-13-omarchy-theme-songs.html".into(),
+            0,
+            1,
+        ));
+        for (r, row) in rows.iter().enumerate().take(2) {
+            let first = if r == 0 {
+                row.iter().position(|c| *c == '(').unwrap()
+            } else {
+                2
+            };
+            let last = row.iter().rposition(|c| !c.is_whitespace()).unwrap();
+            for c in first..=last {
+                assert_eq!(opens(&rows, &[false; 4], r, c), whole, "r{r} c{c}");
+            }
+        }
+        assert_eq!(opens(&rows, &[false; 4], 0, 5), None);
+        assert_eq!(opens(&rows, &[false; 4], 1, 0), None);
+        assert_eq!(opens(&rows, &[false; 4], 3, 5), None);
+        for lines in [
+            vec!["  (/home/parker/", "", "  notes.md)"],
+            vec!["  (/home/parker/", "  ordinary prose)"],
+            vec!["  (ordinary", "  prose)"],
+        ] {
+            let rows = padded_grid(100, &lines);
+            assert_eq!(delimited_wrapped_link(&rows, 0, 4), None);
+        }
+        let rows = padded_grid(
+            100,
+            &["  (file:///home/parker/", "  Work/", "  report.html)"],
+        );
+        for r in 0..3 {
+            assert_eq!(
+                opens(&rows, &[false; 3], r, 5),
+                Some(("file:///home/parker/Work/report.html".into(), 0, 2))
+            );
+        }
+    }
 
-        // click the FIRST row → stitched to the whole path, click column preserved
-        let (line, col) = stitch_wrapped_line(&rows, &wraps, 0, 3);
-        assert_eq!(line.trim_end(), "file:///home/pbrown/a.jsonl next");
-        assert_eq!(col, 3);
+    #[test]
+    fn a_soft_wrapped_url_opens_whole_from_either_row() {
+        // a narrow 8-col terminal; the URL fills row 0 (WRAPLINE) and spills into row 1
+        let rows = padded_grid(8, &["https://", "a.dev/x", "next"]);
+        let wraps = [true, false, false];
+        let whole = Some(("https://a.dev/x".to_string(), 0, 1));
+        assert_eq!(opens(&rows, &wraps, 0, 2), whole);
+        assert_eq!(opens(&rows, &wraps, 1, 3), whole);
+        assert_eq!(opens(&rows, &wraps, 2, 1), None);
+        // A soft wrap carries on at column 0, so a space there ends the token.
+        let ended = padded_grid(8, &["https://", " a.dev/x"]);
         assert_eq!(
-            link_at(&line, col),
-            Some(Link::Url("file:///home/pbrown/a.jsonl".into()))
+            opens(&ended, &[true, false], 0, 2),
+            Some(("https://".to_string(), 0, 0))
+        );
+        assert_eq!(opens(&[], &[], 0, 4), None);
+    }
+
+    #[test]
+    fn a_link_an_app_broke_at_column_zero_opens_whole() {
+        // An app that breaks its own lines sets no WRAPLINE; the token runs
+        // edge to edge across three rows and stops before a word on the third.
+        let rows = padded_grid(12, &["file:///home", "/pbrown/a.js", "onl next"]);
+        let wraps = [false; 3];
+        let whole = Some(("file:///home/pbrown/a.jsonl".to_string(), 0, 2));
+        assert_eq!(opens(&rows, &wraps, 0, 3), whole);
+        assert_eq!(opens(&rows, &wraps, 1, 2), whole);
+        assert_eq!(opens(&rows, &wraps, 2, 1), whole);
+        assert_eq!(opens(&rows, &wraps, 2, 6), None, "the word after it");
+    }
+
+    /// Parker's screenshot of 2026-09-28, as the grid held it: a pane 96 columns
+    /// wide, Claude's two-column margin on every row, the path broken at the edge.
+    /// Only the first half opened, and only the first half was coloured.
+    fn claude_links_rows() -> Vec<Vec<char>> {
+        padded_grid(
+            96,
+            &[
+                "  Target: file:///home/parker/Work/terminal-delight/handoffs/HANDOFF-2026-09-28-left-bar-carry-c",
+                "  ascade-and-workbench-turn-fix.md",
+                "  What it is: Same handoff, repo copy",
+            ],
+        )
+    }
+
+    const CLAUDE_LINK: &str = "file:///home/parker/Work/terminal-delight/handoffs/HANDOFF-2026-09-28-left-bar-carry-cascade-and-workbench-turn-fix.md";
+
+    #[test]
+    fn a_link_claude_broke_behind_its_margin_opens_whole_from_either_half() {
+        let rows = claude_links_rows();
+        assert_eq!(
+            rows[0].last(),
+            Some(&'c'),
+            "the fixture's first half must fill the row, as it did on screen"
+        );
+        let wraps = [false; 3];
+        let whole = Some((CLAUDE_LINK.to_string(), 0, 1));
+        assert_eq!(opens(&rows, &wraps, 0, 20), whole, "the first half");
+        assert_eq!(
+            opens(&rows, &wraps, 0, 95),
+            whole,
+            "the last cell of the first half"
+        );
+        assert_eq!(opens(&rows, &wraps, 1, 2), whole, "the second half");
+        assert_eq!(
+            opens(&rows, &wraps, 1, 0),
+            None,
+            "the margin is not the link"
+        );
+        assert_eq!(
+            opens(&rows, &wraps, 0, 4),
+            None,
+            "the label is not the link"
+        );
+        assert_eq!(opens(&rows, &wraps, 2, 5), None);
+    }
+
+    #[test]
+    fn a_link_broken_over_three_rows_under_a_hanging_indent_opens_whole() {
+        // A list item hangs its continuation two columns deeper than its first row,
+        // and the middle row is nothing but the link.
+        let rows = padded_grid(
+            24,
+            &[
+                "  - see file:///home/par",
+                "    ker/applications/rem",
+                "    ote/-letter.pdf ok",
+            ],
+        );
+        let wraps = [false; 3];
+        let whole = Some((
+            "file:///home/parker/applications/remote/-letter.pdf".to_string(),
+            0,
+            2,
+        ));
+        for (row, col) in [(0, 10), (1, 8), (2, 6)] {
+            assert_eq!(
+                opens(&rows, &wraps, row, col),
+                whole,
+                "clicked ({row}, {col})"
+            );
+        }
+    }
+
+    #[test]
+    fn the_disk_decides_whether_a_path_at_the_edge_was_broken_or_finished() {
+        // The path ends exactly at the edge and the next word starts the row
+        // below: from the width alone that reads as a break.
+        let rows = padded_grid(21, &["  see /tmp/x/notes.md", "  and then more"]);
+        let wraps = [false; 2];
+        let readings = wrapped_link_candidates(&rows, &wraps, 0, 10);
+        let named: Vec<&Link> = readings.iter().map(|c| &c.link).collect();
+        assert_eq!(
+            named,
+            [
+                &Link::Path("/tmp/x/notes.mdand".into()),
+                &Link::Path("/tmp/x/notes.md".into())
+            ]
+        );
+        let exists = |p: &str| p == "/tmp/x/notes.md";
+        assert_eq!(
+            pick_link(&readings, None, exists),
+            Some(("/tmp/x/notes.md".to_string(), 0, 0))
+        );
+        // A path that names nothing on this disk is not a link, joined or not.
+        assert_eq!(pick_link(&readings, None, |_| false), None);
+
+        // The same for a file:// link: the disk is asked for the decoded path.
+        let rows = padded_grid(24, &["  see file:///tmp/x/a.md", "  and more"]);
+        let readings = wrapped_link_candidates(&rows, &wraps, 0, 10);
+        assert_eq!(
+            pick_link(&readings, None, |p| p == "/tmp/x/a.md"),
+            Some(("file:///tmp/x/a.md".to_string(), 0, 0))
+        );
+        // With nothing confirmed, a file:// link is handed on as it always was.
+        assert_eq!(
+            pick_link(&readings, None, |_| false),
+            Some(("file:///tmp/x/a.mdand".to_string(), 0, 1))
+        );
+    }
+
+    #[test]
+    fn two_links_that_meet_at_the_edge_stay_two_links() {
+        let rows = padded_grid(17, &["  https://a.dev/x", "  https://b.dev/y"]);
+        let wraps = [false; 2];
+        assert_eq!(
+            opens(&rows, &wraps, 0, 5),
+            Some(("https://a.dev/x".to_string(), 0, 0))
+        );
+        assert_eq!(
+            opens(&rows, &wraps, 1, 5),
+            Some(("https://b.dev/y".to_string(), 1, 1))
+        );
+        // A link starting a row under a full row of prose is not glued to its last word.
+        let rows = padded_grid(19, &["  see the following", "  https://b.dev/y"]);
+        assert_eq!(
+            opens(&rows, &wraps, 1, 5),
+            Some(("https://b.dev/y".to_string(), 1, 1))
+        );
+    }
+
+    /// The agentic overlay's colours for `rows`, collapsed to two inks so a
+    /// test can say which cells read as a link.
+    fn agentic_inks(rows: &[Vec<char>], link: Hsla, text: Hsla) -> Vec<Vec<Hsla>> {
+        rows.iter()
+            .map(|r| {
+                classify_agentic(&r.iter().collect::<String>())
+                    .into_iter()
+                    .map(|role| if role == Role::Secondary { link } else { text })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_second_half_of_a_broken_link_wears_the_link_colour() {
+        let (link, text) = (gpui::hsla(0.8, 0.9, 0.5, 1.), gpui::hsla(0.3, 0.4, 0.5, 1.));
+        let rows = claude_links_rows();
+        let mut inks = agentic_inks(&rows, link, text);
+        assert_eq!(
+            inks[1][2], text,
+            "the bug: a half with no slash reads as prose"
+        );
+        carry_link_colour(&rows, &[false; 3], &mut inks);
+        let half = "ascade-and-workbench-turn-fix.md".len();
+        assert!(
+            inks[1][2..2 + half].iter().all(|h| *h == link),
+            "{:?}",
+            &inks[1][..4]
+        );
+        assert!(inks[1][..2]
+            .iter()
+            .chain(&inks[1][2 + half..])
+            .all(|h| *h == text));
+        assert!(
+            inks[2].iter().all(|h| *h == text),
+            "the row after is untouched"
         );
 
-        // click a CONTINUATION row (row 1) → walks up to the same full link
-        let (line, col) = stitch_wrapped_line(&rows, &wraps, 1, 2);
-        assert_eq!(col, cols + 2);
-        assert_eq!(
-            link_at(&line, col),
-            Some(Link::Url("file:///home/pbrown/a.jsonl".into()))
+        // Down through a middle row that is nothing but the link.
+        let rows = padded_grid(
+            24,
+            &[
+                "  Target: file:///home/p",
+                "  arker/applications/rem",
+                "  ote-cover-letter.pdf",
+            ],
+        );
+        let mut inks = agentic_inks(&rows, link, text);
+        carry_link_colour(&rows, &[false; 3], &mut inks);
+        assert!(
+            inks[2][2..22].iter().all(|h| *h == link),
+            "the third row's half"
         );
 
-        // a word-boundary wrap (trailing space) does NOT over-stitch: two short
-        // distinct rows stay separate.
-        let prose = vec![pad("hello "), pad("world ")];
-        let (line, _) = stitch_wrapped_line(&prose, &[false, false], 0, 1);
-        assert_eq!(line.trim_end(), "hello");
+        // A slash token with an unknown scheme is still not a path, even
+        // though the overlay colours it. Bare episode/handoff is now a path
+        // candidate, checked against the pane's cwd and disk by pick_link.
+        let rows = padded_grid(
+            29,
+            &["  Session tag:episode/handoff", "  (APES) for the record"],
+        );
+        let mut inks = agentic_inks(&rows, link, text);
+        assert_eq!(inks[0][28], link, "the fixture must end on a coloured cell");
+        let before = inks.clone();
+        carry_link_colour(&rows, &[false; 2], &mut inks);
+        assert_eq!(inks, before);
     }
 
     #[test]
@@ -10726,6 +14390,42 @@ mod tests {
         // a box-drawing rule between two full rows is never absorbed.
         let ruled = "a full width heading line here\n──────────────────────────────\nbody paragraph text follows on";
         assert_eq!(reflow_wrapped_copy(ruled, cols), ruled);
+    }
+
+    #[test]
+    fn reflow_reads_a_margin_two_rows_share_as_a_margin_and_not_as_structure() {
+        // Claude Code's rows, 40 wide: a command broken between words, then a
+        // path broken mid-word at the very edge.
+        let cols = 40;
+        let rows = [
+            "  cargo test --locked -- disk_decides",
+            "  two_links_meet wears_colour",
+            "  see /tmp/a-long-directory/and-a-longer",
+            "  -file-name.md now",
+        ];
+        assert_eq!(rows[2].len(), cols, "the third row must fill the pane");
+        let lines = reflow_wrapped_copy_spans(&rows, cols);
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "  cargo test --locked -- disk_decides two_links_meet wears_colour",
+                "  see /tmp/a-long-directory/and-a-longer-file-name.md now",
+            ],
+            "the margin opens the line once and is gone from every row joined to it"
+        );
+        assert_eq!((lines[1].first, lines[1].last), (2, 3));
+
+        // Indented deeper than the row above is still structure: a code block
+        // under a paragraph, both behind the same margin.
+        let code = [
+            "  this prose line runs right up to edge",
+            "        let x = code_block();",
+        ];
+        assert_eq!(reflow_wrapped_copy_spans(&code, cols).len(), 2);
+        // And two rows behind one margin that the width did not break stay two.
+        let short = ["  git status", "  git log --oneline -3"];
+        assert_eq!(reflow_wrapped_copy_spans(&short, cols).len(), 2);
     }
 
     #[test]
@@ -11163,12 +14863,17 @@ mod tests {
     }
 
     #[test]
-    fn is_agent_is_true_only_for_claude_and_codex() {
+    fn is_agent_includes_an_explicitly_configured_local_program() {
         assert!(PaneMode::Claude.is_agent());
         assert!(PaneMode::Codex.is_agent());
         assert!(!PaneMode::Shell.is_agent());
         assert!(!PaneMode::Remote.is_agent());
         assert!(!PaneMode::Other("vim".into()).is_agent());
+        let local = PaneMode::Other(crate::launcher::LOCAL_AGENT_MODE.into());
+        assert!(local.is_agent());
+        assert!(!local.reads_transcript());
+        assert_eq!(local.label(), "LOCAL");
+        assert_eq!(local.at_a_prompt(), Some(false));
     }
 
     /// The prompt seek drives a full-screen agent by synthesising wheel notches,
@@ -11678,30 +15383,897 @@ mod tests {
         }
     }
 
+    // ── the floating document ───────────────────────────────────────────────
+
+    /// Parker, at scale 1.6: the Alt chip's box sat on the line at the top of
+    /// the pane and a little higher every row down, half a row off by the
+    /// bottom. gpui draws each row at its height rounded to whole device
+    /// pixels, and the box, the hit-test and the square's placement multiplied
+    /// by the unrounded height. With the laid-out height, row N is where gpui
+    /// puts it, all the way down.
     #[test]
-    fn the_pane_root_takes_a_file_drop() {
-        // gpui delivers a dropped file as a mouse-up carrying the paths, and
-        // only to an element that registered `on_drop` for that exact type.
-        // Nothing about `bench_drop` existing makes it reachable: it would
-        // compile, read as live, and never run — the same hole the pane's
-        // right-click tray sat in for months, asserted two tests above.
-        //
-        // Two things make this gate honest rather than decorative. The source
-        // is cut at the test module, so this assertion cannot satisfy itself
-        // with its own needle; and comment lines are dropped, because the
-        // registration is explained in a comment beside it and a gate its own
-        // explanation can pass is a gate that passes on a deleted line.
-        let src = include_str!("pane.rs");
-        let code: String = src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())]
+    fn a_row_is_found_where_gpui_draws_it_at_any_scale() {
+        // 20 × 0.7365 is Parker's pane text size on the 1.6 laptop panel.
+        for &(cell, scale) in &[
+            (20.0_f32 * 0.7365, 1.6_f32),
+            (17.3, 1.6),
+            (18.0, 1.6),
+            (19.5, 1.25),
+            (20.0, 1.0),
+            (16.7, 2.0),
+        ] {
+            let drawn = (cell * scale - 0.5).ceil() / scale;
+            let pitch = laid_out_length(cell, scale);
+            for row in [0usize, 1, 10, 40, 60] {
+                let at = row as f32 * drawn;
+                assert!(
+                    (row as f32 * pitch - at).abs() < 1e-3,
+                    "cell {cell} at {scale}: row {row} is drawn at {at}, found at {}",
+                    row as f32 * pitch
+                );
+            }
+        }
+        // The bug, in Parker's numbers: 14.73 at 1.6 is 23.57 device pixels,
+        // drawn as 24, so by row 40 the unrounded arithmetic is 17.3 device
+        // pixels (0.7 of a row) above the text, which is what he photographed.
+        let (cell, scale) = (20.0_f32 * 0.7365, 1.6_f32);
+        let drift = 40.0 * (laid_out_length(cell, scale) - cell) * scale;
+        assert!(
+            (drift - 17.28).abs() < 0.05,
+            "the drift this fixes, in device pixels: {drift}"
+        );
+        // Ties go toward zero, as gpui's own rounding does.
+        assert_eq!(laid_out_length(1.25, 2.0), 1.0);
+        assert_eq!(laid_out_length(1.3, 2.0), 1.5);
+    }
+
+    /// `laid_out_length` copies gpui's rounding, because gpui keeps its own
+    /// crate-private. If gpui ever rounds differently, rows drift from the
+    /// arithmetic again with nothing failing, so this reads gpui's source and
+    /// holds the copy to it.
+    #[test]
+    fn the_row_rounding_is_still_the_rule_gpui_lays_out_with() {
+        let util = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../zed-upstream/crates/gpui/src/util.rs");
+        let src = std::fs::read_to_string(&util).unwrap_or_else(|e| {
+            panic!(
+                "gpui's util.rs at {} is where the rule lives: {e}",
+                util.display()
+            )
+        });
+        let squash = |t: &str| t.split_whitespace().collect::<String>();
+        let gpui = squash(&src);
+        assert!(
+            gpui.contains(&squash(
+                "fn round_half_toward_zero(value: f32) -> f32 { (value.abs() - 0.5).ceil().copysign(value) }"
+            )),
+            "gpui's round_half_toward_zero changed: update laid_out_length to match"
+        );
+        assert!(
+            gpui.contains(&squash(
+                "fn round_to_device_pixel(logical: f32, scale_factor: f32) -> f32 { round_half_toward_zero(logical * scale_factor) }"
+            )),
+            "gpui's round_to_device_pixel changed: update laid_out_length to match"
+        );
+    }
+
+    /// The grid's padding is rounded by gpui like every other authored length,
+    /// so every place that turns a row into a position adds the drawn padding.
+    /// Only `grid_pad_drawn` may call the raw `grid_pad`.
+    #[test]
+    fn the_grid_is_positioned_by_its_drawn_padding() {
+        let code = live_code();
+        let drawn_at = code.find("fn grid_pad_drawn(").expect("grid_pad_drawn");
+        let drawn_end = drawn_at + code[drawn_at..].find("\n}\n").expect("its end");
+        let outside = format!("{}{}", &code[..drawn_at], &code[drawn_end..]);
+        let raw_calls =
+            outside.matches("grid_pad(").count() - outside.matches("fn grid_pad(").count();
+        assert_eq!(raw_calls, 0, "raw grid_pad called outside grid_pad_drawn");
+        assert_eq!(laid_out_length(17.3, 1.6), 17.5);
+        let (x, y) = grid_pad_drawn(1000.0, 800.0, 0.2, 0.05, 1.6);
+        assert_eq!(
+            ((x * 1.6).fract(), (y * 1.6).fract()),
+            (0.0, 0.0),
+            "whole device pixels"
+        );
+        let main = include_str!("main.rs");
+        assert!(
+            main.contains("crate::pane::laid_out_length(snap.cell_h * ms, window.scale_factor())"),
+            "the FOCUS mirror counts rows at the height it draws them"
+        );
+    }
+
+    #[test]
+    fn the_pane_takes_the_laid_out_row_height_not_the_themes() {
+        let code = live_code();
+        let sync = code.split("fn sync_size(").nth(1).expect("sync_size");
+        let sync = sync.split("\n    fn ").next().unwrap_or(sync);
+        assert!(
+            sync.contains("self.cell_h = laid_out_length(th.cell_h, self.scale)"),
+            "cell_h must be the height gpui draws a row at"
+        );
+        assert!(
+            sync.contains("self.scale = window.scale_factor()"),
+            "the scale the hit-test snaps with is the window's"
+        );
+    }
+
+    /// Notes typed into a square and not yet saved used to vanish when it was
+    /// closed by anything but Escape: the ✕, `ctl doc close`, a link or an
+    /// Alt+click that replaced its document, or a split of a file already
+    /// split. Every one of those now asks the document first, so the rule is
+    /// that nothing but the guarded entry point closes a square outright.
+    #[test]
+    fn a_square_holding_unsaved_notes_is_not_closed_by_any_deliberate_close() {
+        let code = live_code();
+        let calls: Vec<&str> = code
+            .split("fn ")
+            .filter(|body| body.contains(".close_float(") || body.contains("self.close_float("))
+            .map(|body| body.split('(').next().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            calls,
+            vec!["request_close_float"],
+            "only request_close_float may close a square outright; found calls in {calls:?}"
+        );
+        let request = code
+            .split("fn request_close_float(")
+            .nth(1)
+            .expect("request_close_float exists");
+        let request = request.split("\n    }\n").next().unwrap_or(request);
+        assert!(
+            request.contains("guard_close("),
+            "the guarded close must ask the document before it drops it"
+        );
+        let main = include_str!("main.rs");
+        let main = &main[..main.find("\n#[cfg(test)]").unwrap_or(main.len())];
+        assert!(
+            !main.contains(".close_float("),
+            "the workspace closes squares through request_close_float, never outright"
+        );
+    }
+
+    /// The pane's own code, cut at the test module with comment lines dropped,
+    /// so an assertion cannot pass on its own needle or on an explanation.
+    ///
+    /// Both files the pane's code lives in outside the bench: pane/doc.rs, the
+    /// floating square and the Document face, then pane.rs. In that order so
+    /// `render` is still the last method in the string.
+    fn live_code() -> String {
+        [include_str!("pane/doc.rs"), include_str!("pane.rs")]
+            .iter()
+            .map(|src| {
+                src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())]
+                    .lines()
+                    .filter(|l| !l.trim_start().starts_with("//"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The chip arms over a document on a line that is not a command — the
+    /// deliverable line in mockup 01 begins `Deliverable:` — and says it will
+    /// open it. A command line still arms for a copy, a path inside a command
+    /// line opens rather than copies, and prose with no document stays silent.
+    #[test]
+    fn the_alt_chip_offers_open_here_on_a_line_that_is_not_a_command() {
+        use crate::docopen::{AltClick, DocKind, DocTarget};
+        let doc = DocTarget {
+            path: "/tmp/graphics-protocols.md".into(),
+            kind: DocKind::Markdown,
+        };
+        let prose = "Deliverable: /tmp/graphics-protocols.md";
+        let command = "cargo test -p terminal-delight --lib host";
+
+        let hint = alt_hint(false, 5, Some((prose, 4, 6)), Some(doc.clone()))
+            .expect("a document arms the chip on a prose line");
+        assert_eq!(hint.does, AltClick::OpenHere(doc.clone()));
+        assert_eq!(
+            (hint.first_paint, hint.last_paint),
+            (4, 6),
+            "it frames the whole line"
+        );
+
+        let hint = alt_hint(false, 2, Some((command, 2, 2)), None).expect("a command copies");
+        assert_eq!(hint.does, AltClick::Copy);
+        assert_eq!(hint.text, command);
+
+        let hint = alt_hint(false, 2, Some((command, 2, 2)), Some(doc.clone()))
+            .expect("a path on a command line");
+        assert_eq!(hint.does, AltClick::OpenHere(doc.clone()));
+
+        assert_eq!(alt_hint(false, 5, Some((prose, 4, 6)), None), None);
+
+        // The alt screen: a document still arms, framing only the pointer's
+        // row; a line that reads as a command never does.
+        let hint =
+            alt_hint(true, 9, None, Some(doc.clone())).expect("a document on the alt screen");
+        assert_eq!(
+            (hint.first_paint, hint.last_paint, hint.does),
+            (9, 9, AltClick::OpenHere(doc))
+        );
+        assert_eq!(alt_hint(true, 2, Some((command, 2, 2)), None), None);
+    }
+
+    /// The chip names what the click will do, and the flash after a copy says
+    /// it happened — never after an open, which puts the square on screen.
+    #[test]
+    fn the_chip_says_open_here_over_a_document_and_copy_over_a_command() {
+        use crate::docopen::{AltClick, DocKind, DocTarget};
+        let en = crate::lang::Lang::En.strings();
+        let open = AltClick::OpenHere(DocTarget {
+            path: "/tmp/a.png".into(),
+            kind: DocKind::Image,
+        });
+        assert_eq!(chip_label(&open, false, en), "◳ alt+click · open here");
+        assert_eq!(chip_label(&open, true, en), "◳ alt+click · open here");
+        assert_eq!(chip_label(&AltClick::Copy, false, en), "⎘ alt+click · copy");
+        assert_eq!(chip_label(&AltClick::Copy, true, en), "✓ copied");
+    }
+
+    #[test]
+    fn a_file_url_is_decoded_before_it_is_classified() {
+        let path = reveal_target("file:///tmp/two%20words.md").expect("a local file URL");
+        assert_eq!(path, "/tmp/two words.md");
+        assert_eq!(
+            crate::docopen::doc_kind_by_name(std::path::Path::new(&path)),
+            Some(crate::docopen::DocKind::Markdown)
+        );
+        assert_eq!(reveal_target("https://example.com/a.png"), None);
+    }
+
+    /// Alt+click on a path did nothing in one agent pane and worked in the
+    /// next, and nobody could see why: the grid's hit-test printed under
+    /// `TD_HITDEBUG`, the document path of the same click printed nothing. So
+    /// the click table's branch prints one `[doc-hit]` line under the same
+    /// variable — the cell, the alternate screen and mouse reporting, what
+    /// `link_under` found, what `document_of` made of it, and the intent
+    /// chosen — after the table decides and before anything acts. Every early
+    /// return that can take a left press before the table says so too.
+    #[test]
+    fn a_modified_click_says_what_the_click_table_decided() {
+        let code = live_code();
+        let body = method_body(&code, "fn on_mouse_down(&mut self, ev: &MouseDownEvent");
+        let decide = body
+            .find("docopen::click_intent(")
+            .expect("the click table");
+        let act = body.find("let took = match intent").expect("the act");
+        let branch = &body[decide..act];
+        let gate = branch
+            .find("std::env::var_os(\"TD_HITDEBUG\").is_some()")
+            .expect("the click table's branch traces under TD_HITDEBUG");
+        let line = branch[gate..]
+            .find("\"[doc-hit] ")
+            .expect("and the line it prints is a [doc-hit] line");
+        for says in [
+            "cell=(r{row},c{col})",
+            "TermMode::ALT_SCREEN",
+            "TermMode::MOUSE_MODE",
+            "link={:?}",
+            "doc={doc_seen}",
+            "intent={intent:?}",
+        ] {
+            assert!(
+                branch[gate + line..].contains(says),
+                "the [doc-hit] line says {says}"
+            );
+        }
+        for (taken, why) in [
+            (
+                "if self.doc_face_press(ev, window, cx) {",
+                "the document face",
+            ),
+            ("= self.float_hit(ev.position) {", "the floating square"),
+            ("self.sticky_click(ev.position, cx) {", "the sticky note"),
+        ] {
+            let at = body.find(taken).unwrap_or_else(|| panic!("{taken}"));
+            let ret = at + body[at..].find("return;").expect("an early return");
+            assert!(
+                body[at..ret].contains(&format!("Self::trace_press_taken(\"{why}\", ev)")),
+                "a press {why} takes before the click table says so under TD_HITDEBUG"
+            );
+        }
+        let trace = method_body(&code, "fn trace_press_taken(");
+        assert!(trace.contains("std::env::var_os(\"TD_HITDEBUG\").is_some()"));
+        assert!(trace.contains("\"[doc-hit] taken by {branch}"));
+    }
+
+    /// A held square owns the pointer: its move is taken before the grid's
+    /// selection drag, and its release before the bench's. A scan because
+    /// neither order shows today — a press on the square starts no selection,
+    /// and the bench lets nothing go on the terminal face — and each becomes a
+    /// bug the day that stops being true. Letting go outside the pane is
+    /// driven for real, in
+    /// `behaviour::a_square_let_go_outside_the_pane_does_not_follow_the_next_drag`.
+    #[test]
+    fn a_held_square_takes_its_move_and_its_release_first() {
+        let code = production_source();
+        let up = method_body(&code, "fn on_mouse_up(");
+        let end = up
+            .find("self.float_drag_end(cx)")
+            .expect("on_mouse_up ends a float drag");
+        let bench = up.find("self.bench_release_at(").expect("bench release");
+        assert!(end < bench, "the square's release comes first");
+        let mv = method_body(&code, "fn on_mouse_move(");
+        let drag = mv
+            .find("self.float_drag_move(ev, cx)")
+            .expect("on_mouse_move drags the square");
+        let select = mv
+            .find(".update_selection(point, side)")
+            .expect("the grid's selection drag");
+        assert!(drag < select, "the square's drag comes before the grid's");
+    }
+
+    /// Every light `on_mouse_move` sets has a way out in `pointer_left`, and
+    /// the hook that calls it is the root's last child, so no hitbox in the
+    /// pane lies above it. Both are about code not written yet — a new light,
+    /// a new child — which is why they stay a scan. What leaving the pane
+    /// does is driven for real, in
+    /// `behaviour::leaving_the_pane_puts_out_the_control_the_pointer_lit`
+    /// (issues 724 and 743).
+    #[test]
+    fn every_light_the_pointer_sets_has_a_way_out() {
+        let code = production_source();
+        let lights: [(&str, &[&str]); 4] = [
+            (
+                "self.bench_hover(",
+                &[
+                    "self.wb_hover.take()",
+                    "&mut self.wb_drop",
+                    "&mut self.wb_pointer",
+                ],
+            ),
+            ("self.float_hover(", &["float.hover.take()"]),
+            ("self.doc_hover(", &["v.hover(None, cx)"]),
+            ("self.sticky_hover(", &["self.note_hover.take()"]),
+        ];
+        let mv = method_body(&code, "fn on_mouse_move(");
+        assert_eq!(
+            mv.matches("_hover(").count(),
+            lights.len(),
+            "on_mouse_move sets a light this test does not know how to put out: {mv}"
+        );
+        let left = method_body(&code, "fn pointer_left(");
+        for (set, outs) in lights {
+            assert!(mv.contains(set), "on_mouse_move no longer calls {set}");
+            for out in outs {
+                assert!(
+                    left.contains(out),
+                    "pointer_left misses {out}, lit by {set}"
+                );
+            }
+        }
+        let render = code
+            .find("fn render(&mut self, window: &mut Window, cx: &mut Context<Self>)")
+            .expect("render");
+        let render = &code[render..];
+        let hook_at = render
+            .find(".child(self.pointer_leave_hook(")
+            .expect("the root draws the hook");
+        assert!(
+            !render[hook_at + 1..].contains(".child"),
+            "a child drawn after the hook can cover it"
+        );
+    }
+
+    /// The wheel finds the square through the glass's inverse, as a press
+    /// does. The harness drives a flat pane, where the flat box and the
+    /// un-bent one agree, so this one line stays a scan; what the wheel does
+    /// over the square is driven for real, in
+    /// `behaviour::the_wheel_over_the_square_moves_its_document_and_nothing_else`.
+    #[test]
+    fn the_wheel_finds_the_square_through_the_glass() {
+        let code = production_source();
+        let doc_wheel = method_body(&code, "fn doc_wheel(");
+        assert!(doc_wheel.contains("self.float_hit(ev.position)"), "un-bent");
+    }
+
+    // ── the Document face ───────────────────────────────────────────────────
+
+    /// A key on the Document face is never declined: declining hands it to
+    /// the window, which is not the document's. And the view is asked before
+    /// the face's own keys, so Escape puts away a brief's dialog before
+    /// anything else hears it. Both stay a scan — a lone pane has no window to
+    /// decline to, and the fake page engine draws no dialog. That nothing
+    /// typed or pasted there reaches the shell is driven for real, in
+    /// `behaviour::the_document_face_swallows_typing_and_pasting`.
+    #[test]
+    fn the_document_face_never_declines_a_key_and_asks_its_view_first() {
+        let code = production_source();
+        let doc_key = method_body(&code, "fn doc_key(");
+        assert!(!doc_key.contains("Handled::Declined"), "{doc_key}");
+        let first = doc_key
+            .find("v.key(ks, cx)")
+            .expect("the face asks the view");
+        let face = doc_key
+            .find("doc_face_key(")
+            .expect("then the face's own keys");
+        assert!(first < face);
+    }
+
+    /// A press on the Document face is un-bent through the tube before the
+    /// view sees it, and a held document's move is taken before the grid's
+    /// selection drag. A scan because the harness drives a flat pane, and a
+    /// press on the face starts no selection for the order to matter to.
+    /// Where the press goes is driven for real, in
+    /// `behaviour::a_press_or_a_drop_on_the_document_face_never_reaches_the_grid`.
+    #[test]
+    fn a_press_on_the_document_face_is_un_bent_and_held_first() {
+        let code = production_source();
+        let press = method_body(&code, "fn doc_face_press(");
+        assert!(press.contains("self.doc_face_local(ev.position)"));
+        let local = method_body(&code, "fn doc_face_local(");
+        assert!(local.contains("crate::workbench::unwarp("));
+        let mv = method_body(&code, "fn on_mouse_move(");
+        let held = mv.find("self.doc_face_drag_move(ev, cx)").expect("drag");
+        let select = mv
+            .find(".update_selection(point, side)")
+            .expect("the grid's selection drag");
+        assert!(held < select);
+    }
+
+    /// Only `show_document` puts a pane on its Document face, where the
+    /// document and the face are set together — a rule about every future
+    /// caller, so a scan. That the face comes only with a document is driven
+    /// for real, in `behaviour::the_document_face_comes_only_with_a_document`.
+    #[test]
+    fn only_show_document_puts_a_pane_on_its_document_face() {
+        let code = production_source();
+        assert_eq!(
+            code.matches("set_face(crate::workbench::Face::Document)")
+                .count(),
+            1,
+            "only show_document puts a pane on its Document face"
+        );
+        let show = method_body(&code, "pub(crate) fn show_document(");
+        assert!(show.contains("self.bench.set_face(crate::workbench::Face::Document)"));
+    }
+
+    /// The right-click menu's link rows come from the same table the tests
+    /// hold, so a row appears exactly where it does something.
+    #[test]
+    fn the_link_menu_rows_come_from_the_table() {
+        let code = live_code();
+        assert!(code.contains("crate::docopen::link_menu(doc.is_some(), item.is_some())"));
+        for row in [
+            "s.m_open_here",
+            "s.m_open_beside",
+            "s.m_open_desktop",
+            "s.m_reveal",
+            "s.m_copy_link",
+        ] {
+            assert!(code.contains(row), "the menu draws {row}");
+        }
+        assert!(
+            !code.contains("\"Open link  ↗\""),
+            "the old literal row is gone"
+        );
+    }
+
+    /// The square is a child of the screen, after the note and before the
+    /// glass: inside the warp tube so it bends with everything else on it, and
+    /// never over the header, where the barrel pass straightens nothing.
+    #[test]
+    fn the_float_is_drawn_inside_the_screen_after_the_note() {
+        let code = live_code();
+        let note = code.find(".children(note_el)").expect("note_el");
+        let float = code.find(".children(float_el)").expect("float_el is drawn");
+        let glass = code.find("crt::glass(").expect("the glass");
+        assert!(
+            note < float && float < glass,
+            "note, then the square, then the glass"
+        );
+        assert!(
+            code.contains("float_shadows(th.accent, th.grade.phosphor)"),
+            "the square wears the hyperglow every floating surface wears"
+        );
+    }
+
+    /// This file's production source, cut at the test module, with comment
+    /// lines dropped and every run of whitespace squashed to one space — so a
+    /// scan can neither satisfy itself with its own needle nor be passed by
+    /// the prose explaining the line it looks for, and rustfmt moving a call
+    /// onto two lines does not hide it.
+    ///
+    /// pane/doc.rs is read too, first, for the reason [`live_code`] gives.
+    fn production_source() -> String {
+        [include_str!("pane/doc.rs"), include_str!("pane.rs")]
+            .iter()
+            .map(|src| {
+                src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())]
+                    .lines()
+                    .map(|l| l.split("//").next().unwrap_or(""))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// The chip a refused click puts up is drawn after the square, so a link in
+    /// the square that prompted it cannot hide it (issue 733). Paint order,
+    /// which nothing a test can press observes, so a scan; the saying itself —
+    /// where, what, and which timer takes it down — is driven for real, in
+    /// `behaviour::an_html_file_nothing_can_draw_goes_to_the_desktop_and_says_why`.
+    #[test]
+    fn the_refusal_chip_is_drawn_over_the_square() {
+        let code = production_source();
+        let render = code
+            .find("fn render(&mut self, window: &mut Window, cx: &mut Context<Self>)")
+            .expect("render");
+        let render = &code[render..];
+        let square = render.find(".children(float_el)").expect("the square");
+        let said = render
+            .find(".children(said_el)")
+            .expect("the chip is drawn");
+        assert!(square < said, "the chip is drawn over the square");
+    }
+
+    /// One method's body out of [`production_source`], up to the next method.
+    /// The bench opens documents in TD, the way the grid does. Parker,
+    /// 2026-09-25: a click on an artifact in the bench's column *"wipes the
+    /// screen (which it shouldn't)"*, and Alt/Ctrl+Alt+click had to reach the
+    /// bench *"like it is in the terminal side"*.
+    ///
+    /// Four facts, each of which the old code broke:
+    /// - the square is drawn, hit and closed on the bench face as well;
+    /// - a press over the square is asked before the bench takes every press
+    ///   on its face, or a square over the bench could never be clicked;
+    /// - a rail click on an artifact goes through `open_float`, never the
+    ///   desktop-then-`close_card` road that blanked the bench;
+    /// - a modified press on the bench is decided by the grid's own table.
+    #[test]
+    fn the_bench_opens_documents_in_td_and_keeps_its_card() {
+        use crate::workbench::Face;
+        assert!(float_shows_on(Face::Terminal));
+        assert!(
+            float_shows_on(Face::Workbench),
+            "the square floats over the bench"
+        );
+        assert!(
+            !float_shows_on(Face::Document),
+            "a document face is a document already"
+        );
+
+        let code = live_code();
+        let down = method_body(&code, "fn on_mouse_down(");
+        let square = down
+            .find("self.float_hit(ev.position)")
+            .expect("the square is asked");
+        let bench = down
+            .find("self.bench_press_at(")
+            .expect("the bench is asked");
+        assert!(square < bench, "the square over the bench is asked first");
+        let modified = down
+            .find("self.bench_doc_click(")
+            .expect("modified bench press");
+        assert!(
+            modified < bench,
+            "a modified press is decided before a plain one"
+        );
+        for gate in ["fn float_hit(", "fn float_el("] {
+            let body = method_body(&code, gate);
+            assert!(
+                body.contains("float_shows_on("),
+                "{gate} gates on the shared rule"
+            );
+        }
+
+        let bench_src: String = include_str!("pane/bench.rs")
             .lines()
             .filter(|l| !l.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n");
+        let open = method_body(&bench_src, "pub fn bench_open(");
         assert!(
-            code.contains(".on_drop::<gpui::ExternalPaths>(cx.listener(Self::bench_drop))"),
-            "TerminalView::bench_drop exists but the root div never registers a drop \
-             listener for gpui::ExternalPaths, so a dropped file reaches nothing — \
-             register it beside the mouse listeners in `render`"
+            !open.contains("close_card"),
+            "a click must not empty the bench: {open}"
+        );
+        assert!(open.contains("self.bench_open_href("), "{open}");
+        let href = method_body(&bench_src, "fn bench_open_href(");
+        assert!(href.contains("self.open_float(target, None, cx)"), "{href}");
+        let click = method_body(&bench_src, "pub(super) fn bench_doc_click(");
+        assert!(click.contains("crate::docopen::click_intent("), "{click}");
+        assert!(
+            click.contains("self.request_beside("),
+            "Ctrl+Alt opens beside: {click}"
+        );
+        assert!(
+            bench_src.contains("Dispatch::Open(href) => self.bench_open_href(&href, cx)"),
+            "the card's own open button takes the same road"
+        );
+    }
+
+    /// A link written in bench text is found at the byte gpui's layout
+    /// answers with, past any multi-byte glyph ahead of it.
+    #[test]
+    fn a_link_in_bench_text_is_found_at_a_layout_byte_offset() {
+        let text = "\u{25f3} Target: file:///home/parker/Work/r/brief.html \u{2192} served";
+        let at = text.find("brief").unwrap();
+        match run_link(text, at) {
+            Some(Link::Url(u)) => assert_eq!(u, "file:///home/parker/Work/r/brief.html"),
+            other => panic!("{other:?}"),
+        }
+        // On the colon just before the link, which is a word and not a link.
+        // Two bytes of the glyph ahead of it are what a character-for-byte
+        // mix-up would add, and that would land on the link's first letter.
+        assert!(run_link(text, text.find("Target:").unwrap() + 6).is_none());
+        // Inside a multi-byte glyph is not a character boundary.
+        assert!(run_link(text, 1).is_none());
+        // A path, as a response's Links table writes it.
+        let row = "  \u{2022} /home/parker/Work/reports/notes.md \u{2014} the notes";
+        match run_link(row, row.find("notes.md").unwrap()) {
+            Some(Link::Path(p)) => assert_eq!(p, "/home/parker/Work/reports/notes.md"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The bench's modified press looks for a link in the text FIRST, maps a
+    /// loopback copy of the card's own file to that file, and only then falls
+    /// back to the artifact under the pointer. And its Alt chip is asked only
+    /// under a bare Alt, and drawn only on the bench.
+    #[test]
+    fn a_link_anywhere_on_the_bench_answers_alt_and_ctrl_alt() {
+        let bench_src: String = include_str!("pane/bench.rs")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // The ORDER is `bench_press_pick`'s, tested by what it does in
+        // bench.rs; here only that the resolver feeds it the text under the
+        // pointer.
+        let press = method_body(&bench_src, "fn bench_press_link(");
+        assert!(press.contains("self.bench_link_under(flat)"), "{press}");
+        assert!(press.contains("bench_press_pick("), "{press}");
+        let click = method_body(&bench_src, "pub(super) fn bench_doc_click(");
+        assert!(
+            click.contains("self.bench_press_link(at, landed)"),
+            "{click}"
+        );
+        let hint = method_body(&bench_src, "pub(super) fn bench_alt_hint(");
+        assert!(
+            hint.contains("self.document_of(&link)?"),
+            "only a document gets the chip"
+        );
+
+        let code = live_code();
+        let mv = method_body(&code, "fn on_mouse_move(");
+        assert!(mv.contains("ev.modifiers.alt && !ev.modifiers.control && !ev.modifiers.platform"));
+        assert!(mv.contains("bare_alt.then(|| self.bench_alt_hint(ev.position))"));
+        assert!(
+            code.contains(".filter(|_| on_bench)"),
+            "the chip is the bench's alone"
+        );
+        assert!(code.contains(".children(bench_hint_el)"));
+    }
+
+    /// A function's body in the pane's live code, from its signature to the
+    /// first line that closes a method.
+    fn method(code: &str, sig: &str) -> String {
+        let at = code.find(sig).unwrap_or_else(|| panic!("{sig}"));
+        let end = code[at..].find("\n    }\n").unwrap_or(code.len() - at);
+        code[at..at + end].to_string()
+    }
+
+    fn method_body(code: &str, signature: &str) -> String {
+        let at = code
+            .find(signature)
+            .unwrap_or_else(|| panic!("{signature}"));
+        let rest = &code[at + signature.len()..];
+        let end = rest.find(" fn ").unwrap_or(rest.len());
+        rest[..end].to_string()
+    }
+
+    /// A pane's screen updates and its effects ticks ask for a frame through
+    /// `repaint`, which waits while the pane is not shown, and the clock
+    /// flushes what waited (#964). The workspace reads every pane while it
+    /// draws, so one stray `cx.notify()` on these paths repaints the whole
+    /// window for a tab nobody is looking at — at the rate a spinner prints.
+    ///
+    /// Mutation-tested: `cx.notify()` back in the Wakeup arm fails this.
+    #[test]
+    fn hidden_panes_stream_their_updates_through_repaint() {
+        let src = include_str!("pane.rs");
+        let code = &src[..src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len())];
+        let at = code.find("TermEvent::Wakeup => {").expect("the Wakeup arm");
+        let arm = &code[at..at + code[at..].find("\n            }\n").expect("end of arm")];
+        assert!(arm.contains("self.repaint(cx)"), "{arm}");
+        assert!(
+            !arm.contains("cx.notify()"),
+            "screen updates notify directly: {arm}"
+        );
+        let clock = &code[code.find("// per-pane effects clock").expect("the clock")..];
+        let clock = &clock[..clock.find(".detach();").expect("end of clock")];
+        assert!(clock.contains("view.repaint(cx)") && clock.contains("view.flush_offscreen(cx)"));
+        assert!(
+            clock.contains("view.shown.load("),
+            "a hidden pane ticks at frame rate"
+        );
+        assert!(
+            clock.contains("housekeeping::HIDDEN_INTERVAL"),
+            "a hidden pane's screen checks run as often as a shown pane's"
+        );
+        assert_eq!(housekeeping::HIDDEN_INTERVAL, Duration::from_secs(1));
+        assert_eq!(OFFSCREEN_REFRESH, Duration::from_secs(5));
+        // And the screen those checks read is copied once per change, not
+        // once per reader: the copy was 30% of the main thread under perf.
+        let rows = method(code, "fn live_rows(&self)");
+        assert!(rows.contains("live_rows_memo") && rows.contains("content_generation"));
+        // A shown pane's output is capped at one frame per OUTPUT_FRAME_GAP,
+        // with what arrives inside the gap drawn when it ends; the echo of a
+        // keystroke is not (the window redraws whole, so an uncapped stream
+        // asked for every frame the panel could show).
+        let repaint = method(code, "pub(crate) fn repaint(");
+        assert!(
+            repaint.contains("frame_ask(") && repaint.contains("frame_pending"),
+            "a shown pane's output asks for every frame: {repaint}"
+        );
+        assert!(arm.contains("typed.is_some()") && arm.contains("self.frame_now(cx)"));
+        assert_eq!(OUTPUT_FRAME_GAP, Duration::from_millis(33));
+    }
+
+    /// The cap itself: one frame per gap, the rest booked for the gap's end,
+    /// and never two bookings for one gap.
+    ///
+    /// Mutation-tested: `>=` turned to `>` in `frame_ask` fails the boundary
+    /// case, and returning `Now` always fails the rest.
+    #[test]
+    fn a_shown_panes_output_asks_for_at_most_one_frame_per_gap() {
+        let ms = Duration::from_millis;
+        assert_eq!(frame_ask(ms(40), false), FrameAsk::Now);
+        assert_eq!(frame_ask(OUTPUT_FRAME_GAP, true), FrameAsk::Now);
+        assert_eq!(frame_ask(ms(10), false), FrameAsk::After(ms(23)));
+        assert_eq!(frame_ask(ms(10), true), FrameAsk::AlreadyScheduled);
+        assert_eq!(frame_ask(ms(0), false), FrameAsk::After(OUTPUT_FRAME_GAP));
+        let main = include_str!("main.rs");
+        let render = &main[main.find("impl Render for Workspace").expect("render")..];
+        assert!(
+            render[..2000].contains("self.mark_shown_panes(cx);"),
+            "nothing tells the panes which tab is on screen"
+        );
+    }
+
+    /// What a program asking for a colour is told is the colour the pane
+    /// draws: Codex asks for the foreground and background as it starts, and
+    /// Neovim for the background to pick light or dark. A dimmed pane reports
+    /// the dimmer background it is actually drawn on, and a palette entry is
+    /// the one cells are drawn from, shaped by the pane's colour mode.
+    #[test]
+    fn a_colour_question_is_answered_with_the_colour_the_pane_draws() {
+        use crate::theme::{Grade, GradeKey};
+        let (fg, bg, cursor) = (
+            NamedColor::Foreground as usize,
+            NamedColor::Background as usize,
+            NamedColor::Cursor as usize,
+        );
+        let th = themed(Grade::neutral());
+        assert_eq!(asked_colour(bg, &th), Some(th.bg));
+        assert_eq!(asked_colour(fg, &th), Some(th.text));
+        assert_eq!(asked_colour(cursor, &th), Some(th.cursor));
+        for i in [0_u8, 1, 9, 15, 16, 196, 231, 232, 255] {
+            assert_eq!(
+                asked_colour(i as usize, &th),
+                Some(shape(idx_color(i), &th)),
+                "palette entry {i}"
+            );
+        }
+        assert_eq!(asked_colour(NamedColor::DimBlack as usize, &th), None);
+
+        let mut dim = Grade::neutral();
+        dim.set(GradeKey::Brightness, 0.25);
+        let th = themed(dim);
+        let drawn = graded(th.bg, &dim, Channel::Bg);
+        assert_ne!(drawn, th.bg, "the grade must move the background");
+        assert_eq!(asked_colour(bg, &th), Some(drawn));
+
+        let white = rgb8(gpui::hsla(0.0, 0.0, 1.0, 1.0));
+        assert_eq!((white.r, white.g, white.b), (255, 255, 255));
+        let black = rgb8(gpui::hsla(0.3, 0.8, 0.0, 1.0));
+        assert_eq!((black.r, black.g, black.b), (0, 0, 0));
+    }
+
+    /// A row of cells as a terminal stores `text`, `cols` wide: each wide
+    /// character followed by its spacer, blanks to the end.
+    fn typed_row(text: &str, cols: usize) -> Vec<crate::vt::Cell> {
+        let mut row = Vec::new();
+        for ch in text.chars() {
+            let mut cell = crate::vt::Cell::default();
+            cell.c = ch;
+            let wide = ch == '日' || ch == '本';
+            if wide {
+                cell.flags = Flags::WIDE_CHAR;
+            }
+            row.push(cell);
+            if wide {
+                let mut spacer = crate::vt::Cell::default();
+                spacer.flags = Flags::WIDE_CHAR_SPACER;
+                row.push(spacer);
+            }
+        }
+        row.resize(cols, crate::vt::Cell::default());
+        row
+    }
+
+    /// `n` lefts (or rights, when `n` is negative), then `erase` DELs.
+    fn walk_then_rub(n: isize, erase: usize) -> Vec<u8> {
+        let arrow: &[u8] = if n >= 0 { b"\x1b[D" } else { b"\x1b[C" };
+        let mut keys = arrow.repeat(n.unsigned_abs());
+        keys.resize(keys.len() + erase, 0x7f);
+        keys
+    }
+
+    /// The selection on the line being typed is erased as a person would by
+    /// hand: the caret walked to just past it, a Backspace per character.
+    #[test]
+    fn erase_run_keys_walk_the_caret_past_the_run_then_rub_it_out() {
+        // "world" is cells 8..=12, "foo" 14..=16, the caret at 17.
+        let row = typed_row("$ hello world foo", 40);
+        // "world", caret at the end of the line: 4 lefts over " foo", 5 DELs.
+        assert_eq!(
+            erase_run_keys(&row, 8, 12, 17, false),
+            Some(walk_then_rub(4, 5))
+        );
+        // The same run with the caret before it walks right instead.
+        assert_eq!(
+            erase_run_keys(&row, 8, 12, 2, false),
+            Some(walk_then_rub(-11, 5))
+        );
+        // Ending at the caret, nothing to walk.
+        assert_eq!(
+            erase_run_keys(&row, 14, 16, 17, false),
+            Some(walk_then_rub(0, 3))
+        );
+        // The caret inside the run walks to its far end.
+        assert_eq!(
+            erase_run_keys(&row, 8, 12, 10, false),
+            Some(walk_then_rub(-3, 5))
+        );
+        // An app that asked for application cursor keys gets SS3 arrows.
+        let mut ss3 = b"\x1bOD".repeat(4);
+        ss3.resize(ss3.len() + 5, 0x7f);
+        assert_eq!(erase_run_keys(&row, 8, 12, 17, true), Some(ss3));
+    }
+
+    /// Ctrl+Shift+Left at the end of a line selects the word AND the blank cell
+    /// the caret sits on. That blank is not text: counting it would rub out the
+    /// space before the word too.
+    #[test]
+    fn a_blank_past_the_end_of_the_text_is_not_erased() {
+        let row = typed_row("$ hello world foo", 40);
+        assert_eq!(
+            erase_run_keys(&row, 14, 17, 17, false),
+            Some(walk_then_rub(0, 3))
+        );
+        // A mouse sweep far past the end takes only what was typed.
+        assert_eq!(
+            erase_run_keys(&row, 14, 35, 17, false),
+            Some(walk_then_rub(0, 3))
+        );
+        // Nothing but blanks is nothing to erase.
+        assert_eq!(erase_run_keys(&row, 20, 30, 17, false), None);
+        // A typed trailing space LEFT of the caret is text, and goes.
+        let spaced = typed_row("$ foo  ", 40);
+        assert_eq!(
+            erase_run_keys(&spaced, 5, 6, 7, false),
+            Some(walk_then_rub(0, 2))
+        );
+    }
+
+    /// A wide character is two cells and one character, to walk over and to
+    /// rub out.
+    #[test]
+    fn a_wide_character_is_one_key_not_two() {
+        // `$`, a space, 日 and its spacer, 本 and its spacer, `x`: cells 0..=6.
+        let row = typed_row("$ 日本x", 20);
+        // "日本" is cells 2..=5; the caret past "x" walks over x alone.
+        assert_eq!(
+            erase_run_keys(&row, 2, 5, 7, false),
+            Some(walk_then_rub(1, 2))
         );
     }
 
@@ -11750,6 +16322,10 @@ mod tests {
         // and the pane would stay open: the chord would read as DEAD rather
         // than as wrong, which is the failure nobody files a bug about.
         assert_eq!(alt_char("w"), None);
+        // The Git inspector belongs to the window even with a printable
+        // key_char; no ESC g may reach a shell or an agent.
+        assert_eq!(alt_char("g"), None);
+        assert_eq!(alt_char("G"), None);
         // alt+k flips the pane's face. It is the PANE's chord rather than the
         // workspace's, and `on_key` returns on it well before this encoder is
         // reached — but it is asserted here for the same reason alt+w is: this
@@ -11859,10 +16435,10 @@ mod tests {
     #[test]
     fn mode_theme_per_mode_palette() {
         let base = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
-        // Shell and Other are passthrough — no retint.
+        // Shell and unrecognized programs keep outer.
         assert_eq!(mode_theme(&base, &PaneMode::Shell).accent, base.accent);
         assert_eq!(
-            mode_theme(&base, &PaneMode::Other("vim".into())).accent,
+            mode_theme(&base, &PaneMode::Other("rg".into())).accent,
             base.accent
         );
         // Agent modes retint the tube and keep their identity invariants.
@@ -11874,7 +16450,81 @@ mod tests {
         }
     }
 
-    /// The AGENT THEME gate: three of the four (inherit × tint) corners leave an
+    #[test]
+    fn terminal_state_changes_return_to_live_outer_and_respect_manual_panes() {
+        let base = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
+        let mut outer = base.clone();
+        let modes = [
+            PaneMode::Remote,
+            PaneMode::Claude,
+            PaneMode::Codex,
+            PaneMode::Other(crate::launcher::LOCAL_AGENT_MODE.into()),
+            PaneMode::Other("gemini".into()),
+            PaneMode::Other("nvim".into()),
+            PaneMode::Other("btop".into()),
+            PaneMode::Other("python3".into()),
+        ];
+        for mode in modes {
+            let tinted = maybe_mode_theme(&outer, &mode, true, true);
+            assert_ne!(tinted.accent, outer.accent, "{mode:?}");
+            // The preset changes inks, never geometry, display grade or the
+            // program's explicitly coloured ANSI slots.
+            let mut restored = tinted.clone();
+            restored.accent = outer.accent;
+            restored.text = outer.text;
+            restored.faint = outer.faint;
+            restored.cursor = outer.cursor;
+            restored.bg = outer.bg;
+            restored.surface = outer.surface;
+            restored.ansi[7] = outer.ansi[7];
+            assert_eq!(restored, outer, "{mode:?} changed more than its inks");
+            for (inherit, enabled) in [(false, true), (true, false), (false, false)] {
+                assert_eq!(maybe_mode_theme(&outer, &mode, inherit, enabled), outer);
+            }
+            for exit in [
+                PaneMode::Shell,
+                PaneMode::Unknown,
+                PaneMode::Other("rg".into()),
+            ] {
+                assert_eq!(maybe_mode_theme(&outer, &exit, true, true), outer);
+            }
+            // Stand in for the next outer / Omarchy palette; no previous preset
+            // is saved over the base, so leaving the program reveals this one.
+            outer.bg = gpui::rgb(0x102030).into();
+            outer.accent = gpui::rgb(0x456789).into();
+            assert_eq!(
+                maybe_mode_theme(&outer, &PaneMode::Shell, true, true),
+                outer
+            );
+        }
+        assert_eq!(
+            base,
+            crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap()
+        );
+    }
+
+    #[test]
+    fn terminal_state_uses_the_observed_program_not_a_filename() {
+        let editing = PaneMode::classify("vim", "vim /tmp/gemini /tmp/opencode");
+        assert_eq!(editing, PaneMode::Other("vim".into()));
+        assert_eq!(
+            crate::terminal_state::colours(&editing).unwrap()[0],
+            0xe6cfab
+        );
+        let searching = PaneMode::classify("rg", "rg gemini /tmp/opencode");
+        assert_eq!(crate::terminal_state::colours(&searching), None);
+        let wrapper = PaneMode::classify("node", "node /some/gemini/index.js");
+        assert_eq!(
+            crate::terminal_state::colours(&wrapper).unwrap()[0],
+            0x91baff
+        );
+        for remote in ["ssh", "mosh-client", "et", "telnet"] {
+            let mode = PaneMode::classify(remote, remote);
+            assert_eq!(crate::terminal_state::colours(&mode).unwrap()[0], 0xc084fc);
+        }
+    }
+
+    /// The TERMINAL STATE gate: three of the four (inherit × tint) corners leave an
     /// inherited theme alone, and only the corner a person asked for retints.
     ///
     /// The bug this closes is the `(inherit = true, tint = false)` cell: it was
@@ -11998,4 +16648,319 @@ mod tests {
             );
         }
     }
+
+    // ── ↪ send to agent: row #9 of the terminal-input manifest ─────────────
+
+    /// ↪ never presses Enter. What it writes is a bracketed paste with no
+    /// carriage return in it and no escape inside the bracket — so a brief
+    /// whose notes hold `ESC[201~` followed by a return cannot close the
+    /// paste early and have the rest read as keys — and a prompt that has
+    /// not asked for bracketing gets nothing at all, because there every
+    /// newline in the map would be an Enter.
+    ///
+    /// Mutation-tested: appending `\r` after the closing marker, letting the
+    /// unbracketed case through, and dropping the control-character filter
+    /// each fail this.
+    #[test]
+    fn send_notes_pastes_bracketed_and_never_sends_a_carriage_return() {
+        let map =
+            "NOTES — brief.html\n\n[ask-a] Which one?\n  - the second\n\n1 notes on 1 elements.\n";
+        let out = notes_paste(map, true).expect("a bracketed prompt takes the map");
+        assert!(out.starts_with(b"\x1b[200~"), "{out:?}");
+        assert!(out.ends_with(b"\x1b[201~"), "{out:?}");
+        assert!(
+            !out.contains(&b'\r'),
+            "a carriage return is an Enter: {out:?}"
+        );
+        let inner = &out[6..out.len() - 6];
+        assert_eq!(inner, map.trim_end().as_bytes(), "the map, as shown");
+
+        // A brief is a file, and anybody can write one.
+        let hostile =
+            "NOTES\r\n[a] A\r\n  - ok\x1b[201~\rrm -rf ~\r\n  - \x03\x04\u{9b}201~\u{7f}\n";
+        let out = notes_paste(hostile, true).expect("still a map");
+        assert!(!out.contains(&b'\r'), "{out:?}");
+        let escapes = out.iter().filter(|b| **b == 0x1b).count();
+        assert_eq!(escapes, 2, "an escape inside the bracket: {out:?}");
+        for c in [0x03u8, 0x04, 0x7f] {
+            assert!(
+                !out.contains(&c),
+                "control byte {c:#x} reached the prompt: {out:?}"
+            );
+        }
+        assert!(
+            !String::from_utf8_lossy(&out).contains('\u{9b}'),
+            "a C1 CSI reached the prompt"
+        );
+        assert!(
+            String::from_utf8_lossy(&out).contains("rm -rf ~"),
+            "text stays text"
+        );
+
+        assert_eq!(
+            notes_paste(map, false),
+            None,
+            "unbracketed, a newline is an Enter"
+        );
+        assert_eq!(notes_paste("\r\n\r\n", true), None, "nothing to send");
+    }
+
+    // ── paste: row #6 of the terminal-input manifest ───────────────────────
+
+    /// A clipboard cannot close its own bracket. The attack is a line copied
+    /// off a web page that carries `ESC[201~` and a command after it: the
+    /// bracket ends where the page said, and the shell reads the rest as keys
+    /// and runs it. ↪ had this test from the day it shipped; the paste the
+    /// person makes with their own hands did not, and sent the clipboard as it
+    /// came.
+    ///
+    /// Mutation-tested: letting ESC through the filter, and passing the text
+    /// unfiltered, each fail this.
+    #[test]
+    fn a_paste_cannot_close_its_own_bracket() {
+        let page = "echo hello\x1b[201~rm -rf ~\r";
+        let out = paste_bytes(page, true);
+        assert!(out.starts_with(b"\x1b[200~"), "{out:?}");
+        assert!(out.ends_with(b"\x1b[201~"), "{out:?}");
+        let closes = out.windows(6).filter(|w| *w == &b"\x1b[201~"[..]).count();
+        assert_eq!(closes, 1, "the bracket closed twice: {out:?}");
+        let escapes = out.iter().filter(|b| **b == 0x1b).count();
+        assert_eq!(escapes, 2, "an escape inside the bracket: {out:?}");
+        let inner = String::from_utf8_lossy(&out[6..out.len() - 6]).into_owned();
+        assert_eq!(
+            inner, "echo hello[201~rm -rf ~\r",
+            "the command stays inside, as text"
+        );
+    }
+
+    /// The rest of C0, DEL and C1 come out whether or not the program asked
+    /// for bracketing. A `^C` or `^Z` in a paste is a signal to the line
+    /// discipline before it is ever a character, and U+009B is CSI in one
+    /// byte's clothing. Unbracketed, ESC itself is a key — in an editor it
+    /// leaves insert mode — so it goes there too.
+    ///
+    /// Mutation-tested: filtering only when bracketed fails the unbracketed
+    /// half.
+    #[test]
+    fn a_paste_takes_out_every_control_but_the_line_breaks_and_tab() {
+        let hostile = "a\x03b\x04c\x1ad\x1ce\x7ff\u{9b}201~g\u{85}h\x1b[2Ji";
+        for bracketed in [true, false] {
+            let out = paste_bytes(hostile, bracketed);
+            let text = if bracketed {
+                &out[6..out.len() - 6]
+            } else {
+                &out[..]
+            };
+            let text = String::from_utf8(text.to_vec()).expect("still UTF-8");
+            assert_eq!(
+                text, "abcdef201~gh[2Ji",
+                "bracketed={bracketed}: every control out, every letter in"
+            );
+        }
+        assert!(
+            !paste_bytes(hostile, false).contains(&0x1b),
+            "an unbracketed escape is a key"
+        );
+    }
+
+    /// What the filter must not touch is everything else: line endings exactly
+    /// as they came (a Windows paste keeps its `\r\n`), tabs, and any text at
+    /// all. Unbracketed, the paste is the text itself — no markers.
+    ///
+    /// Mutation-tested: dropping `\r` from the kept set, and wrapping the
+    /// unbracketed paste, each fail this.
+    #[test]
+    fn a_paste_keeps_its_text_and_its_line_endings() {
+        let ordinary = "line one\r\nline two\n\tindented — café, 東京, 🦀\n";
+        let out = paste_bytes(ordinary, true);
+        assert_eq!(&out[..6], b"\x1b[200~");
+        assert_eq!(&out[6..out.len() - 6], ordinary.as_bytes());
+        assert_eq!(&out[out.len() - 6..], b"\x1b[201~");
+        assert_eq!(paste_bytes(ordinary, false), ordinary.as_bytes());
+    }
+
+    /// A clipboard holding nothing a person could read writes nothing — not
+    /// an empty bracket, which some programs answer with a redraw.
+    #[test]
+    fn a_paste_of_nothing_but_controls_writes_nothing() {
+        assert!(paste_bytes("", true).is_empty());
+        assert!(paste_bytes("\x1b\x03\x7f\u{9b}", true).is_empty());
+        assert!(paste_bytes("\x1b\x03\x7f\u{9b}", false).is_empty());
+    }
+
+    /// `paste_text` decides nothing about the bytes: every paste goes through
+    /// `paste_bytes`, so the filter above is the only one there is. Scanned
+    /// with comments stripped, so a sentence about the markers cannot satisfy
+    /// it, and a literal marker written back into the function fails it.
+    ///
+    /// Mutation-tested: restoring the old inline wrap fails this.
+    #[test]
+    fn every_paste_goes_through_paste_bytes() {
+        let src = include_str!("pane.rs");
+        let code = &src[..src.find("\n#[cfg(test)]").expect("a test module")];
+        let at = code.find("    fn paste_text(").expect("paste_text");
+        let end = code[at..].find("\n    }\n").expect("end of fn") + at;
+        let body: String = code[at..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(body.contains("paste_bytes("), "{body}");
+        assert!(
+            !body.contains(r"\x1b[200~") && !body.contains("as_bytes()"),
+            "paste_text builds its own bytes again: {body}"
+        );
+    }
+
+    /// The manifest is checked, not trusted: its counted `notifier.notify`
+    /// expectation is the number of call sites in this file's code — and in
+    /// pane/doc.rs's, where the document half of the pane moved, so a write
+    /// added there is counted too — and every one of them sits in a function
+    /// the manifest's table names. The ↪ site
+    /// is row #9, `send_notes`, and it is the only function whose write
+    /// carries `notes_paste`'s bytes.
+    ///
+    /// Mutation-tested: a stray `notifier.notify` in another function, the
+    /// manifest's count left at 10, and row #9 taken out of the table each
+    /// fail this.
+    #[test]
+    fn the_manifest_counts_every_write_to_a_terminal() {
+        let manifest = include_str!("../../docs/security/terminal-input.md");
+        let code: String = [include_str!("pane.rs"), include_str!("pane/doc.rs")]
+            .iter()
+            .map(|src| &src[..src.find("\n#[cfg(test)]").expect("a test module")])
+            .collect::<Vec<_>>()
+            .join("\n");
+        let needle = concat!("notifier", ".notify(");
+
+        let expect: usize = manifest
+            .lines()
+            .find(|l| l.contains(r"'notifier\.notify\('") && l.contains("# expect:"))
+            .and_then(|l| l.split("# expect:").nth(1))
+            .and_then(|l| l.split_whitespace().next())
+            .and_then(|n| n.parse().ok())
+            .expect("the manifest's counted notifier.notify line");
+
+        // The functions the table names, from its "Enclosing function" column.
+        let named: Vec<&str> = manifest
+            .lines()
+            .filter(|l| {
+                l.starts_with("| ")
+                    && l.split('|')
+                        .nth(1)
+                        .is_some_and(|c| c.trim().parse::<u32>().is_ok())
+            })
+            .filter_map(|l| l.split('|').nth(3))
+            .filter_map(|c| c.split('`').nth(1))
+            .collect();
+        assert!(
+            named.contains(&"send_notes"),
+            "row #9 is missing: {named:?}"
+        );
+
+        let mut owner = "<file>";
+        let mut sites: Vec<(&str, &str)> = Vec::new();
+        for line in code.lines() {
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            // A method (four spaces in) or a free function (none); a closure
+            // or a nested fn inside a method stays the method's.
+            let indent = line.len() - t.len();
+            if indent == 0 || indent == 4 {
+                if let Some(rest) = ["fn ", "pub fn ", "pub(super) fn ", "pub(crate) fn "]
+                    .iter()
+                    .find_map(|p| t.strip_prefix(p))
+                {
+                    owner = rest.split(['(', '<']).next().unwrap_or(rest);
+                }
+            }
+            if t.contains(needle) {
+                sites.push((owner, t));
+            }
+        }
+        assert_eq!(
+            sites.len(),
+            expect,
+            "docs/security/terminal-input.md expects {expect} call sites and pane.rs with pane/doc.rs has {}: {sites:?}",
+            sites.len()
+        );
+        let strays: Vec<_> = sites.iter().filter(|(o, _)| !named.contains(o)).collect();
+        assert!(
+            strays.is_empty(),
+            "a write to a terminal in a function the manifest does not name: {strays:?}"
+        );
+        let ours: Vec<_> = sites.iter().filter(|(o, _)| *o == "send_notes").collect();
+        assert_eq!(ours.len(), 1, "send_notes writes once: {ours:?}");
+        let pasted: Vec<&str> = code
+            .lines()
+            .filter(|l| l.contains("notes_paste(") && !l.trim_start().starts_with("//"))
+            .collect();
+        assert_eq!(
+            pasted.len(),
+            2,
+            "notes_paste is defined once and called once, in send_notes: {pasted:?}"
+        );
+        let body = method(&code, "pub(crate) fn send_notes(");
+        assert!(body.contains("notes_paste("), "{body}");
+    }
+
+    /// ↪ is the only way to `send_notes`: the workspace calls it from the
+    /// handler of the event the notes bar's press raises, and from nowhere
+    /// else — no socket verb, no MCP verb, no timer.
+    #[test]
+    fn only_a_press_on_the_notes_bar_reaches_send_notes() {
+        // The whole file: main.rs keeps test items all through it, so there
+        // is no one place where its code ends.
+        let main = include_str!("main.rs");
+        let calls: Vec<&str> = main
+            .lines()
+            .filter(|l| l.contains(".send_notes(") && !l.trim_start().starts_with("//"))
+            .collect();
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        let handler = method(main, "fn send_notes_beside(");
+        assert!(handler.contains(".send_notes("), "{handler}");
+        let routed: Vec<&str> = main
+            .lines()
+            .filter(|l| l.contains("send_notes_beside(") && !l.trim_start().starts_with("//"))
+            .collect();
+        assert_eq!(
+            routed.len(),
+            2,
+            "defined, and called from the subscription: {routed:?}"
+        );
+        assert!(main.contains("ev: &pane::SendNotesBeside"));
+        for other in ["ctl.rs", "mcp.rs", "mcp_transport.rs"] {
+            let src = match other {
+                "ctl.rs" => include_str!("ctl.rs"),
+                "mcp.rs" => include_str!("mcp.rs"),
+                _ => include_str!("mcp_transport.rs"),
+            };
+            assert!(!src.contains("send_notes("), "{other} reaches send_notes");
+        }
+        // And the pane raises the event only from the view's own ↪ event.
+        let code = live_code();
+        let asks: Vec<&str> = code
+            .lines()
+            .filter(|l| l.contains("SendNotesBeside {"))
+            .collect();
+        assert_eq!(
+            asks.len(),
+            2,
+            "the struct, and the one place it is raised: {asks:?}"
+        );
+        assert!(method(&code, "fn ask_to_send(").contains("docview::SendNotes"));
+    }
 }
+
+// A real pane under gpui's headless test platform, and the tests that drive
+// it. Declared after `mod tests` on purpose: the source scans in there read
+// this file only up to its first `#[cfg(test)]`, so anything test-only placed
+// above it would cut them short.
+#[cfg(test)]
+mod behaviour;
+#[cfg(test)]
+mod harness;
+#[cfg(test)]
+mod housekeeping_tests;

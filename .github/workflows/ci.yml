@@ -6,6 +6,17 @@ on:
     branches: [main]
     tags: ['v*']
 
+# The Rust every job builds with, pinned, so a new stable release cannot turn
+# its new lints into a failure on lines a pull request never touched. That
+# happened on 2026-10-07: stable moved 1.98 -> 1.99 and every PR failed clippy
+# on two old lines in surface.rs (#911). 1.98.0 is what the machine the agents
+# build on has as its default, so a local `cargo clippy` is CI's clippy.
+# Moving it is a deliberate commit that fixes the new lints in the same change;
+# toolchain-drift-watch.yml runs the latest stable weekly and says what it
+# would break before anyone has to move.
+env:
+  RUST_TOOLCHAIN: "1.98.0"
+
 jobs:
   rust:
     name: Rust checks
@@ -16,6 +27,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # poppler-utils is not a build dependency: the PDF test in
+      # docview/poppler.rs drives the real pdfinfo and pdftoppm, and fails
+      # under CI rather than skipping when they are missing.
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -27,10 +41,12 @@ jobs:
             libxcb1-dev \
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
-            pkg-config
+            pkg-config \
+            poppler-utils
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy, rustfmt
 
       - name: Prepare patched gpui (crt-pass + focus-blur + text-crawl + tube-cap-32 + gpl-sever)
@@ -50,8 +66,33 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked -- -D warnings
 
+      # The alacritty fallback core is the way back if rio-vt misbehaves, and
+      # the oracle the suite is checked against. A fallback nobody builds is
+      # one that no longer compiles on the day it is needed (issue 826 removes
+      # it, and these steps with it).
+      - name: Clippy, fallback core
+        run: cargo clippy --locked --features core-alacritty -- -D warnings
+
+      # The HTML engine's tests drive a real Chromium, and the runner's AppArmor
+      # forbids the unprivileged user namespaces its sandbox needs, so without
+      # this the browser dies at launch and those tests skip. TD never runs a
+      # browser without its sandbox; this lets the sandbox start (#737).
+      - name: Let Chromium start its sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # The first Chromium launch on a fresh runner pays one-time costs (the
+      # font cache, and whatever else a cold start sets up) that once took
+      # longer than the engine's 30 s start limit, failing the first real-browser
+      # test (run 36112126088). Paying them here keeps that out of the tests; a
+      # launch that fails here is left for the tests to report.
+      - name: Warm Chromium once
+        run: timeout 180 chromium --headless=new --no-first-run --disable-gpu --dump-dom about:blank >/dev/null 2>&1 || true
+
       - name: Test
         run: cargo test --locked
+
+      - name: Test, fallback core
+        run: cargo test --locked --features core-alacritty
 
       - name: Release build smoke
         run: cargo build --release --locked
@@ -91,7 +132,9 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Prepare patched gpui (crt-pass + focus-blur + text-crawl + tube-cap-32 + gpl-sever)
         run: ../scripts/prepare-gpui.sh
       - uses: taiki-e/install-action@cargo-audit
@@ -133,7 +176,9 @@ jobs:
             libxkbcommon-x11-dev \
             pkg-config
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Prepare patched gpui (crt-pass + focus-blur + text-crawl + tube-cap-32 + gpl-sever)
         run: ./scripts/prepare-gpui.sh

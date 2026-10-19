@@ -37,13 +37,12 @@
 //! Two ways, and the split matters because only one of them is ours to give.
 //!
 //! Claude Code takes `--append-system-prompt`, so a pane this window launched
-//! carries the briefing from its first token. Codex has no equivalent flag; it
-//! reads `AGENTS.md` from the working directory, which is where the
-//! machine-global rule lives instead. Both then compute their own drop
-//! directory from `TD_SESSION` and `TD_PANE_ID`, which the host already puts
-//! in every pane's environment — so neither harness needs a path handed to it,
-//! and an agent started from a plain shell is no worse off than one this
-//! window launched.
+//! carries the briefing from its first token. Codex receives the packet in its
+//! supported initial PROMPT argument, leaving its own configured instructions
+//! intact. A custom local command receives a file or context argument through
+//! local-agent.toml. Every launcher path uses the same packet and bundled kit.
+//! Agents compute their drop directory from TD_SESSION and TD_PANE_ID. A plain
+//! hand-started agent remains outside this launcher contract.
 //!
 //! # Effort is the harness's own dial, in the harness's own words
 //!
@@ -65,15 +64,17 @@ use std::path::{Path, PathBuf};
 pub enum Harness {
     Claude,
     Codex,
+    Local,
 }
 
 impl Harness {
-    pub const ALL: [Harness; 2] = [Harness::Claude, Harness::Codex];
+    pub const ALL: [Harness; 3] = [Harness::Claude, Harness::Codex, Harness::Local];
 
     pub fn binary(self) -> &'static str {
         match self {
             Harness::Claude => "claude",
             Harness::Codex => "codex",
+            Harness::Local => "local",
         }
     }
 
@@ -81,6 +82,7 @@ impl Harness {
         match self {
             Harness::Claude => "claude",
             Harness::Codex => "codex",
+            Harness::Local => "local",
         }
     }
 
@@ -114,6 +116,10 @@ impl Harness {
                     label: "haiku",
                 },
             ],
+            Harness::Local => &[Model {
+                id: "local-config",
+                label: "local-agent.toml",
+            }],
             Harness::Codex => &[
                 Model {
                     id: "gpt-5-codex",
@@ -142,6 +148,7 @@ impl Harness {
                 Effort::Max,
             ],
             Harness::Codex => &[Effort::Low, Effort::Medium, Effort::High, Effort::XHigh],
+            Harness::Local => &[],
         }
     }
 
@@ -152,7 +159,7 @@ impl Harness {
     pub fn default_effort(self) -> Effort {
         match self {
             Harness::Claude => Effort::High,
-            Harness::Codex => Effort::Medium,
+            Harness::Codex | Harness::Local => Effort::Medium,
         }
     }
 
@@ -164,6 +171,9 @@ impl Harness {
     /// anything Codex offers is offered by Claude unchanged.
     pub fn clamp_effort(self, chosen: Effort) -> Effort {
         let offered = self.efforts();
+        if offered.is_empty() {
+            return self.default_effort();
+        }
         offered
             .iter()
             .rev()
@@ -433,6 +443,7 @@ impl Reach {
             (Harness::Claude, Reach::Machine) => &["--permission-mode", "auto"],
             (Harness::Codex, Reach::Repo) => &["--sandbox", "workspace-write"],
             (Harness::Codex, Reach::Machine) => &["--sandbox", "danger-full-access"],
+            (Harness::Local, _) => &[],
         };
         words.iter().map(|w| w.to_string()).collect()
     }
@@ -546,6 +557,13 @@ impl Recipe {
                 parts.push("-c".into());
                 parts.push(format!("model_reasoning_effort={}", self.effort.id()));
             }
+            Harness::Local => unreachable!("local launches use command_line_with_adapter"),
+        }
+        if self.harness == Harness::Codex {
+            if let Some(path) = briefing {
+                parts.push(context_argument(path, self.opener.as_deref()));
+                return parts.join(" ");
+            }
         }
         if let Some(opener) = self.opener.as_ref().filter(|o| !o.trim().is_empty()) {
             parts.push(shell_quote(opener));
@@ -558,13 +576,147 @@ impl Recipe {
     /// The surface briefing and nothing about effort: effort is a flag on the
     /// same command line now, and a sentence asking for the same thing in
     /// prose would be a second instruction that can drift from the first.
-    pub fn briefing(&self, drop_dir: &str) -> String {
-        crate::surface::launch_briefing(drop_dir)
+    ///
+    /// `kit` is the decision-brief `SKILL.md` written for this launch, when it
+    /// could be written; see [`crate::briefkit`].
+    pub fn briefing(&self, drop_dir: &str, kit: Option<&Path>) -> String {
+        let kit = kit.map(|p| p.display().to_string());
+        crate::surface::launch_briefing(drop_dir, kit.as_deref())
     }
 
     /// Does this harness take a briefing from us at all?
     pub fn takes_briefing(&self) -> bool {
-        matches!(self.harness, Harness::Claude)
+        true
+    }
+
+    /// Prepare the actual kit and packet before starting any supported agent.
+    pub fn prepare_briefing(&self, dir: &Path, kit_root: &Path) -> Result<PathBuf, String> {
+        let skill = crate::briefkit::write(kit_root)
+            .map_err(|e| format!("Could not prepare the decision-brief kit: {e}"))?;
+        let text = self.briefing(&format!("{}/$TD_PANE_ID", dir.display()), Some(&skill));
+        write_briefing(dir, &text).map_err(|e| format!("Could not prepare the TD briefing: {e}"))
+    }
+
+    /// The same validated command is used by the launch and its preview.
+    pub fn command_line_with_adapter(
+        &self,
+        briefing: Option<&Path>,
+        adapter: Option<&LocalAdapter>,
+    ) -> Result<String, String> {
+        if self.harness != Harness::Local {
+            return Ok(self.command_line(briefing));
+        }
+        if self.reach != Reach::Anywhere {
+            return Err("local-agent.toml owns the local runner's permission flags".into());
+        }
+        let path = briefing.ok_or("The local runner needs a TD briefing file")?;
+        adapter
+            .ok_or("Configure the local runner in local-agent.toml")?
+            .command_line(path, self.opener.as_deref())
+    }
+}
+
+// One reserved existing wire value, not a new host protocol variant.
+pub const LOCAL_AGENT_MODE: &str = "td:local-agent";
+
+/// A declaration scoped to the configured command, never to its enclosing shell.
+/// This controls display and notes eligibility, not authorisation.
+pub fn local_agent_environment(bytes: &[u8]) -> bool {
+    bytes
+        .split(|b| *b == 0)
+        .any(|item| item == b"TD_LOCAL_AGENT=1")
+}
+
+/// Build one initial PROMPT argument without replacing the agent's own rules.
+fn context_argument(path: &Path, opener: Option<&str>) -> String {
+    let suffix = match opener.filter(|s| !s.trim().is_empty()) {
+        Some(task) => format!("\n\nUSER TASK:\n{task}"),
+        None => "\n\nThis is launch context only. Wait for the user to give a task. Acknowledge briefly; do not create a brief for this startup message.".into(),
+    };
+    format!(
+        "\"$(cat {})\"{}",
+        shell_quote(&path.to_string_lossy()),
+        shell_quote(&suffix)
+    )
+}
+
+/// A custom runner's argv. These are arguments, not an interpolated shell script.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAdapter {
+    pub command: Vec<String>,
+}
+
+impl LocalAdapter {
+    pub fn config_path() -> PathBuf {
+        crate::instance::config_dir().join("local-agent.toml")
+    }
+
+    pub fn load() -> Result<Self, String> {
+        let path = Self::config_path();
+        Self::load_from(&path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    fn load_from(path: &Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let adapter: Self = toml::from_str(&text).map_err(|e| e.to_string())?;
+        adapter.validate()?;
+        Ok(adapter)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let Some(binary) = self.command.first() else {
+            return Err("command must contain the runner executable".into());
+        };
+        if binary.trim().is_empty()
+            || matches!(binary.as_str(), "{briefing}" | "{context}" | "{prompt}")
+        {
+            return Err("command must start with a runner executable".into());
+        }
+        if self.command.iter().any(|arg| arg.contains('\0')) {
+            return Err("command arguments cannot contain NUL".into());
+        }
+        if !self
+            .command
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "{briefing}" | "{context}"))
+        {
+            return Err(
+                "command needs a whole argument {briefing} or {context} to receive TD instructions"
+                    .into(),
+            );
+        }
+        for arg in &self.command {
+            for token in ["{briefing}", "{context}", "{prompt}"] {
+                if arg.contains(token) && arg != token {
+                    return Err(format!("{token} must occupy a whole command argument"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn command_line(&self, path: &Path, opener: Option<&str>) -> Result<String, String> {
+        self.validate()?;
+        if opener.is_some_and(|s| !s.trim().is_empty())
+            && !self
+                .command
+                .iter()
+                .any(|a| a == "{prompt}" || a == "{context}")
+        {
+            return Err("command needs {prompt} or {context} to receive the user's task".into());
+        }
+        let args: Vec<String> = self
+            .command
+            .iter()
+            .map(|arg| match arg.as_str() {
+                "{briefing}" => shell_quote(&path.to_string_lossy()),
+                "{context}" => context_argument(path, opener),
+                "{prompt}" => shell_quote(opener.unwrap_or("")),
+                _ => shell_quote(arg),
+            })
+            .collect();
+        Ok(format!("TD_LOCAL_AGENT=1 {}", args.join(" ")))
     }
 }
 
@@ -692,6 +844,7 @@ mod tests {
                 let expected = match harness {
                     Harness::Claude => format!("--effort {}", effort.label()),
                     Harness::Codex => format!("model_reasoning_effort={}", effort.label()),
+                    Harness::Local => unreachable!("local effort dials are empty"),
                 };
                 assert!(line.contains(&expected), "{harness:?} {effort:?}: {line}");
             }
@@ -712,6 +865,150 @@ mod tests {
         assert_eq!(Effort::from_id("standard"), None);
         assert_eq!(Effort::from_id(""), None);
         assert_eq!(Harness::from_label("gemini"), None);
+    }
+
+    #[test]
+    fn brief_launch_codex_receives_context_and_task_as_one_literal_argument() {
+        let dir = std::env::temp_dir().join(format!("td-codex-brief-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("briefing's file.txt");
+        let trap = dir.join("must-not-exist");
+        let body = format!(
+            "Terminal Delight\nDECISION BRIEFS\n$(touch {})\n`echo code`",
+            trap.display()
+        );
+        std::fs::write(&path, &body).unwrap();
+        let mut r = recipe(Harness::Codex, Effort::High);
+        r.opener = Some(format!(
+            "Compare A & B; $(touch {})\nDon't execute this",
+            trap.display()
+        ));
+        let line = r.command_line(Some(&path));
+        let output = std::process::Command::new("sh")
+            .args(["-c", &format!("set -- {line}; printf '%s\\0' \"$@\"")])
+            .env("HOME", &dir)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let argv: Vec<_> = output
+            .stdout
+            .split(|b| *b == 0)
+            .filter(|a| !a.is_empty())
+            .collect();
+        let last = String::from_utf8(argv.last().unwrap().to_vec()).unwrap();
+        assert!(last.starts_with(&body));
+        assert!(last.ends_with(r.opener.as_deref().unwrap()));
+        assert_eq!(
+            argv.len(),
+            6,
+            "codex + model pair + effort pair + one prompt"
+        );
+        assert!(
+            !line.contains("developer_instructions"),
+            "existing rules stay configured"
+        );
+        assert!(
+            !trap.exists(),
+            "model content and user text are never executed"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn brief_launch_local_adapter_executes_with_context_and_scoped_marker() {
+        let dir = std::env::temp_dir().join(format!("td-local-brief-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("packet's file.txt");
+        std::fs::write(&path, "TD packet\nDECISION BRIEFS").unwrap();
+        let adapter = LocalAdapter {
+            command: vec![
+                "sh".into(),
+                "-c".into(),
+                "printf '%s\\0' \"$TD_LOCAL_AGENT\" \"$@\"".into(),
+                "capture".into(),
+                "{context}".into(),
+                "{prompt}".into(),
+            ],
+        };
+        let line = adapter
+            .command_line(&path, Some("user's task\nsecond line"))
+            .unwrap();
+        let output = std::process::Command::new("sh")
+            .args(["-c", &line])
+            .env("HOME", &dir)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let args: Vec<_> = output
+            .stdout
+            .split(|b| *b == 0)
+            .filter(|a| !a.is_empty())
+            .collect();
+        assert_eq!(args[0], b"1");
+        assert!(String::from_utf8_lossy(args[1]).starts_with("TD packet\nDECISION BRIEFS"));
+        assert_eq!(args[2], b"user's task\nsecond line");
+        assert!(local_agent_environment(b"X=1\0TD_LOCAL_AGENT=1\0Y=2\0"));
+        for env in [
+            b"X=TD_LOCAL_AGENT=1".as_slice(),
+            b"TD_LOCAL_AGENT=10",
+            b"TD_LOCAL_AGENT=0",
+            b"",
+        ] {
+            assert!(!local_agent_environment(env));
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn brief_launch_prepares_the_same_complete_kit_for_all_harnesses() {
+        let dir = std::env::temp_dir().join(format!("td-shared-kit-{}", std::process::id()));
+        let kit = dir.join("kit");
+        for h in Harness::ALL {
+            let path = recipe(h, Effort::Medium)
+                .prepare_briefing(&dir.join(h.label()), &kit)
+                .unwrap();
+            let text = std::fs::read_to_string(path).unwrap();
+            assert!(text.contains("DECISION BRIEFS"));
+            assert!(text.contains(&kit.join("SKILL.md").display().to_string()));
+            assert!(kit.join("assets/notes.js").is_file());
+        }
+        let blocked = dir.join("blocked");
+        std::fs::write(&blocked, "a file, not a directory").unwrap();
+        assert!(recipe(Harness::Codex, Effort::Medium)
+            .prepare_briefing(&dir, &blocked)
+            .is_err());
+        let invalid = dir.join("invalid.toml");
+        std::fs::write(&invalid, "command = [42]").unwrap();
+        assert!(LocalAdapter::load_from(&invalid).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn brief_launch_local_config_refuses_unbriefed_and_ambiguous_commands() {
+        for command in [
+            vec![],
+            vec!["runner"],
+            vec!["{context}"],
+            vec!["runner", "--prompt={context}"],
+        ] {
+            let a = LocalAdapter {
+                command: command.into_iter().map(str::to_string).collect(),
+            };
+            assert!(a.command_line(Path::new("/packet"), None).is_err());
+        }
+        let a = LocalAdapter {
+            command: vec!["runner".into(), "{briefing}".into()],
+        };
+        assert!(a
+            .command_line(Path::new("/packet"), Some("a task"))
+            .is_err());
+        let r = recipe(Harness::Local, Effort::Medium);
+        assert!(r
+            .command_line_with_adapter(Some(Path::new("/packet")), None)
+            .is_err());
+        assert!(r.command_line_with_adapter(None, Some(&a)).is_err());
+        assert!(LocalAdapter::load_from(Path::new("/nonexistent/local-agent.toml")).is_err());
+        assert!(Harness::Local.efforts().is_empty());
     }
 
     #[test]
@@ -740,6 +1037,10 @@ mod tests {
             "codex has no max and must not be offered one"
         );
         for harness in Harness::ALL {
+            if harness == Harness::Local {
+                assert!(harness.efforts().is_empty());
+                continue;
+            }
             assert!(harness.efforts().contains(&harness.default_effort()));
             assert!(
                 harness.efforts().windows(2).all(|w| w[0] < w[1]),
@@ -755,7 +1056,7 @@ mod tests {
         let texts: Vec<String> = Harness::Claude
             .efforts()
             .iter()
-            .map(|e| recipe(Harness::Claude, *e).briefing("/run/td/7"))
+            .map(|e| recipe(Harness::Claude, *e).briefing("/run/td/7", None))
             .collect();
         assert!(
             texts.windows(2).all(|w| w[0] == w[1]),
@@ -902,9 +1203,21 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stdout), to.to_string_lossy());
     }
 
+    /// The kit the launch wrote reaches the briefing by its path, and a launch
+    /// that could not write one briefs without it.
+    #[test]
+    fn the_briefing_names_the_kit_the_launch_wrote() {
+        let r = recipe(Harness::Claude, Effort::High);
+        let kit = Path::new("/data/terminal-delight/skills/decision-brief/SKILL.md");
+        assert!(r
+            .briefing("/run/td/7", Some(kit))
+            .contains(&*kit.to_string_lossy()));
+        assert!(!r.briefing("/run/td/7", None).contains("SKILL.md"));
+    }
+
     #[test]
     fn the_briefing_carries_the_drop_directory_and_the_verb() {
-        let text = recipe(Harness::Claude, Effort::Max).briefing("/run/td/surfaces/s/7");
+        let text = recipe(Harness::Claude, Effort::Max).briefing("/run/td/surfaces/s/7", None);
         assert!(text.contains("/run/td/surfaces/s/7"));
         assert!(text.contains("present_surface"), "and the verb");
         assert!(
@@ -914,9 +1227,10 @@ mod tests {
     }
 
     #[test]
-    fn only_claude_is_offered_a_briefing_by_us() {
-        assert!(recipe(Harness::Claude, Effort::Low).takes_briefing());
-        assert!(!recipe(Harness::Codex, Effort::Low).takes_briefing());
+    fn every_launcher_harness_is_offered_the_shared_briefing() {
+        for harness in Harness::ALL {
+            assert!(recipe(harness, Effort::Low).takes_briefing());
+        }
     }
 
     #[test]

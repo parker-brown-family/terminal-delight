@@ -7,7 +7,124 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **The FOCUS reader (Alt+R) has a size of its own.** It lays text out at the
+  pane's own letter size across the whole glass, so a narrow pane opens with as
+  many columns as the glass holds — about 175 × 46 in a 1,576 × 950 window —
+  instead of its own few columns blown up to fill it (a 48-column pane used to
+  open at 3.65×, about twelve rows at a time). The slider and Ctrl+wheel move the
+  letters from there, 0.5× to 2.5×, and Ctrl+wheel over the reader now sizes the
+  reader instead of the pane behind it.
+- **A shell's lines reach the reader as the program printed them.** Rows are
+  joined exactly where the terminal soft-wrapped them, from the terminal's own
+  flag, instead of by a width guess that refused a wrapped line whose next row
+  began with spaces and glued a half-full row to a long word after it. What a
+  program broke itself, like `ls`'s columns, stays as printed. Blank rows under
+  the last line no longer push a short screen's content out of view, and the
+  reader keeps the history it has read instead of re-reading all of it, under
+  the terminal's lock, on every frame a shell streams.
+- **Alt+R on a document pane reads the document.** A pane opened to show a
+  Markdown file, a page, a PDF, a picture or a video lends the reader its own
+  view, and so does a square floating over a terminal or a bench; the reader
+  used to show the shell hidden behind them. The document is drawn at the
+  reader's size and read there as on its pane: the wheel scrolls it, Ctrl+wheel
+  zooms it, PageUp and PageDown turn pages of the reader's height, and a brief
+  takes notes, CONCUR stamps and ↪ inside the reader, saved into the same file.
+  Escape closes an open note box before the reader, and the pane gets its
+  document back at its own zoom and at the place it was read to. A small
+  picture stays at its own pixels until zoomed. The workbench face still reads
+  the terminal.
+- **Alt+R on an agent's pane reads its conversation.** When the pane's Claude
+  Code session is bound for certain, the reader shows the conversation from its
+  transcript instead of the screen Claude Code drew for a narrow pane: what you
+  typed (a slash command as you typed it, and never a background task's
+  notification) and its replies whole, at the reader's width, with headings,
+  lists, code and tables drawn from their Markdown; one row per tool call —
+  `⚙ Read  app/src/doc.rs  →  40 lines` — which a click opens to the whole
+  command and what it printed; the thinking left out; and a divider where the
+  conversation was compacted. It follows the transcript as the agent writes it,
+  a finished block at a time. The agent's own status line and input box stay
+  live at the reader's foot, and typing still reaches it. The header names what
+  is being read: TRANSCRIPT, SCREEN when the transcript could not be bound for
+  certain (the reader then reads the screen, never a guess at whose
+  conversation it is), SCROLLBACK for a shell, and ALTERNATE SCREEN for a
+  full-screen program. A Codex pane reads its rollout the same way, under
+  CODEX: what you typed rather than the instructions Codex files beside it, and
+  each script it ran summed up by what the script printed; its screen has no
+  input box the reader recognises, so it has no live foot yet.
+
+- **A new install's panes wear Terminal Delight's own mark.** With no
+  `dir-logos.toml` at all, the first start writes one mapping `/` to the app's
+  mark, saved as `~/.config/terminal-delight/logos/terminal-delight.png`. Every
+  pane without a nearer mapping inherits it, where it used to show the bare
+  `＋ logo` placeholder. An existing file is never touched, even an empty one:
+  removing the default with ✕ in the logo picker leaves an empty map, and it
+  stays empty across restarts.
+- **The terminal emulator core is rio-vt, the core inside the Rio terminal.**
+  alacritty_terminal did the emulation from the start; it is still built with
+  `--features core-alacritty`, as a fallback and as the oracle the whole suite
+  is checked against, until it has been out of daily use long enough to delete.
+  Measured on the research branch before choosing: an 8 MB text stream parses in
+  82 ms against 140 ms, and a pane holding 10,000 lines of history costs 11.0 MB
+  against 28.5 MB. The swap also made the read loop, the pseudoterminal and the
+  lock TD's own (`app/src/vt/`), which turned the session host's attach fence
+  into one plain lock and deleted the socket-as-pseudoterminal workaround a
+  replica needed. A window still attaches to a session host built before the
+  swap: the host protocol stays at version 1 and the divergence hash is over
+  alacritty's frozen numbering. The decision, the plan and every difference
+  found between the cores are in `docs/plans/core-swap-rio/`. (#825)
+- **Terminal Delight says what it is when a program asks.** Device attributes
+  are `?62;22c`, long enough for `kitten icat`'s detector, which used to wait
+  ten seconds in every pane and then give up (#750); XTVERSION is
+  `terminal-delight 0.3.0`; the cell size (`CSI 16 t`) is answered in every
+  pane, where before only a pane on a session host answered it. The kitty
+  keyboard query goes unanswered, because TD sends legacy key encodings.
+  `--version` names the core. (#825)
+
 ### Added
+
+- **A name in an `ls` listing opens by Alt+click.** When a listing puts each
+  file's path behind its name, as `ls --hyperlink` and `eza --hyperlink` do,
+  Alt+click opens exactly the file listed, in the floating square, or with
+  Ctrl+Alt in a pane beside, whichever folder was listed and wherever the shell
+  has gone since. A name with no hyperlink is tried in the pane's own folder and
+  opens only if that folder holds it. A hyperlink to a file that has gone, a
+  web address behind a label, or another machine's file is never swapped for a
+  guess from the name. Omarchy's `ls` alias writes no hyperlinks; adding
+  `--hyperlink=auto` to it makes every listing exact.
+- **A PDF opens in the floating square.** Alt+click on a `.pdf` path shows it
+  there as one column of pages, the widest fitted to the width, with the page
+  in view counted at the bottom right; Ctrl+Alt+click opens it in a pane beside.
+  It scrolls, drags, and zooms from 50% to 300% on the same controls a page and
+  a Markdown document use, panning sideways when zoomed past the width, and
+  stays sharp because poppler draws each page again at the size shown, a tile
+  of at most 2,048 pixels at a time and only where the view is looking. A PDF
+  artifact floats over the bench, `open_document` opens one beside an agent,
+  and a document's link to `paper.pdf#page=3` opens it on page 3. A PDF rewritten while it is
+  open is read again on the page you were reading. poppler runs as a child
+  process, found when the first PDF opens; without it, the file goes to the
+  desktop with a chip saying why.
+- **A video plays in the floating square.** Alt+click on an `.mp4`, `.mov`,
+  `.webm`, `.mkv`, `.m4v`, `.ogv` or `.avi` path plays it there, looping, with
+  sound; Ctrl+Alt+click plays it in a pane beside, where Space, ← → and M pause,
+  skip and mute. A bar along the bottom pauses, shows the time, seeks and mutes.
+  A video artifact floats over the bench, and `open_document` opens one beside
+  an agent. It plays through libmpv, found when the first video opens; without
+  mpv installed, the file goes to the desktop with a chip saying why. A video
+  pane put back by a restart comes back paused.
+- **A Markdown link's words open what they point at, on the bench.** Alt,
+  Ctrl+Alt and Ctrl on the words of `[the clip](clip.mp4)` in a bench card do
+  what they do on the terminal, and a held Alt outlines just those words.
+- **Pictures a program draws appear in the pane.** Anything speaking the Kitty
+  graphics protocol — `kitten icat`, chafa, an agent's chart — draws in the
+  cells it asked for, scrolls with its text, and bends with the glass. They are
+  attentional: when a pane's tab is hidden it forgets its pictures, so coming
+  back shows the text alone, and no snapshot carries them. Sixel and iTerm2
+  pictures are not drawn yet. A picture command cannot grow past 4 MiB. A
+  temporary picture file is deleted only by kitty's own rule. A pipe named as
+  shared memory is never opened. A character carries at most 32 combining
+  marks. (#825)
 
 - **A response carries a `brief` — the bare minimum, in two sentences under
   fifty words.** The tl;dr and the ELI5 came back as ONE register, which is
@@ -29,6 +146,60 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Fixed
 
+- **A paste while a sticky note or a pane name is being written goes into it,
+  not into the shell under it.** Ctrl+Shift+V was still the pane's paste, so it
+  typed the clipboard into whatever ran behind the paper or the title, and a
+  newline in it was a return; Ctrl+V and Shift+Insert reached the box and
+  vanished. All three now paste into the sticky note or the name, the way a
+  note in the square already did, and as one line: a line break or tab becomes
+  a space, because the paper draws only its first line and a name has one.
+- **The bench strip stops saying "Reading your answer" once the agent has
+  left.** The eight second reading window was not cleared when an agent quit
+  back to the shell, so the strip kept the words, and an agent started in that
+  pane inside the window was born on a rung that outranks a real question.
+- **An MCP pid too big for 32 bits is refused instead of landing on another
+  pane.** The pid was cut to its low 32 bits, so `4294967396` addressed pid
+  100: `pane_events`, `get_pane_config`, `set_pane_config`, `leave_note`,
+  `declare_deliverable` and `present_surface` could read or change a pane the
+  caller never named. They now answer "pid is out of range".
+- **A program cannot make a pane hold an unfinished escape forever.** The text
+  guard capped a half-arrived control sequence at 64 bytes, but ESC followed by
+  intermediate bytes (spaces, say) was held for as long as it stayed open, and
+  every read copied and rescanned the whole pile with the terminal locked. Those
+  bytes are never rewritten, so they now pass through as they arrive.
+- **Escape reaches a pane again after it closes the reader there.** Closing
+  the FOCUS reader with Escape never told the pane it had been reading, so from
+  then on Escape and the page keys in that pane went to a reader that was no
+  longer open, and never reached its terminal: Esc could not interrupt an agent
+  there until the reader was reopened and closed with a click. Wrong since
+  2026-06-24.
+- **A Markdown document keeps its place through two quick re-layouts.** A
+  second zoom, or the reader opened and closed at once, before the first had
+  settled used to land on a different block.
+- **A link Claude Code breaks across two rows opens whole from either half.**
+  Claude cuts a long path at the pane's width and starts the second half at its
+  two-column margin. The click only looked for the rest of a link in column 0,
+  so Alt+click and Ctrl+click on a wrapped `file://` path opened nothing, or the
+  wrong half. The rest of the link is now found at the margin. When a path could
+  have been broken at the edge or could have ended there with the next word
+  below it, the disk decides: the reading that names an existing file wins. The
+  second half is also painted in the link colour even when it carries no slash;
+  before, `ascade-and-workbench-turn-fix.md` stayed prose while
+  `es/HANDOFF-….md` lit up. (#XXX)
+- **The Alt copy chip copies a command Claude Code wrapped as one line.** The
+  copy only rejoined rows that started in column 0, and every row of a Claude
+  reply starts two columns in. So Alt+click on a wrapped command copied its
+  first row, cut off mid-command and with the margin in front of it. A margin
+  two rows share is now read as a margin. The command copies whole from either
+  row with no leading spaces, and a code block indented under a paragraph still
+  stays apart. (#881)
+
+- **Output reaches the terminal core faster.** The guards the core swap put in
+  front of rio-vt's parser read every byte one at a time and took about a third
+  of its throughput: coloured text ran at 88 MiB/s through them, against 138
+  for the core alone. They now search with memchr and read a character whole.
+  The same text runs at 114 MiB/s, and pictures at 498 MiB/s where they ran at
+  311. `what_the_guards_cost` in `app/src/vt/rio.rs` measures it. (#843)
 - **Standing on the comments board no longer swallows a keystroke meant for the
   agent.** For one build, typing while the board was on screen opened a note
   under the first character — the reasoning being that the bench already works

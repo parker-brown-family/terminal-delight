@@ -1,0 +1,333 @@
+<div class="wrap">
+
+<p class="kicker">Terminal Delight &middot; the build plan for documents in the pane &middot; Gates 3 and 4 of 4 &middot; 2026-09-24</p>
+
+<h1>Ten Slices</h1>
+
+<p class="lede">Documents opening inside Terminal Delight&rsquo;s panes now has an approved product and an
+approved architecture, and the next step is the one most plans skip: deciding every file, every type,
+every call and every test before a line of code exists. Two agents did that in parallel, one working from
+the click inward and one from the document outward, and they met at a small set of calls both sides agreed
+on. Their two design documents run to fifteen hundred lines of types, signatures and call stacks, which is
+the wrong thing to ask you to read. This page draws what those lines decide, and the order the work would be built in &mdash; ten slices,
+each one running and shown to you before the next begins &mdash; and asks you to approve both, or change
+them.</p>
+
+<!-- ============================================================ 1 -->
+<h2 class="sec">New modules carry the work; the session protocol is left alone</h2>
+
+<p>Almost all of it is new code in two places, a small file of decisions and a new document module, and the
+existing files change at their edges. The window process carries everything; the session host changes in
+one spot, the stale size answer.</p>
+
+<figure>
+  <span class="lbl">01 &middot; New files, changed files, and what is left alone</span>
+  <div class="scroller">
+    <div class="stack3">
+      <div class="tri">
+        <div class="box b"><b>docopen.rs &middot; new</b><span>the pure decisions: is this a document, what does this click do, what does the chip say, where does the square go</span></div>
+        <div class="box b"><b>docview/ &middot; new</b><span>the document view and its parts: image, Markdown, HTML pages, the Chromium engine, the page cache, TD&rsquo;s notes and their writer</span></div>
+        <div class="box b"><b>ptyscan.rs &middot; new</b><span>spots a program asking for the cell size, so the host can answer</span></div>
+      </div>
+      <div class="tri">
+        <div class="box g"><b>pane.rs &middot; changed</b><span>the router, the floating square, the document face, the chip and menu, the keys</span></div>
+        <div class="box g"><b>main.rs &middot; changed</b><span>the split beside, the saved layout, the help modal, a multi-line edit box</span></div>
+        <div class="box g"><b>workbench.rs, keylayer.rs &middot; changed</b><span>a third face; two new key layers for the square and the document</span></div>
+      </div>
+      <div class="tri">
+        <div class="box g"><b>host.rs, term.rs &middot; changed</b><span>live size answers, and the cell-size answer</span></div>
+        <div class="box g"><b>benchdraw.rs &middot; changed</b><span>workbench Markdown cards drawn by the same renderer</span></div>
+        <div class="box g"><b>Cargo.toml &middot; changed</b><span>one crate, comrak, without its defaults: eight packages</span></div>
+      </div>
+      <div class="box d wide"><b>untouched</b><span>the host&rsquo;s wire protocol, the socket reader, the attach snapshot, the warp, alacritty_terminal, vte &mdash; and no async runtime, no web view, no open port</span></div>
+    </div>
+  </div>
+  <div class="legend"><span><i class="b"></i>new</span><span><i class="g"></i>changed</span><span><i class="d"></i>not touched</span></div>
+  <figcaption>From the merged design. <b>The only new dependency is the Markdown parser markdown-delight already
+  uses</b>; the browser engine is driven by a small client TD owns, which adds nothing to the build.</figcaption>
+</figure>
+
+<p class="bridge">Two agents writing two halves of one feature is how a feature breaks at the seam. This one
+has a rule that stops it.</p>
+
+<!-- ============================================================ 2 -->
+<h2 class="sec">One rule holds the two halves together</h2>
+
+<p>TD bends each pane&rsquo;s picture with the CRT glass after everything is drawn, but gpui, the framework
+underneath, decides what a click hit using the flat, unbent layout. So a button drawn near a pane&rsquo;s
+curved edge is clicked somewhere beside where it appears. The terminal grid and the workbench already live
+with this: the pane catches every click, un-bends the point, and hands it on. The document view must do the
+same, and nothing inside it may listen for the mouse on its own.</p>
+
+<figure>
+  <span class="lbl">02 &middot; How a click reaches a document on bent glass</span>
+  <div class="scroller">
+    <svg viewBox="0 0 920 230" style="min-width:700px" role="img" aria-label="A click on the bent picture goes to the pane, which un-bends the point through the warp's inverse and calls the document view's press method with a flat point. The view looks the point up in zones it recorded while painting. A crossed-out path shows gpui's own handlers inside the view, which would miss on bent glass." font-family="ui-monospace, monospace">
+      <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8b8a80"/></marker></defs>
+      <rect x="10" y="30" width="170" height="56" rx="7" fill="#232321" stroke="#6b6a62" stroke-dasharray="4 3"/>
+      <text x="22" y="54" font-size="12" fill="#fff">your click</text>
+      <text x="22" y="72" font-size="10" fill="#8b8a80">on the bent picture</text>
+      <rect x="215" y="30" width="190" height="56" rx="7" fill="#12241c" stroke="#199e70"/>
+      <text x="227" y="54" font-size="12" fill="#fff">the pane</text>
+      <text x="227" y="72" font-size="10" fill="#8b8a80">un-bends the point</text>
+      <rect x="440" y="30" width="215" height="56" rx="7" fill="#152130" stroke="#3987e5"/>
+      <text x="452" y="54" font-size="12" fill="#fff">document view.press(at)</text>
+      <text x="452" y="72" font-size="10" fill="#8b8a80">a flat point, view-local</text>
+      <rect x="690" y="30" width="220" height="56" rx="7" fill="#152130" stroke="#3987e5"/>
+      <text x="702" y="54" font-size="12" fill="#fff">zones recorded at paint</text>
+      <text x="702" y="72" font-size="10" fill="#8b8a80">links, note buttons, modals</text>
+      <line x1="180" y1="58" x2="212" y2="58" stroke="#8b8a80" marker-end="url(#ar2)"/>
+      <line x1="405" y1="58" x2="437" y2="58" stroke="#8b8a80" marker-end="url(#ar2)"/>
+      <line x1="655" y1="58" x2="687" y2="58" stroke="#8b8a80" marker-end="url(#ar2)"/>
+      <rect x="440" y="115" width="215" height="50" rx="7" fill="#2a1a14" stroke="#ec835a" stroke-dasharray="4 3"/>
+      <text x="452" y="137" font-size="12" fill="#f0a58a">gpui handlers in the view</text>
+      <text x="452" y="155" font-size="10" fill="#8b8a80">aim at the flat layout</text>
+      <line x1="440" y1="115" x2="655" y2="165" stroke="#ec835a" stroke-width="1.5"/>
+      <text x="440" y="185" font-size="10" fill="#8b8a80">a source-scan test fails the build if one appears</text>
+      <text x="10" y="220" font-size="10" fill="#8b8a80">the grid and the workbench already route their clicks this way; the document view joins them</text>
+    </svg>
+  </div>
+  <figcaption>From both halves of the design, and the code they cite. <b>A document on bent glass is clicked
+  where you see it</b> only because the pane, not the document, decides what the click hit.</figcaption>
+</figure>
+
+<p class="bridge">The other seam is between TD and the browser that draws a brief.</p>
+
+<!-- ============================================================ 3 -->
+<h2 class="sec">TD talks to Chromium through a pipe, not a port</h2>
+
+<p>The page engine needs sixteen of Chromium&rsquo;s remote-control commands &mdash; open a tab, load a file,
+run a script, take a picture. The usual Rust libraries for that each bring an async runtime TD does not use
+and open a debugging port on your machine that any local program could connect to. Chromium can also be
+driven over a private pipe, which is what the spike measured through.</p>
+
+<figure>
+  <span class="lbl">03 &middot; Four ways to drive Chromium</span>
+  <div class="cards">
+    <div class="card rec">
+      <span class="badge">chosen</span>
+      <h3>TD&rsquo;s own client, over a pipe</h3>
+      <p><b>Adds no packages.</b> Chromium reads and writes two private file descriptors only TD holds; no port
+      is ever open. One reader thread, the pattern TD&rsquo;s control socket already uses.</p>
+      <p class="why">What it costs: TD owns the code for sixteen protocol commands, tested without a browser
+      over a socket pair.</p>
+    </div>
+    <div class="card">
+      <h3>chromiumoxide</h3>
+      <p>Adds <b>32 packages</b>, including a second async runtime (tokio) running beside gpui&rsquo;s, and
+      listens on a local debugging port.</p>
+      <p class="why">Better at: generated types for the whole protocol, if a live engine ever needs most of it.</p>
+    </div>
+    <div class="card">
+      <h3>headless_chrome</h3>
+      <p>Adds <b>35 packages</b>, TLS for a connection that never leaves the machine among them; also a port.</p>
+      <p class="why">Better at: a blocking API that would fit TD&rsquo;s threads.</p>
+    </div>
+    <div class="card">
+      <h3>TD&rsquo;s own client, over a WebSocket</h3>
+      <p>Adds <b>5 packages</b> and still opens a port.</p>
+      <p class="why">Better at: nothing the pipe does not already do.</p>
+    </div>
+  </div>
+  <figcaption>Package counts measured by resolving each candidate against TD&rsquo;s own lock file.
+  <b>The browser TD drives can read your files, so nothing else on the machine should be able to drive
+  it</b> &mdash; which rules out a port before the package count does.</figcaption>
+</figure>
+
+<p class="bridge">The last seam runs between TD and the brief skill, which both write the same notes.</p>
+
+<!-- ============================================================ 4 -->
+<h2 class="sec">The notes are held to the skill&rsquo;s own bytes</h2>
+
+<p>TD&rsquo;s notes layer writes the same blocks your briefs&rsquo; own script writes, and that script
+changed today. So the design puts a set of test briefs in the skill&rsquo;s repository &mdash; thirteen
+cases, one per release of the notes script plus the hostile and broken shapes the spike found &mdash; with
+the exact bytes a save must produce. The skill&rsquo;s tests and TD&rsquo;s tests both run them.</p>
+
+<figure>
+  <span class="lbl">04 &middot; One set of fixtures, two writers, both tested against it</span>
+  <div class="scroller">
+    <div class="stack3">
+      <div class="tri2">
+        <div class="box g"><b>agent-skills &middot; decision-brief/fixtures/notes-format</b><span>13 cases: each brief, the edits, the anchors, the expected file and map &middot; the reference writer lives here &middot; changes in the same commit as the notes script</span></div>
+        <div class="box b"><b>Terminal Delight &middot; a vendored copy</b><span>byte-identical, with the skill commit it came from &middot; TD&rsquo;s writer tests loop over every case</span></div>
+      </div>
+      <div class="tri2">
+        <div class="box b"><b>the sync script</b><span>refreshes TD&rsquo;s copy; <code>--check</code> fails on any difference</span></div>
+        <div class="box b"><b>a weekly drift watch</b><span>compares against the skill&rsquo;s main and opens an issue, never failing the build</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="legend"><span><i class="g"></i>the source of truth</span><span><i class="b"></i>proposed</span></div>
+  <figcaption>From the documents half of the design. <b>Whichever repository changes the notes format first,
+  the other learns within a week</b> &mdash; and TD refuses to write a format version it does not
+  know.</figcaption>
+</figure>
+
+<p class="bridge">That is what the design decides. The order it gets built in matters as much.</p>
+
+<!-- ============================================================ 5 -->
+<h2 class="sec">Ten slices, each one you can see working</h2>
+
+<p>Every slice ends with something running that you can try, and each is one pull request to main. The first
+does almost nothing, on purpose: it proves the whole path from a click to pixels and back, and it measures the
+one thing that could leak memory unseen before anything is built on top of it.</p>
+
+<figure>
+  <span class="lbl">05 &middot; The build order</span>
+  <div class="scroller">
+    <div class="tracks">
+      <div class="track">
+        <div class="tn">images and<br>the square</div>
+        <div class="step go"><b>1 &middot; Alt+click a PNG</b>it floats in the hyperglow; Esc closes; textures counted back over 100 cycles</div>
+        <div class="step"><b>2 &middot; The square, whole</b>drag, bent-glass clicks, the chip, the click table, the menu, zoom<span class="sz">deploy</span></div>
+        <div class="step"><b>3 &middot; Markdown</b>your palette, links, images, keeps your place on reload</div>
+        <div class="step"><b>4 &middot; The split</b>Ctrl+Alt+click beside; promote the square; four-pane fallback<span class="sz">deploy</span></div>
+        <div class="step"><b>5 &middot; Remembered</b>document panes survive a restart</div>
+      </div>
+      <div class="track">
+        <div class="tn">briefs and<br>the rest</div>
+        <div class="step"><b>6 &middot; HTML, read-only</b>the snapshot engine, tiles, modals, links; no Chromium &rarr; desktop<span class="sz">deploy</span></div>
+        <div class="step"><b>7 &middot; Notes, read</b>badges, buttons, stamps, copy map; the shared fixtures</div>
+        <div class="step go"><b>8 &middot; Notes, write</b>save into the file, verified and backed up<span class="sz">deploy</span></div>
+        <div class="step later"><b>9 &middot; Size answers</b>live 14 t, cell size, device pixels<span class="sz">independent &mdash; any time</span></div>
+        <div class="step"><b>10 &middot; Guards</b>drift watch, format version, licences</div>
+      </div>
+    </div>
+  </div>
+  <div class="legend"><span><i class="g"></i>the tracer bullet, and the slice that touches your files</span><span><i class="d"></i>can run in parallel</span></div>
+  <figcaption>The plan&rsquo;s slice list, drawn. <b>You can use documents in the pane from slice 2, briefs
+  from slice 6, and notes from slice 8</b>; the deploys are proposed there so each step reaches your terminal,
+  not only main.</figcaption>
+</figure>
+
+<div class="stat-row">
+  <div class="tile"><div class="k">new tests, click to view</div><div class="v">40</div><p>pure decisions, source scans, and real-PTY host tests; two existing tests extended</p></div>
+  <div class="tile"><div class="k">new tests, view and notes</div><div class="v">69</div><p>including a real Chromium against the fixture briefs</p></div>
+  <div class="tile"><div class="k">shared fixture cases</div><div class="v">13</div><p>one per notes-script release, plus the hostile and broken shapes</p></div>
+  <div class="tile"><div class="k">passing today</div><div class="v">0</div><p>on purpose: a test that cannot fail on today&rsquo;s code tests nothing</p></div>
+</div>
+
+<!-- ============================================================ 6 -->
+<h2 class="sec">Five calls to argue with, then approve</h2>
+
+<p>The design carries fourteen decisions its authors were least sure of; these five matter most, each with
+the recommendation it was built on. The rest are in the modal below.</p>
+
+<div class="grill">
+  <div class="ask">
+    <h3>1 &middot; Does a saved note ever move the page?</h3>
+    <p>The page cache and the no-re-render-after-save both assume a changed notes block moves no element on
+    the page. It should not &mdash; a noted element gains only a shadow &mdash; but nobody has measured it.</p>
+    <p class="rec"><b>Recommendation:</b> keep the assumption, and make slice 8 measure it across the report
+    archive; every save also re-reads the file in the engine and says so if anything is off.</p>
+  </div>
+  <div class="ask">
+    <h3>2 &middot; The note box inside the bent glass, or as a flat window-level box?</h3>
+    <p>Inside the pane keeps the note beside its passage, as the mockup drew it, but it needs a multi-line
+    edit box TD does not have yet. Every other glowing box in TD is flat and window-level.</p>
+    <p class="rec"><b>Recommendation:</b> inside the pane, as drawn; the multi-line editing is slice 8&rsquo;s
+    largest piece of new code, and it can flatten if typing into bent glass feels wrong.</p>
+  </div>
+  <div class="ask">
+    <h3>3 &middot; Notes you have not saved live only in memory?</h3>
+    <p>That matches the brief&rsquo;s own save button and your &ldquo;SAVE doc&rdquo;. A crash loses unsaved
+    notes; a draft journal would keep them and create a third place notes live.</p>
+    <p class="rec"><b>Recommendation:</b> explicit save, with the bar showing &ldquo;N unsaved&rdquo; so
+    nothing is lost by surprise.</p>
+  </div>
+  <div class="ask">
+    <h3>4 &middot; A brief cannot reach the network from inside TD?</h3>
+    <p>A brief runs its own script in TD&rsquo;s engine; blocking the network means it cannot send anything
+    anywhere. Your briefs are self-contained, so they lose nothing; a page that loads a web font renders
+    with a fallback.</p>
+    <p class="rec"><b>Recommendation:</b> blocked by default, with one setting to allow it.</p>
+  </div>
+  <div class="ask">
+    <h3>5 &middot; One pull request per slice, merged to main as each goes green?</h3>
+    <p>Main is merge-on-green, so each slice lands on its own and the feature grows in your terminal as the
+    deploys at slices 2, 4, 6 and 8 go out. The alternative is one long branch merged at the end.</p>
+    <p class="rec"><b>Recommendation:</b> one per slice. Small diffs stay reviewable, and slice 1 already
+    changes what Alt+click does on an image path.</p>
+  </div>
+  <div class="ask">
+    <h3>6 &middot; Approve Gate 3 and Gate 4, or what should change?</h3>
+    <p>Approving starts slice 1, the tracer bullet. Nothing is built before this.</p>
+    <p class="rec"><b>Recommendation:</b> approve, with a note on anything above.</p>
+  </div>
+</div>
+
+<h2 class="sec">Where these come from</h2>
+
+<div class="dlgrow">
+  <button data-dlg="d-lcd">All fourteen least-confident calls</button>
+  <button data-dlg="d-tests">What each test area proves</button>
+  <button data-dlg="d-files">The documents behind this page</button>
+</div>
+
+<p class="foot">The design is three files under <code>docs/plans/gui-in-the-tui/</code> on the branch
+<code>feat/documents-open-in-the-pane</code>: the merged <code>03-program-design.md</code> and its two
+halves, with the slice plan in <code>04-slices.md</code>. Nothing has been built.</p>
+
+</div>
+
+<dialog id="d-lcd" class="sub">
+  <div class="dlg-head"><div><h3>All fourteen least-confident calls</h3><p class="repo">merged and ranked in 03-program-design.md</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <ol>
+      <li><strong>The face in two places.</strong> A third workbench face plus a document on the pane can disagree; the API makes it unreachable, the type does not. The alternative lets the pane&rsquo;s document outrank the face.</li>
+      <li><strong>Notes are data, not layout</strong> &mdash; the cache and the no-re-render-after-save rest on it. Measured in slice 8.</li>
+      <li><strong>Textures given back at close</strong> rely on gpui&rsquo;s release order; up to 61 MiB per closed brief if wrong. Counted in slice 1.</li>
+      <li><strong>Owning the DevTools client:</strong> no crates, no port, sixteen commands to maintain.</li>
+      <li><strong>The note box inside the bent glass</strong>, with new multi-line editing.</li>
+      <li><strong>Explicit save</strong>; unsaved notes live in memory.</li>
+      <li><strong>The cell-size answer can overtake</strong> an earlier answer in the same read; right for the usual probe order.</li>
+      <li><strong>A document pane swallows typing</strong> rather than typing into the hidden shell.</li>
+      <li><strong>Browser storage still wins in the browser</strong> until the skill fixes issue 24.</li>
+      <li><strong>No network for a brief</strong> by default.</li>
+      <li><strong>Vendored fixtures and a weekly watch</strong>: TD can lag a format change by up to a week.</li>
+      <li><strong>One Chromium per TD process</strong>, shut down after five idle minutes (265&ndash;570 MiB while alive).</li>
+      <li><strong>Serverless panes answer 14 t but not 16 t</strong>; hosted mode is the default.</li>
+      <li><strong>Promotion moves the view</strong> from the square to the split rather than reopening the file.</li>
+    </ol>
+  </div>
+</dialog>
+
+<dialog id="d-tests" class="sub">
+  <div class="dlg-head"><div><h3>What each test area proves</h3><p class="repo">109 new tests, every one failing on today&rsquo;s code</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <table>
+      <thead><tr><th>Area</th><th>Proves</th></tr></thead>
+      <tbody>
+        <tr><td>Classifier and click table</td><td>which files are documents (by name and by their first bytes), and that every row of the click map does what the mockup says, including the Shift+click change</td></tr>
+        <tr><td>The square</td><td>where it opens, that a drag stays inside the pane, and that a press on bent glass lands on the strip where you see it</td></tr>
+        <tr><td>Keys</td><td>Escape closes the square before it reaches the terminal; a caret elsewhere keeps its Escape; the document face takes typing</td></tr>
+        <tr><td>Split and layout</td><td>a document already open is focused, a fifth pane floats instead, focus stays put, a document pane survives the state file</td></tr>
+        <tr><td>Size answers</td><td>a resized pane reports its new size, the cell size is answered, a replica does not answer twice</td></tr>
+        <tr><td>The view&rsquo;s rule</td><td>nothing inside the document view listens for the mouse</td></tr>
+        <tr><td>Markdown</td><td>links keep their targets, images become image blocks, no colour is hard-coded, a reload keeps your place, workbench cards lose their raw syntax</td></tr>
+        <tr><td>Chromium client and engine</td><td>message framing, replies reaching the right caller, dialogs dismissed without hanging, pipe never port, missing browser named, network blocked, anchors identical at any width</td></tr>
+        <tr><td>Cache and tiles</td><td>complete or absent, a save keeps the render, at most five tiles resident, tile edges on whole pixels, note buttons where the browser puts them</td></tr>
+        <tr><td>Notes format</td><td>over 13 shared cases: the skill&rsquo;s exact bytes, nothing outside three regions moves, hostile text survives, the map matches the script&rsquo;s, refusals refuse, a backup is kept, another writer&rsquo;s change is never overwritten</td></tr>
+      </tbody>
+    </table>
+  </div>
+</dialog>
+
+<dialog id="d-files" class="sub">
+  <div class="dlg-head"><div><h3>The documents behind this page</h3><p class="repo">docs/plans/gui-in-the-tui/</p></div><button class="x" data-close>&times;</button></div>
+  <div class="dlg-body">
+    <ul>
+      <li><strong>03-program-design.md</strong> &mdash; the join: the rulings that reconcile the halves, the file list, the test plan&rsquo;s shape, the ranked decisions.</li>
+      <li><strong>03-program-design.td-wiring.md</strong> &mdash; from the click to the view: every type and signature, seven call stacks, 40 new tests.</li>
+      <li><strong>03-program-design.docs.md</strong> &mdash; the view and under it: backends, engine, client, cache, notes format and writer, seven call stacks, 69 tests.</li>
+      <li><strong>04-slices.md</strong> &mdash; the ten slices.</li>
+      <li><strong>00-status.md</strong> &mdash; the gates and the slice checklist.</li>
+    </ul>
+    <h4>Rulings made while joining</h4>
+    <p>The click&rsquo;s target is named <code>DocTarget</code>, because <code>DocumentSource</code> is already
+    a trait in <code>doc.rs</code>; the interface is the documents half&rsquo;s version; the third face stays,
+    with setting it without a document refused; the note box is drawn inside the pane; one Chromium per TD
+    process over a pipe.</p>
+  </div>
+</dialog>

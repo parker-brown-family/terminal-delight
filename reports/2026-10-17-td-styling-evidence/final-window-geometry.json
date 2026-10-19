@@ -1,0 +1,30 @@
+{
+  "pid": 834794,
+  "at": [
+    1612,
+    38
+  ],
+  "size": [
+    1056,
+    1870
+  ],
+  "workspace": {
+    "id": -98,
+    "name": "special:tdstyle-1792280201-834786-baseline"
+  }
+}
+{
+  "pid": 836787,
+  "at": [
+    1612,
+    38
+  ],
+  "size": [
+    1056,
+    1870
+  ],
+  "workspace": {
+    "id": -97,
+    "name": "special:tdstyle-1792280201-834786-candidate"
+  }
+}

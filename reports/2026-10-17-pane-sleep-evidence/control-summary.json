@@ -1,0 +1,23 @@
+{
+  "design": "two simultaneous ten-second identical-baseline-binary pairs per condition, before A/B; descriptive range only, not a statistical confidence interval",
+  "conditions": {
+    "idle": {
+      "signed_core_point_differences": [
+        -3.2943152354139187,
+        -1.7968144323654798
+      ],
+      "largest_absolute_core_point_difference": 3.2943152354139187,
+      "baseline_window_cpu_median": 35.7873383905778,
+      "other_identical_window_cpu_median": 38.3329032244675
+    },
+    "working": {
+      "signed_core_point_differences": [
+        3.1943743853585076,
+        1.7969364813424775
+      ],
+      "largest_absolute_core_point_difference": 3.1943743853585076,
+      "baseline_window_cpu_median": 44.57278303036405,
+      "other_identical_window_cpu_median": 42.07712759701356
+    }
+  }
+}

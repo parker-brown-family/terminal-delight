@@ -42,6 +42,134 @@ impl TerminalView {
     /// and never opens the card.
     pub(super) const DRAG_SLOP: f32 = 5.0;
 
+    /// `ctl bench click|hover`: a pointer event at a window point, through
+    /// this pane's own handlers, so a script can drive the bench's gestures
+    /// the way a hand does — hit test, deferral, release and all. Answers
+    /// what the pane holds afterwards: the floating square's file, and the
+    /// bench's Alt chip.
+    pub(crate) fn synthetic_pointer(
+        &mut self,
+        p: crate::ctl::PointerReq,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
+        // `p` is FLAT, as `bench probe` prints zones. The pane un-bends every
+        // pointer through its tube, so the event has to arrive where the
+        // glass SHOWS that flat point: invert `unwarp` by walking the error
+        // back, which converges in a few steps for a barrel this mild.
+        let (mut wx, mut wy) = (p.x, p.y);
+        if let Some(b) = self.content_bounds.lock().ok().and_then(|b| *b) {
+            let rect = (
+                f32::from(b.origin.x),
+                f32::from(b.origin.y),
+                f32::from(b.size.width),
+                f32::from(b.size.height),
+            );
+            let (k1, k2) = self.warp_k;
+            for _ in 0..60 {
+                let (fx, fy) = crate::workbench::unwarp(rect, k1, k2, wx, wy);
+                wx += p.x - fx;
+                wy += p.y - fy;
+            }
+        }
+        let position = gpui::point(gpui::px(wx), gpui::px(wy));
+        let modifiers = gpui::Modifiers {
+            alt: p.alt,
+            control: p.control,
+            ..Default::default()
+        };
+        if p.click {
+            self.on_mouse_down(
+                &gpui::MouseDownEvent {
+                    button: gpui::MouseButton::Left,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                    first_mouse: false,
+                },
+                window,
+                cx,
+            );
+            self.on_mouse_up(
+                &gpui::MouseUpEvent {
+                    button: gpui::MouseButton::Left,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                },
+                window,
+                cx,
+            );
+        } else {
+            self.on_mouse_move(
+                &gpui::MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers,
+                },
+                window,
+                cx,
+            );
+        }
+        let float = self
+            .float
+            .as_ref()
+            .map(|f| f.view.read(cx).target().path.display().to_string());
+        format!(
+            "ok float={} hint={:?} showing={:?}",
+            float.as_deref().unwrap_or("none"),
+            self.wb_alt_hint,
+            self.bench.showing().map(|s| s.id.0.clone()),
+        )
+    }
+
+    /// `ctl bench probe`: every zone the bench recorded, every zone the
+    /// floating square over it recorded (a clip's covered square included),
+    /// every text run that carries a link, and every Markdown link label with
+    /// the target it hides, each with its flat rectangle — where a scripted
+    /// click has to aim. A label that wraps is given its run's rectangle.
+    pub(crate) fn bench_probe(&self) -> String {
+        let mut out = Vec::new();
+        for z in self.wb_zones.borrow().iter() {
+            out.push(format!(
+                "zone {:.0} {:.0} {:.0} {:.0} {:?}",
+                z.x, z.y, z.w, z.h, z.hit
+            ));
+        }
+        for z in self.float_zones.borrow().iter() {
+            out.push(format!(
+                "float {:.0} {:.0} {:.0} {:.0} {:?}",
+                z.x, z.y, z.w, z.h, z.hit
+            ));
+        }
+        let atoms = self.wb_atoms.borrow();
+        for (i, a) in atoms.0.iter().enumerate() {
+            if a.text.contains("://") || a.text.contains("/home/") {
+                out.push(format!(
+                    "text {:.0} {:.0} {:.0} {:.0} {:?}",
+                    a.x,
+                    a.y,
+                    a.w,
+                    a.h,
+                    a.text.chars().take(100).collect::<String>()
+                ));
+            }
+            for (range, target) in &a.links {
+                let (x, y, w, h) = atoms
+                    .1
+                    .get(i)
+                    .and_then(|layout| label_rect(layout, range.clone()))
+                    .unwrap_or((a.x, a.y, a.w, a.h));
+                out.push(format!(
+                    "label {x:.0} {y:.0} {w:.0} {h:.0} {:?} {target:?}",
+                    a.text.get(range.clone()).unwrap_or_default()
+                ));
+            }
+        }
+        // One line: the socket answers a line.
+        out.join(" \u{2016} ")
+    }
+
     /// Turn a flat point into a caret — which run, and how far into it.
     ///
     /// `None` when there is nothing selectable under or near the point, which
@@ -473,6 +601,14 @@ impl TerminalView {
             return;
         }
         if self.size_by_wheel(ev, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        // A square floating over the bench is drawn above it, and a turn over
+        // the square is the document's: this hook runs first and halts, so
+        // the pane root's `doc_wheel` would never hear it, and the bench
+        // behind would scroll instead.
+        if self.doc_wheel(ev, cx) {
             cx.stop_propagation();
             return;
         }
@@ -1203,9 +1339,28 @@ impl TerminalView {
         }
         let loaded = crate::benchstore::load(&dir, &key.root);
         self.wb_writer = Some(writer);
+        let root = key.root.clone();
         self.wb_conv = Some(key);
+        // What this conversation handed over, from its whole record rather
+        // than from the 64 surfaces the bench keeps. After the key is set, so
+        // the history page is written into the conversation's own folder.
+        self.handovers_from_record(&root);
+        // The agent's own card for a file wins over the one TD filed for the
+        // same file, on a replay as it does live (`handover_presented`).
+        let carded: std::collections::HashSet<String> = loaded
+            .surfaces
+            .iter()
+            .filter(|(id, _)| !id.starts_with("handover-"))
+            .filter_map(|(_, doc)| crate::handover::from_surface(doc, 0))
+            .map(|h| h.key())
+            .collect();
         let now = crate::surfacefeed::now_ms();
         for (id, doc) in loaded.surfaces {
+            if id.starts_with("handover-")
+                && crate::handover::from_surface(&doc, 0).is_some_and(|h| carded.contains(&h.key()))
+            {
+                continue;
+            }
             // `bench.apply` rather than `present`: the two things `present`
             // adds are about a LIVE arrival — deciding whether an MCP caller
             // was this pane's own agent, and telling the channel a reply has
@@ -1567,6 +1722,14 @@ impl TerminalView {
     ) {
         use crate::surface::{Op, Post};
         let now = crate::surfacefeed::now_ms();
+        // The picker as it is NOW, not as the last sweep saw it — see
+        // `channel::State::read_picker`. Only while the pane is waiting on
+        // you: keys aimed at a stale picker in the scrollback would land in
+        // the prompt instead.
+        if self.needs_input {
+            let rows = self.live_rows();
+            self.wb_channel.read_picker(id, &rows);
+        }
         let press = self.wb_channel.press(id, nav, now);
         self.bench_route_press(id, press, cx);
         // Whatever the road, the cards say what was pressed.
@@ -1729,27 +1892,44 @@ impl TerminalView {
     /// in the list underneath it. Parker: *"the current model is not
     /// highlighted in the options list"*. Two copies of "what is this dial on"
     /// can only ever agree by accident.
+    ///
+    /// **The transcript outranks the launch command for the model.** It is the
+    /// only source that knows a VERSION — `--model opus` says an alias, the
+    /// transcript says `claude-opus-5-5` — and it is the only one that follows
+    /// a `/model` typed straight into the terminal. The one thing that beats it
+    /// is a press on this dial whose family the transcript has not caught up
+    /// with yet: the reply that would prove the switch has not been written.
     fn dial_now(&self, which: crate::workbench::Dial) -> (String, bool) {
         use crate::workbench::Dial;
         let harness = self.dial_harness();
         let launched = self.runtime().resume;
         match which {
-            Dial::Model => self
-                .wb_model
-                .clone()
-                .map(|m| (m, true))
-                .or_else(|| {
-                    launched
+            Dial::Model => {
+                let running = self
+                    .wb_running_model
+                    .as_deref()
+                    .and_then(crate::workbench::model_label);
+                // An alias drawn with its version: `opus` → `opus 5.5`.
+                let named = |m: String| crate::workbench::model_label(&m).unwrap_or(m);
+                match (self.wb_model.clone(), running) {
+                    (Some(told), Some(ran)) if !crate::workbench::same_model(&told, &ran) => {
+                        (named(told), true)
+                    }
+                    (_, Some(ran)) => (ran, true),
+                    (Some(told), None) => (named(told), true),
+                    (None, None) => launched
                         .as_deref()
                         .and_then(|c| crate::workbench::flag_value(c, "--model"))
-                        .map(|m| (m, true))
-                })
-                // Nobody said, so the button says the one thing that is true
-                // anyway — which harness is in there. A faint CLAUDE is a
-                // better button than a crisp `model ?`, and it still never
-                // claims a model was chosen. It matches no row in the list,
-                // which is correct: nothing is lit because nothing is known.
-                .unwrap_or_else(|| (harness.label().to_string(), false)),
+                        .map(|m| (named(m), true))
+                        // Nobody said, so the button says the one thing that
+                        // is true anyway — which harness is in there. A faint
+                        // CLAUDE is a better button than a crisp `model ?`, and
+                        // it still never claims a model was chosen. It matches
+                        // no row in the list, which is correct: nothing is lit
+                        // because nothing is known.
+                        .unwrap_or_else(|| (harness.label().to_string(), false)),
+                }
+            }
             Dial::Effort => self
                 .wb_effort
                 .map(|e| (e.id().to_string(), true))
@@ -1779,30 +1959,74 @@ impl TerminalView {
     /// `claude --help` and already clamped per harness. A second copy of that
     /// list here is how a menu goes stale and silently starts the wrong model.
     ///
-    /// The lit row is whatever [`Self::dial_now`] says the BUTTON is showing,
-    /// matched case-insensitively because the button uppercases what it draws
-    /// and a `--model Opus` on somebody's launch command is the same model as
-    /// `opus`. A value the list does not contain lights nothing — an agent
-    /// started on a model this window does not offer is a fact, and inventing
-    /// a nearest row for it would be a claim.
+    /// The lit row is whatever [`Self::dial_now`] says the BUTTON is showing.
+    /// For effort that is a case-insensitive match, because the button
+    /// uppercases what it draws. For the model it is
+    /// [`crate::workbench::same_model`], because the button can say `opus 5.5`
+    /// over a row whose alias is `opus`. A value the list does not contain
+    /// lights nothing — an agent started on a model this window does not offer
+    /// is a fact, and inventing a nearest row for it would be a claim.
+    ///
+    /// The row of the family the transcript says is running wears its version.
+    /// The others stay bare: what `sonnet` would resolve to is only known once
+    /// something answers on it, and a version written into the list by hand is
+    /// the stale menu the paragraph above warns about.
+    ///
+    /// These are LABELS. What a pick sends is the row's id, in
+    /// [`Self::bench_dial_pick`] — `opus 5.5` is not a word `/model` takes.
     fn dial_values(&self, which: crate::workbench::Dial) -> (Vec<String>, Option<usize>, bool) {
         use crate::workbench::Dial;
         let harness = self.dial_harness();
-        let vals: Vec<String> = match which {
-            Dial::Model => harness
-                .models()
-                .iter()
-                .map(|m| m.label.to_string())
-                .collect(),
-            Dial::Effort => harness
-                .efforts()
-                .iter()
-                .map(|e| e.id().to_string())
-                .collect(),
-        };
         let (now, chosen) = self.dial_now(which);
-        let at = vals.iter().position(|v| v.eq_ignore_ascii_case(&now));
-        (vals, at, chosen)
+        match which {
+            Dial::Model => {
+                let running = self
+                    .wb_running_model
+                    .as_deref()
+                    .and_then(crate::workbench::model_label);
+                let models = harness.models();
+                let vals = models
+                    .iter()
+                    .map(|m| match &running {
+                        Some(ran) if crate::workbench::same_model(m.id, ran) => ran.clone(),
+                        _ => crate::workbench::model_label(m.id)
+                            .unwrap_or_else(|| m.label.to_string()),
+                    })
+                    .collect();
+                let at = models
+                    .iter()
+                    .position(|m| crate::workbench::same_model(m.id, &now));
+                (vals, at, chosen)
+            }
+            Dial::Effort => {
+                let vals: Vec<String> = harness
+                    .efforts()
+                    .iter()
+                    .map(|e| e.id().to_string())
+                    .collect();
+                let at = vals.iter().position(|v| v.eq_ignore_ascii_case(&now));
+                (vals, at, chosen)
+            }
+        }
+    }
+
+    /// What the transcript says this pane's agent last answered on, from the
+    /// window's tool sweep.
+    ///
+    /// A NEW reading lets go of what the dial was told. Either the switch the
+    /// dial asked for has landed, and the reading now says it with a version,
+    /// or somebody typed `/model` in the terminal, and the dial's old word is
+    /// no longer true. A reading that did not change keeps it: a press whose
+    /// reply has not been written yet is still the newest thing known.
+    pub(crate) fn set_running_model(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        if self.wb_running_model == id {
+            return;
+        }
+        if id.is_some() {
+            self.wb_model = None;
+        }
+        self.wb_running_model = id;
+        cx.notify();
     }
 
     /// Take a value from an open dial: remember it, and tell the agent.
@@ -1825,8 +2049,14 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         use crate::workbench::Dial;
-        let (vals, _, _) = self.dial_values(which);
-        let Some(value) = vals.get(at).cloned() else {
+        // The row's ID, never its label: the label can carry a version the
+        // harness's `/model` does not take as a word.
+        let harness = self.dial_harness();
+        let value = match which {
+            Dial::Model => harness.models().get(at).map(|m| m.id.to_string()),
+            Dial::Effort => harness.efforts().get(at).map(|e| e.id().to_string()),
+        };
+        let Some(value) = value else {
             return;
         };
         // Recorded BEFORE the write, and recorded as what we asked for rather
@@ -2011,7 +2241,11 @@ impl TerminalView {
         }
 
         if let (Some(q), Some(id)) = (asking, now_id) {
-            let title: String = q.question.chars().take(72).collect();
+            let title: String = q
+                .question
+                .chars()
+                .take(crate::surface::TITLE_MAX_CHARS)
+                .collect();
             let kind = Kind::Question(q);
             let actions = kind.default_actions();
             self.wb_live_q = Some(id.clone());
@@ -2036,27 +2270,192 @@ impl TerminalView {
 
     /// A single click on a rail row.
     ///
-    /// A document opens in whatever this desktop opens documents with — HTML
-    /// in a browser, Markdown wherever Markdown goes — because that is what a
-    /// click on a file means everywhere else on this machine, and a terminal
-    /// that invented its own viewer would override a choice the person
-    /// already made in their MIME database.
+    /// An artifact TD can draw — HTML, Markdown, a picture — opens in the
+    /// floating square over the bench, and its card stays open underneath.
+    /// Anything else goes to the desktop, and the card still stays: the click
+    /// meant "show me this", and emptying the bench answered it with nothing.
+    /// Parker, 2026-09-25, on the old road (desktop, then `close_card`):
+    /// *"clicking on it wipes the screen (which it shouldn't)"*.
     ///
-    /// Anything that is not a document opens as a card over the conversation.
+    /// Anything that is not an artifact opens as a card over the conversation.
     pub fn bench_open(&mut self, id: &crate::surface::SurfaceId, cx: &mut Context<Self>) {
-        let href = self.bench.get(id).and_then(|s| match &s.kind {
-            crate::surface::Kind::Artifact(a) => Some(a.href.clone()),
-            _ => None,
-        });
+        let href = self.bench_artifact_href(id);
         self.bench.select(id);
-        if let Some(target) = href {
-            open_with_system(&target);
-            // Opened elsewhere, so the bench does not ALSO fill itself with a
-            // card nobody asked for — the click meant "show me this", and the
-            // desktop is now showing it.
-            self.bench.close_card();
+        if let Some(href) = href {
+            self.bench_open_href(&href, cx);
         }
         cx.notify();
+    }
+
+    /// The link an artifact card points at, or `None` for any other kind.
+    fn bench_artifact_href(&self, id: &crate::surface::SurfaceId) -> Option<String> {
+        self.bench.get(id).and_then(|s| match &s.kind {
+            crate::surface::Kind::Artifact(a) => Some(a.href.clone()),
+            _ => None,
+        })
+    }
+
+    /// Open a link from the bench the way the grid opens one: a document TD
+    /// can draw goes to the floating square ([`Self::open_float`], one of the
+    /// two roads a document may take), anything else to the desktop. HTML
+    /// with no engine to draw it is refused by `open_float` itself, which
+    /// has already handed it to the desktop and said why.
+    fn bench_open_href(&mut self, href: &str, cx: &mut Context<Self>) {
+        match self.document_of(href) {
+            Some(target) => {
+                let _ = self.open_float(target, None, cx);
+            }
+            None => open_with_system(href),
+        }
+    }
+
+    /// The link written in the bench's text under a flat point, read the way
+    /// the grid reads a row — [`super::link_at`] on the run's own characters,
+    /// a path resolved against this pane's directory and required to exist —
+    /// with the run's flat rectangle, for the Alt chip to outline.
+    ///
+    /// A Markdown link's label comes first: `[the clip](clip.mp4)` draws only
+    /// "the clip", and the run carries the target it hides
+    /// ([`crate::benchdraw::sel_linked`]). That target is resolved as the
+    /// floating square resolves one ([`crate::docview::resolve_link`]), with
+    /// the pane's directory standing in for the document's folder, and the
+    /// rectangle is the label's own when it sits on one line.
+    ///
+    /// The point has to be INSIDE the run. [`Self::bench_caret_at`] also
+    /// answers for a point merely near one, which is right for a selection
+    /// and wrong here: an Alt+click in the margin beside a path is not a click
+    /// on the path.
+    fn bench_link_under(&self, flat: gpui::Point<gpui::Pixels>) -> Option<(String, Rect4)> {
+        let caret = self.bench_caret_at(flat)?;
+        let atoms = self.wb_atoms.borrow();
+        let a = atoms.0.get(caret.atom)?;
+        let (fx, fy) = (f32::from(flat.x), f32::from(flat.y));
+        if !(fx >= a.x && fx < a.x + a.w && fy >= a.y && fy < a.y + a.h) {
+            return None;
+        }
+        let cwd = || self.runtime().cwd;
+        if let Some((range, href)) = hidden_link_at(&a.links, caret.byte) {
+            let link = match hidden_link_target(href, cwd().as_deref())? {
+                super::Link::Url(u) => u,
+                super::Link::Path(p) => Some(p).filter(|p| std::path::Path::new(p).exists())?,
+            };
+            let rect = atoms
+                .1
+                .get(caret.atom)
+                .and_then(|layout| label_rect(layout, range))
+                .unwrap_or((a.x, a.y, a.w, a.h));
+            return Some((link, rect));
+        }
+        let link = match super::run_link(&a.text, caret.byte)? {
+            super::Link::Url(u) => u,
+            super::Link::Path(p) => super::resolve_path(&p, cwd().as_deref())
+                .filter(|x| std::path::Path::new(x).exists())?,
+        };
+        Some((link, (a.x, a.y, a.w, a.h)))
+    }
+
+    /// What an Alt or Ctrl press on the bench means, and the flat rectangle
+    /// it came from when there is one to outline. First match wins:
+    ///
+    /// 1. a link written in the text under the pointer — a response's Links
+    ///    table, a path in a finding, an artifact's TARGET or SERVED row. A
+    ///    loopback SERVED copy of the open card's own file is that file
+    ///    ([`crate::docopen::loopback_target`]), so the engine stays offline;
+    /// 2. an artifact's row in the rail;
+    /// 3. anywhere else on an open artifact card, which answers for its one
+    ///    document. No rectangle: the whole card is not a thing to outline.
+    fn bench_press_link(
+        &self,
+        at: gpui::Point<gpui::Pixels>,
+        landed: Option<&crate::workbench::Hit>,
+    ) -> Option<(String, Option<Rect4>)> {
+        use crate::workbench::Hit;
+        let (_, flat) = self.bench_flat(at)?;
+        let (fx, fy) = (f32::from(flat.x), f32::from(flat.y));
+        let card = self
+            .bench
+            .showing()
+            .and_then(|s| self.bench_artifact_href(&s.id));
+        let row = match landed {
+            Some(Hit::OpenRow(id)) => self.bench_artifact_href(id).map(|href| {
+                let rect = self
+                    .wb_zones
+                    .borrow()
+                    .iter()
+                    .find(|z| {
+                        z.hit == Hit::OpenRow(id.clone())
+                            && fx >= z.x
+                            && fx < z.x + z.w
+                            && fy >= z.y
+                            && fy < z.y + z.h
+                    })
+                    .map(|z| (z.x, z.y, z.w, z.h));
+                (href, rect)
+            }),
+            _ => None,
+        };
+        bench_press_pick(
+            self.bench_link_under(flat),
+            card.as_deref(),
+            row,
+            matches!(landed, Some(Hit::Nothing) | None),
+        )
+    }
+
+    /// The chip a held bare Alt shows over the bench: "open here" on a
+    /// document TD can draw, outlined where it is written. The grid's chip on
+    /// the bench's face, and like the grid's it offers nothing for a Ctrl+Alt
+    /// that will not open here, nor for a web link Alt does not open.
+    pub(super) fn bench_alt_hint(&self, at: gpui::Point<gpui::Pixels>) -> Option<Rect4> {
+        let landed = self.bench_hit_at(at);
+        let (link, rect) = self.bench_press_link(at, landed.as_ref().map(|(h, _)| h))?;
+        self.document_of(&link)?;
+        rect
+    }
+
+    /// Alt or Ctrl pressed on the bench, over a link or an artifact. `true`
+    /// when the press was taken.
+    ///
+    /// Decided by the grid's own table, [`crate::docopen::click_intent`], so
+    /// a modifier means the same thing on both faces: Alt opens the floating
+    /// square, Ctrl+Alt a pane beside, Ctrl alone the desktop. Parker: *"we
+    /// need to extend the ALT+click and ctrl+alt+click behaviour to the MAIN
+    /// workbench space like it is in the terminal side"*, and then, of the
+    /// links written inside other cards, *"go hard on those"*. What the press
+    /// is ON is [`Self::bench_press_link`].
+    pub(super) fn bench_doc_click(
+        &mut self,
+        at: gpui::Point<gpui::Pixels>,
+        mods: crate::docopen::Mods,
+        landed: Option<&crate::workbench::Hit>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        use crate::docopen::ClickIntent;
+        let Some((href, _)) = self.bench_press_link(at, landed) else {
+            return false;
+        };
+        let doc = self.document_of(&href);
+        let revealable = super::reveal_target(&href);
+        match crate::docopen::click_intent(mods, doc.is_some(), true, revealable.is_some(), false) {
+            ClickIntent::OpenHere => {
+                if let Some(target) = doc {
+                    let _ = self.open_float(target, None, cx);
+                }
+            }
+            ClickIntent::OpenBeside => {
+                if let Some(target) = doc {
+                    self.request_beside(target, None, crate::docopen::Asker::Click, None, cx);
+                }
+            }
+            ClickIntent::Reveal => {
+                if let Some(item) = revealable {
+                    super::reveal_with_system(&item);
+                }
+            }
+            ClickIntent::OpenWithDesktop => open_with_system(&href),
+            ClickIntent::CopyChip | ClickIntent::Pass => return false,
+        }
+        true
     }
 
     /// The verb chips for the card that is open, if it has any.
@@ -2122,6 +2521,10 @@ impl TerminalView {
             return;
         };
         let now = crate::surfacefeed::now_ms();
+        if self.needs_input {
+            let rows = self.live_rows();
+            self.wb_channel.read_picker(&id, &rows);
+        }
         let press = self.wb_channel.submit(&id, now);
         self.bench_route_press(&id, press, cx);
         // EVERY CARD OF THE ROUND IS RE-PRESENTED, not just the open one: the
@@ -2662,6 +3065,13 @@ impl TerminalView {
         if text.is_empty() {
             return;
         }
+        // On the DOCUMENT face the shell is hidden behind the page, and a path
+        // typed into it would land where nobody can see it — at a prompt, or
+        // worse, inside whatever program that shell is running. Nothing on the
+        // document takes a drop, so the drop is let go.
+        if self.bench.face() == crate::workbench::Face::Document {
+            return;
+        }
         // On the TERMINAL face there is no composer to aim at and no mirror to
         // keep: the path goes to the process as a paste, which is what every
         // other terminal on this machine does with a dropped file.
@@ -2774,17 +3184,7 @@ impl TerminalView {
     /// agent asked to look at it can still find it tomorrow, and it is swept
     /// with everything else when the session goes.
     pub(super) fn save_pasted_image(&self, image: &gpui::Image) -> Option<String> {
-        let ext = match image.format {
-            gpui::ImageFormat::Png => "png",
-            gpui::ImageFormat::Jpeg => "jpg",
-            gpui::ImageFormat::Webp => "webp",
-            gpui::ImageFormat::Gif => "gif",
-            gpui::ImageFormat::Svg => "svg",
-            gpui::ImageFormat::Bmp => "bmp",
-            gpui::ImageFormat::Tiff => "tiff",
-            gpui::ImageFormat::Ico => "ico",
-            gpui::ImageFormat::Pnm => "pnm",
-        };
+        let ext = crate::workbench::ext_of_image_format(image.format);
         self.write_paste(&image.bytes, ext)
     }
 
@@ -2870,6 +3270,18 @@ impl TerminalView {
             self.wb_queued.push(bytes);
         }
         cx.notify();
+    }
+
+    /// One signed line for the agent in this pane, from a person's answer given
+    /// elsewhere in the window: the rail's Yes or No to its `request_access`.
+    ///
+    /// Through [`Self::bench_deliver`] and so under its rules — typed only
+    /// while this pane is on screen and its far end is a line editor, held in
+    /// order until then. The answer is a person's act, but the line still lands
+    /// in a terminal, and the house rule for that does not bend for a good
+    /// reason. The setting itself does not wait for the line.
+    pub(crate) fn tell_agent(&mut self, line: String, cx: &mut Context<Self>) {
+        self.bench_deliver(crate::workbench::typed_line(&line), cx);
     }
 
     /// The bytes, into the pseudoterminal, stamped. No rules — the callers
@@ -3209,7 +3621,7 @@ impl TerminalView {
             .term
             .lock()
             .mode()
-            .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+            .contains(crate::vt::TermMode::BRACKETED_PASTE);
         let (bytes, delivery) = crate::channel::say_bytes(&text, bracketed);
         let delivery = if self.bench_may_write() {
             delivery
@@ -3286,7 +3698,7 @@ impl TerminalView {
             .map(|l| l.text().to_string())
             .filter(|c| !c.trim().is_empty());
         match self.bench.act(&action, target, comment) {
-            crate::workbench::Dispatch::Open(href) => open_with_system(&href),
+            crate::workbench::Dispatch::Open(href) => self.bench_open_href(&href, cx),
             // No journal entry and no line typed anywhere. A copy is a person
             // moving their own words with their own hands, and the agent has
             // no business hearing about it — which is the entire reason this
@@ -4342,4 +4754,192 @@ fn clear_drop(weak: &gpui::WeakEntity<TerminalView>, cx: &mut gpui::App) {
             cx.notify();
         }
     });
+}
+
+/// A flat rectangle: x, y, width, height.
+type Rect4 = (f32, f32, f32, f32);
+
+/// Which thing a modified press on the bench means, first match wins — the
+/// decision [`TerminalView::bench_press_link`] feeds, pure so its order can be
+/// tested by what it DOES rather than by where its lines sit.
+///
+/// 1. `text`: a link written in the text under the pointer. A loopback copy
+///    of the open card's own file is that file.
+/// 2. `row`: an artifact's row in the rail.
+/// 3. `card`, only when the press landed on nothing pressable: anywhere else
+///    on an open artifact card answers for its one document.
+///
+/// A press on a control that is not a row (a verb chip, a tab) means none of
+/// them, so a modified click there does what the control does.
+fn bench_press_pick(
+    text: Option<(String, Rect4)>,
+    card: Option<&str>,
+    row: Option<(String, Option<Rect4>)>,
+    on_nothing: bool,
+) -> Option<(String, Option<Rect4>)> {
+    if let Some((link, rect)) = text {
+        let link = card
+            .and_then(|t| crate::docopen::loopback_target(&link, t))
+            .unwrap_or(link);
+        return Some((link, Some(rect)));
+    }
+    if row.is_some() {
+        return row;
+    }
+    if on_nothing {
+        return card.map(|href| (href.to_string(), None));
+    }
+    None
+}
+
+/// The Markdown link whose label the caret at `byte` is in, and its range.
+///
+/// A caret sits between characters, so a press on the right half of a
+/// label's last letter lands on its end. That end counts, unless it is also
+/// where the next link starts — `[a](x)[b](y)` — where the press was on the
+/// second.
+fn hidden_link_at(
+    links: &[(std::ops::Range<usize>, String)],
+    byte: usize,
+) -> Option<(std::ops::Range<usize>, &str)> {
+    let hit = |inside: &dyn Fn(&std::ops::Range<usize>) -> bool| {
+        links
+            .iter()
+            .find(|(r, _)| inside(r))
+            .map(|(r, t)| (r.clone(), t.as_str()))
+    };
+    hit(&|r| r.contains(&byte)).or_else(|| hit(&|r| r.end == byte && r.start < byte))
+}
+
+/// A hidden link's target, as the bench opens it: resolved the way the
+/// floating square resolves one ([`crate::docview::resolve_link`]), with the
+/// pane's directory as the folder a relative target is read against. A
+/// relative target with no directory to read it against, and a link to a
+/// heading, open nothing: the bench has no document for either to be in.
+/// Touches no disk; the caller asks whether a path is there.
+fn hidden_link_target(href: &str, cwd: Option<&str>) -> Option<super::Link> {
+    use crate::docview::LinkTarget;
+    let dir = std::path::PathBuf::from(cwd.unwrap_or_default());
+    match crate::docview::resolve_link(&dir, href) {
+        LinkTarget::Url(u) => Some(super::Link::Url(u)),
+        LinkTarget::File { path, .. } if path.is_absolute() => {
+            Some(super::Link::Path(path.to_string_lossy().into_owned()))
+        }
+        LinkTarget::File { .. } | LinkTarget::Fragment(_) => None,
+    }
+}
+
+/// A label's own rectangle, when it sits on one line: the Alt chip outlines
+/// the words that will open, not the whole paragraph around them. `None`
+/// for a label that wraps, where the run's rectangle stands in.
+fn label_rect(layout: &gpui::TextLayout, range: std::ops::Range<usize>) -> Option<Rect4> {
+    let (a, b) = (
+        layout.position_for_index(range.start)?,
+        layout.position_for_index(range.end)?,
+    );
+    let line = f32::from(layout.line_height());
+    let (ay, by) = (f32::from(a.y), f32::from(b.y));
+    ((ay - by).abs() < line / 2.0 && b.x > a.x).then(|| {
+        let x = f32::from(a.x);
+        (x, ay, f32::from(b.x) - x, line)
+    })
+}
+
+#[cfg(test)]
+mod hidden_link_tests {
+    use super::{hidden_link_at, hidden_link_target};
+    use crate::pane::Link;
+
+    fn links() -> Vec<(std::ops::Range<usize>, String)> {
+        // "see a b" with [a](x.md) at 4..5 and [b](y.mp4) at 6..7
+        vec![(4..5, "x.md".into()), (6..7, "y.mp4".into())]
+    }
+
+    /// A caret inside a label, or at its end, is on that label; one in the
+    /// text around it is on nothing.
+    #[test]
+    fn a_caret_on_a_label_finds_its_target() {
+        let l = links();
+        assert_eq!(hidden_link_at(&l, 4).map(|(_, t)| t), Some("x.md"));
+        assert_eq!(
+            hidden_link_at(&l, 5).map(|(_, t)| t),
+            Some("x.md"),
+            "its end"
+        );
+        assert_eq!(hidden_link_at(&l, 0), None);
+        assert_eq!(hidden_link_at(&[], 4), None);
+    }
+
+    /// Where one label ends and the next begins, the press is on the next.
+    #[test]
+    fn two_labels_side_by_side_are_told_apart() {
+        let l = vec![(0..1, "x".to_string()), (1..2, "y".to_string())];
+        assert_eq!(hidden_link_at(&l, 1).map(|(_, t)| t), Some("y"));
+        assert_eq!(hidden_link_at(&l, 2).map(|(_, t)| t), Some("y"));
+    }
+
+    /// A target resolves as the floating square resolves it: relative against
+    /// the pane's directory, `file://` decoded, a web address as written. A
+    /// heading, or a relative target with no directory, opens nothing.
+    #[test]
+    fn a_target_resolves_against_the_panes_directory() {
+        let path = |p: &str| Some(Link::Path(p.to_string()));
+        assert_eq!(
+            hidden_link_target("clips/demo.mp4", Some("/home/p/proj")),
+            path("/home/p/proj/clips/demo.mp4")
+        );
+        assert_eq!(
+            hidden_link_target("file:///home/p/a%20b.mp4", None),
+            path("/home/p/a b.mp4")
+        );
+        assert_eq!(hidden_link_target("/tmp/x.md#top", None), path("/tmp/x.md"));
+        assert_eq!(
+            hidden_link_target("https://example.com/v.mp4", None),
+            Some(Link::Url("https://example.com/v.mp4".into()))
+        );
+        assert_eq!(hidden_link_target("#heading", Some("/home/p")), None);
+        assert_eq!(hidden_link_target("demo.mp4", None), None);
+    }
+}
+
+#[cfg(test)]
+mod press_pick_tests {
+    use super::bench_press_pick;
+
+    const CARD: &str = "file:///home/parker/Work/r/brief.html";
+    const R: (f32, f32, f32, f32) = (1.0, 2.0, 3.0, 4.0);
+
+    #[test]
+    fn a_link_in_the_text_beats_the_row_and_the_card() {
+        let text = Some(("file:///home/parker/Work/r/other.md".to_string(), R));
+        let row = Some(("file:///rail.html".to_string(), None));
+        assert_eq!(
+            bench_press_pick(text, Some(CARD), row, false),
+            Some(("file:///home/parker/Work/r/other.md".to_string(), Some(R)))
+        );
+    }
+
+    #[test]
+    fn a_served_copy_of_the_cards_file_opens_the_file() {
+        let served = Some(("http://127.0.0.1:8611/brief.html".to_string(), R));
+        assert_eq!(
+            bench_press_pick(served, Some(CARD), None, true),
+            Some((CARD.to_string(), Some(R)))
+        );
+    }
+
+    #[test]
+    fn with_no_link_a_row_then_the_card_and_never_a_control() {
+        let row = Some(("file:///rail.html".to_string(), Some(R)));
+        assert_eq!(bench_press_pick(None, Some(CARD), row.clone(), false), row);
+        assert_eq!(
+            bench_press_pick(None, Some(CARD), None, true),
+            Some((CARD.to_string(), None))
+        );
+        assert_eq!(
+            bench_press_pick(None, Some(CARD), None, false),
+            None,
+            "a modified press on a verb chip is the chip's"
+        );
+    }
 }

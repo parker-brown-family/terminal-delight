@@ -1,0 +1,36 @@
+[
+  {
+    "pid": 3285006,
+    "at": [
+      301,
+      163
+    ],
+    "size": [
+      1000,
+      700
+    ],
+    "workspace": {
+      "id": -98,
+      "name": "special:tdsleep-1792307405-3284942"
+    },
+    "monitor": 1,
+    "floating": true
+  },
+  {
+    "pid": 3289723,
+    "at": [
+      301,
+      163
+    ],
+    "size": [
+      1000,
+      700
+    ],
+    "workspace": {
+      "id": -98,
+      "name": "special:tdsleep-1792307405-3284942"
+    },
+    "monitor": 1,
+    "floating": true
+  }
+]

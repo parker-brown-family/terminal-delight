@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Copy the decision-brief skill's kit from the skill into TD, or check that
+# TD's copy is what it says it is.
+#
+# Terminal Delight carries the decision-brief skill inside its own binary
+# (app/src/briefkit.rs) and writes it out for every agent the Workbench
+# launcher starts, so the briefing can point at a SKILL.md that is on disk on
+# any machine TD runs on. The kit's assets, references and brief-wall script
+# live in the skill (parker-brown-family/agent-skills, decision-brief/) and are
+# vendored here byte for byte, with SOURCE naming the commit. SKILL.md is TD's
+# own — the Workbench edition, shorter and more drawn than the skill's — and
+# this script never touches it.
+#
+#   scripts/sync-brief-skill [--from <agent-skills checkout>] [--ref <commit>]
+#   scripts/sync-brief-skill --check [--from <checkout>] [--ref <commit>]
+#
+# The source is always a COMMIT, read with `git archive`, never a working tree:
+# uncommitted edits in the skill are not the skill. --from defaults to the local
+# checkout if there is one, otherwise a fresh clone of the public repository.
+# --ref defaults to origin/main when syncing, and to the commit SOURCE names
+# when checking. The notes-format fixtures are not part of the kit; they are
+# scripts/sync-brief-fixtures' job, and the two should name the same commit.
+#
+# Exit 0: in step (or synced). 1: the copy differs from the ref. 2: bad input.
+set -uo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+DEST="$ROOT/app/skills/decision-brief"
+SUBDIR="decision-brief"
+# What the kit carries from the skill. Everything else under decision-brief/
+# (its own SKILL.md, the fixtures, the tests) stays in the skill.
+PARTS="assets reference scripts/brief-wall"
+REPO="parker-brown-family/agent-skills"
+FROM=""
+REF=""
+CHECK=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check) CHECK=1; shift ;;
+    --from) FROM=$2; shift 2 ;;
+    --ref) REF=$2; shift 2 ;;
+    *) echo "unknown argument $1"; exit 2 ;;
+  esac
+done
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+if [ -z "$FROM" ]; then
+  local_checkout="$HOME/BROWN-FAMILY-SPORTS/Software/agent-skills"
+  if git -C "$local_checkout" rev-parse --git-dir >/dev/null 2>&1; then
+    FROM=$local_checkout
+  else
+    git clone -q "https://github.com/$REPO.git" "$TMP/agent-skills" || { echo "could not clone $REPO"; exit 2; }
+    FROM="$TMP/agent-skills"
+  fi
+fi
+git -C "$FROM" fetch -q origin 2>/dev/null || true
+
+if [ -z "$REF" ]; then
+  if [ "$CHECK" -eq 1 ]; then
+    REF=$(awk 'NR==1 {print $2}' "$DEST/SOURCE" 2>/dev/null)
+    [ -n "$REF" ] || { echo "no commit named in $DEST/SOURCE"; exit 2; }
+  else
+    REF=origin/main
+  fi
+fi
+COMMIT=$(git -C "$FROM" rev-parse --verify --quiet "$REF^{commit}") || { echo "$REF is not a commit in $FROM"; exit 2; }
+SHORT=$(git -C "$FROM" rev-parse --short "$COMMIT")
+
+mkdir -p "$TMP/theirs"
+# shellcheck disable=SC2086 # PARTS is a word list on purpose
+git -C "$FROM" archive "$COMMIT" $(for p in $PARTS; do echo "$SUBDIR/$p"; done) | tar -x -C "$TMP/theirs" ||
+  { echo "the kit's parts are not all in $REPO at $SHORT"; exit 2; }
+THEIRS="$TMP/theirs/$SUBDIR"
+
+if [ "$CHECK" -eq 1 ]; then
+  if diff -r -q --exclude=SOURCE --exclude=SKILL.md "$DEST" "$THEIRS" >"$TMP/diff" 2>&1; then
+    echo "in step: TD's kit is byte-identical to $REPO@$SHORT"
+    exit 0
+  fi
+  echo "differs from $REPO@$SHORT ($(wc -l <"$TMP/diff") paths):"
+  sed "s|$DEST|td|; s|$THEIRS|skill|" "$TMP/diff" | head -40
+  exit 1
+fi
+
+mkdir -p "$DEST"
+find "$DEST" -mindepth 1 -maxdepth 1 ! -name SOURCE ! -name SKILL.md -exec rm -rf {} +
+cp -a "$THEIRS/." "$DEST/"
+{
+  echo "$REPO $SHORT"
+  echo "$SUBDIR/{$(echo "$PARTS" | tr ' ' ',')}"
+  echo ""
+  echo "Copied byte for byte from that commit (git archive), every file but this one"
+  echo "and SKILL.md, which is Terminal Delight's own Workbench edition. The binary"
+  echo "embeds every file here (app/src/briefkit.rs) and a test fails if one is"
+  echo "missing from that list. Do not edit the copied files by hand: change the"
+  echo "skill, then run scripts/sync-brief-skill and name the new commit above."
+} >"$DEST/SOURCE"
+echo "synced from $REPO@$SHORT; run cargo test briefkit before committing"
