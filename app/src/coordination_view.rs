@@ -500,7 +500,8 @@ impl Workspace {
                                                 "{} · {}",
                                                 repo.name,
                                                 repo.worktrees_on_disk
-                                                    .map(|n| l.count(&t.worktrees_on_disk, n as usize))
+                                                    .map(|n| l
+                                                        .count(&t.worktrees_on_disk, n as usize))
                                                     .unwrap_or_else(|| t.unavailable.into())
                                             ),
                                         )
@@ -550,7 +551,14 @@ impl Workspace {
                         }
                     } else {
                         if p.clusters.is_empty() {
-                            rows.push(Row::new(RowKind::Note, if p.coverage==Coverage::Complete{t.no_shared_complete}else{t.no_group_incomplete}));
+                            rows.push(Row::new(
+                                RowKind::Note,
+                                if p.coverage == Coverage::Complete {
+                                    t.no_shared_complete
+                                } else {
+                                    t.no_group_incomplete
+                                },
+                            ));
                         }
                         if !p.clusters.is_empty() {
                             rows.push(Row::new(RowKind::Section, t.section_groups));
@@ -575,7 +583,10 @@ impl Workspace {
                         for u in &p.unlocated {
                             rows.push(
                                 Row::card(u.title.clone(), Action::Focus(u.id.clone()), None)
-                                    .detail(format!("{} · {}", t.checkout_unavailable, t.focus_pane)),
+                                    .detail(format!(
+                                        "{} · {}",
+                                        t.checkout_unavailable, t.focus_pane
+                                    )),
                             );
                         }
                     }
@@ -693,10 +704,7 @@ impl Workspace {
                 mutation,
             };
             if matches!(f.attention.status, Status::New | Status::Changed) {
-                rows.push(
-                    Row::control(t.mark_seen, action(Mutation::Acknowledge))
-                    .inset(),
-                );
+                rows.push(Row::control(t.mark_seen, action(Mutation::Acknowledge)).inset());
             }
             if now.is_some_and(|now| f.can_expect(now)) {
                 let confirm = format!("expect:{}", f.id);
@@ -718,8 +726,11 @@ impl Workspace {
                         t.scope_file
                     };
                     rows.push(
-                        Row::new(RowKind::Note, lang::fill(t.quiet_notice, &[("scope", scope)]))
-                            .inset(),
+                        Row::new(
+                            RowKind::Note,
+                            lang::fill(t.quiet_notice, &[("scope", scope)]),
+                        )
+                        .inset(),
                     );
                     for (label, duration) in [
                         (t.dur_15m.to_string(), 900_000),
@@ -1484,7 +1495,12 @@ fn cluster_size(c: &coordination::Cluster, l: lang::Lang) -> String {
             .join(" + "),
         l.count(&t.count_checkout, c.checkout_ids.len()),
         l.count(&t.count_pane, c.participant_ids.len()),
-        counted(c.session_count, &t.count_session, t.count_session_unknown, l)
+        counted(
+            c.session_count,
+            &t.count_session,
+            t.count_session_unknown,
+            l
+        )
     )
 }
 fn append_context(
@@ -1618,7 +1634,11 @@ fn append_context(
         .flatten()
         .chain(&c.footprint.unmerged)
     {
-        let mut row = Row::new(RowKind::Note, format!("{} · {}", t.conflict_path, path.display)).inset();
+        let mut row = Row::new(
+            RowKind::Note,
+            format!("{} · {}", t.conflict_path, path.display),
+        )
+        .inset();
         row.severity = Some(Severity::Alert);
         rows.push(row);
     }
@@ -1630,15 +1650,24 @@ fn append_context(
                 "{} · {} · {}",
                 lang::fill(
                     t.ref_head,
-                    &[("oid", c.footprint.head_oid.as_deref().unwrap_or(t.unavailable))]
+                    &[(
+                        "oid",
+                        c.footprint.head_oid.as_deref().unwrap_or(t.unavailable)
+                    )]
                 ),
                 lang::fill(
                     t.ref_base,
-                    &[("oid", c.footprint.base_oid.as_deref().unwrap_or(t.unavailable))]
+                    &[(
+                        "oid",
+                        c.footprint.base_oid.as_deref().unwrap_or(t.unavailable)
+                    )]
                 ),
                 lang::fill(
                     t.ref_target,
-                    &[("ref", c.footprint.base_ref.as_deref().unwrap_or(t.unavailable))]
+                    &[(
+                        "ref",
+                        c.footprint.base_ref.as_deref().unwrap_or(t.unavailable)
+                    )]
                 ),
             ),
         )
@@ -1827,6 +1856,9 @@ mod tests {
             lang::DE.gc.hl_last_merge_unknown,
             "the overlay says the lead in the reader's language"
         );
-        assert_eq!(coverage_label(project.coverage, lang::Lang::En), "partial scan");
+        assert_eq!(
+            coverage_label(project.coverage, lang::Lang::En),
+            "partial scan"
+        );
     }
 }

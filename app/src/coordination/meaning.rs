@@ -234,12 +234,14 @@ impl Finding {
                     t.glance_concurrent_unconfirmed,
                 ],
                 Kind::SharedFile => {
-                    vec![t.glance_may_need_coordination, t.glance_conflict_unconfirmed]
+                    vec![
+                        t.glance_may_need_coordination,
+                        t.glance_conflict_unconfirmed,
+                    ]
                 }
-                Kind::TargetConflict => vec![
-                    t.glance_commits_wont_merge,
-                    t.glance_uncommitted_unchecked,
-                ],
+                Kind::TargetConflict => {
+                    vec![t.glance_commits_wont_merge, t.glance_uncommitted_unchecked]
+                }
                 Kind::UnmergedIndex => {
                     vec![t.glance_changes_need_reconciling, t.glance_cause_unknown]
                 }
@@ -343,10 +345,7 @@ pub fn explain(p: &Project, now: u64) -> Vec<Finding> {
                     limits.push(Line::BranchHistory);
                 }
                 (
-                    Line::SharedFile(
-                        contexts.len(),
-                        h.path.as_ref().map(|p| p.display.clone()),
-                    ),
+                    Line::SharedFile(contexts.len(), h.path.as_ref().map(|p| p.display.clone())),
                     Line::SigSharedFile,
                 )
             }

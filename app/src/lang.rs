@@ -2805,7 +2805,10 @@ mod tests {
     #[test]
     fn a_filled_value_is_never_filled_again() {
         assert_eq!(
-            fill("{path} against {target}", &[("path", "a{target}b"), ("target", "main")]),
+            fill(
+                "{path} against {target}",
+                &[("path", "a{target}b"), ("target", "main")]
+            ),
             "a{target}b against main"
         );
         assert_eq!(fill("{unknown} {n}", &[("n", "3")]), "{unknown} 3");
@@ -2820,7 +2823,10 @@ mod tests {
             let t = l.strings().gc;
             assert_ne!(t.title, EN.gc.title, "{} title", l.code());
             assert_ne!(t.glance_scan_incomplete, EN.gc.glance_scan_incomplete);
-            assert_ne!(t.lim_sharing_not_simultaneous, EN.gc.lim_sharing_not_simultaneous);
+            assert_ne!(
+                t.lim_sharing_not_simultaneous,
+                EN.gc.lim_sharing_not_simultaneous
+            );
         }
     }
 }
