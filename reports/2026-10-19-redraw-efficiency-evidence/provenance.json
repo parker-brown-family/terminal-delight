@@ -1,0 +1,18 @@
+{
+  "baseline_commit": "396f857",
+  "baseline_app_tree": "6db660edf410a8c52dcf42bc9671548e3fa04eae",
+  "baseline_binary_sha256": "0992f5c437442528d6420b381d30f996ebff8098fadd169bac0751c507b8162e",
+  "profile_source": "installed f597f3c, identical app tree to396f857",
+  "profile_samples": 406,
+  "lost_samples": 0,
+  "listed_taffy_self_sample_percent": 50.99,
+  "profile_note": "20 seconds,99Hz,user-only main thread; profile separate from timing; symbols below1percent omitted",
+  "live_session_profile_samples": 19,
+  "live_session_profile_conclusion": "too sparse to rank",
+  "candidate_commit": "3dff6848",
+  "candidate_binary_sha256": "681edca5f504892ef7b8905fdaf670c3ee788a03300051cb9f783834f0e383c2",
+  "runtime_display": "HEADLESS-1; physical DPMS off; desktop locked; render_unfocused fixture windows",
+  "integration_base": "6f32ac96d8aaadc3aeecc2244a39418eb4ffe453",
+  "reverse_hidden_script_exit": 2,
+  "reverse_hidden_script_exit_note": "All ten observations and their assertions completed. Editing the active script for the next fixture changed its later parse, causing a final syntax error. EXIT cleanup ran; no owned windows/hosts remained. Captured measurements retained, not rerun or selected away."
+}

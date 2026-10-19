@@ -1,0 +1,848 @@
+active = 0
+agent_tint = false
+anchor_top = false
+focus_inherit = false
+groups = []
+lang = "en"
+left_bar = true
+left_bar_w = 208.0
+panes = 31
+projects = []
+rail_pinned = false
+scale = 0.8500000238418579
+slot_remaining = true
+undo_hinted = false
+warp = 1.4299999475479126
+
+[mcp]
+enabled = true
+events = true
+expose = "all"
+writable = true
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 0"
+pane_id = 1
+resume = "exec sleep 1200"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 1"
+pane_id = 2
+resume = "codex resume --last"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 2"
+pane_id = 3
+resume = "codex resume --last"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 3"
+pane_id = 4
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 3 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 4"
+pane_id = 5
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 4 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 5"
+pane_id = 6
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 5 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 6"
+pane_id = 7
+resume = "codex resume --last"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 7"
+pane_id = 8
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 7 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 8"
+pane_id = 9
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 8 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 9"
+pane_id = 10
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 9 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 10"
+pane_id = 11
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 10 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 11"
+pane_id = 12
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 11 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 12"
+pane_id = 13
+resume = "codex resume --last"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 13"
+pane_id = 14
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 13 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 14"
+pane_id = 15
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 14 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 15"
+pane_id = 16
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 15 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 16"
+pane_id = 17
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 16 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 17"
+pane_id = 18
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 17 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 18"
+pane_id = 19
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 18 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 19"
+pane_id = 20
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 19 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 20"
+pane_id = 21
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 20 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 21"
+pane_id = 22
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 21 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 22"
+pane_id = 23
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 22 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 23"
+pane_id = 24
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 23 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 24"
+pane_id = 25
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 24 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 25"
+pane_id = 26
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 25 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 26"
+pane_id = 27
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 26 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 27"
+pane_id = 28
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 27 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 28"
+pane_id = 29
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 28 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 29"
+pane_id = 30
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 29 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/tmp"
+name = "fixture 30"
+pane_id = 31
+resume = "python3 /tmp/td-redraw-efficiency/hidden-reverse/codex-fixture.py 30 /tmp/tdsleep-1792396531-2740670-working /tmp/tdsleep-1792396531-2740670-counts/baseline"
+
+[tabs.node.Leaf.appearance]
+pins = ["crt"]
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.9900000095367432
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126
+
+[theme]
+id = "custom"
+palette = "terminal-delight"
+syntax = true
+syntax_scheme = "agentic"
+
+[theme.grade]
+background = 0.4300000071525574
+brightness = 0.1599999964237213
+colour = 0.6899999976158142
+contrast = 0.44999998807907104
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.5
+phosphor = 1.0
+scale = 0.8500000238418579
+text = 0.6600000262260437
+text_size = 1.0
+warp = 1.4299999475479126

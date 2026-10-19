@@ -1,0 +1,1 @@
+681edca5f504892ef7b8905fdaf670c3ee788a03300051cb9f783834f0e383c2  /tmp/td-redraw-efficiency/candidate
