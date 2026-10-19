@@ -60,11 +60,26 @@ fn start_host(name: &str) -> Session {
     let socket = runtime
         .join("terminal-delight")
         .join(format!("session-{name}.sock"));
+    // Ready is a connection being accepted, not the file existing. Binding a
+    // Unix socket is two calls: `bind` makes the file and `listen` starts
+    // accepting, so for a moment between them the file is there and a connect
+    // is refused. A loaded full suite landed in that moment (#1009). A probe
+    // that closes without a line is a connection the host already tolerates.
     let deadline = Instant::now() + PATIENCE;
-    while Instant::now() < deadline && !socket.exists() {
+    let mut last = None;
+    while Instant::now() < deadline {
+        match UnixStream::connect(&socket) {
+            Ok(_) => {
+                last = None;
+                break;
+            }
+            Err(e) => last = Some(e),
+        }
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert!(socket.exists(), "the host never bound {}", socket.display());
+    if let Some(e) = last {
+        panic!("the host never accepted on {}: {e}", socket.display());
+    }
     Session {
         child,
         socket,
