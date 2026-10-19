@@ -14,6 +14,11 @@ removed, sessions saved by 0.3.0 load, and a 0.4.0 window attaches to a session
 host started by 0.3.0, because the host protocol is still version 1. These are
 the changes you may notice in the first hour.
 
+- **SUPER+ALT+T opens the key menu instead of sending a tile.** On Omarchy that
+  chord used to move the focused terminal into Terminal Delight. It now opens
+  the list of Terminal Delight's keys, and `scripts/install-keys-hotkey.sh`
+  removes the old binding when it adds the new one. `td-send` still works when
+  run by hand. (#921)
 - **Some keys do something different.** Ctrl+Alt+R now renames the highlighted
   left-bar row; Alt+V still makes a side-by-side split. Shift+click on a file
   path reveals it in the file manager, and Ctrl+click opens it. On the
@@ -355,6 +360,12 @@ the changes you may notice in the first hour.
   page serves. Every release lists the AppImage's SHA-256 and the commit it was
   built from, and is published only after every check passed for that commit.
   The schedule and the checks are in `RELEASING.md`. (#1008)
+
+- **SUPER+ALT+T on Omarchy shows every Terminal Delight key.** It opens
+  Omarchy's own searchable key menu, the one SUPER+K opens for Omarchy's keys,
+  listing the keys on the docs site's Keys page, each led by the part of the app
+  it belongs to. `scripts/install-keys-hotkey.sh` binds it. The Keys page also
+  gains the keys added since it was written. (#921)
 
 ### Changed
 

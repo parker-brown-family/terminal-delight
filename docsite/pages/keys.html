@@ -2,8 +2,8 @@
 {
   "title": "Keys",
   "description": "Every key and chord in Terminal Delight: panes and tabs, the left bar, the terminal, clipboard, find, panels, the workbench, documents, the paint overlay and the mouse. How a keystroke decides where it goes.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "updated": "2026-10-13",
+  "trueOf": "main at 8659826",
   "summary": "Every chord, and where a keystroke goes"
 }
 </script>
@@ -34,7 +34,7 @@
 
 <section data-register="technical" data-headline="Every key">
 <h3>Where a keystroke goes</h3>
-<p>Checked in this order, and the first taker keeps it: <kbd>F1</kbd>, then <kbd>Alt</kbd>+<kbd>K</kbd>, then window chords, the paint overlay, open menus, the <a href="/focus-reader">focus reader</a>, pane chords, a sticky note being written, a rename box, a floating document, the document face, the workbench, and last the terminal. Window chords are <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+anything, and <kbd>Alt</kbd> with an arrow or <kbd>R</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>W</kbd> <kbd>K</kbd> <kbd>L</kbd>. Pane chords are <kbd>Ctrl</kbd>+<kbd>Shift</kbd> with <kbd>T</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>K</kbd> <kbd>A</kbd> <kbd>B</kbd> <kbd>N</kbd> <kbd>Z</kbd> <kbd>U</kbd> <kbd>Y</kbd> <kbd>D</kbd> <kbd>G</kbd> <kbd>F</kbd>, plus <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>F</kbd>, <kbd>Ctrl</kbd>+<kbd>X</kbd> and <kbd>Alt</kbd>+<kbd>A</kbd> / <kbd>Alt</kbd>+<kbd>S</kbd>. <kbd>Alt</kbd>+<kbd>B</kbd> and <kbd>Alt</kbd>+<kbd>F</kbd> stay with readline.</p>
+<p>Checked in this order, and the first taker keeps it: <kbd>F1</kbd>, then <kbd>Alt</kbd>+<kbd>K</kbd>, then window chords, the paint overlay, open menus, the <a href="/focus-reader">focus reader</a>, pane chords, a sticky note being written, a rename box, a floating document, the document face, the workbench, and last the terminal. Window chords are <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+anything, and <kbd>Alt</kbd> with an arrow or <kbd>R</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>W</kbd> <kbd>K</kbd> <kbd>L</kbd>. Pane chords are <kbd>Ctrl</kbd>+<kbd>Shift</kbd> with <kbd>T</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>K</kbd> <kbd>A</kbd> <kbd>B</kbd> <kbd>N</kbd> <kbd>M</kbd> <kbd>Z</kbd> <kbd>U</kbd> <kbd>Y</kbd> <kbd>D</kbd> <kbd>G</kbd> <kbd>F</kbd>, plus <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>F</kbd>, <kbd>Ctrl</kbd>+<kbd>X</kbd> and <kbd>Alt</kbd>+<kbd>A</kbd> / <kbd>Alt</kbd>+<kbd>S</kbd>. <kbd>Alt</kbd>+<kbd>B</kbd> and <kbd>Alt</kbd>+<kbd>F</kbd> stay with readline.</p>
 
 <h3>Panes and tabs</h3>
 <table class="keys">
@@ -61,6 +61,8 @@
     <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd></td><td>fold; otherwise up to the parent</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>–<kbd>9</kbd></td><td>jump to that top-level branch</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd></td><td>rename the highlighted row, or the active tab</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd></td><td>carry the active tab a slot up / down; at the edge of its group it goes on into the next group, then the next project</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd></td><td>make the next carry jump a whole group, then a whole project / back to a slot at a time</td></tr>
   </tbody>
 </table>
 
@@ -100,6 +102,7 @@
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd></td><td>this pane's DESIGN tray: <a href="/themes">themes</a> and colour</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd></td><td>this pane's GAUGES tray: <a href="/crt">grade, warp</a> and <a href="/text-crawl">crawl</a></td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></td><td>the <a href="/attention">attention</a> queue</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></td><td>everything this pane's agent handed over, newest first</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>R</kbd></td><td>the <a href="/focus-reader">focus reader</a></td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>A</kbd></td><td>open the agent launcher for this pane, also available as ⌁ AGENT in its header</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>S</kbd></td><td>stick a <a href="/sticky-notes">note</a> on the pane; while writing, post it</td></tr>
@@ -151,6 +154,8 @@
     <tr><td>arrows, <kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>pan, or most of a screen</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>K</kbd></td><td>back to the terminal</td></tr>
     <tr><td><kbd>Esc</kbd>, over a floating document</td><td>close it</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd>, over a floating brief</td><td>↪ send its notes to the agent beside it</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>, <kbd>Shift</kbd>+<kbd>Insert</kbd></td><td>paste into the note being written</td></tr>
   </tbody>
 </table>
 
@@ -177,7 +182,7 @@
     <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+click a document</td><td>open it in a pane beside</td></tr>
     <tr><td><kbd>Alt</kbd>+click a command</td><td>copy the line</td></tr>
     <tr><td>right-click a name</td><td>rename; <kbd>Ctrl</kbd>+click for colour and group</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+wheel</td><td>size what's under the pointer: text, bench or chrome</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+wheel</td><td>size what's under the pointer: text, bench, chrome, or a document's zoom</td></tr>
     <tr><td>drop a file</td><td>on the bench, its path; on the terminal, pasted</td></tr>
   </tbody>
 </table>
@@ -185,7 +190,7 @@
 <h3>On the desktop</h3>
 <ul>
   <li><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> on GNOME opens Terminal Delight, once <code>scripts/install-hotkey.sh</code> has bound it. The app itself does nothing with that chord.</li>
-  <li><kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> on Hyprland or Omarchy moves the focused terminal, and the agent in it, into Terminal Delight, once <code>scripts/install-send-hotkey.sh</code> has bound it.</li>
+  <li><kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> on Omarchy shows every key on this page in Omarchy's own searchable key menu, beside <kbd>Super</kbd>+<kbd>K</kbd> for Omarchy's own keys, once <code>scripts/install-keys-hotkey.sh</code> has bound it.</li>
   <li><kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> on Omarchy raises the <a href="/themes#technical-paint">paint overlay</a> in every Terminal Delight window on the workspace, once you have bound it to <code>terminal-delight ctl paint toggle</code>. A second press folds them all. The app itself does not bind that chord.</li>
   <li><kbd>Super</kbd>+<kbd>W</kbd> on Omarchy closes the whole window: that's the desktop's key, not Terminal Delight's.</li>
 </ul>
