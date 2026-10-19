@@ -4416,6 +4416,12 @@ struct Workspace {
     /// [`launchpref::Prefs`] — nothing about which agent starts next depends
     /// on whether a person can see the chips.
     launch_defaults_open: bool,
+    /// The detail folded under the pace line — today, the week behind it, by
+    /// model. Closed by default: pace is the number worth seeing without
+    /// asking, the rest is for when that number raises a question. Parker,
+    /// 2026-10-14: the relevant thing "is just the relationship of being on
+    /// pace, burning hot, or gone cold"; everything below it is detail.
+    usage_history_open: bool,
     /// What the last refresh said, when it had something to say.
     usage_status: Option<String>,
     /// A collector run is in flight on a pool thread.
@@ -5969,6 +5975,7 @@ impl Workspace {
             usage_refreshing: false,
             launch_defaults: launchpref::load(),
             launch_defaults_open: false,
+            usage_history_open: false,
             agent_vitals: std::collections::HashMap::new(),
             vitals_refreshing: false,
             eng: std::collections::HashMap::new(),
@@ -9422,6 +9429,92 @@ impl Workspace {
         // ---- the ceilings ----------------------------------------------------
         if !rec.limits.is_empty() {
             let now = usage::now_epoch();
+
+            // The weekly window specifically — the one that actually governs a
+            // plan — never the 5-hour session window, which resets too often
+            // for "pace" to mean anything, and never a secondary quota like
+            // Fable's. Absent silently when no weekly-shaped limit is present,
+            // or when usage::pace can't anchor it (see that function's doc).
+            let pace_limit = rec
+                .limits
+                .iter()
+                .find(|l| l.label.contains("7-day") || l.label == "Weekly");
+            let pace_info = pace_limit.and_then(|l| usage::pace(l, now)).map(|p| {
+                // How much room is left to adjust: whichever constraint binds
+                // tighter, time or tokens. Far from the reset AND plenty of
+                // plan left, both slack — wide. Close to either, narrow. Not
+                // an average: being flush with tokens doesn't buy back a
+                // clock that's nearly out, and the reverse.
+                let margin = (1.0 - p.elapsed)
+                    .min(1.0 - pace_limit.unwrap().percent)
+                    .clamp(0.0, 1.0);
+                // Parker, 2026-10-14: blue running cool (banked), green
+                // running optimal (within ~15 points), red running hot.
+                // A dedicated banding for the bar/flame's colour — coarser
+                // than PaceVerdict's own four-way text (which a reader sees
+                // written out and can afford more nuance in); the bar is read
+                // at a glance and three colours is the whole point of it.
+                let band = pace_band(p.delta);
+                (p, margin, band)
+            });
+
+            // The flame glyph, drawn once and parameterised by size and
+            // colour — a shared helper rather than inlined at its one call
+            // site, in case a second place ever wants the same glow.
+            let flame = move |size: f32, col: gpui::Hsla| {
+                gpui::svg()
+                    .external_path(SharedString::from(
+                        art::pace_flame_svg().to_string_lossy().into_owned(),
+                    ))
+                    .w(px(size))
+                    .h(px(size))
+                    .text_color(col)
+                    .shadow(vec![BoxShadow {
+                        color: col.alpha(0.55),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(size * 0.9),
+                        spread_radius: px(1.),
+                        inset: false,
+                    }])
+            };
+
+            // The margin bar itself: a track the width of its container, a
+            // band-coloured fill of width `margin` CENTRED in it (this is a
+            // margin either side of "now", not a left-to-right progress bar),
+            // with the flame riding in the middle of the fill.
+            let margin_bar = move |margin: f32, col: gpui::Hsla, h: f32, flame_px: f32| {
+                div()
+                    .relative()
+                    .w_full()
+                    .h(px(h))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded_full()
+                            .bg(th.text.alpha(0.08)),
+                    )
+                    .child(
+                        div()
+                            .w(gpui::relative(margin.max(0.04)))
+                            .h(px(h))
+                            .rounded_full()
+                            .bg(col.alpha(0.85))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            // Brightened, not the bar's own colour — the first
+                            // cut drew the flame in the exact fill colour it
+                            // sits on, so it read as a stray mark instead of a
+                            // flame. The glow (inside `flame`) still carries
+                            // the true band colour.
+                            .child(flame(flame_px, brighten(col, 1.7))),
+                    )
+            };
+
             let mut list = div().flex().flex_col().gap_1p5();
             for l in &rec.limits {
                 let col = pressure(l.percent);
@@ -9459,6 +9552,61 @@ impl Workspace {
                 );
             }
             body = body.child(list);
+
+            // ---- the pace card: what this window's pace actually is --------------
+            if let Some((p, margin, band)) = pace_info {
+                let delta_pts = (p.delta * 100.).abs().round() as i32;
+                let delta_word = if p.delta > 0.0 { "over pace" } else { "banked" };
+                body = body.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1p5()
+                        .pt_1()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .text_size(px(10.5))
+                                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                        .text_color(th.text.alpha(0.85))
+                                        .child("TOKEN USAGE PACE"),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_baseline()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_size(px(9.))
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(band)
+                                                .child(p.verdict.label()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(8.5))
+                                                .text_color(th.text.alpha(0.6))
+                                                .child(
+                                                    if matches!(
+                                                        p.verdict,
+                                                        usage::PaceVerdict::OnPace
+                                                    ) {
+                                                        "even with the week's clock".to_string()
+                                                    } else {
+                                                        format!("{delta_pts} points {delta_word}")
+                                                    },
+                                                ),
+                                        ),
+                                ),
+                        )
+                        .child(margin_bar(margin, band, 10., 20.)),
+                );
+            }
         }
 
         // ---- prepaid credit, for the subscriptions that drain instead of reset
@@ -9513,6 +9661,42 @@ impl Workspace {
             );
         }
 
+        // ---- detail: today, the week, by model — folded under the pace line --
+        // ONE LINE UNTIL IT IS ASKED FOR, same convention as LAUNCH AGENT
+        // CONFIG above: the pace line already answers "am I fine right now",
+        // and these three blocks are the "why" for when that answer surprises
+        // you. Closed by default (`usage_history_open`'s own doc explains why).
+        let history_open = self.usage_history_open;
+        body = body.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1p5()
+                .cursor_pointer()
+                .child(
+                    div()
+                        .text_size(px(8.))
+                        .text_color(th.text.alpha(0.55))
+                        .child(if history_open { "\u{25be}" } else { "\u{25b8}" }),
+                )
+                .child(
+                    div()
+                        .text_size(px(9.))
+                        .text_color(th.text.alpha(0.55))
+                        .child("today, the week, by model"),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.usage_history_open = !ws.usage_history_open;
+                        cx.notify();
+                    }),
+                ),
+        );
+        let mut detail = div().flex().flex_col().gap_2();
+
         // ---- today -----------------------------------------------------------
         let today = if rec.has_prompt_stats {
             format!(
@@ -9526,7 +9710,7 @@ impl Workspace {
             // for prompts would be a number the collector never had.
             format!("{} tokens", hud::fmt_tokens(rec.today_tokens))
         };
-        body = body.child(
+        detail = detail.child(
             div()
                 .flex()
                 .flex_row()
@@ -9579,7 +9763,7 @@ impl Workspace {
                         ),
                 );
             }
-            body = body.child(
+            detail = detail.child(
                 div()
                     .flex()
                     .flex_col()
@@ -9636,7 +9820,7 @@ impl Workspace {
                 cr = cr.saturating_add(m.cache_read);
                 cw = cw.saturating_add(m.cache_create);
             }
-            body = body.child(
+            detail = detail.child(
                 div()
                     .flex()
                     .flex_col()
@@ -9662,6 +9846,7 @@ impl Workspace {
                     ),
             );
         }
+        body = body.when(history_open, |b| b.child(detail));
 
         // ---- provenance, and the button that re-asks --------------------------
         let mut prov: Vec<String> = Vec::new();
@@ -21992,6 +22177,7 @@ impl Workspace {
         let pill = sk.radius_pill();
         let rad = sk.radius();
         let rows = self.slot_rows();
+        let now = usage::now_epoch();
         // The agent rollup that used to close this slot is in the top right of
         // the mother bar now (see `render_agent_counter`), so the slot is the
         // allowance rows and nothing else — and with none of those, nothing.
@@ -22069,8 +22255,24 @@ impl Workspace {
             .px(px(6.0 * s))
             .pb(px(5.0 * s));
 
-        for row in &rows {
+        for (rec, row) in self.usage_records.iter().zip(&rows) {
             let deg = slot::Degrade::resolve(self.left_bar_w, rail_w, row.session_ticks);
+
+            // The same pace math the usage panel's TOKEN USAGE PACE line uses
+            // — same weekly limit, same margin. Shades the provider's own
+            // mark now, not a separate torch: Parker, 2026-10-14, on the
+            // torch sitting over the rails, "doesn't quite work… we just
+            // SHADE the LOGO of the provider… lose the torch icon, but keep
+            // the surface glow." `None` when there's no weekly-shaped limit
+            // or no resetsAt to anchor it to — a badge with nothing measured
+            // keeps its plain neutral colour and no glow, never a grey
+            // standing in for a band nobody read.
+            let badge_tint = rec
+                .limits
+                .iter()
+                .find(|l| l.label.contains("7-day") || l.label == "Weekly")
+                .and_then(|l| usage::pace(l, now))
+                .map(|p| pace_ramp(p.delta));
 
             // The long window, as one solid rail.
             let week = match lit_colour(&row.week) {
@@ -22186,24 +22388,40 @@ impl Workspace {
                     // mark and some will not, and a column that changes shape
                     // per row loses the rhythm that lets the eye find the rail
                     // it wants without reading anything.
-                    div()
-                        .flex_none()
-                        .w(px(mark_w * s))
-                        .h(px(mark_w * s))
-                        .rounded(rad)
-                        .border_1()
-                        .border_color(text.alpha(0.18))
-                        .bg(text.alpha(0.06))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_size(px(7.5 * SLOT_RAIL_GROWTH * s))
-                        .text_color(text.alpha(0.75))
-                        .map(|d| match self.provider_marks.get(&row.id) {
+                    {
+                        let mark_col = badge_tint.unwrap_or(text.alpha(0.85));
+                        let mut badge = div()
+                            .flex_none()
+                            .w(px(mark_w * s))
+                            .h(px(mark_w * s))
+                            .rounded(rad)
+                            .border_1()
+                            .border_color(text.alpha(0.18))
+                            .bg(text.alpha(0.06))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_size(px(7.5 * SLOT_RAIL_GROWTH * s))
+                            .text_color(mark_col);
+                        // The glow the torch used to carry, moved onto the
+                        // badge it now shades — absent along with the tint
+                        // when there is nothing measured to colour it with.
+                        if let Some(col) = badge_tint {
+                            badge = badge.shadow(vec![BoxShadow {
+                                color: col.alpha(0.55),
+                                offset: point(px(0.), px(0.)),
+                                blur_radius: px(mark_w * s * 0.5),
+                                spread_radius: px(0.),
+                                inset: false,
+                            }]);
+                        }
+                        badge.map(|d| match self.provider_marks.get(&row.id) {
                             // gpui draws an SVG as a MASK tinted by
-                            // `text_color`, so the mark follows the theme
-                            // instead of dragging a brand palette into a
-                            // window whose whole point is being re-coloured.
+                            // `text_color`, so the mark follows the pace
+                            // tint the same way it already followed the
+                            // theme, rather than dragging a brand palette
+                            // into a window whose whole point is being
+                            // re-coloured.
                             Some(path) => d.child(
                                 gpui::svg()
                                     .external_path(SharedString::from(
@@ -22211,10 +22429,11 @@ impl Workspace {
                                     ))
                                     .w(px(mark_w * s * 0.7))
                                     .h(px(mark_w * s * 0.7))
-                                    .text_color(text.alpha(0.85)),
+                                    .text_color(mark_col),
                             ),
                             None => d.child(row.initials.clone()),
-                        }),
+                        })
+                    },
                 )
                 .child(
                     div()
@@ -25665,6 +25884,61 @@ fn pressure(frac: f32) -> Hsla {
         slot::Band::Warn => hsla(0.09, 0.82, 0.60, 1.),
         slot::Band::Calm => hsla(0.38, 0.52, 0.52, 1.),
     }
+}
+
+/// The pace torch's three colours — blue running cool (banked), green on pace,
+/// red running hot — on the same ±15-point bands wherever a torch is drawn, so
+/// the usage card's TOKEN USAGE PACE line and the left bar's slot cannot
+/// disagree about which colour a week is.
+///
+/// Red and green are the pressure ramp's own Spent and Calm on purpose. Parker,
+/// 2026-10-14, on a slot torch that had been brightened to near-white: "INSTANT
+/// colour recognition from the main screen … It might be vaguely red, but
+/// should be as red or green or blue as the pips underneath!" The pips are
+/// these colours.
+fn pace_band(delta: f32) -> Hsla {
+    if delta < -0.15 {
+        hsla(0.56, 0.55, 0.58, 1.) // cool — blue
+    } else if delta > 0.15 {
+        hsla(0.01, 0.72, 0.60, 1.) // hot — red, the ramp's Spent
+    } else {
+        hsla(0.38, 0.52, 0.52, 1.) // on pace — green, the ramp's Calm
+    }
+}
+
+/// The left bar's badge tint — a continuous ramp, not a three-way band, across
+/// red/yellow/green/blue-green/blue. The torch sitting on the rails "doesn't
+/// quite work," Parker said 2026-10-14: shade the provider's own mark instead,
+/// losing the separate icon but keeping the glow it carried. `None` for no
+/// pace data — a badge nobody has a reading for stays its plain neutral
+/// colour, never a confident grey standing in for a band.
+fn pace_ramp(delta: f32) -> Hsla {
+    // Hue-only interpolation between five fixed anchors, so saturation and
+    // lightness never muddy on the way between stops the way mixing two
+    // arbitrary RGBs can.
+    const STOPS: [(f32, f32); 5] = [
+        (0.30, 0.00),  // hot — red
+        (0.15, 0.14),  // yellow
+        (0.00, 0.33),  // on pace — green
+        (-0.15, 0.48), // blue-green
+        (-0.30, 0.60), // cool — blue
+    ];
+    let d = delta.clamp(STOPS[4].0, STOPS[0].0);
+    let hue = STOPS
+        .windows(2)
+        .find(|w| d <= w[0].0 && d >= w[1].0)
+        .map(|w| {
+            let (d0, h0) = w[0];
+            let (d1, h1) = w[1];
+            let t = if (d0 - d1).abs() < f32::EPSILON {
+                0.0
+            } else {
+                (d0 - d) / (d0 - d1)
+            };
+            h0 + (h1 - h0) * t
+        })
+        .unwrap_or(STOPS[2].1);
+    hsla(hue, 0.60, 0.56, 1.)
 }
 
 fn agent_state_glow(th: &theme::Theme, idle: Hsla, state: hud::AgentState) -> Hsla {
@@ -35757,6 +36031,83 @@ mod tests {
             src.contains("slot-remaining-toggle") && src.contains("ws.slot_remaining = !ws"),
             "the card carries the bar's spent/remaining toggle — the slot itself \
              is four rails in a 200px column with no room for a control"
+        );
+    }
+
+    /// `pace_band` — the usage card's TOKEN USAGE PACE line — is as red, green
+    /// or blue as the pips under it.
+    ///
+    /// It was brightened 1.7× to stand out once, which lifted every band to
+    /// within a few points of white, and Parker read a WAY OVER week as
+    /// "vaguely red" (2026-10-14). Red and green ARE the pips' pressure
+    /// colours, so this fails if either is washed again.
+    #[test]
+    fn pace_band_is_as_saturated_as_the_pips() {
+        assert_eq!(pace_band(0.41), pressure(0.99), "way over is the pips' red");
+        assert_eq!(pace_band(0.0), pressure(0.10), "on pace is the pips' green");
+        let blue = pace_band(-0.30);
+        assert!(
+            blue.s >= 0.5 && blue.l <= 0.65,
+            "banked stays a blue, not a tint of one"
+        );
+        // the bands' edges, either side
+        assert_eq!(pace_band(0.15), pressure(0.10));
+        assert_eq!(pace_band(-0.15), pressure(0.10));
+        assert_eq!(pace_band(0.16), pressure(0.99));
+        assert_ne!(pace_band(-0.16), pressure(0.10));
+    }
+
+    /// The left bar lost its torch (2026-10-14: "doesn't quite work… we just
+    /// SHADE the LOGO of the provider… lose the torch icon, but keep the
+    /// surface glow") in favour of tinting the provider's own mark with
+    /// `pace_ramp`, a continuous red/yellow/green/blue-green/blue sweep
+    /// rather than `pace_band`'s three-way split. This pins both halves of
+    /// that swap in the shipped source: no flame SVG drawn inside the slot,
+    /// and the badge's colour actually comes from the ramp.
+    #[test]
+    fn pace_ramp_sweeps_red_through_blue_and_has_replaced_the_slot_torch() {
+        // five named anchors, in order
+        let hues: Vec<f32> = [0.30, 0.15, 0.0, -0.15, -0.30]
+            .iter()
+            .map(|&d| pace_ramp(d).h)
+            .collect();
+        for w in hues.windows(2) {
+            assert!(
+                w[0] < w[1],
+                "the ramp must climb red(0) toward blue(.6): {hues:?}"
+            );
+        }
+        assert!((pace_ramp(0.30).h - 0.0).abs() < 0.01, "hot anchors on red");
+        assert!(
+            (pace_ramp(-0.30).h - 0.60).abs() < 0.01,
+            "cool anchors on blue"
+        );
+        // a point halfway between two anchors lands halfway between their
+        // hues: 0.075 is halfway between the 0.15 anchor (yellow, .14) and
+        // the 0.0 anchor (green, .33), so the hue should land at their
+        // midpoint, (.14+.33)/2 = .235, not at either anchor outright.
+        let mid = pace_ramp(0.075).h;
+        assert!(
+            (mid - 0.235).abs() < 0.01,
+            "midpoint interpolates, not steps: {mid}"
+        );
+        // beyond the ends, the ramp clamps rather than extrapolating past blue/red
+        assert_eq!(pace_ramp(5.0), pace_ramp(0.30));
+        assert_eq!(pace_ramp(-5.0), pace_ramp(-0.30));
+
+        let src = shipped_src();
+        let slot = {
+            let at = src.find("fn render_bar_slot").expect("the slot");
+            let end = src[at..].find("\n    }\n").expect("end of fn");
+            &src[at..at + end]
+        };
+        assert!(
+            slot.contains(".map(|p| pace_ramp(p.delta))"),
+            "the badge's tint comes from the ramp, not the three-way band"
+        );
+        assert!(
+            !slot.contains("pace_flame_svg"),
+            "the torch is gone — the slot shades the mark, it doesn't draw a flame"
         );
     }
 
