@@ -2777,4 +2777,50 @@ mod tests {
         assert_eq!(Lang::En.strings().new_tab, "New tab");
         assert_eq!(Lang::En.strings().help, "HELP");
     }
+
+    #[test]
+    fn russian_counts_take_three_forms_and_chinese_takes_one() {
+        let p = Plural {
+            one: "{n} one",
+            few: "{n} few",
+            many: "{n} many",
+            other: "{n} other",
+        };
+        let ru: Vec<_> = [1, 2, 4, 5, 11, 12, 21, 22, 25, 111, 0]
+            .into_iter()
+            .map(|n| Lang::Ru.count(&p, n))
+            .collect();
+        assert_eq!(
+            ru,
+            [
+                "1 one", "2 few", "4 few", "5 many", "11 many", "12 many", "21 one", "22 few",
+                "25 many", "111 many", "0 many"
+            ]
+        );
+        assert_eq!(Lang::Fr.count(&p, 0), "0 one", "French zero is singular");
+        assert_eq!(Lang::En.count(&p, 0), "0 other", "English zero is plural");
+        assert_eq!(Lang::Zh.count(&p, 1), "1 other", "Chinese has no plural");
+    }
+
+    #[test]
+    fn a_filled_value_is_never_filled_again() {
+        assert_eq!(
+            fill("{path} against {target}", &[("path", "a{target}b"), ("target", "main")]),
+            "a{target}b against main"
+        );
+        assert_eq!(fill("{unknown} {n}", &[("n", "3")]), "{unknown} 3");
+    }
+
+    #[test]
+    fn the_git_overlay_is_translated_in_every_language() {
+        // The generated table was checked for placeholders and keycaps when it
+        // was written; this catches a regeneration that dropped a language
+        // back to its English fallback.
+        for l in Lang::ALL.into_iter().filter(|&l| l != Lang::En) {
+            let t = l.strings().gc;
+            assert_ne!(t.title, EN.gc.title, "{} title", l.code());
+            assert_ne!(t.glance_scan_incomplete, EN.gc.glance_scan_incomplete);
+            assert_ne!(t.lim_sharing_not_simultaneous, EN.gc.lim_sharing_not_simultaneous);
+        }
+    }
 }
