@@ -7,115 +7,152 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
-### Changed
+### Upgrading from 0.3.0
 
-- **The FOCUS reader (Alt+R) has a size of its own.** It lays text out at the
-  pane's own letter size across the whole glass, so a narrow pane opens with as
-  many columns as the glass holds — about 175 × 46 in a 1,576 × 950 window —
-  instead of its own few columns blown up to fill it (a 48-column pane used to
-  open at 3.65×, about twelve rows at a time). The slider and Ctrl+wheel move the
-  letters from there, 0.5× to 2.5×, and Ctrl+wheel over the reader now sizes the
-  reader instead of the pane behind it.
-- **A shell's lines reach the reader as the program printed them.** Rows are
-  joined exactly where the terminal soft-wrapped them, from the terminal's own
-  flag, instead of by a width guess that refused a wrapped line whose next row
-  began with spaces and glued a half-full row to a long word after it. What a
-  program broke itself, like `ls`'s columns, stays as printed. Blank rows under
-  the last line no longer push a short screen's content out of view, and the
-  reader keeps the history it has read instead of re-reading all of it, under
-  the terminal's lock, on every frame a shell streams.
-- **Alt+R on a document pane reads the document.** A pane opened to show a
-  Markdown file, a page, a PDF, a picture or a video lends the reader its own
-  view, and so does a square floating over a terminal or a bench; the reader
-  used to show the shell hidden behind them. The document is drawn at the
-  reader's size and read there as on its pane: the wheel scrolls it, Ctrl+wheel
-  zooms it, PageUp and PageDown turn pages of the reader's height, and a brief
-  takes notes, CONCUR stamps and ↪ inside the reader, saved into the same file.
-  Escape closes an open note box before the reader, and the pane gets its
-  document back at its own zoom and at the place it was read to. A small
-  picture stays at its own pixels until zoomed. The workbench face still reads
-  the terminal.
-- **Alt+R on an agent's pane reads its conversation.** When the pane's Claude
-  Code session is bound for certain, the reader shows the conversation from its
-  transcript instead of the screen Claude Code drew for a narrow pane: what you
-  typed (a slash command as you typed it, and never a background task's
-  notification) and its replies whole, at the reader's width, with headings,
-  lists, code and tables drawn from their Markdown; one row per tool call —
-  `⚙ Read  app/src/doc.rs  →  40 lines` — which a click opens to the whole
-  command and what it printed; the thinking left out; and a divider where the
-  conversation was compacted. It follows the transcript as the agent writes it,
-  a finished block at a time. The agent's own status line and input box stay
-  live at the reader's foot, and typing still reaches it. The header names what
-  is being read: TRANSCRIPT, SCREEN when the transcript could not be bound for
-  certain (the reader then reads the screen, never a guess at whose
-  conversation it is), SCROLLBACK for a shell, and ALTERNATE SCREEN for a
-  full-screen program. A Codex pane reads its rollout the same way, under
-  CODEX: what you typed rather than the instructions Codex files beside it, and
-  each script it ran summed up by what the script printed; its screen has no
-  input box the reader recognises, so it has no live foot yet.
+Nothing you saved is renamed or moved. No config or state file was renamed or
+removed, sessions saved by 0.3.0 load, and a 0.4.0 window attaches to a session
+host started by 0.3.0, because the host protocol is still version 1. These are
+the changes you may notice in the first hour.
 
-- **A new install's panes wear Terminal Delight's own mark.** With no
-  `dir-logos.toml` at all, the first start writes one mapping `/` to the app's
-  mark, saved as `~/.config/terminal-delight/logos/terminal-delight.png`. Every
-  pane without a nearer mapping inherits it, where it used to show the bare
-  `＋ logo` placeholder. An existing file is never touched, even an empty one:
-  removing the default with ✕ in the logo picker leaves an empty map, and it
-  stays empty across restarts.
-- **The terminal emulator core is rio-vt, the core inside the Rio terminal.**
-  alacritty_terminal did the emulation from the start; it is still built with
-  `--features core-alacritty`, as a fallback and as the oracle the whole suite
-  is checked against, until it has been out of daily use long enough to delete.
-  Measured on the research branch before choosing: an 8 MB text stream parses in
-  82 ms against 140 ms, and a pane holding 10,000 lines of history costs 11.0 MB
-  against 28.5 MB. The swap also made the read loop, the pseudoterminal and the
-  lock TD's own (`app/src/vt/`), which turned the session host's attach fence
-  into one plain lock and deleted the socket-as-pseudoterminal workaround a
-  replica needed. A window still attaches to a session host built before the
-  swap: the host protocol stays at version 1 and the divergence hash is over
-  alacritty's frozen numbering. The decision, the plan and every difference
-  found between the cores are in `docs/plans/core-swap-rio/`. (#825)
-- **Terminal Delight says what it is when a program asks.** Device attributes
-  are `?62;22c`, long enough for `kitten icat`'s detector, which used to wait
-  ten seconds in every pane and then give up (#750); XTVERSION is
-  `terminal-delight 0.3.0`; the cell size (`CSI 16 t`) is answered in every
-  pane, where before only a pane on a session host answered it. The kitty
-  keyboard query goes unanswered, because TD sends legacy key encodings.
-  `--version` names the core. (#825)
+- **Some keys do something different.** Ctrl+Alt+R now renames the highlighted
+  left-bar row; Alt+V still makes a side-by-side split. Shift+click on a file
+  path reveals it in the file manager, and Ctrl+click opens it. On the
+  workbench, Escape no longer drops you to the terminal (Alt+K or the TERM chip
+  does), and in its composer Ctrl+C copies, Ctrl+X cuts, Ctrl+G interrupts the
+  agent and Ctrl+A selects the whole draft. A new tab, group or project you ask
+  for opens on its name box: Enter keeps the name, Escape goes to the terminal.
+  With the paint overlay up, Return closes it instead of reaching the pane.
+  (#532, #543, #559, #624, #662, #667, #723, #973)
+- **Terminal Delight now takes some chords that used to reach your shell or
+  agent.** Alt+L (find by name), Alt+A (start an agent), Alt+G (Git
+  coordination), Ctrl+= and Ctrl+- (size the pane), Ctrl+Shift+= and
+  Ctrl+Shift+- (size the window's chrome), Ctrl+Shift+Alt+arrows (carry a tab
+  through the left bar) and Ctrl+Shift+M (an agent's handovers). In a Claude
+  Code or Codex pane only, Ctrl+Up and Ctrl+Down jump through your own messages.
+  On the workbench, Alt+1 to Alt+4 pick a tab and Alt+M opens a comment.
+  Anything you had bound to these in readline, your shell or an editor no longer
+  arrives there. (#566, #574, #816, #857, #907, #961, #965, #976, #984, #994,
+  #998)
+- **Sticky notes change colour on the first launch.** A note's paper now comes
+  from the theme, and a note with no saved colour reads as the new default,
+  contrast, so every note looks different after upgrading. The painter's STICKY
+  NOTE row picks another. (#970, #975)
+- **The Gamba design is gone.** A pane saved on it opens on the custom theme,
+  and `TD_GAMBA` and `TD_GAMBA_DEMO` no longer do anything. The colour set once
+  labelled "gamba" is now "gold" and still loads. (#992)
+- **The painter's COLOUR SETS shelf and colour wheel are gone, and AGENT THEME
+  is now called TERMINAL STATE.** Colours already set with either are kept but
+  can no longer be picked. TERMINAL STATE keeps your saved on or off. (#972,
+  #989, #992)
+- **Branch pins and the tab strip's scope chip are retired.** A click on a
+  project or group row in the left bar goes to that branch, and the strip always
+  shows the active tab's own group. A group can no longer be moved straight from
+  one project to another; unfile it first. State files that mention a pin or a
+  scope still load. (#782, #816)
+- **A fresh install opens flat.** New installs start in the Terminal Delight
+  palette with the CRT off; an existing install keeps its tube. Warp and the
+  roll sliders moved into a collapsed CRT section at the foot of GAUGES, and
+  **reset** no longer clears them. If you already ran flat, the coloured haze
+  under each pane header is gone. (#821, #856)
+- **A tall pane may show one row fewer.** That row was being drawn partly off
+  the bottom of the pane. (#747, #769)
+- **Programs in a pane see a different terminal.** The emulator core is now
+  rio-vt. Device attributes answer `?62;22c`, XTVERSION answers
+  `terminal-delight` and its version, the cell-size and colour queries are
+  answered, and the kitty keyboard query is not, because Terminal Delight sends
+  legacy key encodings. Programs that probe the terminal, such as kitten icat,
+  Neovim and Codex, may behave differently, mostly by no longer waiting on an
+  unanswered query. (#720, #756, #825)
+- **Pasted text loses its control characters.** Everything except newline,
+  carriage return and tab is removed from a paste, so a workflow that
+  deliberately pasted escape sequences into a program no longer works. (#950)
+- **MCP answers that quote other panes start with `UNTRUSTED TERMINAL DATA.`**
+  The quoted fields are named under `structuredContent.untrusted_terminal_data`,
+  and a client that reads the text content by position needs updating. Panes a
+  person marks off-limits also disappear from `list_panes`, `grep` and
+  `pane_events`. (#951, #956)
+- **Agents that speak the surface protocol get version 0.4.** A response opens
+  on `layman`; `tldr` and `eli5` still parse but are no longer separate
+  readings, and a `tldr` fills the new `brief`; `next` and `asks` are shown
+  under `steps`; `escalation` is new and optional. Nothing an older agent sends
+  is refused. (#534, #613, #620, #659)
+- **`scripts/install-agent-hooks.sh` edits Claude Code's
+  `~/.claude/settings.json`.** It adds five hooks the workbench uses to talk to
+  Claude Code directly and puts `td-agent-hooks` in `~/.local/bin`, keeping a
+  timestamped backup of the settings; `--uninstall` takes them out. Without the
+  hooks the workbench falls back to typing keys, as in 0.3.0. Agents launched
+  from the workbench also get a longer briefing, which now asks for decision
+  briefs; agents you start by hand are told nothing new. (#624, #851, #940)
+- **If you build from source, re-run `scripts/prepare-gpui.sh`.** The pinned
+  gpui checkout gains two patches, and the script is safe to run again. CI
+  builds with Rust 1.98.0. The old alacritty core is still available with
+  `--features core-alacritty`. (#825, #912, #958, #963)
+- **Three new optional runtime dependencies.** poppler (`pdfinfo`, `pdftoppm`)
+  draws PDFs, libmpv plays video and sound, and Chromium draws HTML pages. Each
+  is looked for the first time it is needed; without it, the file goes to your
+  desktop's own app and a chip says why. Packagers should list them as optional.
+  (#735, #859, #879, #931)
+- **Packagers should ship the updated `packaging/terminal-delight.desktop`.**
+  `terminal-delight default-terminal on` refuses until the installed entry
+  carries its new `X-TerminalArg` keys. Becoming the default terminal is opt-in.
+  (#955)
+- **New files are created only when needed.** `launch.toml`, `local-agent.toml`
+  and `documents.toml` under `~/.config/terminal-delight/`, every field
+  optional; conversation history, brief backups, Markdown notes and handover
+  lists under `$XDG_STATE_HOME/terminal-delight/`; and an HTML render cache of
+  up to 256 MiB under `$XDG_CACHE_HOME/terminal-delight/pages`. None replaces a
+  0.3.0 file. (#560, #655, #735, #741, #813, #907, #940)
 
 ### Added
 
+- **Alt+click on a file path opens it inside Terminal Delight.** Pictures (PNG,
+  JPEG, WebP, GIF, BMP, SVG), Markdown, HTML pages, PDFs, video and sound open
+  in a floating square over the pane, next to the line that printed them, and
+  Escape closes it. The square moves by its title strip, resizes from its edges
+  and corners, zooms with `− fit +` or Ctrl+wheel, and hands the file to the
+  desktop with `↗ desktop`. A long document shows how far through it you are,
+  with a column of blocks down its right edge and a percentage. (#721, #723,
+  #749, #761, #812, #884)
+- **Ctrl+Alt+click opens a document in a new pane beside the one you clicked.**
+  The new pane shows the document over a shell that keeps running underneath,
+  and Alt+K switches between them. On the document, 0 fits, 1 is actual size, +
+  and − zoom, the arrows pan or scroll and PageUp/PageDown page; other keys stop
+  there, so nothing is typed into the hidden shell. "Open beside" in the
+  right-click menu does the same. A document pane comes back after a restart at
+  the place you were reading. (#729, #730)
+- **Markdown files open rendered.** Headings, lists, tables, code and quotes are
+  drawn in the pane's own palette, local pictures are shown, links are followed,
+  and an edit to the file on disk is re-rendered with your place kept. Remote
+  pictures are never fetched. (#728)
+- **HTML pages open as the page itself.** Terminal Delight draws an `.html` file
+  with headless Chromium and scrolls it itself. A `#fragment` link scrolls the
+  page, a link to a file Terminal Delight can show opens there, and anything
+  else goes to the desktop. The page's network is off unless
+  `~/.config/terminal-delight/documents.toml` sets `network = "allowed"`, and
+  renders are cached on disk so a page opened again draws at once. (#735, #754,
+  #755)
+- **A PDF opens in the floating square.** Alt+click on a `.pdf` path shows it as
+  one column of pages, with the page in view counted at the bottom right;
+  Ctrl+Alt+click opens it in a pane beside. It scrolls, drags and zooms like the
+  other documents, and stays sharp because poppler redraws each page at the size
+  shown. A link to `paper.pdf#page=3` opens it on page 3, and a PDF rewritten
+  while open is read again on the page you were reading. (#879)
+- **Video plays over the floating square.** Alt+click on an `.mp4`, `.mov`,
+  `.webm`, `.mkv`, `.m4v`, `.ogv` or `.avi` path opens it in its own box with
+  sound; it plays once and closes at its end, and the square it covered comes
+  back as it was. A press on a video inside a page plays it the same way.
+  Ctrl+Alt+click plays it in a pane beside instead, looping, where Space, ← →
+  and M pause, skip and mute. (#859, #922, #924, #926)
+- **Sound plays over the floating square, drawn as its waveform.** Alt+click an
+  `.mp3`, `.m4a`, `.aac`, `.flac`, `.wav`, `.ogg`, `.oga`, `.opus` or `.weba`
+  path, or press an audio player on a page, and it plays once in a band in the
+  pane's accent colour, then closes. (#931)
 - **A name in an `ls` listing opens by Alt+click.** When a listing puts each
   file's path behind its name, as `ls --hyperlink` and `eza --hyperlink` do,
-  Alt+click opens exactly the file listed, in the floating square, or with
-  Ctrl+Alt in a pane beside, whichever folder was listed and wherever the shell
-  has gone since. A name with no hyperlink is tried in the pane's own folder and
-  opens only if that folder holds it. A hyperlink to a file that has gone, a
-  web address behind a label, or another machine's file is never swapped for a
-  guess from the name. Omarchy's `ls` alias writes no hyperlinks; adding
-  `--hyperlink=auto` to it makes every listing exact.
-- **A PDF opens in the floating square.** Alt+click on a `.pdf` path shows it
-  there as one column of pages, the widest fitted to the width, with the page
-  in view counted at the bottom right; Ctrl+Alt+click opens it in a pane beside.
-  It scrolls, drags, and zooms from 50% to 300% on the same controls a page and
-  a Markdown document use, panning sideways when zoomed past the width, and
-  stays sharp because poppler draws each page again at the size shown, a tile
-  of at most 2,048 pixels at a time and only where the view is looking. A PDF
-  artifact floats over the bench, `open_document` opens one beside an agent,
-  and a document's link to `paper.pdf#page=3` opens it on page 3. A PDF rewritten while it is
-  open is read again on the page you were reading. poppler runs as a child
-  process, found when the first PDF opens; without it, the file goes to the
-  desktop with a chip saying why.
-- **A video plays in the floating square.** Alt+click on an `.mp4`, `.mov`,
-  `.webm`, `.mkv`, `.m4v`, `.ogv` or `.avi` path plays it there, looping, with
-  sound; Ctrl+Alt+click plays it in a pane beside, where Space, ← → and M pause,
-  skip and mute. A bar along the bottom pauses, shows the time, seeks and mutes.
-  A video artifact floats over the bench, and `open_document` opens one beside
-  an agent. It plays through libmpv, found when the first video opens; without
-  mpv installed, the file goes to the desktop with a chip saying why. A video
-  pane put back by a restart comes back paused.
-- **A Markdown link's words open what they point at, on the bench.** Alt,
-  Ctrl+Alt and Ctrl on the words of `[the clip](clip.mp4)` in a bench card do
-  what they do on the terminal, and a held Alt outlines just those words.
+  Alt+click opens exactly the file listed, wherever the shell has gone since. A
+  name with no hyperlink opens only if the pane's own folder holds it. Omarchy's
+  `ls` alias writes no hyperlinks; adding `--hyperlink=auto` to it makes every
+  listing exact. (#948)
 - **Pictures a program draws appear in the pane.** Anything speaking the Kitty
   graphics protocol — `kitten icat`, chafa, an agent's chart — draws in the
   cells it asked for, scrolls with its text, and bends with the glass. They are
@@ -125,417 +162,504 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   temporary picture file is deleted only by kitty's own rule. A pipe named as
   shared memory is never opened. A character carries at most 32 combining
   marks. (#825)
+- **Decision briefs take notes and CONCUR stamps inside Terminal Delight, and
+  save them into their own file.** A brief in the floating square or a document
+  pane shows its note buttons, counts and stamps, and a note box that wraps to
+  its width. Edits wait as "N unsaved" until **save into file**, which changes
+  only the notes in the file, keeps eight backups and reads the result back
+  before showing ✓. Closing a square with unsaved notes warns once first, and
+  **copy map** puts the notes map on the clipboard. (#740, #741, #744, #869)
+- **Markdown files take notes too.** Each heading, paragraph, code block, table,
+  quote and list item takes a note from the 💬 beside it, and holding Alt
+  outlines everything that does. The notes are kept by Terminal Delight under
+  `~/.local/state/terminal-delight/notes/` and never written into the `.md`, and
+  the map names each note by the line its block starts on. (#813, #814, #818)
+- **A note box takes a paste, pictures included.** Ctrl+V, Ctrl+Shift+V and
+  Shift+Insert paste text at the caret and copied files as their paths. A pasted
+  picture is attached to the element the note is on and listed under its notes.
+  (#894, #895)
+- **A document's notes go to the agent beside it with one press.** **↪ send to
+  agent**, or Ctrl+Shift+Enter over the square, pastes the notes map into that
+  agent's prompt without pressing Enter, so you read it there and send it
+  yourself; with unsaved notes it saves them into the file first. On the
+  workbench it goes into the composer as a draft. (#777, #811, #851)
+- **Agents can read your notes and open documents for you.** Two new MCP tools:
+  `document_notes` returns the notes on the document beside the agent, unsaved
+  ones and pasted pictures included, and writes nothing; `open_document` floats
+  a Markdown file, page, picture, PDF, video or sound over the calling agent's
+  own pane, or opens it in a pane beside with `"placement": "beside"`. On the
+  attention rail, **⇲ beside** (or `b`) opens a declared deliverable beside its
+  agent. (#773, #780, #896, #917)
+- **Decision briefs ship with Terminal Delight.** The decision-brief kit is
+  built into the app and written to
+  `~/.local/share/terminal-delight/skills/decision-brief/` whenever the
+  workbench launches an agent, and the launch briefing asks the agent to answer
+  decision-shaped work with a brief, so the brief, its notes and the reply all
+  stay in the window. (#851)
+- **Alt+L finds a project, group, tab, pane or sticky note by name.** One list
+  holds every left-bar entry, every pane by its header title and every sticky
+  note by its words, each with where it sits written underneath. Type to narrow
+  it, Enter goes there, Escape or a second Alt+L closes it. (#965)
+- **A GIT signal warns when panes are changing the same files.** One compact
+  signal covers every project in the window. Alt+G opens an inspector with a
+  card per project, the working copies that share files, and the checkouts,
+  branches and panes behind each, every finding with a short sentence saying why
+  it is shown. Sharing you intend can be marked as expected for a while. Agents
+  can read the same findings through four read-only MCP tools. (#994, #996,
+  #999)
+- **A pane can be marked off-limits to agents.** Right-click a pane and choose
+  **Off-limits to agents**: it wears `OFF-LIMITS` in its header, disappears from
+  what agents can list, search and read over MCP, and refuses changes and notes
+  from other panes; the agent inside it can still work on its own pane. Only the
+  right-click menu sets or lifts the mark. An agent refused access can call
+  `request_access`, and the request waits on the attention rail for a person's
+  **Yes** or **No**. (#956, #957)
+- **Terminal Delight can be Omarchy's default terminal, and can stop being it.**
+  It now accepts the flags `xdg-terminal-exec` sends (`--app-id=`, `--title=`,
+  `--working-directory=`, `-e`), so once it is the default, Super+Return and
+  Omarchy's TUI launchers open in it. `terminal-delight default-terminal on`
+  puts it first in `~/.config/xdg-terminals.list`, `off` restores the list
+  exactly as it was, and `status` says which terminal is the default. (#955)
+- **Ctrl+Up and Ctrl+Down jump through your own messages in a Claude Code or
+  Codex pane.** Each press goes to the previous or next thing you typed, with
+  the agent's reply in view, read from the conversation rather than by
+  scrolling, and nothing is sent to the agent. Escape returns to the live chat.
+  Other programs still receive Ctrl+Up/Down, and Alt+arrows still move between
+  panes. (#983, #984, #998)
+- **Every agent pane's header names the newest thing its agent handed over.** A
+  chip after the TERMINAL/WORKBENCH switch opens the latest deliverable in the
+  floating square, and ▾ or Ctrl+Shift+M lists everything that agent has handed
+  over, newest first. A handover is recorded whether the agent declared it over
+  MCP, showed it on its workbench or printed a `Deliverable:` line, and the list
+  survives a restart. (#907, #914)
+- **Alt+A, or the ⌁ AGENT button in a terminal pane's header, starts an agent.**
+  It opens the same project, program, model and effort picker as the empty
+  workbench and launches the agent in that pane. (#961)
+- **Codex, and a local program you configure, launch from the workbench with the
+  same briefing Claude Code gets.** A local agent is declared in
+  `~/.config/terminal-delight/local-agent.toml` as a command line; the pane goes
+  back to being a shell when it exits, and a broken config shows its error in
+  the launcher. (#940)
+- **A new agent starts as whatever you told it to.** LAUNCH AGENT CONFIG, a
+  folded block at the top of the usage card, sets the program, model and effort
+  the launcher opens on. A row nobody has set shows the value in force, tagged
+  `unset`; pressing a chosen value again clears it. Settings are kept in
+  `~/.config/terminal-delight/launch.toml`. (#560, #582)
+- **The workbench strip carries the agent's controls.** Above the card it reads,
+  for example, `CLAUDE ▾ · HIGH ▾ · END SESSION`: model and effort dials, and
+  END SESSION while an agent runs or LAUNCH AGENT once it has gone. The model
+  dial names the version (`OPUS 5.5`) and stays readable mid-turn, each dial's
+  list hangs under it with the current value lit, and changing either confirms
+  the agent's own prompt and types your half-written draft back rather than
+  sending it. A card taller than the pane scrolls. (#543, #553, #556, #560,
+  #610, #711, #713, #715)
+- **PAUSE TURN and RESUME TURN on the workbench strip.** While an agent works,
+  the strip offers PAUSE TURN; once paused, RESUME TURN, and the dials can be
+  changed in between. (#654)
+- **The turn in progress gets its own card.** As soon as you send a message, the
+  overview shows a THIS TURN card with what the agent says it is doing, the tool
+  it is in, its clock and its tokens, and the reply replaces it when it lands.
+  Before, the previous answer sat under your new question for the whole turn.
+  (#672, #764, #870)
+- **The overview shows what you said above the reply to it.** Your last message
+  sits over the agent's answer in your own colour, held outside the card's
+  scroll, and stays there after a long turn has scrolled it out of the
+  terminal's history. (#560, #610)
+- **The workbench keeps each conversation's history, so it survives restarts.**
+  What you said, every card, each round of questions with its answer, and where
+  the conversation was compacted or resumed are appended to
+  `$XDG_STATE_HOME/terminal-delight/conversations/<id>.ws` as they happen. A
+  pane that picks the conversation back up shows what it already had, and
+  `terminal-delight conversation <id>` prints it without a window. (#655, #668)
+- **A COMMENTS tab on the workbench holds your own notes.** Notes are written in
+  your own colour, newest first, and kept across restarts; Alt+M or the `+ write
+  a note` row opens the box. Nothing written there reaches the agent; **copy**
+  is how the words leave. (#566, #595)
+- **Alt+1 to Alt+4 jump to a workbench tab.** Tab still cycles them. (#574)
+- **Ctrl+wheel sizes exactly what you are pointing at.** Over the menus, tabs or
+  left bar it sizes the window's chrome as before; over a pane's header, that
+  header; over the terminal, that pane's text; over the workbench, the
+  workbench's own text, which has its own `bench_size` dial on the DISPLAY tray
+  and in `set_pane_config`. Until you turn it, the workbench follows the
+  terminal's size, so nothing changes on upgrade. (#549, #597)
+- **Ctrl+= and Ctrl+- size the focused pane, and Ctrl+Shift+= and Ctrl+Shift+-
+  size the window's chrome.** One press is one notch of Ctrl+wheel on whatever
+  the pane is showing. (#976)
+- **Text on the workbench can be selected with the mouse and copied.** Drag
+  across a card or the rail beside it; letting go fills the primary selection,
+  and Ctrl+Shift+C or the right-click tray copies to the clipboard. (#621)
+- **The workbench composer selects like a text box.** Ctrl+A selects the whole
+  draft, Shift with any motion grows a selection, and typing, Backspace or
+  Delete replace what is selected. Ctrl+C and Ctrl+X act on the selection, or on
+  the whole draft when nothing is selected. (#543, #639)
+- **Drag a file onto the workbench and its path lands at the caret.** The
+  composer lights up while the file is over it, several files arrive as several
+  words, and a name with a space in it arrives quoted. A drop on the terminal
+  pastes the path, as before. (#561)
+- **Claude Code's folder-trust prompt can be answered from the workbench.** It
+  used to show "Waiting on you" with nothing to press; it now arrives as a
+  question card. (#714)
+- **Agents can say how urgently they need you.** A response can carry
+  `escalation` of `blocking`, `wanted` or `none`, and a blocking one is framed
+  in the theme's red above the card's title. (#534)
+- **A tab can be carried through the left bar from the keyboard, or dragged onto
+  it.** Ctrl+Shift+Alt+Up/Down moves the active tab to the previous or next
+  place in the tree, and Ctrl+Shift+Alt+Left/Right widens or narrows the step
+  from tab to group to project. Dragging a running pane onto the tree files it
+  there; a hover that would put a fifth pane in a tab shows red. (#816, #822,
+  #832, #857)
+- **Backspace and Delete erase a selection on the line you are typing.** Select
+  part of the current line with Ctrl+Shift+Left/Right or the mouse, and
+  Backspace or Delete removes all of it; Ctrl+X cuts it. Selections in
+  scrollback or in full-screen programs behave as before. (#979)
+- **Programs that ask the terminal for its colours get an answer.** The
+  foreground, background, cursor and palette queries (`OSC 10`, `11`, `12` and
+  `4`) are answered with the colours the pane draws, so Codex no longer waits at
+  start and Neovim no longer guesses a dark background on a light theme. (#756)
+- **INHERIT keeps Terminal Delight in step with Omarchy's current theme.** The
+  switch beside INVERT links the window, and every pane following it, to
+  Omarchy's selected colours and repaints them when the desktop theme changes.
+  Turning it off restores the colours you had set by hand. (#988)
+- **GAUGES gains a phosphor gauge and a glare slider.** Phosphor scales the glow
+  of every lit border from none to four times the default; glare, in the CRT
+  section, sets the reflection in a pane's top-left corner and follows the theme
+  until you move it. (#883, #943)
+- **The agent wall has an IMAGES switch.** It sits in a new CARDS group beside
+  the card-size slider and takes the pictures out of every card, so more cards
+  fit on screen. (#858)
+- **The usage card has a Grok tab.** An installation that is not signed in says
+  so rather than showing zero usage. (#934)
+- **`terminal-delight bindings` names the conversation a session belongs to.**
+  Each row carries the conversation's root id, how many restarts deep the
+  session is and what joined them. It reports `unrecorded` where the agent hooks
+  are not installed. (#642)
+- **Documentation for the whole product.** The documentation site covers first
+  launch to the MCP server, config files and keys, with a key sheet read from
+  the app's own F1 help, a recorded tour on its homepage, and a page on why the
+  terminal core moved to rio-vt. The info kiosk is rebuilt in the terminal's own
+  look and points readers to the docs. (#790, #794, #805, #815, #823, #831,
+  #835, #841, #848, #854)
 
-- **A response carries a `brief` — the bare minimum, in two sentences under
-  fifty words.** The tl;dr and the ELI5 came back as ONE register, which is
-  exactly what was wrong with them as two: the brevity of the first and the
-  plainness of the second in a single answer to *what is the bare minimum I
-  need to know about this*. Serious, direct, simple; an explanation made small,
-  never a metaphor. It is drawn **last** in the reading group and moves no
-  default — the chip row reads `Plain brief · Technical brief · Brief`, and a
-  card still opens on its plain reply, because somebody who has opened a card
-  has already decided to read and the fifty-word version is the rung they drop
-  to. Optional, and every reply sent without one draws
-  precisely as it did before. Two migrations came with it: a legacy `tldr`
-  beside a real `layman` used to be thrown away and now fills the brief, which
-  is the length it always was, and `brief` — until now an undocumented alias
-  for the plain reply — still parses on its own, because the resolution ladder
-  falls back to it rather than refusing a payload that plainly has text in it.
-  No reading is ever a second copy of another; a brief equal to the plain reply
-  is dropped at the parser. (#XXX)
+### Changed
+
+- **The terminal emulator core is rio-vt, the core inside the Rio terminal.**
+  Measured before choosing it: an 8 MB text stream parses in 82 ms against
+  alacritty_terminal's 140 ms, and a pane holding 10,000 lines of history takes
+  11.0 MB against 28.5 MB. The old core is still built with `--features
+  core-alacritty` as a fallback, and a window still attaches to a session host
+  built before the swap. (#825, #843)
+- **Terminal Delight says what it is when a program asks.** Device attributes
+  are `?62;22c`, long enough for `kitten icat`'s detector, which used to wait
+  ten seconds in every pane and then give up; XTVERSION is `terminal-delight`
+  and its version; and the cell size (`CSI 16 t`) is answered in every pane, in
+  device pixels, at the pane's current size. The kitty keyboard query goes
+  unanswered, because Terminal Delight sends legacy key encodings. `--version`
+  names the core. (#720, #825)
+- **The workbench talks to Claude Code through hooks instead of reading its
+  screen and typing into it.** A question the agent asks reaches the workbench
+  whole, every option included, and pressing an answer replies to it directly.
+  The composer is a real text box with line breaks and undo, Up on an empty
+  draft recalls the last message, and SEND delivers the draft as one paste.
+  `scripts/install-agent-hooks.sh` installs the hooks; without them the
+  workbench types keys as before. (#624, #635)
+- **A fresh install opens flat, and the CRT is a switch at the foot of GAUGES.**
+  New installs start in the Terminal Delight palette, which now ships inside the
+  app, with no tube effects. The CRT is a collapsed section at the bottom of
+  GAUGES holding warp and the roll sliders, and switching it on gives the usual
+  tube. An existing install keeps its tube, and **reset** now clears only the
+  main gauges. (#821)
+- **The painter is three areas: Theme, Style and Rules.** Theme holds the theme
+  tiles and the sticky-note row; Style holds design, skin, program colour and
+  syntax; Rules holds INHERIT, INVERT, TERMINAL STATE, anchor and pass-down.
+  Hovering a choice explains it. (#992)
+- **The colour pickers offer exactly the themes Omarchy's own picker shows.**
+  The paint overlay's shelves are FAVOURITES and OMARCHY THEMES, and the theme
+  tray shows one tile per desktop theme in its own colours. Hiding, installing,
+  removing or editing an Omarchy theme shows up in both within a second, and
+  themes that ship only an `alacritty.toml` now load. Without Omarchy, the stock
+  Omarchy themes are offered from a copy Terminal Delight carries. (#972)
+- **Sticky notes take the theme's own colours: contrast, accent or mute.** The
+  STICKY NOTE row in the painter picks the paper, and the ink stays readable at
+  4.5:1 or better on every theme. (#970, #975)
+- **TERMINAL STATE (formerly AGENT THEME) colours a pane by what it is
+  running.** SSH, Claude Code and Codex keep their colours, and local agents,
+  other agent programs, editors, system monitors and consoles get their own.
+  Shells, unrecognised programs and panes you painted by hand keep theirs.
+  (#989)
+- **Return finishes painting, and closing the painter closes it in every window
+  on the workspace.** With the paint overlay up, Return folds it and no longer
+  reaches the pane, and Tab, Space, Backspace and Delete are ignored. Folding
+  the overlay in one window folds it in every Terminal Delight window on the
+  workspace. (#973)
+- **An idle window uses less memory, and background panes cost less CPU.** On
+  the measured laptop an idle one-pane window's GPU memory fell from 182 to 86
+  MiB and it maps 13 font files instead of 263. Panes in hidden tabs redraw at
+  most every five seconds, unchanged panes are not redrawn when a neighbour
+  changes, tab badges animate a few times a second, and a visible pane's
+  streaming output redraws at most about thirty times a second while your own
+  typing still echoes at once. (#958, #963, #967, #971, #974, #980, #982, #986,
+  #993, #1000, #1006)
+- **The FOCUS reader (Alt+R) has a size of its own.** It lays text out at the
+  pane's own letter size across the whole glass, so a narrow pane opens with as
+  many columns as the glass holds instead of its own few columns blown up. The
+  slider and Ctrl+wheel move the letters from 0.5× to 2.5×. (#893)
+- **A shell's lines reach the reader as the program printed them.** Rows are
+  joined exactly where the terminal soft-wrapped them, what a program broke
+  itself (like `ls`'s columns) stays as printed, and blank rows under the last
+  line no longer push a short screen's content out of view. (#893)
+- **Alt+R on an agent's pane reads its conversation.** When the pane's Claude
+  Code or Codex session can be identified for certain, the reader shows the
+  conversation from its transcript instead of the narrow screen: what you typed
+  and the replies whole, with Markdown drawn, one row per tool call that a click
+  opens, and a divider where the conversation was compacted. The agent's own
+  input box stays live at the reader's foot. The header says what is being read:
+  TRANSCRIPT, CODEX, SCREEN, SCROLLBACK or ALTERNATE SCREEN. (#900, #902)
+- **Alt+R on a document reads the document.** A document pane, or a square
+  floating over a pane, lends the reader its own view, where it scrolls, zooms
+  and takes notes as on its pane; the reader used to show the shell hidden
+  behind it. (#898)
+- **Ctrl+Alt+R renames the highlighted left-bar row instead of splitting the
+  pane.** Ctrl+Alt+↑/↓ walks to a project, group or tab and Ctrl+Alt+R opens its
+  name box; with the tree shut it renames the active tab. Alt+V still makes the
+  split. (#662)
+- **A new project, group or tab you ask for opens on its name box.** The left
+  bar, Ctrl+Shift+T, the strip's `+` and "New tab here" put the keyboard in the
+  new row's name; Enter keeps it and Escape drops into the terminal. A tab that
+  arrives as a side effect does not take the keyboard. (#662, #667)
+- **Shift+click on a file path reveals it in the file manager.** It used to open
+  the file; Ctrl+click still opens it, and Shift+click on a web link still opens
+  the link. The right-click menu offers Open here, Open with desktop, Reveal in
+  folder and Copy link, each labelled with its click, and the Alt chip says what
+  Alt+click will do on the line under the pointer. (#723)
+- **A click on a project or group row in the left bar goes to that branch.** It
+  opens the branch's first tab, as its chip on the shut strip does, and the tab
+  strip always shows the active tab's own group. (#545, #546, #596, #782)
+- **A group filed under a project stays in that project.** Moving it straight to
+  another project is refused; unfile it first, then file it where it belongs.
+  (#816)
+- **The window's corners are rearranged.** The agent counter, which opens the
+  agent wall, is at the top right. The bottom right holds what the window
+  contains (`6 tabs · 6 panes`), the menu glyphs, the menu-bar scale and the
+  split buttons, which are drawn as boxes filled on the half the new pane opens
+  into, and the theme and display trays open over the buttons that raise them.
+  With the tree shut, the tab strip reads project, then its groups, then your
+  group's tabs. (#748, #767)
+- **A new install's panes wear Terminal Delight's own mark.** With no
+  `dir-logos.toml` at all, the first start writes one mapping `/` to the app's
+  logo, where panes used to show an empty logo slot. An existing file, even an
+  empty one, is never touched. (#887)
+- **The workbench is a surface you stay on.** Escape no longer drops you to the
+  terminal once there is nothing left to close, and choosing an option on a card
+  no longer flips the pane to its terminal. Alt+K and the TERM chip go back.
+  (#532, #559)
+- **The workbench opens documents inside Terminal Delight.** An HTML or Markdown
+  artifact on the workbench floats over it instead of going to the desktop, and
+  Alt, Ctrl+Alt and Ctrl on an artifact or on any link in a card, including a
+  Markdown link's words, do what they do on the terminal. A deliverable clicked
+  on the attention rail opens in the floating square instead of the browser.
+  (#781, #787, #795, #859)
+- **A response card is a row of tabs over one body.** Instead of a stack of
+  folding sections, a card shows `reading · evidence · steps` across the top,
+  and a reply that is only a short answer draws no tabs. An agent still sends
+  `next` and `asks`; they are shown under `steps`. (#554, #613)
+- **A reply card opens on its plain answer, and carries a `brief` as its
+  shortest reading.** The plain-language reply is what a card and the overview
+  open on, with the technical reply one chip away. A `brief`, at most two
+  sentences under fifty words, is drawn last (`Plain brief · Technical brief ·
+  Brief`). `tldr` and `eli5` are no longer separate readings: a `tldr` fills the
+  brief and an `eli5` is kept under Other. (#620, #659)
+- **A response card has at most one loud thing on it.** Only a declared
+  escalation is drawn in the attention colour, word and item counts beside each
+  reading are gone, and the empty workbench is a single launch card. (#534)
+- **A card's weights read as one sentence.** The strip that read `effort L ·
+  complexity moderate · depth subsystem · terminal-del…` now says, for example,
+  "A big, fiddly job in terminal-delight — workbench, where several components
+  depend on it. Measured." It wraps instead of cutting the name off. The routing
+  lines under each card are shown only with `TD_VERB_PREVIEW=1`. (#613, #657)
+- **A round of questions is one card with SUBMIT ANSWERS.** A three-question
+  round puts one row on the rail instead of three. Its tabs name each question
+  and tick the answered ones, answering one moves to the next, and SUBMIT
+  ANSWERS sends the round however much of it is answered; a question left blank
+  goes back as skipped. Questions use the theme's accent instead of bright red,
+  and SUBMIT turns green once every question is answered. (#634, #638, #691,
+  #764)
+- **When an agent ends, its workbench goes with it.** The next agent started in
+  that pane opens on an empty workbench instead of inheriting the last one's
+  cards and questions. (#627)
+- **Return starts the agent on a workbench that is offering one.** It used to do
+  nothing there; it opens the launcher unless a card is open. (#560)
+- **Every pressable button on the workbench lights under the pointer**, over
+  exactly the area that takes the click, and labels that cannot be pressed stay
+  unlit. (#669)
+- **Two numbers that said nothing are gone from the pane header.** The header no
+  longer shows its grid size (`194×50`), and the bare digit beside the BENCH
+  toggle is gone; the badge above it already says `2 answers waiting` in words.
+  (#573, #591)
+- **Small print on workbench cards is readable.** Subtitles, cost lines, section
+  tags and provenance lines were drawn at 1.22:1 to 1.62:1 against their
+  background; they now clear 4.5:1 on every bundled palette. (#555)
+- **Tabs and the TERM ⇄ BENCH switch are easier to read.** A lit tab's label,
+  which measured 1.38:1 against its own background, stays in the text colour
+  with the highlight on the tab's edge; TERM ⇄ BENCH is one switch instead of
+  two chips; panels keep their contents off their own border; and a card's
+  primary button no longer glows over its word. (#555)
 
 ### Fixed
 
 - **A paste while a sticky note or a pane name is being written goes into it,
-  not into the shell under it.** Ctrl+Shift+V was still the pane's paste, so it
-  typed the clipboard into whatever ran behind the paper or the title, and a
-  newline in it was a return; Ctrl+V and Shift+Insert reached the box and
-  vanished. All three now paste into the sticky note or the name, the way a
-  note in the square already did, and as one line: a line break or tab becomes
-  a space, because the paper draws only its first line and a name has one.
-- **The bench strip stops saying "Reading your answer" once the agent has
-  left.** The eight second reading window was not cleared when an agent quit
-  back to the shell, so the strip kept the words, and an agent started in that
-  pane inside the window was born on a rung that outranks a real question.
-- **An MCP pid too big for 32 bits is refused instead of landing on another
-  pane.** The pid was cut to its low 32 bits, so `4294967396` addressed pid
-  100: `pane_events`, `get_pane_config`, `set_pane_config`, `leave_note`,
-  `declare_deliverable` and `present_surface` could read or change a pane the
-  caller never named. They now answer "pid is out of range".
-- **A program cannot make a pane hold an unfinished escape forever.** The text
-  guard capped a half-arrived control sequence at 64 bytes, but ESC followed by
-  intermediate bytes (spaces, say) was held for as long as it stayed open, and
-  every read copied and rescanned the whole pile with the terminal locked. Those
-  bytes are never rewritten, so they now pass through as they arrive.
-- **Escape reaches a pane again after it closes the reader there.** Closing
-  the FOCUS reader with Escape never told the pane it had been reading, so from
-  then on Escape and the page keys in that pane went to a reader that was no
-  longer open, and never reached its terminal: Esc could not interrupt an agent
-  there until the reader was reopened and closed with a click. Wrong since
-  2026-06-24.
-- **A Markdown document keeps its place through two quick re-layouts.** A
-  second zoom, or the reader opened and closed at once, before the first had
-  settled used to land on a different block.
+  not into the shell under it.** Ctrl+Shift+V typed the clipboard into whatever
+  ran behind, a newline included, and Ctrl+V and Shift+Insert vanished. All
+  three now paste into the note or name, as one line. (#937) — thanks @nixfred
+- **A file reference Codex wraps across rows opens whole.** Alt+click or
+  Ctrl+click on a path Codex broke over indented rows opened nothing or half a
+  path. A relative reference such as `(reports/brief.html)` also opens by
+  Alt+click, from the pane's folder. (#917, #939)
 - **A link Claude Code breaks across two rows opens whole from either half.**
-  Claude cuts a long path at the pane's width and starts the second half at its
-  two-column margin. The click only looked for the rest of a link in column 0,
-  so Alt+click and Ctrl+click on a wrapped `file://` path opened nothing, or the
-  wrong half. The rest of the link is now found at the margin. When a path could
-  have been broken at the edge or could have ended there with the next word
-  below it, the disk decides: the reading that names an existing file wins. The
-  second half is also painted in the link colour even when it carries no slash;
-  before, `ascade-and-workbench-turn-fix.md` stayed prose while
-  `es/HANDOFF-….md` lit up. (#XXX)
-- **The Alt copy chip copies a command Claude Code wrapped as one line.** The
-  copy only rejoined rows that started in column 0, and every row of a Claude
-  reply starts two columns in. So Alt+click on a wrapped command copied its
-  first row, cut off mid-command and with the margin in front of it. A margin
-  two rows share is now read as a margin. The command copies whole from either
-  row with no leading spaces, and a code block indented under a paragraph still
-  stays apart. (#881)
+  The second half starts at Claude's two-column margin, where the click did not
+  look, so a wrapped `file://` path opened nothing or the wrong half. Where the
+  break is ambiguous, the reading that names an existing file wins, and the
+  second half is painted as a link too. (#882)
+- **The Alt copy chip copies a command Claude Code wrapped as one line, and
+  works when Claude Code runs fullscreen.** It copied only the first row, with
+  the margin in front; it now copies the whole command from either row. In
+  Claude Code's fullscreen mode the chip had been switched off altogether.
+  Full-screen programs such as vim and htop still get no chip. (#882, #927)
+- **A restart reopens the session that was on that workspace.** A save recorded
+  whichever workspace had keyboard focus rather than the window's own, so two
+  windows could claim one workspace and a restart could reopen the wrong
+  session. (#981)
+- **Live panes no longer wear a false DUPLICATE TAB note.** Two Codex panes in
+  one folder, or any two bare `claude` panes, were taken for duplicates on every
+  save, and the second was told it was a fresh shell while its agent was still
+  running. The note is now written only on a pane that really comes back empty,
+  and the false ones already saved are taken off when the pane reattaches.
+  (#1004)
+- **Window and pane shortcuts work while the workbench is showing.** Alt+S,
+  Ctrl+Shift+B, Ctrl+W and most other chords did nothing on the workbench, and
+  the rename box took focus but no letters. A key the workbench has no use for
+  now reaches the window, the pane or the terminal. (#609)
+- **Escape reaches a pane again after it closes the reader there.** After
+  closing the FOCUS reader with Escape, Escape and the page keys in that pane
+  went to the closed reader, so Esc could not interrupt an agent until the
+  reader was reopened. (#898)
+- **With two agents under one shell, the pane follows the one in the
+  foreground.** Suspending an agent with Ctrl+Z and starting another left the
+  workbench, the agent wall and the tool glyph reading the suspended one. (#581)
+- **Each pane reads its own conversation.** Several agents in one folder could
+  all be shown the newest conversation there, so each workbench showed another
+  agent's work as its own. A pane that cannot be matched to its conversation for
+  certain now shows nothing rather than a neighbour's. A hand-written
+  session-ledger entry with spaces in its JSON is read too. (#576)
+- **A surface an agent presents over MCP survives a restart.** It reached the
+  window but not the disk, so everything sent through MCP vanished with the
+  window. (#578)
+- **Re-sending a surface can no longer lose it.** Two writes of the same surface
+  at once could collide, and one vanished under an error that blamed a missing
+  directory. (#547)
+- **An agent keeps its Terminal Delight tools after a window it knew has
+  closed.** A leftover socket file was taken as proof the window was alive, so
+  an agent could lose every Terminal Delight MCP tool for the rest of its
+  session. (#664)
+- **Background notifications are no longer shown as messages you typed.** Claude
+  Code reports a finished background task or a message from another session as
+  if it were a prompt; those turns are now kept apart from what you said. (#656)
+- **A round of questions ends once.** A refused round stayed open with pressable
+  cards, and after a restart could come back live and send answers to a question
+  already closed. A round the agent has moved past now closes, the tab badge no
+  longer blinks with every keystroke, and an answer pressed on the workbench
+  reaches the agent instead of stalling. (#660, #666, #700, #771)
+- **A question opens at the top of the workbench and stays there.** It used to
+  appear against the composer and jump up when you pressed an option. (#673)
+- **The workbench strip stops saying "Reading your answer" after the agent has
+  left.** An agent started in the pane soon after could have its first question
+  hidden behind it. (#936) — thanks @nixfred
+- **A program asking a pane its size in pixels is told the current size.** A
+  pane on a session host answered with the size it was created at, a
+  window-owned pane did not answer, and the cell size was rounded down on scaled
+  monitors. (#720)
+- **Clicks and the Alt chip land on the row you see, all the way down the
+  pane.** At fractional text sizes on a scaled monitor the click target drifted
+  upward the further down the pane it was, by most of a row at row 40. (#747,
+  #769)
+- **Panels and hover cards over a curved pane are drawn flat.** With CRT warp on
+  they bent with the terminal and could be cut off down one side; hover cards
+  now wear the window's menu style. (#682, #699)
+- **Highlights go out when the pointer leaves a pane.** Workbench chips, the
+  sticky note's peel corner and the floating square's buttons stayed lit after
+  the pointer moved away. (#753)
+- **A flat screen no longer shows a coloured haze under every pane header.** It
+  is drawn only with the CRT on. (#856)
+- **A drop that would put a fifth pane in a tab leaves the layout alone.** A
+  pane dropped on a full tab through the tab strip joined it anyway, and a
+  refused drop on the left bar pulled the pane out into a tab of its own. (#816,
+  #819)
+- **A tab can be dragged out of its group when every tab is filed.** The UNFILED
+  line, the only drop target for "no group", was drawn only once some tab was
+  already loose. (#558)
+- **The savings tab of the `</>` card no longer opens empty** when the card is
+  opened from `Σ usage`, Ctrl+Shift+A or a left-bar allowance rail. (#575)
+- **A workbench artifact named by `open`, `path`, `file`, `url` or `link` is
+  shown as an artifact**, not as raw JSON, and table columns are sized to their
+  contents and wrap instead of being cut at forty characters. (#610)
+- **Pasting a filename with a space in it no longer breaks it in two.** A copied
+  `Screenshot 2026-09-18.png` arrived as two words. (#561)
+- **The F1 help card scrolls to its last row.** On a short or narrow window the
+  last rows, the demo button and the footer could not be reached. (#947)
+- **Piping a command-line verb into `head` no longer prints a panic.**
+  `terminal-delight skin --list | head -5` printed a Rust backtrace after its
+  output. (#608)
+- **The trash bay at the foot of the left bar has a frame and one seam**,
+  instead of two lines down its middle and no frame. (#704)
+- **Two chips in the workbench composer follow a square skin.** The paste chip
+  and the `LIVE → AGENT` chip stayed round when every other corner squared.
+  (#566)
 
-- **Output reaches the terminal core faster.** The guards the core swap put in
-  front of rio-vt's parser read every byte one at a time and took about a third
-  of its throughput: coloured text ran at 88 MiB/s through them, against 138
-  for the core alone. They now search with memchr and read a character whole.
-  The same text runs at 114 MiB/s, and pictures at 498 MiB/s where they ran at
-  311. `what_the_guards_cost` in `app/src/vt/rio.rs` measures it. (#843)
-- **Standing on the comments board no longer swallows a keystroke meant for the
-  agent.** For one build, typing while the board was on screen opened a note
-  under the first character — the reasoning being that the bench already works
-  that way and the board should too. It is the wrong extension of that idea:
-  "just type" is valuable because there is ONE place a character goes and you
-  never have to aim at it, and letting the shelf you happen to be READING choose
-  the destination turns reading into a mode nobody entered on purpose. Typing
-  goes to the agent on every shelf. A note is opened deliberately — `alt+m`, or
-  the new row — and catches keys only once it is open. (#XXX)
+### Removed
 
-### Added
+- **The Gamba design and its slot-machine overlay.** A pane saved on it opens on
+  the custom theme; pick another design in the painter's Style area. Bells and
+  attention badges are unaffected. (#992)
+- **The painter's COLOUR SETS shelf and colour wheel.** The Omarchy themes
+  replace the colour sets; colours already chosen with either are still applied.
+  (#972, #992)
+- **Branch pins and the tab strip's scope chip.** See the left-bar entry under
+  Changed. (#748, #782)
+- **The agent wall's 🎨 theme toggle.** The wall draws in its panes' own colours;
+  `TD_WALL_THEME=1` still starts it themed. (#652)
+- **The agent wall header's six unlabelled glyph counters.** They set the same
+  filter as the WORKING / DONE / IDLE chips below them and could contradict
+  them. (#560)
 
-- **A `+ write a note` row sits at the head of the comments board.** With
-  type-to-open gone, `alt+m` was the only door, and a feature reachable by one
-  undiscoverable chord is one most people never find. The row is a dashed
-  outline rather than a filled box, because every real row on the rail is filled
-  and a filled affordance at the top of a newest-first list reads as the newest
-  note. It carries `ALT+M` on its right, so the mouse path teaches the keyboard
-  path instead of competing with it, and it is drawn whether or not the board
-  has anything on it. (#XXX)
+### Security
 
-### Added
-
-- **`alt+1` … `alt+4` land on a workbench tab without reaching for the mouse.**
-  `tab` already cycled the shelves and still does; this is for going straight to
-  one. The keys are the digits rather than four hand-picked letters because the
-  obvious letters were taken — `alt+v` splits the focused pane and `alt+b` is
-  readline's word-back, which reaches the agent's own prompt from the bench
-  composer — and because digits extend on their own the day a fifth shelf
-  appears. The mapping is `Shelf::ALL`'s own order, so there is no second list to
-  keep in step with the tab strip, and a test fails if any shelf's chord is ever
-  one the window has already claimed. `alt+m` still opens the note box, which
-  moves to the comments board on its way. (#574)
-
-- **A pane's rail has a fourth tab, COMMENTS, and the agent has no wire to it.**
-  The bench held an agent's replies, its artifacts and what it was asking, and
-  nowhere to put your own thinking — the only answer was the sticky note on the
-  glass, which is one slot in handwriting built to be read across a wall of
-  panes rather than written into. The board is the quiet plural version: notes
-  in the palette's `human` colour, newest first, persisted through the same file
-  transport every surface uses so they survive a restart. `alt+m` opens the box,
-  and on the comments shelf simply typing opens it, the way typing anywhere else
-  on the bench already starts talking. Nothing you write there reaches the agent
-  — no bytes down the pseudoterminal, no line in the action journal, and
-  deliberately no verb that hands a note over. `copy` is the whole escape hatch,
-  so the words move when you decide they should. A comment is a ninth surface
-  kind rather than a store of its own, which is why it arrived with persistence,
-  restore, the history cap and the unseen mark already working. (#566)
-
-- **ctrl+wheel sizes exactly what you are pointing at — four dials, one chord.**
-  It used to size the cabinet from anywhere in the window, which meant the
-  things a person most wants bigger — the terminal they are reading, the
-  workbench they are reading — were the two it could not touch. There are now
-  four separate answers and the pointer picks between them: over the **outer
-  chrome** (menu bar, tabs, left bar, the gaps) it scrubs the cabinet exactly as
-  before; over a **pane's own header** it scrubs that one pane's header chrome;
-  over the **terminal grid** it scrubs that pane's terminal text, so the font
-  and cell height move together and the shell reflows; over the **workbench**
-  it scrubs the bench's type ramp. Only the dial actually turned becomes that
-  pane's own — every other one keeps following the outer theme — and each is
-  written into the layout like any other appearance change. The keyboard help
-  has advertised `A──A · Ctrl+wheel` under "Text size" all along; it is true now.
-
-- **The workbench has its own size dial.** A new `bench_size` grade channel,
-  beside the existing text-size one on the DISPLAY tray and in the MCP
-  `set_pane_config` API. It starts **unset**, which is not the same as `1.0`:
-  unset means the bench follows the terminal's dial, which is what the two faces
-  did before they were split and what every session already on disk describes.
-  So nothing shrinks on upgrade, and the two only come apart once somebody
-  turns one of them.
-- **Drag a file onto the bench and its path lands in the line you are
-  writing.** The composer lights up in your own colour while the file is over
-  it, and letting go types the path at the caret — mid-sentence, with the rest
-  of the sentence intact, because placing a caret already sends the agent's
-  line editor the matching arrows. Several files come in as several words, and
-  a name with a space in it arrives quoted, so `Screenshot 2026-09-18.png`
-  stays one filename instead of two arguments nothing downstream can rejoin.
-  A drop on the terminal face pastes the path the way every other terminal
-  does. Files only: the renderer discards a drag whose contents are not local
-  files before the app is told, so an image dragged straight off a web page
-  still does nothing. (#561)
-
-### Fixed
-
-- **ctrl+wheel sizes the workbench when you are standing on the workbench.** The
-  chord reached the terminal grid, a pane's header and the outer cabinet, and
-  did nothing at all on the one face that had just been given a dial of its own.
-  The bench paints a capture-phase wheel hook — it has to, because under the
-  curved tube gpui hit-tests flat and cannot tell which box a turn is over — and
-  that hook runs ahead of every bubble listener and swallows the turn, so the
-  pane's own handler never saw it. It looked like it worked from the outside:
-  sizing the terminal and flipping back showed a resized bench, because an unset
-  bench dial follows the grid's. The chord is now one method both handlers ask,
-  and a test enumerates every wheel handler on a pane and fails when a new one
-  appears without answering it — which is the shape of this bug rather than this
-  instance of it.
-
-- **A surface presented over MCP now reaches the disk, so the bench survives a
-  restart.** `present_surface` handed the document to the live window and
-  stopped there, while this module's own header drew all three transports
-  converging on `surfaces/<session>/<pane>/*.json` and promised the directory is
-  re-read when a window opens. The file drop kept that promise and the verb did
-  not, so everything an agent sent through MCP died with the window — a pane
-  that had presented four surfaces had no directory at all, and the overview
-  came back reading "No responses yet". Three things had to be true at once for
-  the round trip to cost nothing: the document is written under the id it was
-  filed as, because `parse` invents a fresh `anon-…` for a document that names
-  no id and the surface would otherwise return from disk as a stranger; a
-  retire takes the file with it, or it reappears on the next restart; and a
-  second arrival cannot blur who wrote the first — the watcher re-reads the
-  file the verb just wrote and delivers it as a `FileDrop`, which by design
-  cannot name a writer, so an origin now only ever gets more specific. (#567)
-
-- **One pane, one conversation.** A bench, a tool glyph, a pane's tool-call feed
-  and a desktop recap all asked the same question — *which conversation is this
-  pane in?* — and all asked it one pane at a time, ending in "the newest
-  `.jsonl` in that project directory". That is the same answer for every pane
-  sharing a directory. With fourteen agents in one repository, eight of them with
-  nothing on this machine naming their session, eight benches read one
-  conversation and each showed that agent's deliverable as its own. The wall
-  already did this properly — one pass, every transcript claimable once — so its
-  resolver is now the only one: `paneident` binds the whole window at once and
-  labels each binding with the rung that produced it (a claim the agent pushed, a
-  process that started when the conversation opened, elimination, or a
-  preference between live conversations). Readers that attribute work take the
-  first three and refuse the fourth, which means a pane that cannot be placed
-  shows nothing rather than its neighbour's work. The per-pane resolver is
-  deleted rather than deprecated, and a source scan fails the build if one comes
-  back. Two rungs were added on the way: the session id Claude Code's own
-  scratchpad descriptor names, which is the only thing left that binds a
-  conversation to a *pid* now that transcripts are opened and closed per write;
-  and the ledger the SessionStart hook pushes, which the wall was not consulting.
-  Codex panes have no fleet pass yet and get the honest half of one — a pane
-  alone in its directory is bound by elimination, a crowded one only by naming
-  its own session, and two panes pointing at one rollout are both demoted, which
-  is not theoretical: the rollout lookup matches a cwd as a SUBSTRING, so a pane
-  in `/home/parker` and a pane in `/home/parker/PROJECT` selected the same file
-  while each looked alone. (#564)
-- **A ledger entry with a space in it is still a ledger entry.** The JSON reader
-  behind the agent-session ledger matched the literal `"session_id":"` — the
-  shape a compact writer emits, and not the one any pretty-printer does — so a
-  valid hand-written entry parsed as *no id at all* and the reader fell through
-  to forensics as though the file were absent. Whitespace around the colon is
-  allowed now, and a non-string value is still refused. (#564)
-- **Two numbers that said nothing are gone.** A pane header carried its own
-  grid size — `194×50` — in among the controls, and a response's group tab
-  carried a doubt count as `·2`. Neither is a number anybody acts on: the grid
-  size is a fact about the window you are already looking at, and the count
-  sits on a tab whose own label is one click from the doubts themselves.
-  Parker, on the pair: *"that -2 shouldn't be there"*, and *"the number 194x50
-  for the pane resolution in the pane header - can go away also"*. The doubts
-  are untouched and still one click away; only the badge in front of them is
-  gone.
-
-- **Pasting a filename with a space in it no longer breaks it in two.** The
-  clipboard's file arm joined paths raw, so a copied `Screenshot
-  2026-09-18.png` arrived as two words. It now goes through the same quoting a
-  dropped file does. (#561)
-- **The shelf strip wraps, so a fourth tab does not fall off the rail.** The rail
-  is a share of the pane, clamped between 132 and 208 points, and four tabs
-  measure about 161 of them. The strip sat in an `overflow_hidden` frame, so the
-  overflow would not have read as a layout problem — the last tab would simply
-  have stopped being drawn, and a tab nobody can see is a shelf nobody can
-  reach. The three-tab strip was fine at every width. (#566)
-
-- **Two corners on the bench stopped ignoring the skin.** `benchdraw.rs` has
-  promised since it was written that a guard test caught literal corner radii.
-  There was no such test anywhere, and two `rounded(px(3.))` had gone in
-  underneath the promise — the paste chip and the `LIVE → AGENT` chip in the
-  composer — both of which would have stayed round under a square skin while
-  every other corner squared. The gate is real now, it lives beside the three
-  other source scans in the file it guards, and the module's header points at it
-  instead of at another module. (#566)
-
-- **A note stamped from a broken clock says so instead of inventing a date.**
-  `localtime_r` does not refuse absurd input: handed a garbage millisecond count
-  it answers `3 Apr 584556019` without an error, which is an invented value with
-  the right shape — the kind every later reader takes for a measurement. A year
-  outside 1900–2999 now resolves to `time unavailable`. (#566)
-
-- **The small print on a card is small, not invisible.** Every subtitle, cost
-  line, consequence, section tag and provenance line on the workbench was drawn
-  in the palette's `faint` role. `faint` is furniture — it is what a divider is
-  mixed from — and a word painted in it lands between **1.22:1 and 1.62:1**
-  against the ground under it on the six palettes we ship. 1.0 is two identical
-  colours. Forty-two sites now take the skin's meta ink instead, and that ink
-  moves from 0.45 to 0.60 of the foreground, which is the first rung on which
-  every builtin palette clears the 4.5:1 small-text floor — the worst of them at
-  4.54:1. A new test walks all six and goes red under either of the old inks.
-  (#555)
-- **A panel holds its contents off its own border.** The inset lived at the call
-  sites, and seven of the bench's fourteen panels forgot it: an eleven-point line
-  of text sat with its descenders on a lit border and a ten-pixel corner arcing
-  through its first word. The inset is the skin's own `pad_x`/`pad_y` now and it
-  is applied in `Skin::panel`, so a region has to opt OUT rather than remember to
-  opt in. The seven that already padded are untouched — their own padding still
-  overwrites it — and the double rule still hugs the edge, because taffy resolves
-  an absolute child's insets against the border box and never subtracts padding.
-  (#555)
-- **The primary button on a card stops shouting.** APPROVE arrives as a chip,
-  which already carries a lit border, a seat and a halo, and was then given a
-  second border in a second hue plus `aglow` — the bloom sized for a whole
-  region, 22 pixels of blur at `glow × 0.45`, against the ring's 5.25 at 0.11.
-  Four times the spread at three and a half times the heat on a box the width of
-  one word, and the tube's own bloom pass multiplies whatever the chrome emits.
-  `verb_button` now adds only the size, which is what makes a button a button;
-  the strip's launch verb takes the new control-scale `Skin::halo` rather than a
-  region's. The empty workbench's launch button keeps the big bloom on purpose —
-  it is alone on the surface, with nothing for it to close over. (#555)
-- **A tab you can read.** Every tab in the window — the bench's shelf strip, the
-  strip across the top, the rows in the left bar — drew the lit one's label in
-  the selection colour, inside a border in the selection colour, on a seat mixed
-  from it, under a bloom of it: four devices, one hue, and the word was the only
-  one of the four anybody had to read. The unlit ones took the "not in effect"
-  ink, which is Faint, and came out as grey words floating beside a glowing pill.
-  Measured on the `quiet-command` palette, the lit label ran at **1.38:1**
-  against its own seat and the resting one at **1.08:1** against its face; 1.0 is
-  two identical colours. The hue now goes on the edge, the seat and the halo and
-  the label stays the foreground, at two weights; a tab at rest keeps a quiet
-  bordered face, because a control is a control whether or not you are standing
-  on it. The phosphor is dialled from 0.41 to 0.11 and the crisp spread-ring is
-  gone — on a box five pixels wider than its own word it closed over the glyphs
-  from every side. A new test walks every palette we ship and fails under either
-  of the old inks. (#555)
-- **TERM ⇄ BENCH is one switch.** It was two chips with two pixels between them,
-  each reserving its own ring, so one binary choice put four vertical edges on
-  the pane header and the lit half was a pill you could not read the word inside.
-  One bordered track now, with the half you are on filled and carrying the
-  control's whole phosphor budget, so throwing the switch moves the glow. (#555)
-- **The overview shows what YOU said, over the reply to it.** The bench's
-  overview is the feed of what the agent said, and for a while it was only
-  that: the newest reply stood in the room with nothing above it, so the one
-  thing a person could not read on the surface that holds the answer was the
-  question they had just asked. It was legible in the pane's mirrored
-  conversation and on the agent wall's card, which are two other places. Your
-  own message now sits above the reply as its own indented block, in the ink
-  the terminal already paints your turns in, pinned outside the card's scroll
-  so a long answer cannot take it off the surface. It is read out of the
-  pane's own scrollback rather than kept as a second record, so a turn typed
-  at the terminal face counts the same as one sent from the composer; a
-  message longer than the block ends in an ellipsis rather than stopping
-  mid-word, and one that has scrolled out of history says so instead of
-  drawing an empty block. Drawn for the reply that is STANDING IN and never
-  for a card opened off the rail — this window can only read the latest
-  message, and captioning a four-turn-old answer with a new question would be
-  a pairing nobody made.
-
-- **A new agent starts as whatever you told it to.** The LAUNCH AGENT panel
-  opened on three constants — claude, the first model in the list, the harness's
-  own effort — and every launch that wanted something else paid for it in
-  keystrokes, every time. Three rows at the top of the usage card (the `Σ usage`
-  face of the `</>` card, which the subscription slot in the bottom-left corner
-  opens) now set them, and the panel opens holding them. The store keeps
-  *nobody has chosen* apart from *somebody chose exactly what would have
-  happened anyway*: an unset row still shows the value in force, drawn with a
-  quiet edge and tagged `unset`, against the accent and `chosen` of a decision.
-  Pressing the lit chip again clears it back to the harness's own. The block is
-  one folded line — `LAUNCH AGENT CONFIG`, press to open — because the card's
-  own subject is what each plan has left, and three rows of somebody else's
-  question above the answer is three rows of noise. It stays open for the rest
-  of the window once opened.
-
-### Fixed
-
-- **Clicking the group you are already in no longer puts the whole session
-  across the top.** Pressing a branch row in the tree a second time backed the
-  strip out to ALL, which on a 31-tab window is 31 tabs over three wrapped
-  rows: *"the outer is tab bombed with ALL our tabs again"*. The gesture was a
-  trap because its first half is invisible — pinning the branch the strip is
-  already resting on draws the same tabs under the same chip label, so the
-  second press is made by somebody who reasonably believes the first did
-  nothing. Backing out now lands on the resting scope, the branch you are in,
-  which is where the person pressing a row twice was trying to stay. The
-  UNFILED heading, which asks for ALL by name, becomes a real toggle in the
-  same change rather than a one-way door, and the chip stops carrying its own
-  copy of the two lines — every control that widens the strip asks one
-  function which way the next press goes. (#546)
-
-- **Return starts the agent on a bench that is offering one.** A workbench with
-  no agent in it shows a single LAUNCH AGENT button, and the key that means *do
-  the obvious thing* did nothing at all there: return takes the selected
-  surface's first verb, and a bench nobody has run an agent on has no surfaces.
-  It now opens the launcher — unless a card is open, whose first verb still
-  wins the key.
-
-- **A dial's list drops under the dial that opened it.** The model and effort
-  lists were placed at a fixed offset from the rail, which put both of them
-  under the END SESSION button at the far end of the strip whichever dial had
-  been pressed. Each now hangs from its own button, sharing its right edge.
-
-- **The open list lights the value the dial is showing.** The button resolved
-  what a pane is running from three sources — a press on the dial, the
-  `--model` on the command that started the agent, then the harness itself —
-  and the list underneath it looked only at the first, so a pane launched with
-  `--model opus` read `OPUS` above a list with nothing marked in it. Both now
-  ask one resolver, and the row's ink carries the same claim the button's does:
-  accent for a value somebody chose, half-strength for one read off the launch
-  command.
-
-- **The agent wall's header no longer counts the fleet twice.** Six unlabelled
-  glyph counters sat between the name and the token totals, setting the same
-  state filter the bordered WORKING / DONE / IDLE chips two rows below set — the
-  same control twice, one of them unreadable, and their numbers were fleet-wide
-  while the chips' are context-aware, so the two rows contradicted each other
-  whenever any filter was on. The chips stay; the glyphs are gone.
-
-- **Changing the model or the effort no longer sends your half-written prompt.**
-  The bench composer mirrors the agent's own line editor, so a draft is already
-  sitting on that line — and the dial announced its new value by putting
-  `/model …` into the composer and sending it. One press posted the unsent
-  prompt with a slash command glued to the end, answered at the strength it was
-  being changed away from, and left the box looking as though the prompt had
-  been thrown away. The command now goes in beside the draft: the line is
-  cleared, the command is sent on its own, the draft is typed back and the caret
-  returns to the character you stopped at. A pasted image does not survive that
-  erase — see #557. (#556)
-
-- **The model and effort a pane is running stay readable while it is working.**
-  The bench's two dials switched to the faint ink at 0.45 alpha whenever a press
-  would not be read — which is the whole of a turn in flight — so a busy pane
-  carried two outlined boxes with nothing legible in them, on a header lit green
-  because the agent was busy. The value is a fact about the process, and a turn
-  in flight is when a person most wants it: which model is spending this, and at
-  what effort. Pressability is now drawn by the caret and the cursor, and the
-  ink carries one claim only — whether anybody chose the value. (#553)
-
-- **The tab strip opens on the group you are in.** Teaching the strip to obey
-  the scope chip left the chip's default on ALL, so a window opened with every
-  tab in the session across the top: the branch a person was actually working in
-  spread over two wrapped rows and mixed with a dozen they were not. The chip
-  now starts on the branch holding the active tab, names that branch instead of
-  reading ALL, and follows when the active tab moves — a sibling group under the
-  same project stays off the strip. The whole session is one press on the chip
-  away, and one press back. A narrowing lasts as long as the window: the scope
-  is no longer saved, because every state file written since the chip shipped
-  says ALL and no loader can tell that apart from somebody asking for it. (#546)
+- **A paste can no longer end bracketed paste early and type keys into your
+  shell.** A clipboard holding its own end-of-paste marker could make the shell
+  read the rest as typed keys, so a line copied from a web page could run a
+  command. Every paste, including the context menu's Paste and a dropped file's
+  path, now has control characters removed except newline, carriage return and
+  tab. (#950)
+- **MCP answers that quote other panes say their words are untrusted.**
+  `list_panes`, `grep`, `pane_events` and `engineering_state`, and the pushed
+  `agent_appeared` and `tool_call` events, open with `UNTRUSTED TERMINAL DATA.`
+  and name every quoted field, so an agent reading what another program printed
+  is told it is data, not an instruction. (#951)
+- **An MCP pid too big for 32 bits is refused instead of landing on another
+  pane.** The pid was cut to its low 32 bits, so `4294967396` addressed pid 100,
+  and tools that read or change a pane could reach one the caller never named.
+  They now answer "pid is out of range". (#935) — thanks @nixfred
+- **A program cannot make a pane hold an unfinished escape sequence without
+  limit.** An ESC followed by a run of intermediate bytes was held for as long
+  as it stayed open and rescanned on every read with the terminal locked; those
+  bytes now pass straight through. (#938) — thanks @nixfred
+- **Documents opened inside the terminal stay off the network and the rest of
+  the disk.** HTML pages render with the network off unless `documents.toml`
+  allows it, in a throwaway browser profile, and Markdown never fetches a remote
+  picture. Saving notes into a brief refuses a symlink or a hard link, and
+  pictures handed to an agent with a document's notes are read only from regular
+  files inside their own folder. (#728, #735, #741, #896)
+- **Agents can be kept out of a pane.** Only a person can mark a pane off-limits
+  or lift the mark, and an agent's request for more access waits for a person's
+  Yes or No. (#956, #957)
 
 ## [0.3.0] — 2026-09-18
 
