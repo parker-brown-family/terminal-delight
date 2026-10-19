@@ -370,3 +370,47 @@ fn hidden_completion_waits_for_scroll_settle(cx: &mut TestAppContext) {
         "expired deadline spun while waiting for scroll-settle"
     );
 }
+
+/// An agent pane's status line is parsed once per screen change, not once per
+/// reader (#1005): the sidebar asks for every agent pane on every frame.
+#[gpui::test]
+fn an_unchanged_screen_is_not_parsed_again_for_its_status(cx: &mut TestAppContext) {
+    use crate::hud::AgentState;
+    let mut attached = Pane::attached(cx);
+    let pane = &mut attached.pane;
+    pane.running_as(PaneMode::Claude);
+    attached
+        .host
+        .write_all("✻ Thinking… (esc to interrupt)".as_bytes())
+        .unwrap();
+    pane.wait_for("esc to interrupt");
+    let first = pane.read(|v| v.agent_status());
+    assert_eq!(first.state, AgentState::Working);
+    let parses = pane.read(|v| v.status_parses.get());
+    for _ in 0..50 {
+        assert_eq!(pane.read(|v| v.agent_status()), first);
+    }
+    assert_eq!(
+        pane.read(|v| v.status_parses.get()),
+        parses,
+        "an unchanged screen was parsed again"
+    );
+
+    // A changed screen is parsed again, and answers for what it now shows.
+    attached
+        .host
+        .write_all("\x1b[2J\x1b[H\u{276f} ".as_bytes())
+        .unwrap();
+    pane.wait_for("\u{276f}");
+    let idle = pane.read(|v| v.agent_status());
+    assert!(idle.state.is_quiet(), "a stale parse: {:?}", idle.state);
+    let parses = pane.read(|v| v.status_parses.get());
+
+    // The bell changes the answer without changing the screen, so it is
+    // applied on top of the remembered parse rather than kept inside it.
+    pane.view.update(pane.cx, |v, _| v.bell = true);
+    assert_eq!(pane.read(|v| v.agent_status()).state, AgentState::Finished);
+    pane.view.update(pane.cx, |v, _| v.bell = false);
+    assert!(pane.read(|v| v.agent_status()).state.is_quiet());
+    assert_eq!(pane.read(|v| v.status_parses.get()), parses);
+}
