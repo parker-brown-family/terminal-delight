@@ -254,3 +254,11 @@ PRIMARY-selection copy).
 **Next** — Flatpak alongside the AppImage · broader Linux matrix (AMD/Intel ·
 Wayland · fractional scaling) · 20-pane stress + rigorous latency rig vs Alacritty ·
 a theme gallery. See [docs/PLAN.md](docs/PLAN.md) for the gated plan.
+
+**Experimental** — Terminal Delight on the phone: a gateway on the laptop and an
+Android app that opens on an agent's workbench, with the terminal one tap behind
+it. It is lab work, part of no release, built and sideloaded by hand, and it
+needs developer mode or Tailscale on the phone. The goal is Omarchy mobile. If
+you want to try it or help, it lives on the
+[`feat/mobile-hello`](https://github.com/parker-brown-family/terminal-delight/tree/feat/mobile-hello/mobile)
+branch, and its README starts with what it needs and what it is not.
