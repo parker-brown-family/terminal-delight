@@ -86,6 +86,17 @@ impl Harness {
         }
     }
 
+    /// The chip's word in `l`. [`Self::label`] is also the stored word
+    /// ([`Self::from_label`]), so it stays English; only `local` is an
+    /// ordinary word — `claude` and `codex` are product names.
+    #[allow(dead_code)] // drawn by main.rs (launcher harness chips) once it adopts this
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        match self {
+            Harness::Local => l.strings().parts.launcher_harness_local,
+            _ => self.label(),
+        }
+    }
+
     /// The harness a stored word names, or `None` if it names none of them.
     ///
     /// The inverse of [`Self::label`], and deliberately the only one: a second
@@ -246,6 +257,20 @@ impl Effort {
 
     pub fn label(self) -> &'static str {
         self.id()
+    }
+
+    /// The chip's word in `l`, for display only. [`Self::label`] stays the
+    /// flag value, because the journal and the command line read it.
+    #[allow(dead_code)] // drawn by main.rs (launcher effort chips) once it adopts this
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        let p = l.strings().parts;
+        match self {
+            Effort::Low => p.launcher_effort_low,
+            Effort::Medium => p.launcher_effort_medium,
+            Effort::High => p.launcher_effort_high,
+            Effort::XHigh => p.launcher_effort_xhigh,
+            Effort::Max => p.launcher_effort_max,
+        }
     }
 }
 
@@ -422,6 +447,17 @@ impl Reach {
         }
     }
 
+    /// The dial's words in `l`; [`Self::label`] is the English.
+    #[allow(dead_code)] // drawn by main.rs (launcher reach chips) once it adopts this
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        let p = l.strings().parts;
+        match self {
+            Reach::Repo => p.launcher_reach_repo,
+            Reach::Machine => p.launcher_reach_machine,
+            Reach::Anywhere => p.launcher_reach_anywhere,
+        }
+    }
+
     /// The word in the launch journal.
     pub fn id(self) -> &'static str {
         match self {
@@ -591,10 +627,14 @@ impl Recipe {
 
     /// Prepare the actual kit and packet before starting any supported agent.
     pub fn prepare_briefing(&self, dir: &Path, kit_root: &Path) -> Result<PathBuf, String> {
+        // These errors are only ever drawn in the launcher, so they are said
+        // in the reader's language; the OS error inside stays as the OS gave it.
+        let p = crate::lang::current().strings().parts;
         let skill = crate::briefkit::write(kit_root)
-            .map_err(|e| format!("Could not prepare the decision-brief kit: {e}"))?;
+            .map_err(|e| crate::lang::fill(p.launcher_err_kit, &[("e", &e.to_string())]))?;
         let text = self.briefing(&format!("{}/$TD_PANE_ID", dir.display()), Some(&skill));
-        write_briefing(dir, &text).map_err(|e| format!("Could not prepare the TD briefing: {e}"))
+        write_briefing(dir, &text)
+            .map_err(|e| crate::lang::fill(p.launcher_err_briefing, &[("e", &e.to_string())]))
     }
 
     /// The same validated command is used by the launch and its preview.
@@ -606,12 +646,13 @@ impl Recipe {
         if self.harness != Harness::Local {
             return Ok(self.command_line(briefing));
         }
+        let p = crate::lang::current().strings().parts;
         if self.reach != Reach::Anywhere {
-            return Err("local-agent.toml owns the local runner's permission flags".into());
+            return Err(p.launcher_err_local_reach.into());
         }
-        let path = briefing.ok_or("The local runner needs a TD briefing file")?;
+        let path = briefing.ok_or(p.launcher_err_local_briefing)?;
         adapter
-            .ok_or("Configure the local runner in local-agent.toml")?
+            .ok_or(p.launcher_err_local_configure)?
             .command_line(path, self.opener.as_deref())
     }
 }
@@ -664,32 +705,37 @@ impl LocalAdapter {
         Ok(adapter)
     }
 
+    /// Every refusal here lands in the launcher's preview line, so it is
+    /// worded in the reader's language. `{briefing}`, `{context}` and
+    /// `{prompt}` inside them are the config's own tokens, which
+    /// [`crate::lang::fill`] leaves alone because nothing fills those names.
     fn validate(&self) -> Result<(), String> {
+        let p = crate::lang::current().strings().parts;
         let Some(binary) = self.command.first() else {
-            return Err("command must contain the runner executable".into());
+            return Err(p.launcher_err_cmd_executable.into());
         };
         if binary.trim().is_empty()
             || matches!(binary.as_str(), "{briefing}" | "{context}" | "{prompt}")
         {
-            return Err("command must start with a runner executable".into());
+            return Err(p.launcher_err_cmd_start.into());
         }
         if self.command.iter().any(|arg| arg.contains('\0')) {
-            return Err("command arguments cannot contain NUL".into());
+            return Err(p.launcher_err_cmd_nul.into());
         }
         if !self
             .command
             .iter()
             .any(|arg| matches!(arg.as_str(), "{briefing}" | "{context}"))
         {
-            return Err(
-                "command needs a whole argument {briefing} or {context} to receive TD instructions"
-                    .into(),
-            );
+            return Err(p.launcher_err_cmd_briefing_arg.into());
         }
         for arg in &self.command {
             for token in ["{briefing}", "{context}", "{prompt}"] {
                 if arg.contains(token) && arg != token {
-                    return Err(format!("{token} must occupy a whole command argument"));
+                    return Err(crate::lang::fill(
+                        p.launcher_err_token_whole,
+                        &[("token", token)],
+                    ));
                 }
             }
         }
@@ -704,7 +750,11 @@ impl LocalAdapter {
                 .iter()
                 .any(|a| a == "{prompt}" || a == "{context}")
         {
-            return Err("command needs {prompt} or {context} to receive the user's task".into());
+            return Err(crate::lang::current()
+                .strings()
+                .parts
+                .launcher_err_cmd_prompt
+                .into());
         }
         let args: Vec<String> = self
             .command
@@ -1329,5 +1379,31 @@ mod tests {
         }
         assert_eq!(scan(std::slice::from_ref(&base), 10).len(), 10);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn display_words_leave_the_stored_words_english() {
+        use crate::lang::Lang;
+        // The chip may be translated; the journal, the flag and from_label
+        // keep reading the English word.
+        for h in Harness::ALL {
+            assert_eq!(h.label_in(Lang::En), h.label());
+            assert_eq!(Harness::from_label(h.label()), Some(h));
+        }
+        for e in Effort::ALL {
+            assert_eq!(e.label_in(Lang::En), e.id());
+            assert_eq!(e.label(), e.id());
+        }
+        for r in Reach::ALL {
+            assert_eq!(r.label_in(Lang::En), r.label());
+        }
+        // The config's own tokens survive the template untouched.
+        let a = LocalAdapter {
+            command: vec!["runner".into(), "{context}".into(), "x{prompt}".into()],
+        };
+        assert_eq!(
+            a.validate().unwrap_err(),
+            "{prompt} must occupy a whole command argument"
+        );
     }
 }

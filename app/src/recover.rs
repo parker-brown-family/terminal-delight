@@ -190,17 +190,26 @@ fn clip(s: &str, n: usize) -> String {
     }
 }
 
+/// How long ago a transcript was last written, as the dashboard row says it.
+/// Only ever drawn, so it is written in the reader's language at the scan; a
+/// language switch shows on the next scan.
 fn fmt_age(now: SystemTime, then: SystemTime) -> String {
+    fmt_age_in(crate::lang::current(), now, then)
+}
+
+fn fmt_age_in(l: crate::lang::Lang, now: SystemTime, then: SystemTime) -> String {
+    let t = &l.strings().parts;
     let secs = now.duration_since(then).map(|d| d.as_secs()).unwrap_or(0);
-    if secs < 90 {
-        format!("{secs}s ago")
+    let (template, name, n) = if secs < 90 {
+        (t.recover_age_s, "secs", secs)
     } else if secs < 5400 {
-        format!("{}m ago", secs / 60)
+        (t.recover_age_m, "mins", secs / 60)
     } else if secs < 172_800 {
-        format!("{}h ago", secs / 3600)
+        (t.recover_age_h, "hours", secs / 3600)
     } else {
-        format!("{}d ago", secs / 86_400)
-    }
+        (t.recover_age_d, "days", secs / 86_400)
+    };
+    crate::lang::fill(template, &[(name, &n.to_string())])
 }
 
 #[cfg(test)]

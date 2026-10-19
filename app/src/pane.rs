@@ -116,8 +116,8 @@ impl PaneMode {
         }
     }
 
-    /// Localised header label for the active UI language. SHELL and REMOTE
-    /// translate; CLAUDE / CODEX stay (proper nouns) and `Other` keeps the live
+    /// Localised header label for the active UI language. SHELL, REMOTE and
+    /// LOCAL translate; CLAUDE / CODEX stay (proper nouns) and `Other` keeps the live
     /// program name. The plain `label()` stays English for MCP/data callers.
     pub fn label_i18n(&self) -> std::borrow::Cow<'static, str> {
         use std::borrow::Cow;
@@ -128,7 +128,7 @@ impl PaneMode {
             PaneMode::Claude => Cow::Borrowed("CLAUDE"),
             PaneMode::Codex => Cow::Borrowed("CODEX"),
             PaneMode::Other(name) if name == crate::launcher::LOCAL_AGENT_MODE => {
-                Cow::Borrowed("LOCAL")
+                Cow::Borrowed(st.parts.pane_mode_local)
             }
             PaneMode::Other(name) => Cow::Owned(name.clone()),
             // Untranslated for the same reason CLAUDE and CODEX are: it is a
@@ -282,6 +282,10 @@ struct Said {
 
 /// How long a [`Said`] chip stays up.
 const SAID_FOR: Duration = Duration::from_secs(8);
+
+/// A pane's title before its shell sets one. Kept English in [`Pane::title`]
+/// because agents read it in the census; [`Pane::shown_title`] translates it.
+pub const DEFAULT_TITLE: &str = "shell";
 
 /// How often a pane in a tab that is not being shown asks for a frame for
 /// what changed on its screen (#964). Parker: panes not on screen only need to
@@ -4045,7 +4049,7 @@ impl TerminalView {
             cell_h: self.cell_h,
             cols: self.grid.cols,
             rows: self.grid.rows,
-            title: self.name.clone().unwrap_or_else(|| self.title.clone()),
+            title: self.name.clone().unwrap_or_else(|| self.shown_title()),
             crawl: th.crawl,
             k1,
             k2,
@@ -4964,7 +4968,7 @@ impl TerminalView {
             superseded: false,
             off_limits: false,
             staged: restore.clone(),
-            title: "shell".into(),
+            title: DEFAULT_TITLE.into(),
             name: None,
             logo,
             launch_mark: restore.mark,
@@ -6115,8 +6119,11 @@ impl TerminalView {
         map: &str,
         cx: &mut Context<Self>,
     ) -> Result<NotesLanded, String> {
+        // Every refusal here is drawn in the notes bar and goes nowhere else,
+        // so it is written in the reader's language at the source.
+        let t = &crate::lang::current().strings().parts;
         if !self.mode.is_agent() {
-            return Err("the pane beside this brief is not running an agent now".into());
+            return Err(t.pane_notes_err_no_agent.into());
         }
         match self.bench.face() {
             crate::workbench::Face::Terminal => {}
@@ -6125,10 +6132,7 @@ impl TerminalView {
                 return Ok(NotesLanded::Composer(map.chars().count()));
             }
             crate::workbench::Face::Document => {
-                return Err(
-                    "the agent's pane is showing a document, so nobody would see the notes land — turn it to its prompt or its bench first"
-                        .into(),
-                );
+                return Err(t.pane_notes_err_doc_face.into());
             }
         }
         let bracketed = self
@@ -6137,10 +6141,8 @@ impl TerminalView {
             .lock()
             .mode()
             .contains(TermMode::BRACKETED_PASTE);
-        let bytes = notes_paste(map, bracketed).ok_or_else(|| {
-            "the agent's prompt is not taking a paste right now, and typed without one every line of the map would press Enter — ⎘ copy map instead"
-                .to_string()
-        })?;
+        let bytes =
+            notes_paste(map, bracketed).ok_or_else(|| t.pane_notes_err_no_paste.to_string())?;
         self.session.notifier.notify(bytes);
         Ok(NotesLanded::Prompt(map.chars().count()))
     }
@@ -6572,6 +6574,22 @@ impl TerminalView {
         cx.emit(StickyChanged);
         cx.notify();
         true
+    }
+
+    /// The OSC title as a person reads it. Until the shell names itself the
+    /// title is the placeholder [`DEFAULT_TITLE`], which stays English in
+    /// `title` (agents read it from the census as "nobody has named this")
+    /// and is drawn in the reader's language here.
+    pub fn shown_title(&self) -> String {
+        if self.title == DEFAULT_TITLE {
+            crate::lang::current()
+                .strings()
+                .parts
+                .pane_title_default_shell
+                .to_string()
+        } else {
+            self.title.clone()
+        }
     }
 
     /// This pane's note for the state file.
@@ -10192,9 +10210,12 @@ impl Render for TerminalView {
                 .child(
                     row(
                         if self.off_limits {
-                            "Let agents see this pane"
+                            crate::lang::current()
+                                .strings()
+                                .parts
+                                .pane_ctx_let_agents_see
                         } else {
-                            "Off-limits to agents"
+                            crate::lang::current().strings().parts.pane_ctx_off_limits
                         },
                         true,
                     )
@@ -10266,7 +10287,13 @@ impl Render for TerminalView {
             // again"), then the shelf on show. Built by [`crate::paint`], which
             // is also what the cabinet's card draws from: one tile shape, one
             // shelf order, two surfaces that cannot disagree about either.
-            for e in crate::paint::entries(cx, shelf, &worn, "ESKTOP") {
+            // DESKTOP in the reader's language; the chord stays `D`, so a
+            // word that does not start with it sits whole under the key.
+            let pt = &crate::lang::current().strings().parts;
+            let (lead, lead_second) = crate::paint::split_lead(pt.paint_tile_desktop);
+            let mut entries = crate::paint::entries(cx, shelf, &worn, &lead);
+            entries[0].second = lead_second;
+            for e in entries {
                 let pick = e.pick.clone();
                 grid = grid.child(crate::paint::tile(&e, &th, &card_sk).on_mouse_down(
                     MouseButton::Left,
@@ -10321,7 +10348,7 @@ impl Render for TerminalView {
                             &th,
                             1.0,
                             sel,
-                            "PAINT THIS PANE",
+                            pt.pane_paint_card_title,
                             &worn,
                         ))
                         .child(
@@ -10348,8 +10375,11 @@ impl Render for TerminalView {
                                     div().text_size(px(9.)).text_color(th.faint).child(
                                         crate::paint::legend(
                                             cx,
-                                            &["↔ select", "↑ outer"],
-                                            "d desktop",
+                                            &[
+                                                pt.pane_paint_legend_select,
+                                                pt.pane_paint_legend_outer,
+                                            ],
+                                            pt.pane_paint_legend_desktop,
                                             &worn,
                                         ),
                                     ),
@@ -10526,11 +10556,11 @@ impl Render for TerminalView {
         let ps = crate::lang::current().strings();
         let status = if self.needs_input {
             // waiting on the HUMAN outranks "done": the turn isn't over, it's
-            // yours. (English literal for now — the prompt phrases it detects
-            // are English-only anyway; i18n rides along when they do.)
-            "❓ your turn".to_string()
+            // yours. The phrases that detect it stay English (they read the
+            // agent's own TUI); the chip is drawn in the reader's language.
+            ps.parts.pane_status_your_turn.to_string()
         } else if self.bell_blocked() {
-            "✘ blocked".to_string()
+            ps.parts.pane_status_blocked.to_string()
         } else if self.bell {
             format!("✔ {}", ps.ph_done)
         } else if self.exited {
@@ -10636,7 +10666,12 @@ impl Render for TerminalView {
                         .px(px(12.))
                         .py(px(6.))
                         .child(div().w(px(22.)).child("👤"))
-                        .child("Your messages")
+                        .child(
+                            crate::lang::current()
+                                .strings()
+                                .parts
+                                .pane_overflow_your_messages,
+                        )
                         .child(div().flex_1())
                         .child(step("▲", false, cx))
                         .child(step("▼", true, cx)),
@@ -10655,37 +10690,55 @@ impl Render for TerminalView {
                 ));
             }
             if !show_eq {
-                menu = menu.child(item("📊", "Display").on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        v.hdr_overflow = None;
-                        cx.emit(OpenDisplayMenu { at: pos });
-                        cx.notify();
-                    }),
-                ));
+                menu = menu.child(
+                    item(
+                        "📊",
+                        crate::lang::current().strings().parts.pane_overflow_display,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.hdr_overflow = None;
+                            cx.emit(OpenDisplayMenu { at: pos });
+                            cx.notify();
+                        }),
+                    ),
+                );
             }
             if !show_theme {
-                menu = menu.child(item("🎨", "Theme").on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        v.hdr_overflow = None;
-                        cx.emit(OpenThemeMenu { at: pos });
-                        cx.notify();
-                    }),
-                ));
+                menu = menu.child(
+                    item(
+                        "🎨",
+                        crate::lang::current().strings().parts.pane_overflow_theme,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.hdr_overflow = None;
+                            cx.emit(OpenThemeMenu { at: pos });
+                            cx.notify();
+                        }),
+                    ),
+                );
             }
             if SHOW_FOCUS_GLYPH && !show_focus {
-                menu = menu.child(item("👓", "Focus — read this pane").on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        v.hdr_overflow = None;
-                        cx.emit(OpenFocusRead);
-                        cx.notify();
-                    }),
-                ));
+                menu = menu.child(
+                    item(
+                        "👓",
+                        crate::lang::current().strings().parts.pane_overflow_focus,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.hdr_overflow = None;
+                            cx.emit(OpenFocusRead);
+                            cx.notify();
+                        }),
+                    ),
+                );
             }
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
@@ -10766,13 +10819,16 @@ impl Render for TerminalView {
                 // agent has gone otherwise watches their words appear in the
                 // mirror and has no way to know they went nowhere.
                 .when(queued > 0, |d| {
+                    let l = crate::lang::current();
+                    let t = &l.strings().parts;
+                    let n = queued.to_string();
                     let why = if self.mode.is_agent() {
-                        format!(
-                            "{queued} answer{} waiting",
-                            if queued == 1 { "" } else { "s" }
+                        crate::lang::fill(
+                            &l.count(&t.pane_queued_answers, queued),
+                            &[("queued", &n)],
                         )
                     } else {
-                        format!("{queued} held · no agent in this pane")
+                        crate::lang::fill(t.pane_queued_held_no_agent, &[("queued", &n)])
                     };
                     d.child(
                         div()
@@ -10930,7 +10986,11 @@ impl Render for TerminalView {
                             })
                             .child("\u{ff0b}"),
                     )
-                    .child(div().text_size(px(9.5 * scale)).child("logo"))
+                    .child(
+                        div()
+                            .text_size(px(9.5 * scale))
+                            .child(crate::lang::current().strings().parts.pane_logo_placeholder),
+                    )
                     .into_any_element()
             }
         };
@@ -10991,7 +11051,7 @@ impl Render for TerminalView {
                     .name
                     .clone()
                     .or(shown)
-                    .unwrap_or_else(|| self.title.clone());
+                    .unwrap_or_else(|| self.shown_title());
                 div()
                     .flex_1()
                     // min-width:0 lets the title actually shrink (a nowrap flex
@@ -11064,7 +11124,14 @@ impl Render for TerminalView {
                             .cursor_pointer()
                             .text_size(px((hicon * 0.42).max(8.5)))
                             .whitespace_nowrap()
-                            .child(if pane_w >= 470. { "⌁ AGENT" } else { "⌁" })
+                            .child(if pane_w >= 470. {
+                                crate::lang::current()
+                                    .strings()
+                                    .parts
+                                    .pane_launch_agent_chip
+                            } else {
+                                "⌁"
+                            })
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
@@ -11229,7 +11296,7 @@ impl Render for TerminalView {
                             .border_color(bar_fg.alpha(0.75))
                             .text_color(bar_fg)
                             .text_size(px(9.5 * scale))
-                            .child("OFF-LIMITS")
+                            .child(crate::lang::current().strings().parts.pane_off_limits_badge)
                     }))
                     .child(status)
                     .child(

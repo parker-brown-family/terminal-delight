@@ -11,6 +11,20 @@ pub const HOVER: &[&str] = &[
     "Your own pane colours take precedence.",
 ];
 
+/// [`HOVER`] in the reader's language, line for line.
+#[allow(dead_code)] // drawn by main.rs (the toggle's hover card, ~17589) once it adopts this
+pub fn hover_in(l: crate::lang::Lang) -> [&'static str; 6] {
+    let t = &l.strings().parts;
+    [
+        t.termstate_hover_title,
+        t.termstate_hover_line_remote,
+        t.termstate_hover_line_editor,
+        t.termstate_hover_line_presets,
+        t.termstate_hover_line_shells,
+        t.termstate_hover_line_precedence,
+    ]
+}
+
 // Accent, default text, divider, cursor. Keep the established agent/remote inks.
 const CLAUDE: [u32; 4] = [0xf59e0b, 0xfbe3b0, 0x4a3410, 0xfbbf24];
 const CODEX: [u32; 4] = [0x22d3ee, 0xc3f4fc, 0x0e3a44, 0x67e8f9];
@@ -44,6 +58,12 @@ pub fn colours(mode: &PaneMode) -> Option<[u32; 4]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The hover card's translated lines are the English ones in English.
+    #[test]
+    fn the_hover_card_reads_the_same_in_english() {
+        assert_eq!(hover_in(crate::lang::Lang::En).as_slice(), HOVER);
+    }
 
     #[test]
     fn every_curated_alias_has_its_family_ink_without_becoming_an_agent() {

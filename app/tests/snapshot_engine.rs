@@ -22,9 +22,18 @@
 //!
 //! The engine's source is compiled into this test directly (the binary crate
 //! has no library to link), which is why nothing under `docview/` other than
-//! the view itself may name `crate::`.
+//! the view itself may name `crate::` — except `crate::lang`, the language
+//! pack, which is compiled in beside it.
 
 #![allow(dead_code)]
+
+// The language pack, which the engine's and the notes' words are looked up
+// in: `crate::lang` is the one `crate::` path these files may name.
+#[path = "../src"]
+mod pack {
+    pub mod lang;
+}
+use pack::lang;
 
 #[path = "../src/docview"]
 mod docview {
