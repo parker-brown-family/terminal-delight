@@ -2442,6 +2442,9 @@ mod tests {
         // nothing when there is only one line for them to share.
         let rig = Rig::new("oneshared");
         let st = scan(&ScanInput {
+            coordination_key: None,
+            scope_key: String::new(),
+            unlocated: vec![],
             project: Some(1),
             name: Some("REPO".into()),
             mine: vec![w(0, "CLAUDE", &rig.main), w(1, "CODEX", &rig.main)],
