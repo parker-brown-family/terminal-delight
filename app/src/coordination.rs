@@ -7,6 +7,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub mod attention;
+pub mod meaning;
+
 pub const MAX_PATHS: usize = 20_000;
 pub const MAX_CONTEXTS: usize = 128;
 pub const MAX_OUTPUT: usize = 4 * 1024 * 1024;
@@ -185,6 +188,7 @@ pub enum TargetState {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Footprint {
+    pub checkout_generation: Option<String>,
     pub paths: Vec<PathChange>,
     pub renames: Vec<Rename>,
     pub sources: BTreeMap<Source, Coverage>,
@@ -382,6 +386,22 @@ fn text(bytes: Vec<u8>) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+// Exit 1 is a conflict only for the documented merge-tree output shape.
+fn conflict_paths(bytes: &[u8]) -> Result<Option<Vec<PathKey>>, String> {
+    let fields = tokens(bytes)?;
+    let oid = fields.first().ok_or("Missing merge tree")?;
+    if !matches!(oid.len(), 40 | 64) || !oid.iter().all(u8::is_ascii_hexdigit) {
+        return Err("Malformed merge tree identifier".into());
+    }
+    let paths: Vec<_> = fields
+        .iter()
+        .skip(1)
+        .take_while(|p| !p.is_empty())
+        .map(|p| PathKey::new(p))
+        .collect();
+    Ok((!paths.is_empty()).then_some(paths))
+}
+
 /// Called by engstate's existing worker pool, never by a UI or MCP handler.
 pub fn measure(checkout: &crate::engstate::Checkout, main_ref: Option<&str>) -> Context {
     let began = Instant::now();
@@ -485,25 +505,14 @@ pub fn measure(checkout: &crate::engstate::Checkout, main_ref: Option<&str>) -> 
                 f.target_check.state = TargetState::CheckedNone;
                 target_conflicts = Some(vec![]);
             }
-            Ok((1, bytes)) => match tokens(&bytes) {
-                Ok(fields) if fields.len() > 1 => {
-                    let files: Vec<_> = fields
-                        .into_iter()
-                        .skip(1)
-                        .take_while(|p| !p.is_empty())
-                        .map(PathKey::new)
-                        .collect();
-                    if files.is_empty() {
-                        f.target_check.state = TargetState::Unavailable;
-                        f.target_check.error = Some("Conflict output omitted paths".into());
-                    } else {
-                        f.target_check.state = TargetState::Conflict;
-                        target_conflicts = Some(files);
-                    }
+            Ok((1, bytes)) => match conflict_paths(&bytes) {
+                Ok(paths) => {
+                    f.target_check.state = TargetState::Conflict;
+                    target_conflicts = paths;
                 }
-                _ => {
+                Err(error) => {
                     f.target_check.state = TargetState::Unavailable;
-                    f.target_check.error = Some("Malformed conflict output".into());
+                    f.target_check.error = Some(error);
                 }
             },
             Ok((code, _)) => {
@@ -539,6 +548,38 @@ pub fn measure(checkout: &crate::engstate::Checkout, main_ref: Option<&str>) -> 
         .collect();
     f.truncated = f.errors.iter().any(|e| e.contains("limit"));
     f.duration_ms = Some(began.elapsed().as_millis() as u64);
+    {
+        use std::os::unix::fs::MetadataExt;
+        // The root inode plus the per-worktree Git directory distinguish a
+        // recreated checkout from ordinary commits on the same branch.
+        let git_dir = run(&["rev-parse", "--absolute-git-dir"])
+            .ok()
+            .and_then(text);
+        f.checkout_generation = std::fs::metadata(&root)
+            .ok()
+            .zip(git_dir.and_then(|p| std::fs::metadata(p).ok()))
+            .and_then(|(root, git)| {
+                let birth = root
+                    .created()
+                    .ok()?
+                    .duration_since(UNIX_EPOCH)
+                    .ok()?
+                    .as_nanos();
+                let git_birth = git
+                    .created()
+                    .ok()?
+                    .duration_since(UNIX_EPOCH)
+                    .ok()?
+                    .as_nanos();
+                Some(format!(
+                    "{}:{}:{birth}:{}:{}:{git_birth}",
+                    root.dev(),
+                    root.ino(),
+                    git.dev(),
+                    git.ino()
+                ))
+            });
+    }
     let id = stable_id(
         "checkout",
         &[
@@ -594,6 +635,8 @@ pub struct Cluster {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Project {
+    #[serde(default)]
+    pub meanings: Vec<meaning::Finding>,
     pub id: String,
     pub name: String,
     pub severity: Option<Severity>,
@@ -614,6 +657,7 @@ pub struct Project {
 impl Project {
     pub fn pending(id: String, name: String) -> Self {
         Self {
+            meanings: vec![],
             id,
             name,
             severity: None,
@@ -782,11 +826,22 @@ pub fn derive(id: &str, name: &str, facts: &Facts, authorized: bool) -> Option<P
     }
     let mut findings = Vec::new();
     for c in &contexts {
+        let target = c
+            .footprint
+            .base_ref
+            .as_deref()
+            .unwrap_or("unavailable target");
+        let target_reason = match &c.target_conflicts {
+            Some(paths) if !paths.is_empty() => {
+                format!("{} committed conflict paths against {target}", paths.len())
+            }
+            _ => format!("Committed conflict against {target}; affected paths unavailable"),
+        };
         for (kind,paths,reason,qualification) in [
             ("unmerged_index",c.footprint.unmerged.as_slice(),format!("{} unresolved index paths in {}",c.footprint.unmerged.len(),c.root),"Current index conflicts; their merge target and agent authorship are not established."),
-            ("target_conflict",c.target_conflicts.as_deref().unwrap_or(&[]),format!("{} committed conflict paths against {}",c.target_conflicts.as_ref().map_or(0,Vec::len),c.footprint.base_ref.as_deref().unwrap_or("unavailable target")),"Committed integration check; uncommitted edits and agent authorship are outside this measurement."),
+            ("target_conflict",c.target_conflicts.as_deref().unwrap_or(&[]),target_reason,"Committed integration check; uncommitted edits and agent authorship are outside this measurement."),
         ] {
-            if paths.is_empty(){continue;}
+            if paths.is_empty() && !(kind == "target_conflict" && c.footprint.target_check.state == TargetState::Conflict){continue;}
             findings.push(format!("{}: {reason}",c.root));
             hotspots.push(Hotspot{id:stable_id("hotspot",&[id,kind,&c.id]),kind:kind.into(),path:paths.first().cloned(),checkout_ids:vec![c.id.clone()],participant_ids:c.participants.iter().map(|p|p.id.clone()).collect(),severity:Severity::Alert,reason,qualification:Some(qualification.into())});
         }
@@ -897,6 +952,7 @@ pub fn derive(id: &str, name: &str, facts: &Facts, authorized: bool) -> Option<P
     );
     let session_count = sessions(participants.into_iter());
     Some(Project {
+        meanings: vec![],
         id: id.into(),
         name: name.into(),
         severity,
@@ -920,6 +976,8 @@ pub struct Snapshot {
     pub schema_version: u32,
     pub epoch: String,
     pub version: u64,
+    #[serde(default)]
+    pub fact_version: u64,
     pub projects: Vec<Project>,
 }
 
@@ -929,6 +987,7 @@ impl Snapshot {
             schema_version: 1,
             epoch: epoch.into(),
             version: 0,
+            fact_version: 0,
             projects: vec![],
         }
     }
@@ -965,14 +1024,31 @@ impl Snapshot {
             observed
         }
     }
+    pub fn attention_severity(&self) -> Option<Severity> {
+        self.projects
+            .iter()
+            .flat_map(|p| &p.meanings)
+            .filter(|f| f.attention.novel())
+            .filter_map(|f| f.severity)
+            .max()
+    }
     pub fn rank(&mut self) {
         self.projects.sort_by(|a, b| {
-            rank(a)
-                .cmp(&rank(b))
+            attention_rank(a)
+                .cmp(&attention_rank(b))
+                .then_with(|| rank(a).cmp(&rank(b)))
                 .then_with(|| a.name.cmp(&b.name))
                 .then_with(|| a.id.cmp(&b.id))
         });
     }
+}
+
+fn attention_rank(p: &Project) -> u8 {
+    p.meanings
+        .iter()
+        .map(|f| f.attention.rank(f.kind))
+        .min()
+        .unwrap_or(3)
 }
 
 fn rank(p: &Project) -> u8 {
@@ -998,17 +1074,30 @@ pub struct Store {
     pub snapshot: Snapshot,
     pub changes: VecDeque<Delta>,
     next_cluster: u64,
+    pub memory: attention::Memory,
+    pub audience: String,
+    pub attention_epoch: String,
+    episodes: BTreeMap<String, u64>,
 }
 
 impl Store {
     pub fn new(epoch: impl Into<String>) -> Self {
+        let epoch = epoch.into();
         Self {
-            snapshot: Snapshot::empty(epoch),
+            snapshot: Snapshot::empty(epoch.clone()),
             changes: VecDeque::new(),
             next_cluster: 0,
+            memory: attention::Memory::default(),
+            audience: "independent_reader".into(),
+            attention_epoch: epoch,
+            episodes: BTreeMap::new(),
         }
     }
     pub fn update(&mut self, mut project: Project) {
+        let Some(now) = unix_ms() else {
+            self.memory.error=Some("Current time unavailable; retaining the earlier observations without changing attention.".into());
+            return;
+        };
         let previous = self.snapshot.projects.iter().find(|p| p.id == project.id);
         let preserved = if let Some(old) = previous {
             reconcile(&old.clusters, &mut project.clusters)
@@ -1028,11 +1117,68 @@ impl Store {
                 );
             }
         }
-        let changed = previous.is_none_or(|old| fingerprint(old) != fingerprint(&project));
+        let facts_changed = previous.is_none_or(|old| fingerprint(old) != fingerprint(&project));
+        project.meanings = meaning::explain(&project, now);
+        if let Some(old) = previous {
+            for finding in &old.meanings {
+                if !project.meanings.iter().any(|f| f.id == finding.id) {
+                    if meaning::absent(finding, &project, now) {
+                        self.episodes
+                            .insert(finding.id.clone(), finding.episode.saturating_add(1));
+                    } else if finding.kind != meaning::Kind::ObservationGap {
+                        let mut retained = finding.clone();
+                        retained.condition = if retained.scope.iter().any(|s| {
+                            !project.contexts.iter().any(|c| {
+                                c.id == s.checkout_id
+                                    && c.branch == s.branch
+                                    && c.footprint.checkout_generation == s.generation
+                            })
+                        }) {
+                            meaning::Condition::OutsideScope
+                        } else {
+                            meaning::Condition::Unverified
+                        };
+                        if retained.kind == meaning::Kind::TargetConflict {
+                            retained.headline="The last merge check reported a conflict; the current result is unknown.".into();
+                        }
+                        retained
+                            .limitations
+                            .retain(|l| !l.starts_with("Showing an earlier observation"));
+                        retained.limitations.insert(
+                            0,
+                            "Showing an earlier observation; a current check is unavailable."
+                                .into(),
+                        );
+                        project.meanings.push(retained);
+                    }
+                }
+            }
+        }
+        for f in &mut project.meanings {
+            f.episode = *self.episodes.get(&f.id).unwrap_or(&1);
+            f.attention = self
+                .memory
+                .present(&project.id, f, &self.attention_epoch, now);
+        }
+        project.meanings.sort_by_key(|f| {
+            (
+                f.attention.rank(f.kind),
+                std::cmp::Reverse(f.severity),
+                f.id.clone(),
+            )
+        });
+        let presentation_changed = previous.is_none_or(|old| {
+            meaning_fingerprint(&old.meanings) != meaning_fingerprint(&project.meanings)
+        });
+        let changed = facts_changed || presentation_changed;
+        if facts_changed {
+            self.snapshot.fact_version += 1;
+        }
         if changed {
             self.snapshot.version += 1;
             let kind = match previous {
                 None => "created",
+                Some(_) if !facts_changed => "attention_changed",
                 Some(p) if matches!((project.severity,p.severity),(Some(a),Some(b)) if a>b) => {
                     "severity_raised"
                 }
@@ -1059,6 +1205,7 @@ impl Store {
         if self.snapshot.projects.iter().any(|p| p.id == id) {
             self.snapshot.projects.retain(|p| p.id != id);
             self.snapshot.version += 1;
+            self.snapshot.fact_version += 1;
             self.changes.push_back(Delta {
                 version: self.snapshot.version,
                 project_id: id.into(),
@@ -1070,16 +1217,69 @@ impl Store {
             }
         }
     }
+
+    pub fn operator_memory(&mut self, memory: attention::Memory) {
+        self.audience = "operator_attention".into();
+        self.memory = memory;
+        let projects = self.snapshot.projects.clone();
+        for p in projects {
+            self.update(p);
+        }
+    }
+
+    pub fn attention_summary(&self) -> String {
+        let new = self
+            .snapshot
+            .projects
+            .iter()
+            .filter(|p| p.meanings.iter().any(|f| f.attention.novel()))
+            .count();
+        let conflicts = self
+            .snapshot
+            .projects
+            .iter()
+            .filter(|p| p.meanings.iter().any(|f| f.kind.conflict()))
+            .count();
+        let incomplete = self.snapshot.projects.iter().any(|p| {
+            p.meanings
+                .iter()
+                .any(|f| f.kind == meaning::Kind::ObservationGap)
+        });
+        if new > 0 {
+            format!(
+                "Git · {new} project{} with new findings",
+                if new == 1 { "" } else { "s" }
+            )
+        } else if conflicts > 0 {
+            format!(
+                "Git · {conflicts} project{} with a conflict · seen",
+                if conflicts == 1 { "" } else { "s" }
+            )
+        } else if incomplete {
+            "Git · No new findings · scan incomplete".into()
+        } else {
+            "Git · No new findings".into()
+        }
+    }
 }
 
 fn fingerprint(project: &Project) -> String {
     let mut stable = project.clone();
+    stable.meanings.clear();
     stable.observed_at_ms = None;
     for c in &mut stable.contexts {
         c.footprint.observed_at_ms = None;
         c.footprint.duration_ms = None;
     }
     serde_json::to_string(&stable).expect("coordination JSON")
+}
+
+fn meaning_fingerprint(meanings: &[meaning::Finding]) -> String {
+    let mut stable = meanings.to_vec();
+    for f in &mut stable {
+        f.observed_at_ms = None;
+    }
+    serde_json::to_string(&stable).expect("meanings")
 }
 
 fn reconcile(old: &[Cluster], new: &mut [Cluster]) -> Vec<bool> {
@@ -1244,6 +1444,7 @@ pub fn query(
         "read",
         &[
             tool,
+            args.get("view").and_then(|v| v.as_str()).unwrap_or(""),
             args.get("project_id")
                 .and_then(|v| v.as_str())
                 .unwrap_or(""),
@@ -1281,14 +1482,16 @@ pub fn query(
             json!({"items":values[offset..end],"total":values.len(),"next_cursor":(end<values.len()).then(||format!("{}:{}:{binding}:{end}",s.epoch,s.version))}),
         )
     };
-    let summary = |p: &Project| json!({"id":p.id,"name":p.name,"severity":p.severity,"coverage":p.coverage,"observed_at_ms":p.observed_at_ms,"age_ms":p.age_ms(),"stale":p.age_ms().map(|age|age>30000),"checkout_count":p.checkout_count,"pane_count":p.pane_count,"session_count":p.session_count,"observed_group_count":p.clusters.len(),"scope_limited":p.scope_limited,"findings":p.findings,"causes":p.hotspots.iter().take(3).map(|h|json!({"kind":h.kind,"severity":h.severity,"reason":h.reason,"qualification":h.qualification})).collect::<Vec<_>>(),"groups":p.clusters.iter().take(3).map(|c|json!({"id":c.id,"title":c.title,"dimensions":c.dimensions,"evidence_coverage":c.evidence_coverage,"membership_coverage":c.membership_coverage,"read":{"tool":"coordination_cluster","arguments":{"project_id":p.id,"cluster_id":c.id}}})).collect::<Vec<_>>(),"read":{"tool":"coordination_project","arguments":{"project_id":p.id}}});
+    let summary = |p: &Project| json!({"id":p.id,"name":p.name,"severity":p.severity,"coverage":p.coverage,"observed_at_ms":p.observed_at_ms,"age_ms":p.age_ms(),"stale":p.age_ms().map(|age|age>30000),"checkout_count":p.checkout_count,"pane_count":p.pane_count,"session_count":p.session_count,"observed_group_count":p.clusters.len(),"scope_limited":p.scope_limited,"findings":p.findings,"meanings":p.meanings.iter().take(3).collect::<Vec<_>>(),"meaning_count":p.meanings.len(),"meaning_read":{"tool":"coordination_project","arguments":{"project_id":p.id,"view":"meanings"}},"headline":meaning::lead(p),"causes":p.hotspots.iter().take(3).map(|h|json!({"kind":h.kind,"severity":h.severity,"reason":h.reason,"qualification":h.qualification})).collect::<Vec<_>>(),"groups":p.clusters.iter().take(3).map(|c|json!({"id":c.id,"title":c.title,"dimensions":c.dimensions,"evidence_coverage":c.evidence_coverage,"membership_coverage":c.membership_coverage,"read":{"tool":"coordination_cluster","arguments":{"project_id":p.id,"cluster_id":c.id}}})).collect::<Vec<_>>(),"read":{"tool":"coordination_project","arguments":{"project_id":p.id}}});
     let data = match tool {
         "coordination_overview" => {
-            json!({"scope":"authorized projects in this window","severity":s.severity(),"coverage":s.coverage(),"affected_projects":s.affected(),"projects":page(s.projects.iter().map(summary).collect())?,"execution":"Read-only observations. Direct an agent to inspect the named group and propose a plan; no Git writes or pane input are performed."})
+            json!({"scope":"authorized projects in this window","severity":s.severity(),"coverage":s.coverage(),"affected_projects":s.affected(),"attention_summary":store.attention_summary(),"projects":page(s.projects.iter().map(summary).collect())?,"execution":"Read-only observations. Direct an agent to inspect the named group and propose a plan; no Git writes or pane input are performed."})
         }
         "coordination_project" => {
             let p = project()?;
-            if let Some(id) = args.get("checkout_id").and_then(|v| v.as_str()) {
+            if args.get("view").and_then(|v| v.as_str()) == Some("meanings") {
+                json!({"project":summary(p),"meanings":page(p.meanings.iter().map(|f|json!(f)).collect())?})
+            } else if let Some(id) = args.get("checkout_id").and_then(|v| v.as_str()) {
                 let ctx = p
                     .contexts
                     .iter()
@@ -1370,7 +1573,7 @@ pub fn query(
                 .iter()
                 .map(|h| (Some(*h), h.path.as_ref()))
                 .chain(extra_paths.values().map(|path| (None, Some(*path))));
-            let evidence:Vec<_>=rows.skip(offset).take(limit).map(|(hotspot,path)|json!({"hotspot":hotspot,"path":path,
+            let evidence:Vec<_>=rows.skip(offset).take(limit).map(|(hotspot,path)|json!({"hotspot":hotspot,"meaning":hotspot.and_then(|h|p.meanings.iter().find(|f|f.evidence_ids.contains(&h.id))),"path":path,
                 "relationships":contexts.iter().filter(|ctx|hotspot.is_none_or(|h|h.checkout_ids.contains(&ctx.id))).filter_map(|ctx|{
                     let change=path.and_then(|path|ctx.footprint.paths.binary_search_by(|p|p.path.cmp(path)).ok().map(|i|&ctx.footprint.paths[i]));
                     if path.is_some()&&change.is_none()&&hotspot.is_none(){return None;}
@@ -1403,5 +1606,7 @@ pub fn query(
         }
         _ => return Err("Unknown coordination read".into()),
     };
-    Ok(json!({"schema_version":s.schema_version,"epoch":s.epoch,"version":s.version,"data":data}))
+    Ok(
+        json!({"schema_version":s.schema_version,"epoch":s.epoch,"version":s.version,"fact_version":s.fact_version,"catalog_version":meaning::CATALOG_VERSION,"attention_audience":store.audience,"attention_revision":store.memory.document.revision,"attention_store_error":store.memory.error,"data":data}),
+    )
 }
