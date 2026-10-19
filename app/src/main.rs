@@ -36022,7 +36022,10 @@ mod tests {
         assert_eq!(pace_band(0.41), pressure(0.99), "way over is the pips' red");
         assert_eq!(pace_band(0.0), pressure(0.10), "on pace is the pips' green");
         let blue = pace_band(-0.30);
-        assert!(blue.s >= 0.5 && blue.l <= 0.65, "banked stays a blue, not a tint of one");
+        assert!(
+            blue.s >= 0.5 && blue.l <= 0.65,
+            "banked stays a blue, not a tint of one"
+        );
         // the bands' edges, either side
         assert_eq!(pace_band(0.15), pressure(0.10));
         assert_eq!(pace_band(-0.15), pressure(0.10));
@@ -36045,16 +36048,25 @@ mod tests {
             .map(|&d| pace_ramp(d).h)
             .collect();
         for w in hues.windows(2) {
-            assert!(w[0] < w[1], "the ramp must climb red(0) toward blue(.6): {hues:?}");
+            assert!(
+                w[0] < w[1],
+                "the ramp must climb red(0) toward blue(.6): {hues:?}"
+            );
         }
         assert!((pace_ramp(0.30).h - 0.0).abs() < 0.01, "hot anchors on red");
-        assert!((pace_ramp(-0.30).h - 0.60).abs() < 0.01, "cool anchors on blue");
+        assert!(
+            (pace_ramp(-0.30).h - 0.60).abs() < 0.01,
+            "cool anchors on blue"
+        );
         // a point halfway between two anchors lands halfway between their
         // hues: 0.075 is halfway between the 0.15 anchor (yellow, .14) and
         // the 0.0 anchor (green, .33), so the hue should land at their
         // midpoint, (.14+.33)/2 = .235, not at either anchor outright.
         let mid = pace_ramp(0.075).h;
-        assert!((mid - 0.235).abs() < 0.01, "midpoint interpolates, not steps: {mid}");
+        assert!(
+            (mid - 0.235).abs() < 0.01,
+            "midpoint interpolates, not steps: {mid}"
+        );
         // beyond the ends, the ramp clamps rather than extrapolating past blue/red
         assert_eq!(pace_ramp(5.0), pace_ramp(0.30));
         assert_eq!(pace_ramp(-5.0), pace_ramp(-0.30));

@@ -1016,7 +1016,11 @@ mod tests {
             percent: 0.5,
             resets_at: fmt_rfc3339(now + 3600),
         };
-        assert_eq!(pace(&l, now), None, "no window length can be read from the label");
+        assert_eq!(
+            pace(&l, now),
+            None,
+            "no window length can be read from the label"
+        );
 
         let l2 = Limit {
             label: "Weekly (7-day)".into(),
