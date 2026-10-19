@@ -1,5 +1,23 @@
 # Terminal Delight on the phone
 
+> **Experimental. This is lab work, not part of any Terminal Delight release.**
+>
+> - It lives on this branch only (`feat/mobile-hello`). No release, AppImage or
+>   install page includes it, and nothing here is promised for a particular
+>   version.
+> - It is Android only, and you build and sideload the app yourself. Pairing
+>   over USB needs the phone in developer mode with USB debugging on; the other
+>   route needs Tailscale on both the laptop and the phone.
+> - It has been run on one laptop and one phone. The gateway's API, the pairing
+>   and the app's screens will change without notice, and nothing is migrated
+>   between versions.
+> - The gateway opens a network door onto your terminal sessions. Read
+>   `DESIGN.md` before running it, and run it only on a machine and a tailnet
+>   you control.
+>
+> The goal is Omarchy mobile. If you are feeling adventurous, or want to help
+> get it there, try it and open an issue or a pull request against this branch.
+
 Two pieces. How they are designed, the gateway's API, and what it would take to
 open this up beyond one laptop and one phone: `DESIGN.md`. The plan they came
 from: `docs/plans/mobile/01-plan.md`.
@@ -57,7 +75,7 @@ Release builds only; `android/SIGNING.md` says why and where the key is.
 | Route | Address | Needs |
 |---|---|---|
 | USB | `http://127.0.0.1:7717` | the cable, and `pair` (which runs `adb reverse`) |
-| Tailscale | `http://100.122.239.70:7717` | Tailscale switched on on the phone |
+| Tailscale | `http://<your laptop's tailnet address>:7717` | Tailscale switched on on the phone |
 | Wi-Fi | `http://192.168.1.x:7717` | the gateway started with `serve --lan` |
 
 ## What it can do, and what it will not
