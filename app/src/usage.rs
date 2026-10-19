@@ -349,6 +349,7 @@ pub const COLLECTORS: &[(&str, &str)] = &[
         "fireworks",
         include_str!("vendor/omarchy-agent-usage-fireworks"),
     ),
+    ("grok", include_str!("vendor/omarchy-agent-usage-grok")),
 ];
 
 /// Where the compiled-in collectors are unpacked to be run.
@@ -796,7 +797,7 @@ mod tests {
     fn every_vendored_collector_is_a_python3_script_that_prints_a_record() {
         // Compiled in, so a corrupt or truncated vendor file is a BUILD-time
         // problem here rather than a runtime mystery on somebody's machine.
-        assert_eq!(COLLECTORS.len(), 3);
+        assert_eq!(COLLECTORS.len(), 4);
         for (id, src) in COLLECTORS {
             assert!(
                 src.starts_with("#!/usr/bin/python3"),
@@ -813,7 +814,7 @@ mod tests {
             );
         }
         let ids: Vec<&str> = COLLECTORS.iter().map(|(i, _)| *i).collect();
-        assert_eq!(ids, ["claude", "codex", "fireworks"]);
+        assert_eq!(ids, ["claude", "codex", "fireworks", "grok"]);
     }
 
     #[test]

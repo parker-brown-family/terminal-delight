@@ -1,0 +1,8 @@
+NOTES — 2026-09-09-the-original-brief.html
+1 notes on 1 elements · 1 concur.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[verdict-reference-writer] Reference writer
+  · The header should name the original.
+
+[ask-keep-the-plain-text] Keep the plain-text mirror?  ✓ concur

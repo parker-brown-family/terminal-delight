@@ -1,0 +1,99 @@
+{
+  "method": "five simultaneous 10-second pairs per condition; thirty hidden synthetic agents; one visible quiet pane; CRT off; both windows1000x700 on the same monitor; identical production host binary; quiet precedes working",
+  "conditions": {
+    "idle": {
+      "baseline_window_cpu_median": 37.930792291997484,
+      "candidate_window_cpu_median": 36.53334204966073,
+      "saved_core_percentage_points": 1.3974502423367525,
+      "median_paired_saved_core_percentage_points": 1.3974502423367525,
+      "paired_saved_core_point_range": [
+        0.4991384384400632,
+        1.596804040460185
+      ],
+      "relative_reduction_percent": 3.684210526315798,
+      "baseline_host_cpu_median": 0.29945362335787484,
+      "candidate_host_cpu_median": 0.19964350902368075,
+      "pairs_with_lower_window_cpu": 5,
+      "pairs": [
+        {
+          "pair": 1,
+          "baseline": 32.741535479883645,
+          "candidate": 31.24420916220604,
+          "relative_reduction_percent": 4.573170731707313
+        },
+        {
+          "pair": 2,
+          "baseline": 40.52015841930603,
+          "candidate": 39.22271492312135,
+          "relative_reduction_percent": 3.2019704433497562
+        },
+        {
+          "pair": 3,
+          "baseline": 38.123696465986924,
+          "candidate": 36.52689242552674,
+          "relative_reduction_percent": 4.188481675392669
+        },
+        {
+          "pair": 4,
+          "baseline": 37.53521057069286,
+          "candidate": 37.0360721322528,
+          "relative_reduction_percent": 1.3297872340425494
+        },
+        {
+          "pair": 5,
+          "baseline": 37.930792291997484,
+          "candidate": 36.53334204966073,
+          "relative_reduction_percent": 3.684210526315798
+        }
+      ]
+    },
+    "working": {
+      "baseline_window_cpu_median": 44.418837079142016,
+      "candidate_window_cpu_median": 44.22008675928219,
+      "saved_core_percentage_points": 0.19875031985982616,
+      "median_paired_saved_core_percentage_points": 0.19966687331243094,
+      "paired_saved_core_point_range": [
+        -1.2976549161866089,
+        2.994689838436571
+      ],
+      "relative_reduction_percent": 0.44744602274415324,
+      "baseline_host_cpu_median": 5.989176536245894,
+      "candidate_host_cpu_median": 5.989176536245894,
+      "pairs_with_lower_window_cpu": 3,
+      "pairs": [
+        {
+          "pair": 1,
+          "baseline": 45.21981656039228,
+          "candidate": 42.22512672195571,
+          "relative_reduction_percent": 6.622516556291382
+        },
+        {
+          "pair": 2,
+          "baseline": 43.327711508797,
+          "candidate": 43.12804463548457,
+          "relative_reduction_percent": 0.46082949308756305
+        },
+        {
+          "pair": 3,
+          "baseline": 42.92243184309558,
+          "candidate": 44.22008675928219,
+          "relative_reduction_percent": -3.0232558139534844
+        },
+        {
+          "pair": 4,
+          "baseline": 44.418837079142016,
+          "candidate": 45.21737797045244,
+          "relative_reduction_percent": -1.7977528089887764
+        },
+        {
+          "pair": 5,
+          "baseline": 48.11277382637259,
+          "candidate": 46.81512639952022,
+          "relative_reduction_percent": 2.6970954356846453
+        }
+      ]
+    }
+  },
+  "whole_machine_speedup": null,
+  "input_latency_change": null
+}

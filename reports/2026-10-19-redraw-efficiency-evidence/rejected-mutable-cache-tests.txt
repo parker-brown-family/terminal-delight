@@ -1,0 +1,36 @@
+   Compiling terminal-delight v0.3.0 (/home/parker/Work/terminal-delight/.worktrees/redraw-efficiency/app)
+    Finished `release` profile [optimized] target(s) in 2m 25s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (/home/parker/Work/terminal-delight/app/target/release/deps/terminal_delight-eb272b5d24031ab7)
+
+running 12 tests
+test doc::tests::recovery_trims_grid_padding_first ... ok
+test pane::tests::grid_pad_floors_then_scales_then_compensates_curvature ... ok
+test pane::tests::padded_grid_rows_must_be_trimmed_before_reflow ... ok
+test pane::tests::paint_row_to_grid_row_inverts_the_paint_transform ... ok
+test pane::tests::the_grid_fallback_chain_waits_for_a_glyph_its_own_font_lacks ... ok
+test theme::tests::an_unset_bench_dial_follows_the_grid_and_a_turned_one_does_not ... ok
+test pane::tests::the_grid_is_positioned_by_its_drawn_padding ... ok
+test host::owning::a_grid_check_states_a_hash_and_the_offset_it_was_taken_at ... ok
+test host::owning::the_hash_is_the_grid_and_moves_only_when_the_grid_does ... ok
+
+thread 'pane::grid_paint::tests::quiet_grid_skips_layout_but_refresh_and_output_repaint' (2318049) panicked at src/pane/grid_paint.rs:102:9:
+output must repaint without relying on generation
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test pane::grid_paint::tests::quiet_grid_skips_layout_but_refresh_and_output_repaint ... FAILED
+test pane::styling::tests::covered_faces_skip_grid_styling_and_terminal_return_catches_up ... ok
+
+thread 'pane::grid_paint::tests::grid_cursor_selection_scroll_theme_and_geometry_invalidate' (2318048) panicked at src/pane/grid_paint.rs:150:13:
+mutation 0 left stale grid pixels
+test pane::grid_paint::tests::grid_cursor_selection_scroll_theme_and_geometry_invalidate ... FAILED
+
+failures:
+
+failures:
+    pane::grid_paint::tests::grid_cursor_selection_scroll_theme_and_geometry_invalidate
+    pane::grid_paint::tests::quiet_grid_skips_layout_but_refresh_and_output_repaint
+
+test result: FAILED. 10 passed; 2 failed; 0 ignored; 0 measured; 2342 filtered out; finished in 0.63s
+
+error: test failed, to rerun pass `--bin terminal-delight`

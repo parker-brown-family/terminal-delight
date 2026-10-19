@@ -85,7 +85,58 @@ pub trait DocumentSource {
     fn document(&self, budget: RowBudget) -> Document;
 }
 
+/// One grid row as the reader reads it: its text and styles, and whether the
+/// terminal soft-wrapped it — carried it on to the next row because it ran out of
+/// columns. The terminal sets that flag itself, so it is a fact about the row
+/// rather than something guessed from how full the row looks.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GridRow {
+    pub line: DocLine,
+    pub wrapped: bool,
+}
+
 impl Document {
+    /// Logical lines from rows that kept the terminal's own soft-wrap flag —
+    /// **no guessing**, which is what a shell's output needs.
+    ///
+    /// A wrapped row carries straight on into the next, exactly as the terminal
+    /// broke it, with its trailing spaces kept: a wrap that lands on a space is
+    /// real text. Every other row ends its line, with the grid's space padding
+    /// trimmed. A program that broke its own lines (`ls -C`, a TUI) wrote real
+    /// line ends, and they stay; [`Self::from_grid_rows`] is the guess for those,
+    /// and only an agent's screen still uses it.
+    pub fn from_wrapped_rows<'a>(rows: impl IntoIterator<Item = &'a GridRow>) -> Document {
+        let mut lines = Vec::new();
+        let mut open: Option<DocLine> = None;
+        for row in rows {
+            let piece = if row.wrapped {
+                row.line.clone()
+            } else {
+                let keep = row.line.text.trim_end_matches(' ').len();
+                DocLine::new(
+                    row.line.text[..keep].to_string(),
+                    slice_runs(&row.line.runs, 0, keep),
+                )
+            };
+            let line = match open.take() {
+                Some(mut acc) => {
+                    acc.text.push_str(&piece.text);
+                    acc.runs.extend(piece.runs);
+                    acc
+                }
+                None => piece,
+            };
+            if row.wrapped {
+                open = Some(line);
+            } else {
+                lines.push(line);
+            }
+        }
+        // The last row can still be wrapped: a line being typed past the edge.
+        lines.extend(open);
+        Document { lines }
+    }
+
     /// Recover logical lines from grid rows — **the one place that guesses.**
     ///
     /// `src_cols` is the width the rows were chopped at. Rows arrive space-padded
@@ -519,5 +570,110 @@ mod tests {
         let rows = layout(&doc, 8);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].cols, 0);
+    }
+
+    /// Rows a terminal of `cols` columns holds for `lines`: each line cut at the
+    /// width, every piece but its last flagged as wrapped — what the grid keeps.
+    fn wrapped_rows(lines: &[&str], cols: usize) -> Vec<GridRow> {
+        let mut rows = Vec::new();
+        for l in lines {
+            let chars: Vec<char> = l.chars().collect();
+            let pieces: Vec<String> = chars
+                .chunks(cols)
+                .map(|c| c.iter().collect::<String>())
+                .collect();
+            let last = pieces.len().saturating_sub(1);
+            for (i, p) in pieces.into_iter().enumerate() {
+                let padded = format!("{p:<cols$}");
+                rows.push(GridRow {
+                    line: line(&padded),
+                    wrapped: i < last,
+                });
+            }
+        }
+        rows
+    }
+
+    /// Real `git log --oneline` output, as a 48-column shell pane holds it,
+    /// comes back as the three lines git printed — joined where the terminal
+    /// wrapped them, not where a width test guesses it might have.
+    #[test]
+    fn a_shells_wrapped_lines_join_where_the_terminal_wrapped_them() {
+        let log = [
+            "5ba60ed Merge pull request #883 from parker-brown-family/feat/border-phosphor-gauge",
+            "c496fb0 The reading rail's lit blocks follow the phosphor gauge too",
+            "e713847 The GAUGES tray has a phosphor gauge, and every lit border's glow goes through it",
+        ];
+        let rows = wrapped_rows(&log, 48);
+        assert_eq!(rows.len(), 6, "each line takes two rows at 48 columns");
+        let doc = Document::from_wrapped_rows(&rows);
+        let got: Vec<&str> = doc.lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(got, log.to_vec());
+        for l in &doc.lines {
+            assert_eq!(
+                l.runs.iter().map(|r| r.len).sum::<usize>(),
+                l.text.len(),
+                "the styles still cover the joined text byte for byte"
+            );
+        }
+    }
+
+    /// What a program broke itself stays as it printed: `ls -C` laid its columns
+    /// out for 48 columns and ended each row, so no row is joined to the next.
+    #[test]
+    fn a_program_that_broke_its_own_lines_keeps_them() {
+        let ls = [
+            "backend.rs   markdown_view.rs  poppler.rs",
+            "cache.rs     md_notes.rs       pref.rs",
+            "cdp.rs       mpv.rs            progress.rs",
+        ];
+        let doc = Document::from_wrapped_rows(&wrapped_rows(&ls, 48));
+        let got: Vec<&str> = doc.lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(
+            got,
+            ls.to_vec(),
+            "three rows in, three lines out, padding trimmed"
+        );
+    }
+
+    /// A wrap that lands on a space keeps the space: the row was full, so its last
+    /// cell is text and not padding.
+    #[test]
+    fn a_space_at_the_wrap_point_survives_the_join() {
+        let rows = vec![
+            GridRow {
+                line: line("hello "),
+                wrapped: true,
+            },
+            GridRow {
+                line: line("world "),
+                wrapped: false,
+            },
+        ];
+        let doc = Document::from_wrapped_rows(&rows);
+        assert_eq!(doc.lines.len(), 1);
+        assert_eq!(doc.lines[0].text, "hello world");
+    }
+
+    /// A line still being typed past the edge ends the grid wrapped; it is kept.
+    #[test]
+    fn a_line_left_open_at_the_end_is_kept() {
+        let rows = vec![
+            GridRow {
+                line: line("$ echo one"),
+                wrapped: false,
+            },
+            GridRow {
+                line: line("$ git log --one"),
+                wrapped: true,
+            },
+            GridRow {
+                line: line("line"),
+                wrapped: true,
+            },
+        ];
+        let doc = Document::from_wrapped_rows(&rows);
+        let got: Vec<&str> = doc.lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(got, vec!["$ echo one", "$ git log --oneline"]);
     }
 }

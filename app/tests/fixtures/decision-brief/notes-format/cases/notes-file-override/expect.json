@@ -1,0 +1,31 @@
+{
+ "release": "current",
+ "pins": "NOTES_FILE names another file (a copy pointing at its original). The map header and the download use that name, never the path.",
+ "notes_file": "2026-09-09-the-original-brief.html",
+ "concur_support": "supported",
+ "format": "1",
+ "rev_before": null,
+ "notes_text": "{}",
+ "refuse": null,
+ "shown_before": {
+  "note_count": "0",
+  "concur_count": "0",
+  "notes": {},
+  "concurs": []
+ },
+ "shown_after": {
+  "note_count": "1",
+  "concur_count": "1",
+  "notes": {
+   "verdict-reference-writer": "1"
+  },
+  "concurs": [
+   "ask-keep-the-plain-text"
+  ]
+ },
+ "writes": [
+  "notes-island",
+  "concurs-island",
+  "mirror-inserted"
+ ]
+}

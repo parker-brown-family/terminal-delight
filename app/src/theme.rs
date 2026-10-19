@@ -26,7 +26,7 @@ pub const DEFAULT_THEME_TOML: &str = include_str!("../themes/hacker.toml");
 
 /// (id, embedded toml) for every built-in. The user file at
 /// ~/.config/terminal-delight/theme.toml stays hot-reloaded as id "custom".
-const BUILTIN_THEMES: &[(&str, &str)] = &[
+pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
     (
         "quiet-command",
         include_str!("../themes/quiet-command.toml"),
@@ -39,7 +39,6 @@ const BUILTIN_THEMES: &[(&str, &str)] = &[
         "tactical-overdrive",
         include_str!("../themes/tactical-overdrive.toml"),
     ),
-    ("gamba", include_str!("../themes/gamba.toml")),
     ("deco", include_str!("../themes/deco.toml")),
     ("hacker", DEFAULT_THEME_TOML),
 ];
@@ -108,7 +107,7 @@ struct PaletteFile {
     colors: FileColors,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Theme {
     /// Kept for theme-file authors; the UI shows `icon` instead.
     #[allow(dead_code)]
@@ -143,6 +142,9 @@ pub struct Theme {
     pub syntax: bool,
     /// Which grammar the overlay highlights when `syntax` is on (the SYNTAX tray).
     pub syntax_scheme: SyntaxScheme,
+    /// Which of the theme's colours a sticky note's paper takes (the STICKY
+    /// NOTE row). Read by `pane.rs` through [`crate::sticky::paper_for`].
+    pub note_paper: NotePaper,
     /// Monitor-OSD grading baked from the scope's [`ThemeChoice::grade`], applied
     /// to final cell colours at paint time (see `pane::graded`).
     pub grade: Grade,
@@ -168,6 +170,11 @@ pub struct Theme {
     /// Crawl depth: ratio of text height at the BOTTOM vs the TOP of the crawl
     /// (`0.05..=15`). `>1` = classic (near text bigger); `1` = no foreshortening.
     pub crawl_depth: f32,
+    /// The CRT master switch, resolved from the scope's [`Grade::crt`]. The
+    /// tube's own effects are already zeroed by [`flatten_tube`] when it is
+    /// off; this is for chrome that bleeds onto the glass and is only right
+    /// on a tube — the pane header's bloom (`pane::header_shadows`).
+    pub crt: bool,
     pub flicker: f32,
     pub jiggle: f32,
     pub screen_glare: f32,
@@ -298,6 +305,47 @@ impl SyntaxScheme {
     }
 }
 
+/// Which of the theme's own colours a sticky note is drawn in (the STICKY NOTE
+/// row under the wheel). Parker named and ordered them: "Contrast Accent Mute".
+/// The arithmetic is [`crate::notepaper::papers`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum NotePaper {
+    /// The theme's named hue farthest from its accent, weighted by how vivid it
+    /// is: praus's bruised-wine purple, bright-future's mint. The default,
+    /// because a note is there to be seen first.
+    #[default]
+    Contrast,
+    /// The theme's accent: praus's sage, bright-future's hot pink.
+    Accent,
+    /// The theme's text colour (its surface, on a light screen): praus's linen.
+    Mute,
+}
+
+/// Lenient on load, like [`ColorMode`]. The words the first STICKY NOTE row
+/// wrote (2026-10-16, PR 970) map to their nearest successor — `primary` was
+/// the theme's own colour, `complement` its opposite — and anything unknown
+/// folds to the default, so a state file from another build keeps loading.
+impl<'de> Deserialize<'de> for NotePaper {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match String::deserialize(d)?.as_str() {
+            "accent" | "primary" => NotePaper::Accent,
+            "mute" => NotePaper::Mute,
+            _ => NotePaper::Contrast,
+        })
+    }
+}
+
+impl NotePaper {
+    /// Picker order, as Parker gave it.
+    pub const ALL: [NotePaper; 3] = [NotePaper::Contrast, NotePaper::Accent, NotePaper::Mute];
+
+    /// `true` for the serde/skip default (contrast).
+    pub fn is_default(&self) -> bool {
+        matches!(self, NotePaper::Contrast)
+    }
+}
+
 /// serde `default` for the two `PaneTheme` inherit flags — a fresh pane follows
 /// outer for both groups, so an absent flag means "inheriting".
 fn yes() -> bool {
@@ -341,6 +389,12 @@ pub enum GradeKey {
     /// but it rides the grade group so each pane curves by its OWN amount (own
     /// override else inherited outer), instead of one global dial bending all.
     Warp,
+    /// The glass glare: how strongly the top-left reflection shines on the
+    /// tube, `0..=1` (`0` = clear glass). Not a paint grade — the CRT pass
+    /// adds it over the warped sample — and, like warp, it rides the grade
+    /// group so each pane shines by its own amount. Until somebody turns it,
+    /// it is *unset* and the theme's own glare shows — see [`Grade::glare`].
+    Glare,
     /// Crawl convergence angle in degrees (`2..=59`). Not a paint grade — it
     /// drives the per-pane crawl perspective the renderer warps by — but it
     /// rides the grade group for the per-pane override + "follow outer".
@@ -348,6 +402,11 @@ pub enum GradeKey {
     /// Crawl depth — text-height ratio bottom:top (`0.05..=15`). Rides the grade
     /// group like [`GradeKey::CrawlAngle`].
     CrawlDepth,
+    /// Border phosphor, `0..=PHOSPHOR_MAX` with `1.0` the house look: how much
+    /// light the lit borders cast. Not a paint grade — it scales halos through
+    /// [`phosphor`] — but it rides the grade group, so a pane's own frame and
+    /// header can glow by its own amount while the chrome follows outer.
+    Phosphor,
 }
 
 impl GradeKey {
@@ -359,8 +418,11 @@ impl GradeKey {
             GradeKey::Scale => (0.7, 1.6, 1.0),
             GradeKey::TextSize | GradeKey::BenchSize => (0.6, 2.0, 1.0),
             GradeKey::Warp => (0.0, WARP_MAX, 0.0),
+            // The CRT pass clamps a tube's glare to `0..1` (`warp::register_tube`).
+            GradeKey::Glare => (0.0, 1.0, 0.0),
             GradeKey::CrawlAngle => (CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX, CRAWL_ANGLE_DEFAULT),
             GradeKey::CrawlDepth => (CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX, CRAWL_DEPTH_DEFAULT),
+            GradeKey::Phosphor => (0.0, PHOSPHOR_MAX, 1.0),
             _ => (0.0, 1.0, 0.5),
         }
     }
@@ -473,6 +535,17 @@ pub struct Grade {
     /// pane's tube by it, so warp is per-pane (override else inherited outer) —
     /// not the old global dial that curved every pane at once.
     pub warp: f32,
+    /// Glass-glare strength (`0..=1`, `0` = clear glass), or `None` for **the
+    /// theme's own glare**.
+    ///
+    /// `None` is not `0`. Glare is authored per theme — `hacker` shines at
+    /// 0.42, most themes not at all — and every grade written
+    /// before this dial existed was showing exactly that. Reading the absent
+    /// key as zero would wipe the reflection off every hacker pane the first
+    /// time this build opened its session. Turning the GAUGES slider writes
+    /// `Some`, and from then on it holds whatever theme the pane wears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glare: Option<f32>,
     /// CRT tracking-band dials `[intensity, speed, size]` in `0..1`, or `None` to
     /// use whatever the resolved theme authored. Per-pane via the grade group.
     pub tracking: Option<[f32; 3]>,
@@ -485,6 +558,23 @@ pub struct Grade {
     pub crawl_angle: f32,
     /// Crawl depth = text-height ratio bottom:top (`0.05..=15`, neutral 2.5).
     pub crawl_depth: f32,
+    /// The CRT master switch. Off ⇒ a flat, clean screen: no warp, roll bar,
+    /// scanlines, vignette, bloom, flicker, jiggle, glare or bezel, and no
+    /// power-on flash — see [`flatten_tube`]. The dials are not touched, so
+    /// switching it back on restores exactly the tube they describe.
+    ///
+    /// An ABSENT key reads as on. Every grade written before this switch
+    /// existed was running the CRT, so a missing `crt` is a fact about that
+    /// file ("this person had the tube"), not an unanswered question. Only an
+    /// explicit `crt = false` is off, which is what a fresh install writes
+    /// ([`house_outer`]) and what the GAUGES toggle writes.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub crt: bool,
+    /// Border phosphor (`0..=PHOSPHOR_MAX`, `1.0` = the house look): the gain on
+    /// every halo a lit border casts, applied through [`phosphor`]. A grade
+    /// written before this dial existed has no key and fills from
+    /// [`Grade::default`], which is `1.0` — exactly the glow it was drawn with.
+    pub phosphor: f32,
 }
 
 /// One addressable channel of a [`Grade`] — every dial a pane can own, the two
@@ -504,10 +594,13 @@ pub enum GradeChannel {
     TextSize,
     BenchSize,
     Warp,
+    Glare,
     CrawlAngle,
     CrawlDepth,
     Crawl,
     Tracking,
+    Crt,
+    Phosphor,
 }
 
 impl GradeChannel {
@@ -515,7 +608,10 @@ impl GradeChannel {
     /// pin list reads the same way every time. Safe to insert into: a pin list
     /// travels as channel NAMES, never as the bitmask, so the discriminants are
     /// an in-memory detail and a new dial can sit beside its sibling.
-    pub const ALL: [GradeChannel; 14] = [
+    ///
+    /// Thirty-two is the most the bitmask holds — [`GradePins`] is a `u32`,
+    /// widened from `u16` when glare became the seventeenth channel.
+    pub const ALL: [GradeChannel; 17] = [
         Self::Brightness,
         Self::Contrast,
         Self::Colour,
@@ -526,10 +622,13 @@ impl GradeChannel {
         Self::TextSize,
         Self::BenchSize,
         Self::Warp,
+        Self::Glare,
         Self::CrawlAngle,
         Self::CrawlDepth,
         Self::Crawl,
         Self::Tracking,
+        Self::Crt,
+        Self::Phosphor,
     ];
 
     /// The wire name. STABLE — it is written into state files, so renaming one
@@ -546,10 +645,13 @@ impl GradeChannel {
             Self::TextSize => "text_size",
             Self::BenchSize => "bench_size",
             Self::Warp => "warp",
+            Self::Glare => "glare",
             Self::CrawlAngle => "crawl_angle",
             Self::CrawlDepth => "crawl_depth",
             Self::Crawl => "crawl",
             Self::Tracking => "tracking",
+            Self::Crt => "crt",
+            Self::Phosphor => "phosphor",
         }
     }
 
@@ -560,8 +662,8 @@ impl GradeChannel {
         Self::ALL.into_iter().find(|c| c.name() == name)
     }
 
-    const fn bit(self) -> u16 {
-        1 << (self as u16)
+    const fn bit(self) -> u32 {
+        1 << (self as u32)
     }
 
     /// True when `a` and `b` carry the same value for this channel.
@@ -587,9 +689,18 @@ impl GradeChannel {
                 _ => false,
             },
             Self::Warp => close(a.warp, b.warp),
+            // Option equality, as for the bench: unset follows the theme, and
+            // a glare dialled to exactly the theme's is still this pane's own.
+            Self::Glare => match (a.glare, b.glare) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
             Self::CrawlAngle => close(a.crawl_angle, b.crawl_angle),
             Self::CrawlDepth => close(a.crawl_depth, b.crawl_depth),
             Self::Crawl => a.crawl == b.crawl,
+            Self::Crt => a.crt == b.crt,
+            Self::Phosphor => close(a.phosphor, b.phosphor),
             Self::Tracking => match (a.tracking, b.tracking) {
                 (None, None) => true,
                 (Some(x), Some(y)) => x.iter().zip(y.iter()).all(|(p, q)| close(*p, *q)),
@@ -611,10 +722,13 @@ impl GradeChannel {
             Self::TextSize => dst.text_size = src.text_size,
             Self::BenchSize => dst.bench_size = src.bench_size,
             Self::Warp => dst.warp = src.warp,
+            Self::Glare => dst.glare = src.glare,
             Self::CrawlAngle => dst.crawl_angle = src.crawl_angle,
             Self::CrawlDepth => dst.crawl_depth = src.crawl_depth,
             Self::Crawl => dst.crawl = src.crawl,
             Self::Tracking => dst.tracking = src.tracking,
+            Self::Crt => dst.crt = src.crt,
+            Self::Phosphor => dst.phosphor = src.phosphor,
         }
     }
 }
@@ -632,8 +746,10 @@ impl From<GradeKey> for GradeChannel {
             GradeKey::TextSize => Self::TextSize,
             GradeKey::BenchSize => Self::BenchSize,
             GradeKey::Warp => Self::Warp,
+            GradeKey::Glare => Self::Glare,
             GradeKey::CrawlAngle => Self::CrawlAngle,
             GradeKey::CrawlDepth => Self::CrawlDepth,
+            GradeKey::Phosphor => Self::Phosphor,
         }
     }
 }
@@ -647,7 +763,7 @@ impl From<GradeKey> for GradeChannel {
 /// fresh pane, a split, a restored layout all start empty and therefore track
 /// the outer scope live, so changing outer moves every pane nobody has dressed.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub struct GradePins(u16);
+pub struct GradePins(u32);
 
 impl GradePins {
     /// Own nothing — follow outer for every channel. A fresh pane's state.
@@ -692,6 +808,17 @@ impl GradePins {
 
     pub fn iter(self) -> impl Iterator<Item = GradeChannel> {
         GradeChannel::ALL.into_iter().filter(move |c| self.has(*c))
+    }
+
+    /// The main gauges' channels — what [`Grade::reset_gauges`] clears, and so
+    /// what a pane's RESET pins. Read off [`Grade::CHANNELS`] rather than listed
+    /// again, so moving a slider into or out of the open list moves it here too.
+    pub fn main_gauges() -> Self {
+        let mut out = Self::NONE;
+        for (k, _) in Grade::CHANNELS {
+            out.insert(k.into());
+        }
+        out
     }
 
     /// A single-channel set — what one slider drag or one patched MCP field pins.
@@ -771,10 +898,16 @@ impl Default for Grade {
             text_size: 1.0,     // terminal grid at config size
             bench_size: None,   // unset: the bench follows the grid's dial
             warp: WARP_DEFAULT, // the house near-fishbowl bend
+            glare: None,        // defer to the theme's authored glass
             tracking: None,     // defer to the theme's authored roll bar
             crawl: false,       // crawl mode off until toggled
             crawl_angle: CRAWL_ANGLE_DEFAULT,
             crawl_depth: CRAWL_DEPTH_DEFAULT,
+            // What a grade with no `crt` key has always meant. The fresh
+            // install's flat screen is [`house_outer`]'s to say, not this.
+            crt: true,
+            // The glow every border had before the gauge existed.
+            phosphor: 1.0,
         }
     }
 }
@@ -782,6 +915,11 @@ impl Default for Grade {
 impl Grade {
     /// Picker order: (channel, label) for the OSD slider rows. Terminal text
     /// size leads — it's the control people reach for most.
+    ///
+    /// These are the MAIN gauges, the ones the tray shows open. Warp and the
+    /// roll bar live in the collapsed CRT section and the crawl knobs in their
+    /// own, so this list is also exactly what `reset` clears — see
+    /// [`Grade::reset_gauges`].
     pub const CHANNELS: [(GradeKey, &'static str); 10] = [
         (GradeKey::TextSize, "text size"),
         (GradeKey::BenchSize, "bench size"),
@@ -792,8 +930,31 @@ impl Grade {
         (GradeKey::Background, "background"),
         (GradeKey::Gamma, "gamma"),
         (GradeKey::Scale, "menu bar"),
-        (GradeKey::Warp, "warp"),
+        (GradeKey::Phosphor, "phosphor"),
     ];
+
+    /// This grade with its MAIN gauges ([`Self::CHANNELS`]) back at neutral and
+    /// everything else kept: the CRT switch, warp and roll, and the crawl.
+    ///
+    /// Those sit in their own collapsed sections, and they hold the tube somebody
+    /// tuned for the day they switch it on. A reset pressed to undo a brightness
+    /// drag has no business flattening that as well.
+    pub fn reset_gauges(self) -> Self {
+        let n = Self::neutral();
+        Self {
+            brightness: n.brightness,
+            contrast: n.contrast,
+            colour: n.colour,
+            text: n.text,
+            background: n.background,
+            gamma: n.gamma,
+            scale: n.scale,
+            text_size: n.text_size,
+            bench_size: n.bench_size,
+            phosphor: n.phosphor,
+            ..self
+        }
+    }
 
     /// The identity grade: every channel at its no-op (`0.5`, scale `1.0`), i.e.
     /// no monitor grading at all. This is what `reset` returns to — distinct
@@ -814,16 +975,25 @@ impl Grade {
             // pinning a 1.0 that would outlive the next text-size change.
             bench_size: None,
             warp: 0.0,      // reset = dead flat
+            glare: None,    // reset = defer to the theme's glass
             tracking: None, // reset = defer to the theme's roll bar
             crawl: false,   // reset = crawl off
             crawl_angle: CRAWL_ANGLE_DEFAULT,
             crawl_depth: CRAWL_DEPTH_DEFAULT,
+            // Not a grade: the tube is on, as every grade before the switch
+            // was. With warp at 0 that is still the theme's own scanlines,
+            // exactly what this identity resolved to before `crt` existed.
+            crt: true,
+            // Reset puts the borders back to the house glow, which is what
+            // `1.0` means — not to none, which is a choice somebody makes.
+            phosphor: 1.0,
         }
     }
 
     /// True when every channel sits at neutral — the grade is the identity and
-    /// takes `resolve`'s fast path. NB: `warp`/`tracking` are NOT paint grades, so
-    /// they're deliberately excluded — a curved-but-ungraded pane still fast-paths.
+    /// takes `resolve`'s fast path. NB: `warp`/`tracking`/`phosphor` are NOT paint
+    /// grades, so they're deliberately excluded — a curved-but-ungraded pane
+    /// still fast-paths, and so does one whose borders glow more than the house.
     pub fn is_neutral(&self) -> bool {
         const EPS: f32 = 1e-3;
         [
@@ -884,10 +1054,13 @@ impl Grade {
             && (self.text_size - d.text_size).abs() < EPS
             && self.bench_size == d.bench_size
             && (self.warp - d.warp).abs() < EPS
+            && self.glare == d.glare
             && self.tracking == d.tracking
             && self.crawl == d.crawl
             && (self.crawl_angle - d.crawl_angle).abs() < EPS
             && (self.crawl_depth - d.crawl_depth).abs() < EPS
+            && self.crt == d.crt
+            && (self.phosphor - d.phosphor).abs() < EPS
     }
 
     /// The multiplier the WORKBENCH face's type ramp is drawn at.
@@ -902,8 +1075,21 @@ impl Grade {
         self.bench_size.unwrap_or(self.text_size)
     }
 
-    pub fn get(&self, k: GradeKey) -> f32 {
-        match k {
+    /// The glare this grade shines with on a theme that authored `authored`.
+    ///
+    /// The only place [`Self::glare`]'s unset state is allowed to collapse,
+    /// and it collapses onto the theme's glass, never onto zero: a pane whose
+    /// glare dial nobody has turned shows what its theme shows.
+    pub fn glare_over(&self, authored: f32) -> f32 {
+        self.glare.unwrap_or(authored)
+    }
+
+    /// Where channel `k` sits, or `None` for a channel this grade leaves to
+    /// the theme — today only an unset [`Self::glare`], whose position the
+    /// grade alone cannot know (see [`Self::glare_over`]). Every other channel
+    /// always answers.
+    pub fn get(&self, k: GradeKey) -> Option<f32> {
+        Some(match k {
             GradeKey::Brightness => self.brightness,
             GradeKey::Contrast => self.contrast,
             GradeKey::Colour => self.colour,
@@ -914,9 +1100,11 @@ impl Grade {
             GradeKey::TextSize => self.text_size,
             GradeKey::BenchSize => self.bench_gauge(),
             GradeKey::Warp => self.warp,
+            GradeKey::Glare => return self.glare,
             GradeKey::CrawlAngle => self.crawl_angle,
             GradeKey::CrawlDepth => self.crawl_depth,
-        }
+            GradeKey::Phosphor => self.phosphor,
+        })
     }
 
     pub fn set(&mut self, k: GradeKey, v: f32) {
@@ -933,8 +1121,10 @@ impl Grade {
             GradeKey::TextSize => self.text_size = v,
             GradeKey::BenchSize => self.bench_size = Some(v),
             GradeKey::Warp => self.warp = v,
+            GradeKey::Glare => self.glare = Some(v),
             GradeKey::CrawlAngle => self.crawl_angle = v,
             GradeKey::CrawlDepth => self.crawl_depth = v,
+            GradeKey::Phosphor => self.phosphor = v,
         }
     }
 }
@@ -991,6 +1181,18 @@ pub struct ThemeChoice {
     /// theme group; `false` by default for back-compat.
     #[serde(default, skip_serializing_if = "is_false")]
     pub invert: bool,
+    /// The sticky note's paper: contrast, accent or mute. Part of the theme
+    /// group, so a pane that follows outer wears outer's note colour. Absent
+    /// reads as `Contrast`, the default Parker chose — every note, old state
+    /// files included, takes the theme's contrast colour until a button says
+    /// otherwise.
+    #[serde(default, skip_serializing_if = "NotePaper::is_default")]
+    pub note: NotePaper,
+    /// Persistently follow Omarchy's active palette. Manual colours stay retained.
+    /// None is an undeclared preference in old state; Some(false) is an explicit
+    /// choice to use manual colours. Both retain the manual colour settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_omarchy: Option<bool>,
 }
 
 impl Default for ThemeChoice {
@@ -1008,54 +1210,64 @@ impl Default for ThemeChoice {
             complement: None,
             human: None,
             invert: false,
+            note: NotePaper::Contrast,
+            follow_omarchy: None,
         }
     }
 }
 
-/// The shipped **OUTER** (mother cabinet) look — Parker's "wooden TV set": the
-/// warm amber colour set layered over the green `custom` base, which seeds the
-/// dark screen into warm brown and paints amber/cream chrome. Used for a fresh
-/// install's outer scope (see `main::build`). Real ANSI + code highlighting on;
-/// a gentle darken/de-contrast grade and a slightly larger UI. The terminal
-/// screens inside stay green — see [`house_terminal`] / [`PaneTheme::house`].
+/// The shipped **OUTER** look — what a fresh install opens on, and what every
+/// pane wears until somebody dresses one (a fresh pane follows outer, see
+/// [`PaneTheme::house`]).
+///
+/// A flat, clean screen in the Terminal Delight palette. It is the look
+/// Parker's own window runs, taken on 2026-09-25, with two changes: the CRT is
+/// switched off, and contrast is raised to make up for the bloom a flat screen
+/// no longer has. Used for a fresh install's outer scope (see `main::build`).
+///
+/// **The CRT dials are his, kept for the day someone switches the tube on.**
+/// Warp and the roll bar are stored exactly as his window has them, so opening
+/// the GAUGES tray's CRT section and pressing the switch gives exactly the
+/// screen this was taken from, with no slider moved. The base `custom` theme
+/// file is seeded from `hacker` on first run, which is where the scanlines,
+/// glare and bloom come from when it is on.
 pub fn house_outer() -> ThemeChoice {
     ThemeChoice {
         id: "custom".into(),
-        // A warm amber seed tints the dark green base into warm brown chrome with
-        // an amber accent and tan text — the "wooden TV" cabinet. (Seed, not the
-        // mono Amber colour set, so the accent stays amber rather than greying.)
-        seed: Some("#e0913a".into()),
-        color: ColorMode::Default, // "ansi"
+        seed: None,
+        color: ColorMode::OnTheme, // "theme" program colour
         syntax: true,
-        syntax_scheme: SyntaxScheme::Code,
+        syntax_scheme: SyntaxScheme::Agentic,
         grade: Grade {
-            brightness: 0.38, // −12
-            // Neutral. This shipped at 0.21 (−29) as part of the "gentle
-            // de-contrast", but a fresh window is the one screen a new pane has
-            // nothing to compare itself against, and it opened visibly flat —
-            // the dial read −29 with nobody having touched it. Darkening still
-            // happens, via brightness above; crushing the range as well was one
-            // grade too many. The DISPLAY tray now reads +0 on a fresh install.
-            contrast: 0.5, // 0
-            colour: 0.5,
+            brightness: 0.26,         // −24
+            contrast: HOUSE_CONTRAST, // raised: see the constant
+            colour: 1.0,              // +50
             text: 0.5,
             background: 0.5,
             gamma: 0.5,
-            scale: HOUSE_SCALE,         // 80%
-            text_size: HOUSE_TEXT_SIZE, // 75%
+            scale: HOUSE_SCALE,         // 85%
+            text_size: HOUSE_TEXT_SIZE, // 74%
             bench_size: None,           // unset: the bench opens at the grid's size
-            warp: WARP_DEFAULT,         // the house near-fishbowl bend
-            tracking: None,             // defer to the theme's authored roll bar
+            // Off on a fresh install; the two dials below are what it turns on.
+            crt: false,
+            warp: WARP_MAX,
+            glare: None, // the `custom` theme's glass, seeded from `hacker`
+            tracking: Some(HOUSE_ROLL),
             crawl: false,
             crawl_angle: CRAWL_ANGLE_DEFAULT,
             crawl_depth: CRAWL_DEPTH_DEFAULT,
+            phosphor: 1.0, // the house glow; the gauge goes to 400% and to none
         },
         dynamic: Dynamic::Plain,
-        palette: None, // the shipped cabinet is our own look, not a borrowed one
+        // The Terminal Delight palette, which TD ships its own copy of, so it is
+        // here on a machine with no Omarchy (see `palette::SHIPPED`).
+        palette: Some(crate::palette::TERMINAL_DELIGHT.into()),
         text: None,
         complement: None,
         human: None,
         invert: false,
+        note: NotePaper::Contrast,
+        follow_omarchy: None,
     }
 }
 
@@ -1089,6 +1301,8 @@ pub fn house_terminal() -> ThemeChoice {
         complement: None,
         human: None,
         invert: false,
+        note: NotePaper::Contrast,
+        follow_omarchy: None,
     }
 }
 
@@ -1119,6 +1333,13 @@ pub struct ThemeGroup {
     pub human: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub invert: bool,
+    #[serde(default, skip_serializing_if = "NotePaper::is_default")]
+    pub note: NotePaper,
+    /// Persistently follow Omarchy's active palette. Manual colours stay retained.
+    /// None is an undeclared preference in old state; Some(false) is an explicit
+    /// choice to use manual colours. Both retain the manual colour settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_omarchy: Option<bool>,
 }
 
 impl Default for ThemeGroup {
@@ -1135,11 +1356,24 @@ impl Default for ThemeGroup {
             complement: None,
             human: None,
             invert: false,
+            note: NotePaper::Contrast,
+            follow_omarchy: None,
         }
     }
 }
 
 impl ThemeChoice {
+    /// The live desktop supplies these roles while manual settings stay parked.
+    fn without_manual_colours(mut self) -> Self {
+        self.palette = None;
+        self.dynamic = Dynamic::Plain;
+        self.seed = None;
+        self.text = None;
+        self.complement = None;
+        self.human = None;
+        self
+    }
+
     /// This choice with its theme group replaced and its `grade` kept — the
     /// inverse of [`ThemeGroup::of`], for the scopes that hold a whole choice
     /// rather than a group beside a grade (the outer is the only one).
@@ -1157,6 +1391,8 @@ impl ThemeChoice {
             complement: g.complement,
             human: g.human,
             invert: g.invert,
+            note: g.note,
+            follow_omarchy: g.follow_omarchy,
         }
     }
 }
@@ -1176,6 +1412,8 @@ impl ThemeGroup {
             complement: c.complement.clone(),
             human: c.human.clone(),
             invert: c.invert,
+            note: c.note,
+            follow_omarchy: c.follow_omarchy,
         }
     }
 }
@@ -1293,6 +1531,8 @@ impl PaneTheme {
             complement: g.complement,
             human: g.human,
             invert: g.invert,
+            note: g.note,
+            follow_omarchy: g.follow_omarchy,
         }
     }
 
@@ -1554,7 +1794,7 @@ pub enum Dynamic {
     Pineapple,
     /// RETRO: a 1970s game-show / slot-machine palette — warm amber-gold anchor,
     /// robin-egg teal complement, vivid game-board greens and cinnabar reds.
-    /// Maximum good vibes; the colour half of the GAMBA look (theme `gamba`).
+    /// Legacy gold palette retained for saved-state compatibility.
     Retro,
     /// BAT: a nocturnal electric-purple monitor — near-black violet field, bright
     /// magenta phosphor letters, pale-orchid title. The flying-mouse, not baseball.
@@ -1604,25 +1844,19 @@ pub enum Dynamic {
 }
 
 impl Dynamic {
-    /// The named colour sets shown in the tray and the paint overlay — ONE
-    /// vocabulary, shared with the desktop.
+    /// The named colour sets — the eleven the theme tray and the paint overlay
+    /// offered until 2026-10-16, when Omarchy's own themes replaced them in
+    /// both pickers ([`crate::palette::offered`]).
     ///
     /// These are exactly the variants the Omarchy theme set ships
     /// (`omarchy-terminal-delight-theme/variants.toml` → the
-    /// `terminal-delight-<key>` themes in `~/.config/omarchy/themes`), so a
-    /// terminal painted from the bar and a pane painted from inside TD are
-    /// speaking the same language. The desktop is the registry; this array
-    /// follows it.
+    /// `terminal-delight-<key>` themes in `~/.config/omarchy/themes`).
     ///
-    /// Order is ALPHABETICAL, not by hue, because the first letter of each
-    /// label is its keyboard chord in the paint overlay — reading order and
-    /// key order have to agree or the letters are a memory test. Every label
-    /// therefore starts with a DISTINCT letter, and none of them may be `d`
-    /// (desktop), `s`/`S` (saturate) or `R` (reset), which the overlay owns.
-    /// Guarded by `named_sets_spell_a_unique_paint_alphabet`.
-    ///
-    /// Colour sets outside this list still exist and still load from saved
-    /// state — they are simply not offered any more. Re-adding one is a line.
+    /// Nothing offers them now, and the list stays because files still name
+    /// them: a pane's saved state can wear one and keeps it, and a `set:` line
+    /// in favourites.toml is still read — and kept when the file is rewritten —
+    /// rather than dropped as a typo. Colour sets outside this list still load
+    /// from saved state too.
     pub const NAMED: [Dynamic; 11] = [
         Dynamic::Army,      // a · olive
         Dynamic::Badger,    // b · greyscale
@@ -1679,11 +1913,8 @@ impl Dynamic {
             Dynamic::Bolt => "bolt",
             Dynamic::Amber => "amber",
             Dynamic::Pineapple => "pineapple",
-            // `gamba`, not `retro`: the desktop's `retro` variant is TD's
-            // Cyberpunk set (variants.toml says so), and two sets may not
-            // answer to one name. This one has always been the colour half
-            // of the GAMBA theme.
-            Dynamic::Retro => "gamba",
+            // Retained only for existing saved colour sets.
+            Dynamic::Retro => "gold",
             Dynamic::Bat => "violet",
             Dynamic::Cherry => "cherry",
             Dynamic::CottonClowndy => "cotton-clowndy",
@@ -1700,40 +1931,6 @@ impl Dynamic {
             Dynamic::Badger => "badger",
             Dynamic::Custom(_) => "custom",
         }
-    }
-
-    /// The keyboard chord that paints this set — its label's first letter,
-    /// upper-cased. Unique across [`Dynamic::NAMED`] by construction, which is
-    /// what lets the overlay be driven letter-by-letter with no mouse.
-    pub fn paint_letter(&self) -> char {
-        self.label()
-            .chars()
-            .next()
-            .map(|c| c.to_ascii_uppercase())
-            .unwrap_or('?')
-    }
-
-    /// Resolve a paint-overlay keystroke to what it paints.
-    ///
-    /// `Some(None)` hands the pane back to the desktop (`d`), `Some(Some(set))`
-    /// paints that set, `None` means the key is not a paint chord at all. One
-    /// function so the overlay's legend, the key handler and the tests are all
-    /// reading the same table — the alternative is a `match` in the handler
-    /// that drifts from the tiles it claims to describe.
-    pub fn paint_chord(key: &str) -> Option<Option<Dynamic>> {
-        let mut ch = key.chars();
-        let (c, rest) = (ch.next()?, ch.next());
-        if rest.is_some() {
-            return None; // "escape", "left", … are not chords
-        }
-        if c.eq_ignore_ascii_case(&'d') {
-            return Some(None);
-        }
-        Dynamic::NAMED
-            .iter()
-            .find(|d| d.paint_letter().eq_ignore_ascii_case(&c))
-            .cloned()
-            .map(Some)
     }
 
     /// The signature palette this colour set seeds, if it's a named one. The
@@ -2165,6 +2362,18 @@ pub fn apply_seed(base: &Theme, seed: Hsla) -> Theme {
 
 /// Resolve a choice to a concrete theme: registry lookup + seed recolour.
 pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
+    let desktop = (choice.follow_omarchy == Some(true))
+        .then(|| crate::palette::current(cx))
+        .flatten();
+    // Suspend manual colour modifiers only in this resolved copy; switching
+    // INHERIT off restores the exact settings kept in the state file.
+    let inherited;
+    let choice = if desktop.is_some() {
+        inherited = choice.clone().without_manual_colours();
+        &inherited
+    } else {
+        choice
+    };
     let reg = cx.global::<ThemeRegistry>();
     let base = if choice.id == "custom" {
         reg.custom.clone()
@@ -2185,10 +2394,13 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     // A palette id that no longer resolves — the theme was uninstalled since the
     // state file was written — leaves the theme's own colours standing. Losing
     // the borrowed look is the right failure; losing the pane is not.
-    let base = match choice
-        .palette
-        .as_deref()
-        .and_then(|id| crate::palette::find(cx, id))
+    let base = match desktop
+        .or_else(|| {
+            choice
+                .palette
+                .as_deref()
+                .and_then(|id| crate::palette::find(cx, id))
+        })
         .and_then(|p| overlay_palette(&base, &p.toml).ok())
     {
         Some(painted) => Arc::new(painted),
@@ -2232,14 +2444,18 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     // shared base Arc is returned untouched. Warp/tracking are excluded from
     // `is_neutral` (they're not paint grades), so guard them explicitly here:
     // a curved or rolling pane must take the full path so `th.warp`/tracking get set.
+    // So must a pane with the CRT off: the base still carries its scanlines.
     if identity_colour
         && !choice.invert
         && mode.is_default()
         && !choice.syntax
+        && choice.note.is_default()
         && choice.grade.is_neutral()
         && choice.grade.warp.abs() < 1e-3
+        && choice.grade.glare.is_none()
         && choice.grade.tracking.is_none()
         && !choice.grade.crawl
+        && choice.grade.crt
     {
         return base;
     }
@@ -2284,11 +2500,14 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     th.color_mode = mode;
     th.syntax = choice.syntax;
     th.syntax_scheme = choice.syntax_scheme;
+    th.note_paper = choice.note;
     th.grade = choice.grade;
-    // Warp + tracking ride the grade group, so they resolve per-pane (own
-    // override else inherited outer) — each pane bends by its own curvature
-    // instead of one global dial bending every pane.
+    // Warp, glare and tracking ride the grade group, so they resolve per-pane
+    // (own override else inherited outer) — each pane bends by its own
+    // curvature instead of one global dial bending every pane. An unset glare
+    // or tracking leaves the theme's authored value standing.
     th.warp = choice.grade.warp.clamp(0.0, WARP_MAX);
+    th.screen_glare = choice.grade.glare_over(th.screen_glare).clamp(0.0, 1.0);
     if let Some(dial) = choice.grade.tracking {
         apply_tracking(&mut th, dial);
     }
@@ -2302,6 +2521,13 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         .grade
         .crawl_depth
         .clamp(CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX);
+    // The CRT switch, after warp and tracking have been written so it has the
+    // last word on them. The grade keeps its dials; only this resolved copy
+    // goes flat.
+    th.crt = choice.grade.crt;
+    if !th.crt {
+        flatten_tube(&mut th);
+    }
     // Layer 4 — the INVERT dimension: the LAST colour op, photo-negating the whole
     // resolved palette. Applied after every other recolour so it flips whatever
     // the theme + set + overrides produced. Grade (a paint-time display axis) then
@@ -2310,6 +2536,32 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         invert_theme_colours(&mut th);
     }
     Arc::new(th)
+}
+
+/// Switch a resolved theme's tube off: a flat, clean screen.
+///
+/// Zeroes every effect that makes the pane look like a picture tube rather
+/// than a screen — the barrel warp, the rolling band, scanlines, vignette,
+/// bloom, flicker, the vertical-hold jiggle, the glass glare and the bezel.
+/// The pane's power-on flash goes with the warp: it only fires on a bent tube
+/// (`pane.rs`, `ignites`).
+///
+/// **Glow is deliberately kept.** It is the accent halo on the header, the
+/// cursor and the bench cards, and the chrome skins lean on it too; it belongs
+/// to the chrome, not the tube. The one exception is the header's bloom, which
+/// falls onto the glass below it: on a flat screen it read as a coloured haze
+/// under every header, so it follows [`Theme::crt`] instead (see
+/// `pane::header_shadows`). Crawl is kept as well, since it is its own switch.
+pub fn flatten_tube(th: &mut Theme) {
+    th.warp = 0.0;
+    th.tracking = 0.0;
+    th.scanline_opacity = 0.0;
+    th.vignette = 0.0;
+    th.bloom = 0.0;
+    th.flicker = 0.0;
+    th.jiggle = 0.0;
+    th.screen_glare = 0.0;
+    th.bezel = 0.0;
 }
 
 /// Photo-negative of a colour: invert each RGB channel (`1 − x`), alpha kept. A
@@ -2360,15 +2612,61 @@ pub fn select_outer(cx: &mut App, choice: ThemeChoice) {
 /// `0` = dead flat; the slider runs to [`WARP_MAX`] for a full fishbowl.
 pub const WARP_DEFAULT: f32 = 1.43;
 
-/// The size a fresh terminal pane opens at — the two SIZE channels of
-/// [`house_terminal`]'s grade. `scale` is the menu-bar/chrome multiplier
+/// The size a fresh window opens at — the two SIZE channels of
+/// [`house_outer`]'s grade. `scale` is the menu-bar/chrome multiplier
 /// (`0.7..1.6`) and `text_size` the grid-font multiplier (`0.6..2.0`); both read
-/// on the OSD gauge as `stored × 100`, so these show 80% and 75%. Deliberately
+/// on the OSD gauge as `stored × 100`, so these show 85% and 74%. Deliberately
 /// below the `1.0` identity: a fresh pane should already be the dense look
 /// rather than something to hand-shrink after every split.
-pub const HOUSE_SCALE: f32 = 0.80;
-pub const HOUSE_TEXT_SIZE: f32 = 0.75;
+pub const HOUSE_SCALE: f32 = 0.85;
+pub const HOUSE_TEXT_SIZE: f32 = 0.7365;
+/// A fresh window's contrast: +25 on the dial.
+///
+/// Parker's window runs +10, with bloom lifting the text. A flat screen has no
+/// bloom, and he asked for contrast "turned up a fair bit" on the default.
+/// Settled on 2026-09-25: he looked at a fresh window at +25 and brightness −24
+/// and shipped it as it was. Measured the same day, contrast barely moves a flat
+/// screen (the brightest text: 93, 100, 108 of 255 at +10, +25, +40) and
+/// brightness moves it a lot, so a darker or brighter default is the brightness
+/// dial's to change, not this one's.
+pub const HOUSE_CONTRAST: f32 = 0.75;
+/// The roll bar a fresh window keeps for when the CRT is switched on:
+/// `[intensity, speed, size]`, Parker's dials on 2026-09-25.
+pub const HOUSE_ROLL: [f32; 3] = [0.52, 0.815, 0.207];
 pub const WARP_MAX: f32 = 1.5;
+
+/// The top of the phosphor gauge. `1.0` is the house look every lit border was
+/// drawn with before the gauge existed, and the range runs to four times that:
+/// the house look was tuned to be tasteful, not to be the most there is, and
+/// the gauge exists for the person who wants a lot more of it — and for the
+/// person who wants none, which is `0.0`.
+pub const PHOSPHOR_MAX: f32 = 4.0;
+
+/// One phosphor halo — the soft light a lit border casts — scaled by a
+/// phosphor gauge reading.
+///
+/// Every border glow in the chrome is built at its house strength and then
+/// passed through here, so the one dial moves all of them together. Alpha
+/// scales linearly and caps at fully lit; the blur scales by the square root,
+/// so the top of the dial is a wider bloom as well as a hotter one without the
+/// light running off past whatever it surrounds. The crisp rims beside these
+/// halos and the black shadows under a floating surface are NOT phosphor and
+/// never come through here: turned all the way down, a border is still a
+/// border and a raised panel is still raised.
+///
+/// `None` at zero, so a gauge turned all the way down draws no halo at all
+/// rather than an invisible one.
+pub fn phosphor(gauge: f32, halo: gpui::BoxShadow) -> Option<gpui::BoxShadow> {
+    let g = gauge.clamp(0.0, PHOSPHOR_MAX);
+    if g <= f32::EPSILON || halo.color.a <= 0.0 {
+        return None;
+    }
+    Some(gpui::BoxShadow {
+        color: halo.color.alpha((halo.color.a * g).min(1.0)),
+        blur_radius: halo.blur_radius * g.sqrt(),
+        ..halo
+    })
+}
 
 /// The barrel coefficients `(k1, k2)` the renderer + hit-testing use for a given
 /// warp amount — kept here so geometry stays in sync with the shader's scaling.
@@ -2427,6 +2725,19 @@ fn bump_theme_gen(cx: &mut App) {
     cx.set_global(ThemeGen(n));
 }
 
+/// The desktop's palettes were re-read ([`crate::palette::init`]'s watcher): a
+/// theme installed, removed, hidden or retuned. Every scope that borrows one
+/// re-resolves — the per-pane memos through the generation, the cabinet here —
+/// so a retuned theme repaints whatever is wearing it, and the pickers redraw
+/// with the new list.
+pub fn palettes_changed(cx: &mut App) {
+    bump_theme_gen(cx);
+    let outer = outer_choice(cx);
+    let th = resolve(cx, &outer);
+    cx.set_global(ActiveTheme(th));
+    cx.refresh_windows();
+}
+
 /// PAINT mode — the palette overlay raised over EVERY pane at once by the
 /// control socket (`terminal-delight ctl paint …`, wired to the Omarchy bar's
 /// palette widget) and dismissed by Esc or a second toggle. App-global rather
@@ -2466,20 +2777,24 @@ pub fn set_paint_mode(cx: &mut App, on: bool) {
 /// [`PaintMode`] is — you flip the shelf once and every pane's overlay turns
 /// with you, so a wall can be painted from one vocabulary in one pass.
 ///
-/// Held as a NAME, never an index. Two of the three shelves can be absent (no
-/// Omarchy, no favourites), so the visible shelves are not a contiguous prefix
-/// of anything, and an index would have to mean "the second one that exists" —
-/// a number that is silently wrong the moment a theme is installed.
+/// Held as a NAME, never an index. The favourites shelf can be absent (nothing
+/// starred that this desktop offers), so an index would have to mean "the
+/// second one that exists" — a number that is silently wrong the moment a
+/// favourite is starred.
+///
+/// There were three shelves. The middle one, Terminal Delight's own COLOUR SETS,
+/// went on 2026-10-16 — Parker: *"TD themes suck! Omarchy themes are GOLD… Do
+/// away with the COLOUR SETS painter"*. The sets still load from saved state, so
+/// a pane wearing one keeps it; they are simply no longer offered.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Shelf {
-    /// The user's own shortlist, mixing both vocabularies ([`crate::fav`]).
-    /// First, and the default, because it is the shelf that gets worn.
+    /// The user's own shortlist of Omarchy themes ([`crate::fav`]). First, and
+    /// the default, because it is the shelf that gets worn.
     #[default]
     Favourites,
-    /// Terminal Delight's own colour sets ([`Dynamic::NAMED`]). Always present:
-    /// they are compiled in, so there is always somewhere to stand.
-    Sets,
-    /// The desktop's palettes ([`crate::palette`]).
+    /// The desktop's themes, as Omarchy's own picker lists them
+    /// ([`crate::palette::offered`]). Always present: TD carries palettes of
+    /// its own, so there is always somewhere to stand.
     Palettes,
 }
 
@@ -2488,8 +2803,7 @@ impl Shelf {
     pub fn label(self) -> &'static str {
         match self {
             Shelf::Favourites => "FAVOURITES",
-            Shelf::Sets => "COLOUR SETS",
-            Shelf::Palettes => "DESKTOP PALETTES",
+            Shelf::Palettes => "OMARCHY THEMES",
         }
     }
 }
@@ -2500,18 +2814,15 @@ impl Global for PaintShelf {}
 
 /// The shelves this desktop can actually show, in cycle order.
 ///
-/// A shelf with nothing on it is OMITTED rather than shown empty — an empty
-/// shelf you can still land on reads as a bug. `Sets` is unconditional, so the
-/// result is never empty and callers may index `[0]`.
+/// A favourites shelf with nothing on it is OMITTED rather than shown empty —
+/// an empty shelf you can still land on reads as a bug. `Palettes` is
+/// unconditional, so the result is never empty and callers may index `[0]`.
 pub fn shelves(cx: &App) -> Vec<Shelf> {
-    let mut v = Vec::with_capacity(3);
+    let mut v = Vec::with_capacity(2);
     if crate::fav::any_visible(cx) {
         v.push(Shelf::Favourites);
     }
-    v.push(Shelf::Sets);
-    if !crate::palette::all(cx).is_empty() {
-        v.push(Shelf::Palettes);
-    }
+    v.push(Shelf::Palettes);
     v
 }
 
@@ -2731,6 +3042,7 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         color_mode: ColorMode::default(),
         syntax: false,
         syntax_scheme: SyntaxScheme::Code,
+        note_paper: NotePaper::Contrast,
         grade: Grade::default(),
         scanline_opacity: file.effects.scanline_opacity.unwrap_or(0.).clamp(0., 0.6),
         scanline_step: file.effects.scanline_step.unwrap_or(4.).max(2.),
@@ -2747,6 +3059,9 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         crawl: false,
         crawl_angle: CRAWL_ANGLE_DEFAULT,
         crawl_depth: CRAWL_DEPTH_DEFAULT,
+        // A theme file is the tube as authored; whether it is switched on is
+        // the scope's grade, applied in resolve().
+        crt: true,
         flicker: file.effects.flicker.unwrap_or(0.).clamp(0., 1.),
         jiggle: file.effects.jiggle.unwrap_or(0.).clamp(0., 1.),
         screen_glare: file
@@ -2782,7 +3097,7 @@ mod tests {
             assert_eq!(&th.name, id, "theme file name must match registry id");
             icons.push(th.icon);
         }
-        assert_eq!(BUILTIN_THEMES.len(), 6);
+        assert_eq!(BUILTIN_THEMES.len(), 5);
         // The tray is glyph-only, so two themes sharing an icon are two themes
         // nobody can tell apart. This test has always collected the icons; it now
         // also reads them, which is what its name has always claimed.
@@ -2792,84 +3107,6 @@ mod tests {
             icons.len(),
             "two builtins share an icon: {icons:?}"
         );
-    }
-
-    #[test]
-    fn dynamic_tray_entries_have_distinct_glyphs_and_labels() {
-        // The tray is glyph-only (no captions/hover), so each entry must be
-        // visually distinct — the cog (Custom) is appended after the named sets.
-        let mut entries: Vec<&Dynamic> = Dynamic::NAMED.iter().collect();
-        let custom = Dynamic::Custom(Box::default());
-        entries.push(&custom);
-        let glyphs: std::collections::HashSet<_> = entries.iter().map(|d| d.glyph()).collect();
-        let labels: std::collections::HashSet<_> = entries.iter().map(|d| d.label()).collect();
-        assert_eq!(
-            glyphs.len(),
-            entries.len(),
-            "every dynamic needs its own glyph"
-        );
-        assert_eq!(
-            labels.len(),
-            entries.len(),
-            "every dynamic needs its own label"
-        );
-        assert_eq!(
-            entries.len(),
-            12,
-            "the eleven Omarchy variants plus the custom cog"
-        );
-    }
-
-    #[test]
-    fn named_sets_spell_a_unique_paint_alphabet() {
-        // The paint overlay is driven by first letters, so the alphabet has to
-        // hold: one set per letter, and never a letter the overlay itself owns.
-        // Case matters — the sets paint on LOWERCASE, so only the overlay's own
-        // lowercase chords are off-limits: `d` (desktop) and `s` (saturate).
-        // `S` (saturate all) and `R` (reset all) are shifted, so `retro` may
-        // keep its `r`. A collision would make a keystroke silently paint the
-        // wrong set — no compile error, no panic, just the wrong colour on the
-        // wrong terminal. (`surfwood` is exactly how this bit us: it shipped,
-        // it started with `s`, and it ate the saturate chord.)
-        const RESERVED: [char; 2] = ['d', 's'];
-        let mut seen = std::collections::HashMap::new();
-        for d in Dynamic::NAMED.iter() {
-            let k = d.paint_letter();
-            assert!(
-                !RESERVED.contains(&k.to_ascii_lowercase()),
-                "{} claims {k}, which the overlay reserves",
-                d.label()
-            );
-            if let Some(prev) = seen.insert(k, d.label()) {
-                panic!("{k} is claimed by both {prev} and {}", d.label());
-            }
-        }
-        assert_eq!(seen.len(), Dynamic::NAMED.len());
-    }
-
-    #[test]
-    fn paint_chord_resolves_the_overlay_keyboard() {
-        // Every tile the overlay draws must be reachable by the letter it wears
-        // — that is the entire promise of "letter paints".
-        for d in Dynamic::NAMED.iter() {
-            let key = d.paint_letter().to_ascii_lowercase().to_string();
-            let got = Dynamic::paint_chord(&key)
-                .unwrap_or_else(|| panic!("{key} paints nothing"))
-                .unwrap_or_else(|| panic!("{key} resolved to DESKTOP, not {}", d.label()));
-            assert!(got.same_kind(d), "{key} painted {}", got.label());
-        }
-        // `d` is the ⟲ DESKTOP tile, not a colour set.
-        assert!(matches!(Dynamic::paint_chord("d"), Some(None)));
-        // Named keys are not chords: the overlay must never read the arrow that
-        // moves the selection as a letter that paints it.
-        for k in ["escape", "left", "right", "up", "down", "enter", ""] {
-            assert!(Dynamic::paint_chord(k).is_none(), "{k:?} is not a chord");
-        }
-        // A letter no set claims is simply a miss.
-        assert!(Dynamic::paint_chord("z").is_none());
-        // Case-insensitive: shift+letter paints the same set, so a capitals-on
-        // keyboard is not a broken one.
-        assert!(matches!(Dynamic::paint_chord("W"), Some(Some(_))));
     }
 
     #[test]
@@ -3192,8 +3429,8 @@ mod tests {
 
         // `get` reports the size the bench is DRAWN at, so the tray slider and
         // the MCP percent read the same number a person is looking at.
-        assert!((g.get(GradeKey::BenchSize) - 0.9).abs() < 1e-6);
-        assert!((stored.get(GradeKey::BenchSize) - 1.6).abs() < 1e-6);
+        assert!((g.get(GradeKey::BenchSize).unwrap() - 0.9).abs() < 1e-6);
+        assert!((stored.get(GradeKey::BenchSize).unwrap() - 1.6).abs() < 1e-6);
 
         // Unset and "set to exactly what unset resolves to" are different
         // states, and nothing in the grade may confuse them.
@@ -3228,7 +3465,7 @@ mod tests {
 
         let turn = |p: &mut PaneTheme, outer: &ThemeChoice, key: GradeKey, notches: f32| {
             let mut g = p.effective(outer).grade;
-            let next = key.nudged(g.get(key), notches);
+            let next = key.nudged(g.get(key).unwrap(), notches);
             g.set(key, next);
             p.pin_grade(g, GradePins::only(key.into()));
         };
@@ -3497,10 +3734,16 @@ mod tests {
             // other one's value.
             bench_size: Some(1.4),
             warp: 2.0,
+            // neutral() leaves glare to the theme, so the walk needs one set.
+            glare: Some(0.6),
             crawl_angle: 40.0,
             crawl_depth: 9.0,
             crawl: true,
             tracking: Some([0.3, 0.4, 0.5]),
+            // neutral() keeps the tube on, so the walk needs it off here.
+            crt: false,
+            // and the house glow, so the walk needs another.
+            phosphor: 2.5,
         };
         for c in GradeChannel::ALL {
             assert_eq!(
@@ -3924,51 +4167,339 @@ mod tests {
     /// reads on the dial rather than the stored float — the bug was that a
     /// window nobody had touched showed "−29".
     #[test]
-    fn a_fresh_window_opens_with_the_contrast_dial_at_zero() {
+    fn a_fresh_install_opens_flat_in_the_terminal_delight_palette() {
         // the tray's own arithmetic (see the grade row in main::render)
         let dial = |v: f32, neutral: f32| ((v - neutral) * 100.0).round() as i32;
         let (_, _, neutral) = GradeKey::Contrast.range();
-        let g = house_outer().grade;
+        let c = house_outer();
         assert_eq!(
-            dial(g.contrast, neutral),
-            0,
-            "a fresh cabinet must not ship pre-de-contrasted"
+            c.palette.as_deref(),
+            Some(crate::palette::TERMINAL_DELIGHT),
+            "the 📺 palette"
         );
-        // brightness is still deliberately down — the screen is dim, and that is
-        // the dial doing the darkening now that contrast is out of it
         assert!(
-            dial(g.brightness, neutral) < 0,
-            "the house look is still a dim screen"
+            c.dynamic.is_plain() && c.seed.is_none(),
+            "nothing layered on it"
         );
+        assert_eq!(c.id, "custom", "design: custom");
+        assert_eq!(c.color, ColorMode::OnTheme, "program colour: theme");
+        assert!(
+            c.syntax && c.syntax_scheme == SyntaxScheme::Agentic,
+            "syntax: agentic"
+        );
+        let g = c.grade;
+        assert!(!g.crt, "the CRT is off");
+        assert!(!g.crawl, "and so is the crawl");
+        assert_eq!(dial(g.contrast, neutral), 25, "contrast turned up");
+        assert_eq!(
+            dial(g.brightness, neutral),
+            -24,
+            "a dim screen, as on the machine it was taken from"
+        );
+        assert_eq!(dial(g.colour, neutral), 50);
+        // …and the tube it would switch on is that machine's, not the old dial.
+        assert_eq!(g.warp, WARP_MAX, "warp +150");
+        assert_eq!(g.tracking, Some(HOUSE_ROLL), "the roll bar");
+
+        // A grade that differs from Grade::default is written out, and the
+        // `crt = false` has to be in it: a missing key reads as ON.
+        assert!(!g.is_default(), "the fresh grade persists");
+        let wire = toml::to_string(&g).unwrap();
+        assert!(
+            wire.contains("crt = false"),
+            "the off switch is written down:\n{wire}"
+        );
+        let back: Grade = toml::from_str(&wire).unwrap();
+        assert!(!back.crt, "and reloads off");
+    }
+
+    /// This machine's `[theme.grade]`, verbatim from its session file on
+    /// 2026-09-25 — written by a build with no CRT switch.
+    const A_GRADE_FROM_BEFORE_THE_SWITCH: &str = r#"
+background = 0.5
+brightness = 0.2588020861148834
+colour = 1.0
+contrast = 0.59940105676651
+crawl_angle = 12.0
+crawl_depth = 2.5
+gamma = 0.5
+scale = 0.8500000238418579
+text = 0.5
+text_size = 0.7365000247955322
+tracking = [0.5203396081924438, 0.8148148059844971, 0.2068965584039688]
+warp = 1.5
+"#;
+
+    #[test]
+    fn a_saved_grade_without_a_crt_key_keeps_the_tube_on() {
+        let g: Grade = toml::from_str(A_GRADE_FROM_BEFORE_THE_SWITCH).unwrap();
+        assert!(
+            g.crt,
+            "every file written before the switch was running the CRT"
+        );
+        assert_eq!(g.warp, 1.5);
+        assert!(g.tracking.is_some_and(|t| (t[0] - 0.5203).abs() < 1e-3));
+        // Writing it back must not invent a key the file never had.
+        let wire = toml::to_string(&g).unwrap();
+        assert!(
+            !wire.contains("crt"),
+            "an on switch stays unwritten:\n{wire}"
+        );
+        // A scope with no grade table at all is Grade::default — also on.
+        assert!(Grade::default().crt && Grade::neutral().crt);
+    }
+
+    #[gpui::test]
+    fn crt_off_resolves_a_flat_screen_and_on_restores_the_tube(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            crate::palette::init_shipped(cx);
+            init_embedded(cx, house_outer());
+            let off = house_outer();
+            let flat = resolve(cx, &off);
+            for (what, v) in [
+                ("warp", flat.warp),
+                ("roll", flat.tracking),
+                ("scanlines", flat.scanline_opacity),
+                ("vignette", flat.vignette),
+                ("bloom", flat.bloom),
+                ("flicker", flat.flicker),
+                ("jiggle", flat.jiggle),
+                ("glare", flat.screen_glare),
+                ("bezel", flat.bezel),
+            ] {
+                assert_eq!(v, 0.0, "{what} is off on a flat screen");
+            }
+            assert!(flat.glow > 0.0, "glow is the chrome's, and stays");
+            assert!(!flat.crt, "and the header's bloom can see the tube is off");
+            assert_eq!(
+                flat.accent,
+                hex("#67F454").unwrap(),
+                "wearing the Terminal Delight palette"
+            );
+
+            // One switch, no slider moved: the tube it was taken from.
+            let mut on = off.clone();
+            on.grade.crt = true;
+            let tube = resolve(cx, &on);
+            assert!(tube.crt);
+            let hacker = parse(DEFAULT_THEME_TOML).unwrap();
+            assert_eq!(tube.warp, WARP_MAX);
+            assert!((tube.tracking - HOUSE_ROLL[0]).abs() < 1e-6, "the roll bar");
+            assert_eq!(tube.scanline_opacity, hacker.scanline_opacity);
+            assert_eq!(tube.screen_glare, hacker.screen_glare);
+            assert_eq!(tube.bloom, hacker.bloom);
+            assert!(tube.scanline_opacity > 0.0 && tube.screen_glare > 0.0);
+        });
+    }
+
+    /// The STICKY NOTE choice is part of the theme group: absent is the default
+    /// (contrast), it survives the round trip through the state file and
+    /// through a pane's pinned group, the first row's words still load, and an
+    /// unknown word from another build folds to the default instead of failing
+    /// the whole choice.
+    #[test]
+    fn the_note_paper_choice_persists_and_absent_is_contrast() {
+        let old: ThemeChoice = toml::from_str("id = \"hacker\"\n").unwrap();
+        assert_eq!(old.note, NotePaper::Contrast, "a file with no note field");
+
+        let c = ThemeChoice {
+            note: NotePaper::Mute,
+            ..Default::default()
+        };
+        let wire = toml::to_string(&c).unwrap();
+        assert!(wire.contains("note = \"mute\""), "{wire}");
+        let back: ThemeChoice = toml::from_str(&wire).unwrap();
+        assert_eq!(back.note, NotePaper::Mute);
+
+        let dflt = toml::to_string(&ThemeChoice::default()).unwrap();
+        assert!(!dflt.contains("note"), "the default is omitted: {dflt}");
+
+        let g = ThemeGroup::of(&ThemeChoice {
+            note: NotePaper::Accent,
+            ..Default::default()
+        });
+        assert_eq!(g.note, NotePaper::Accent, "lifted into the group");
+        let pane = PaneTheme {
+            theme: Some(g.clone()),
+            inherit_theme: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            pane.effective(&ThemeChoice::default()).note,
+            NotePaper::Accent,
+            "a pane's own group carries its note"
+        );
+        assert_eq!(ThemeChoice::default().with_group(g).note, NotePaper::Accent);
+
+        // The words this morning's build (PR 970) wrote.
+        for (word, now) in [
+            ("primary", NotePaper::Accent),
+            ("complement", NotePaper::Contrast),
+            ("contrast", NotePaper::Contrast),
+            ("plaid", NotePaper::Contrast),
+        ] {
+            let c: ThemeChoice =
+                toml::from_str(&format!("id = \"hacker\"\nnote = \"{word}\"\n")).unwrap();
+            assert_eq!(c.note, now, "{word}");
+        }
+    }
+
+    /// A stock theme with nothing else changed takes resolve's fast path, which
+    /// hands back the authored theme untouched — and the authored theme says
+    /// the default. Picking a different paper has to knock it off that path, or
+    /// the button lights and the note stays the colour it was.
+    #[gpui::test]
+    fn a_note_paper_alone_still_resolves(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            crate::palette::init_shipped(cx);
+            init_embedded(cx, house_outer());
+            let plain = ThemeChoice {
+                syntax: false,
+                grade: Grade::neutral(),
+                ..ThemeChoice::default()
+            };
+            assert_eq!(resolve(cx, &plain).note_paper, NotePaper::Contrast);
+            for mode in NotePaper::ALL {
+                let c = ThemeChoice {
+                    note: mode,
+                    ..plain.clone()
+                };
+                assert_eq!(resolve(cx, &c).note_paper, mode, "{mode:?}");
+            }
+        });
+    }
+
+    /// The glare slider. Unset shows the theme's glass, so a hacker pane keeps
+    /// its reflection on a build that has never seen the dial; a dialled value
+    /// wins over the theme, zero included; and the CRT switch still has the
+    /// last word.
+    #[gpui::test]
+    fn glare_follows_the_theme_until_dialled_and_the_switch_still_wins(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            crate::palette::init_shipped(cx);
+            init_embedded(cx, house_outer());
+            let hacker = parse(DEFAULT_THEME_TOML).unwrap();
+            assert!(
+                hacker.screen_glare > 0.0,
+                "the fixture needs a theme with glass"
+            );
+            let mut on = house_outer();
+            on.grade.crt = true;
+            assert_eq!(on.grade.glare, None);
+            assert_eq!(
+                resolve(cx, &on).screen_glare,
+                hacker.screen_glare,
+                "unset is the theme's glass"
+            );
+            on.grade.set(GradeKey::Glare, 0.9);
+            assert!(
+                (resolve(cx, &on).screen_glare - 0.9).abs() < 1e-6,
+                "the dial wins"
+            );
+            on.grade.set(GradeKey::Glare, 0.0);
+            assert_eq!(
+                resolve(cx, &on).screen_glare,
+                0.0,
+                "dialled to clear glass is clear, not the theme's"
+            );
+            on.grade.glare = Some(0.9);
+            on.grade.crt = false;
+            assert_eq!(resolve(cx, &on).screen_glare, 0.0, "off is a flat screen");
+
+            // A stock theme with nothing else to restate takes resolve's fast
+            // path, which hands back the authored theme untouched — a dialled
+            // glare has to knock it off that path or it never draws.
+            let mut plain = ThemeChoice {
+                syntax: false,
+                grade: Grade::neutral(),
+                ..ThemeChoice::default()
+            };
+            plain.grade.glare = Some(0.1);
+            assert!(
+                (resolve(cx, &plain).screen_glare - 0.1).abs() < 1e-6,
+                "a glare alone still resolves"
+            );
+        });
+    }
+
+    /// Glare is the seventeenth channel, one past what the old `u16` pin mask
+    /// held, and it pins, inherits and persists like every other.
+    #[test]
+    fn glare_is_a_channel_that_pins_and_persists() {
+        // The last channel's bit is the seventeenth, and still its own.
+        let last = *GradeChannel::ALL.last().unwrap();
+        assert_eq!(GradeChannel::ALL.len(), 17);
+        assert_eq!(GradePins::all().iter().count(), GradeChannel::ALL.len());
+        assert!(!GradePins::only(last).has(GradeChannel::Brightness));
+        assert_eq!(GradeChannel::parse("glare"), Some(GradeChannel::Glare));
+
+        // A grade written before the dial existed reads as the theme's glass,
+        // and writing it back invents no key.
+        let old: Grade = toml::from_str("warp = 1.5").unwrap();
+        assert_eq!(old.glare, None);
+        assert!(!toml::to_string(&old).unwrap().contains("glare"));
+
+        // A dialled glare survives the file.
+        let outer = Grade::default();
+        let mut own = outer;
+        own.set(GradeKey::Glare, 0.3);
+        let back: Grade = toml::from_str(&toml::to_string(&own).unwrap()).unwrap();
+        assert_eq!(back.glare, Some(0.3));
+
+        // One drag pins glare and nothing else; the rest follows outer.
+        let pins = GradePins::only(GradeKey::Glare.into());
+        assert_eq!(GradePins::differing(&own, &outer), pins);
+        let mut moved = outer;
+        moved.warp = 0.2;
+        let pane = pins.merge(moved, own);
+        assert_eq!((pane.glare, pane.warp), (Some(0.3), 0.2));
+    }
+
+    /// The GAUGES tray draws a main gauge only when it has a position, so every
+    /// one of them must always have one — only a dial left to the theme may
+    /// answer `None`.
+    #[test]
+    fn main_gauges_always_hold_a_position() {
+        for g in [
+            Grade::default(),
+            Grade::neutral(),
+            house_outer().grade,
+            house_terminal().grade,
+        ] {
+            for (k, _) in Grade::CHANNELS {
+                assert!(g.get(k).is_some(), "{k:?} has a position");
+            }
+            assert_eq!(g.get(GradeKey::Glare), None, "unset glare is the theme's");
+        }
     }
 
     #[test]
-    fn house_outer_resolves_to_a_warm_amber_cabinet() {
-        // The shipped outer is the green base seeded amber — the resolved chrome
-        // must be WARM (amber accent, dark warm bg), never grey or green.
-        let base = parse(DEFAULT_THEME_TOML).expect("embedded theme parses");
-        let c = house_outer();
-        assert_eq!(c.color, ColorMode::Default, "ansi");
-        assert!(c.syntax, "code highlighting on");
-        assert!(
-            c.dynamic.is_plain(),
-            "warmth is from the seed, not a colour set"
+    fn reset_clears_the_main_gauges_and_leaves_the_tube_and_the_crawl() {
+        let mut g = house_outer().grade;
+        g.crawl = true;
+        g.crawl_angle = 40.0;
+        g.glare = Some(0.7);
+        let r = g.reset_gauges();
+        let n = Grade::neutral();
+        for (k, _) in Grade::CHANNELS {
+            assert_eq!(r.get(k), n.get(k), "{k:?} is back at neutral");
+        }
+        assert_eq!(r.bench_size, None, "the bench follows the grid again");
+        assert_eq!(
+            (r.crt, r.warp, r.glare, r.tracking, r.crawl, r.crawl_angle),
+            (g.crt, g.warp, g.glare, g.tracking, g.crawl, g.crawl_angle),
+            "the collapsed sections keep what they hold"
         );
-        let warm = |h: f32| (15.0..=55.0).contains(&(h * 360.0)); // orange/amber band
-        let seed = hex(c.seed.as_deref().expect("outer carries an amber seed")).unwrap();
-        assert!(warm(seed.h), "seed is amber, got {}°", seed.h * 360.0);
-        let th = apply_seed(&base, seed);
-        assert!(warm(th.accent.h), "accent warms to amber (was green)");
-        assert!(th.accent.s > 0.3, "accent stays saturated, not grey");
-        assert!(
-            warm(th.bg.h) && th.bg.l < 0.22,
-            "cabinet bg is warm and dark"
-        );
-        // the warm outer grade differs from the green house default, so it persists
-        assert!(
-            !c.grade.is_default(),
-            "outer grade is the warm cabinet grade"
-        );
+        // The pins a pane's reset takes are the same list, and nothing else.
+        let pins = GradePins::main_gauges();
+        for c in GradeChannel::ALL {
+            let main = Grade::CHANNELS
+                .iter()
+                .any(|(k, _)| GradeChannel::from(*k) == c);
+            assert_eq!(pins.has(c), main, "{} pinned by reset", c.name());
+        }
     }
 
     #[test]
@@ -4012,12 +4543,13 @@ mod tests {
         );
         assert_eq!(
             eff.grade.scale, HOUSE_SCALE,
-            "so the menu bar opens at the cabinet's 80%"
+            "so the menu bar opens at the cabinet's 85%"
         );
         assert_eq!(
             eff.grade.text_size, HOUSE_TEXT_SIZE,
-            "and the grid font at 75%"
+            "and the grid font at 74%"
         );
+        assert!(!eff.grade.crt, "and flat, like the cabinet");
     }
 
     #[test]
@@ -4183,8 +4715,10 @@ mod tests {
             GradeKey::Scale,
             GradeKey::TextSize,
             GradeKey::Warp,
+            GradeKey::Glare,
             GradeKey::CrawlAngle,
             GradeKey::CrawlDepth,
+            GradeKey::Phosphor,
         ];
         for k in keys {
             let (min, max, _) = k.range();
@@ -4259,7 +4793,7 @@ mod tests {
         // Stored in real units, clamped to 0.7..1.6 (not the colour 0..1).
         let mut g = Grade::neutral();
         g.set(GradeKey::Scale, 1.3);
-        assert!((g.get(GradeKey::Scale) - 1.3).abs() < 1e-6);
+        assert!((g.get(GradeKey::Scale).unwrap() - 1.3).abs() < 1e-6);
         assert!(!g.is_neutral(), "a non-1.0 scale breaks neutrality");
         g.set(GradeKey::Scale, 9.0);
         assert!((g.scale - 1.6).abs() < 1e-6, "clamps to the 1.6 ceiling");
@@ -4564,6 +5098,114 @@ size = 9.0
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+    /// The phosphor gauge's contract, which every border halo in the window
+    /// inherits by going through [`phosphor`]: nothing at zero, exactly the
+    /// halo as built at one, and at the top four times as hot (capped at fully
+    /// lit) and twice as wide — with nothing but heat and width moving.
+    #[test]
+    fn the_phosphor_gauge_is_none_at_zero_the_house_at_one_and_four_times_at_the_top() {
+        let ink = gpui::hsla(0.33, 0.9, 0.6, 1.0);
+        let halo = gpui::BoxShadow {
+            color: ink.alpha(0.2),
+            offset: gpui::point(gpui::px(0.), gpui::px(1.)),
+            blur_radius: gpui::px(16.),
+            spread_radius: gpui::px(2.),
+            inset: false,
+        };
+        assert_eq!(
+            phosphor(0.0, halo.clone()),
+            None,
+            "all the way down, no halo at all"
+        );
+        assert_eq!(phosphor(-3.0, halo.clone()), None, "below zero is zero");
+        assert_eq!(
+            phosphor(1.0, halo.clone()),
+            Some(halo.clone()),
+            "the house setting is the halo exactly as it was built"
+        );
+        let top = phosphor(PHOSPHOR_MAX, halo.clone()).expect("lit at the top");
+        assert!(
+            (top.color.a - 0.8).abs() < 1e-4,
+            "four times as hot: {}",
+            top.color.a
+        );
+        assert_eq!(top.blur_radius, gpui::px(32.), "twice as wide");
+        assert_eq!(
+            (top.offset, top.spread_radius, top.inset),
+            (halo.offset, halo.spread_radius, halo.inset),
+            "only the heat and the width move"
+        );
+        let hot = gpui::BoxShadow {
+            color: ink.alpha(0.5),
+            ..halo.clone()
+        };
+        assert_eq!(
+            phosphor(PHOSPHOR_MAX, hot).map(|s| s.color.a),
+            Some(1.0),
+            "a hot halo caps at fully lit"
+        );
+        assert_eq!(
+            phosphor(99.0, halo.clone()),
+            phosphor(PHOSPHOR_MAX, halo),
+            "past the top is the top"
+        );
+    }
+
+    /// A grade saved before the gauge existed has no `phosphor` key, and must
+    /// open on exactly the glow it was drawn with. A turned gauge must survive a
+    /// save, a reset must bring back the house glow rather than none, and a pane
+    /// must be able to own the dial by name without owning anything else.
+    #[test]
+    fn a_grade_from_before_the_phosphor_gauge_opens_at_the_house_glow() {
+        let old: Grade = toml::from_str("brightness = 0.2\ncontrast = 0.5\n").expect("loads");
+        assert_eq!(old.phosphor, 1.0, "no key is the glow it always had");
+        assert_eq!(Grade::default().phosphor, 1.0);
+        assert_eq!(
+            house_outer().grade.phosphor,
+            1.0,
+            "a fresh install opens on it too"
+        );
+        assert_eq!(
+            Grade::neutral().phosphor,
+            1.0,
+            "reset brings back the house glow"
+        );
+
+        let mut g = Grade::default();
+        g.set(GradeKey::Phosphor, 0.0);
+        assert!(
+            !g.is_default(),
+            "a turned gauge is not the default, so it is written"
+        );
+        let body = toml::to_string(&g).expect("serializes");
+        let back: Grade = toml::from_str(&body).expect("round-trips");
+        assert_eq!(back.phosphor, 0.0, "all the way down survives a save");
+        assert_eq!(
+            g.reset_gauges().phosphor,
+            1.0,
+            "RESET clears it with the main gauges"
+        );
+        g.set(GradeKey::Phosphor, 9.0);
+        assert_eq!(g.phosphor, PHOSPHOR_MAX, "the dial stops at the top");
+
+        assert_eq!(
+            GradeChannel::parse("phosphor"),
+            Some(GradeChannel::Phosphor)
+        );
+        let outer = Grade::default();
+        let own = Grade {
+            phosphor: 3.0,
+            brightness: 0.9,
+            ..Grade::default()
+        };
+        let pane = GradePins::only(GradeChannel::Phosphor).merge(outer, own);
+        assert_eq!(
+            (pane.phosphor, pane.brightness),
+            (3.0, outer.brightness),
+            "a pane that owns its phosphor owns nothing else"
+        );
+    }
 }
 
 /// Absolute path of the hot-reloaded "custom" theme file for THIS machine —
@@ -4689,4 +5331,28 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// What [`init`] installs, from the embedded themes alone, with `outer` as the
+/// window's choice: no theme file read or seeded, no hot-reload watcher. For a
+/// test that builds a real pane, which must neither read the person's own
+/// theme nor write one into their config.
+#[cfg(test)]
+pub(crate) fn init_embedded(cx: &mut App, outer: ThemeChoice) {
+    let builtins = BUILTIN_THEMES
+        .iter()
+        .map(|(id, src)| {
+            (
+                (*id).to_string(),
+                Arc::new(parse(src).expect("embedded theme parses")),
+            )
+        })
+        .collect();
+    cx.set_global(ThemeRegistry {
+        builtins,
+        custom: Arc::new(parse(DEFAULT_THEME_TOML).expect("embedded theme parses")),
+    });
+    let active = resolve(cx, &outer);
+    cx.set_global(OuterChoice(outer));
+    cx.set_global(ActiveTheme(active));
 }

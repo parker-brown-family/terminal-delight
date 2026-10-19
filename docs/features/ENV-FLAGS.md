@@ -45,7 +45,6 @@ Every environment flag Terminal Delight reads, grouped by purpose. Demo flags st
 | `TD_GRAVEYARD_DEMO` | Fictional dead-agent list |
 | `TD_SAVINGS_DEMO` | Demo mode for the LeanCTX savings plugin |
 | `TD_USAGE_DEMO` | Fictional subscriptions on the </> card's usage face |
-| `TD_GAMBA` / `TD_GAMBA_DEMO` | Slot-machine satire overlay (rig jackpot in demo) |
 | `TD_CONFIRM_DEMO` | Auto-confirm certain dialogs for capture |
 
 > Demo media rule: public captures must use staged, fictional content — never real

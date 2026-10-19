@@ -1,0 +1,93 @@
+{
+  "default": {
+    "passed": 2401,
+    "failed": 0,
+    "ignored": 9,
+    "suite_counts": [
+      [
+        2295,
+        0,
+        8
+      ],
+      [
+        9,
+        0,
+        0
+      ],
+      [
+        2,
+        0,
+        0
+      ],
+      [
+        4,
+        0,
+        0
+      ],
+      [
+        8,
+        0,
+        0
+      ],
+      [
+        74,
+        0,
+        1
+      ],
+      [
+        9,
+        0,
+        0
+      ]
+    ],
+    "full_local_log_sha256": "49072951d29c58b92fac771a134ab9cf5885364b9f9a86e7d7ad04eb1ea01ec2",
+    "strict_clippy_passed": true,
+    "clippy_log_sha256": "61d3fa4e1322f553d6a4396c117c35f5e8c2e0b6af8a306b20234668331fa63f"
+  },
+  "fallback": {
+    "passed": 2354,
+    "failed": 0,
+    "ignored": 9,
+    "suite_counts": [
+      [
+        2248,
+        0,
+        8
+      ],
+      [
+        9,
+        0,
+        0
+      ],
+      [
+        2,
+        0,
+        0
+      ],
+      [
+        4,
+        0,
+        0
+      ],
+      [
+        8,
+        0,
+        0
+      ],
+      [
+        74,
+        0,
+        1
+      ],
+      [
+        9,
+        0,
+        0
+      ]
+    ],
+    "full_local_log_sha256": "c09856bd67220e01f4b942de0024b70ea4fc2b9e12fa8ff2d3aab9c5f5e6e479",
+    "strict_clippy_passed": true,
+    "clippy_log_sha256": "f13beece37415f1328672d5c28dadf0f8f92ae685a37573b4f962a63ff9dff94"
+  },
+  "format_and_diff_check": "Passed; separate commands before commit."
+}

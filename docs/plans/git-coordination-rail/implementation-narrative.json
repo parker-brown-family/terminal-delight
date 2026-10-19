@@ -1,0 +1,405 @@
+{
+  "file": "reports/2026-10-18-git-coordination-built.html",
+  "subject": "The shipped Git attention surface exposes shared work and gives agents authorized evidence for a targeted plan.",
+  "reader": "Parker owns Terminal Delight, approved the Git coordination design, and wants what shipped and what the tests prove; he does not read Rust.",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.8
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.87
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "journey",
+      "probabilities": {
+        "journey": 0.59,
+        "catalogue": 0.02,
+        "argument": 0.34,
+        "report": 0.04,
+        "none_of_the_above": 0.01
+      },
+      "confidence": 0.49
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Git coordination",
+      "text": "Several agents can share a checkout or change the same file on different branches. Terminal Delight now shows where that work is connected, why it needs attention, and what an agent should inspect next. \n\n Verified locally Application + agent read tools 2026-10-18",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.37,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.09,
+            "1": 0.49,
+            "2": 0.38,
+            "3": 0.04
+          },
+          "confidence": 0.45
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.06
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.33
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.15,
+            "complication": 0.01,
+            "turn": 0.73,
+            "consequence": 0.05,
+            "resolution": 0.04,
+            "aside": 0.01,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.69
+        }
+      },
+      "latency_ms": 432.29956296272576,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "01 Notice work that needs attention",
+      "text": "01 \u00b7 A clear selection keeps attention elsewhere visible \n\n \u25a6 GIT \u00b7 \u25b2 WARNING \u00b7 1 project \u00b7 PARTIAL \n\n SELECTED Client Portal \u2713 Clear \n ELSEWHERE IN THIS WINDOW Terminal Delight \u25b2 Three checkouts touch relay.rs Packaging checkout unavailable \n\n Selection cannot silence another project's warning. This drawing uses the native fixture's observations. The permanent rail carries urgency and coverage; checkout counts and idle inventory live inside inspection. Native capture \u2197 measured \n\nThe old rotating ticker is gone. One GIT signal summarizes the projects in this window\u2014even when the selected project is clear. In this example, Client Portal is clear while Terminal Delight has overlapping work. Click GIT to find the cause. Urgent projects come first, unread projects precede clear ones, and a project can expand into ranked group previews before you open it. \n\n 02 \u00b7 Preview the connections before drilling in \n\n \u25be Terminal Delight \u25b2 WARNING partial \n\n \u21b3 relay.rs 3 checkouts \u00b7 shared file + shared checkout \u25b2 Warning \n\n \u21b3 palette.rs 2 checkouts \u00b7 shared file \u25c7 Caution \n\nPackaging unread checkout unavailable \u00b7 membership incomplete \n\n Client Portal \u2713 CLEAR \n\n The two observed groups are different connections. Missing evidence can join them later; a falling group count does not establish reduced friction. The native project view keeps that uncertainty visible. measured",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.72,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.3,
+            "2": 0.6,
+            "3": 0.07
+          },
+          "confidence": 0.57
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.42
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.01,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.19,
+            "1": 0.62,
+            "2": 0.18,
+            "3": 0.01
+          },
+          "confidence": 0.61
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.51
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.02,
+            "complication": 0.03,
+            "turn": 0.73,
+            "consequence": 0.19,
+            "resolution": 0.01,
+            "aside": 0.02,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.69
+        }
+      },
+      "latency_ms": 390.60376305133104,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "02 Follow the connection to its cause",
+      "text": "The first group connects three checkouts through a file named relay.rs. Open it to see the relationship: the panes, their checkout roots and branches, and each file's change sources appear together. Exact Git references and checkout metrics unfold in place. The same inspector can then take you to a participant\u2019s pane. \n\n 03 \u00b7 Four panes, three checkouts, one shared-file hotspot \n\n | \n | Pane | Checkout / branch | relay.rs evidence \n\n | Render A | render\n feature/render | committed unstaged \n\n | Host B, C | host\n feature/host | unstaged \n Two panes share this checkout. \n\n | CLI D | cli\n feature/cli | staged \n\n Known-member paths complete Project membership partial \n\n Pane occupancy does not establish file authorship. The live fixture also supplies an untracked path in the shared host checkout. A separate fixture verifies two named panes sharing one known session in both native rows and MCP. Native evidence \u2197 measured \n\n 04 \u00b7 Pane navigation keeps the inspector's keyboard \n\n Project \u2192 Relay group \u2192 Focus Host B \u2192 Esc Project \u2192 Esc Projects \u2192 Esc Closed \n\n Repeated Escape returns through the inspector after focusing a pane. The real-window check exercises this without forcing focus back between keys. Each depth retains its scroll position, and arrow selection scrolls into view. 390-pixel capture \u2197 measured",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.82,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.23,
+            "2": 0.67,
+            "3": 0.08
+          },
+          "confidence": 0.65
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.41
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.71,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.3,
+            "1": 0.69,
+            "2": 0.01,
+            "3": 0
+          },
+          "confidence": 0.69
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.14
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.01,
+            "turn": 0.86,
+            "consequence": 0.08,
+            "resolution": 0.01,
+            "aside": 0.04,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.84
+        }
+      },
+      "latency_ms": 371.1773569812067,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "03 Give an agent the evidence",
+      "text": "Once the cause is visible, a person can direct an agent to investigate it. Ctrl+C copies the evidence that agent is permitted to see, together with an exact read request. The Model Context Protocol (MCP) exposes the same observations through four read tools. An agent can also start with coordination_overview , follow the returned group request, and propose a plan against the named roots and measured references. \n 05 \u00b7 Background observations \n\n Git collection stays in the existing background worker. Four change sources keep separate coverage, and an unavailable checkout remains an explicit observation gap. code inspected 06 \u00b7 Authorized relationships \n\n Authorization comes before groups, identifiers and history. Shared places form connected groups; two clones with one remote do not become one shared object database. code inspected 07 \u00b7 A shared snapshot \n\n In a fully exposed window, native inspection and MCP use the same authorized snapshot. Scope changes start fresh agent history; operator history is kept separate. code inspected \n\n Restricted exposure keeps file evidence unavailable. Git cannot attribute a filesystem change to the pane permitted to disclose it. Agents still see permitted occupancy. Once a window has held an off-limits pane, the conservative file restriction lasts for that window's lifetime. Human inspection can show more; copying for an agent stays inside the authorized projection. \n\nThe four read tools share the existing running-window MCP relay. They expose observed causes, project details, joined group evidence and changes since a scoped version. A checkout-specific project read also pages file and conflict evidence for an isolated alert. Those permissions and missing observations are part of the behavior the tests must prove. \n Read contract and captured response \u2197",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.76,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.27,
+            "2": 0.66,
+            "3": 0.06
+          },
+          "confidence": 0.65
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.36
+        },
+        "seam": {
+          "type": "score",
+          "score": 1,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.94,
+            "2": 0.03,
+            "3": 0
+          },
+          "confidence": 0.94
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.8
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0.6,
+            "consequence": 0.37,
+            "resolution": 0.02,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.53
+        }
+      },
+      "latency_ms": 383.0120100174099,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "04 Prove the warning can be trusted",
+      "text": "08 \u00b7 The tests reject false confidence \n\n Authorization filter deliberately removed Assertion failed as expected \n\n Incomplete coverage deliberately called complete Assertion failed as expected \n\n Restored source \u00b7 default terminal core 2,445 passed \u00b7 9 ignored \n\n Restored source \u00b7 fallback terminal core 2,398 passed \u00b7 9 ignored \n\n Both injected faults fail assertions, then the restored source passes. The coordination checks cover raw filenames and renames, four change sources, shared sessions, physical clone identity, cross-project worktrees, coverage bridges, scope-local history, bounded cursors, and Git subprocess failures. measured \n\nThe sparse fixture has 100 checkouts and 10,000 paths. The dense fixture retains 11 hotspots across 40 checkouts. Real-window checks cover project and group navigation, pane focus, copied agent context, permission cycling and narrow layouts. \n\nA loaded run reproduced the existing host-test race: it read the child's environment before exec. The fixture now waits for the executable transition, then checks the same identity fields. Twenty full unit-suite stress runs passed. With those checks complete, the remaining step is to use the evidence to assign work. \n Method, limits and full results \u2197",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.84,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.19,
+            "2": 0.72,
+            "3": 0.07
+          },
+          "confidence": 0.7
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.44
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.72,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.33,
+            "1": 0.62,
+            "2": 0.05,
+            "3": 0
+          },
+          "confidence": 0.62
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.88
+        },
+        "role": {
+          "type": "choice",
+          "choice": "aside",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.02,
+            "turn": 0.09,
+            "consequence": 0.31,
+            "resolution": 0.2,
+            "aside": 0.37,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.26
+        }
+      },
+      "latency_ms": 375.3071120008826,
+      "failure": null
+    },
+    {
+      "index": 6,
+      "heading": "05 Investigate, then direct the work",
+      "text": "The native implementation is built. Release verification is in progress. \n\nOpen GIT, choose a project or group, then copy context or focus an existing pane. Agents use the read tools to investigate and plan; the authorized agent performs the Git work. \n\nRelease binary built and verified locally. Installation follows the single pull request and required CI checks. \n\nThe approved entry point, signal policy and first-release direction remain the basis of this implementation. Optional line analysis and push notifications are outside this release. \n MCP guide \u00b7 Verification record \u00b7 Observation model \u00b7 Native inspector \u00b7 Coordination tests \n\n . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.66,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.31,
+            "2": 0.59,
+            "3": 0.06
+          },
+          "confidence": 0.55
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.73
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.12,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.14,
+            "1": 0.62,
+            "2": 0.22,
+            "3": 0.02
+          },
+          "confidence": 0.6
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.64
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0.02,
+            "consequence": 0.06,
+            "resolution": 0.81,
+            "aside": 0.09,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.78
+        }
+      },
+      "latency_ms": 437.68431001808494,
+      "failure": null
+    }
+  ]
+}

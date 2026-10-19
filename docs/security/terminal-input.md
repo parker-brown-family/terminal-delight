@@ -5,7 +5,8 @@ and in an agent pane it is typing into a live conversation with a model that wil
 
 **The rule this repository holds: TD never types into a running terminal on its own initiative.**
 Every byte that reaches the pty of a pane you are already using originates from a key you pressed, a
-pointer gesture you made (a scroll, a ▲/▼ click, a context-menu paste), or the terminal protocol
+pointer gesture you made (a scroll, a ▲/▼ click, a context-menu paste, a ↪ in a brief's notes
+bar), or the terminal protocol
 answering the program running in the pane. No timer, plugin, MCP verb or notification callback can
 put text in front of an agent that is already running.
 
@@ -26,25 +27,35 @@ audited 2026-09-08:
 
 | # | Site | Enclosing function | What initiates it | Class |
 |---|---|---|---|---|
-| 1 | `pane.rs` | `send` | `on_key` — **its only caller** | keystroke |
-| 2 | `pane.rs` | `handle_term_event` → `TermEvent::PtyWrite` | the program in the pane asking the terminal a question (cursor reports, device attributes) | protocol reply |
+| 1 | `pane.rs` | `send` | the key handler, `terminal_key`, for the key pressed — or, for Backspace or Delete over a selection on the line being typed, the arrow keys and DELs that erase it (`erase_selection_keys`); the cut keybinding, `cut_selection`, the same erase; and `run_line`, the launch panel's recipe line | keystroke + pointer |
+| 2 | `pane.rs` | `handle_term_event` → `TermEvent::PtyWrite` and `TermEvent::ColorRequest` | the program in the pane asking the terminal a question (cursor reports, device attributes, the colour of a palette slot) | protocol reply |
 | 3 | `pane.rs` | `render` | focus in/out, `\x1b[I` / `\x1b[O`, only when the program set `FOCUS_IN_OUT` | protocol reply |
 | 4 | `pane.rs` | `scroll_by_wheel` ×2 | mouse wheel over an alt-screen program, translated to arrow keys | pointer |
-| 5 | `pane.rs` | `cut_selection` | the cut keybinding — sends DEL for the removed characters | keystroke |
-| 6 | `pane.rs` | `paste_clipboard` | the paste keybinding, and the right-click context menu's *Paste* row | keystroke + pointer |
+| 5 | `pane.rs` | `cut_selection` | the cut keybinding — since 2026-10-16 its erase goes through `send` (#1), and it has no write of its own | keystroke |
+| 6 | `pane.rs` | `paste_text` | the paste keybinding and the right-click context menu's *Paste* row, through `paste_clipboard`; and a file dropped on the terminal face, whose path it pastes (`bench_drop`). The bytes are `paste_bytes`'s: every control character but newline, carriage return and tab is taken out first, so a clipboard carrying `ESC[201~` cannot close the bracket and have what follows read as keys | keystroke + pointer |
 | 7 | `pane.rs` | `seek_agent_prompt` | `alt+↑` / `alt+↓` **and the ▲/▼ header buttons** — walks an alt-screen agent's own scrollback with synthetic wheel notches, or PageUp/PageDown when the program has not asked for mouse reports; a bounded async walk, see below | keystroke + pointer |
 | 8 | `pane.rs:2471` | `new_restored` | a **freshly spawned** shell is handed its recorded command line — session restore, the dead-agent *resurrect* menu, `ctl adopt --run`, or `TD_SEED_RESUME` at launch | see below |
+| 9 | `pane.rs` | `send_notes` | a press on **↪** in a brief's notes bar, or its chord **ctrl+shift+enter** over the square while the button is drawn — the brief's notes map, pasted into the prompt of the agent pane the brief sits beside, bracketed and **never followed by Enter**; on the bench face it goes into the composer instead and writes nothing here; see below | pointer + keystroke |
 
 `send` is the only site that composes bytes from a keystroke, and it is reachable only from the key
-handler. That is the invariant. Everything else is the terminal answering its own program (#2, #3),
-a pointer gesture the person made (#4, #6, #7), or site #8 handing a command line to a shell it just
-spawned — and #8 is the only one of the three that something other than a person can start.
+handler, the cut keybinding and the launch panel's `run_line`. That is the invariant. Everything
+else is the terminal answering its own program (#2, #3), a pointer gesture the person made (#4, #6,
+#7, #9), or site #8 handing a command line to a shell it just spawned — and #8 is the only one of
+the three that something other than a person can start.
 
 **`mcp.rs` and `plugins.rs` reach none of them.** The MCP tool surface changes appearance —
-brightness, contrast, warp, text size — reads pane state, and posts a sticky note; the seven verbs
-are `list_panes`, `pane_events`, `get_pane_config`, `set_pane_config`, `leave_note`, `grep` and
-`ping`. There is no input verb, by design, and this audit confirmed it rather than taking the docs'
-word for it. The plugin *host* launches plugin MCP servers over stdio and never holds a `Session`.
+brightness, contrast, warp, text size — reads pane state, posts a sticky note, declares a
+deliverable, puts work objects on a pane's workbench and opens a document beside its caller; the
+twelve tools are `list_panes`, `pane_events`, `get_pane_config`, `set_pane_config`, `leave_note`,
+`declare_deliverable`, `present_surface`, `engineering_state`, `surface_catalogue`, `grep`,
+`document_notes` and `open_document`, beside the protocol's own `ping`. `document_notes` reads the
+notes a person left on the brief beside the calling agent, from the same report `ctl doc notes`
+prints, and writes nothing. `open_document` changes the layout of the caller's own tab and nothing
+else: a document pane it splits off gets a fresh shell with no command line — `PaneRestore` with no
+`resume`, so site #8 has nothing to type — exactly as a Ctrl+Alt+click's does, and it takes no pane
+argument, so it cannot reach another agent's. There is no input verb, by design, and this audit
+confirmed it rather than taking the docs' word for it. The plugin *host* launches plugin MCP servers
+over stdio and never holds a `Session`.
 
 **`ctl.rs` reaches exactly one — site #8, and only by making a new pane.** `ctl adopt --cwd X --run
 "<cmd>"` travels `AdoptReq` → `Workspace::queue_adopt` → `drain_pending_adopts` → `adopt_pane` →
@@ -54,6 +65,18 @@ makes this acceptable is structural, not a promise: `adopt` has no pane argument
 expressible request that writes into a session already running. The socket itself lives in a
 `0700` directory keyed to the owning pid, so the caller is already this user — and a process running
 as this user can execute commands without asking a terminal emulator to do it.
+
+**Corrected 2026-10-15: the socket also reaches an agent that is already running — through its
+bench.** `ctl bench say`, `ctl bench choose` and `ctl bench submit` are the workbench's own
+gestures driven from outside, and they land in `pane/bench.rs` (`bench_deliver`, `bench_keystroke`,
+`dial_answer`), which this file's audit does not count because it scans `pane.rs` and `pane/doc.rs`.
+Those writes have their own scan, `every_bench_write_goes_through_the_gate`, and their own bounds:
+the pane must be on screen with an agent in it, a picker the dial raised holds them back, and a
+line arrives prefixed `[workbench:<tag>]`, so the agent can tell its own person's line from anyone
+else's. (`ctl bench type` only fills the composer and writes nothing to the terminal.) So the
+sentence above is true of `adopt` and not of the socket: any process running as you can put a line
+in front of an agent on screen, the bench's way. Marking a pane **off-limits** (`docs/mcp.md`) does
+not change that: the mark hides a pane from MCP, and this path is the control socket, not MCP.
 
 **And a plugin this repository ships puts that verb in front of agents.** `plugins/td-send/`
 declares `pull_workspace` and describes itself as "the ⇄ desk-consolidation verbs behind
@@ -114,6 +137,29 @@ These look like the concern and are not. Recorded so the next reader does not re
   stops early on three unchanged frames or when a human prompt scrolls into view. Synthetic,
   bounded, navigational, started by a keypress **or a click on ▲/▼** — it moves the view, not the
   cursor in a prompt.
+- **↪ send to agent (#9).** The one write that lands in a pane other than the one the gesture was
+  made on: ↪ sits in the notes bar of a brief, and the workspace routes the press to the agent pane
+  that brief sits beside — the pane a floating square is over, the pane a split was opened beside,
+  else the nearest agent pane in the same tab, named on the button when there is more than one.
+  Three things bound it, each held by a test in `pane.rs`. It is a paste and never a submission:
+  the map goes in bracketed, with every control character but newline and tab taken out first, so
+  it carries no carriage return and no ESC that could close the bracket early; a prompt that has
+  not asked for bracketed paste gets nothing, because there every newline would be an Enter. It is
+  reachable only from the press: `send_notes` has one caller, the handler of the event the notes
+  bar raises, and no socket or MCP verb reaches it. The chord raises that same event from the
+  document's own key handler, and `keylayer` gives it to the square only while the square draws
+  the button, so it is the same gesture on the other hand. And it goes nowhere the person cannot see: the
+  target must be an agent showing its terminal face, and the bar says where the notes landed. The
+  person reads them in the prompt and presses Enter. An agent showing its **bench** face — where a
+  brief opened from a bench card sits — takes the map into the bench's composer instead, as a draft:
+  that branch writes nothing to the terminal, and the composer's own send (`bench_deliver` in
+  `pane/bench.rs`, the bench's one road to the terminal) is the write, made when the person makes
+  it. A pane showing a document takes nothing. Unsaved notes are sent as shown and saved into
+  the file by the same press (a write to the file, not to a terminal; the button reads "save &
+  send" while there is something to save); where the file cannot take a save, the bar says how
+  many went that the file does not hold. Where the button is
+  drawn is checked live, without pressing it, by `scripts/doc-send-check.sh`: absent over a shell,
+  present over an agent and on a split opened beside one, and a stand-in agent's stdin empty after.
 - **The MCP server.** `set_pane_config` stores numbers for appearance. There is no verb that writes
   to a pty, and this audit confirmed the docs' claim rather than repeating it.
 
@@ -155,17 +201,23 @@ The audit is a grep, and it should stay one. Each line below states the count it
 check whose expectation is wrong on the day it ships is a check somebody switches off:
 
 ```
-rg -c 'self\.send\(' app/src/pane.rs        # expect: 1  — pane.rs:4099, inside on_key
-rg -c 'notifier\.notify\(' app/src/pane.rs  # expect: 9  — the eight rows above, #4 twice
+sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'self\.send\('  # expect: 4 — run_line, terminal_key twice (the erase and the key), cut_selection
+sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'notifier\.notify\('  # expect: 10 — the nine rows above but #5, which writes through send, with #2 and #4 twice each; code only, since the tests quote the call
 rg -c 'keepalive' app/src/main.rs           # expect: 2  — the module doc, and the header-glyph count comment
-rg -n 'Msg::Input|notifier\.0|notifier:' app/src   # expect: nothing outside term.rs
+rg -n 'Msg::Input|notifier\.0|notifier:' app/src   # expect: the type in vt/pump.rs and vt/socket.rs's test, the field in term.rs, and host.rs's own three writes (the recipe, write_to, a test) — nothing in pane.rs or main.rs
 ```
 
-The fourth line is the one that is easy to forget. `Notifier` is alacritty's newtype and its sender
-is public — `pub struct Notifier(pub EventLoopSender)`, and `notify` is one line, `self.0.send(
-Msg::Input(bytes))`. A future call site written as `notifier.0.send(Msg::Input(…))`, or a `Notifier`
-cloned out to another module, writes to a pty while passing every other grep on this page. The
-single primitive is a convention this repository keeps, not something the type system enforces.
+The fourth line is the one that is easy to forget. `Notifier` is TD's own type since the core swap
+(`app/src/vt/pump.rs`), and its sender is private, so the old escape — `notifier.0.send(Msg::Input(…))`
+on alacritty's newtype, whose sender was public — no longer compiles. What remains is
+`Notifier::send(Msg::Input(…))`, which is public because the session host writes a pane's recipe and a
+client's keystrokes through it. A call site written that way in the pane, or a `Notifier` cloned out
+to another module, writes to a pty while passing every other grep on this page. The single primitive
+is a convention this repository keeps, not something the type system enforces.
+
+The second line is also a test: `the_manifest_counts_every_write_to_a_terminal`, in `pane.rs`, reads
+this page, holds the count above to the code, and fails for a call site in a function the table does
+not name.
 
 A new `notifier.notify` call site is a change to this document, not just to the code. If you are
 adding one, say in the pull request which row of the table it becomes and who initiates it.

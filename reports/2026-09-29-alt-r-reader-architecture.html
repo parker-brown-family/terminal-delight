@@ -1,0 +1,1999 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attempt six</title>
+<style>
+/* decision-brief — glass over an Omarchy wallpaper.
+ *
+ * The look is Terminal Delight's docs redesign (td-docs, docsite/redesign/redesign.css):
+ * the theme's wallpaper, blurred, under a scrim of the theme's own ground; the Omarchy
+ * kiosk's glass on every surface that is not a terminal; milky, lit glass for the one
+ * element the reader must not miss; and code on opaque black, because a terminal you
+ * can see the wall through is not a terminal.
+ *
+ * Still ONE design and no theme toggle — tps-report shipped four themes and nobody ever
+ * switched. What changes per brief is the palette, and it is not a choice anyone makes:
+ * scripts/brief-wall picks a random Omarchy theme at build time, and paints its wallpaper
+ * and its colour roles into a <style id="brief-wall"> block that goes straight after this
+ * file. Without that block the page wears Last Voyage, the kiosk family's default, over a
+ * glow instead of a wallpaper, and still looks finished.
+ *
+ * What the theme may NOT touch: the status and categorical colours. A red box means a
+ * decision is waiting in every brief, whatever the wallpaper, so --critical, --serious,
+ * --warning, --good and --s1..--s8 are fixed hex. They are the validated dataviz default
+ * palette (dark steps), which clears the CVD, chroma, lightness and contrast gates on the
+ * adjacent pairlist. If you change them, re-run the validator; do not eyeball it.
+ *
+ * Everything below sits in @layer brief, so a brief's own style block beats it without a
+ * specificity fight, whatever order the two are pasted in. The one exception is at the
+ * very bottom: the notes UI's glass, which has to beat notes.css.
+ */
+@layer brief {
+
+:root {
+  color-scheme: dark;
+
+  /* Colour roles, as the Terminal Delight kiosk family names them (assets/kiosk-theme.js).
+     Last Voyage until brief-wall overwrites them. */
+  --bg: #14100c;  --bg2: #201913;  --bg0: #0b0907;
+  --fg: #e2c79a;  --fg2: #a07a50;  --fgb: #f3d69b;
+  --acc: #dd6d16; --mut: #6c4727;  --sel: #54351e;
+  --red: #e2542a; --grn: #93663b;  --yel: #d8a55e; --blu: #a1561c; --mag: #b7935e; --cyn: #f58e28;
+  --dim: color-mix(in srgb, var(--fg) 60%, var(--fg2));   /* brief-wall measures and writes this */
+
+  --wall: none;          /* brief-wall: url("data:image/webp;base64,…") */
+  --scrim: 80%;          /* how much of the theme's ground lies over the wall */
+  --wall-label: "";      /* brief-wall: which wallpaper, printed under the footer */
+
+  --line:  color-mix(in srgb, var(--dim) 28%, transparent);
+  --line2: color-mix(in srgb, var(--dim) 48%, transparent);
+
+  /* The Omarchy kiosk's glass: a hard top highlight, a dark bottom lip and a wide inner
+     bloom, so it reads as a thick pane rather than a tinted rectangle. */
+  --glass-tint: #ffffff1a; --glass-tint-2: #ffffff05; --glass-edge: #ffffff2e;
+  --glass: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 58%, transparent);
+  --glass-shadow: 0 12px 34px #00000047, inset 0 1px 0 #ffffff5c, inset 0 -1px 0 #00000038, inset 0 0 30px #ffffff0d;
+  --glass-blur: blur(16px) saturate(1.5);
+
+  /* The names this file used before the glass, kept so notes.css and every brief's own
+     style block still resolve. They are opaque on purpose: notes.css sets text in
+     var(--surface-1) on amber, and see-through ink on amber is mud. */
+  --surface-0: var(--bg0);
+  --surface-1: var(--bg);
+  --surface-2: var(--bg2);
+  --surface-3: color-mix(in srgb, var(--bg2) 80%, var(--fg));
+  --text-primary:   var(--fgb);
+  --text-secondary: var(--fg);
+  --text-muted:     var(--dim);
+
+  /* categorical — assign in fixed order, never cycle. Not themed. */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. Not themed. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: "JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; background: var(--bg0); scrollbar-color: var(--line2) transparent; }
+body {
+  margin: 0; min-height: 100vh; background: transparent; color: var(--fg);
+  font: 16px/1.62 var(--sans); -webkit-font-smoothing: antialiased;
+}
+::selection { background: color-mix(in srgb, var(--acc) 42%, transparent); color: var(--fgb); }
+:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+a { color: var(--acc); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { color: var(--fgb); }
+
+/* ---- the wall ----
+   Two fixed layers under everything, so every glass surface has something to blur and no
+   markup is needed. The wall is blurred a little and scrimmed a lot; without one, two soft
+   glows in the theme's accent stand in. The scanlines sit UNDER the text, never over it. */
+body::before {
+  content: ""; position: fixed; inset: -14px; z-index: -2; pointer-events: none;
+  background:
+    linear-gradient(color-mix(in srgb, var(--bg) var(--scrim), transparent), color-mix(in srgb, var(--bg) var(--scrim), transparent)),
+    var(--wall) center / cover no-repeat,
+    radial-gradient(60rem 42rem at 88% -8%, color-mix(in srgb, var(--acc) 26%, transparent), transparent 70%),
+    radial-gradient(52rem 40rem at -6% 34%, color-mix(in srgb, var(--cyn) 16%, transparent), transparent 70%),
+    var(--bg0);
+  filter: blur(2.5px) saturate(1.1);
+}
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, #00000024 0 1px, transparent 1px 3px),
+    radial-gradient(130% 110% at 50% 40%, transparent 55%, #00000073 100%);
+}
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+header.top, .wrap > header:first-child, body > header { padding: 64px 0 26px; }
+header.top .wrap > :last-child, .wrap > header > :last-child { margin-bottom: 0; }
+
+/* ---- the masthead ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a heading
+   breaks the heading. The body does the explaining. */
+.eyebrow, header .meta, .kicker {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 18px; font: 700 11.5px/1.4 var(--mono); letter-spacing: .16em;
+  text-transform: uppercase; color: var(--acc);
+}
+.eyebrow::before, header .meta::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--acc); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acc) 20%, transparent), 0 0 14px var(--acc);
+}
+h1 {
+  margin: 0 0 20px; max-width: 22ch; color: var(--fgb);
+  font: 760 clamp(2.3rem, 4.8vw, 4.3rem)/1.02 var(--sans); letter-spacing: -.035em;
+  text-wrap: balance; text-shadow: 0 2px 30px color-mix(in srgb, var(--bg0) 70%, transparent);
+}
+h1 .n { font: 700 .82em/1 var(--mono); letter-spacing: -.02em; color: var(--dim); margin-right: .3em; }
+h1 .hi { color: var(--acc); }
+.lede {
+  max-width: 68ch; margin: 0 0 22px; color: var(--fg);
+  font-size: clamp(17px, 1.5vw, 19.5px); line-height: 1.6;
+}
+.stamps, .stamp-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.stamp {
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px; border-radius: 999px;
+  font: 700 10.5px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--fg);
+}
+.stamp::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+.stamp.good::before, .stamp.live::before { background: var(--good); box-shadow: 0 0 0 3px #0ca30c33, 0 0 10px var(--good); }
+.stamp.warn::before { background: var(--warning); box-shadow: 0 0 0 3px #fab21933; }
+.stamp.crit::before { background: var(--critical); box-shadow: 0 0 0 3px #d03b3b33; }
+
+/* ---- headings ---- */
+h2 {
+  margin: 68px 0 16px; color: var(--fgb); text-wrap: balance;
+  font: 740 clamp(1.5rem, 2.7vw, 2.15rem)/1.12 var(--sans); letter-spacing: -.025em;
+  scroll-margin-top: 24px;
+}
+h2 .n { font: 700 .8em/1 var(--mono); color: var(--dim); letter-spacing: 0; margin-right: .45em; }
+/* the label form: mono small caps, a lit number, and a hairline running out to the edge */
+h2.sec {
+  display: flex; align-items: center; gap: 14px; margin: 64px 0 20px;
+  font: 700 12.5px/1.3 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--fgb);
+}
+h2.sec::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--line2), transparent); }
+h2.sec .n { color: var(--acc); font-size: 1em; margin: 0; }
+h3 { margin: 0 0 8px; color: var(--fgb); font: 650 17.5px/1.3 var(--sans); letter-spacing: -.01em; }
+p { margin: 0 0 14px; }
+b, strong { color: var(--fgb); font-weight: 650; }
+ul, ol { padding-left: 22px; }
+li { margin-bottom: 6px; }
+hr { border: 0; height: 1px; margin: 44px 0; background: linear-gradient(90deg, transparent, var(--line2), transparent); }
+.dim { color: var(--dim); }
+
+/* ---- glass: every surface that is not a terminal ---- */
+.panel, .card, .finding, .tile, .grill .ask, .grill .q, .grill-q, .callout, .esc-list > li,
+.facts, .stamp, table, blockquote, .linkbtn, .open-dialog, button[data-dlg] {
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  background: var(--glass); border: 1px solid var(--glass-edge); box-shadow: var(--glass-shadow);
+}
+.panel { padding: 18px 20px; border-radius: 16px; margin: 0 0 16px; }
+
+/* ---- milky glass: the element the reader must not miss ----
+   Put the headline verdict in one. Bright, lit from above, the wall blurred through it, a
+   sheen across the top, a streak, and the faint scanlines of Terminal Delight's CRT.
+   One or two per page; a page of them is a page of nothing. */
+.glass {
+  position: relative; isolation: isolate; overflow: hidden;
+  padding: 22px 26px; margin: 0 0 22px; border-radius: 18px; color: var(--bg0);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7); backdrop-filter: blur(20px) saturate(1.7);
+  background: linear-gradient(180deg, #ffffffa8 0%, #ffffff30 38%, #ffffff00 60%), color-mix(in srgb, var(--fgb) 84%, transparent);
+  border: 1px solid #ffffffb0;
+  box-shadow: 0 18px 40px -12px #00000090, inset 0 1px 0 #ffffffe6, inset 0 -2px 0 #0000002e, inset 0 0 26px #ffffff40, inset 0 -18px 30px -18px #00000030;
+}
+.glass::before {
+  content: ""; position: absolute; z-index: -1; left: 1px; right: 1px; top: 1px; height: 50%;
+  border-radius: 17px 17px 0 0; pointer-events: none;
+  background: linear-gradient(180deg, #ffffffb0 0%, #ffffff40 45%, #ffffff00 100%);
+}
+.glass::after {
+  content: ""; position: absolute; z-index: -1; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(115deg, transparent 38%, #ffffff38 46%, transparent 54%),
+    repeating-linear-gradient(0deg, #0000000d 0 1px, transparent 1px 3px);
+}
+.glass :is(h1, h2, h3, h4, b, strong, a) { color: var(--bg0); text-shadow: none; }
+.glass p:last-child { margin-bottom: 0; }
+.glass :is(.lbl, .k, .kicker, .eyebrow, .h) { color: color-mix(in srgb, var(--bg0) 62%, var(--fgb)); }
+.glass > .h { display: block; margin: 0 0 8px; font: 700 11.5px/1.3 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+.glass code { background: color-mix(in srgb, var(--bg0) 12%, transparent); color: var(--bg0); }
+.glass .tag { color: var(--bg0); background: color-mix(in srgb, var(--bg0) 10%, transparent); border-color: color-mix(in srgb, var(--bg0) 30%, transparent); box-shadow: none; }
+.glass .tag::before { box-shadow: none; }
+.glass pre { margin-top: 12px; }
+
+/* ---- two faces: the prose on the left, its evidence level with it on the right ---- */
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 40px; align-items: start; margin: 0 0 18px; }
+.pair > * > :first-child { margin-top: 0; }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 0 0 16px; padding: 13px 16px; border-radius: 14px; font-size: 14px; }
+.facts .cap { grid-column: 1 / -1; margin-bottom: 3px; font: 700 10.5px var(--mono); letter-spacing: .15em; text-transform: uppercase; color: var(--yel); }
+.facts dt { font: 12px/1.75 var(--mono); color: var(--dim); }
+.facts dd { margin: 0; font: 13px/1.75 var(--mono); color: var(--fgb); overflow-wrap: anywhere; }
+
+/* ---- read-first: ranked, hard cap of five ---- */
+.esc-list { list-style: none; margin: 0 0 26px; padding: 0; display: grid; gap: 10px; counter-reset: rf; }
+.esc-list > li {
+  position: relative; margin: 0; padding: 16px 22px 16px 68px; border-radius: 16px; counter-increment: rf;
+}
+.esc-list > li::before, .esc-list .esc-n {
+  position: absolute; left: 22px; top: 15px; font: 700 19px/1.2 var(--mono); color: var(--acc);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--acc) 55%, transparent);
+}
+.esc-list > li::before { content: counter(rf, decimal-leading-zero); }
+.esc-list > li:has(.esc-n)::before { content: none; }
+.esc-list > li > b { color: var(--fgb); font-size: 16px; }
+.esc-list > li > span:not(.tag):not(.esc-n) { display: block; margin-top: 4px; color: var(--fg); }
+
+/* ---- cards, one lit ---- */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; margin: 0 0 22px; }
+.card { padding: 20px 22px; border-radius: 16px; }
+.card h3 { margin: 10px 0 8px; }
+.card p { font-size: 15px; }
+.card .why { margin: 12px 0 0; padding-top: 11px; border-top: 1px dashed var(--line2); color: var(--dim); font-size: 14px; }
+.badge {
+  display: inline-block; padding: 3px 10px; border: 1px solid var(--line2); border-radius: 999px;
+  font: 700 10px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim);
+}
+.card.rec {
+  border-color: color-mix(in srgb, var(--s3) 75%, transparent);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--s3) 20%, transparent), transparent 60%), var(--glass);
+  box-shadow: var(--glass-shadow), 0 0 0 1px var(--s3) inset, 0 18px 50px -18px color-mix(in srgb, var(--s3) 70%, transparent);
+}
+.card.rec .badge { color: #6fe0b4; border-color: var(--s3); background: color-mix(in srgb, var(--s3) 20%, transparent); }
+
+/* ---- stat tiles ---- */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 0 0 22px; }
+.tile { display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; border-radius: 16px; }
+.tile .k { font: 700 10.5px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.tile > b, .tile .big {
+  font: 780 2.3rem/1 var(--sans); letter-spacing: -.045em; color: var(--acc);
+  text-shadow: 0 0 26px color-mix(in srgb, var(--acc) 40%, transparent);
+}
+.tile .u { font-size: 13px; color: var(--dim); }
+
+/* ---- findings ---- */
+.finding { margin: 0 0 12px; padding: 16px 20px; border-radius: 16px; }
+.finding .t { color: var(--fgb); font-weight: 650; }
+.finding .w { margin-top: 6px; color: var(--fg); }
+
+/* ---- the grill: red is "a decision is waiting", so the grill is lit red, softly ---- */
+.grill .ask, .grill .q, .grill-q {
+  margin: 0 0 14px; padding: 20px 22px; border-radius: 18px;
+  border-color: color-mix(in srgb, var(--critical) 38%, var(--glass-edge));
+  background: linear-gradient(150deg, color-mix(in srgb, var(--critical) 13%, transparent), transparent 55%), var(--glass);
+}
+.grill .ask h3, .grill .q > b:first-child { color: var(--fgb); }
+:is(.ask, .q, .grill-q) .rec {
+  display: block; margin: 12px 0 0; padding: 10px 14px; border-radius: 10px; color: var(--fgb);
+  border-left: 3px solid var(--s3); background: color-mix(in srgb, var(--s3) 14%, transparent);
+}
+
+/* ---- figures: dark glass, because what is drawn on them was drawn for a dark page ---- */
+figure {
+  margin: 0 0 28px; padding: 20px 22px 16px; border-radius: 18px; border: 1px solid var(--glass-edge);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3);
+  background: linear-gradient(165deg, color-mix(in srgb, var(--bg2) 74%, transparent), color-mix(in srgb, var(--bg0) 90%, transparent) 72%);
+  box-shadow: 0 26px 60px -24px #000000c0, inset 0 1px 0 #ffffff2a, inset 0 0 40px #ffffff08;
+}
+figure > .lbl {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 14px;
+  font: 700 11px/1.3 var(--mono); letter-spacing: .15em; text-transform: uppercase; color: var(--dim);
+}
+figure > .lbl::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--acc); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acc) 18%, transparent);
+}
+figcaption { margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--line); font-size: 14.5px; color: var(--fg); }
+figcaption b { color: var(--fgb); }
+figure svg { display: block; width: 100%; height: auto; }
+figure img { display: block; max-width: 100%; height: auto; border-radius: 10px; }
+.scroller { overflow-x: auto; }
+.gutter { margin-top: 10px; font: 11.5px/1.5 var(--mono); color: var(--dim); }
+
+/* Figure ink for inline SVG, so a drawing wears the theme it sits in. Classes, because a
+   presentation attribute cannot read var(). Hex attributes still work; these are optional.
+   The six meanings are the fixed ones from reference/pictures.md. */
+svg .ink { fill: var(--fgb); }   svg .ink2 { fill: var(--dim); }   svg .ink-acc { fill: var(--acc); }
+svg .box { fill: color-mix(in srgb, var(--bg2) 88%, var(--bg0)); stroke: var(--line2); }
+svg .wire { fill: none; stroke: var(--dim); }
+svg .crit { --k: var(--critical); } svg .fail { --k: var(--serious); } svg .ready { --k: var(--s3); }
+svg .struct { --k: var(--s1); } svg .mine { --k: var(--warning); } svg .unk { --k: var(--dim); }
+svg :is(.crit, .fail, .ready, .struct, .mine, .unk):not(text):not(line):not(path) { fill: color-mix(in srgb, var(--k) 16%, var(--bg0)); stroke: var(--k); }
+svg :is(line, path):is(.crit, .fail, .ready, .struct, .mine, .unk) { stroke: var(--k); }
+svg text:is(.crit, .fail, .ready, .struct, .mine, .unk) { fill: var(--k); }
+svg .unk:not(text) { stroke-dasharray: 5 4; }
+
+/* ---- code: the only thing on the page that looks like a terminal, because it is one.
+   Opaque on purpose. ---- */
+/* inline-block, so a flag like --theme moves to the next line whole instead of breaking
+   after its hyphens; a path longer than the line still wraps, inside its own box */
+code {
+  display: inline-block; max-width: 100%; vertical-align: baseline;
+  font: .86em/1.5 var(--mono); color: var(--fgb); padding: 0 6px; border-radius: 5px;
+  background: color-mix(in srgb, var(--sel) 62%, transparent); overflow-wrap: anywhere;
+}
+pre {
+  margin: 0 0 16px; padding: 14px 17px; overflow-x: auto; border-radius: 12px;
+  background: color-mix(in srgb, var(--bg0) 95%, transparent); border: 1px solid var(--line2);
+  box-shadow: inset 0 1px 0 #ffffff12, 0 12px 28px -16px #000000d0;
+}
+pre code { display: inline; background: none; padding: 0; color: var(--fgb); font-size: 13px; line-height: 1.72; overflow-wrap: normal; }
+pre .ln { display: flex; gap: 10px; white-space: pre-wrap; word-break: break-all; }   /* wrap at the edge, as a terminal does */
+pre .ln::before { content: "$"; color: var(--grn); flex: none; user-select: none; }
+
+/* ---- tables ---- */
+table {
+  width: 100%; margin: 0 0 18px; border-collapse: separate; border-spacing: 0;
+  border-radius: 14px; overflow: hidden; font-size: 14px;
+}
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font: 700 10.5px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+  background: color-mix(in srgb, var(--bg0) 42%, transparent);
+}
+td { color: var(--fg); }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: color-mix(in srgb, var(--acc) 7%, transparent); }
+td b, td strong { color: var(--fgb); }
+
+blockquote {
+  margin: 0 0 16px; padding: 14px 20px; border-radius: 4px 14px 14px 4px;
+  border-left: 3px solid var(--acc); color: var(--fg); font-size: 15px; font-style: italic;
+}
+
+.callout {
+  margin: 0 0 18px; padding: 15px 20px; border-radius: 4px 14px 14px 4px; border-left: 3px solid var(--warning);
+  background: linear-gradient(90deg, #fab2191c, transparent 70%), var(--glass);
+}
+.callout.crit { border-left-color: var(--critical); background: linear-gradient(90deg, #d03b3b24, transparent 70%), var(--glass); }
+.callout.good { border-left-color: var(--good);     background: linear-gradient(90deg, #0ca30c1f, transparent 70%), var(--glass); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  display: block; margin: 0 0 7px; font: 700 10.5px/1.3 var(--mono); letter-spacing: .12em;
+  text-transform: uppercase; color: var(--dim);
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-flex; align-items: center; gap: 6px; margin-right: 7px; padding: 3px 9px 3px 8px;
+  border: 1px solid; border-radius: 999px; vertical-align: 2px;
+  font: 700 10px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+}
+.tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 7px currentColor; }
+.tag:is(.v, .measured)                { color: #6cd46c; background: #0ca30c2e; border-color: #0ca30c66; }
+.tag:is(.w, .inferred)                { color: #f5c95f; background: #fab21924; border-color: #fab21961; }
+.tag:is(.c, .hunch, .contradicted)    { color: #f08a8a; background: #d03b3b29; border-color: #d03b3b66; }
+.tag:is(.u, .unknown)                 { color: var(--dim); background: color-mix(in srgb, var(--dim) 12%, transparent); border-color: var(--line2); border-style: dashed; }
+.glass .tag:is(.v, .measured)::before { background: var(--good); }
+.glass .tag:is(.w, .inferred)::before { background: var(--s4); }
+.glass .tag:is(.c, .hunch, .contradicted)::before { background: var(--critical); }
+
+/* ---- buttons that open a modal ---- */
+.linkbtn, .open-dialog, button[data-dlg] {
+  display: inline-flex; align-items: center; gap: 8px; margin: 0 8px 8px 0; padding: 8px 15px; border-radius: 999px;
+  font: 600 13px/1.2 var(--mono); color: var(--fgb); cursor: pointer;
+  transition: transform .12s ease, border-color .12s ease;
+}
+.linkbtn:hover, .open-dialog:hover, button[data-dlg]:hover {
+  transform: translateY(-1px); border-color: color-mix(in srgb, var(--acc) 70%, transparent);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--acc) 24%, transparent);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+  color: var(--fg); border: 1px solid var(--glass-edge); border-radius: 18px;
+  -webkit-backdrop-filter: blur(24px) saturate(1.4); backdrop-filter: blur(24px) saturate(1.4);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 88%, transparent);
+  box-shadow: 0 40px 120px #000000b3, inset 0 1px 0 #ffffff47;
+}
+dialog::backdrop { background: color-mix(in srgb, var(--bg0) 62%, transparent); backdrop-filter: blur(6px); }
+.dlg-head {
+  position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: flex-start; gap: 20px;
+  padding: 20px 26px; border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg2) 94%, var(--bg0));
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { margin: 0; font: 11.5px/1.5 var(--mono); color: var(--dim); }
+.x {
+  flex: none; width: 32px; height: 32px; border-radius: 999px; cursor: pointer;
+  font-size: 17px; line-height: 1; color: var(--fg);
+  background: color-mix(in srgb, var(--bg0) 45%, transparent); border: 1px solid var(--line2);
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  margin: 30px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line);
+  font: 700 11.5px/1.3 var(--mono); letter-spacing: .13em; text-transform: uppercase; color: var(--dim);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p, .dlg-body ul { font-size: 15px; color: var(--fg); }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; }
+.dlg-body li { margin-bottom: 8px; }
+
+footer {
+  margin-top: 76px; padding-top: 24px; border-top: 1px solid var(--line);
+  font: 12px/1.6 var(--mono); color: var(--dim);
+}
+footer p { margin: 0 0 7px; }
+footer::after { content: var(--wall-label); display: block; margin-top: 12px; opacity: .75; }
+
+@media (max-width: 900px) {
+  .pair { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .wrap { padding: 0 16px 80px; }
+  header.top, .wrap > header:first-child, body > header { padding-top: 40px; }
+  h1 { font-size: clamp(2rem, 9vw, 2.6rem); }
+  h2 { margin-top: 52px; }
+  .esc-list > li { padding: 14px 16px 14px 56px; }
+  .esc-list > li::before, .esc-list .esc-n { left: 16px; font-size: 17px; }
+  figure { padding: 14px 14px 12px; border-radius: 14px; }
+}
+@media print {
+  body::before, body::after { display: none; }
+}
+
+} /* @layer brief */
+
+/* ---- the notes UI, in glass ----
+   Outside the layer and one step more specific than notes.css, which it has to beat.
+   notes.css itself is left alone: its bytes are pinned by fixtures/notes-format, and
+   Terminal Delight vendors those. It already reads every colour from the tokens above. */
+:root .notebar {
+  padding: 7px 8px 7px 16px; border-radius: 999px; border-color: var(--glass-edge);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 80%, transparent);
+  box-shadow: 0 16px 44px #00000080, inset 0 1px 0 #ffffff55;
+}
+:root .notebar button { border-radius: 999px; background: color-mix(in srgb, var(--bg0) 45%, transparent); border-color: var(--line2); }
+@media (max-width: 640px) { :root .notebar { border-radius: 18px; padding: 8px 10px; } }   /* notes.css wraps it to two rows here */
+:root .note-btn { border-radius: 999px; }
+:root :is(#note-text, #export-out) { background: color-mix(in srgb, var(--bg0) 92%, transparent); border-color: var(--line2); border-radius: 10px; }
+:root #note-list li { background: var(--glass); border-color: var(--glass-edge); border-left-color: var(--warning); }
+
+</style>
+<style id="brief-wall">
+/* brief-wall — theme terminal-delight (dark), wallpaper 12-tokyo-night-omakub.webp
+   scrim 0.78; contrast over the wall's brightest tenth: fg 8.59:1, fgb 12.68:1, dim 5.59:1, acc 11.52:1 */
+:root {
+  --bg: #030708;
+  --bg2: #0c1823;
+  --bg0: #010304;
+  --fg: #b5beac;
+  --fg2: #5a6061;
+  --fgb: #dfe2e3;
+  --acc: #67f454;
+  --mut: #282e32;
+  --sel: #14262c;
+  --red: #d6483c;
+  --grn: #44b064;
+  --yel: #c89944;
+  --blu: #45a4ae;
+  --mag: #916d86;
+  --cyn: #45a4ae;
+  --dim: #91988e;
+  --scrim: 78%;
+  --wall-label: "wallpaper · terminal-delight · 12-tokyo-night-omakub.webp";
+  --wall: url("data:image/webp;base64,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");
+}
+</style>
+
+<style>
+
+/* ---- the brief's own: mockup ink, the case table, the document grid ---- */
+.mt { font-family: var(--mono); fill: var(--fg); }
+.mt .txt { fill: var(--fg); }
+.mt .you { fill: var(--fgb); }
+.mt .b, .mt .h { fill: var(--fgb); font-weight: 700; }
+.mt .dim { fill: var(--dim); }
+.mt .acc { fill: var(--acc); }
+.mt .lbl { fill: var(--acc); font-weight: 700; letter-spacing: .1em; }
+.mt .th { fill: var(--dim); font-weight: 700; }
+svg .lane { fill: var(--dim); font-weight: 700; letter-spacing: .12em; }
+.g-panel { fill: color-mix(in srgb, var(--bg0) 92%, #000); stroke: var(--line2); stroke-width: 1.5; }
+.g-panel.unkb { stroke: var(--dim); stroke-dasharray: 6 5; }
+.g-hdr { fill: color-mix(in srgb, var(--bg2) 94%, #000); }
+.g-title { fill: var(--fgb); font-weight: 700; }
+.g-chip { stroke-width: 1.2; }
+.g-chip.fail { fill: color-mix(in srgb, var(--serious) 18%, var(--bg0)); stroke: var(--serious); }
+.g-chip.mine { fill: color-mix(in srgb, var(--warning) 16%, var(--bg0)); stroke: var(--warning); }
+.g-chip.unk { fill: var(--bg0); stroke: var(--dim); stroke-dasharray: 3 3; }
+.g-chipt { font-weight: 700; letter-spacing: .06em; }
+.g-chipt.fail { fill: var(--serious); } .g-chipt.mine { fill: var(--warning); } .g-chipt.unk { fill: var(--dim); }
+.g-track { stroke: var(--line2); stroke-width: 3; stroke-linecap: round; }
+.g-knob { fill: var(--acc); }
+.g-kl { fill: var(--dim); }
+.g-strip { fill: color-mix(in srgb, var(--warning) 7%, transparent); }
+.g-stripedge { fill: var(--warning); }
+.g-stripl { fill: var(--warning); font-style: italic; }
+.fade0 { stop-color: var(--bg0); stop-opacity: 0; } .fade1 { stop-color: var(--bg0); stop-opacity: 1; }
+.pin-c { fill: var(--s1); stroke: var(--bg0); stroke-width: 2; }
+.pin-c.mine { fill: var(--s4); }
+.pin-t { fill: #fff; font-family: var(--mono); font-weight: 700; }
+svg .margin { fill: color-mix(in srgb, var(--serious) 40%, transparent); }
+svg .rdr { fill: color-mix(in srgb, var(--bg0) 92%, #000); }
+svg .edge { stroke: var(--serious); stroke-width: 1.5; stroke-dasharray: 3 3; }
+svg .ah { fill: var(--dim); }
+svg .grid { stroke: var(--line); }
+svg .one { stroke: var(--warning); stroke-width: 2; stroke-dasharray: 7 5; }
+svg .reach { fill: color-mix(in srgb, var(--dim) 22%, transparent); stroke: var(--line2); }
+svg .opens { fill: var(--serious); stroke: var(--bg0); stroke-width: 2; }
+svg .bar { fill: color-mix(in srgb, var(--dim) 45%, transparent); }
+svg .bound { fill: none; stroke: var(--line2); stroke-width: 1.5; }
+svg .wire.struct { stroke: var(--s1); } svg .wire.mine { stroke: var(--warning); }
+
+.glab { display: flex; align-items: center; gap: 10px; margin: 16px 0 8px; font: 700 11px/1.3 var(--mono);
+  letter-spacing: .12em; text-transform: uppercase; }
+.glab:first-of-type { margin-top: 0; }
+.glab.fail { color: var(--serious); } .glab.mine { color: var(--warning); }
+
+table.cases { font-size: 13.5px; }
+table.cases td:first-child { color: var(--fgb); }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: 1px;
+  background: var(--dim); flex: none; }
+.dot.fail { background: var(--serious); } .dot.ready { background: var(--s3); }
+.dot.mine { background: var(--warning); } .dot.crit { background: var(--critical); box-shadow: 0 0 8px var(--critical); }
+.dot.unk { background: transparent; border: 1.5px dashed var(--dim); }
+.keyrow { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+
+.legend { list-style: none; margin: 16px 0 0; padding: 0; display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 8px 24px; font-size: 14px; }
+.legend li { display: flex; gap: 10px; align-items: flex-start; }
+.pin { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--s1); color: #fff; font: 700 10.5px/1 var(--mono); flex: none; margin-top: 2px; }
+.pin.mine { background: var(--s4); }
+
+.docgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 22px 26px; }
+.dpair { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.dside { display: flex; flex-direction: column; gap: 5px; }
+.dcap { font: 700 9.5px/1.2 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.dpane { width: 62px; height: 158px; border-radius: 6px; padding: 7px 6px; overflow: hidden;
+  background: color-mix(in srgb, var(--bg0) 92%, #000); border: 1px solid var(--line2); }
+.dglass { width: 265px; height: 160px; border-radius: 10px; overflow: hidden;
+  background: color-mix(in srgb, var(--bg0) 92%, #000); border: 1px solid var(--line2);
+  box-shadow: 0 10px 26px -12px #000; }
+.dhdr { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 4px 9px;
+  background: color-mix(in srgb, var(--bg2) 94%, #000); font: 9px/1.3 var(--mono); color: var(--fgb); }
+.dhdr b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dhdr i { font-style: normal; color: var(--warning); letter-spacing: .1em; }
+.dbody { padding: 8px 12px; height: calc(100% - 21px); overflow: hidden; }
+.mh { height: 6px; width: 70%; border-radius: 3px; background: var(--fgb); opacity: .8; margin: 2px 0 7px; }
+.mh.t { height: auto; width: auto; background: none; opacity: 1; font: 700 8.5px/1.3 var(--mono); color: var(--fgb); }
+.ln { height: calc(var(--n) * 6px); margin-bottom: 6px;
+  background: repeating-linear-gradient(to bottom, color-mix(in srgb, var(--dim) 55%, transparent) 0 2px, transparent 2px 6px); }
+.ln.long { height: calc(var(--n) * 7px);
+  background: repeating-linear-gradient(to bottom, color-mix(in srgb, var(--dim) 55%, transparent) 0 2px, transparent 2px 7px); }
+.fig { height: 34px; border-radius: 4px; margin: 4px 0 7px; border: 1px solid var(--line2);
+  background: color-mix(in srgb, var(--s1) 14%, transparent); }
+.figs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.figs .fig { height: 60px; }
+.page { background: #e9e6dc; border-radius: 2px; padding: 6px 5px; height: 88px; margin-top: 30px; }
+.page .mh { background: #3a3830; }
+.page .ln { background: repeating-linear-gradient(to bottom, #8d897c 0 1.5px, transparent 1.5px 5px); }
+.page.wide { margin-top: 0; height: 140px; padding: 12px 14px; }
+.page.wide .ln { background: repeating-linear-gradient(to bottom, #6f6b60 0 2px, transparent 2px 7px); }
+.pic, .vid { position: relative; border-radius: 3px; aspect-ratio: 16 / 9; margin-top: 50px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--s1) 45%, #000), color-mix(in srgb, var(--acc) 35%, #000) 70%, #000); }
+.dbody .pic, .dbody .vid { margin-top: 0; width: 216px; }
+.vid { background: radial-gradient(circle at 60% 40%, color-mix(in srgb, var(--s3) 45%, #000), #050505 70%); }
+.vbar { position: absolute; left: 0; right: 0; bottom: 0; height: 12px; display: flex; gap: 6px; align-items: center;
+  padding: 0 6px; background: #000000b0; font: 8px/1 var(--mono); color: #fff; }
+.vbar i { font-style: normal; } .vbar em { flex: 1; height: 2px; background: linear-gradient(90deg, var(--acc) 40%, #ffffff55 40%); }
+.dclaim { margin: 10px 0 0; font-size: 13.5px; }
+.lend svg { max-width: 340px; }
+.dlgs { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 26px; }
+
+svg .bar.ok { fill: color-mix(in srgb, var(--s3) 70%, transparent); }
+svg .thumb { fill: var(--dim); }
+svg .strip { fill: color-mix(in srgb, var(--warning) 45%, transparent); }
+pre.shape { font-size: 12.5px; }
+
+</style>
+<style>
+/* decision-brief — reader notes, styling.
+   Depends on the surface/ink/status custom properties in base.css. */
+
+.notable { position: relative; }
+
+.note-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  width: 26px; height: 26px; line-height: 1; padding: 0;
+  background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text-muted); font-size: 13px; cursor: pointer; opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+}
+/* Hidden until hover: a brief with 130 always-visible affordances reads as a form. */
+.notable:hover > .note-btn,
+.note-btn:focus-visible { opacity: 1; }
+.note-btn:hover { background: var(--warning); border-color: var(--warning); color: var(--surface-1); }
+
+.notable.has-note > .note-btn {
+  opacity: 1; background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 700;
+}
+.notable.has-note { box-shadow: inset 3px 0 0 var(--warning); }
+tr.notable.has-note > td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* Table rows can't host an absolutely-positioned child reliably — inline it. */
+tr.notable .note-btn {
+  position: static; opacity: .35; width: 22px; height: 22px; font-size: 11px;
+  margin-left: 6px; vertical-align: middle; display: inline-block;
+}
+tr.notable:hover .note-btn { opacity: 1; }
+
+/* ---- floating bar ---- */
+.notebar {
+  position: fixed; right: 18px; bottom: 18px; z-index: 900;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 10px 32px rgba(0,0,0,.55);
+  font-family: var(--mono); font-size: 11.5px;
+}
+.notebar .cnt { color: var(--text-muted); padding-right: 4px; }
+.notebar .cnt b { color: var(--warning); font-size: 14px; }
+.notebar button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .03em; cursor: pointer;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-secondary);
+  border-radius: 6px; padding: 6px 10px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.notebar button:hover { background: var(--warning); color: var(--surface-1); border-color: var(--warning); }
+.notebar button.primary {
+  background: rgba(250,178,25,.14); border-color: rgba(250,178,25,.45); color: #f5c95f;
+}
+.notebar button:disabled {
+  opacity: .4; cursor: default; background: var(--surface-3);
+  color: var(--text-muted); border-color: var(--line);
+}
+@media (max-width: 640px) {
+  .notebar { right: 8px; bottom: 8px; flex-wrap: wrap; max-width: calc(100vw - 16px); }
+}
+
+/* ---- note dialog ---- */
+dialog#d-note { max-width: 620px; }
+#note-list { margin: 0 0 18px; padding: 0; list-style: none; }
+#note-list li {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--warning); border-radius: 0 7px 7px 0;
+  padding: 11px 14px; margin-bottom: 9px; font-size: 14px; color: var(--text-secondary);
+}
+#note-list .nts {
+  font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+  display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px;
+}
+#note-list .ndel {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 0;
+}
+#note-list .ndel:hover { color: var(--critical); }
+#note-none { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+#note-text {
+  width: 100%; min-height: 104px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-primary);
+  padding: 11px 13px; font-family: var(--sans); font-size: 14.5px;
+  resize: vertical; line-height: 1.55;
+}
+#note-text:focus { outline: none; border-color: var(--warning); }
+
+.note-actions { display: flex; gap: 9px; align-items: center; margin-top: 11px; }
+.note-actions button {
+  font-family: var(--mono); font-size: 11.5px; cursor: pointer; border-radius: 6px;
+  padding: 8px 14px; border: 1px solid var(--line);
+  background: var(--surface-3); color: var(--text-secondary);
+}
+.note-actions button.save {
+  background: var(--warning); border-color: var(--warning);
+  color: var(--surface-1); font-weight: 600;
+}
+.note-actions .hintk {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); margin-left: auto;
+}
+
+/* ---- export dialog ---- */
+dialog#d-export { max-width: 780px; }
+#export-out {
+  width: 100%; min-height: 320px; background: var(--surface-0);
+  border: 1px solid var(--line); border-radius: 7px; color: var(--text-secondary);
+  padding: 13px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  resize: vertical; white-space: pre;
+}
+.tokest { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin: 9px 0 0; }
+
+/* ---- concur: a rubber stamp in a space on each decision's right ----
+   notes.js adds .concurrable to every decision and appends the space. The padding is
+   forced because briefs set .grill .ask padding with a shorthand of their own, and the
+   space must never sit under the note button in the top-right corner. */
+.concurrable {
+  --concur-size: 120px;
+  position: relative;
+  min-height: calc(var(--concur-size) + 58px);
+  padding-right: calc(var(--concur-size) + 34px) !important;
+}
+.concur-zone {
+  position: absolute; right: 14px; top: max(42px, calc(50% - var(--concur-size) / 2));
+  width: var(--concur-size); height: var(--concur-size); margin: 0; padding: 0;
+  background: transparent; border: 1.5px dashed #56554e; border-radius: 14px;
+  color: #6b6a62; font: inherit; cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.concur-q {
+  position: absolute; inset: 0 0 18px; display: grid; place-items: center;
+  font: 600 46px/1 var(--sans); transition: opacity .15s;
+}
+.concur-lbl {
+  position: absolute; left: 0; right: 0; bottom: 9px; text-align: center;
+  font: 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
+  transition: opacity .15s;
+}
+.concur-zone:not(.on):hover,
+.concur-zone:not(.on):focus-visible {
+  border-color: var(--text-secondary); color: var(--text-secondary);
+  animation: concur-throb .9s ease-in-out infinite;
+}
+@keyframes concur-throb { 0%, 100% { scale: 1; } 50% { scale: 1.07; } }
+.concur-zone:focus-visible { outline: 2px solid var(--s1); outline-offset: 3px; }
+.concur-zone.on { border-color: transparent; }
+.concur-zone.on .concur-q, .concur-zone.on .concur-lbl { opacity: 0; }
+.concur-zone.on::after {
+  content: "click to peel"; position: absolute; left: -24px; right: -24px; bottom: -20px;
+  text-align: center; font: 10px/1 var(--mono); letter-spacing: .08em; color: var(--text-muted);
+  opacity: 0; transition: opacity .15s; pointer-events: none;
+}
+.concur-zone.on:hover::after { opacity: 1; }
+
+.concur-stamp {
+  position: absolute; left: -12px; top: -12px;
+  width: calc(100% + 24px); height: calc(100% + 24px);
+  overflow: visible; pointer-events: none;
+  rotate: var(--r, 0deg); translate: var(--dx, 0px) var(--dy, 0px);
+}
+.concur-stamp.thud { animation: concur-thud .2s cubic-bezier(.2,.8,.3,1) both; }
+@keyframes concur-thud { 0% { scale: 1.9; opacity: 0; } 70% { scale: .97; opacity: 1; } 100% { scale: 1; } }
+.concur-stamp.peel { animation: concur-peel .3s cubic-bezier(.5,0,.9,.4) forwards; }
+@keyframes concur-peel {
+  to {
+    rotate: calc(var(--r, 0deg) - 30deg);
+    translate: calc(var(--dx, 0px) + 36px) calc(var(--dy, 0px) - 32px);
+    scale: .72; opacity: 0;
+  }
+}
+.concurrable.concur-jolt { animation: concur-jolt .24s ease-out; }
+@keyframes concur-jolt { 0%, 100% { translate: 0 0; } 30% { translate: 0 2px; } 65% { translate: 0 -1px; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .concur-zone, .concur-stamp, .concurrable { animation: none !important; transition: none !important; }
+}
+@media (max-width: 640px) {
+  .concurrable { --concur-size: 96px; }
+  .concur-q { font-size: 38px; }
+}
+
+</style>
+</head>
+<body>
+
+<header class="top"><div class="wrap">
+  <p class="eyebrow">Gate 2 of 4 &middot; architecture &middot; Terminal Delight &middot; 2026-09-29</p>
+  <h1>Attempt six</h1>
+  <p class="lede">Gate 1 settled what the reader shows. This page is where each case lands in the code, what it reuses, and five calls I need from you before program design.</p>
+  <div class="stamps">
+    <span class="stamp good">Gate 1 approved</span>
+    <span class="stamp good">approved · 2026-09-29</span>
+    <span class="stamp">nothing built</span>
+  </div>
+</div></header>
+
+<div class="wrap">
+
+  <div class="glass">
+    <p>The reader stops starting from the screen. It asks the pane what it shows and borrows that: the document itself, the conversation from its transcript, or a shell’s lines joined where the terminal broke them. <b>The reader’s size comes from the window alone.</b></p>
+  </div>
+
+  <ol class="esc-list">
+    <li><span class="esc-n">1</span><b>All five attempts started from the grid at the pane’s width.</b><span>Each tried to undo that afterwards. The transcript source was designed on 31 August and set aside for the mirror the same day; your decision 1 brought it back. <span class="tag measured">from the history</span></span></li>
+    <li><span class="esc-n">2</span><b>A shell’s fix was already in the grid.</b><span>Every row carries the terminal’s soft-wrap flag, and the reader drops it before guessing. Joining on it is exact on both cores with no copy of the grid, so rio-vt’s re-wrap isn’t needed. <span class="tag measured">read in the code</span></span></li>
+    <li><span class="esc-n">3</span><b>Two costs you would see.</b><span>A reply reaches the transcript only when each block of it is finished, so a long answer shows in the live footer first. HTML renders once more when it is lent, soft for about a quarter second. <span class="tag inferred">inferred</span></span></li>
+  </ol>
+
+  <h2><span class="n">01</span>History</h2>
+  <figure>
+    <span class="lbl">01 &middot; Five attempts, one starting point</span>
+    <div class="scroller"><svg viewBox="0 0 960 636" role="img" aria-label="Six attempts at the reader in order. Five read the pane’s grid at the pane’s width and hit a narrow column, a ribbon, magnified letters, or replies that never heal. The sixth reads a source per kind of pane at the reader’s own size.">
+<text x="14" y="32" class="mt ink" font-size="13" font-weight="700">1</text>
+<text x="14" y="50" class="mt ink2" font-size="10">15 Jun</text>
+<rect class="g-panel" x="60" y="14" width="150" height="86" rx="7"/>
+<rect class="bar" x="118.0" y="24.0" width="18.7" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="30.0" width="26.4" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="36.0" width="34.0" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="42.0" width="22.5" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="48.0" width="30.2" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="54.0" width="18.7" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="60.0" width="26.4" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="66.0" width="34.0" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="72.0" width="22.5" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="78.0" width="30.2" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="84.0" width="18.7" height="3" rx="1.5"/>
+<text x="232" y="32" class="mt ink" font-size="13" font-weight="700">mirror, fit to the glass</text>
+<text x="434" y="32" class="mt ink2" font-size="10">7a43d17</text>
+<text x="232" y="56" class="mt ink2" font-size="11">tried</text>
+<text x="310" y="56" class="mt ink" font-size="11.5">the pane’s rows, scaled to the tighter axis</text>
+<text x="232" y="78" class="mt fail" font-size="11">hit</text>
+<text x="310" y="78" class="mt ink" font-size="11.5">a tall pane fits by its height: a narrow column mid-glass</text>
+<line class="grid" x1="14" y1="108" x2="946" y2="108"/>
+<text x="14" y="136" class="mt ink" font-size="13" font-weight="700">2</text>
+<text x="14" y="154" class="mt ink2" font-size="10">20 Jun</text>
+<rect class="g-panel" x="60" y="118" width="150" height="86" rx="7"/>
+<rect class="bar" x="118.0" y="128.0" width="18.7" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="134.0" width="26.4" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="140.0" width="34.0" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="146.0" width="22.5" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="152.0" width="30.2" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="158.0" width="18.7" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="164.0" width="26.4" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="170.0" width="34.0" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="176.0" width="22.5" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="182.0" width="30.2" height="3" rx="1.5"/>
+<rect class="bar" x="118.0" y="188.0" width="18.7" height="3" rx="1.5"/>
+<text x="232" y="136" class="mt ink" font-size="13" font-weight="700">wrap to fit</text>
+<text x="331" y="136" class="mt ink2" font-size="10">ef74db9</text>
+<text x="232" y="160" class="mt ink2" font-size="11">tried</text>
+<text x="310" y="160" class="mt ink" font-size="11.5">re-wrap every row at the glass width</text>
+<text x="232" y="182" class="mt fail" font-size="11">hit</text>
+<text x="310" y="182" class="mt ink" font-size="11.5">rows already broken at 48 columns can’t get longer: a ribbon</text>
+<line class="grid" x1="14" y1="212" x2="946" y2="212"/>
+<text x="14" y="240" class="mt ink" font-size="13" font-weight="700">3</text>
+<text x="14" y="258" class="mt ink2" font-size="10">31 Aug</text>
+<rect class="g-panel" x="60" y="222" width="150" height="86" rx="7"/>
+<rect class="bar" x="72.0" y="232.0" width="78.1" height="9" rx="1.5"/>
+<rect class="bar" x="72.0" y="249.0" width="126.0" height="9" rx="1.5"/>
+<rect class="bar" x="72.0" y="266.0" width="110.0" height="9" rx="1.5"/>
+<rect class="bar" x="72.0" y="283.0" width="94.1" height="9" rx="1.5"/>
+<text x="232" y="240" class="mt ink" font-size="13" font-weight="700">fill the width</text>
+<text x="355" y="240" class="mt ink2" font-size="10">9fabb41</text>
+<text x="232" y="264" class="mt ink2" font-size="11">tried</text>
+<text x="310" y="264" class="mt ink" font-size="11.5">scale the pane’s columns to the glass</text>
+<text x="232" y="286" class="mt fail" font-size="11">hit</text>
+<text x="310" y="286" class="mt ink" font-size="11.5">no ribbon, but 3.65× letters on a 48-column pane: today</text>
+<line class="grid" x1="14" y1="316" x2="946" y2="316"/>
+<text x="14" y="344" class="mt ink" font-size="13" font-weight="700">4</text>
+<text x="14" y="362" class="mt ink2" font-size="10">31 Aug</text>
+<rect class="g-panel" x="60" y="326" width="150" height="86" rx="7"/>
+<rect class="bar ok" x="72.0" y="336.0" width="119.7" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="341.4" width="34.0" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="346.8" width="27.2" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="352.2" width="20.4" height="2.4" rx="1.5"/>
+<rect class="bar ok" x="72.0" y="357.6" width="119.7" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="363.0" width="27.2" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="368.4" width="20.4" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="373.8" width="34.0" height="2.4" rx="1.5"/>
+<rect class="bar ok" x="72.0" y="379.2" width="119.7" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="384.6" width="20.4" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="390.0" width="34.0" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="395.4" width="27.2" height="2.4" rx="1.5"/>
+<text x="232" y="344" class="mt ink" font-size="13" font-weight="700">the document model</text>
+<text x="386" y="344" class="mt ink2" font-size="10">128d6cf</text>
+<text x="232" y="368" class="mt ink2" font-size="11">tried</text>
+<text x="310" y="368" class="mt ink" font-size="11.5">rejoin the rows the terminal broke, by guessing</text>
+<text x="232" y="390" class="mt fail" font-size="11">hit</text>
+<text x="310" y="390" class="mt ink" font-size="11.5">shell lines heal; a Claude reply never does, every row is indented</text>
+<line class="grid" x1="14" y1="420" x2="946" y2="420"/>
+<text x="14" y="448" class="mt ink" font-size="13" font-weight="700">5</text>
+<text x="14" y="466" class="mt ink2" font-size="10">31 Aug</text>
+<rect class="g-panel" x="60" y="430" width="150" height="86" rx="7"/>
+<rect class="bar ok" x="72.0" y="440.0" width="119.7" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="445.4" width="34.0" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="450.8" width="27.2" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="456.2" width="20.4" height="2.4" rx="1.5"/>
+<rect class="bar ok" x="72.0" y="461.6" width="119.7" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="467.0" width="27.2" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="472.4" width="20.4" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="477.8" width="34.0" height="2.4" rx="1.5"/>
+<rect class="bar ok" x="72.0" y="483.2" width="119.7" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="488.6" width="20.4" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="494.0" width="34.0" height="2.4" rx="1.5"/>
+<rect class="bar" x="72.0" y="499.4" width="27.2" height="2.4" rx="1.5"/>
+<rect class="thumb" x="203" y="474" width="3" height="30" rx="1.5"/>
+<text x="232" y="448" class="mt ink" font-size="13" font-weight="700">the whole conversation</text>
+<text x="418" y="448" class="mt ink2" font-size="10">121e475</text>
+<text x="232" y="472" class="mt ink2" font-size="11">tried</text>
+<text x="310" y="472" class="mt ink" font-size="11.5">all the scrollback, mirrored; the transcript source set aside</text>
+<text x="232" y="494" class="mt fail" font-size="11">hit</text>
+<text x="310" y="494" class="mt ink" font-size="11.5">all of history, still at the pane’s width</text>
+<line class="grid" x1="14" y1="524" x2="946" y2="524"/>
+<text x="14" y="552" class="mt ready" font-size="13" font-weight="700">6</text>
+<text x="14" y="570" class="mt ink2" font-size="10">29 Sep</text>
+<rect class="g-panel" x="60" y="534" width="150" height="86" rx="7"/>
+<rect class="bar ok" x="72.0" y="544.0" width="75.6" height="2.4" rx="1.5"/>
+<rect class="bar ok" x="72.0" y="549.4" width="123.5" height="2.4" rx="1.5"/>
+<rect class="bar ok" x="72.0" y="554.8" width="123.5" height="2.4" rx="1.5"/>
+<rect class="bar ok" x="72.0" y="560.2" width="75.6" height="2.4" rx="1.5"/>
+<rect class="bar ok" x="72.0" y="565.6" width="123.5" height="2.4" rx="1.5"/>
+<rect class="bar ok" x="72.0" y="571.0" width="123.5" height="2.4" rx="1.5"/>
+<rect class="bar ok" x="72.0" y="576.4" width="75.6" height="2.4" rx="1.5"/>
+<rect class="bar ok" x="72.0" y="581.8" width="123.5" height="2.4" rx="1.5"/>
+<rect class="bar ok" x="72.0" y="587.2" width="123.5" height="2.4" rx="1.5"/>
+<rect class="bar ok" x="72.0" y="592.6" width="75.6" height="2.4" rx="1.5"/>
+<rect class="strip" x="68" y="604" width="134" height="10" rx="2"/>
+<text x="232" y="552" class="mt ready" font-size="13" font-weight="700">attempt six</text>
+<text x="331" y="552" class="mt ink2" font-size="10">Gate 1</text>
+<text x="232" y="576" class="mt ink2" font-size="11">approved</text>
+<text x="310" y="576" class="mt ink" font-size="11.5">a source per kind of pane, at the reader’s own size</text>
+<text x="232" y="598" class="mt ready" font-size="11">reads</text>
+<text x="310" y="598" class="mt ready" font-size="11.5">a lent document · a transcript · a shell’s lines joined on its own flag</text>
+</svg></div>
+    <figcaption>From the commits of June and August. Every attempt began from the pane’s grid at the pane’s width, so more room never helped: the breaks were already in the rows. <b>Attempt six starts from a different source for each kind of pane</b>, with the reader sized from the window and documents borrowed rather than copied.</figcaption>
+  </figure>
+
+  <h2><span class="n">02</span>Where it lands</h2>
+  <figure>
+    <span class="lbl">02 &middot; Today</span>
+    <div class="scroller"><svg viewBox="0 0 960 356" role="img" aria-label="Where the reader lands, step 1 of 3: a pane with three faces, a floating square, a document view and a grid, beside the reader reading the grid with its flags dropped.">
+<defs><marker id="ah4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah"/></marker></defs>
+<rect class="bound" x="16" y="14" width="430" height="262" rx="14"/>
+<text x="30" y="34" class="mt ink2" font-size="10.5" font-weight="700">▣ A PANE</text>
+<rect class="box" x="32" y="44" width="118" height="24" rx="12"/>
+<text x="91.0" y="60" class="mt ink" font-size="11" text-anchor="middle">Terminal face</text>
+<rect class="box" x="158" y="44" width="132" height="24" rx="12"/>
+<text x="224.0" y="60" class="mt ink" font-size="11" text-anchor="middle">Workbench face</text>
+<rect class="box" x="298" y="44" width="132" height="24" rx="12"/>
+<text x="364.0" y="60" class="mt ink" font-size="11" text-anchor="middle">Document face</text>
+<rect class="box" x="32" y="84" width="398" height="46" rx="8"/>
+<text x="44" y="103" class="mt ink" font-size="11.5" font-weight="700">floating square</text>
+<text x="44" y="120" class="mt ink2" font-size="10.5">its own document view, over the terminal face</text>
+<rect class="box" x="32" y="150" width="398" height="46" rx="8"/>
+<text x="44" y="169" class="mt ink" font-size="11.5" font-weight="700">document view</text>
+<text x="44" y="186" class="mt ink2" font-size="10.5">on the Document face</text>
+<rect class="box" x="32" y="216" width="398" height="46" rx="8"/>
+<text x="44" y="235" class="mt ink" font-size="11.5" font-weight="700">the terminal’s grid</text>
+<text x="44" y="252" class="mt ink2" font-size="10.5">every row carries its soft-wrap flag ↩</text>
+<rect class="bound" x="560" y="14" width="384" height="330" rx="14"/>
+<text x="574" y="34" class="mt ink2" font-size="10.5" font-weight="700">▣ THE READER · ALT+R</text>
+<rect class="fail" x="576" y="216" width="352" height="46" rx="8"/>
+<text x="588" y="235" class="mt ink" font-size="11.5" font-weight="700">the grid’s rows, ↩ dropped</text>
+<text x="588" y="252" class="mt ink2" font-size="10.5">blown up to the pane’s width</text>
+<path class="wire" d="M430 239 H574" marker-end="url(#ah4)"/>
+</svg></div>
+    <figcaption>One source on every face. <b>The reader reads the grid, drops each row’s soft-wrap flag, and scales what’s left to the pane’s width.</b> On a Document face that grid is the shell hidden behind the document.</figcaption>
+  </figure>
+  <figure>
+    <span class="lbl">03 &middot; Documents are lent</span>
+    <div class="scroller"><svg viewBox="0 0 960 356" role="img" aria-label="Where the reader lands, step 2 of 3: a pane with three faces, a floating square, a document view and a grid, beside the reader, which also draws a lent document view.">
+<defs><marker id="ah4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah"/></marker></defs>
+<rect class="bound" x="16" y="14" width="430" height="262" rx="14"/>
+<text x="30" y="34" class="mt ink2" font-size="10.5" font-weight="700">▣ A PANE</text>
+<rect class="box" x="32" y="44" width="118" height="24" rx="12"/>
+<text x="91.0" y="60" class="mt ink" font-size="11" text-anchor="middle">Terminal face</text>
+<rect class="box" x="158" y="44" width="132" height="24" rx="12"/>
+<text x="224.0" y="60" class="mt ink" font-size="11" text-anchor="middle">Workbench face</text>
+<rect class="box" x="298" y="44" width="132" height="24" rx="12"/>
+<text x="364.0" y="60" class="mt ink" font-size="11" text-anchor="middle">Document face</text>
+<rect class="box" x="32" y="84" width="398" height="46" rx="8"/>
+<text x="44" y="103" class="mt ink" font-size="11.5" font-weight="700">floating square</text>
+<text x="44" y="120" class="mt ink2" font-size="10.5">its own document view, over the terminal face</text>
+<rect class="struct" x="32" y="150" width="398" height="46" rx="8"/>
+<text x="44" y="169" class="mt ink" font-size="11.5" font-weight="700">document view</text>
+<text x="44" y="186" class="mt ink2" font-size="10.5">stays the pane’s; while lent, the face says ‘being read’</text>
+<rect class="box" x="32" y="216" width="398" height="46" rx="8"/>
+<text x="44" y="235" class="mt ink" font-size="11.5" font-weight="700">the terminal’s grid</text>
+<text x="44" y="252" class="mt ink2" font-size="10.5">every row carries its soft-wrap flag ↩</text>
+<rect class="bound" x="560" y="14" width="384" height="330" rx="14"/>
+<text x="574" y="34" class="mt ink2" font-size="10.5" font-weight="700">▣ THE READER · ALT+R</text>
+<rect class="box" x="576" y="216" width="352" height="46" rx="8"/>
+<text x="588" y="235" class="mt ink" font-size="11.5" font-weight="700">the grid’s rows, ↩ dropped</text>
+<text x="588" y="252" class="mt ink2" font-size="10.5">blown up to the pane’s width</text>
+<path class="wire" d="M430 239 H574" marker-end="url(#ah4)"/>
+<rect class="struct" x="576" y="150" width="352" height="46" rx="8"/>
+<text x="588" y="169" class="mt ink" font-size="11.5" font-weight="700">the lent document view</text>
+<text x="588" y="186" class="mt ink2" font-size="10.5">drawn here, still owned by the pane</text>
+<path class="wire struct" d="M430 173 H574" marker-end="url(#ah4)"/>
+<text x="452" y="192" class="mt struct" font-size="10">lent on Alt+R</text>
+<path class="wire struct" d="M430 107 H502 V173"/>
+</svg></div>
+    <figcaption>The pane keeps its document view; the reader asks for it every frame and draws it in the glass. <b>Nothing changes owner</b>, so notes, links, the ↪ target and the saved layout stay exactly where they are, and the face says “being read” meanwhile.</figcaption>
+  </figure>
+  <figure>
+    <span class="lbl">04 &middot; Text at the reader’s width</span>
+    <div class="scroller"><svg viewBox="0 0 960 428" role="img" aria-label="Where the reader lands, step 3 of 3: a pane with three faces, a floating square, a document view and a grid, beside the reader, which also draws a lent document view, lays text out at its own width from a joined grid or a certain transcript, and chooses its source from one table.">
+<defs><marker id="ah4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah"/></marker></defs>
+<rect class="bound" x="16" y="14" width="430" height="262" rx="14"/>
+<text x="30" y="34" class="mt ink2" font-size="10.5" font-weight="700">▣ A PANE</text>
+<rect class="box" x="32" y="44" width="118" height="24" rx="12"/>
+<text x="91.0" y="60" class="mt ink" font-size="11" text-anchor="middle">Terminal face</text>
+<rect class="box" x="158" y="44" width="132" height="24" rx="12"/>
+<text x="224.0" y="60" class="mt ink" font-size="11" text-anchor="middle">Workbench face</text>
+<rect class="box" x="298" y="44" width="132" height="24" rx="12"/>
+<text x="364.0" y="60" class="mt ink" font-size="11" text-anchor="middle">Document face</text>
+<rect class="box" x="32" y="84" width="398" height="46" rx="8"/>
+<text x="44" y="103" class="mt ink" font-size="11.5" font-weight="700">floating square</text>
+<text x="44" y="120" class="mt ink2" font-size="10.5">its own document view, over the terminal face</text>
+<rect class="box" x="32" y="150" width="398" height="46" rx="8"/>
+<text x="44" y="169" class="mt ink" font-size="11.5" font-weight="700">document view</text>
+<text x="44" y="186" class="mt ink2" font-size="10.5">stays the pane’s; while lent, the face says ‘being read’</text>
+<rect class="box" x="32" y="216" width="398" height="46" rx="8"/>
+<text x="44" y="235" class="mt ink" font-size="11.5" font-weight="700">the terminal’s grid</text>
+<text x="44" y="252" class="mt ink2" font-size="10.5">every row carries its soft-wrap flag ↩</text>
+<rect class="bound" x="560" y="14" width="384" height="330" rx="14"/>
+<text x="574" y="34" class="mt ink2" font-size="10.5" font-weight="700">▣ THE READER · ALT+R</text>
+<rect class="struct" x="576" y="216" width="352" height="46" rx="8"/>
+<text x="588" y="235" class="mt ink" font-size="11.5" font-weight="700">lines at the reader’s own width</text>
+<text x="588" y="252" class="mt ink2" font-size="10.5">shell: joined on ↩ · agent: its transcript</text>
+<path class="wire" d="M430 239 H574" marker-end="url(#ah4)"/>
+<rect class="box" x="576" y="150" width="352" height="46" rx="8"/>
+<text x="588" y="169" class="mt ink" font-size="11.5" font-weight="700">the lent document view</text>
+<text x="588" y="186" class="mt ink2" font-size="10.5">drawn here, still owned by the pane</text>
+<path class="wire" d="M430 173 H574" marker-end="url(#ah4)"/>
+<text x="452" y="192" class="mt ink2" font-size="10">lent on Alt+R</text>
+<path class="wire" d="M430 107 H502 V173"/>
+<rect class="struct" x="576" y="84" width="352" height="46" rx="8"/>
+<text x="588" y="103" class="mt ink" font-size="11.5" font-weight="700">which source: one pure table</text>
+<text x="588" y="120" class="mt ink2" font-size="10.5">face · square up · transcript certain</text>
+<rect class="mine" x="576" y="282" width="300" height="46" rx="8"/>
+<text x="588" y="301" class="mt ink" font-size="11.5" font-weight="700">the live footer</text>
+<text x="588" y="318" class="mt ink2" font-size="10.5">input rows, a permission question</text>
+<rect class="unk" x="576" y="370" width="352" height="46" rx="8"/>
+<text x="588" y="389" class="mt ink" font-size="11.5" font-weight="700">the agent’s transcript, on disk</text>
+<text x="588" y="406" class="mt ink2" font-size="10.5">read from the last byte it reached, each second</text>
+<path class="wire struct" d="M905 370 V264" marker-end="url(#ah4)"/>
+<polygon class="struct" points="905,347 915,357 905,367 895,357"/>
+<text x="890" y="361" class="mt struct" font-size="10" text-anchor="end">certain? the probe already knows</text>
+</svg></div>
+    <figcaption>A shell’s lines join on the terminal’s own flag; an agent’s come from its transcript when the binding is certain. <b>One pure table decides which</b>, in the place today’s rule lives, and a test that pins today’s rule changes with it. The footer carries what exists only on screen.</figcaption>
+  </figure>
+
+  <h2><span class="n">03</span>A shell</h2>
+  <figure>
+    <span class="lbl">05 &middot; Joined where the terminal broke them</span>
+    <div class="scroller"><svg viewBox="0 0 960 541" role="img" aria-label="A 48-column shell grid where each row of a wrapped git log line carries a soft-wrap flag; joined on that flag they come back as three whole lines in a 175-column reader, while ls output that ls broke itself stays as printed. Joined history is cached and only the seam and the screen are re-read.">
+<defs><marker id="ah5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah"/></marker></defs>
+<text x="20" y="24" class="mt lane" font-size="11">THE PANE’S GRID · 48 COLUMNS · ↩ = THE ROW’S SOFT-WRAP FLAG</text>
+<rect class="box" x="20" y="40" width="313" height="194" rx="7"/>
+<text x="28" y="58.7" class="mt" font-size="9.33" xml:space="preserve"><tspan class="txt">$ git log --oneline -3 origin/main</tspan></text>
+<text x="28" y="73.7" class="mt" font-size="9.33" xml:space="preserve"><tspan class="txt">5ba60ed Merge pull request #883 from parker-brow</tspan></text>
+<text x="306.8" y="73.7" class="mt ready" font-size="11">↩</text>
+<text x="28" y="88.7" class="mt" font-size="9.33" xml:space="preserve"><tspan class="txt">n-family/feat/border-phosphor-gauge</tspan></text>
+<text x="28" y="103.7" class="mt" font-size="9.33" xml:space="preserve"><tspan class="txt">c496fb0 The reading rail&#x27;s lit blocks follow the</tspan></text>
+<text x="306.8" y="103.7" class="mt ready" font-size="11">↩</text>
+<text x="28" y="118.7" class="mt" font-size="9.33" xml:space="preserve"><tspan class="txt"> phosphor gauge too</tspan></text>
+<text x="28" y="133.7" class="mt" font-size="9.33" xml:space="preserve"><tspan class="txt">e713847 The GAUGES tray has a phosphor gauge, an</tspan></text>
+<text x="306.8" y="133.7" class="mt ready" font-size="11">↩</text>
+<text x="28" y="148.7" class="mt" font-size="9.33" xml:space="preserve"><tspan class="txt">d every lit border&#x27;s glow goes through it</tspan></text>
+<text x="28" y="163.7" class="mt" font-size="9.33" xml:space="preserve"><tspan class="txt">$ ls app/src/docview</tspan></text>
+<text x="28" y="178.7" class="mt" font-size="9.33" xml:space="preserve"><tspan class="txt">backend.rs   markdown_view.rs  poppler.rs</tspan></text>
+<text x="28" y="193.7" class="mt" font-size="9.33" xml:space="preserve"><tspan class="txt">cache.rs     md_notes.rs       pref.rs</tspan></text>
+<text x="28" y="208.7" class="mt" font-size="9.33" xml:space="preserve"><tspan class="txt">cdp.rs       mpv.rs            progress.rs</tspan></text>
+<text x="28" y="223.7" class="mt" font-size="9.33" xml:space="preserve"><tspan class="txt">⋮</tspan></text>
+<text x="363" y="70" class="mt struct" font-size="11.5" font-weight="700">join on ↩</text>
+<text x="363" y="88" class="mt ink2" font-size="10.5">the flag the terminal set when it wrapped the row;</text>
+<text x="363" y="104" class="mt ink2" font-size="10.5">the same one both cores’ own re-wrap joins on</text>
+<text x="363" y="140" class="mt ink2" font-size="11.5" font-weight="700">today</text>
+<text x="363" y="158" class="mt ink2" font-size="10.5">the flag is dropped, the width guessed, and</text>
+<text x="363" y="174" class="mt ink2" font-size="10.5">the terminal stays locked for the whole read</text>
+<path class="wire struct" d="M176 238 V272" marker-end="url(#ah5)"/>
+<text x="188" y="262" class="mt lane" font-size="11">THE READER · 175 COLUMNS</text>
+<rect class="box rdr" x="20" y="278" width="926" height="149" rx="7"/>
+<text x="28" y="296.7" class="mt" font-size="8.67" xml:space="preserve"><tspan class="txt">$ git log --oneline -3 origin/main</tspan></text>
+<text x="28" y="311.7" class="mt" font-size="8.67" xml:space="preserve"><tspan class="txt">5ba60ed Merge pull request #883 from parker-brown-family/feat/border-phosphor-gauge</tspan></text>
+<text x="28" y="326.7" class="mt" font-size="8.67" xml:space="preserve"><tspan class="txt">c496fb0 The reading rail&#x27;s lit blocks follow the phosphor gauge too</tspan></text>
+<text x="28" y="341.7" class="mt" font-size="8.67" xml:space="preserve"><tspan class="txt">e713847 The GAUGES tray has a phosphor gauge, and every lit border&#x27;s glow goes through it</tspan></text>
+<text x="28" y="356.7" class="mt" font-size="8.67" xml:space="preserve"><tspan class="txt">$ ls app/src/docview</tspan></text>
+<text x="28" y="371.7" class="mt" font-size="8.67" xml:space="preserve"><tspan class="dim">backend.rs   markdown_view.rs  poppler.rs</tspan></text>
+<text x="28" y="386.7" class="mt" font-size="8.67" xml:space="preserve"><tspan class="dim">cache.rs     md_notes.rs       pref.rs</tspan></text>
+<text x="28" y="401.7" class="mt" font-size="8.67" xml:space="preserve"><tspan class="dim">cdp.rs       mpv.rs            progress.rs</tspan></text>
+<text x="28" y="416.7" class="mt" font-size="8.67" xml:space="preserve"><tspan class="dim">⋮</tspan></text>
+<text x="28" y="445" class="mt ink2" font-size="10">ls broke its own lines for 48 columns, so they stay as printed</text>
+<rect class="mine" x="20" y="461" width="926" height="46" rx="8"/>
+<text x="34" y="480" class="mt mine" font-size="11" font-weight="700">kept, not rebuilt</text>
+<text x="34" y="497" class="mt ink" font-size="10.5">joined history is cached until a resize, a clear or rows falling off the top; each update re-reads the seam and the screen</text>
+<text x="20" y="527" class="mt unk" font-size="10.5">vim, htop and anything else on the alternate screen: drawn as its screen, with no history, and the reader says so</text>
+</svg></div>
+    <figcaption>Real output from this session, drawn at 48 and 175 columns. <b>Joined on the flag the terminal set, a wrapped line comes back whole</b>; what a program broke itself stays as printed, since nothing can know better. Keeping the joined history also stops the reader rebuilding ten thousand lines on every frame while a shell streams, with the terminal locked the whole time. <span class="tag inferred">rebuild rate read in the code, not timed</span></figcaption>
+  </figure>
+
+  <h2><span class="n">04</span>An agent</h2>
+  <figure>
+    <span class="lbl">06 &middot; From transcript to glass</span>
+    <div class="scroller"><svg viewBox="0 0 960 206" role="img" aria-label="Five stages: the pane’s certain transcript path, already refreshed every two seconds; reading only new bytes each second; folding records into prompts, replies and one line per tool call; laying Markdown out as styled lines at the reader’s width; and a live footer of the pane’s own rows.">
+<defs><marker id="ahp" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah"/></marker></defs>
+<rect class="struct" x="14" y="34" width="178" height="132" rx="10"/>
+<text x="28" y="58" class="mt struct" font-size="11" font-weight="700">1</text>
+<text x="44" y="58" class="mt ink" font-size="12.5" font-weight="700">which transcript</text>
+<text x="28" y="88" class="mt ink2" font-size="9.6">the pane’s certain path,</text>
+<text x="28" y="107" class="mt ink2" font-size="9.6">refreshed every 2 s today;</text>
+<text x="28" y="126" class="mt ink2" font-size="9.6">none → SCREEN, labelled</text>
+<path class="wire" d="M194 100.0 H200" marker-end="url(#ahp)"/>
+<rect class="mine" x="202" y="34" width="178" height="132" rx="10"/>
+<text x="216" y="58" class="mt mine" font-size="11" font-weight="700">2</text>
+<text x="232" y="58" class="mt ink" font-size="12.5" font-weight="700">read what’s new</text>
+<text x="216" y="88" class="mt ink2" font-size="9.6">from the last byte read,</text>
+<text x="216" y="107" class="mt ink2" font-size="9.6">polled once a second;</text>
+<text x="216" y="126" class="mt ink2" font-size="9.6">one line can be 1.1 MB</text>
+<path class="wire" d="M382 100.0 H388" marker-end="url(#ahp)"/>
+<rect class="mine" x="390" y="34" width="178" height="132" rx="10"/>
+<text x="404" y="58" class="mt mine" font-size="11" font-weight="700">3</text>
+<text x="420" y="58" class="mt ink" font-size="12.5" font-weight="700">fold it</text>
+<text x="404" y="88" class="mt ink2" font-size="9.6">join a reply’s blocks;</text>
+<text x="404" y="107" class="mt ink2" font-size="9.6">a tool call and result</text>
+<text x="404" y="126" class="mt ink2" font-size="9.6">become one line</text>
+<path class="wire" d="M570 100.0 H576" marker-end="url(#ahp)"/>
+<rect class="mine" x="578" y="34" width="178" height="132" rx="10"/>
+<text x="592" y="58" class="mt mine" font-size="11" font-weight="700">4</text>
+<text x="608" y="58" class="mt ink" font-size="12.5" font-weight="700">lay it out</text>
+<text x="592" y="88" class="mt ink2" font-size="9.6">Markdown to styled lines,</text>
+<text x="592" y="107" class="mt ink2" font-size="9.6">tables as aligned text,</text>
+<text x="592" y="126" class="mt ink2" font-size="9.6">at the reader’s width</text>
+<path class="wire" d="M758 100.0 H764" marker-end="url(#ahp)"/>
+<rect class="mine" x="766" y="34" width="178" height="132" rx="10"/>
+<text x="780" y="58" class="mt mine" font-size="11" font-weight="700">5</text>
+<text x="796" y="58" class="mt ink" font-size="12.5" font-weight="700">the live footer</text>
+<text x="780" y="88" class="mt ink2" font-size="9.6">from the screen: input,</text>
+<text x="780" y="107" class="mt ink2" font-size="9.6">a permission question,</text>
+<text x="780" y="126" class="mt ink2" font-size="9.6">a reply being written</text>
+<text x="14" y="20" class="mt lane" font-size="11">AN AGENT’S PANE · FROM ITS TRANSCRIPT TO THE GLASS</text>
+<text x="14" y="194" class="mt ink2" font-size="10.5">blue = exists today, reused · amber = new</text>
+</svg></div>
+    <figcaption><b>Only the first stage exists today</b>: the app already works out each pane’s certain transcript every two seconds. None of the five places that read transcripts keeps the prose in order, and each re-reads a 256 KB tail, which one line can fill on its own. The reader needs its own conversation and a tail that reads only new bytes.</figcaption>
+  </figure>
+  <figure>
+    <span class="lbl">07 &middot; What the reader keeps from a transcript</span>
+    <div class="scroller">
+    <table class="wide cases"><thead><tr><th>In the transcript</th><th>How much, in this session’s own</th><th>In the reader</th></tr></thead><tbody>
+<tr><td>Your typed prompts</td><td>2 of 162 user records</td><td><span class="dot mine"></span>shown whole</td></tr>
+<tr><td>Reply text</td><td>27 text blocks across 122 replies</td><td><span class="dot mine"></span>drawn as Markdown; a reply split over up to 6 records is joined</td></tr>
+<tr><td>Tool calls</td><td>159, each with its result</td><td><span class="dot mine"></span>one line each; a click opens the result</td></tr>
+<tr><td>Tool results</td><td>84% of the file’s bytes, up to 547 KB each</td><td><span class="dot mine"></span>behind their tool line; spilled ones by link</td></tr>
+<tr><td>Thinking</td><td>121 blocks, 91 of them empty</td><td><span class="dot unk"></span>hidden</td></tr>
+<tr><td>Attachments, modes, file history, queue</td><td>most of the other records</td><td><span class="dot unk"></span>skipped</td></tr>
+<tr><td>Compaction</td><td>35 across the whole machine</td><td><span class="dot mine"></span>a divider</td></tr>
+<tr><td>Subagents</td><td>their own files, beside the session</td><td><span class="dot mine"></span>a line naming the agent; its file on click</td></tr>
+<tr><td>Images in results</td><td>21 in this session</td><td><span class="dot mine"></span>a placeholder</td></tr>
+    </tbody></table>
+    </div>
+    <div class="gutter keyrow"><span><span class="dot mine"></span>shown, my proposal</span><span><span class="dot unk"></span>left out, my proposal</span></div>
+    <figcaption>Counted in this session’s own transcript: 15.4 MB, 1,060 lines. <b>Tool output is 84% of the bytes, so it waits behind a click.</b> Every row takes a note if you want it drawn differently.</figcaption>
+  </figure>
+
+  <h2><span class="n">05</span>A document</h2>
+  <figure>
+    <span class="lbl">08 &middot; Lending, in order</span>
+    <div class="scroller"><svg viewBox="0 0 960 380" role="img" aria-label="Lending a document in order: Alt+R marks the view lent and the pane’s face says being read; the reader asks for the lent view every frame and draws it; the view measures its new box and each kind lays itself out again; Esc closes an open note box first, then the reader, and the pane takes the view back.">
+<defs><marker id="ah8" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah"/></marker></defs>
+<text x="50" y="22" class="mt ink" font-size="11.5" font-weight="700" text-anchor="middle">you</text>
+<line class="grid" x1="50" y1="32" x2="50" y2="372"/>
+<text x="250" y="22" class="mt ink" font-size="11.5" font-weight="700" text-anchor="middle">the pane</text>
+<line class="grid" x1="250" y1="32" x2="250" y2="372"/>
+<text x="450" y="22" class="mt ink" font-size="11.5" font-weight="700" text-anchor="middle">the reader</text>
+<line class="grid" x1="450" y1="32" x2="450" y2="372"/>
+<text x="650" y="22" class="mt ink" font-size="11.5" font-weight="700" text-anchor="middle">the document view</text>
+<line class="grid" x1="650" y1="32" x2="650" y2="372"/>
+<path class="wire" d="M50 56 H250" marker-end="url(#ah8)"/>
+<text x="150.0" y="49" class="mt ink" font-size="10.5" text-anchor="middle">Alt+R</text>
+<text x="260" y="80" class="mt ink2" font-size="10">marks the view lent;</text>
+<text x="260" y="94" class="mt ink2" font-size="10">its face says ‘being read’</text>
+<path class="wire struct" d="M450 128 H250" marker-end="url(#ah8)"/>
+<text x="350.0" y="121" class="mt ink" font-size="10.5" text-anchor="middle">the lent view?</text>
+<text x="350.0" y="143" class="mt ink2" font-size="9.5" text-anchor="middle">asked every frame; no handle kept</text>
+<path class="wire struct" d="M450 176 H650" marker-end="url(#ah8)"/>
+<text x="550.0" y="169" class="mt ink" font-size="10.5" text-anchor="middle">drawn in the glass</text>
+<text x="660" y="200" class="mt struct" font-size="10">a new box: measure again</text>
+<text x="660" y="218" class="mt ink2" font-size="10">HTML renders again · PDF redraws tiles</text>
+<text x="660" y="234" class="mt ink2" font-size="10">video keeps playing · Markdown keeps its place</text>
+<path class="wire" d="M50 276 H650" marker-end="url(#ah8)"/>
+<text x="350.0" y="269" class="mt ink" font-size="10.5" text-anchor="middle">Esc</text>
+<text x="350.0" y="291" class="mt ink2" font-size="9.5" text-anchor="middle">an open note box closes first</text>
+<path class="wire" d="M50 318 H250" marker-end="url(#ah8)"/>
+<text x="150.0" y="311" class="mt ink" font-size="10.5" text-anchor="middle">Esc again</text>
+<text x="260" y="342" class="mt ink2" font-size="10">takes it back; the view</text>
+<text x="260" y="356" class="mt ink2" font-size="10">measures the pane’s box</text>
+</svg></div>
+    <figcaption>The pane never lets go of its view, and the reader never holds one, so a pane that closes or follows a link mid-read can’t leave a video playing nowhere. <b>Esc goes to an open note box before it closes the reader.</b></figcaption>
+  </figure>
+  <figure>
+    <span class="lbl">09 &middot; What each kind does in a bigger box</span>
+    <div class="scroller"><table class="wide cases"><thead><tr><th>Kind</th><th>In the reader</th><th>Cost or catch</th></tr></thead><tbody>
+<tr><td>HTML</td><td>laid out again at the reader’s width by headless Chromium</td><td>a fresh render: soft for about a quarter second, and again on the way back</td></tr>
+<tr><td>PDF</td><td>pages at the reader’s width, tiles drawn again at the new scale</td><td>tiles arrive three at a time, roughly a tenth of a second each</td></tr>
+<tr><td>Video</td><td>the same player keeps playing, drawn at the new size</td><td>decoding at up to the file’s own pixels costs CPU nobody has measured</td></tr>
+<tr><td>Picture</td><td>fitted to the glass</td><td>never past its own pixels: a small picture stays small until you zoom</td></tr>
+<tr><td>Markdown</td><td>re-flowed at the reader’s width</td><td>loses its place today; it has to re-anchor to the block at the top</td></tr>
+</tbody></table></div>
+    <figcaption>Every kind already lays itself out again when its box grows; the reader only hands it a bigger one. <b>Two need work: Markdown loses its place, and a picture never grows past its own pixels.</b> <span class="tag inferred">timings from the code’s comments</span></figcaption>
+  </figure>
+  <figure>
+    <span class="lbl">10 &middot; Keys while reading</span>
+    <div class="scroller"><table class="wide cases"><thead><tr><th>Key</th><th>Reading text</th><th>Reading a document</th></tr></thead><tbody>
+<tr><td>Esc</td><td>closes the reader</td><td>closes an open note box or dialog first, then the reader</td></tr>
+<tr><td>Page Up / Down, Ctrl+Home / End</td><td>pages the text</td><td>pages the document by its own height</td></tr>
+<tr><td>Ctrl+wheel</td><td>letter size</td><td>the document’s zoom</td></tr>
+<tr><td>0 · 1 · + · − · arrows</td><td>reach the agent</td><td>fit, actual size, zoom, pan</td></tr>
+<tr><td>Any other key</td><td>reaches the agent</td><td>reaches the agent from a square; swallowed on a Document face</td></tr>
+</tbody></table></div>
+    <figcaption>Today the reader takes Esc and the paging keys and lets everything else through, so a document never sees Page Down and an open note box never sees Esc. <b>With a document lent, those go to the document first.</b></figcaption>
+  </figure>
+
+  <h2><span class="n">06</span>Decisions</h2>
+  <div class="callout good"><p>You concurred with all five on 29 September, so nothing here is waiting on you. Program design and the slices follow as one plan.</p></div>
+  <div class="grill">
+    <div class="ask">
+      <h3>1 · Join a shell’s lines on the terminal’s flag, with no copy of the grid?</h3>
+      <p>Exact on both cores and cheaper than re-wrapping a 16–58 MB copy; the joined history is cached and the terminal is no longer locked for the whole read.</p>
+      <p class="rec"><b>Recommendation:</b> yes. rio-vt’s re-wrap stays unused, and its count of rows gone off the top keeps the cache cheap.</p>
+    </div>
+    <div class="ask">
+      <h3>2 · Draw a conversation in the reader’s own text layout?</h3>
+      <p>It keeps fast scrolling through huge transcripts, selection and copy. Headings are bold rather than larger, and tables are aligned text. The Markdown document view draws real tables but builds every block every frame and has no selection.</p>
+      <p class="rec"><b>Recommendation:</b> the reader’s own layout, as figure 04 of Gate 1 drew it.</p>
+    </div>
+    <div class="ask">
+      <h3>3 · Show a reply when each block of it is finished?</h3>
+      <p>Claude Code writes a block to the transcript only when it’s done. Until then the words exist only on screen, so the live footer carries them.</p>
+      <p class="rec"><b>Recommendation:</b> yes, with the footer showing the pane’s rows from the input box up.</p>
+    </div>
+    <div class="ask">
+      <h3>4 · Keep what figure 07 keeps?</h3>
+      <p>Prompts and replies shown, one line per tool call with its output behind a click, thinking hidden, the rest skipped.</p>
+      <p class="rec"><b>Recommendation:</b> as drawn; note any row you want otherwise.</p>
+    </div>
+    <div class="ask">
+      <h3>5 · Lend documents, and let a small picture stay at its own pixels?</h3>
+      <p>Lending keeps notes, links and the saved layout untouched. Fitting a small picture to the glass would enlarge it into blur; the zoom keys still go larger.</p>
+      <p class="rec"><b>Recommendation:</b> lend, and keep a picture at no more than its own pixels until you zoom.</p>
+    </div>
+  </div>
+
+  <div class="dlgs">
+    <button class="linkbtn" data-dlg="d-method">How this was researched</button>
+    <button class="linkbtn" data-dlg="d-shape">The shape, for program design</button>
+    <button class="linkbtn" data-dlg="d-limits">What this page does not settle</button>
+  </div>
+
+</div>
+
+<dialog id="d-method"><div class="dlg-head"><div><h3>How this was researched</h3><p class="repo">three read-only passes over main at 5ba60ed, each checked where it mattered</p></div><button class="x" data-close>&times;</button></div><div class="dlg-body">
+  <h4>The history</h4>
+  <p>From <code>git log</code> on main and the handoff of 31 August, which records the call that set the transcript source aside and the ticket it blocked. That ticket is back in the queue.</p>
+  <h4>A shell</h4>
+  <p>The grid research read TD’s terminal boundary and both cores’ sources (rio-vt 0.5.28, alacritty_terminal 0.26.0). Checked by hand: the reader’s row reader (<code>grid_rows_in</code>, pane.rs line 5107) locks the terminal for the whole range and keeps only each character and its colour, and <code>Grid</code> is <code>Clone</code> with a reflowing <code>resize</code> on both cores, where only rio-vt records a row map.</p>
+  <h4>An agent</h4>
+  <p>The transcript research counted this session’s own transcript and all 815 on the machine, and read the five places TD parses them. Checked by hand: comrak 0.52 is already a dependency; the per-pane transcript probe is <code>Workspace.tool_probe</code> (main.rs line 4160) with its path in <code>ToolProbe</code> (toolprop.rs line 299).</p>
+  <h4>A document</h4>
+  <p>The document research read the view, its five backends, the pane’s square and face, and the reader overlay. Checked by hand: the reader’s key handler pages or closes and nothing else (pane.rs line 6176), and a picture’s fit is capped at its own pixels (<code>fit_scale</code>, image.rs line 94). It also corrected Gate 1’s sketch: a new seat would clash with the one enum the pane already uses to say which of its two documents something came from, so the view is lent instead.</p>
+  <h4>Rebuilding this page</h4>
+  <p><code>python3 reports/2026-09-29-alt-r-reader-architecture.build.py</code>, which keeps any notes and concurs already saved into the page.</p>
+</div></dialog>
+
+<dialog id="d-shape"><div class="dlg-head"><div><h3>The shape, for program design</h3><p class="repo">types and signatures only; Gate 3 names every file and test</p></div><button class="x" data-close>&times;</button></div><div class="dlg-body">
+  <pre class="shape"><code>// which source: pure, beside the rule the reader follows today (pane.rs)
+pub enum ReadFrom { Grid, Document(DocSeat), Transcript }
+pub fn read_from(face: Face, square_up: bool, transcript: Option&lt;Bond&gt;) -&gt; ReadFrom;
+
+// a shell: rows keep their soft-wrap flag; joined history is cached (doc.rs, vt/)
+pub struct GridLine { pub text: String, pub runs: Vec&lt;TextRun&gt;, pub wrapped: bool }
+pub fn join_wrapped(rows: &amp;[GridLine]) -&gt; Document;          // exact, no width test
+fn evicted(&amp;self) -&gt; Option&lt;u64&gt;;                            // rio counts rows gone; alacritty says None
+
+// an agent: a conversation model and a tail that reads only new bytes (new module)
+pub struct Tail { path: PathBuf, offset: u64, partial: Vec&lt;u8&gt; }
+impl Tail { pub fn poll(&amp;mut self, conv: &amp;mut Conversation) -&gt; io::Result&lt;Polled&gt;; }
+pub enum Polled { Unchanged, Grew, Reset }
+pub struct Conversation { pub entries: Vec&lt;Entry&gt;, pub rev: u64 }
+pub enum EntryKind { Prompt(String), Reply { message_id: String, markdown: String },
+    Tool { id: String, name: String, gist: String, state: ToolState, output: Option&lt;OutputRef&gt; },
+    Command(String), Boundary(Boundary), Error(String) }
+impl DocumentSource for TranscriptSource&lt;&#x27;_&gt; { fn document(&amp;self, b: RowBudget) -&gt; Document; }
+impl ToolProbe { pub fn path(&amp;self) -&gt; Option&lt;&amp;Path&gt;; }       // the certain path, no I/O
+
+// a document: lent, never moved (docview.rs, pane)
+impl DocumentView { pub fn lend(&amp;mut self, reading: bool, cx: &amp;mut Context&lt;Self&gt;);
+                    pub fn page(&amp;mut self, dir: i8, cx: &amp;mut Context&lt;Self&gt;) -&gt; bool; }
+trait Backend { fn reseated(&amp;mut self) {} }                  // Markdown re-anchors to its top block
+impl TerminalView { pub(crate) fn lent_view(&amp;self) -&gt; Option&lt;Entity&lt;DocumentView&gt;&gt;; }</code></pre>
+</div></dialog>
+
+<dialog id="d-limits"><div class="dlg-head"><div><h3>What this page does not settle</h3><p class="repo">what was read rather than run, and what nobody has looked at yet</p></div><button class="x" data-close>&times;</button></div><div class="dlg-body">
+  <ul>
+    <li>Nothing was built or run. Every behaviour on this page is read from the code, and the timings come from the code’s own comments. <span class="tag inferred">inferred</span></li>
+    <li>That a reply appears only when each block finishes comes from the records on disk; it has not been timed against a live turn.</li>
+    <li>The rebuild-every-frame cost of today’s reader follows from how the content generation and the cache key work; nobody has measured it.</li>
+    <li>The app counts a binding made by launch time as certain, and it picks the closest of agents launched close together. After a <code>/clear</code>, before the new file exists, a pane can be bound to its own previous conversation. It can’t be bound to another pane’s.</li>
+    <li>No <code>/clear</code> rotation has been observed in the session ledger yet, so following one is designed, not seen.</li>
+    <li>Codex writes a different format and needs its own reader of it: a medium job, left to a later slice.</li>
+    <li>Video decoding at the reader’s size has an unmeasured CPU cost.</li>
+    <li>A pane attached while vim was up has no history until vim exits; the reader should say so rather than show an empty page.</li>
+  </ul>
+</div></dialog>
+
+
+
+<div class="notebar" id="notebar">
+  <span class="cnt"><b id="note-count">0</b> notes</span>
+  <button id="btn-export" class="primary" data-note-action="export"
+          title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
+  <button id="btn-embed" data-note-action="embed"
+          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
+  <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
+</div>
+
+<dialog id="d-note">
+  <div class="dlg-head">
+    <div>
+      <h3 id="note-title">Note</h3>
+      <p class="repo" id="note-anchor">&nbsp;</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <ul id="note-list"></ul>
+    <p id="note-none">No notes on this yet.</p>
+    <textarea id="note-text"
+      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+    <div class="note-actions">
+      <button class="save" data-note-action="add">Add note</button>
+      <button data-close>Close</button>
+      <span class="hintk">Ctrl+Enter to add</span>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="d-export">
+  <div class="dlg-head">
+    <div>
+      <h3>Note map</h3>
+      <p class="repo">Anchored to element ids in this file &middot; paste straight into a prompt</p>
+    </div>
+    <button class="x" data-close>&times;</button>
+  </div>
+  <div class="dlg-body">
+    <p style="margin-bottom:12px">
+      Each line is anchored to an element id, so an agent can locate the passage without you
+      pasting the file. Prompt shape: <em>"read my notes in <code>&lt;filename&gt;</code> and act
+      on them."</em>
+    </p>
+    <textarea id="export-out" readonly></textarea>
+    <p class="tokest" id="export-est"></p>
+    <div class="note-actions">
+      <button class="save" data-note-action="copy">Copy to clipboard</button>
+      <button data-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+
+<script type="application/json" id="report-notes" data-format="1" data-rev="2026-09-29T18:40:06.260Z">{}</script>
+<script type="application/json" id="report-concurs" data-format="1" data-rev="2026-09-29T18:40:06.260Z">{
+ "ask-1-join-a-shell": "2026-09-29 18:39",
+ "ask-2-draw-a-conversation": "2026-09-29 18:39",
+ "ask-3-show-a-reply": "2026-09-29 18:39",
+ "ask-4-keep-what-figure": "2026-09-29 18:39",
+ "ask-5-lend-documents-and": "2026-09-29 18:40"
+}</script>
+
+<script>
+  /* Set before notes.js runs. Used for the storage key and the download filename. */
+  window.NOTES_FILE = '2026-09-29-alt-r-reader-architecture.html';
+</script>
+
+
+<script>
+/* decision-brief — reader notes.
+ *
+ * Drop-in. No build step, no dependencies. Paste this file's contents inline inside a
+ * script element, after the document body — a decision brief must survive being emailed
+ * as one file, so never load it with a src attribute.
+ *
+ * NOTHING IN THIS FILE MAY CONTAIN THE LITERAL CLOSING SCRIPT TAG, not even inside a
+ * comment or a string: an HTML parser ends the script element at the first one it sees,
+ * and everything after it silently becomes page content. Write it broken up, e.g.
+ * "<\/script>", if you ever need to emit one.
+ *
+ * Three outputs, in the order they matter:
+ *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
+ *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   3. localStorage — live persistence between reloads
+ *
+ * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
+ * tokens; pasting bare notes loses which passage each one is about. The map is the third
+ * option — [element-id] + note, so the agent greps the id and finds the passage itself.
+ *
+ * CONCUR. Every decision (.ask) also gets a space on its right that takes a rubber stamp —
+ * the commonest answer a decision gets, and the quickest way to say the work was good.
+ * A concur is independent of notes, rides in the map as "✓ concur" on the decision's own
+ * line, and is baked into its own island (#report-concurs) so the notes island keeps the
+ * shape every saved brief already has.
+ *
+ * FORMAT 1. Other programs write these islands too (Terminal Delight edits a brief's notes
+ * in place), so what a save writes is a contract, pinned byte for byte by the fixtures in
+ * fixtures/notes-format/ and its reference writer. Each island carries data-format and a
+ * revision, data-rev, the time of the write. Island JSON escapes "<" before "/" and "!",
+ * and the plain-text mirror breaks any sequence that would end an HTML comment. A change
+ * to any of that bumps FORMAT and the fixtures in the same commit.
+ *
+ * Configure before this script runs (all optional):
+ *   window.NOTES_FILE     — filename used for the storage key and the download. Default: location basename.
+ *   window.NOTES_TARGETS  — [[selector, prefix], ...] overriding what gets an affordance.
+ *   window.CONCUR_TARGETS — selector for what takes a concur stamp. Default: the grill's decisions.
+ */
+(function () {
+  'use strict';
+
+  var FILE = window.NOTES_FILE ||
+    (location.pathname.split('/').pop() || 'decision-brief.html');
+  var KEY = 'notes:' + FILE;
+
+  /* Default targets. A prefix keeps exported anchors readable and grouped.
+     Override wholesale with window.NOTES_TARGETS if a brief's shape differs.
+
+     THE GRILL COMES FIRST, AND IT IS NOT OPTIONAL. Until 2026-09-02 this list
+     covered five of the seven components layout.md tells you to build and
+     omitted the grill — so the one section whose entire purpose is a decision
+     the reader has to make was the one section the reader could not comment on.
+     Two briefs shipped that way, each having invented its own class name
+     (`grill-q`, then `q`) because nothing here named one. Both spellings are
+     matched below; `.ask` is the name to use going forward. If you add a
+     component, add it here in the same commit.
+
+     FIGURES ARE SECOND, for the same reason. The 2026-09-15 attention-spine
+     brief carried eleven pictures and had to override NOTES_TARGETS wholesale
+     to make any of them annotatable, because `figure` was not here — a fork of
+     this list living in one report, where nothing else would inherit it. The
+     pictures are the part a reader argues with, so they are in the default list
+     now. `titleOf()` already reads `.lbl`, so a figure labelled `03 · What
+     opening costs` anchors as `fig-03-what-opening-costs`. */
+  var TARGETS = window.NOTES_TARGETS || [
+    ['.grill .q, .grill-q, .ask', 'ask'],
+    ['figure', 'fig'],
+    ['.card', 'verdict'],
+    ['.esc-list li', 'readfirst'],
+    ['.finding', 'finding'],
+    ['.tile', 'stat'],
+    ['table.wide tr', 'row'],
+    ['.bar-row', 'chart'],
+    ['.callout', 'callout'],
+    ['dialog .dlg-body > h4', 'sub']
+  ];
+
+  var FORMAT = '1';
+  /* Concurs: { anchor: 'YYYY-MM-DD HH:MM' }, under their own key and island. */
+  var CKEY = 'concurs:' + FILE;
+  var SKEY = 'notes-sync:' + FILE;
+  var CONCUR_SEL = window.CONCUR_TARGETS || '.grill .q, .grill-q, .ask';
+
+  /* ---- which notes the page shows: the file's and this browser's, together ----
+     Notes live in two places: the islands baked into this file, which is what an agent
+     reads, and localStorage, which keeps a reader's edits between reloads. Before format 1
+     the stored copy simply won, so once a browser had stored any map for this filename,
+     even the {} the clear button leaves, notes written into the file by anyone else never
+     showed again (agent-skills#24).
+
+     So every save stamps a revision on the islands, and this browser keeps, under SKEY,
+     the revision it last took in and every note and concur it has taken from an island or
+     written into one. On load, for notes and concurs alike:
+       - nothing stored: the island, as before;
+       - the island's revision is the one last taken in: the stored copy, as before;
+       - anything else, including an island with no revision (a brief saved before
+         format 1): the stored copy, plus every note and concur in the island this browser
+         has not seen before.
+     Nothing the browser holds is ever dropped, and a note it deleted stays deleted. The
+     price: a note deleted from the file by another writer stays in a browser that still
+     holds it. Revisions are compared for sameness, not order, because a save lands in
+     Downloads while the original may have been changed in the meantime. */
+  function stored(key) {
+    try {
+      var v = JSON.parse(localStorage.getItem(key) || 'null');
+      return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+    } catch (e) { return null; }
+  }
+  function readIsland(id) {
+    var el = document.getElementById(id), map = {};
+    if (el) {
+      try { map = JSON.parse(el.textContent || '{}'); } catch (e) { /* a malformed island must not break the page */ }
+      if (!map || typeof map !== 'object' || Array.isArray(map)) map = {};
+    }
+    return { map: map, rev: el ? el.getAttribute('data-rev') : null };
+  }
+  function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+  function noteId(nid, n) { return nid + '\n' + (n.ts || '') + '\n' + n.text; }
+  function idsOf(kind, map) {
+    var out = [];
+    for (var k in map) {
+      if (!has(map, k)) continue;
+      if (kind === 'concurs') out.push(k + '\n' + map[k]);
+      else if (Array.isArray(map[k])) map[k].forEach(function (n) { if (n) out.push(noteId(k, n)); });
+    }
+    return out;
+  }
+  function union(a, b) {
+    var seen = Object.create(null), out = [];
+    a.concat(b).forEach(function (x) { if (!seen[x]) { seen[x] = 1; out.push(x); } });
+    return out;
+  }
+
+  var SYNC = stored(SKEY) || {};
+  ['notes', 'concurs'].forEach(function (k) {
+    var s = SYNC[k];
+    if (!s || typeof s !== 'object' || !Array.isArray(s.seen)) SYNC[k] = { rev: null, seen: [] };
+  });
+
+  function takeIn(kind, key, isl) {
+    var s = SYNC[kind], have = stored(key), added = false;
+    if (have && !(isl.rev && isl.rev === s.rev)) {
+      var seen = Object.create(null), mine = Object.create(null);
+      s.seen.forEach(function (x) { seen[x] = 1; });
+      idsOf(kind, have).forEach(function (x) { mine[x] = 1; });
+      Object.keys(isl.map).forEach(function (k) {
+        if (kind === 'concurs') {
+          if (!has(have, k) && !seen[k + '\n' + isl.map[k]]) { have[k] = isl.map[k]; added = true; }
+          return;
+        }
+        if (!Array.isArray(isl.map[k])) return;
+        isl.map[k].forEach(function (n) {
+          var id = n && noteId(k, n);
+          if (!n || seen[id] || mine[id]) return;
+          if (!Array.isArray(have[k])) have[k] = [];
+          have[k].push(n);
+          mine[id] = 1;
+          added = true;
+        });
+      });
+    }
+    SYNC[kind] = { rev: isl.rev, seen: union(s.seen, idsOf(kind, isl.map)) };
+    return { map: have || isl.map, added: added };
+  }
+
+  var tookN = takeIn('notes', KEY, readIsland('report-notes'));
+  var tookC = takeIn('concurs', CKEY, readIsland('report-concurs'));
+  var N = tookN.map, C = tookC.map;
+  if (tookN.added) save();
+  if (tookC.added) saveConcurs();
+
+  var reduceMotion = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var active = null, activeTitle = '';
+
+  /* The sync record goes with every write, so what it says was seen is always stored. */
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(N)); localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
+  }
+  function saveConcurs() {
+    try { localStorage.setItem(CKEY, JSON.stringify(C)); localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
+  }
+  function stamp() { return new Date().toISOString().slice(0, 16).replace('T', ' '); }
+  function concurCount() {
+    var n = 0;
+    for (var k in C) { if (C.hasOwnProperty(k)) n++; }
+    return n;
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function slug(s) {
+    return String(s || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '').slice(0, 44) || 'x';
+  }
+  function titleOf(el) {
+    var h = el.querySelector('h2,h3,h4,.bar-lab,.k,.lbl,td:first-child,th:first-child');
+    var t = ((h ? h.textContent : el.textContent) || 'item').replace(/\s+/g, ' ').trim();
+    return t.length > 72 ? t.slice(0, 69) + '…' : t;
+  }
+
+  /* ---- give every target a stable anchor id and a note affordance ---- */
+  function tag() {
+    var used = {};
+    TARGETS.forEach(function (pair) {
+      var sel = pair[0], pre = pair[1];
+      Array.prototype.forEach.call(document.querySelectorAll(sel), function (el, i) {
+        if (el.classList.contains('notable')) return;
+        if (el.tagName === 'TR' && el.querySelector('th')) return;   // header rows
+        if (el.closest('#d-note, #d-export, .notebar')) return;
+
+        /* Numbered lists anchor by position; everything else by a SHORT title slug.
+           Long slugs make the exported map unreadable, which defeats the map. */
+        var id;
+        var num = el.querySelector('.esc-n');
+        if (num) id = pre + '-' + num.textContent.trim();
+        else id = pre + '-' + slug(titleOf(el)).split('-').slice(0, 4).join('-');
+
+        var base = id, n = 2;
+        while (used[id]) id = base + '-' + (n++);
+        used[id] = 1;
+
+        el.classList.add('notable');
+        el.dataset.nid = id;
+        el.dataset.ntitle = titleOf(el);
+        if (!el.id) el.id = id;                      // a real anchor in the file
+
+        var b = document.createElement('button');
+        b.className = 'note-btn';
+        b.type = 'button';
+        b.title = 'Add a note';
+        b.innerHTML = '&#x1F4AC;';
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation(); open(el);
+        });
+        el.appendChild(b);
+      });
+    });
+  }
+
+  /* ---- concur: a rubber stamp in a space on each decision's right ----
+     The angle is seeded from the anchor, so a stamp lands the same way on every reload
+     and a page of them still looks hand-done. */
+  function seed(s) {
+    var h = 2166136261;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0) / 4294967295;
+  }
+  function stampSvg(id) {
+    var r = -12 + 9 * seed(id), dx = (seed(id + ':x') - 0.5) * 6, dy = (seed(id + ':y') - 0.5) * 6;
+    var ink = '#35c27a';
+    return '<svg class="concur-stamp" viewBox="0 0 120 120" aria-label="concur stamp" style="--r:' +
+      r.toFixed(1) + 'deg;--dx:' + dx.toFixed(1) + 'px;--dy:' + dy.toFixed(1) + 'px">' +
+      '<g filter="url(#concur-ink)">' +
+      '<rect x="9" y="33" width="102" height="54" rx="7" fill="none" stroke="' + ink + '" stroke-width="5"/>' +
+      '<rect x="16" y="40" width="88" height="40" rx="3" fill="none" stroke="' + ink + '" stroke-width="1.6"/></g>' +
+      '<g filter="url(#concur-ink-fine)">' +
+      '<path d="M22 61 L28 67 L39 52" fill="none" stroke="' + ink + '" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<text x="70" y="69" text-anchor="middle" textLength="58" lengthAdjust="spacingAndGlyphs" fill="' + ink + '" ' +
+      'font-family="Anton, Oswald, Impact, \'Arial Black\', \'DejaVu Sans Condensed\', sans-serif" ' +
+      'font-weight="800" font-size="21">CONCUR</text></g></svg>';
+  }
+
+  /* Wet ink. The strokes swell a little, a fine speckle and a few round air pockets are cut
+     out of them, then a blur and a hard alpha curve round every edge and every hole the way
+     ink sits on paper, and a slow wobble bends the whole. The frame takes big pockets; the
+     check and the word take small ones, because pockets that size eat a condensed letter.
+     The pockets are sized to survive a snapshot: Terminal Delight's document square draws a
+     screenshot of the page, where the old two-pixel speckle smoothed away. One copy per page. */
+  function wetInk(id, pocketFreq, pocketAt, speckCut, blur, swell) {
+    return '<filter id="' + id + '" x="-15%" y="-15%" width="130%" height="130%">' +
+      '<feMorphology in="SourceGraphic" operator="dilate" radius="' + swell + '" result="fat"/>' +
+      '<feTurbulence type="fractalNoise" baseFrequency="0.6" numOctaves="2" seed="11" result="n"/>' +
+      '<feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  -9 0 0 0 ' + speckCut + '" result="speck"/>' +
+      '<feTurbulence type="fractalNoise" baseFrequency="' + pocketFreq + '" numOctaves="3" seed="3" result="p"/>' +
+      '<feColorMatrix in="p" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  -22 0 0 0 ' + (22 * pocketAt).toFixed(2) + '" result="pock"/>' +
+      '<feComposite in="speck" in2="pock" operator="in" result="mask"/>' +
+      '<feComposite in="fat" in2="mask" operator="in" result="inked"/>' +
+      '<feGaussianBlur in="inked" stdDeviation="' + blur + '" result="soft"/>' +
+      '<feComponentTransfer in="soft" result="wet"><feFuncA type="linear" slope="5" intercept="-1.6"/></feComponentTransfer>' +
+      '<feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="5" result="w"/>' +
+      '<feDisplacementMap in="wet" in2="w" scale="3" xChannelSelector="R" yChannelSelector="G"/>' +
+      '</filter>';
+  }
+  function concurDefs() {
+    if (document.getElementById('concur-defs')) return;
+    var d = document.createElement('div');
+    d.innerHTML = '<svg id="concur-defs" viewBox="0 0 1 1" aria-label="concur stamp ink" focusable="false" ' +
+      'style="position:absolute;width:0;height:0;overflow:hidden"><defs>' +
+      wetInk('concur-ink', 0.17, 0.62, 6.0, 0.55, 0.4) +
+      wetInk('concur-ink-fine', 0.35, 0.72, 7.0, 0.3, 0.28) +
+      '</defs></svg>';
+    document.body.appendChild(d.firstChild);
+  }
+
+  function showConcur(el, zone, on, animate) {
+    var live = zone.querySelector('.concur-stamp:not(.peel)');
+    if (on && !live) {
+      zone.insertAdjacentHTML('beforeend', stampSvg(el.dataset.nid));
+      if (animate && !reduceMotion) {
+        zone.querySelector('.concur-stamp:not(.peel)').classList.add('thud');
+        setTimeout(function () {
+          el.classList.remove('concur-jolt'); void el.offsetWidth; el.classList.add('concur-jolt');
+        }, 110);
+      }
+    } else if (!on && live) {
+      if (animate && !reduceMotion) {
+        live.classList.add('peel');
+        setTimeout(function () { live.remove(); }, 320);
+      } else live.remove();
+    }
+    zone.classList.toggle('on', on);
+    el.classList.toggle('has-concur', on);
+    zone.setAttribute('aria-pressed', on ? 'true' : 'false');
+    zone.title = on ? 'Concurred. Click to peel it off' : 'Concur with this decision';
+  }
+
+  function concurZones() {
+    var made = 0;
+    Array.prototype.forEach.call(document.querySelectorAll(CONCUR_SEL), function (el) {
+      if (!el.dataset.nid || el.querySelector(':scope > .concur-zone')) return;
+      if (el.closest('#d-note, #d-export, .notebar')) return;
+      var zone = document.createElement('button');
+      zone.type = 'button';
+      zone.className = 'concur-zone';
+      zone.innerHTML = '<span class="concur-q" aria-hidden="true">?</span><span class="concur-lbl">concur</span>';
+      zone.addEventListener('click', function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        var id = el.dataset.nid;
+        if (C[id]) delete C[id]; else C[id] = stamp();
+        saveConcurs();
+        showConcur(el, zone, !!C[id], true);
+        badges();
+      });
+      el.classList.add('concurrable');
+      el.appendChild(zone);
+      showConcur(el, zone, !!C[el.dataset.nid], false);
+      made++;
+    });
+    if (!made) return;
+    concurDefs();
+    var bar = document.getElementById('notebar');
+    if (bar && !document.getElementById('concur-cnt')) {
+      var s = document.createElement('span');
+      s.className = 'cnt';
+      s.id = 'concur-cnt';
+      s.innerHTML = '&middot; <b id="concur-count">0</b> <span id="concur-word">concurs</span>';
+      var first = bar.querySelector('.cnt');
+      if (first) first.parentNode.insertBefore(s, first.nextSibling); else bar.insertBefore(s, bar.firstChild);
+    }
+  }
+
+  function badges() {
+    var total = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var n = (N[el.dataset.nid] || []).length;
+      total += n;
+      el.classList.toggle('has-note', n > 0);
+      var b = el.querySelector(':scope > .note-btn');
+      if (b) b.innerHTML = n ? String(n) : '&#x1F4AC;';
+    });
+    var c = document.getElementById('note-count');
+    if (c) c.textContent = total;
+    var cc = concurCount();
+    var ce = document.getElementById('concur-count');
+    if (ce) ce.textContent = cc;
+    var cw = document.getElementById('concur-word');
+    if (cw) cw.textContent = cc === 1 ? 'concur' : 'concurs';
+    /* A concur alone is an answer worth exporting; clear stays notes-only. */
+    ['btn-export', 'btn-embed'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = total + cc === 0;
+    });
+    var bc = document.getElementById('btn-clear');
+    if (bc) bc.disabled = total === 0;
+  }
+
+  function render() {
+    var list = N[active] || [];
+    var ul = document.getElementById('note-list');
+    document.getElementById('note-none').style.display = list.length ? 'none' : 'block';
+    ul.innerHTML = list.map(function (n, i) {
+      return '<li><div class="nts"><span>' + esc(n.ts) + '</span>' +
+        '<button class="ndel" data-i="' + i + '">delete</button></div>' + esc(n.text) + '</li>';
+    }).join('');
+    Array.prototype.forEach.call(ul.querySelectorAll('.ndel'), function (b) {
+      b.addEventListener('click', function () { del(+b.dataset.i); });
+    });
+  }
+
+  function open(el) {
+    active = el.dataset.nid;
+    activeTitle = el.dataset.ntitle;
+    document.getElementById('note-title').textContent = activeTitle;
+    document.getElementById('note-anchor').textContent = '#' + active;
+    render();
+    document.getElementById('d-note').showModal();
+    document.getElementById('note-text').focus();
+  }
+
+  function add() {
+    var ta = document.getElementById('note-text');
+    var t = ta.value.trim();
+    if (!t || !active) return;
+    (N[active] = N[active] || []).push({
+      text: t,
+      title: activeTitle,
+      ts: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
+    ta.value = '';
+    save(); render(); badges();
+  }
+
+  function del(i) {
+    N[active].splice(i, 1);
+    if (!N[active].length) delete N[active];
+    save(); render(); badges();
+  }
+
+  /* ---- the map: anchored, compact, prompt-ready ---- */
+  function buildMap() {
+    var count = 0, els = 0;
+    for (var k in N) { if (N.hasOwnProperty(k)) { els++; count += N[k].length; } }
+    var cc = concurCount();
+    var out = [
+      'NOTES — ' + FILE,
+      count + ' notes on ' + els + ' elements' +
+        (cc ? ' · ' + cc + (cc === 1 ? ' concur' : ' concurs') : '') + '.',
+      'Each [anchor] is an element id in that file — search it to find the passage.',
+      ''
+    ];
+    /* Document order, not object order: the map should read the way the brief reads.
+       A concur rides on the decision's own line, so an agreed decision with no note
+       still reaches the agent. */
+    Array.prototype.forEach.call(document.querySelectorAll('.notable'), function (el) {
+      var list = N[el.dataset.nid] || [];
+      var agreed = !!C[el.dataset.nid];
+      if (!list.length && !agreed) return;
+      out.push('[' + el.dataset.nid + '] ' + el.dataset.ntitle + (agreed ? '  ✓ concur' : ''));
+      list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
+  function exportNotes() {
+    var txt = buildMap();
+    document.getElementById('export-out').value = txt;
+    var est = document.getElementById('export-est');
+    if (est) {
+      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+        ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
+        ' for the whole document.';
+    }
+    document.getElementById('d-export').showModal();
+  }
+
+  function copyExport(btn) {
+    var ta = document.getElementById('export-out');
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (btn) {
+      var o = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = o; }, 1400);
+    }
+  }
+
+  /* ---- bake notes into a downloadable copy of this file ----
+     localStorage is invisible to an agent. This is what makes
+     "read my notes in <file>" work. */
+
+  /* JSON leaves "<" alone, so a note reading "<\/script>" used to end the island early:
+     the rest spilled into the page and the reopened brief showed no notes at all
+     (agent-skills#25). Escaped, it is still JSON and parses to the same strings. */
+  function islandJson(map) {
+    return JSON.stringify(map, null, 1).replace(/<\//g, '<\\/').replace(/<!/g, '\\u003c!');
+  }
+  /* The only two sequences that end an HTML comment. A reader's own "---" stays. */
+  function commentSafe(s) {
+    return s.replace(/--!>/g, '--! >').replace(/-->/g, '-- >');
+  }
+  function stampIsland(el, rev) {
+    el.setAttribute('data-format', FORMAT);
+    el.setAttribute('data-rev', rev);
+  }
+  /* The mirror's first line, written once here so a grep of a brief for it finds one
+     line of code and then the mirror itself. */
+  var MIRROR_HEAD = '\nREADER NOTES —';
+  /* The last mirror comment, if it follows the notes island: the one a save replaces. */
+  function lastMirror(root, island) {
+    var w = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT), c, last = null;
+    while ((c = w.nextNode())) if (c.data.indexOf(MIRROR_HEAD) === 0) last = c;
+    if (last && island && !(island.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING)) return null;
+    return last;
+  }
+
+  function embedNotes() {
+    var rev = new Date().toISOString();
+    var doc = document.documentElement.cloneNode(true);
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
+      n.classList.remove('notable', 'has-note');
+    });
+    var island = doc.querySelector('#report-notes');
+    if (island) { island.textContent = islandJson(N); stampIsland(island, rev); }
+
+    /* Concur UI is rebuilt on load, so strip it; the answers go into their own island,
+       created here, where the reference writer puts it, if the brief predates it and
+       there is something to put in it. */
+    Array.prototype.forEach.call(doc.querySelectorAll('.concur-zone, #concur-defs, #concur-cnt'),
+      function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.concurrable'), function (n) {
+      n.classList.remove('concurrable', 'has-concur', 'concur-jolt');
+    });
+    var cisl = doc.querySelector('#report-concurs');
+    if (!cisl && concurCount()) {
+      cisl = document.createElement('script');
+      cisl.type = 'application/json';
+      cisl.id = 'report-concurs';
+      if (island && island.parentNode) island.parentNode.insertBefore(cisl, island.nextSibling);
+      else if (doc.querySelector('body')) doc.querySelector('body').appendChild(cisl);
+    }
+    if (cisl) { cisl.textContent = islandJson(C); stampIsland(cisl, rev); }
+
+    /* A plain-text mirror as well, so grep and ctx_read find the notes without anyone
+       having to parse JSON out of a script tag. A save replaces the last one rather than
+       adding another, so saving never leaves a stale map behind for a grep to find. */
+    var text = MIRROR_HEAD + '\n' + commentSafe(buildMap()) + '\n';
+    var mirror = lastMirror(doc, island), body = doc.querySelector('body');
+    if (mirror) mirror.data = text;
+    else if (body) body.appendChild(document.createComment(text));
+
+    /* Everything just written counts as seen, under the revision just stamped. */
+    SYNC.notes = { rev: rev, seen: union(SYNC.notes.seen, idsOf('notes', N)) };
+    SYNC.concurs = { rev: rev, seen: union(SYNC.concurs.seen, idsOf('concurs', C)) };
+    try { localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
+
+    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = FILE;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+
+    var b = document.getElementById('btn-embed');
+    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+  }
+
+  function clearNotes() {
+    if (!confirm('Delete every note in this brief?')) return;
+    N = {}; save(); badges();
+  }
+
+  /* ---- wiring ---- */
+  function init() {
+    var ta = document.getElementById('note-text');
+    if (ta) {
+      ta.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-note-action]');
+      if (!t) return;
+      var a = t.dataset.noteAction;
+      if (a === 'add') add();
+      else if (a === 'export') exportNotes();
+      else if (a === 'embed') embedNotes();
+      else if (a === 'clear') clearNotes();
+      else if (a === 'copy') copyExport(t);
+    });
+    ['d-note', 'd-export'].forEach(function (id) {
+      var d = document.getElementById(id);
+      if (!d) return;
+      Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+        x.addEventListener('click', function () { d.close(); });
+      });
+      d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    });
+    tag();
+    concurZones();
+    badges();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
+</script>
+<script>
+
+(function () {
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-dlg]');
+    if (!b) return;
+    var d = document.getElementById(b.dataset.dlg);
+    if (d && d.showModal) d.showModal();
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('dialog:not(#d-note):not(#d-export)'), function (d) {
+    Array.prototype.forEach.call(d.querySelectorAll('[data-close]'), function (x) {
+      x.addEventListener('click', function () { d.close(); });
+    });
+    d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+  });
+})();
+
+</script>
+</body>
+</html>

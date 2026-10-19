@@ -69,14 +69,35 @@ pub const RAIL_HIDE_BELOW: f32 = 240.0;
 // which face is showing
 // ---------------------------------------------------------------------------
 
-/// A pane shows one of two faces. Both exist at all times; the terminal keeps
-/// running while the workbench is up, because an agent whose output stopped
-/// being read is not an agent whose work stopped.
+/// A pane shows one of its faces. The terminal and the workbench exist at all
+/// times; the terminal keeps running while the workbench is up, because an
+/// agent whose output stopped being read is not an agent whose work stopped.
+///
+/// The third, [`Face::Document`], exists only on a pane that was opened to
+/// show a document (Ctrl+Alt+click on a path, or a floating square promoted
+/// to a split). Its shell is still there underneath, alt+k away.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Face {
     #[default]
     Terminal,
     Workbench,
+    Document,
+}
+
+/// Which face alt+k moves to.
+///
+/// With a document attached it moves between the document and its shell, and
+/// from the bench back to the document: the document is what that pane was
+/// opened for, so it is where the key goes home to. Without one, the two faces
+/// swap as they always have. The bench stays one click away on the header's
+/// slider either way.
+pub fn next_face(now: Face, has_document: bool) -> Face {
+    match (now, has_document) {
+        (Face::Document, _) => Face::Terminal,
+        (_, true) => Face::Document,
+        (Face::Terminal, false) => Face::Workbench,
+        (Face::Workbench, false) => Face::Terminal,
+    }
 }
 
 /// How much of the tube's vignette a face gets.
@@ -91,10 +112,13 @@ pub enum Face {
 /// scanlines, the bloom and the bend, which are.
 ///
 /// Decided 2026-09-17, the recommendation taken.
+///
+/// A document gets none either, for the bench's reason: the vignette darkens
+/// the edges of the content box, and a page or a picture is read to its edges.
 pub fn vignette_on(face: Face, vignette: f32) -> f32 {
     match face {
         Face::Terminal => vignette,
-        Face::Workbench => 0.0,
+        Face::Workbench | Face::Document => 0.0,
     }
 }
 
@@ -124,7 +148,7 @@ impl Face {
     pub fn other(self) -> Face {
         match self {
             Face::Terminal => Face::Workbench,
-            Face::Workbench => Face::Terminal,
+            Face::Workbench | Face::Document => Face::Terminal,
         }
     }
 
@@ -135,6 +159,7 @@ impl Face {
         match self {
             Face::Terminal => "TERM",
             Face::Workbench => "BENCH",
+            Face::Document => "DOC",
         }
     }
 }
@@ -1488,6 +1513,10 @@ pub struct Atom {
     /// What it says. Owned, because the selection has to survive the frame
     /// that drew it — see [`Sel::still_valid`].
     pub text: String,
+    /// Where `text` stands for a target it does not show — a Markdown link's
+    /// label — the byte range and the target as written. Empty for a run that
+    /// shows everything it links to.
+    pub links: Vec<(std::ops::Range<usize>, String)>,
     pub region: Region,
 }
 
@@ -2388,6 +2417,77 @@ pub fn flag_value(cmd: &str, flag: &str) -> Option<String> {
     None
 }
 
+/// The Claude families a model id can name. A word in this list is a family;
+/// every other word in an id is a version, a date, or a vendor prefix.
+const CLAUDE_FAMILIES: [&str; 4] = ["opus", "fable", "sonnet", "haiku"];
+
+/// What each alias resolves to today. Bump when a model ships; a transcript
+/// that reports a different version still wins on the dial.
+const CURRENT_VERSION: [(&str, &str); 4] = [
+    ("opus", "5.5"),
+    ("fable", "5.1"),
+    ("sonnet", "5"),
+    ("haiku", "4.5"),
+];
+
+/// What the Workbench's model dial calls a model: `claude-opus-5-5` → `opus 5.5`.
+///
+/// The overview card drops the version on purpose — [`crate::vitals::model_name`]
+/// says OPUS, which is what fits a card. The dial has the room, and a dial that
+/// says only `opus` cannot tell Opus 5.5 from a session still pinned to 4.8.
+/// Parker: *"It just says Opus or Sonnet, whatever. We want to say Opus x.x."*
+///
+/// Claude ids come in two shapes, `claude-opus-5-5` and the older
+/// `claude-3-5-sonnet-20241022`, so the version is every short run of digits
+/// wherever it sits, and the eight-digit date stamp is not a version. `[1m]` is
+/// the context window, not the model. An id naming no Claude family is its own
+/// label: `gpt-5-codex` already says which one it is, and is already a row.
+///
+/// Idempotent: `opus 5.5` comes back as `opus 5.5`, so a label can be fed back
+/// through it and compared with an id.
+pub fn model_label(raw: &str) -> Option<String> {
+    let lower = raw.trim().to_ascii_lowercase();
+    let id = lower.split('[').next().unwrap_or("").trim();
+    if id.is_empty() || id == "<synthetic>" {
+        return None;
+    }
+    let words: Vec<&str> = id.split(['-', ' ', '.']).collect();
+    let Some(family) = words.iter().copied().find(|w| CLAUDE_FAMILIES.contains(w)) else {
+        return Some(id.to_string());
+    };
+    let version: Vec<&str> = words
+        .iter()
+        .copied()
+        .filter(|w| !w.is_empty() && w.len() <= 2 && w.chars().all(|c| c.is_ascii_digit()))
+        .collect();
+    Some(if version.is_empty() {
+        // A bare alias: name the version it currently resolves to, so the
+        // dial says OPUS 5.5 from launch rather than after the first reply.
+        match CURRENT_VERSION.iter().find(|(f, _)| *f == family) {
+            Some((_, v)) => format!("{family} {v}"),
+            None => family.to_string(),
+        }
+    } else {
+        format!("{family} {}", version.join("."))
+    })
+}
+
+/// Do two ways of naming a model name the same ROW of the dial?
+///
+/// `opus`, `Opus`, `claude-opus-5-5` and `opus 5.5` all do: the row is the
+/// alias the harness is given, and the alias is a family. So the `--model opus`
+/// a launcher passed and the `claude-opus-5-5` the transcript reports light the
+/// same row, and two versions of one family are the same row too — the list has
+/// one row per family, and lighting nothing for a 4.8 session would be a lie
+/// about which button is pressed.
+pub fn same_model(a: &str, b: &str) -> bool {
+    fn row(s: &str) -> Option<String> {
+        let label = model_label(s)?;
+        Some(label.split(' ').next().unwrap_or_default().to_string())
+    }
+    matches!((row(a), row(b)), (Some(x), Some(y)) if x == y)
+}
+
 /// Does this keystroke ask the composer for HISTORY rather than for an edit?
 ///
 /// Up and down mean two things in a box that has both rows and a history, and
@@ -2500,6 +2600,22 @@ pub fn is_paste_chord(key: &str, ctrl: bool, shift: bool) -> bool {
     key.eq_ignore_ascii_case("insert") && shift
 }
 
+/// A paste for a box that holds one line: a pane's name, or a sticky note,
+/// whose paper draws only the first line `shape_text` gives it, so a line
+/// break would keep everything after it and show none of it. Each line break
+/// (`\r\n` counted once) and tab becomes a space, and every other control
+/// character is dropped.
+pub fn pasted_as_one_line(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .chars()
+        .filter_map(|c| match c {
+            '\n' | '\r' | '\t' => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect()
+}
+
 /// The image type to ask a clipboard for, out of everything it is offering.
 ///
 /// Wayland clipboards are a LIST of types, and a copied image usually arrives
@@ -2547,6 +2663,23 @@ pub fn ext_of_image_mime(mime: &str) -> Option<&'static str> {
         "image/svg+xml" => "svg",
         _ => return None,
     })
+}
+
+/// The file extension to save a picture gpui read off the clipboard under,
+/// for the same reason as [`ext_of_image_mime`]. One table for the bench's
+/// paste and a note's.
+pub fn ext_of_image_format(format: gpui::ImageFormat) -> &'static str {
+    match format {
+        gpui::ImageFormat::Png => "png",
+        gpui::ImageFormat::Jpeg => "jpg",
+        gpui::ImageFormat::Webp => "webp",
+        gpui::ImageFormat::Gif => "gif",
+        gpui::ImageFormat::Svg => "svg",
+        gpui::ImageFormat::Bmp => "bmp",
+        gpui::ImageFormat::Tiff => "tiff",
+        gpui::ImageFormat::Ico => "ico",
+        gpui::ImageFormat::Pnm => "pnm",
+    }
 }
 
 /// The text a set of dropped — or pasted — file paths becomes.
@@ -2880,7 +3013,11 @@ pub fn turn_opening(effect: &crate::channel::Effect) -> (Option<String>, Option<
 /// further is coming* is a fact about the present rather than a prediction.
 pub fn live_says(state: AgentState) -> (&'static str, &'static str) {
     match state {
-        AgentState::Working => ("IN FLIGHT", "the reply lands here when the turn ends"),
+        // Silent on purpose. The card sits there for the whole turn, and a
+        // sentence repeated under every turn stops being information. Parker:
+        // *"that reply lands here when turn ends is actually persistent and
+        // really gross... PLEASE JUST --- kill it"*.
+        AgentState::Working => ("IN FLIGHT", ""),
         AgentState::Reading => ("IN FLIGHT", "it is reading what the bench just typed"),
         AgentState::Paused => ("PAUSED", "you stopped this turn; it has not started again"),
         AgentState::Asking => ("WAITING ON YOU", "it asked something before it could go on"),
@@ -3995,21 +4132,27 @@ impl Bench {
         self.face
     }
 
-    /// Flip the face. Returns the face now showing.
-    pub fn toggle_face(&mut self) -> Face {
-        self.face = self.face.other();
-        if self.face == Face::Workbench {
+    /// alt+k: step to the next face, as [`next_face`] walks them for a pane
+    /// that does or does not have a document attached. Returns the face now
+    /// showing.
+    pub fn toggle_face(&mut self, has_document: bool) -> Face {
+        self.set_face(next_face(self.face, has_document));
+        self.face
+    }
+
+    /// Show `face`. Assigns rather than toggling its way there: with three
+    /// faces a toggle from the terminal lands on the bench, so asking for the
+    /// document would have shown the bench instead.
+    pub fn set_face(&mut self, face: Face) {
+        if self.face == face {
+            return;
+        }
+        self.face = face;
+        if face == Face::Workbench {
             // Looking at the bench is what makes its contents seen — but only
             // the shelf actually on screen. A decision waiting on another tab
             // has not been looked at just because a document on this one was.
             self.mark_shelf_seen();
-        }
-        self.face
-    }
-
-    pub fn set_face(&mut self, face: Face) {
-        if self.face != face {
-            self.toggle_face();
         }
     }
 
@@ -4098,6 +4241,16 @@ impl Bench {
 
     pub fn get(&self, id: &SurfaceId) -> Option<&Surface> {
         self.surfaces.iter().find(|s| &s.id == id)
+    }
+
+    /// Every artifact on this bench, by id and where it points. The handover
+    /// chip asks before filing one of its own, so a file the agent already put
+    /// here is not shelved twice.
+    pub fn artifacts(&self) -> impl Iterator<Item = (&SurfaceId, &str)> {
+        self.surfaces.iter().filter_map(|s| match &s.kind {
+            Kind::Artifact(a) => Some((&s.id, a.href.as_str())),
+            _ => None,
+        })
     }
 
     /// How many surfaces sit on each shelf, and how many of those are unseen.
@@ -5012,11 +5165,14 @@ mod tests {
             AgentState::Idle,
             AgentState::Paused,
             AgentState::Reading,
-            AgentState::Working,
         ] {
             let (l, s) = live_says(state);
             assert!(!l.is_empty() && !s.is_empty(), "{state:?} says nothing");
         }
+        // A running turn is the one that says nothing below its label: the
+        // agent's own words are on the card, and a standing sentence under
+        // every turn was noise.
+        assert_eq!(live_says(AgentState::Working), ("IN FLIGHT", ""));
     }
 
     #[test]
@@ -6179,7 +6335,7 @@ mod tests {
         assert_eq!(b.unseen_total(), 1, "it arrived behind the terminal face");
 
         b.set_shelf(Shelf::Artifacts);
-        b.toggle_face();
+        b.toggle_face(false);
         assert_eq!(b.face(), Face::Workbench);
         assert_eq!(
             b.unseen_total(),
@@ -7167,6 +7323,51 @@ mod tests {
     }
 
     #[test]
+    fn the_model_dial_names_the_version_the_transcript_reports() {
+        // Every id shape this box has actually produced.
+        for (id, want) in [
+            ("claude-opus-5-5", "opus 5.5"),
+            ("claude-opus-5", "opus 5"),
+            ("claude-opus-4-8", "opus 4.8"),
+            ("claude-sonnet-5", "sonnet 5"),
+            ("claude-fable-5-1", "fable 5.1"),
+            // The date stamp is not a version.
+            ("claude-haiku-4-5-20251001", "haiku 4.5"),
+            // The older shape puts the version BEFORE the family.
+            ("claude-3-5-sonnet-20241022", "sonnet 3.5"),
+            // The context window is not the model.
+            ("claude-opus-5-5[1m]", "opus 5.5"),
+            // A bare alias names the version it resolves to today.
+            ("opus", "opus 5.5"),
+            ("Opus", "opus 5.5"),
+            ("sonnet", "sonnet 5"),
+            ("haiku", "haiku 4.5"),
+            // A label fed back in is itself.
+            ("opus 5.5", "opus 5.5"),
+            // Not a Claude family: the id is the label, and is the row.
+            ("gpt-5-codex", "gpt-5-codex"),
+        ] {
+            assert_eq!(model_label(id).as_deref(), Some(want), "{id}");
+        }
+        assert_eq!(model_label("<synthetic>"), None);
+        assert_eq!(model_label("  "), None);
+    }
+
+    #[test]
+    fn an_alias_and_the_version_it_resolved_to_light_the_same_row() {
+        assert!(same_model("opus", "claude-opus-5-5"));
+        assert!(same_model("OPUS 5.5", "opus"));
+        assert!(same_model("opus", "claude-opus-4-8"), "one row per family");
+        assert!(!same_model("opus", "claude-sonnet-5"));
+        // The haiku 4.5 in `claude-haiku-4-5` must not leak a row onto opus 4.x.
+        assert!(!same_model("opus", "claude-haiku-4-5-20251001"));
+        assert!(same_model("gpt-5-codex", "gpt-5-codex"));
+        assert!(!same_model("gpt-5", "gpt-5-codex"));
+        // The faint harness name the button falls back to lights nothing.
+        assert!(!same_model("claude", "opus"));
+    }
+
+    #[test]
     fn word_motion_and_the_kills_agree_with_every_editor_on_this_desk() {
         let mut l = Line::holding("the quick brown fox");
         // Back one word from the end.
@@ -7385,6 +7586,14 @@ mod tests {
         assert_eq!(vignette_on(Face::Workbench, 0.0), 0.0);
         assert_eq!(vignette_on(Face::Terminal, 0.7), 0.7);
         assert_eq!(vignette_on(Face::Terminal, 0.0), 0.0);
+    }
+
+    /// A page or a picture is read to its edges, which is where the vignette
+    /// is darkest, so a document gets none, as the bench gets none.
+    #[test]
+    fn the_document_face_has_no_vignette() {
+        assert_eq!(vignette_on(Face::Document, 0.7), 0.0);
+        assert_eq!(vignette_on(Face::Document, 0.0), 0.0);
     }
 
     #[test]
@@ -8884,6 +9093,21 @@ mod tests {
     }
 
     #[test]
+    fn a_paste_for_a_one_line_box_keeps_every_word_on_one_line() {
+        assert_eq!(
+            pasted_as_one_line("alpha\nbeta\r\ngamma\tdelta\re"),
+            "alpha beta gamma delta e",
+            "each break or tab is one space, a Windows line end included"
+        );
+        assert_eq!(
+            pasted_as_one_line("red\u{1b}[31m bell\u{7}"),
+            "red[31m bell",
+            "other control characters are dropped, not spaced"
+        );
+        assert_eq!(pasted_as_one_line("plain words"), "plain words");
+    }
+
+    #[test]
     fn an_image_on_the_clipboard_beats_the_text_beside_it() {
         // Exactly what a browser offers when you copy an image. Before this,
         // the text won and the paste was a line of markup.
@@ -9038,13 +9262,48 @@ mod tests {
             Face::Terminal,
             "a pane is a terminal until told otherwise"
         );
-        assert_eq!(b.toggle_face(), Face::Workbench);
-        assert_eq!(b.toggle_face(), Face::Terminal);
+        assert_eq!(b.toggle_face(false), Face::Workbench);
+        assert_eq!(b.toggle_face(false), Face::Terminal);
         b.set_face(Face::Terminal);
         assert_eq!(
             b.face(),
             Face::Terminal,
             "setting the face it already wears is not a flip"
+        );
+    }
+
+    /// Setting a face lands on that face. With two faces, "toggle if it
+    /// differs" was the same thing; with three, asking for the document from
+    /// the terminal toggled onto the bench.
+    #[test]
+    fn setting_the_document_face_lands_on_it_from_either_face() {
+        let mut b = Bench::new();
+        b.set_face(Face::Document);
+        assert_eq!(b.face(), Face::Document, "from the terminal");
+        let mut b = Bench::new();
+        b.set_face(Face::Workbench);
+        b.set_face(Face::Document);
+        assert_eq!(b.face(), Face::Document, "from the bench");
+        b.set_face(Face::Workbench);
+        assert_eq!(b.face(), Face::Workbench, "and back to the bench");
+        b.set_face(Face::Terminal);
+        assert_eq!(b.face(), Face::Terminal, "and to the terminal");
+    }
+
+    /// alt+k on a pane showing a document moves between the document and the
+    /// shell under it, and from the bench it goes home to the document. With no
+    /// document it swaps terminal and bench, as it always has.
+    #[test]
+    fn alt_k_on_a_document_pane_moves_between_the_document_and_its_shell() {
+        assert_eq!(next_face(Face::Document, true), Face::Terminal);
+        assert_eq!(next_face(Face::Terminal, true), Face::Document);
+        assert_eq!(next_face(Face::Workbench, true), Face::Document);
+        assert_eq!(next_face(Face::Terminal, false), Face::Workbench);
+        assert_eq!(next_face(Face::Workbench, false), Face::Terminal);
+        assert_eq!(
+            next_face(Face::Document, false),
+            Face::Terminal,
+            "a document face without a document goes to the shell, never nowhere"
         );
     }
 
@@ -9060,6 +9319,7 @@ mod tests {
             w,
             h: 14.0,
             text: text.to_string(),
+            links: Vec::new(),
             region,
         };
         vec![
@@ -9144,6 +9404,7 @@ mod tests {
                     w: 9.,
                     h: 9.,
                     text: String::new(),
+                    links: Vec::new(),
                     region: Region::Body
                 }],
                 1.0,
@@ -9238,6 +9499,7 @@ mod tests {
             w: 150.0,
             h: 14.0,
             text: text.to_string(),
+            links: Vec::new(),
             region,
         };
         let p = vec![
@@ -9320,6 +9582,7 @@ mod tests {
             w: 90.,
             h: 14.,
             text: text.to_string(),
+            links: Vec::new(),
             region: Region::Body,
         }];
         let s = Sel {

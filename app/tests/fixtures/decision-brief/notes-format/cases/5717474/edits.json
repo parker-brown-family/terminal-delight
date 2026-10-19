@@ -1,0 +1,18 @@
+{
+ "rev": "2026-09-24T20:05:00.000Z",
+ "edits": [
+  {
+   "op": "add",
+   "nid": "verdict-reference-writer",
+   "title": "Reference writer",
+   "text": "Added later, by the writer.",
+   "ts": "2026-09-24 20:00"
+  },
+  {
+   "op": "delete",
+   "nid": "finding-the-island-is-the",
+   "text": "First note, written in the browser.",
+   "ts": "2026-09-20 09:00"
+  }
+ ]
+}

@@ -69,6 +69,18 @@ pub(crate) struct Caller {
     pub pane: Option<u64>,
 }
 
+/// A synthetic pointer event on the bench, from `ctl bench click|hover`.
+/// Window coordinates, which are the bench's flat ones: its tube is
+/// registered flat while the bench face is up.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointerReq {
+    pub click: bool,
+    pub x: f32,
+    pub y: f32,
+    pub alt: bool,
+    pub control: bool,
+}
+
 /// A queued control request, applied on the UI thread by the ticker.
 #[derive(Debug)]
 pub(crate) enum Req {
@@ -91,11 +103,31 @@ pub(crate) enum Req {
     /// Send the open round from the focused pane's bench. See
     /// [`Cmd::BenchSubmit`].
     BenchSubmit(mpsc::Sender<String>),
+    /// `bench probe`: the picked bench pane's zones, its link-bearing text
+    /// runs and its floating square, one per line.
+    BenchProbe(mpsc::Sender<String>),
+    /// `bench click|hover X Y [mods]`: a pointer event at a window point,
+    /// through the pane's own handlers. Needs a Window, so it is parked for
+    /// the next frame like an adoption.
+    BenchPointer(PointerReq, mpsc::Sender<String>),
     /// Say a line to the agent through the bench. See [`Cmd::BenchSay`].
     BenchSay(String, mpsc::Sender<String>),
     /// Put a line in the composer WITHOUT submitting it — what a person
     /// halfway through typing looks like. See [`Cmd::BenchType`].
     BenchType(String, mpsc::Sender<String>),
+    /// Open a document in a floating square. See [`Cmd::DocHere`].
+    DocHere(PathBuf, mpsc::Sender<String>),
+    /// Open a document in a pane beside the focused one. See
+    /// [`Cmd::DocBeside`].
+    DocBeside(PathBuf, mpsc::Sender<String>),
+    /// Close a floating square. See [`Cmd::DocClose`].
+    DocClose(mpsc::Sender<String>),
+    /// Scroll a floating document. See [`Cmd::DocScroll`].
+    DocScroll(f32, mpsc::Sender<String>),
+    /// Read what an open brief shows of its notes. See [`Cmd::DocNotes`].
+    DocNotes(mpsc::Sender<String>),
+    /// Add, delete, concur or save in an open brief. See [`Cmd::DocNote`].
+    DocNote(crate::docview::NotesCommand, mpsc::Sender<String>),
 }
 
 /// Wait for the window to say what a bench verb actually did. The ticker
@@ -335,6 +367,8 @@ enum Cmd {
     /// is not either. It sends whatever round the pane would send if somebody
     /// clicked, which is the only thing a test of that click can mean.
     BenchSubmit,
+    BenchProbe,
+    BenchPointer(PointerReq),
     /// Type a line into the agent through the bench, exactly as the composer
     /// does. The scripted half of talking to a pane.
     BenchSay(String),
@@ -348,6 +382,31 @@ enum Cmd {
     /// script, so both were found by borrowing a person's keyboard, once by
     /// accident into the wrong window.
     BenchType(String),
+    /// Open a document in a floating square on the focused pane — what
+    /// Alt+clicking its path does, for a caller with no pointer. Takes an
+    /// absolute path: the socket has no working directory to resolve against.
+    DocHere(PathBuf),
+    /// Open a document in a pane beside the focused one — what Ctrl+Alt+
+    /// clicking its path does, split, dedupe and four-pane cap included.
+    /// Absolute, for `DocHere`'s reason.
+    DocBeside(PathBuf),
+    /// Close the floating square, on the focused pane or the first one that
+    /// has a square open.
+    DocClose,
+    /// Scroll the floating document by this many logical pixels, down when
+    /// positive — the wheel over it, for a caller with no pointer.
+    DocScroll(f32),
+    /// What an open brief shows of its notes: the state, the bar's counts,
+    /// and the map copy map would give — one line of JSON after the pane's
+    /// answer. For a caller with no eyes, which is how the notes layer is
+    /// checked against the skill's fixtures in a real window.
+    DocNotes,
+    /// A brief's note box and bar, for a caller with no pointer: add a note
+    /// to an anchor, delete one by its words, put a stamp down or peel it
+    /// off, or save into the file. Answers like `doc notes`, or with the
+    /// sentence that refused it. The round trip a save makes — the file
+    /// written, backed up and read back — is proved by driving this.
+    DocNote(crate::docview::NotesCommand),
 }
 
 /// Which face `ctl bench` asks for.
@@ -417,6 +476,9 @@ pub fn socket_path(pid: u32) -> PathBuf {
 const USAGE: &str = "ping | whoami | paint on|off|toggle|status | \
      skin <name>|theme|status | \
      bench on|off|toggle|choose <n>|submit|say <text>|type <text> | \
+     doc here <absolute path> | doc beside <absolute path> | doc close | \
+     doc scroll <pixels> | doc notes | doc note add <nid> <text> | \
+     doc note delete <nid> <text> | doc concur <nid> | doc save | \
      mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
      mcp rpc <json> | mcp from <session> <pane|-> rpc <json> | \
      adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
@@ -444,6 +506,49 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
             return Err("bench say: nothing to say".into());
         }
         return Ok(Cmd::BenchSay(line.to_string()));
+    }
+    // A note carries a sentence after its anchor: the anchor is one word,
+    // and the rest is the note, verbatim — or, when it opens with a double
+    // quote, a JSON string, which is how a note with a newline in it travels
+    // on a socket that reads lines.
+    for (verb, add) in [("doc note add ", true), ("doc note delete ", false)] {
+        if let Some(rest) = s.strip_prefix(verb) {
+            let rest = rest.trim_end_matches(['\r', '\n']);
+            let (nid, text) = rest.split_once(' ').unwrap_or((rest, ""));
+            if nid.is_empty() || text.trim().is_empty() {
+                return Err(format!("{}: expected <nid> <text>", verb.trim_end()));
+            }
+            let text = if text.starts_with('"') {
+                serde_json::from_str::<String>(text).map_err(|e| {
+                    format!("{}: the note is not a JSON string: {e}", verb.trim_end())
+                })?
+            } else {
+                text.to_string()
+            };
+            let nid = nid.to_string();
+            return Ok(Cmd::DocNote(if add {
+                crate::docview::NotesCommand::Add { nid, text }
+            } else {
+                crate::docview::NotesCommand::Delete { nid, text }
+            }));
+        }
+    }
+    // `doc here` and `doc beside` carry a path, and paths hold spaces: take
+    // it verbatim.
+    for (verb, make) in [
+        ("doc here ", Cmd::DocHere as fn(PathBuf) -> Cmd),
+        ("doc beside ", Cmd::DocBeside),
+    ] {
+        if let Some(rest) = s.strip_prefix(verb) {
+            let path = rest.trim_end_matches(['\r', '\n']);
+            if !path.starts_with('/') {
+                return Err(format!(
+                    "{}: {path:?} is not an absolute path — the socket has no working directory",
+                    verb.trim_end()
+                ));
+            }
+            return Ok(make(PathBuf::from(path)));
+        }
     }
     // `tabs` carries a JSON op list — tab names hold spaces, so the remainder
     // is taken verbatim and parsed as JSON rather than split into words.
@@ -490,6 +595,45 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
         // its last answer, the SUBMIT tab is the whole of how one ends, and a
         // capability reachable only by a mouse cannot be gated by anything.
         ["bench", "submit"] => Ok(Cmd::BenchSubmit),
+        ["bench", "probe"] => Ok(Cmd::BenchProbe),
+        ["bench", verb @ ("click" | "hover"), x, y, rest @ ..] => {
+            let x: f32 = x
+                .parse()
+                .map_err(|_| format!("bench {verb}: {x:?} is not a number"))?;
+            let y: f32 = y
+                .parse()
+                .map_err(|_| format!("bench {verb}: {y:?} is not a number"))?;
+            let (alt, control) = match rest {
+                [] => (false, false),
+                ["alt"] => (true, false),
+                ["ctrl"] => (false, true),
+                ["ctrl-alt"] => (true, true),
+                other => {
+                    return Err(format!(
+                        "bench {verb}: modifiers are alt, ctrl or ctrl-alt, not {other:?}"
+                    ))
+                }
+            };
+            Ok(Cmd::BenchPointer(PointerReq {
+                click: *verb == "click",
+                x,
+                y,
+                alt,
+                control,
+            }))
+        }
+        ["doc", "close"] => Ok(Cmd::DocClose),
+        ["doc", "notes"] => Ok(Cmd::DocNotes),
+        ["doc", "concur", nid] => Ok(Cmd::DocNote(crate::docview::NotesCommand::Concur {
+            nid: (*nid).to_string(),
+        })),
+        ["doc", "save"] => Ok(Cmd::DocNote(crate::docview::NotesCommand::Save)),
+        ["doc", "scroll", px] => px
+            .parse::<f32>()
+            .ok()
+            .filter(|p| p.is_finite())
+            .map(Cmd::DocScroll)
+            .ok_or_else(|| format!("doc scroll: {px:?} is not a number of pixels")),
         ["skin", "status"] => Ok(Cmd::SkinStatus),
         // Any other single word is a skin id — `theme` and `custom` included,
         // which is why they are not special-cased here. The window is what knows
@@ -793,6 +937,70 @@ fn handle_conn(
                 "err ui gone".into()
             }
         }
+        Ok(Cmd::BenchProbe) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::BenchProbe(rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
+        Ok(Cmd::BenchPointer(p)) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::BenchPointer(p, rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
+        Ok(Cmd::DocHere(path)) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::DocHere(path, rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
+        Ok(Cmd::DocBeside(path)) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::DocBeside(path, rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
+        Ok(Cmd::DocClose) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::DocClose(rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
+        Ok(Cmd::DocScroll(px)) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::DocScroll(px, rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
+        Ok(Cmd::DocNotes) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::DocNotes(rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
+        Ok(Cmd::DocNote(cmd)) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::DocNote(cmd, rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
         Ok(Cmd::Bench(face)) => {
             if tx.send(Req::Bench(face)).is_ok() {
                 "ok".into()
@@ -896,11 +1104,35 @@ pub fn start(cx: &mut Context<Workspace>) {
                     Req::BenchSubmit(reply) => {
                         let _ = reply.send(ws.bench_submit(cx));
                     }
+                    Req::BenchProbe(reply) => {
+                        let _ = reply.send(ws.bench_probe(cx));
+                    }
+                    // A pointer event needs a Window; parked for render.
+                    Req::BenchPointer(p, reply) => ws.queue_pointer(p, reply, cx),
                     Req::BenchSay(line, reply) => {
                         let _ = reply.send(ws.bench_say(&line, cx));
                     }
                     Req::BenchType(line, reply) => {
                         let _ = reply.send(ws.bench_type(&line, cx));
+                    }
+                    Req::DocHere(path, reply) => {
+                        let _ = reply.send(ws.doc_here(&path, cx));
+                    }
+                    // The split needs a Window, which this ticker has none
+                    // of: the pane is asked, as a click asks it, and the
+                    // workspace answers from the subscription that has one.
+                    Req::DocBeside(path, reply) => ws.doc_beside(&path, reply, cx),
+                    Req::DocClose(reply) => {
+                        let _ = reply.send(ws.doc_close(cx));
+                    }
+                    Req::DocScroll(px, reply) => {
+                        let _ = reply.send(ws.doc_scroll(px, cx));
+                    }
+                    Req::DocNotes(reply) => {
+                        let _ = reply.send(ws.doc_notes(cx));
+                    }
+                    Req::DocNote(cmd, reply) => {
+                        let _ = reply.send(ws.doc_note(cmd, cx));
                     }
                     // The same escalation the robot panel performs, and the same
                     // persistence: a grant made from the CLI shows in the panel
@@ -1081,6 +1313,8 @@ fn parse_cli(args: &[String]) -> Result<(String, Scope), String> {
             // person debugging instance identity most wants to type.
             "-" => words.push("-"),
             w if !w.starts_with('-') => words.push(w),
+            // A negative number is a word too: `doc scroll -2400` scrolls up.
+            w if w.parse::<f64>().is_ok() => words.push(w),
             other => return Err(format!("unknown flag {other:?}")),
         }
     }
@@ -1244,6 +1478,63 @@ fn td_pids_in_workspace(clients: &serde_json::Value, sel: &str) -> Vec<u32> {
     out
 }
 
+/// The workspace a window is on, by its pid, as the id `td_pids_in_workspace`
+/// selects with. `None` when Hyprland does not list the pid — a window on no
+/// compositor, or one that has gone — which is an answer, not workspace 0.
+fn workspace_of(clients: &serde_json::Value, pid: u32) -> Option<String> {
+    clients
+        .as_array()?
+        .iter()
+        .find(|c| c["pid"].as_i64() == Some(i64::from(pid)))
+        .and_then(|c| c["workspace"]["id"].as_i64())
+        .map(|id| id.to_string())
+}
+
+/// A person folded the paint overlay in THIS window: fold it in every other
+/// terminal-delight window on the same Hyprland workspace too.
+///
+/// The overlay is raised per workspace (`paint on` with the default scope pokes
+/// every window there), so two tiles side by side each grew one. Folding only
+/// the window the key was pressed in left the other standing, and a second
+/// press of the hotkey then flipped the two out of step. One raise, one fold.
+///
+/// Off the UI thread: asking Hyprland and each window is socket I/O. The other
+/// windows receive a plain `paint off`, which sets their mode and broadcasts
+/// nothing, so this cannot echo back and forth.
+pub fn fold_paint_on_my_workspace() {
+    let me = std::process::id();
+    std::thread::spawn(move || {
+        let Some(clients) = hypr_request("j/clients")
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        else {
+            return;
+        };
+        let Some(ws) = workspace_of(&clients, me) else {
+            return;
+        };
+        for pid in td_pids_in_workspace(&clients, &ws) {
+            if pid != me {
+                let _ = send(&socket_path(pid), "paint off");
+            }
+        }
+    });
+}
+
+/// What a `paint toggle` sent to several windows at once should become.
+///
+/// Flipping each window on its own leaves two windows that disagree still
+/// disagreeing — one closed by hand, one still up — and the hotkey then can
+/// never bring them back together. So a broadcast toggle settles on one state:
+/// if any window has the overlay up, the press folds them all; only when none
+/// has it does it raise them all. A window that would not say counts as down.
+fn settle_paint_toggle(up: &[bool]) -> &'static str {
+    if up.iter().any(|&u| u) {
+        "paint off"
+    } else {
+        "paint on"
+    }
+}
+
 /// The `terminal-delight ctl …` entry point. Returns the process exit code:
 /// 0 when at least one terminal answered, 2 when nothing matched (with a hint
 /// on stderr), 1 on a usage error.
@@ -1342,6 +1633,18 @@ pub fn run_cli(args: &[String]) -> i32 {
         );
         return 2;
     }
+
+    // A toggle aimed at several windows is one gesture, so it settles on one
+    // state rather than flipping each window from wherever it happens to be.
+    let line = if line == "paint toggle" && targets.len() > 1 {
+        let up: Vec<bool> = targets
+            .iter()
+            .map(|(_, path)| send(path, "paint status").is_ok_and(|r| r == "on"))
+            .collect();
+        settle_paint_toggle(&up).to_string()
+    } else {
+        line
+    };
 
     let mut ok = 0;
     for (pid, path) in &targets {
@@ -1910,6 +2213,29 @@ mod tests {
     #[test]
     fn the_rounds_only_exit_can_be_pressed_without_a_pointer() {
         assert!(matches!(parse_line("bench submit"), Ok(Cmd::BenchSubmit)));
+        assert!(matches!(parse_line("bench probe"), Ok(Cmd::BenchProbe)));
+        assert!(matches!(
+            parse_line("bench click 10 20.5 ctrl-alt"),
+            Ok(Cmd::BenchPointer(PointerReq {
+                click: true,
+                alt: true,
+                control: true,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            parse_line("bench hover 1 2"),
+            Ok(Cmd::BenchPointer(PointerReq {
+                click: false,
+                alt: false,
+                ..
+            }))
+        ));
+        assert!(parse_line("bench click 1").is_err(), "two coordinates");
+        assert!(
+            parse_line("bench click 1 2 shift").is_err(),
+            "alt, ctrl or ctrl-alt"
+        );
         assert!(
             USAGE.contains("submit"),
             "the verb exists and the usage string does not mention it: {USAGE}"
@@ -1919,6 +2245,85 @@ mod tests {
         // answering it would send a round they did not mean.
         assert!(parse_line("bench submit 1").is_err());
         assert!(parse_line("bench submit all").is_err());
+    }
+
+    /// A floating document can be opened and closed without a pointer, which
+    /// is how a hundred open-and-close cycles get counted at all. The path is
+    /// taken whole, spaces included, and must be absolute: the socket has no
+    /// working directory, and resolving against the window's own would open a
+    /// file the caller did not name.
+    #[test]
+    fn a_floating_document_opens_and_closes_without_a_pointer() {
+        assert!(matches!(
+            parse_line("doc here /tmp/two words.png"),
+            Ok(Cmd::DocHere(ref p)) if p == Path::new("/tmp/two words.png")
+        ));
+        assert!(parse_line("doc here shot.png").is_err());
+        assert!(parse_line("doc here ~/shot.png").is_err());
+        assert!(matches!(parse_line("doc close"), Ok(Cmd::DocClose)));
+        assert!(matches!(parse_line("doc notes"), Ok(Cmd::DocNotes)));
+        assert!(USAGE.contains("doc notes"));
+        use crate::docview::NotesCommand;
+        assert!(matches!(
+            parse_line("doc note add fig-01-x two  words, kept"),
+            Ok(Cmd::DocNote(NotesCommand::Add { ref nid, ref text }))
+                if nid == "fig-01-x" && text == "two  words, kept"
+        ));
+        assert!(matches!(
+            parse_line("doc note delete fig-01-x the words"),
+            Ok(Cmd::DocNote(NotesCommand::Delete { ref nid, ref text }))
+                if nid == "fig-01-x" && text == "the words"
+        ));
+        assert!(
+            parse_line("doc note add fig-01-x").is_err(),
+            "a note needs words"
+        );
+        let quoted = format!(
+            "doc note add a {}",
+            serde_json::to_string("two\nlines").unwrap()
+        );
+        assert!(matches!(
+            parse_line(&quoted),
+            Ok(Cmd::DocNote(NotesCommand::Add { ref text, .. })) if text == "two\nlines"
+        ));
+        assert!(parse_line("doc note add a \"unclosed").is_err());
+        assert!(matches!(
+            parse_line("doc concur ask-1"),
+            Ok(Cmd::DocNote(NotesCommand::Concur { ref nid })) if nid == "ask-1"
+        ));
+        assert!(matches!(
+            parse_line("doc save"),
+            Ok(Cmd::DocNote(NotesCommand::Save))
+        ));
+        assert!(USAGE.contains("doc save") && USAGE.contains("doc concur"));
+        assert!(parse_line("doc close all").is_err());
+        assert!(USAGE.contains("doc here") && USAGE.contains("doc close"));
+    }
+
+    /// The split can be asked for without a pointer too — Ctrl+Alt+click's
+    /// verb — on the same terms as `doc here`: the whole path, spaces and all,
+    /// and only an absolute one.
+    #[test]
+    fn a_document_opens_beside_a_pane_without_a_pointer() {
+        assert!(matches!(
+            parse_line("doc beside /tmp/two words.md"),
+            Ok(Cmd::DocBeside(ref p)) if p == Path::new("/tmp/two words.md")
+        ));
+        assert!(parse_line("doc beside notes.md").is_err());
+        assert!(parse_line("doc beside ~/notes.md").is_err());
+        assert!(parse_line("doc beside").is_err(), "no path is not a path");
+        assert!(USAGE.contains("doc beside <absolute path>"));
+    }
+
+    /// A floating document scrolls without a pointer, which is how a soak
+    /// walks a brief top to bottom and makes it evict and bring back tiles.
+    #[test]
+    fn a_floating_document_scrolls_without_a_pointer() {
+        assert!(matches!(parse_line("doc scroll 2400"), Ok(Cmd::DocScroll(p)) if p == 2400.0));
+        assert!(matches!(parse_line("doc scroll -120.5"), Ok(Cmd::DocScroll(p)) if p == -120.5));
+        assert!(parse_line("doc scroll down").is_err());
+        assert!(parse_line("doc scroll NaN").is_err());
+        assert!(USAGE.contains("doc scroll"));
     }
 
     #[test]
@@ -2213,6 +2618,18 @@ mod tests {
         assert!(parse_cli(&s(&["paint", "on", "--wat"])).is_err());
     }
 
+    /// `doc scroll -2400` scrolls up. Read as a flag, the minus sign made the
+    /// soak's walk back to the top a string of refusals nobody saw, and every
+    /// cycle closed the brief scrolled to its end.
+    #[test]
+    fn a_negative_number_on_the_command_line_is_a_word_not_a_flag() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let (line, scope) = parse_cli(&s(&["doc", "scroll", "-2400", "--pid", "42"])).unwrap();
+        assert_eq!(line, "doc scroll -2400");
+        assert_eq!(scope, Scope::Pid(42));
+        assert!(parse_cli(&s(&["doc", "scroll", "-x"])).is_err());
+    }
+
     #[test]
     fn workspace_filter_matches_class_and_either_selector_spelling() {
         let clients: serde_json::Value = serde_json::from_str(
@@ -2228,6 +2645,25 @@ mod tests {
         assert_eq!(td_pids_in_workspace(&clients, "2"), vec![200]);
         assert_eq!(td_pids_in_workspace(&clients, "web"), vec![200]);
         assert!(td_pids_in_workspace(&clients, "9").is_empty());
+
+        // …and the way back, from a window to its workspace.
+        assert_eq!(workspace_of(&clients, 200).as_deref(), Some("2"));
+        assert_eq!(workspace_of(&clients, 300).as_deref(), Some("2"));
+        assert_eq!(
+            workspace_of(&clients, 999),
+            None,
+            "an unlisted pid has no workspace"
+        );
+    }
+
+    /// Two windows, one painter closed by hand: the hotkey must bring them back
+    /// together, not flip each into the other's state.
+    #[test]
+    fn a_broadcast_paint_toggle_settles_on_one_state() {
+        assert_eq!(settle_paint_toggle(&[true, false]), "paint off");
+        assert_eq!(settle_paint_toggle(&[false, true]), "paint off");
+        assert_eq!(settle_paint_toggle(&[true, true]), "paint off");
+        assert_eq!(settle_paint_toggle(&[false, false]), "paint on");
     }
 
     #[test]

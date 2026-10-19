@@ -1,0 +1,58 @@
+<script type="application/json" data-page>
+{
+  "title": "Comments",
+  "description": "The workbench's COMMENTS shelf holds notes you write to yourself about a pane. They're saved with the pane and never sent to the agent: no keystrokes, no journal line, no button that hands one over. Copy is the only way out.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Notes to yourself the agent never sees"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">The fourth shelf on a pane's <a href="/workbench">workbench</a>, <b>comments</b>, is for notes to yourself: what to check when the agent finishes, a number you want to remember, what you think of its plan. The agent is never told.</p>
+<p>Press <kbd>Alt</kbd>+<kbd>M</kbd> on the bench, or click <b>+ write a note</b> at the top of the shelf. Write, then press <kbd>Enter</kbd> to post or <kbd>Esc</kbd> to throw it away. The note is saved with the pane, so it's still there after a restart.</p>
+<p>Nothing about a note reaches the agent. It isn't typed into the terminal, it isn't recorded in the agent's action journal, and no button sends it. <b>copy</b>, which puts it on your clipboard, is the only way it leaves. It isn't secret, though: it's an ordinary file that anything running as you can read.</p>
+<p class="invite">Technical has the keys, where notes are kept, and how long.</p>
+</section>
+
+<section data-register="technical" data-headline="Notes">
+<h3>Writing</h3>
+<p>The box opens below the bench, above the composer, headed <code>A NOTE ON THIS PANE · THE AGENT IS NOT TOLD</code>, and the rail moves to the comments shelf. The <b>+ write a note</b> row only shows while the rail is open, on panes at least 420 px wide; on narrower ones <kbd>Alt</kbd>+<kbd>M</kbd> is the way in. Typing on the comments shelf without opening the box starts a message to the agent, as on every shelf.</p>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Enter</kbd></td><td>post</td></tr>
+    <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>new line</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>discard</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Shift</kbd>+<kbd>Insert</kbd></td><td>paste text; copied files paste as their paths; an image isn't pasted</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>1</kbd>–<kbd>4</kbd>, <kbd>Alt</kbd>+<kbd>M</kbd></td><td>still work while you write</td></tr>
+  </tbody>
+</table>
+<p>The rest of the editing keys are the composer's, listed on <a href="/keys#technical-workbench-writing">Keys</a>. Every other key goes into the note. An empty note closes without posting.</p>
+
+<h3>Where notes are kept</h3>
+<p>Each note is a file in the pane's own folder:</p>
+<pre><code>~/.local/state/terminal-delight/surfaces/&lt;session&gt;/&lt;pane&gt;/comment-&lt;time&gt;-&lt;n&gt;.json</code></pre>
+<pre><code>{"td":"0.4","kind":"comment","id":"comment-1758784380000-0","model":{"body":"check the bleed at 40%. it might be the chip"}}</code></pre>
+<p>It's the same folder an agent writes its own surfaces to, and the file is readable by anything running as you. A pane with nowhere to save, such as one in a scratch window, says <code>THIS PANE CANNOT SAVE NOTES · NOTHING HERE WILL SURVIVE</code> and keeps your draft if you try to post. Notes follow the same limits as every surface: 64 per pane on the bench, 512 files per pane on disk, and a session folder untouched for 30 days is removed.</p>
+
+<h3>Why it can't reach the agent</h3>
+<ul>
+  <li>A comment's only action is <b>copy</b>, and copy is done by the window: it writes the clipboard and nothing else.</li>
+  <li>Posting writes the file and draws the card. It doesn't touch the terminal or <code>actions.jsonl</code>.</li>
+  <li>The <code>comment</code> kind isn't in the catalogue or the launch briefing, so agents aren't invited to write one, and no <a href="/mcp">MCP</a> tool returns the bench's contents.</li>
+</ul>
+
+<h3>The card</h3>
+<p>Notes are drawn in the colour of your own input. The title is the note's first line, up to 72 characters. Under it, <code>you · 25 Sep 2026, 07:13</code>, and the provenance line <code>written here, by you</code>. A one-line note's card reads <code>A NOTE TO YOURSELF · THE AGENT WAS NOT TOLD</code>. Newest notes come first.</p>
+<p>The <code>you</code> lasts for the session. After a restart the note is read back from its file, and since anything could have written that file, it reads <code>dropped as a file · writer unknown</code>.</p>
+
+<h3>Copying</h3>
+<p><b>copy</b> on the card, or <kbd>Enter</kbd> with the note selected, copies the whole note. To copy part of it, drag across the text, then <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> or right-click and Copy.</p>
+
+<h3>Not yet</h3>
+<p>A posted note can't be edited or deleted from the bench. Deleting its file removes it the next time the window opens.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The note box and posting: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>; the comment kind and its one action: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surface.rs">surface.rs</a>; the card: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a>.</li>
+</ol>

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>04 · Every click on a path, before and after</title>
+<link rel="stylesheet" href="td-mock.css"></head><body>
+
+<h1 class="mock">04 · Every click on a path, before and after</h1>
+<p class="say">Alt is TD's modifier, so the two new gestures carry it. Nothing you use today disappears: opening with the
+desktop stays on Ctrl+click, and revealing a file gets a shorter click. The right-click menu offers every action by name.</p>
+
+<div class="row">
+<table class="clicks">
+  <thead><tr><th>Click on a path</th><th>Today</th><th>After</th></tr></thead>
+  <tbody>
+    <tr><td>Ctrl+click</td><td>opens with the desktop</td><td>opens with the desktop — unchanged</td></tr>
+    <tr><td>Shift+click</td><td>opens with the desktop (same as Ctrl)</td><td>shows the file in the file manager <span class="moved">moved</span></td></tr>
+    <tr><td>Alt+click</td><td>copies the line, when it is a command or starts with a URL</td><td>on a Markdown, HTML or image path: opens the floating square <span class="new">new</span><br>anywhere else: copies the line, as today</td></tr>
+    <tr><td>Ctrl+Alt+click</td><td>copies the line, or opens with the desktop</td><td>on a Markdown, HTML or image path: opens it in a split beside the pane <span class="new">new</span></td></tr>
+    <tr><td>click on the floating square</td><td>—</td><td>docks it into a split <span class="new">new</span></td></tr>
+    <tr><td>Super+Ctrl+click</td><td>shows the file in the file manager</td><td>unchanged, kept alongside Shift+click</td></tr>
+    <tr><td>right-click</td><td>Open link · Reveal in folder</td><td>the menu to the right</td></tr>
+  </tbody>
+</table>
+
+<div class="menu glow">
+  <div class="hot"><span>◳ Open here</span><kbd>alt+click</kbd></div>
+  <div><span>⤢ Open beside</span><kbd>ctrl+alt+click</kbd></div>
+  <div><span>↗ Open with desktop</span><kbd>ctrl+click</kbd></div>
+  <div><span>⌖ Reveal in folder</span><kbd>shift+click</kbd></div>
+  <div class="sep"></div>
+  <div><span>⎘ Copy link</span><kbd></kbd></div>
+</div>
+</div>
+
+<p class="prop">yellow = proposal, not decided: "click on the floating square docks it" needs a rule for clicks meant for
+the document itself (a link, a note button) — the proposal is that the dock action is the title strip's "click to split"
+and a second Alt+click on the same path, not any click on the body. "Copy link" in the menu replaces the copy that Alt+click
+gives up on document lines.</p>
+</body></html>

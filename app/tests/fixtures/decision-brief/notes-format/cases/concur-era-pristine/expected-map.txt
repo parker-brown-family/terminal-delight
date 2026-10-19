@@ -1,0 +1,10 @@
+NOTES — brief.html
+1 notes on 1 elements · 2 concurs.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[finding-the-island-is-the] The island is the record
+  · One note beside two concurs.
+
+[ask-stamp-a-revision-on] Stamp a revision on the island?  ✓ concur
+
+[ask-keep-the-plain-text] Keep the plain-text mirror?  ✓ concur

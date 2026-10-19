@@ -6,6 +6,7 @@
 //! by direction · ctrl+arrows: word-jump in the shell · alt+v / alt+h: split ↔ / ↕
 //! alt+w: close the focused PANE (ctrl+w closes the whole tab) ·
 //! alt+k: flip the focused pane between its TERMINAL and WORKBENCH faces ·
+//! alt+g: open or close Git coordination ·
 //! ctrl+alt+arrows: walk the left bar's tree (→ opens a branch, then steps in;
 //! ← closes it, then climbs out) ·
 //! drag a tab to reorder · ctrl+click a tab: set its binder-divider colour
@@ -27,24 +28,32 @@
 //!
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
+mod access;
 mod art;
 mod attention;
 mod bell;
 mod benchdraw;
 mod benchstore;
+mod briefkit;
 mod channel;
+mod coordination;
+mod coordination_view;
 mod crt;
 mod csd;
 mod ctl;
+mod defaultterm;
 mod demo;
 mod derive;
 mod dirlogo;
 mod doc;
+mod docopen;
+mod docview;
 mod emphasis;
 mod engstate;
 mod fav;
-mod gamba;
+mod glyph;
 mod gridwire;
+mod handover;
 mod hold;
 mod host;
 mod hostctl;
@@ -55,34 +64,41 @@ mod keylayer;
 mod lang;
 mod launcher;
 mod launchpref;
+mod lookup;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
+mod notepaper;
 mod notifpref;
 mod notify;
 mod paint;
 mod palette;
 mod pane;
 mod paneident;
+mod picturewire;
 mod plugins;
+mod ptyscan;
+mod readrows;
 mod recover;
 mod screenread;
 mod session;
 mod skin;
 mod slot;
-mod socketpty;
 mod sticky;
 mod surface;
 mod surfacefeed;
 mod tenancy;
 mod term;
+mod terminal_state;
 #[cfg(test)]
 mod testsync;
 mod theme;
 mod toolprop;
+mod transcript;
 mod tree;
 mod usage;
 mod vitals;
+mod vt;
 mod warp;
 mod workbench;
 
@@ -135,6 +151,66 @@ const _: () = assert!(MAX_PANES <= LEGACY_PANE_CEILING);
 /// arranged six panes before the cap dropped keeps all six.
 fn may_split(leaves: usize) -> bool {
     leaves < MAX_PANES
+}
+
+/// Whether dropping a dragged pane on tab `t` (currently showing `t_panes`
+/// panes) is refused by the cap, given the drag started at tab `from`.
+///
+/// A drop back onto the pane's OWN tab never grows it — the pane is
+/// already counted in `t_panes` and will still be one of that tab's panes
+/// after the extract-then-splice, just rearranged — so it is never
+/// refused by the cap regardless of `t_panes`, even for a legacy tab
+/// sitting above `MAX_PANES` already. Only a drop that ADDS to a
+/// DIFFERENT tab can push it past the cap. Caught in review: an earlier
+/// version of this check counted the pane against its own tab before
+/// removing it, which refused an ordinary re-layout drag on any tab
+/// already at the cap.
+fn pane_drop_capped(t: usize, from: usize, t_panes: usize) -> bool {
+    t != from && !may_split(t_panes)
+}
+
+/// What a request to open a document beside a pane becomes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Beside {
+    /// A pane in the tab already shows the file: that pane, by its index in
+    /// the leaves given. Focused rather than opened twice.
+    Focus(usize),
+    /// Split the pane that asked, the document on the right.
+    Split,
+    /// The tab is full: the document floats over the pane that asked instead.
+    Float,
+}
+
+/// Where a document asked for beside a pane goes, decided over a tab's leaves.
+///
+/// A leaf already showing `path` wins, whatever the count, so a second
+/// Ctrl+Alt+click on the same path brings its pane forward rather than making
+/// another. Only then does the cap ask: under four panes the tab splits, and at
+/// four the document floats. `showing` answers which file a leaf's Document
+/// face shows, if any.
+fn beside<L>(
+    leaves: &[L],
+    showing: impl Fn(&L) -> Option<PathBuf>,
+    path: &std::path::Path,
+) -> Beside {
+    if let Some(i) = leaves
+        .iter()
+        .position(|l| showing(l).as_deref() == Some(path))
+    {
+        return Beside::Focus(i);
+    }
+    if may_split(leaves.len()) {
+        Beside::Split
+    } else {
+        Beside::Float
+    }
+}
+
+/// Two spellings of one file are one file: `a/../b.md` and a symlink to it
+/// both name what `b.md` names. Falls back to the path as given when the
+/// file cannot be resolved, so a missing file still compares by its name.
+fn same_file_key(path: &std::path::Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// A tube that has been switched off. A closing pane is dropped immediately —
@@ -204,6 +280,30 @@ struct RailHit {
     /// document: the wrong verb, from a hit box that was still confidently
     /// returning an answer.
     deliverable: Option<(f32, f32)>,
+}
+
+/// The local file a declared deliverable names, when it names one: an absolute
+/// path, or a `file://` URL decoded. `None` for a web address, a pull request or
+/// anything else that has no pane to open in.
+fn deliverable_file(href: &str) -> Option<PathBuf> {
+    let href = href.trim();
+    if href.starts_with('/') {
+        return Some(PathBuf::from(href));
+    }
+    if !href.get(..5)?.eq_ignore_ascii_case("file:") {
+        return None;
+    }
+    match docview::resolve_link(std::path::Path::new("/"), href) {
+        docview::LinkTarget::File { path, .. } => Some(path),
+        _ => None,
+    }
+}
+
+/// Whether a deliverable row offers "⇲ beside": its target is a local file
+/// whose NAME is one TD draws. By name only, because the row is painted every
+/// frame; the click then checks the file itself.
+fn rail_offers_beside(href: &str) -> bool {
+    deliverable_file(href).is_some_and(|p| docopen::doc_kind_by_name(&p).is_some())
 }
 
 /// What a click on the queue meant, once the curve was undone.
@@ -651,6 +751,8 @@ impl<L: Clone> Tree<L> {
                     logo: s.logo,
                     note: s.note,
                     pane_id: s.pane_id,
+                    document: s.document,
+                    off_limits: s.off_limits,
                 }
             }
             Tree::Split {
@@ -689,6 +791,10 @@ impl Node {
                     pinned: n.pinned,
                 }),
                 pane_id: view.pane_id(),
+                document: view
+                    .saved_document(cx)
+                    .map(|(path, scroll)| SavedDocument { path, scroll }),
+                off_limits: view.off_limits,
             }
         })
     }
@@ -705,6 +811,27 @@ struct LeafState {
     logo: Option<String>,
     note: Option<SavedNote>,
     pane_id: Option<u64>,
+    document: Option<SavedDocument>,
+    off_limits: bool,
+}
+
+/// The document a pane was showing on its Document face, on its way into the
+/// state file, so a split opened to read something beside the prompt comes
+/// back after a restart with the page where it was left.
+///
+/// The path is kept even when the file has gone: a restore keeps the pane and
+/// its face, and the view says it cannot read the file. "Not there right now"
+/// (an unmounted drive, a branch switched away) is a different fact from "never
+/// was a document", and turning the pane back into a shell would lose it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SavedDocument {
+    path: String,
+    /// The top of the view as a fraction of the page. `None` is "never
+    /// measured" — an image has no scroll, and a page that was never laid out
+    /// has none yet — which is not the top of the page, so it is never written
+    /// as 0.0 and never read back as it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scroll: Option<f32>,
 }
 
 /// A sticky note on its way into the state file. The seed travels with the text
@@ -755,6 +882,17 @@ enum SavedNode {
         /// and starting a second one beside it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pane_id: Option<u64>,
+        /// The document this pane was showing, if it was opened to show one.
+        /// Absent in every file written before documents existed, which reads
+        /// back as a terminal, as it was.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        document: Option<SavedDocument>,
+        /// A person marked this pane off-limits to agents (see
+        /// [`mcp::should_expose`]). Written only when set, and absent in every
+        /// file written before the mark existed — which reads back as NOT
+        /// marked, exactly how those panes behaved.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        off_limits: bool,
     },
     Split {
         dir: SplitDir,
@@ -788,6 +926,10 @@ impl<'de> Deserialize<'de> for SavedNode {
             note: Option<SavedNote>,
             #[serde(default)]
             pane_id: Option<u64>,
+            #[serde(default)]
+            document: Option<SavedDocument>,
+            #[serde(default)]
+            off_limits: bool,
         }
         // A leaf's appearance: the new per-group form if present, else migrate a
         // legacy `theme` override, else pristine (follows outer for everything).
@@ -821,6 +963,8 @@ impl<'de> Deserialize<'de> for SavedNode {
                         logo: None,
                         note: None,
                         pane_id: None,
+                        document: None,
+                        off_limits: false,
                     }),
                     other => Err(E::custom(format!("unknown node: {other}"))),
                 }
@@ -844,6 +988,8 @@ impl<'de> Deserialize<'de> for SavedNode {
                             logo: f.logo.take(),
                             note: f.note.take(),
                             pane_id: f.pane_id.take(),
+                            document: f.document.take(),
+                            off_limits: f.off_limits,
                         })
                     }
                     "Split" => {
@@ -873,15 +1019,16 @@ impl SavedNode {
     /// recipe has been taken away and whose pane id has not.
     fn for_each_claim(
         &mut self,
-        f: &mut impl FnMut(&mut Option<u64>, &mut Option<String>, &mut Option<SavedNote>),
+        f: &mut impl FnMut(Option<&str>, &mut Option<u64>, &mut Option<String>, &mut Option<SavedNote>),
     ) {
         match self {
             SavedNode::Leaf {
+                cwd,
                 pane_id,
                 resume,
                 note,
                 ..
-            } => f(pane_id, resume, note),
+            } => f(cwd.as_deref(), pane_id, resume, note),
             SavedNode::Split { a, b, .. } => {
                 a.for_each_claim(f);
                 b.for_each_claim(f);
@@ -944,7 +1091,7 @@ fn dedupe_resumes(tabs: &mut [SavedTab]) {
     let mut claimed = std::collections::HashSet::new();
     let mut panes = std::collections::HashSet::new();
     for tab in tabs.iter_mut() {
-        tab.node.for_each_claim(&mut |pane_id, resume, note| {
+        tab.node.for_each_claim(&mut |cwd, pane_id, resume, note| {
             let mut copied = false;
             if let Some(id) = *pane_id {
                 if !panes.insert(id) {
@@ -953,21 +1100,31 @@ fn dedupe_resumes(tabs: &mut [SavedTab]) {
                 }
             }
             if let Some(cmd) = resume.clone() {
-                if !claimed.insert(cmd.clone()) {
+                if resume_claim(cwd, &cmd).is_some_and(|claim| !claimed.insert(claim)) {
                     *resume = bare_agent(&cmd);
                     copied = true;
                 }
             }
-            // Say so on the glass. The restore explains this when IT finds the
-            // collision (`LeafPlan::Duplicate`), and dropping the claim here
-            // means the restore no longer can — the leaf reaches it looking like
-            // an ordinary fresh shell. Repairing something silently and leaving
-            // a person to notice that a tab is empty is the failure this whole
-            // thread is about, so the explanation moves with the repair.
+            // Say so on the glass — but only where the next restore really will
+            // start this leaf afresh, which is a leaf left holding no terminal.
+            //
+            // The restore explains a collision when IT finds one
+            // (`LeafPlan::Duplicate`), and dropping the claim here means it no
+            // longer can: a leaf with no terminal reaches it looking like an
+            // ordinary fresh shell, so the explanation moves with the repair.
+            //
+            // A leaf that still names a pane is a terminal the host is running
+            // right now, with its own agent in it. The restore binds it rather
+            // than starting it, the host writes its real recipe back over the
+            // stripped one at the next checkpoint, and a note saying "this is a
+            // fresh shell" is false on the glass it lands on. Until 2026-10-19
+            // it was written there on every save: every pair of Codex panes in
+            // one directory (both `codex resume --last`) and every pair of bare
+            // `claude` panes anywhere wore it while mid-conversation (#919).
             //
             // Only onto blank glass: somebody's own words outrank ours, and the
             // note they wrote is usually what identifies the tab.
-            if copied && note.is_none() {
+            if copied && pane_id.is_none() && note.is_none() {
                 let said = duplicate_leaf_note();
                 *note = Some(SavedNote {
                     title: said.title,
@@ -978,6 +1135,39 @@ fn dedupe_resumes(tabs: &mut [SavedTab]) {
             }
         });
     }
+}
+
+/// What a resume line claims, if anything: the conversation two leaves must
+/// not both come back onto.
+///
+/// `claude --resume <id>` and `codex resume <id>` claim that conversation,
+/// wherever they run. `claude --continue` and `codex resume --last` claim "the
+/// newest one here", so they collide only with the same line in the same
+/// directory — the same line in another directory is another conversation.
+/// Anything else (`claude`, `codex`, a script) names no conversation, and two
+/// leaves running it are two of it, which is what a second pane was for.
+///
+/// The text alone was the key until 2026-10-19, so a bare `claude` in one tab
+/// collided with a bare `claude` in another, and a `codex resume --last` in
+/// one repository with one in a different repository.
+fn resume_claim(cwd: Option<&str>, cmd: &str) -> Option<String> {
+    if let Some(id) = named_session(Some(cmd)) {
+        return Some(format!("session {id}"));
+    }
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    let newest_here = words.iter().any(|w| *w == "--continue" || *w == "-c")
+        || words.windows(2).any(|w| w == ["resume", "--last"]);
+    // Two leaves with no recorded directory both restore into the same
+    // fallback one, so an unknown directory is one shared key, not a pass.
+    newest_here.then(|| format!("newest {} {}", cwd.unwrap_or(""), words.join(" ")))
+}
+
+/// Whether a saved note is the one `dedupe_resumes` writes, rather than words
+/// a person or an agent chose. Matched on the whole text, so a hand-written note
+/// that merely starts "DUPLICATE TAB" is theirs.
+fn is_duplicate_leaf_note(note: &SavedNote) -> bool {
+    let ours = duplicate_leaf_note();
+    note.title == ours.title && note.text == ours.text
 }
 
 /// A resume command with the session part stripped — `claude --continue` becomes
@@ -1014,6 +1204,134 @@ const ENG_STALE: Duration = Duration::from_secs(20);
 /// coming back, which is the moment the afterglow is for.
 const ENG_AFTERGLOW: Duration = Duration::from_secs(15 * 60);
 
+/// How strongly the tree washes the project and group rows holding the active
+/// task, as the alpha of each row's own colour. Under the hover's `0.12` and
+/// well under a pinned scope's `0.20`: a standing fact, read in passing.
+const STANDING_WASH: f32 = 0.08;
+
+/// The wash on the chip of the group you are in, at the head of the shut
+/// strip. Twice the tree's: a chip is a few characters wide, and the wash is
+/// half of what tells it from its siblings.
+const STRIP_CHIP_WASH: f32 = STANDING_WASH * 2.;
+
+/// The column beside the screen on the right — the attention pill at its head,
+/// the split-right button at its foot — as its width plus its left margin, in
+/// points at scale 1. The bottom bezel stops this far (and the screen's own
+/// margin) short of the window's edge, so its split-down button meets the
+/// corner under the column rather than running beneath it.
+const RIGHT_COLUMN_W: f32 = 30.;
+
+/// Where a panel raised from the bottom-right controls opens: rising from just
+/// above the bottom bezel, its right edge on the inset the controls stop at.
+///
+/// One anchor for every panel those controls raise — the scale, the `…` menu,
+/// the theme tray and the display tray. Each used to carry its own copy of the
+/// numbers, and two were still hanging from the top of the window a day after
+/// their buttons moved to the bottom: a menu that opens at the far end of the
+/// window from the thing that raised it reads as a different control firing.
+fn over_the_footer<E: Styled>(el: E, scale: f32) -> E {
+    el.bottom(px((pane::HICON + 10.) * scale))
+        .right(px(RIGHT_COLUMN_W * scale + 12.))
+}
+
+/// One chip at the head of the shut strip: a branch you can go to, and
+/// whether you are in it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum StripChip {
+    /// The project, standing for its own tabs — the ones filed under no group.
+    /// `go` is the first of those, and `None` when it has none: a project
+    /// whose every tab is in a group is a heading with nowhere of its own.
+    Project {
+        id: u32,
+        lit: bool,
+        go: Option<usize>,
+    },
+    /// One of the project's groups, or a top-level group on its own. `go` is
+    /// its first tab.
+    Group { id: u32, lit: bool, go: usize },
+}
+
+/// The head of the shut strip: the active tab's project, then that project's
+/// groups — every one holding a tab, in the order the tree lists them — with
+/// the branch you are in lit. The tabs that follow the head are that branch's,
+/// so the row reads project › groups › the tabs beside yours.
+///
+/// A tab in a top-level group gets that group alone, since it has no project
+/// to list siblings under; a tab filed nowhere gets no head at all, because an
+/// unorganised session is not labelled "unfiled".
+///
+/// `places` is [`Workspace::places`], which reads a grouped tab's project FROM
+/// ITS GROUP — so every tab in a group under a project answers that project.
+fn strip_chips(places: &[tree::Place], active: usize) -> Vec<StripChip> {
+    let Some(here) = places.get(active).copied() else {
+        return Vec::new();
+    };
+    let first = |want: tree::Place| places.iter().position(|p| *p == want);
+    match (here.project, here.initiative) {
+        (Some(p), g) => {
+            let mut chips = vec![StripChip::Project {
+                id: p,
+                lit: g.is_none(),
+                go: first(tree::Place {
+                    project: Some(p),
+                    initiative: None,
+                }),
+            }];
+            // First-tab order, which is the order the tree lists groups in.
+            for (i, place) in places.iter().enumerate() {
+                let Some(gid) = place.initiative.filter(|_| place.project == Some(p)) else {
+                    continue;
+                };
+                let seen = chips
+                    .iter()
+                    .any(|c| matches!(c, StripChip::Group { id, .. } if *id == gid));
+                if !seen {
+                    chips.push(StripChip::Group {
+                        id: gid,
+                        lit: g == Some(gid),
+                        go: i,
+                    });
+                }
+            }
+            chips
+        }
+        (None, Some(g)) => first(here)
+            .map(|i| {
+                vec![StripChip::Group {
+                    id: g,
+                    lit: true,
+                    go: i,
+                }]
+            })
+            .unwrap_or_default(),
+        (None, None) => Vec::new(),
+    }
+}
+
+/// Where a click on `branch` in the tree lands: the index of the tab to make
+/// active, or `None` when there is nothing to do.
+///
+/// Nothing to do when the active tab is already in that branch — a click on the
+/// place you are standing moves you nowhere — or when the branch holds no tab.
+/// Otherwise the branch's first tab, in tab order, which is where the strip's
+/// chips send you too. A project counts every tab filed under it, grouped or
+/// loose, because a project row stands for the whole project. The UNFILED
+/// divider stands for the tabs filed nowhere.
+///
+/// `places` is [`Workspace::places`], which reads a grouped tab's project FROM
+/// ITS GROUP.
+fn branch_landing(places: &[tree::Place], active: usize, branch: BarBranch) -> Option<usize> {
+    let within = |p: &tree::Place| match branch {
+        BarBranch::Project(id) => p.project == Some(id),
+        BarBranch::Initiative(id) => p.initiative == Some(id),
+        BarBranch::Unfiled => p.project.is_none() && p.initiative.is_none(),
+    };
+    if places.get(active).is_some_and(within) {
+        return None;
+    }
+    places.iter().position(within)
+}
+
 /// Which branch of the tree the rail is reading for.
 ///
 /// The project the active tab is filed under when it has one; else the
@@ -1035,17 +1353,11 @@ enum EngKey {
 /// rebuilding them on every render was allocation for the same answer.
 struct Reading {
     state: engstate::ProjectState,
-    frames: Vec<engstate::Frame>,
-    badge: Vec<engstate::Segment>,
 }
 
 impl Reading {
     fn of(state: engstate::ProjectState) -> Reading {
-        Reading {
-            frames: state.frames(),
-            badge: state.badge(),
-            state,
-        }
+        Reading { state }
     }
 }
 
@@ -1053,21 +1365,17 @@ impl Reading {
 /// is missing or stale, else the stalest of the others that is stale, else
 /// nothing. `keys` is every branch the tree has, active first.
 ///
-/// The active branch always wins because it is the one on screen; the others
+/// The oldest observation wins, with the active branch breaking ties; the others
 /// are read round-robin behind it so that `engineering_state` describes the
 /// whole session for a coordinating agent, not only the places a person has
 /// visited since the window opened. A branch never read has age `MAX` and so
 /// goes first among the others.
 fn next_stale(keys: &[EngKey], age: impl Fn(&EngKey) -> Duration) -> Option<EngKey> {
-    let active = *keys.first()?;
-    if age(&active) >= ENG_STALE {
-        return Some(active);
-    }
-    keys[1..]
-        .iter()
-        .copied()
-        .filter(|k| age(k) >= ENG_STALE)
-        .max_by_key(|k| age(k))
+    keys.iter()
+        .enumerate()
+        .filter(|(_, k)| age(k) >= ENG_STALE)
+        .max_by(|(ia, a), (ib, b)| age(a).cmp(&age(b)).then_with(|| ib.cmp(ia)))
+        .map(|(_, k)| *k)
 }
 /// Default bar width in logical pixels at scale 1.0 — wide enough for two
 /// levels of indent plus a name plus its roll-up glyphs.
@@ -1155,13 +1463,20 @@ fn slider_switch(on: bool, th: &theme::Theme) -> gpui::Div {
                 .rounded_full()
                 .bg(if on { th.accent } else { th.text.alpha(0.45) })
                 .when(on, |d| {
-                    d.shadow(vec![BoxShadow {
-                        color: th.accent.alpha(0.8),
-                        offset: point(px(0.), px(0.)),
-                        blur_radius: px(6.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
+                    d.shadow(
+                        theme::phosphor(
+                            th.grade.phosphor,
+                            BoxShadow {
+                                color: th.accent.alpha(0.8),
+                                offset: point(px(0.), px(0.)),
+                                blur_radius: px(6.),
+                                spread_radius: px(0.),
+                                inset: false,
+                            },
+                        )
+                        .into_iter()
+                        .collect(),
+                    )
                 }),
         )
 }
@@ -1172,7 +1487,7 @@ const MARQUEE_SECS: f32 = 6.0;
 /// The in-window marquee: a strip of chasing bulbs around a line of text,
 /// across the top of the window.
 ///
-/// The bulbs are the casino cabinet's ([`gamba`]), which is deliberate — this
+/// The small bulbs follow the window accent — this
 /// is the loud channel, opted into by a switch that says so, and a quiet
 /// version of it would just be the toast we already had.
 fn marquee_banner(text: &str, age: f32, th: &theme::Theme) -> gpui::Div {
@@ -1211,7 +1526,7 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme) -> gpui::Div {
                 .border_1()
                 .border_color(th.accent.alpha(0.8 * fade))
                 .bg(th.bg.alpha(0.88 * fade))
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .child(bulbs(0))
                 .child(
                     div()
@@ -1280,27 +1595,25 @@ const TRAY_PAD: f32 = 12.; // p_3
 const TRAY_LABEL_H: f32 = 12.; // a 9px section heading
 const TRAY_SEP: f32 = 1.; // a hairline, h or v
 
-/// The PICKERS column — exactly three DESIGN buttons plus their gaps, which is
-/// the whole reason the tray fits: at this width DESIGN wraps 3+3+1 instead of
-/// the 2+2+2+1 it wrapped at in the old single strip.
-const TRAY_PICKER_W: f32 = 3. * TRAY_BTN_W + 2. * TRAY_GAP + TRAY_FIT_SLACK;
-/// The WHEEL column — the 132px wheel with room for its lightness bar.
-const TRAY_WHEEL_COL_W: f32 = 150.;
-/// The glyph column — the INVERT bar sets it (a heading plus a mode button),
-/// which is wider than the two 40px colour-set columns beneath it.
-const TRAY_GLYPH_COL_W: f32 = 110.;
-/// Three columns, two hairlines, four gaps, two paddings.
+/// STYLE fits three program-colour buttons, including rounding slack.
+const TRAY_PICKER_W: f32 = 3. * TRAY_MODE_BTN_W + 2. * TRAY_GAP + TRAY_FIT_SLACK;
+/// RULES holds labelled switches and the window-wide actions.
+const TRAY_RULES_COL_W: f32 = 180.;
+const TRAY_AREA_PAD: f32 = 8.;
+const TRAY_GLYPH_GAP: f32 = 3.;
+/// THEME holds the glyph columns and all three sticky-note papers.
+const TRAY_GLYPH_COL_W: f32 = 156.;
+/// Three boxed areas, their padding, two gaps and the outer padding.
 const TRAY_PANEL_W: f32 = 2. * TRAY_PAD
     + TRAY_GLYPH_COL_W
     + TRAY_PICKER_W
-    + TRAY_WHEEL_COL_W
-    + 2. * TRAY_SEP
-    + 4. * TRAY_COL_GAP;
-const TRAY_WHEEL_H: f32 = 132.; // color_wheel's D
-const TRAY_LBAR_H: f32 = 14.; // lightness_bar
-const TRAY_PIPS_H: f32 = 24.; // the four wheel-target pips
-const TRAY_RESET_H: f32 = 14.; // the ↺ reset row under them
-const TRAY_PILL_H: f32 = 22.; // a bezel button: 2px py, 11px text, a border
+    + TRAY_RULES_COL_W
+    + 6. * TRAY_AREA_PAD
+    + 2. * TRAY_COL_GAP;
+/// The STICKY NOTE buttons sit three abreast beneath the theme glyphs.
+const TRAY_NOTE_BTN_W: f32 = 48.;
+const TRAY_NOTE_GAP: f32 = 3.;
+const TRAY_NOTE_CAPTION: f32 = 7.5;
 
 /// The shortest render band the tray promises to open inside WITHOUT scrolling
 /// — a 768-tall screen with the window's own chrome taken off it.
@@ -1356,43 +1669,28 @@ fn tray_pickers_h(themes: usize, skins: usize, modes: usize, schemes: usize) -> 
     h + 2. * TRAY_PAD
 }
 
-/// Estimated height of the WHEEL column: the fixed wheel stack, then one block
-/// per window RULE (a hairline, a heading and a pill — AGENT THEME, ANCHOR) plus
-/// any bare pills under them (pass-down on the outer tray, follow-outer on a
-/// pane's). This is the column AGENT THEME grew, so it is the one that has to be
-/// counted rather than assumed short.
-fn tray_wheel_col_h(rules: usize, bare_pills: usize) -> f32 {
-    let mut h = TRAY_LABEL_H
-        + TRAY_GAP
-        + 8.  // py_1 above and below the wheel
-        + TRAY_WHEEL_H
-        + TRAY_GAP
-        + TRAY_LBAR_H
-        + TRAY_GAP
-        + 4. // pt_1 over the pips
-        + TRAY_PIPS_H
-        + TRAY_GAP
-        + TRAY_RESET_H;
-    for _ in 0..rules {
-        h += TRAY_GAP + TRAY_SEP + TRAY_GAP + TRAY_LABEL_H + TRAY_GAP + TRAY_PILL_H;
-    }
-    h += bare_pills as f32 * (TRAY_GAP + TRAY_PILL_H);
-    h + 2. * TRAY_PAD
+/// Rules are fixed-height rows; Theme is ten glyphs and the paper selector.
+fn tray_rules_h(rules: usize, bare_pills: usize) -> f32 {
+    TRAY_LABEL_H
+        + (rules + bare_pills + 2) as f32 * (TRAY_GAP + 32.)
+        + 2. * (TRAY_PAD + TRAY_AREA_PAD)
 }
 
-/// The tallest COLUMN on the OUTER tray — which is what the split bought, and
-/// what decides where the tray may open so it lands fully on screen.
 fn tray_panel_h_est() -> f32 {
-    let pickers = tray_pickers_h(
+    let style = tray_pickers_h(
         theme::picker_count(),
         skin::picker_max_count(),
         theme::ColorMode::ALL.len(),
-        // SYNTAX draws one button per grammar PLUS the "off" button.
         theme::SyntaxScheme::ALL.len() + 1,
-    );
-    // The outer tray's rules: AGENT THEME and ANCHOR, then the pass-down button.
-    let wheel = tray_wheel_col_h(2, 1);
-    pickers.max(wheel)
+    ) + 2. * TRAY_AREA_PAD;
+    let themes = 10. * 40.
+        + 9. * TRAY_GLYPH_GAP
+        + 2. * TRAY_LABEL_H
+        + TRAY_SEP
+        + 4. * TRAY_GAP
+        + TRAY_MODE_BTN_H
+        + 2. * (TRAY_PAD + TRAY_AREA_PAD);
+    style.max(themes).max(tray_rules_h(4, 1))
 }
 
 /// Seconds since the process started, for animations that want a phase rather
@@ -1416,6 +1714,18 @@ fn anim_clock() -> f32 {
 /// started. Tasks add this on top, which makes all three layers step by the
 /// same amount from the layer above.
 const FOLD_W: f32 = 15.0;
+
+/// How far a carried row shifts right at scale 1.0, on top of its own
+/// depth indent — see `Workspace::bar_cursor_ring`, which multiplies this
+/// by `s` like every other spacing constant in the same rows (`FOLD_W`,
+/// the depth `step`), so a narrowed or enlarged bar shifts the carried
+/// row by the same proportion as everything around it rather than by a
+/// fixed pixel count that only reads right at the scale it was eyeballed
+/// at. Large enough to read as a real step out of the tree's own rhythm
+/// rather than a rounding wobble; small enough that a task carried to
+/// Project depth still sits under the bar's own edge rather than
+/// crowding the fold triangle three layers up.
+const BAR_CARRY_INDENT: f32 = 10.0;
 
 /// The bin glyph's point size at scale 1.0 — two thirds of the 19pt it shipped
 /// at on the first pass, which read as the subject of the panel rather than as
@@ -1777,6 +2087,34 @@ impl EditBuffer {
             i += 1;
         }
         i
+    }
+
+    /// Put text at the caret, over any selection, and leave the caret after
+    /// it: how a note gets its newlines, since [`Self::apply`] leaves Enter
+    /// to its caller.
+    pub(crate) fn insert(&mut self, s: &str) {
+        self.delete_sel();
+        for c in s.chars() {
+            self.chars.insert(self.cursor, c);
+            self.cursor += 1;
+        }
+        self.anchor = self.cursor;
+    }
+
+    /// [`Self::insert`] for a paste: the selection goes, then as much of `s`
+    /// as leaves the text at most `max` characters long, with the caret after
+    /// it. Answers how many characters went in. Spliced in one move rather
+    /// than a character at a time, because a paste can be twenty thousand
+    /// characters landing in front of twenty thousand more.
+    pub(crate) fn insert_capped(&mut self, s: &str, max: usize) -> usize {
+        self.delete_sel();
+        let room = max.saturating_sub(self.chars.len());
+        let incoming: Vec<char> = s.chars().take(room).collect();
+        let n = incoming.len();
+        self.chars.splice(self.cursor..self.cursor, incoming);
+        self.cursor += n;
+        self.anchor = self.cursor;
+        n
     }
 
     /// Apply one keystroke. Enter/Escape are handled by the caller before this is
@@ -2422,7 +2760,7 @@ struct StateFile {
     /// the bottom pad so the prompt/typing area sits near the TOP of the pane.
     #[serde(default)]
     anchor_top: bool,
-    /// Global AGENT THEME preference: whether a pane that FOLLOWS OUTER is
+    /// Global TERMINAL STATE preference: whether a pane that FOLLOWS OUTER is
     /// retinted by the program running in it (claude amber · codex cyan ·
     /// remote violet) instead of wearing the theme it inherited.
     ///
@@ -2434,6 +2772,18 @@ struct StateFile {
     /// the OUTER design tray and the choice is saved from then on.
     #[serde(default)]
     agent_tint: bool,
+    /// The agent wall's IMAGES switch: whether each card draws its art window
+    /// — the uploaded logo, the robot holding the tool in flight, or the
+    /// generated crest. Off is the plain wall: the same card in text, shorter
+    /// by exactly the window it no longer carries.
+    ///
+    /// Absent means nobody has chosen, which draws the pictures every wall had
+    /// before the switch existed. It stays `None` rather than being written as
+    /// `true`, so a later change of default reaches the people who never chose
+    /// and leaves alone the ones who did. [`wall_card_art`] is the one place it
+    /// becomes a yes or a no.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    card_art: Option<bool>,
     /// Chrome language for the UI (the language pack). Absent on old files →
     /// English; keycaps and symbols are never translated.
     #[serde(default)]
@@ -2481,8 +2831,11 @@ impl Default for StateFile {
             win: None,
             scale: None,
             theme: None,
-            warp: theme::WARP_DEFAULT, // fresh install: the classic dial
-            track: None,
+            // `build` folds these two over the outer grade on every load, the
+            // fresh install included, so they must say what `house_outer` says
+            // or they would overwrite the CRT dials it keeps for switching on.
+            warp: theme::house_outer().grade.warp,
+            track: theme::house_outer().grade.tracking,
             tabs: Vec::new(),
             closed: Vec::new(),
             groups: Vec::new(),
@@ -2495,9 +2848,15 @@ impl Default for StateFile {
             slot_remaining: None,
             scope: None,
             mcp: None,
-            focus_inherit: false,
+            // A fresh install's reader wears the pane it reads. With the CRT
+            // off that is a flat screen either way; switch the tube on and the
+            // reader follows it, as it does on the machine this default was
+            // taken from. A file without the key still reads `false`, which is
+            // what everyone had before the preference existed.
+            focus_inherit: true,
             anchor_top: false,
             agent_tint: false,
+            card_art: None,
             lang: lang::Lang::default(),
             last_workspace: None,
             undo_hinted: false,
@@ -2587,8 +2946,9 @@ impl From<SavedLevel> for attention::Priority {
     }
 }
 
-/// The persisted form of [`tree::Scope`]. Its own type so the state file is
-/// never coupled to the tree module's derives.
+/// The persisted form of the strip's old scope — a narrowing that no longer
+/// exists at runtime, since the strip became the active tab's own branch and
+/// branch pins were retired (#757).
 ///
 /// PARSED, NEVER WRITTEN, AND NEVER RESTORED, since the strip started opening
 /// on the branch it is standing in. A narrowing is a gesture that lasts as long
@@ -2629,6 +2989,25 @@ fn load_state() -> StateFile {
         .ok()
         .and_then(|s| toml::from_str(&s).ok())
         .unwrap_or_default()
+}
+
+/// The outer look a window opens on, from its state file: the saved choice, or
+/// [`theme::house_outer`] on a fresh install, with the legacy top-level fields
+/// folded in. Pure, so a test can boot it from an empty state and from a real
+/// one.
+fn settled_outer(saved: &StateFile) -> ThemeChoice {
+    let mut outer = saved.theme.clone().unwrap_or_else(theme::house_outer);
+    // Text size now lives in the outer grade (`grade.scale`); fold a legacy
+    // top-level `scale` from older state files into it on load.
+    if let Some(s) = saved.scale {
+        outer.grade.scale = s.clamp(0.7, 1.6);
+    }
+    // Warp + tracking now ride the grade group (per-pane override + inherit);
+    // fold a legacy top-level `warp`/`track` from older state files into the
+    // outer grade so a saved fishbowl/roll survives the migration.
+    outer.grade.warp = saved.warp.clamp(0.0, theme::WARP_MAX);
+    outer.grade.tracking = saved.track;
+    outer
 }
 
 /// Count the terminal leaves (panes) under a saved node — the "richness" metric
@@ -2779,6 +3158,17 @@ impl FrameJiggle {
     }
 }
 
+/// The GAUGES tray's two collapsed sections: the text crawl, and the CRT.
+///
+/// Both sit at the foot of the tray as one faint row each, and both start shut
+/// every time the tray opens, because they are easter eggs rather than
+/// controls anyone should trip over.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+struct OsdEggs {
+    crawl: bool,
+    crt: bool,
+}
+
 /// Which scope the open theme breakout is editing.
 #[derive(Clone)]
 enum MenuScope {
@@ -2818,6 +3208,15 @@ enum DropTarget {
     Edge { container: u64, zone: Zone },
     /// Move the dragged pane into main tab `index`.
     Tab { index: usize },
+    /// Dropped on a left-bar TASK row: join that tab as an additional pane —
+    /// the same landing as `Tab`, reached from the tree instead of the strip.
+    /// `blocked` is set the moment the cap is hit, so the hover can refuse it
+    /// before release rather than after.
+    BarTask { index: usize, blocked: bool },
+    /// Dropped on a left-bar Initiative, Project, or the Unfiled row: pulled
+    /// out into a fresh tab of its own, filed there — the pane-drag's version
+    /// of what a tab-drag already does via `file_task`.
+    BarBranch(BarBranch),
 }
 
 /// How a `Zone` maps to a split: which axis, and whether the dropped pane takes
@@ -2923,6 +3322,26 @@ impl From<tree::RowId> for BarBranch {
             tree::RowId::Project(id) => BarBranch::Project(id),
             tree::RowId::Initiative(id) => BarBranch::Initiative(id),
             tree::RowId::Task(_) | tree::RowId::Unfiled => BarBranch::Unfiled,
+        }
+    }
+}
+
+impl BarBranch {
+    /// Whether this is one of the branches the active task stands in — its
+    /// project, or its group — which the tree washes faintly so a glance down
+    /// the bar finds where you are.
+    ///
+    /// `active` must be [`Workspace::place_of`]'s answer, which reads a grouped
+    /// task's project FROM ITS GROUP: a task in a group filed under a project
+    /// is standing in both, and both rows light.
+    fn holds(self, active: tree::Place) -> bool {
+        match self {
+            BarBranch::Project(id) => active.project == Some(id),
+            BarBranch::Initiative(id) => active.initiative == Some(id),
+            // The divider is a heading over the loose tasks, not a branch
+            // anybody stands in: a loose task lights its own row and nothing
+            // above it.
+            BarBranch::Unfiled => false,
         }
     }
 }
@@ -3056,6 +3475,74 @@ enum BarDragged {
     Project(u32),
 }
 
+/// The keyboard sibling of [`BarDrag`]: a task being carried by
+/// Ctrl+Shift+Alt+arrows, and how far the arrows have zoomed out from it.
+///
+/// Scoped to tasks only — a group cannot change project ("groups will be
+/// locked into their project"), so there is no "carry a whole group"
+/// version of this to grow into. [`CarryDepth::Project`] refiles the TASK
+/// under a sibling project; it never moves an initiative.
+#[derive(Clone, Copy, Debug)]
+struct BarCarry {
+    /// The tab index being carried, held by index like everything else that
+    /// points at a tab (`self.active`, `TabDrag::from`).
+    task: usize,
+    depth: CarryDepth,
+}
+
+/// How far Ctrl+Shift+Alt+← has zoomed a carry out from the task itself.
+///
+/// Three layers because the tree has three: a task hangs from an
+/// initiative, which hangs from a project. Left walks out one layer at a
+/// time and Right walks back in — that alone moves nothing. Up/Down at a
+/// given depth move the carried task to the previous/next sibling AT that
+/// depth; see `Workspace::bar_carry_move`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CarryDepth {
+    Task,
+    Initiative,
+    Project,
+}
+
+impl CarryDepth {
+    /// One layer further out. Clamps at `Project` — there is no fourth
+    /// layer to zoom into, so a third Left in a row is a no-op rather than
+    /// a wrap: zooming is a ladder, not the ring `bar_walk`'s Up/Down are.
+    fn out(self) -> CarryDepth {
+        match self {
+            CarryDepth::Task => CarryDepth::Initiative,
+            CarryDepth::Initiative | CarryDepth::Project => CarryDepth::Project,
+        }
+    }
+
+    /// One layer back in. Clamps at `Task`, the mirror of `out`.
+    fn in_(self) -> CarryDepth {
+        match self {
+            CarryDepth::Project => CarryDepth::Initiative,
+            CarryDepth::Initiative | CarryDepth::Task => CarryDepth::Task,
+        }
+    }
+}
+
+/// What `bar_carry_move` sets the carry's depth to after one press, given
+/// the depth the press started at and — from `bar_carry_move_cascading` —
+/// the depth a move actually landed at, if anything moved.
+///
+/// Landing at the SAME depth the press started at (no escalation needed)
+/// keeps that depth, honoring an explicit Left-zoom's contract that
+/// repeated Up/Down keeps walking siblings there. Landing at a WIDER depth
+/// (the cascade had to escalate to find room) resets to `Task`, so the next
+/// press starts narrow again rather than staying zoomed out from a rescue
+/// that was only needed once. Moving nothing at all leaves the depth alone
+/// — nothing happened, so there is nothing to reset.
+fn carry_depth_after_move(started_at: CarryDepth, landed_at: Option<CarryDepth>) -> CarryDepth {
+    match landed_at {
+        Some(d) if d == started_at => started_at,
+        Some(_) => CarryDepth::Task,
+        None => started_at,
+    }
+}
+
 /// What the find panel is searching, and where it centres.
 enum FindScope {
     /// Ctrl+F: just this pane; the panel centres over the pane's on-screen box.
@@ -3089,6 +3576,19 @@ struct FindState {
     scope: FindScope,
     query: EditBuffer,
     results: Vec<FindHit>,
+    selected: usize,
+}
+
+/// The Alt+L LOOKUP panel: every project, group, tab, pane and sticky note in
+/// the window, found by typing part of its name. See [`lookup`].
+///
+/// The rows are read once, when the panel opens. It owns the keyboard while it
+/// is up, so nothing a person does can rename anything under it, and a pane
+/// that goes away meanwhile is re-found at the jump rather than trusted.
+struct Lookup {
+    query: EditBuffer,
+    entries: Vec<lookup::Entry<EntityId>>,
+    hits: Vec<lookup::Hit>,
     selected: usize,
 }
 
@@ -3162,6 +3662,8 @@ struct AgentLauncher {
     /// asked where the person was standing. It is what decides whether the
     /// agent starts in that pane or in a new tab — see [`launcher::landing`].
     from: Option<gpui::EntityId>,
+    error: Option<String>,
+    local_adapter: Result<launcher::LocalAdapter, String>,
 }
 
 impl AgentLauncher {
@@ -3228,6 +3730,32 @@ struct LogoCandidate {
     mtime: u64,
     /// Which sweep found it — the PRIMARY sort key (see [`logo_sort_by_rank`]).
     tier: LogoTier,
+}
+
+/// An agent-wall card's height at card scale 1, art window included.
+const WALL_CARD_H: f32 = 296.;
+/// The art window's height at card scale 1: the portrait the IMAGES switch
+/// takes out of every card.
+const WALL_ART_H: f32 = 116.;
+/// The gap between a card's stacked parts (`gap_1`, a quarter rem). It does
+/// not grow with the card scale.
+const WALL_CARD_GAP: f32 = 4.;
+
+/// Whether the agent wall's cards draw their art window. A session that never
+/// chose gets the pictures, which is the wall as it was before the switch.
+fn wall_card_art(choice: Option<bool>) -> bool {
+    choice.unwrap_or(true)
+}
+
+/// An agent-wall card's height at card scale `cs`. With the art window off,
+/// the card gives back exactly the room the window and its gap took, so the
+/// feed box below keeps its size instead of stretching into a tall empty well.
+fn wall_card_h(cs: f32, art: bool) -> f32 {
+    if art {
+        WALL_CARD_H * cs
+    } else {
+        (WALL_CARD_H - WALL_ART_H) * cs - WALL_CARD_GAP
+    }
 }
 
 /// DEMO ONLY: deterministically assign a stock "logo" to a card from the
@@ -3504,7 +4032,13 @@ fn scan_logo_candidates_in(home_path: &std::path::Path) -> Vec<LogoCandidate> {
 
 /// Wrap one tab-group's header + its agent cards in a section with a SUBTLE
 /// background glow in the group's theme colour, so each group reads as one stack.
-fn group_section(header: gpui::Div, gcol: gpui::Hsla, cards: Vec<gpui::AnyElement>) -> gpui::Div {
+/// The glow rides the `phosphor` gauge; the tinted panel and its border do not.
+fn group_section(
+    header: gpui::Div,
+    gcol: gpui::Hsla,
+    cards: Vec<gpui::AnyElement>,
+    phosphor: f32,
+) -> gpui::Div {
     div()
         .w_full()
         .flex()
@@ -3517,13 +4051,20 @@ fn group_section(header: gpui::Div, gcol: gpui::Hsla, cards: Vec<gpui::AnyElemen
         .bg(gcol.alpha(0.07))
         .border_1()
         .border_color(gcol.alpha(0.30))
-        .shadow(vec![gpui::BoxShadow {
-            color: gcol.alpha(0.16),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(24.),
-            spread_radius: px(0.),
-            inset: false,
-        }])
+        .shadow(
+            theme::phosphor(
+                phosphor,
+                gpui::BoxShadow {
+                    color: gcol.alpha(0.16),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(24.),
+                    spread_radius: px(0.),
+                    inset: false,
+                },
+            )
+            .into_iter()
+            .collect(),
+        )
         .child(
             // a coloured rule + the group header, so the panel is titled + themed.
             div()
@@ -3613,13 +4154,50 @@ fn filter_logo_two_field(candidates: &[LogoCandidate], name: &str, loc: &str) ->
     scored.into_iter().map(|(_, i)| i).collect()
 }
 
+/// The document the FOCUS reader lays out when it reads a pane as text: the
+/// pane's terminal, or its agent's conversation. Part of the layout memo's key,
+/// because the two count their revisions apart and one must never be served
+/// for the other.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FocusSource {
+    Grid,
+    Transcript,
+}
+
+/// Memoised reader layout: ((whose document, its revision, fit_cols), the
+/// laid-out rows).
+type FocusLayoutMemo = Option<((FocusSource, u64, usize), Arc<Vec<doc::VisualRow>>)>;
+
+/// The conversation the FOCUS reader reads for an agent pane whose transcript
+/// the tool sweep bound for certain (`toolprop::ToolProbe::path`). Read and
+/// folded off the main thread by `_read`, and handed across already drawn:
+/// the first read of a long session is tens of megabytes of JSON.
+struct ReaderTalk {
+    path: std::path::PathBuf,
+    /// The last drawing. `None` until the first read lands; the reader shows
+    /// the screen until then.
+    drawn: Option<TalkDrawn>,
+    /// The tool calls shown open, by entry, and a count that moves whenever the
+    /// set does, which is what makes the reading task draw again.
+    open: Arc<Mutex<(std::collections::HashSet<usize>, u64)>>,
+    _read: gpui::Task<()>,
+}
+
+/// A conversation drawn for the reader: a count that moves with every drawing
+/// (the layout memo's revision), the document, and the tool call each of its
+/// lines opens.
+#[derive(Clone)]
+struct TalkDrawn {
+    rev: u64,
+    doc: Arc<doc::Document>,
+    opens: Arc<Vec<Option<usize>>>,
+    turns: Arc<Vec<usize>>,
+}
+
 /// The FOCUS reader's wrapped layout, captured each render so the mouse handlers
 /// can map a screen click back to a source cell (for selection + copy) through the
 /// exact frame the user is looking at. All metrics are logical px, matching the
 /// captured `focus_body_bounds`.
-/// Memoised reader layout: ((document revision, fit_cols), the laid-out rows).
-type FocusLayoutMemo = Option<((u64, usize), Arc<Vec<doc::VisualRow>>)>;
-
 struct FocusMap {
     /// The full laid-out rows, shared with the render's layout cache — with the
     /// whole scrollback in the document this can be tens of thousands of rows,
@@ -3642,6 +4220,61 @@ struct FocusMap {
     inherit: bool,
 }
 
+/// The padding above and below the rows of the FOCUS reader's foot, in logical px.
+const READER_FOOT_PAD: f32 = 6.0;
+
+/// The FOCUS reader's glass and the text area inside it, in logical px, for a
+/// window of a given size. Only the window decides it; the pane being read never
+/// does, which is what gives the reader a size of its own.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ReaderGlass {
+    panel_w: f32,
+    panel_h: f32,
+    /// Top and bottom padding inside the glass.
+    pad: f32,
+    /// Side padding: 7% of the glass, so the text keeps a margin on a wide
+    /// monitor, floored at `pad` on a small window.
+    pad_x: f32,
+    hdr_h: f32,
+    /// The text area's width and height.
+    avail_w: f32,
+    avail_h: f32,
+}
+
+impl ReaderGlass {
+    fn in_pane(w: f32, h: f32) -> Self {
+        let pad = 6.0;
+        let hdr_h = 24.0;
+        Self {
+            panel_w: w,
+            panel_h: h,
+            pad,
+            pad_x: pad,
+            hdr_h,
+            avail_w: (w - 2.0 * pad).max(1.0),
+            avail_h: (h - hdr_h - 2.0 * pad).max(1.0),
+        }
+    }
+
+    fn in_window(win_w: f32, win_h: f32) -> Self {
+        let panel_w = (win_w * 0.8).max(320.);
+        let panel_h = (win_h * 0.8).max(240.);
+        // A third roomier than the old 16px, so the text breathes inside the glass.
+        let pad = 21.0_f32;
+        let pad_x = (panel_w * 0.07).max(pad);
+        let hdr_h = 30.0_f32;
+        Self {
+            panel_w,
+            panel_h,
+            pad,
+            pad_x,
+            hdr_h,
+            avail_w: (panel_w - pad_x * 2.).max(1.),
+            avail_h: (panel_h - hdr_h - pad * 2.).max(1.),
+        }
+    }
+}
+
 struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
@@ -3650,6 +4283,8 @@ struct Workspace {
     /// up, like the rename editors — typing edits the query, ↑/↓ move the
     /// selection, ↵ jumps to the hit, esc closes.
     find: Option<FindState>,
+    /// The Alt+L LOOKUP panel, if open. Owns the keyboard while up, like find.
+    lookup: Option<Lookup>,
     /// The language dropdown (🌐 in the help header), if open. Owns the keyboard
     /// while up, like `find`.
     lang_picker: Option<LangPicker>,
@@ -3683,6 +4318,7 @@ struct Workspace {
     lang: lang::Lang,
     /// Open theme breakout menu, if any.
     theme_menu: Option<MenuScope>,
+    palette_help_seen: Option<Instant>,
     /// Window-space point to anchor the open tray at (a sub-tab icon click).
     /// None = the fixed top-right anchor used by the global/outer menu.
     menu_at: Option<Point<Pixels>>,
@@ -3690,6 +4326,10 @@ struct Workspace {
     osd_menu: Option<MenuScope>,
     /// Window-space anchor for the open OSD tray (a pane display-icon click).
     osd_at: Option<Point<Pixels>>,
+    /// Which of the GAUGES tray's two collapsed sections are open. Both are
+    /// easter eggs, so neither is remembered: every opening of the tray starts
+    /// them shut (see [`Self::open_osd`]).
+    osd_eggs: OsdEggs,
     /// Read-only MCP control-surface policy (persisted). The 🤖 mother-bar
     /// button edits this; the live snapshot it would expose is derived per-frame.
     mcp: mcp::McpConfig,
@@ -3710,6 +4350,8 @@ struct Workspace {
     /// a window context: queued by the window-less ctl ticker, drained by
     /// render() via defer_in.
     pending_adopts: Vec<ctl::AdoptReq>,
+    /// Pointer events from `ctl bench click|hover`, parked for a Window.
+    pending_pointer: Vec<(ctl::PointerReq, std::sync::mpsc::Sender<String>)>,
     /// The 🧩 plugins panel overlay is open (MCP plugin host — see [`plugins`]).
     plugins_menu: bool,
     /// The 🔔 notifications panel overlay is open — what a finished agent is
@@ -3792,8 +4434,14 @@ struct Workspace {
     /// A scan is out. One at a time: a second pass queued behind a slow git
     /// would land after the first and say the same thing.
     eng_scanning: bool,
-    /// Which ticker frame is up, advanced on its own clock.
-    eng_frame: usize,
+    coord_operator: coordination::Store,
+    coord_authorized: std::sync::Arc<coordination::Store>,
+    coord_scope: String,
+    coord_off_limits_seen: bool,
+    coord_view: coordination::View,
+    coord_attention_error: Option<String>,
+    coord_rows: std::cell::RefCell<Option<coordination_view::Rows>>,
+    coord_scrolls: std::cell::RefCell<std::collections::HashMap<String, gpui::ScrollHandle>>,
     /// The afterglow: what changed between consecutive readings of each
     /// project, with when it was noticed. Kept for [`ENG_AFTERGLOW`] and then
     /// dropped — evidence that something happened, never a notification.
@@ -3819,6 +4467,9 @@ struct Workspace {
     mcp_theme_preview: bool,
     /// Text+size scale for ALL agent-wall cards (the A-/A+ control). Session-scoped.
     card_scale: f32,
+    /// The agent wall's IMAGES switch, persisted as the session saved it:
+    /// `None` until someone chooses. Read through [`wall_card_art`].
+    card_art: Option<bool>,
     /// Agent-wall view filter (the chip strip) — transient, not persisted.
     mcp_filter: McpFilter,
     /// Agent-wall state filter. Combines with [`Self::mcp_filter`] so a group
@@ -3930,8 +4581,6 @@ struct Workspace {
     /// width so the drag tracks the cursor exactly however far it travels
     /// outside the bar.
     bar_resize: Option<(f32, f32)>,
-    /// Which branch the MOTHER BAR is narrowed to. The tree never narrows.
-    scope: tree::Scope,
     /// Where the left bar's KEYBOARD cursor is (Ctrl+Alt+arrows), if it has
     /// been put anywhere this session.
     ///
@@ -3946,6 +4595,11 @@ struct Workspace {
     /// at a row that no longer exists — a closed tab, a folded-away branch —
     /// and `tree::step` re-enters the list rather than trusting it.
     bar_cursor: Option<tree::RowId>,
+    /// The task being carried by Ctrl+Shift+Alt+arrows, if any, and how far
+    /// zoomed out. Deliberately not persisted, for the same reason
+    /// `bar_cursor` is not: it is a gesture in progress, not a fact about
+    /// the session.
+    bar_carry: Option<BarCarry>,
     /// The bar list's scroll position, held only so the keyboard can bring the
     /// cursor's row into view.
     ///
@@ -3996,10 +4650,11 @@ struct Workspace {
     /// The pane currently mirrored in the FOCUS reading modal, if any. Weak so a
     /// closed pane (its × / shell exit) drops normally — the modal just vanishes.
     focus_read: Option<gpui::WeakEntity<TerminalView>>,
-    /// User text-size multiplier for the FOCUS mirror, on top of the auto-fit
-    /// scale. 1.0 = fit-to-modal; the header slider drives it `FZ_MIN..=FZ_MAX`.
-    /// Non-destructive — it scales only the mirror, never the real terminal's
-    /// grid. Reset to 1.0 whenever the modal (re)opens on a pane.
+    /// The FOCUS reader's letter size against the pane's own letters. 1.0 draws
+    /// them as the pane does, so opening the reader only ever adds room; the
+    /// header slider and Ctrl+wheel move it `FZ_MIN..=FZ_MAX` (see
+    /// [`reader_scale`]). Non-destructive — it scales only the reader, never the
+    /// real terminal's grid. Reset to 1.0 whenever the modal (re)opens on a pane.
     focus_zoom: f32,
     /// True while the FOCUS text-size slider thumb is being dragged.
     focus_zoom_drag: bool,
@@ -4089,6 +4744,11 @@ struct Workspace {
     /// guess about how stale is acceptable, and this needs no guess — the answer
     /// is "not stale at all within one paint, recomputed for the next".
     rail_frame: u64,
+    /// The panes the last frame showed: the active tab's. Compared with this
+    /// frame's so a pane that has left the screen, by whatever route — a tab
+    /// click, a keyboard jump, a pane moved to another tab — can forget the
+    /// pictures it held. See [`Workspace::forget_pictures_out_of_sight`].
+    shown_panes: Vec<gpui::WeakEntity<TerminalView>>,
     /// The projection, memoised for the frame that built it.
     ///
     /// **Why this exists.** `rail_rows` walks every tab and every pane, reads
@@ -4128,6 +4788,17 @@ struct Workspace {
     focus_sel: Option<((usize, usize), (usize, usize))>,
     /// True while a left-drag is actively extending the reader selection.
     focus_sel_drag: bool,
+    /// A press in the reader went to the document the pane lent it, and so
+    /// do the moves until the button comes up: a picture being panned, a
+    /// video's track being scrubbed.
+    focus_doc_holding: bool,
+    /// The conversation the reader reads, while it reads an agent pane whose
+    /// transcript is bound for certain. Dropped with the reader, which stops
+    /// its reading.
+    focus_talk: Option<ReaderTalk>,
+    /// Alt+arrows browse the transcript inside the original terminal pane.
+    focus_inline: bool,
+    focus_turn_nav: transcript::TurnNav,
     /// Global, persisted: when on, the FOCUS reader inherits the read pane's CRT
     /// look (barrel curvature + screen glare) instead of the flat default. One
     /// toggle in the modal header; applies to every reader open from then on.
@@ -4227,8 +4898,8 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         },
     )
     .detach();
-    // ⌁ LAUNCH AGENT on an empty workbench → the launcher, seeded with the
-    // directory that pane is already sitting in.
+    // Alt+A, the header button and the empty workbench share this launcher,
+    // seeded with the emitting pane's directory.
     cx.subscribe_in(
         pane,
         window,
@@ -4240,8 +4911,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     .detach();
     // the header display icon → open this pane's monitor-OSD tray at the click
     cx.subscribe(pane, |ws, pane, ev: &OpenDisplayMenu, cx| {
-        ws.osd_menu = Some(MenuScope::Pane(pane));
-        ws.osd_at = Some(ev.at);
+        ws.open_osd(MenuScope::Pane(pane), Some(ev.at));
         cx.notify();
     })
     .detach();
@@ -4332,6 +5002,19 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         cx.notify();
     })
     .detach();
+    // A document asked for beside this pane: Ctrl+Alt+click, the menu's
+    // "Open beside", the floating square's "⇲ split", or `ctl doc beside`.
+    // The tree is ours, so the pane asks and the workspace decides.
+    cx.subscribe_in(pane, window, |ws, pane, ev: &pane::OpenDoc, window, cx| {
+        ws.open_doc_beside(pane.clone(), ev, window, cx);
+    })
+    .detach();
+    // ↪ in a brief's notes bar: the map goes to the agent pane the brief sits
+    // beside, and which pane that is only the tree can say.
+    cx.subscribe(pane, |ws, pane, ev: &pane::SendNotesBeside, cx| {
+        ws.send_notes_beside(pane, ev, cx);
+    })
+    .detach();
     // the header × → close just this pane (window-aware: refocuses what's left)
     cx.subscribe_in(pane, window, |ws, pane, _ev: &ClosePane, window, cx| {
         ws.close_pane(pane.entity_id(), window, cx);
@@ -4349,6 +5032,12 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     })
     .detach();
     cx.subscribe(pane, |ws, _pane, _ev: &PaneRenamed, cx| {
+        ws.save(cx);
+    })
+    .detach();
+    // a person marked the pane off-limits to agents, or lifted it — persist it
+    // like a rename, so the mark outlives the window
+    cx.subscribe(pane, |ws, _pane, _ev: &pane::OffLimitsChanged, cx| {
         ws.save(cx);
     })
     .detach();
@@ -4486,6 +5175,24 @@ fn duplicate_leaf_note() -> sticky::Saved {
     }
 }
 
+/// The note a saved leaf comes back wearing.
+///
+/// A leaf bound to its running terminal was not started afresh, so the
+/// DUPLICATE TAB note saying it was is false on that glass. Saves wrote that
+/// note onto live panes until 2026-10-19 (#919) and the session files still
+/// carry it; dropping it here is what stops every reattach repainting it. A
+/// leaf that really is respawned keeps it, and every other note is kept as
+/// written.
+fn note_on_reattach(note: Option<&SavedNote>, bound: bool) -> Option<sticky::Saved> {
+    note.filter(|n| !(bound && is_duplicate_leaf_note(n)))
+        .map(|n| sticky::Saved {
+            title: n.title.clone(),
+            text: n.text.clone(),
+            seed: n.seed,
+            pinned: n.pinned,
+        })
+}
+
 /// Match a saved layout against what is actually running.
 ///
 /// Pure, and deliberately so: this is the decision that a restore either gets
@@ -4586,6 +5293,8 @@ fn plan_attach(saved: &[SavedTab], live: &[hostproto::PaneInfo]) -> AttachPlan {
                 {
                     LeafPlan::Duplicate {
                         restore: session::PaneRestore {
+                            program: None,
+                            mark: None,
                             cwd: cwd.clone(),
                             // No recipe at all, and that is the load-bearing
                             // part rather than a preference. See below.
@@ -4599,6 +5308,8 @@ fn plan_attach(saved: &[SavedTab], live: &[hostproto::PaneInfo]) -> AttachPlan {
                     spoken_for.extend(named_session(resume.as_deref()));
                     LeafPlan::Respawn {
                         restore: session::PaneRestore {
+                            program: None,
+                            mark: None,
                             cwd: cwd.clone(),
                             resume: resume.clone(),
                             logo: logo.clone(),
@@ -4848,7 +5559,7 @@ fn make_pane_attached(
     let pane_id = info.pane;
     let streams = term::AttachStreams {
         bytes: stream,
-        announce_resize: Box::new(move |size: alacritty_terminal::event::WindowSize| {
+        announce_resize: Box::new(move |size: vt::WindowSize| {
             link.announce_resize(
                 pane_id,
                 hostproto::PaneGeom {
@@ -4862,9 +5573,18 @@ fn make_pane_attached(
     };
     // The pid is the host's, and only an attribute: this window did not start
     // that process and will never signal it.
-    let (session, guard) = term::attach_in(grid, streams, Some(info.shell_pid))?;
-    let pane =
-        cx.new(|cx| TerminalView::new_attached(session, guard, pane_id.0, restore, grid, cx));
+    let (session, guard) = term::attach_in(
+        grid.with_cell(geom.cell_width, geom.cell_height),
+        streams,
+        Some(info.shell_pid),
+    )?;
+    // The host's cell as well as its grid: a pane that believed the cell were
+    // anything else would re-announce the size on its first frame and wake
+    // every agent in the window with a resize that changed nothing.
+    let cell_px = (geom.cell_width, geom.cell_height);
+    let pane = cx.new(|cx| {
+        TerminalView::new_attached(session, guard, pane_id.0, restore, grid, cell_px, cx)
+    });
     pane.update(cx, |view, cx| {
         view.appearance = PaneTheme::house();
         // The host has been watching this terminal; a window that has just
@@ -4991,20 +5711,20 @@ fn build_node_attached(
             name,
             logo,
             note,
+            document,
+            off_limits,
             ..
         } => {
+            let plan = plans.next();
             let restore = session::PaneRestore {
+                program: None,
+                mark: None,
                 cwd: cwd.clone(),
                 resume: resume.clone(),
                 logo: logo.clone(),
-                note: note.as_ref().map(|n| sticky::Saved {
-                    title: n.title.clone(),
-                    text: n.text.clone(),
-                    seed: n.seed,
-                    pinned: n.pinned,
-                }),
+                note: note_on_reattach(note.as_ref(), matches!(plan, Some(LeafPlan::Bind { .. }))),
             };
-            let built = match plans.next() {
+            let built = match plan {
                 // The terminal is still running. Take it, and do NOT type the
                 // resume line: the agent it would start is already in there.
                 Some(LeafPlan::Bind { pane }) => match live.get(&pane.0) {
@@ -5035,12 +5755,17 @@ fn build_node_attached(
             // pristine one, which means "follow the outer cabinet".
             let appearance = appearance.clone();
             let name = name.clone();
+            let off_limits = *off_limits;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
                 if name.is_some() {
                     view.name = name;
                 }
+                view.off_limits = off_limits;
             });
+            // The document it was showing, back on its face over whichever
+            // shell the plan gave it, the terminal bound or respawned as ever.
+            restore_document_on(&pane, document.as_ref(), cx);
             Node::Leaf(pane)
         }
         SavedNode::Split { dir, ratio, a, b } => Node::Split {
@@ -5065,9 +5790,13 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             // A serverless window builds its own terminals, so whichever host
             // pane this leaf used to show is not this window's business.
             pane_id: _,
+            document,
+            off_limits,
         } => {
             let pane = make_pane_window_owned(
                 session::PaneRestore {
+                    program: None,
+                    mark: None,
                     cwd: cwd.clone(),
                     resume: resume.clone(),
                     logo: logo.clone(),
@@ -5087,12 +5816,15 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             // hence this applies unconditionally, not just when non-pristine.
             let appearance = appearance.clone();
             let name = name.clone();
+            let off_limits = *off_limits;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
                 if name.is_some() {
                     view.name = name;
                 }
+                view.off_limits = off_limits;
             });
+            restore_document_on(&pane, document.as_ref(), cx);
             Node::Leaf(pane)
         }
         SavedNode::Split { dir, ratio, a, b } => Node::Split {
@@ -5102,6 +5834,19 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             a: Box::new(build_node(a, window, cx)),
             b: Box::new(build_node(b, window, cx)),
         },
+    }
+}
+
+/// Put a saved leaf's document back on its pane, if it had one. Shared by
+/// both restores — the hosted one and the one where the window owns its
+/// terminals — so a document pane comes back the same way in either.
+fn restore_document_on(
+    pane: &Entity<TerminalView>,
+    document: Option<&SavedDocument>,
+    cx: &mut Context<Workspace>,
+) {
+    if let Some(d) = document {
+        pane.update(cx, |view, cx| view.restore_document(&d.path, d.scroll, cx));
     }
 }
 
@@ -5160,17 +5905,7 @@ impl Workspace {
         };
         // scale + theme are read even in scratch mode so a quick window still
         // looks like the rest of the session; only the *layout* is skipped.
-        // Text size now lives in the outer grade (`grade.scale`); fold a legacy
-        // top-level `scale` from older state files into it on load.
-        let mut outer = saved.theme.clone().unwrap_or_else(theme::house_outer);
-        if let Some(s) = saved.scale {
-            outer.grade.scale = s.clamp(0.7, 1.6);
-        }
-        // Warp + tracking now ride the grade group (per-pane override + inherit);
-        // fold a legacy top-level `warp`/`track` from older state files into the
-        // outer grade so a saved fishbowl/roll survives the migration.
-        outer.grade.warp = saved.warp.clamp(0.0, theme::WARP_MAX);
-        outer.grade.tracking = saved.track;
+        let outer = settled_outer(&saved);
         // Panes written by a pre-per-channel build carry `inherit_grade = false`,
         // which detached all thirteen channels whether or not a human had ever
         // touched them. Resolve that against the outer grade we just settled:
@@ -5186,6 +5921,7 @@ impl Workspace {
             active: 0,
             focus_handle: cx.focus_handle(),
             find: None,
+            lookup: None,
             lang_picker: None,
             logo_picker: None,
             agent_launcher: None,
@@ -5197,9 +5933,11 @@ impl Workspace {
             help_open: false,
             help_features: false,
             theme_menu: None,
+            palette_help_seen: None,
             menu_at: None,
             osd_menu: None,
             osd_at: None,
+            osd_eggs: OsdEggs::default(),
             mcp: saved.mcp.clone().unwrap_or_default(),
             mcp_menu: false,
             scale_menu: false,
@@ -5207,6 +5945,7 @@ impl Workspace {
             dead_menu: false,
             dead_filter: None,
             pending_adopts: Vec::new(),
+            pending_pointer: Vec::new(),
             plugins_menu: false,
             notif_menu: false,
             notif: notifpref::load(),
@@ -5234,7 +5973,28 @@ impl Workspace {
             vitals_refreshing: false,
             eng: std::collections::HashMap::new(),
             eng_scanning: false,
-            eng_frame: 0,
+            coord_operator: {
+                let mut store = coordination::Store::new(format!(
+                    "{}-operator-{:?}",
+                    std::process::id(),
+                    coordination::unix_ms()
+                ));
+                store.operator_memory(coordination::attention::Memory::load(
+                    coordination::attention::path(),
+                ));
+                store
+            },
+            coord_authorized: std::sync::Arc::new(coordination::Store::new(format!(
+                "{}-agent-{:?}",
+                std::process::id(),
+                coordination::unix_ms()
+            ))),
+            coord_scope: String::new(),
+            coord_off_limits_seen: false,
+            coord_view: coordination::View::default(),
+            coord_attention_error: None,
+            coord_rows: std::cell::RefCell::new(None),
+            coord_scrolls: std::cell::RefCell::new(std::collections::HashMap::new()),
             eng_events: std::collections::HashMap::new(),
             // a rig lever, like TD_RAIL_DEBUG: there is no click injection on
             // this machine, so the table is photographed by opening at launch
@@ -5247,6 +6007,7 @@ impl Workspace {
             // preview toggle, never exposes real panes.
             mcp_theme_preview: std::env::var_os("TD_WALL_THEME").is_some(),
             card_scale: 1.0,
+            card_art: saved.card_art,
             mcp_filter: McpFilter::All,
             mcp_state_filter: None,
             mcp_program_filter: None,
@@ -5298,13 +6059,8 @@ impl Workspace {
             // default reading rather than the off one.
             slot_remaining: saved.slot_remaining.unwrap_or(SLOT_REMAINING_DEFAULT),
             bar_resize: None,
-            // A WINDOW OPENS ON THE BRANCH ITS ACTIVE TAB IS IN. The scope is
-            // not restored, and since 2026-09-18 it is not written either — see
-            // `SavedScope`, which is now a field the file may carry and this
-            // window ignores. `default` is the branch scope, the one that no
-            // state file, no delete and no rename can strand.
-            scope: tree::Scope::default(),
             bar_cursor: None,
+            bar_carry: None,
             bar_scroll: ScrollHandle::new(),
             bar_rename: None,
             bar_drag: None,
@@ -5353,6 +6109,7 @@ impl Workspace {
             rail_bounds: Arc::new(Mutex::new(None)),
             rail_hits: Arc::new(Mutex::new(Vec::new())),
             rail_frame: 0,
+            shown_panes: Vec::new(),
             rail_memo: std::cell::RefCell::new(None),
             rail_shown: Arc::new(Mutex::new(Vec::new())),
             rail_band: Arc::new(Mutex::new(Vec::new())),
@@ -5360,6 +6117,10 @@ impl Workspace {
             focus_map: Arc::new(Mutex::new(None)),
             focus_sel: None,
             focus_sel_drag: false,
+            focus_doc_holding: false,
+            focus_talk: None,
+            focus_inline: false,
+            focus_turn_nav: transcript::TurnNav::default(),
             focus_inherit_theme: saved.focus_inherit,
             anchor_top: saved.anchor_top,
             agent_tint: saved.agent_tint,
@@ -5444,6 +6205,9 @@ impl Workspace {
             ws.prune_groups();
             ws.active = saved.active.min(ws.tabs.len() - 1);
             ws.focus_active(window, cx);
+        }
+        if ws.eng_table {
+            window.focus(&ws.focus_handle, cx);
         }
         // frame jiggle clock (cheap idle poll). MUST stop when this window's
         // Workspace is dropped — otherwise every opened-then-closed window
@@ -5607,16 +6371,17 @@ impl Workspace {
             }
         })
         .detach();
-        // The ticker's clock. Six seconds a frame — long enough to read a
-        // sentence, short enough that a person who glanced up and missed one
-        // sees the next before looking away. A silent rail has no frames and
-        // the tick costs it nothing.
+        // The badge clock (#964): one frame per BADGE_STEP while a pulsing or
+        // blinking badge was drawn, and none once they have all stopped.
         cx.spawn(async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_secs(6)).await;
-            if this
-                .update(cx, |ws: &mut Workspace, cx| ws.tick_eng_frame(cx))
-                .is_err()
-            {
+            cx.background_executor().timer(BADGE_STEP).await;
+            let moving = BADGES_MOVING.swap(false, std::sync::atomic::Ordering::Relaxed);
+            let alive = this.update(cx, |_: &mut Workspace, cx| {
+                if moving {
+                    cx.notify();
+                }
+            });
+            if alive.is_err() {
                 break;
             }
         })
@@ -6010,23 +6775,11 @@ impl Workspace {
         // the window is an activation like any other, so reveal it here rather
         // than leaving the first frame disagreeing with the file.
         self.reveal_active_branch();
-        // ...and the SCOPE is part of that activation, for the same reason.
-        //
-        // The saved field has claimed since it was written that it is "restored,
-        // then checked against the active tab", and nothing checked it: the
-        // check lives in `ensure_scope_shows`, which runs on every activation
-        // except the one that opens the window. It cost nothing while the strip
-        // ignored the scope; the moment the strip started obeying it, a window
-        // saved on a narrow branch reopened with its own active tab off the bar
-        // and, if that branch had since been emptied, with no tabs on the bar at
-        // all. That is what a restart looked like this afternoon.
-        //
-        // Nothing is restored into the scope any more, and the scope a window
-        // opens on follows the active tab, so this call finds nothing to
-        // correct. Kept because it is the promise the field's doc made, and
-        // because a pin is one click away on any branch row the moment the
-        // tree is open.
-        self.ensure_scope_shows(self.active);
+        // There is no scope to settle here any more: the strip is the active
+        // tab's own branch (`tree::family`), re-asked every frame, so a window
+        // opens on the branch it is standing in with nothing to restore or
+        // correct. Branch pins, the last thing that could leave it elsewhere,
+        // were retired in #757.
         self.focus_active(window, cx);
         // Write the layout down now, while what it says is true.
         //
@@ -6276,7 +7029,7 @@ impl Workspace {
                 return;
             }
         };
-        fresh.update(cx, |view, _| view.adopt_presentation(carried));
+        fresh.update(cx, |view, cx| view.adopt_presentation(carried, cx));
         let old_id = old.entity_id();
         for tab in &mut self.tabs {
             if tab.root.replace_leaf(
@@ -6676,12 +7429,13 @@ impl Workspace {
             focus_inherit: self.focus_inherit_theme,
             anchor_top: self.anchor_top,
             agent_tint: self.agent_tint,
+            card_art: self.card_art,
             lang: self.lang,
             // Where this session is right now, recorded every save so a cold
             // launch can prefer the session that was last open *here*. A hint
             // for ranking only — never an identity, so a dragged or renamed
             // workspace costs nothing.
-            last_workspace: instance::current_workspace(),
+            last_workspace: instance::window_workspace(),
             undo_hinted: self.undo_hinted,
         }
     }
@@ -6833,11 +7587,41 @@ impl Workspace {
                         text: n.text,
                         pinned: n.pinned,
                     }),
-                    exposed: mcp::should_expose(&self.mcp, is_agent),
+                    exposed: mcp::should_expose(&self.mcp, is_agent, p.off_limits),
                     // the look the pane actually renders with (own override else
                     // inherited outer), in the config API's 0..100 percents
                     grade: Self::grade_report(&p.appearance.effective(&outer).grade),
                 });
+            }
+        }
+        out
+    }
+
+    /// Every document open in this window, for `document_notes`: each pane's
+    /// floating square and Document face, with the tab it is in, who it was
+    /// opened beside, and what its notes layer shows. Read-only, like the
+    /// rest of the snapshot — the report is the one `ctl doc notes` prints.
+    fn mcp_documents(&self, cx: &App) -> Vec<mcp::DocInfo> {
+        let mut out = vec![];
+        for (ti, tab) in self.tabs.iter().enumerate() {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let p = leaf.read(cx);
+                let Some(pid) = p.shell_pid() else { continue };
+                for (place, path, notes) in p.documents_open(cx) {
+                    out.push(mcp::DocInfo {
+                        tab: ti,
+                        pane: pid,
+                        place,
+                        opened_by: match place {
+                            mcp::DocPlace::Split => p.doc_opened_by(),
+                            mcp::DocPlace::Float => None,
+                        },
+                        path,
+                        notes,
+                    });
+                }
             }
         }
         out
@@ -6859,7 +7643,7 @@ impl Workspace {
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
                 let p = leaf.read(cx);
-                if !mcp::should_expose(&self.mcp, p.mode.is_agent()) {
+                if !mcp::should_expose(&self.mcp, p.mode.is_agent(), p.off_limits) {
                     continue;
                 }
                 let hits = p.grep_grid(needle, cap);
@@ -6910,6 +7694,8 @@ impl Workspace {
             crawl: g.crawl,
             crawl_angle: K::CrawlAngle.to_percent(g.crawl_angle),
             crawl_depth: K::CrawlDepth.to_percent(g.crawl_depth),
+            crt: g.crt,
+            phosphor: K::Phosphor.to_percent(g.phosphor),
         }
     }
 
@@ -6969,9 +7755,16 @@ impl Workspace {
         if let Some(p) = patch.crawl_depth {
             set!(K::CrawlDepth, p);
         }
+        if let Some(p) = patch.phosphor {
+            set!(K::Phosphor, p);
+        }
         if let Some(c) = patch.crawl {
             g.crawl = c;
             touched.insert(theme::GradeChannel::Crawl);
+        }
+        if let Some(c) = patch.crt {
+            g.crt = c;
+            touched.insert(theme::GradeChannel::Crt);
         }
         touched
     }
@@ -7011,7 +7804,16 @@ impl Workspace {
                         for leaf in leaves {
                             let p = leaf.read(cx);
                             if p.shell_pid() == Some(*pid) {
-                                let exposed = mcp::should_expose(&self.mcp, p.mode.is_agent());
+                                // An off-limits pane still takes an update aimed
+                                // at it by the agent running INSIDE it — its own
+                                // note, deliverable or bench — and nothing from
+                                // anywhere else (see `mcp::may_write`).
+                                let exposed = mcp::may_write(
+                                    &self.mcp,
+                                    p.mode.is_agent(),
+                                    p.off_limits,
+                                    patch.own_pane,
+                                );
                                 hit = Some((leaf.clone(), exposed));
                                 break 'find;
                             }
@@ -7049,9 +7851,52 @@ impl Workspace {
                                         }
                                     }
                                 };
+                            // An ask, checked against what this window knows
+                            // before anything is stored: the pane it names is
+                            // here, and what it asks for is not already so. A
+                            // row whose Yes would do nothing teaches a person
+                            // the buttons are decoration. The pane's name is
+                            // read now, for the person — the agent named it by
+                            // pid, and a pid is not how anyone thinks of a pane.
+                            let ask_change: Result<Option<access::Ask>, String> = match &patch.ask {
+                                None => Ok(None),
+                                Some(ask) => {
+                                    let named = ask.pid.and_then(|p| self.leaf_by_shell_pid(p, cx));
+                                    let (off, title) = match &named {
+                                        Some(t) => {
+                                            let v = t.read(cx);
+                                            let title = v
+                                                .name
+                                                .clone()
+                                                .filter(|n| !n.is_empty())
+                                                .or_else(|| {
+                                                    (!v.title.is_empty()).then(|| v.title.clone())
+                                                })
+                                                .unwrap_or_else(|| v.mode.label().to_string());
+                                            (Some(v.off_limits), Some(title))
+                                        }
+                                        None => (None, None),
+                                    };
+                                    let now = access::Now {
+                                        pane_off_limits: off,
+                                        mcp: &self.mcp,
+                                    };
+                                    match access::nothing_to_ask(ask.change, ask.pid, &now) {
+                                        Some(why) => Err(why),
+                                        None => Ok(Some(access::Ask {
+                                            title,
+                                            ..ask.clone()
+                                        })),
+                                    }
+                                }
+                            };
+                            let logo_change = match ask_change {
+                                Err(e) => Err(e),
+                                Ok(ask) => logo_change.map(|l| (l, ask)),
+                            };
                             match logo_change {
                                 Err(e) => out.push((target.clone(), Err(e))),
-                                Ok(logo_change) => {
+                                Ok((logo_change, ask)) => {
                                     let outer = theme::outer_choice(cx);
                                     let report = leaf.update(cx, |view, cx| {
                                         let mut g = view.appearance.effective(&outer).grade;
@@ -7096,6 +7941,15 @@ impl Workspace {
                                                         href: href.clone(),
                                                     },
                                                 ));
+                                                // And into the pane's list of
+                                                // what it handed over, filed so
+                                                // it outlives this turn.
+                                                view.hand_over(
+                                                    Some(label.clone()),
+                                                    href.clone(),
+                                                    handover::Source::Declared,
+                                                    cx,
+                                                );
                                             }
                                         }
                                         // And a work object for the bench, on
@@ -7103,6 +7957,11 @@ impl Workspace {
                                         // is a pane mutation like any other.
                                         if let Some(post) = patch.surface.clone() {
                                             view.present(post, cx);
+                                        }
+                                        // And an ask, onto the pane that made
+                                        // it, replacing any it made before.
+                                        if let Some(ask) = ask {
+                                            view.access_ask = Some(ask);
                                         }
                                         cx.notify();
                                         Self::grade_report(&g)
@@ -7315,6 +8174,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let restore = session::PaneRestore {
+            program: None,
+            mark: None,
             cwd,
             resume: run,
             logo: None,
@@ -7330,6 +8191,51 @@ impl Workspace {
 
     /// Park a desktop adoption until a frame gives us a Window (the ctl ticker
     /// is window-less). render() drains the queue via defer_in.
+    /// `ctl bench probe`: what the picked bench pane has laid out — the
+    /// proof, from outside, of where a click would land.
+    pub(crate) fn bench_probe(&mut self, cx: &mut Context<Self>) -> String {
+        let mut out = String::new();
+        let said = self.act_on_picked_pane(
+            cx,
+            |v| v.bench.face() == workbench::Face::Workbench,
+            "no pane is showing its bench",
+            |view, _cx| out = view.bench_probe(),
+        );
+        if said.starts_with("err") {
+            said
+        } else {
+            format!("{said} \u{2016} {out}")
+        }
+    }
+
+    /// Park a pointer event for the next frame, which has a Window.
+    pub(crate) fn queue_pointer(
+        &mut self,
+        p: ctl::PointerReq,
+        reply: std::sync::mpsc::Sender<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_pointer.push((p, reply));
+        cx.notify();
+    }
+
+    /// Run parked pointer events on the picked bench pane, through its own
+    /// handlers — the press a hand makes, with nothing short-circuited.
+    fn drain_pending_pointer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for (p, reply) in std::mem::take(&mut self.pending_pointer) {
+            let (_, leaves, focused) = self.bench_targets();
+            let flags: Vec<bool> = leaves
+                .iter()
+                .map(|l| l.read(cx).bench.face() == workbench::Face::Workbench)
+                .collect();
+            let said = match workbench::bench_target(&flags, focused) {
+                Some(i) => leaves[i].update(cx, |v, cx| v.synthetic_pointer(p, window, cx)),
+                None => "err no pane is showing its bench".to_string(),
+            };
+            let _ = reply.send(said);
+        }
+    }
+
     pub(crate) fn queue_adopt(&mut self, a: ctl::AdoptReq, cx: &mut Context<Self>) {
         self.pending_adopts.push(a);
         cx.notify();
@@ -7490,9 +8396,18 @@ impl Workspace {
         }
         let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
         for leaf in leaves {
-            leaf.update(cx, |view, cx| match want {
-                Some(f) => view.set_face(f, cx),
-                None => view.toggle_face(cx),
+            leaf.update(cx, |view, cx| {
+                // A pane showing a document is left on it. `bench off` turns a
+                // window of benches back to its terminals; it was never meant
+                // to take away a page somebody opened beside their prompt.
+                if view.bench.face() == workbench::Face::Document {
+                    return;
+                }
+                // `toggle` swaps terminal and bench, as the verb says — not
+                // alt+k's walk, which on a pane with a document turned to its
+                // shell would step onto the document instead.
+                let face = want.unwrap_or_else(|| view.bench.face().other());
+                view.set_face(face, cx);
             });
         }
         cx.notify();
@@ -7517,13 +8432,16 @@ impl Workspace {
         // places the chips are drawn, and `Bench::act` already falls back from
         // one to the other. Requiring a selection here refused the case that
         // matters most.
-        self.bench_apply(
+        self.act_on_picked_pane(
             cx,
             |v| {
-                v.bench.face() == workbench::Face::Workbench
+                // An off-limits pane takes nothing from the control socket's
+                // bench verbs: the socket answers agents as readily as people.
+                !v.off_limits
+                    && v.bench.face() == workbench::Face::Workbench
                     && (v.bench.selected().is_some() || v.bench.waiting_question().is_some())
             },
-            "no pane is showing a bench with a question",
+            "no pane is showing a bench with a question (an off-limits pane takes none from here)",
             |view, cx| view.bench_choose(n.saturating_sub(1), cx),
         )
     }
@@ -7542,15 +8460,126 @@ impl Workspace {
     /// Qualifies on the same predicate the tab is drawn under, so this lands
     /// where the pointer would land rather than beside it.
     pub(crate) fn bench_submit(&mut self, cx: &mut Context<Self>) -> String {
-        self.bench_apply(
+        self.act_on_picked_pane(
             cx,
-            |v| v.bench.face() == workbench::Face::Workbench && v.bench_can_submit(),
-            "no pane is showing a bench with a round it can send",
+            |v| !v.off_limits && v.bench.face() == workbench::Face::Workbench && v.bench_can_submit(),
+            "no pane is showing a bench with a round it can send (an off-limits pane takes none from here)",
             |view, cx| view.bench_submit_round(cx),
         )
     }
 
-    /// Every leaf, the active tab's first, plus which ones are on screen.
+    /// Open a document in a floating square on the focused pane — Alt+click,
+    /// from the control socket.
+    ///
+    /// The ctl family's reason applies again: the gesture belongs to a hand,
+    /// and the thing most worth proving about it — that a square closed a
+    /// hundred times gives a hundred textures back — cannot be proved by a hand.
+    /// Refuses, in words, a path TD cannot draw rather than opening an empty
+    /// square.
+    pub(crate) fn doc_here(&mut self, path: &std::path::Path, cx: &mut Context<Self>) -> String {
+        let Some(target) = crate::docopen::drawable_document(path) else {
+            let why = format!("{} is not a file TD can draw", path.display());
+            eprintln!("terminal-delight: doc here: {why}");
+            return format!("err {why}");
+        };
+        let mut refused = None;
+        let said = self.act_on_picked_pane(
+            cx,
+            // The square floats over the bench as well as the terminal, so
+            // the verb that proves it reaches both faces.
+            |v| {
+                matches!(
+                    v.bench.face(),
+                    workbench::Face::Terminal | workbench::Face::Workbench
+                )
+            },
+            "no pane is showing its terminal or its bench",
+            |view, cx| refused = view.open_float(target, None, cx).err(),
+        );
+        // An HTML file with no engine to draw it went to the desktop instead,
+        // and the caller hears the same sentence the log does.
+        match refused {
+            Some(why) => format!("desktop {why}"),
+            None => said,
+        }
+    }
+
+    /// Scroll the floating document by `dy` logical pixels, down when
+    /// positive — the wheel, for a caller with no pointer. It is how the soak
+    /// walks a brief top to bottom and back, which is the path that evicts
+    /// tiles and brings them back.
+    pub(crate) fn doc_scroll(&mut self, dy: f32, cx: &mut Context<Self>) -> String {
+        self.act_on_picked_pane(
+            cx,
+            |v| v.has_float(),
+            "no pane has a floating document open",
+            |view, cx| view.scroll_float(dy, cx),
+        )
+    }
+
+    /// What an open brief shows of its notes — the floating square's, else a
+    /// Document face's — as the pane's answer and one line of JSON: the
+    /// state (notes, or why it is read-only), the counts the bar shows, and
+    /// the exact map copy map would put on the clipboard. The ctl family's
+    /// reason again: the notes layer is drawn for eyes, and what it read has
+    /// to be checkable by a script against the skill's fixtures.
+    pub(crate) fn doc_notes(&mut self, cx: &mut Context<Self>) -> String {
+        let mut got = None;
+        let said = self.act_on_picked_pane(
+            cx,
+            |v| v.has_document(),
+            "no pane has a document open",
+            |view, cx| got = Some(view.doc_notes(cx)),
+        );
+        match got {
+            Some(Ok(json)) => format!("{said} {json}"),
+            Some(Err(why)) => format!("err {why}"),
+            None => said,
+        }
+    }
+
+    /// Add a note, delete one, stamp a decision or save, in an open brief —
+    /// the note box and the bar, from the control socket. Answers like
+    /// [`Self::doc_notes`], or with the sentence that refused it.
+    pub(crate) fn doc_note(
+        &mut self,
+        cmd: crate::docview::NotesCommand,
+        cx: &mut Context<Self>,
+    ) -> String {
+        let mut got = None;
+        let said = self.act_on_picked_pane(
+            cx,
+            |v| v.has_document(),
+            "no pane has a document open",
+            |view, cx| got = Some(view.doc_note(cmd, cx)),
+        );
+        match got {
+            Some(Ok(json)) => format!("{said} {json}"),
+            Some(Err(why)) => format!("err {why}"),
+            None => said,
+        }
+    }
+
+    /// Close a floating square: the focused pane's, else the first open one.
+    ///
+    /// Asks the way the ✕ does: a square holding notes not yet saved is kept
+    /// once, and the answer says so rather than `ok`, because a script told
+    /// `ok` would believe the square was gone.
+    pub(crate) fn doc_close(&mut self, cx: &mut Context<Self>) -> String {
+        let closed = std::cell::Cell::new(true);
+        let said = self.act_on_picked_pane(
+            cx,
+            |v| v.has_float(),
+            "no pane has a floating document open",
+            |view, cx| closed.set(view.request_close_float(cx)),
+        );
+        if closed.get() || said.starts_with("err") {
+            said
+        } else {
+            "kept: the square holds notes not yet saved — save them, or doc close again to leave without them".into()
+        }
+    }
+
     /// Every leaf, the active tab's first, plus which ones are on screen and
     /// where the FOCUSED pane sits in that order. The pick itself is
     /// [`workbench::bench_target`]: the focused pane when it qualifies, else
@@ -7585,12 +8614,21 @@ impl Workspace {
         (active, leaves, focused)
     }
 
-    /// Apply a scripted bench verb to the pane [`workbench::bench_target`]
-    /// picks, and answer with the OUTCOME — `ok pane 3`, `queued pane 3`, or
-    /// an `err` — because a reply that only meant "the message was accepted"
-    /// let a whole smoke run report green while the window logged that
-    /// nothing happened.
-    fn bench_apply(
+    /// Pick one pane for a control-socket verb, act on it, and answer with
+    /// what happened.
+    ///
+    /// The pick is [`workbench::bench_target`]'s: the focused pane when it
+    /// `qualifies`, else the first pane that does, active tab first. With none,
+    /// the answer is `err` and `refusal`. Every scripted verb that acts on "the
+    /// pane in front of you" goes through here — the bench's (`choose`,
+    /// `submit`, `say`, `type`) and the document's (`doc here`, `doc close`,
+    /// `doc scroll`, `doc notes`, the note box's commands) — which is why it is
+    /// not named for the bench any more.
+    ///
+    /// Answers on the OUTCOME — `ok pane 3`, `queued pane 3`, or an `err` —
+    /// because a reply that only meant "the message was accepted" let a whole
+    /// smoke run report green while the window logged that nothing happened.
+    fn act_on_picked_pane(
         &mut self,
         cx: &mut Context<Self>,
         qualifies: impl Fn(&TerminalView) -> bool,
@@ -7629,10 +8667,10 @@ impl Workspace {
     /// the same method the composer does, so this tests the composer rather
     /// than working around it.
     pub(crate) fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) -> String {
-        self.bench_apply(
+        self.act_on_picked_pane(
             cx,
-            |v| v.bench.face() == workbench::Face::Workbench && v.mode.is_agent(),
-            "no agent pane is showing its bench",
+            |v| !v.off_limits && v.bench.face() == workbench::Face::Workbench && v.mode.is_agent(),
+            "no agent pane is showing its bench (an off-limits pane takes nothing from here)",
             |view, cx| view.bench_say(line, cx),
         )
     }
@@ -7647,10 +8685,10 @@ impl Workspace {
     /// caret sitting in it — is where both caret bugs lived, and it could not
     /// be photographed without borrowing somebody's actual keyboard.
     pub(crate) fn bench_type(&mut self, line: &str, cx: &mut Context<Self>) -> String {
-        self.bench_apply(
+        self.act_on_picked_pane(
             cx,
-            |v| v.bench.face() == workbench::Face::Workbench && v.mode.is_agent(),
-            "no agent pane is showing its bench",
+            |v| !v.off_limits && v.bench.face() == workbench::Face::Workbench && v.mode.is_agent(),
+            "no agent pane is showing its bench (an off-limits pane takes nothing from here)",
             |view, cx| view.bench_type(line, cx),
         )
     }
@@ -7690,6 +8728,10 @@ impl Workspace {
                 // was not open when it was sent. See
                 // [`TerminalView::latch_asked`].
                 view.latch_asked(None);
+                // A `Deliverable:` line on the screen, on the same slow clock:
+                // Claude draws on the alternate screen, so a link the reply
+                // handed over is only ever readable while it is on screen.
+                view.scan_handovers(cx);
                 // The channel's liveness marker, which a hook reads before it
                 // holds a picker for this bench. See `bench_beacon`.
                 view.bench_beacon();
@@ -8195,8 +9237,17 @@ impl Workspace {
             )
             .when(open, |d| {
                 d.child(row("harness", harness_chips, pref.harness().is_some()))
-                    .child(row("model", model_chips, pref.model_ix(harness).is_some()))
-                    .child(row("effort", effort_chips, pref.effort(harness).is_some()))
+                    .when(harness != launcher::Harness::Local, |d| {
+                        d.child(row("model", model_chips, pref.model_ix(harness).is_some()))
+                            .child(row("effort", effort_chips, pref.effort(harness).is_some()))
+                    })
+                    .when(harness == launcher::Harness::Local, |d| {
+                        d.child(
+                            div()
+                                .text_size(px(10.))
+                                .child("The local runner uses local-agent.toml"),
+                        )
+                    })
             })
     }
 
@@ -9156,7 +10207,7 @@ impl Workspace {
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.62))
-            .shadow(float_shadows(th.accent))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
             .flex()
             .flex_col()
             .gap_3()
@@ -9177,7 +10228,7 @@ impl Workspace {
                 div()
                     .text_size(px(8.5))
                     .text_color(th.accent.alpha(0.8))
-                    .child("esc or click outside to close"),
+                    .child("Escape: back, then close · click outside to close"),
             );
 
         div()
@@ -9234,6 +10285,8 @@ impl Workspace {
         let cwd = target_pane.read(cx).runtime().cwd;
         let new_pane = self.make_pane_in_mode(
             session::PaneRestore {
+                program: None,
+                mark: None,
                 cwd,
                 resume: None,
                 logo: None,
@@ -9259,6 +10312,394 @@ impl Workspace {
         });
         self.save(cx);
         cx.notify();
+    }
+
+    /// A document asked for beside `from` — see [`pane::OpenDoc`] for who
+    /// asks. A pane in the same tab already showing the file is brought
+    /// forward; otherwise the tab splits, or, at four panes, the document
+    /// floats over `from` with a line in its strip saying why.
+    fn open_doc_beside(
+        &mut self,
+        from: Entity<TerminalView>,
+        ev: &pane::OpenDoc,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use docopen::{Asker, FloatNote};
+        let answer = |said: String| {
+            if let Some(reply) = ev.reply.as_ref() {
+                let _ = reply.send(said);
+            }
+        };
+        // A mouse-down can be dispatched twice for one physical click, and a
+        // second split for the same click is the one thing worse than none.
+        // A script and the square's own button are asked once each.
+        if matches!(ev.by, Asker::Click | Asker::Menu) && !self.debounced() {
+            return;
+        }
+        let Some(tab) = self.tab_with_leaf(from.entity_id()) else {
+            answer("err the pane that asked is in no tab".into());
+            return;
+        };
+        let leaves: Vec<Entity<TerminalView>> = {
+            let mut ls = vec![];
+            self.tabs[tab].root.leaves(&mut ls);
+            ls.into_iter().cloned().collect()
+        };
+        let wanted = same_file_key(&ev.target.path);
+        let pane_name = |p: Option<u64>| p.map_or_else(|| "?".to_string(), |p| p.to_string());
+        match beside(
+            &leaves,
+            |l| l.read(cx).document_path().map(same_file_key),
+            &wanted,
+        ) {
+            Beside::Focus(i) => {
+                let shown = leaves[i].clone();
+                // A square asking to become a split of a file already split
+                // is a duplicate of what is on screen: it goes.
+                if ev.carry.is_some() {
+                    from.update(cx, |v, cx| {
+                        v.request_close_float(cx);
+                    });
+                }
+                // Brought forward: onto its document, if someone had turned
+                // it to its shell, and focused — deferred, for `split`'s
+                // reason, so the click still being dispatched cannot take the
+                // focus back.
+                shown.update(cx, |v, cx| v.set_face(workbench::Face::Document, cx));
+                let focus = shown.clone();
+                cx.defer_in(window, move |_ws, window, cx| {
+                    window.focus(&focus.focus_handle(cx), cx);
+                    cx.notify();
+                });
+                answer(format!(
+                    "ok focused pane {} — it already shows this file",
+                    pane_name(shown.read(cx).pane_id())
+                ));
+            }
+            Beside::Split => {
+                let made = self.split_with_document(
+                    tab,
+                    &from,
+                    ev.target.clone(),
+                    ev.carry.clone(),
+                    window,
+                    cx,
+                );
+                answer(format!(
+                    "ok beside pane {} — opened in pane {}",
+                    pane_name(from.read(cx).pane_id()),
+                    pane_name(made.read(cx).pane_id())
+                ));
+            }
+            Beside::Float => {
+                from.update(cx, |v, cx| {
+                    // A square asking to become a split stays the square it
+                    // is; anything else gets a square, so the document is on
+                    // screen either way.
+                    // (An HTML file with no engine never gets this far: the
+                    // pane refused it before asking for a split.)
+                    if ev.by != Asker::Float || !v.has_float() {
+                        let _ = v.open_float(ev.target.clone(), ev.row, cx);
+                    }
+                    v.note_float(FloatNote::FourPanes, cx);
+                });
+                answer(format!(
+                    "ok float pane {} — the tab has four panes, so it floats instead",
+                    pane_name(from.read(cx).pane_id())
+                ));
+            }
+        }
+        cx.notify();
+    }
+
+    /// Open `target` in a new pane to the RIGHT of `from` — a side-by-side
+    /// row with a vertical divider, for reading beside the prompt — and give
+    /// focus back to `from`, so the next keystroke still lands where the
+    /// person was typing.
+    ///
+    /// `carry` is a floating square's view being promoted. The square comes
+    /// down and its view moves into the new pane, re-seated; the file is not
+    /// opened a second time, so the zoom, the place and the decoded pixels all
+    /// come along.
+    ///
+    /// The new pane gets a shell in `from`'s directory, as a split's does: the
+    /// Document face sits over a terminal like every face, alt+k away.
+    fn split_with_document(
+        &mut self,
+        tab: usize,
+        from: &Entity<TerminalView>,
+        target: docopen::DocTarget,
+        carry: Option<Entity<docview::DocumentView>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<TerminalView> {
+        let cwd = from.read(cx).runtime().cwd;
+        let new_pane = self.make_pane_in_mode(
+            session::PaneRestore {
+                cwd,
+                ..Default::default()
+            },
+            window,
+            cx,
+        );
+        // The square goes before its view is handed on, so for no frame is
+        // one view drawn in two places.
+        if carry.is_some() {
+            from.update(cx, |v, cx| {
+                v.release_float(cx);
+            });
+        }
+        // Who it was opened beside, by the host's durable id rather than the
+        // entity: a replica repair rebuilds the opener's pane under a new
+        // entity and the same id. It is how `document_notes` tells the split
+        // an agent opened from any other document in the tab.
+        let opener = from.read(cx).pane_id();
+        new_pane.update(cx, |v, cx| {
+            v.show_document(target, carry, cx);
+            v.set_doc_opened_by(opener);
+        });
+        let from_id = from.entity_id();
+        self.tabs[tab].root.split_leaf(
+            &|p| p.entity_id() == from_id,
+            SplitDir::Row,
+            new_pane.clone(),
+        );
+        // Deferred, for `split`'s reason: making the pane focused it, and the
+        // click that asked is still being dispatched.
+        let from = from.clone();
+        cx.defer_in(window, move |_ws, window, cx| {
+            window.focus(&from.focus_handle(cx), cx);
+            cx.notify();
+        });
+        self.save(cx);
+        cx.notify();
+        new_pane
+    }
+
+    /// Which pane ↪ on a brief sends to, and what the bar calls it, over the
+    /// tab holding `host` by [`docopen::send_to`]. `seat` says which of the
+    /// host's documents asks: its floating square sits beside the host
+    /// itself, its Document face beside the pane it was opened beside. The
+    /// name is "agent" unless the tab holds more than one agent pane the
+    /// notes could go to, and then it is the target's own.
+    fn notes_send_target(
+        &self,
+        host: EntityId,
+        seat: docopen::DocSeat,
+        cx: &App,
+    ) -> Option<(Entity<TerminalView>, String)> {
+        let tab = self.tab_with_leaf(host)?;
+        let mut leaves = vec![];
+        self.tabs[tab].root.leaves(&mut leaves);
+        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
+        let at = leaves.iter().position(|l| l.entity_id() == host)?;
+        let facts: Vec<docopen::SendLeaf> = leaves
+            .iter()
+            .map(|l| docopen::SendLeaf {
+                agent: l.read(cx).mode.is_agent(),
+            })
+            .collect();
+        let beside = match seat {
+            docopen::DocSeat::Float => Some(at),
+            docopen::DocSeat::Face => leaves[at]
+                .read(cx)
+                .doc_opened_by()
+                .and_then(|id| leaves.iter().position(|l| l.read(cx).pane_id() == Some(id))),
+        };
+        let to = docopen::send_to(&facts, at, beside)?.index();
+        let candidates = facts
+            .iter()
+            .enumerate()
+            .filter(|(i, l)| l.agent && (*i != at || seat == docopen::DocSeat::Float))
+            .count();
+        let p = leaves[to].read(cx);
+        let name = p
+            .name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+            .unwrap_or_else(|| p.mode.label().to_string());
+        Some((leaves[to].clone(), docopen::send_label(candidates, &name)))
+    }
+
+    /// ↪ pressed in the notes bar of a brief on `from`: the map goes into the
+    /// prompt of the agent pane the brief sits beside — pasted, never sent —
+    /// and the bar says where it landed, how much of it is unsaved, or why
+    /// nothing went. The target is worked out again here rather than trusted
+    /// from the last frame, so a pane that stopped being an agent since the
+    /// button was drawn is refused in words.
+    fn send_notes_beside(
+        &mut self,
+        from: Entity<TerminalView>,
+        ev: &pane::SendNotesBeside,
+        cx: &mut Context<Self>,
+    ) {
+        use docview::notes_ui::Said;
+        let said = match self.notes_send_target(from.entity_id(), ev.seat, cx) {
+            None => {
+                Said::Refused("no agent pane is beside this brief now — ⎘ copy map instead".into())
+            }
+            Some((target, who)) => match target.update(cx, |v, cx| v.send_notes(&ev.map, cx)) {
+                Ok(landed) => {
+                    let (place, chars) = match landed {
+                        pane::NotesLanded::Prompt(n) => ("prompt", n),
+                        pane::NotesLanded::Composer(n) => ("composer on the bench", n),
+                    };
+                    let prompt = if who == "agent" {
+                        format!("the agent's {place}")
+                    } else {
+                        format!("{who}'s {place}")
+                    };
+                    // A send saves as it goes; this counts only what a
+                    // brief that cannot be saved into kept out of the file.
+                    let unsaved = match ev.unsaved {
+                        0 => String::new(),
+                        1 => " · it includes 1 edit not saved into the file".to_string(),
+                        n => format!(" · it includes {n} edits not saved into the file"),
+                    };
+                    Said::Done(format!(
+                        "in {prompt}, not sent · {chars} characters{unsaved} · press Enter there"
+                    ))
+                }
+                Err(why) => Said::Refused(why),
+            },
+        };
+        from.update(cx, |v, cx| v.doc_said(ev.seat, said, cx));
+    }
+
+    /// Tell each pane in the active tab that shows a brief who its ↪ sends
+    /// to, so the bar draws the button only beside an agent and names the
+    /// pane when there is a choice. Once a frame over one tab; a pane
+    /// repaints only when its answer changed.
+    fn label_note_sends(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        let leaves: Vec<Entity<TerminalView>> = leaves.into_iter().cloned().collect();
+        for leaf in leaves {
+            let (float, face, labelled) = {
+                let v = leaf.read(cx);
+                (
+                    v.has_float(),
+                    v.has_doc_face(),
+                    v.notes_beside() != &(None, None),
+                )
+            };
+            if !float && !face && !labelled {
+                continue;
+            }
+            let id = leaf.entity_id();
+            let label = |seat| self.notes_send_target(id, seat, cx).map(|(_, who)| who);
+            let on_float = if float {
+                label(docopen::DocSeat::Float)
+            } else {
+                None
+            };
+            let on_face = if face {
+                label(docopen::DocSeat::Face)
+            } else {
+                None
+            };
+            leaf.update(cx, |v, cx| v.set_notes_beside(on_float, on_face, cx));
+        }
+    }
+
+    /// The tab holding a pane, wherever it sits in that tab's tree.
+    /// [`Self::tab_index_of`] matches a tab's FIRST leaf only, which is right
+    /// for the tab key it was written for and wrong for a pane in a split.
+    fn tab_with_leaf(&self, pane: EntityId) -> Option<usize> {
+        self.tabs.iter().position(|t| {
+            let mut leaves = vec![];
+            t.root.leaves(&mut leaves);
+            leaves.iter().any(|p| p.entity_id() == pane)
+        })
+    }
+
+    /// `open_document`, on the gpui thread: the document opens in the calling
+    /// agent's own pane or tab, through the same routes a hand uses. "beside"
+    /// is the pane asking for a split exactly as Ctrl+Alt+click does, so the
+    /// workspace router focuses a pane already showing the file, splits under
+    /// four panes, and floats at four; "here" is Alt+click's square over the
+    /// pane. `reply` gets the router's own line, and for a split that is sent
+    /// by [`Self::open_doc_beside`] once it has decided.
+    ///
+    /// The pane is the one the request names, and the request can only name
+    /// the caller: `mcp::open_document` fills the pid in from who called and
+    /// takes none. It is refused here too if the policy does not expose it.
+    fn mcp_open(
+        &mut self,
+        request: mcp::OpenRequest,
+        reply: std::sync::mpsc::Sender<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut leaves = vec![];
+        for tab in &self.tabs {
+            tab.root.leaves(&mut leaves);
+        }
+        let Some(leaf) = leaves
+            .into_iter()
+            .find(|l| l.read(cx).shell_pid() == Some(request.pid))
+            .cloned()
+        else {
+            let _ = reply.send(format!(
+                "err pane {} is not in this window any more",
+                request.pid
+            ));
+            return;
+        };
+        // Always the caller's own pane (`caller_pane` in mcp.rs resolved it),
+        // so its off-limits mark does not stop the agent inside opening a
+        // document in its own tab.
+        if !mcp::should_expose(&self.mcp, leaf.read(cx).mode.is_agent(), false) {
+            let _ = reply.send(format!(
+                "err pane {} is not exposed under the current policy",
+                request.pid
+            ));
+            return;
+        }
+        match request.placement {
+            mcp::Placement::Beside => leaf.update(cx, |v, cx| {
+                v.request_beside(request.target, None, docopen::Asker::Mcp, Some(reply), cx)
+            }),
+            mcp::Placement::Here => {
+                let said = leaf.update(cx, |v, cx| v.open_here(request.target, cx));
+                let _ = reply.send(said);
+            }
+        }
+    }
+
+    /// `ctl doc beside <path>`: what Ctrl+Alt+click on that path does, on the
+    /// focused pane when it is showing its terminal, else the first pane that
+    /// is. Goes through the same request the click makes, so this drives the
+    /// gesture rather than working around it; the answer comes back once the
+    /// workspace has decided, through `reply`.
+    pub(crate) fn doc_beside(
+        &mut self,
+        path: &std::path::Path,
+        reply: std::sync::mpsc::Sender<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(target) = crate::docopen::drawable_document(path) else {
+            let why = format!("{} is not a file TD can draw", path.display());
+            eprintln!("terminal-delight: doc beside: {why}");
+            let _ = reply.send(format!("err {why}"));
+            return;
+        };
+        let (_, leaves, focused) = self.bench_targets();
+        let flags: Vec<bool> = leaves
+            .iter()
+            .map(|l| l.read(cx).bench.face() == workbench::Face::Terminal)
+            .collect();
+        let Some(i) = workbench::bench_target(&flags, focused) else {
+            let _ = reply.send("err no pane is showing its terminal face".into());
+            return;
+        };
+        leaves[i].update(cx, |v, cx| {
+            v.request_beside(target, None, docopen::Asker::Ctl, Some(reply), cx)
+        });
     }
 
     /// Where a tab-reorder release at cursor `pos` lands, now that tabs can wrap
@@ -9332,43 +10773,34 @@ impl Workspace {
     /// Slide outer tab `from` to insertion slot `to` (in the pre-removal index
     /// space, 0..=len). Keeps `self.active` pointing at the very same tab it did
     /// before, whether or not the moved tab was the active one.
-    fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+    /// Moves the tab and returns where it ended up — `from` unchanged on a
+    /// no-op (out of range, or dropped back into its own slot), so a caller
+    /// can always trust the return value as the tab's current index rather
+    /// than needing to special-case "did it move".
+    fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) -> usize {
         if from >= self.tabs.len() {
-            return;
+            return from;
         }
         let (dest, new_active) = reorder_indices(from, to, self.tabs.len(), self.active);
         if dest == from {
-            return; // no-op: dropped back into its own slot
+            return from; // no-op: dropped back into its own slot
         }
         let tab = self.tabs.remove(from);
         self.tabs.insert(dest, tab);
         self.active = new_active;
         self.save(cx);
         cx.notify();
+        dest
     }
 
     /// Keyboard tab reorder (ctrl+shift+pgup / pgdn): slide the active tab one
-    /// slot in `dir` (−1 left / +1 right) — but never across a group boundary. A
-    /// grouped tab can't be shoved out of its group, nor an ungrouped tab pulled
-    /// into one; only same-group (or both-ungrouped) neighbours swap. Mirrors the
-    /// drag-reorder group clamp so both gestures behave alike.
+    /// slot in `dir` (−1 left / +1 right) — but never across a group boundary.
+    /// `nudge_tab_at`'s own clamp, called on `self.active`: its active-
+    /// tracking already covers the `task == self.active` case this always
+    /// is, so the group-boundary rule lives in exactly one place rather than
+    /// two that a later change could leave disagreeing.
     fn nudge_active_tab(&mut self, dir: i32, cx: &mut Context<Self>) {
-        let cur = self.active;
-        let n = self.tabs.len();
-        let nb = match dir {
-            d if d < 0 && cur > 0 => cur - 1,
-            d if d > 0 && cur + 1 < n => cur + 1,
-            _ => return,
-        };
-        // boundary clamp: the swap is allowed only when both tabs share the same
-        // group membership (both `None`, or both the same group id).
-        if self.tabs[cur].group != self.tabs[nb].group {
-            return;
-        }
-        self.tabs.swap(cur, nb);
-        self.active = nb;
-        self.save(cx);
-        cx.notify();
+        self.nudge_tab_at(self.active, dir, cx);
     }
 
     /// Slide a whole group to insertion slot `to` (pre-removal index space,
@@ -9658,19 +11090,6 @@ impl Workspace {
         // Here, deliberately: this is where shells end.
         self.end_held(evicted, cx);
 
-        // A delete can strand a PINNED scope on a branch that no longer exists,
-        // and a strip scoped to nothing draws nothing. Back out to the unpinned
-        // scope, which is whatever branch the surviving active tab lands in —
-        // deleting one branch is no reason to put every other one on the strip.
-        let gone = match branch {
-            BarBranch::Project(id) => self.scope == tree::Scope::Project(id),
-            BarBranch::Initiative(id) => self.scope == tree::Scope::Initiative(id),
-            BarBranch::Unfiled => false,
-        };
-        if gone {
-            self.scope = tree::Scope::default();
-        }
-
         self.prune_groups();
         self.prune_projects();
         self.active = tree::active_after_removal(self.active, &doomed, self.tabs.len());
@@ -9959,7 +11378,7 @@ impl Workspace {
             .border_2()
             .border_color(danger.alpha(0.9))
             .bg(darken(th.surface, 0.62))
-            .shadow(float_shadows(danger))
+            .shadow(float_shadows(danger, th.grade.phosphor))
             .text_color(th.text)
             .on_mouse_down(
                 MouseButton::Left,
@@ -10963,8 +12382,15 @@ impl Workspace {
         self.prune_groups();
     }
 
-    /// Move a whole initiative — and therefore every task in it — under a
-    /// project, or out to the top level.
+    /// File an initiative under a project for the FIRST time — the one
+    /// write this makes once a group already has one is none at all.
+    ///
+    /// Parker: *"groups will be locked into their project."* A group with no
+    /// project yet (every group from a session written before the tree
+    /// existed, or one made loose on purpose) may still be given one; a
+    /// group that already has a project cannot be moved to a different one
+    /// or back to Unfiled. `apply_bar_drop`'s Initiative arm is the mouse's
+    /// door to the identical write and carries the identical guard.
     fn file_initiative(&mut self, gid: u32, into: BarBranch) {
         let project = match into {
             BarBranch::Project(p) => Some(p),
@@ -10974,7 +12400,15 @@ impl Workspace {
             BarBranch::Initiative(_) => return,
         };
         if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
-            g.project = project;
+            // Locked against reassignment to a DIFFERENT project — not
+            // against being taken out entirely. The tab-config chip's
+            // existing "press the project you're already in to take it
+            // back out" gesture has to keep working, so `Some(A) -> None`
+            // and `None -> Some(X)` both stay allowed; only
+            // `Some(A) -> Some(B)` with `A != B` is refused.
+            if g.project.is_none() || project.is_none() || g.project == project {
+                g.project = project;
+            }
         }
     }
 
@@ -10987,12 +12421,20 @@ impl Workspace {
     /// have drifted the first time either grew a rule, and the symptom would
     /// have been a cursor landing on a row that is not drawn.
     fn bar_rows(&self, cx: &App) -> Vec<tree::Row> {
+        self.tree_rows(true, cx)
+    }
+
+    /// The tree's rows, obeying every fold when `folds` is set and none of
+    /// them when it is not. The lookup lists the whole session in the bar's
+    /// order, and a branch folded away is exactly the one a person can no
+    /// longer find by eye.
+    fn tree_rows(&self, folds: bool, cx: &App) -> Vec<tree::Row> {
         let projects: Vec<tree::ProjectRef> = self
             .projects
             .iter()
             .map(|p| tree::ProjectRef {
                 id: p.id,
-                collapsed: p.collapsed,
+                collapsed: folds && p.collapsed,
             })
             .collect();
         // Initiatives are listed in the order their tasks appear on the strip,
@@ -11006,7 +12448,7 @@ impl Workspace {
             .map(|g| tree::InitiativeRef {
                 id: g.id,
                 project: g.project,
-                collapsed: g.collapsed,
+                collapsed: folds && g.collapsed,
             })
             .collect();
         let first_task_of = |gid: u32| {
@@ -11069,9 +12511,8 @@ impl Workspace {
     /// overruled, for ever, with nothing on screen to say so.
     ///
     /// Moved here it keeps the promise that matters (activate a task and you
-    /// can see it) and lets a deliberate fold stand, which is the same shape as
-    /// `ensure_scope_shows` beside it in `activate_tab`: the window corrects
-    /// itself when you MOVE, never while you are looking at it.
+    /// can see it) and lets a deliberate fold stand: the window corrects itself
+    /// when you MOVE, never while you are looking at it.
     ///
     /// Called from the paths where a DIFFERENT tab becomes active — activation,
     /// a new tab, a click into a pane, and restore. Deliberately not from the
@@ -11253,6 +12694,306 @@ impl Workspace {
         }
     }
 
+    /// Where a fresh carry starts: the live cursor's task, or the active
+    /// tab — the same fallback `rename_here` already uses for "whatever is
+    /// under consideration right now."
+    fn bar_carry_seed(&self, cx: &App) -> usize {
+        let rows = self.bar_rows(cx);
+        match self.bar_live_cursor(&rows) {
+            Some(tree::RowId::Task(i)) => i,
+            _ => self.active,
+        }
+    }
+
+    /// The live carry, or a fresh one seeded on the current task — the
+    /// entry point every carry chord goes through first, so "press an
+    /// arrow with nothing carried yet" and "press another arrow mid-carry"
+    /// are the same code path. A carry whose task has since gone missing
+    /// (closed by some other door mid-gesture) is treated as fresh too,
+    /// rather than trusted at a stale index.
+    fn bar_carry_or_seed(&self, cx: &App) -> BarCarry {
+        match self.bar_carry {
+            Some(c) if c.task < self.tabs.len() => c,
+            _ => BarCarry {
+                task: self.bar_carry_seed(cx),
+                depth: CarryDepth::Task,
+            },
+        }
+    }
+
+    /// Ctrl+Shift+Alt+←: zoom the carry out one layer — task, to initiative,
+    /// to project — without moving anything. The keyboard sibling of
+    /// `bar_leave`, changing what Up/Down means next rather than closing a
+    /// branch.
+    fn bar_carry_out(&mut self, cx: &mut Context<Self>) {
+        let mut carry = self.bar_carry_or_seed(cx);
+        carry.depth = carry.depth.out();
+        self.bar_carry = Some(carry);
+        self.bar_carry_show(cx);
+        cx.notify();
+    }
+
+    /// Ctrl+Shift+Alt+→: zoom the carry back in one layer, the mirror of
+    /// `bar_carry_out`.
+    fn bar_carry_in(&mut self, cx: &mut Context<Self>) {
+        let mut carry = self.bar_carry_or_seed(cx);
+        carry.depth = carry.depth.in_();
+        self.bar_carry = Some(carry);
+        self.bar_carry_show(cx);
+        cx.notify();
+    }
+
+    /// Point `bar_cursor` at whatever the carry is currently zoomed to, so
+    /// the existing cursor ring is the carry's visual feedback for free —
+    /// the task itself at Task depth, else its CURRENT initiative/project
+    /// at that depth (a zoom alone has moved nothing yet).
+    fn bar_carry_show(&mut self, cx: &App) {
+        let Some(carry) = self.bar_carry else { return };
+        let place = self.place_of(carry.task);
+        self.bar_cursor = Some(match carry.depth {
+            CarryDepth::Task => tree::RowId::Task(carry.task),
+            CarryDepth::Initiative => match place.initiative {
+                Some(g) => tree::RowId::Initiative(g),
+                None => tree::RowId::Task(carry.task),
+            },
+            CarryDepth::Project => match place.project {
+                Some(p) => tree::RowId::Project(p),
+                None => tree::RowId::Task(carry.task),
+            },
+        });
+        let rows = self.bar_rows(cx);
+        self.bar_reveal(&rows);
+    }
+
+    /// Ctrl+Shift+Alt+↑/↓: move the carried tab to the previous/next sibling
+    /// at the carry's current depth — the "do something" verb the zoom
+    /// levels set up.
+    ///
+    /// Up/Down alone WALK OUT of an exhausted layer rather than stopping
+    /// there: hitting the edge of the current group (or project) escalates
+    /// to the next layer out and tries again, all within this one press —
+    /// see `bar_carry_move_cascading`. Parker, on the version that stopped
+    /// at the group edge and needed an explicit Left first: *"UP arrow
+    /// ALONE should get me out of the group! ... up should just AUTO bump
+    /// me into the next available slot ABOVE."*
+    ///
+    /// A move that escalated past the depth this press started at resets to
+    /// `Task`: the NEXT press tries the narrowest scope again first, which is
+    /// what makes holding one direction feel like walking the tree row by
+    /// row rather than jumping whole branches at a time. A move that landed
+    /// WITHOUT escalating — the ordinary Task-depth case, or an explicit
+    /// Left-zoom's first Up/Down at the depth it zoomed to — leaves the
+    /// depth exactly where it was, so `Left` then repeated `Up` still walks
+    /// sibling initiatives/projects rather than collapsing back to Task
+    /// after the first one, per `CarryDepth`'s own contract. A press that
+    /// moved nothing at all (every layer exhausted) leaves the depth alone
+    /// too — nothing happened, so there is nothing to reset. See
+    /// `carry_depth_after_move`.
+    fn bar_carry_move(&mut self, down: bool, cx: &mut Context<Self>) {
+        let carry = self.bar_carry_or_seed(cx);
+        // Every arm can relocate `carry.task` — the swap, or a refile that
+        // lands the tab somewhere else in the vec — so the carry has to
+        // follow wherever it actually ended up, not the index it started
+        // this one press at. Losing this was the bug: a second press moved
+        // whatever tab now sat at the OLD index, not the one being carried.
+        let (task, landed_at) =
+            self.bar_carry_move_cascading(carry.task, carry.depth, carry.depth, down, cx);
+        let depth = carry_depth_after_move(carry.depth, landed_at);
+        self.bar_carry = Some(BarCarry { task, depth });
+        self.bar_carry_show(cx);
+        cx.notify();
+    }
+
+    /// Try the move at `depth`; a no-op there (the edge of that layer)
+    /// zooms out one layer and tries again, up to Project — where a no-op
+    /// means there is truly nowhere left to go, and `task` comes back
+    /// unmoved. Returns the task's (possibly new) index, and — when
+    /// something moved — the depth that move actually happened at, so
+    /// `bar_carry_move` can tell "landed at the depth it was asked to try"
+    /// from "had to escalate to get anywhere" (`carry_depth_after_move`).
+    ///
+    /// `entered_at` is the depth `bar_carry_move` started this whole press
+    /// at — Task by default, or whatever the user last zoomed to — and
+    /// stays fixed across the recursion so `depth == entered_at` is true
+    /// only on the FIRST attempt. That `entering` flag is what tells
+    /// `carry_to_sibling_initiative`/`_project` whether seeding a fresh
+    /// landing is appropriate: a fallthrough attempt, reached only because a
+    /// narrower layer was exhausted, must never seed a task into a branch it
+    /// isn't currently part of; see the doc comment on those two functions.
+    fn bar_carry_move_cascading(
+        &mut self,
+        task: usize,
+        depth: CarryDepth,
+        entered_at: CarryDepth,
+        down: bool,
+        cx: &mut Context<Self>,
+    ) -> (usize, Option<CarryDepth>) {
+        let entering = depth == entered_at;
+        let dir = if down { 1 } else { -1 };
+        match depth {
+            CarryDepth::Task => match self.nudge_tab_at(task, dir, cx) {
+                Some(landed) => (landed, Some(CarryDepth::Task)),
+                None => self.bar_carry_move_cascading(task, depth.out(), entered_at, down, cx),
+            },
+            CarryDepth::Initiative => {
+                match self.carry_to_sibling_initiative(task, entering, down, cx) {
+                    Some(landed) => (landed, Some(CarryDepth::Initiative)),
+                    None => self.bar_carry_move_cascading(task, depth.out(), entered_at, down, cx),
+                }
+            }
+            CarryDepth::Project => match self.carry_to_sibling_project(task, entering, down, cx) {
+                Some(landed) => (landed, Some(CarryDepth::Project)),
+                None => (task, None),
+            },
+        }
+    }
+
+    /// The generalised body of `nudge_active_tab`, off an explicit index
+    /// rather than `self.active`, so a carry can move a task that is not
+    /// the active one (the bar cursor's, say) without disturbing which tab
+    /// is open. Same clamp: a grouped task can't be shoved past its group's
+    /// edge, nor an ungrouped one pulled into a neighbour's.
+    fn nudge_tab_at(&mut self, task: usize, dir: i32, cx: &mut Context<Self>) -> Option<usize> {
+        let n = self.tabs.len();
+        let nb = match dir {
+            d if d < 0 && task > 0 => task - 1,
+            d if d > 0 && task + 1 < n => task + 1,
+            _ => return None,
+        };
+        if self.tabs[task].group != self.tabs[nb].group {
+            return None;
+        }
+        self.tabs.swap(task, nb);
+        if self.active == task {
+            self.active = nb;
+        } else if self.active == nb {
+            self.active = task;
+        }
+        self.save(cx);
+        cx.notify();
+        Some(nb)
+    }
+
+    /// A project's initiatives, in the same order the tree draws them — by
+    /// where their first task sits on the strip, the key `bar_rows` sorts
+    /// by. Kept in one place so a sibling walk here and the tree's own
+    /// drawn order can never quietly disagree.
+    fn project_initiatives_in_tree_order(&self, project: Option<u32>) -> Vec<u32> {
+        let first_task_of = |gid: u32| {
+            self.tabs
+                .iter()
+                .position(|t| t.group == Some(gid))
+                .unwrap_or(usize::MAX)
+        };
+        let mut ids: Vec<u32> = self
+            .groups
+            .iter()
+            .filter(|g| g.project == project)
+            .map(|g| g.id)
+            .collect();
+        ids.sort_by_key(|&id| first_task_of(id));
+        ids
+    }
+
+    /// The index just after the last tab (other than `exclude`) in
+    /// initiative `gid` — the contiguous landing slot for a task freshly
+    /// filed there. `exclude` is the task being filed: by the time this is
+    /// asked, `file_task` has usually already set its group to `gid`, and
+    /// without excluding it a task that lands last would count itself as
+    /// its own predecessor.
+    fn end_of_initiative_run(&self, gid: u32, exclude: usize) -> Option<usize> {
+        self.tabs
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|&(i, t)| i != exclude && t.group == Some(gid))
+            .map(|(i, _)| i + 1)
+    }
+
+    /// The index just after the last tab (other than `exclude`) under
+    /// `project` — direct or through an initiative. Same exclusion reason
+    /// as `end_of_initiative_run`.
+    fn end_of_project_run(&self, project: u32, exclude: usize) -> Option<usize> {
+        (0..self.tabs.len())
+            .rev()
+            .filter(|&i| i != exclude)
+            .find(|&i| self.place_of(i).project == Some(project))
+            .map(|i| i + 1)
+    }
+
+    /// Initiative-depth carry move: refile `task` into the previous/next
+    /// sibling initiative within its CURRENT project — never crossing a
+    /// project boundary at this depth. That is what keeps a carry from ever
+    /// needing to move an initiative itself: groups are locked to their
+    /// project, so only the task travels.
+    ///
+    /// `None` means there is no sibling initiative to move to: none exist,
+    /// this is the only one, or `task` is not currently in any initiative
+    /// AND `entering` is false — all three are `tree::sibling_landing`'s job
+    /// to catch (its `may_seed` parameter is this same `entering`). A
+    /// fallthrough from an exhausted Task depth must not seed an ungrouped
+    /// task into "the first/last initiative that happens to exist" just
+    /// because nothing is currently selected there; that seeding is only
+    /// right on the FIRST attempt at this depth, i.e. when the user asked
+    /// for Initiative depth on purpose. The cascade in
+    /// `bar_carry_move_cascading` reads `None` as "this layer is exhausted,
+    /// try the next one out", so it must stay `None` rather than fall back
+    /// to `task` the way this used to before `bar_carry_move` grew that
+    /// cascade.
+    fn carry_to_sibling_initiative(
+        &mut self,
+        task: usize,
+        entering: bool,
+        down: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let place = self.place_of(task);
+        let siblings = self.project_initiatives_in_tree_order(place.project);
+        let target = tree::sibling_landing(&siblings, place.initiative, entering, down)?;
+        let slot = self.end_of_initiative_run(target, task);
+        Some(self.carry_land_in(task, BarBranch::Initiative(target), slot, cx))
+    }
+
+    /// Project-depth carry move: refile `task` into the previous/next
+    /// sibling project, ungrouped — `file_task` already clears the group
+    /// the moment a project is set directly. Same `None`-means-exhausted
+    /// contract as `carry_to_sibling_initiative`, and the same reason for
+    /// each of its causes, `entering` included.
+    fn carry_to_sibling_project(
+        &mut self,
+        task: usize,
+        entering: bool,
+        down: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let place = self.place_of(task);
+        let ids: Vec<u32> = self.projects.iter().map(|p| p.id).collect();
+        let target = tree::sibling_landing(&ids, place.project, entering, down)?;
+        let slot = self.end_of_project_run(target, task);
+        Some(self.carry_land_in(task, BarBranch::Project(target), slot, cx))
+    }
+
+    /// The shared tail of both `carry_to_sibling_*` functions once a
+    /// landing sibling has been picked: refile `task` there and place it
+    /// contiguous with that branch's existing run — at the end if it has
+    /// one, saved in place (nothing to reorder around) if it doesn't.
+    fn carry_land_in(
+        &mut self,
+        task: usize,
+        into: BarBranch,
+        end_of_run: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        self.file_task(task, into);
+        match end_of_run {
+            Some(slot) => self.move_tab(task, slot, cx),
+            None => {
+                self.save(cx);
+                task
+            }
+        }
+    }
+
     /// Fold / unfold a branch of the tree.
     fn toggle_branch(&mut self, branch: BarBranch, cx: &mut Context<Self>) {
         match branch {
@@ -11272,34 +13013,22 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Narrow the mother bar to a branch, or back out to everything.
+    /// A click on a branch row: go there.
     ///
-    /// Scoping away from the task you are in would leave the strip showing a
-    /// set that does not contain the active tab, so the scope only takes if it
-    /// still shows it — otherwise the active task moves to the branch you just
-    /// asked to look at. Choosing the second is deliberate: you asked to work
-    /// on that branch.
-    fn set_scope(&mut self, to: tree::Scope, window: &mut Window, cx: &mut Context<Self>) {
-        self.scope = to;
-        let places = self.places();
-        let home = places.get(self.active).copied().unwrap_or_default();
-        let active_shown = places
-            .get(self.active)
-            .map(|p| self.scope.shows(p, &home))
-            .unwrap_or(true);
-        if !active_shown {
-            if let Some(first) = places.iter().position(|p| self.scope.shows(p, &home)) {
-                self.activate_tab(first, window, cx);
-            } else {
-                // An empty branch cannot be worked in. Back out to the scope
-                // that cannot be empty — the one holding whatever tab you are
-                // on — rather than strand the strip with nothing on it, and
-                // rather than dump the whole session onto it as an apology.
-                self.scope = tree::Scope::default();
-            }
+    /// The same act as a press on one of the shut strip's chips — the branch's
+    /// first tab becomes the active one, and a click on the branch you are
+    /// already in changes nothing. It used to PIN the strip's scope to the
+    /// branch and light the row until clicked again; the shut strip stopped
+    /// obeying pins (it always carries your own group's tabs), so the light was
+    /// left claiming a narrowing nothing drew. Parker, on the choice between
+    /// giving pins a new meaning and retiring them: *"Concur — go ahead"* (#757).
+    /// Where you are is the tree's faint wash to say, and nothing else.
+    fn go_to_branch(&mut self, branch: BarBranch, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(i) = branch_landing(&self.places(), self.active, branch) {
+            self.activate_tab(i, window, cx);
+            self.save(cx);
+            cx.notify();
         }
-        self.save(cx);
-        cx.notify();
     }
 
     /// Where a new member of `place`'s branch lands: after the last tab already
@@ -11319,21 +13048,6 @@ impl Workspace {
 
     fn places(&self) -> Vec<tree::Place> {
         (0..self.tabs.len()).map(|i| self.place_of(i)).collect()
-    }
-
-    /// Widen the scope if it would hide task `i` — called on every activation,
-    /// wherever it came from (a click, ctrl+pgup, a ctl script, a notification
-    /// jump). The strip always contains the tab you are in.
-    ///
-    /// A no-op under the default scope, which follows the active tab instead of
-    /// being corrected after it: only a PIN can be left behind. Kept on every
-    /// activation path anyway, because a pin is one click away on any branch
-    /// row in the tree.
-    fn ensure_scope_shows(&mut self, i: usize) {
-        let place = self.place_of(i);
-        if let Some(wider) = self.scope.widened_for(&place) {
-            self.scope = wider;
-        }
     }
 
     /// Commit an in-flight left-bar rename (project or initiative).
@@ -11483,6 +13197,28 @@ impl Workspace {
                 let Some(landing) = tree::land_initiative(&places, &inis, gid, drop) else {
                     return false;
                 };
+                let current_project = self
+                    .groups
+                    .iter()
+                    .find(|g| g.id == gid)
+                    .and_then(|g| g.project);
+                // Locked against reassignment to a DIFFERENT project — see
+                // `file_initiative`, the keyboard/menu door to the identical
+                // rule and the reason this checks both sides are `Some` and
+                // unequal rather than just "already has one": taking a group
+                // OUT of its project (dropped on Unfiled) is a separate,
+                // still-allowed gesture, the drag version of the tab-config
+                // chip's "press it again to remove it". Refused WHOLE rather
+                // than just skipping the project write: `landing.slot` was
+                // computed assuming the change lands, and repositioning the
+                // group there without it would separate its tabs from the
+                // branch its own colour band still claims.
+                if current_project.is_some()
+                    && landing.project.is_some()
+                    && current_project != landing.project
+                {
+                    return false;
+                }
                 if let Some(g) = self.groups.iter_mut().find(|g| g.id == gid) {
                     g.project = landing.project;
                 }
@@ -11520,11 +13256,6 @@ impl Workspace {
 
     // ---- the project rail --------------------------------------------------
 
-    /// The active project's engineering state, if the rail has read it yet.
-    fn eng_state(&self) -> Option<&engstate::ProjectState> {
-        self.eng.get(&self.eng_key()).map(|r| &r.state)
-    }
-
     /// The branch the rail reads for right now — see [`EngKey`].
     fn eng_key(&self) -> EngKey {
         Self::eng_key_of(self.place_of(self.active))
@@ -11555,6 +13286,7 @@ impl Workspace {
     /// case that matters — the sweep's two-second beat is the most a person
     /// waits to see the rail say something about where they just arrived.
     fn eng_scan_request(&mut self, cx: &App) -> Option<(EngKey, engstate::ScanInput)> {
+        self.sync_coordination_scope(cx);
         if self.eng_scanning {
             return None;
         }
@@ -11590,15 +13322,14 @@ impl Workspace {
         let name = self.eng_key_name(key);
         let mut mine = Vec::new();
         let mut others = Vec::new();
+        let mut unlocated = Vec::new();
+        let full_scope = self.coordination_full_scope();
         for (i, tab) in self.tabs.iter().enumerate() {
             let place = self.place_of(i);
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
             for pane in leaves {
                 let v = pane.read(cx);
-                let Some(cwd) = v.current_cwd() else {
-                    continue;
-                };
                 let tab_name = tab.name.clone().unwrap_or_else(|| {
                     if v.title.trim().is_empty() {
                         v.mode.label().to_lowercase()
@@ -11606,7 +13337,32 @@ impl Workspace {
                         v.title.clone()
                     }
                 });
+                let rt = v.runtime();
+                let participant = coordination::Participant {
+                    id: format!("{}:{:?}", crate::instance::key(), pane.entity_id()),
+                    project_id: Self::coordination_key(Self::eng_key_of(place)),
+                    pane_id: v.pane_id(),
+                    pid: v.shell_pid(),
+                    title: v
+                        .name
+                        .clone()
+                        .filter(|name| !name.trim().is_empty())
+                        .or_else(|| (!v.title.trim().is_empty()).then(|| v.title.clone()))
+                        .unwrap_or_else(|| tab_name.clone()),
+                    mode: v.mode.label().into(),
+                    agent: Self::coordination_agent(&v.mode),
+                    session: coordination::session_identity(rt.resume.as_deref()),
+                    exposed: mcp::should_expose(&self.mcp, v.mode.is_agent(), v.off_limits),
+                    full_scope,
+                };
+                let Some(cwd) = v.current_cwd() else {
+                    if Self::eng_key_of(place) == key {
+                        unlocated.push(participant);
+                    }
+                    continue;
+                };
                 let w = engstate::Writer {
+                    participant: Some(participant),
                     tab: i,
                     tab_name,
                     label: v.mode.label().to_string(),
@@ -11632,6 +13388,9 @@ impl Workspace {
             }
         }
         engstate::ScanInput {
+            coordination_key: Some(Self::coordination_key(key)),
+            scope_key: self.coord_scope.clone(),
+            unlocated,
             project: match key {
                 EngKey::Project(p) => Some(p),
                 EngKey::Group(_) | EngKey::Unfiled => None,
@@ -11670,23 +13429,25 @@ impl Workspace {
             let excess = log.len().saturating_sub(12);
             log.drain(..excess);
         }
+        if let Some(reading) = &state.coordination {
+            self.coord_operator.memory.reload();
+            self.coord_operator.update(reading.operator.clone());
+            if reading.scope_key == self.coord_scope {
+                let full = self.coordination_full_scope();
+                let store = std::sync::Arc::make_mut(&mut self.coord_authorized);
+                if full {
+                    store.attention_epoch = self.coord_operator.attention_epoch.clone();
+                    store.operator_memory(self.coord_operator.memory.clone());
+                }
+                if let Some(p) = &reading.authorized {
+                    store.update(p.clone());
+                } else {
+                    store.remove(&reading.operator.id);
+                }
+            }
+        }
         self.eng.insert(key, Reading::of(state));
         cx.notify();
-    }
-
-    /// The afterglow still on show for the active project, oldest first.
-    fn eng_afterglow(&self) -> Vec<&str> {
-        let key = self.eng_key();
-        let now = Instant::now();
-        self.eng_events
-            .get(&key)
-            .map(|log| {
-                log.iter()
-                    .filter(|(at, _)| now.duration_since(*at) < ENG_AFTERGLOW)
-                    .map(|(_, e)| e.as_str())
-                    .collect()
-            })
-            .unwrap_or_default()
     }
 
     /// Every project's reading, for the MCP snapshot — the active one flagged,
@@ -11710,38 +13471,6 @@ impl Workspace {
                 st.state.report(*key == active, &glow)
             })
             .collect()
-    }
-
-    /// Every frame the ticker rotates through: the reading's own, then one
-    /// for the afterglow when there is any. One function, so the clock and
-    /// the renderer count the same frames.
-    fn eng_frames(&self) -> Vec<engstate::Frame> {
-        let Some(reading) = self.eng.get(&self.eng_key()) else {
-            return Vec::new();
-        };
-        let mut frames = reading.frames.clone();
-        let glow = self.eng_afterglow();
-        if !glow.is_empty() {
-            // the three newest, newest first — the rest are on the badge's
-            // dot and in the table
-            let recent: Vec<&str> = glow.iter().rev().take(3).copied().collect();
-            frames.push(engstate::Frame {
-                kind: engstate::FrameKind::Events,
-                text: format!("\u{25c6} {}", recent.join(" \u{00b7} ")),
-                tone: engstate::Tone::Plain,
-            });
-        }
-        frames
-    }
-
-    /// Advance the ticker. Silent when there is nothing to rotate.
-    fn tick_eng_frame(&mut self, cx: &mut Context<Self>) {
-        let n = self.eng_frames().len();
-        if n == 0 {
-            return;
-        }
-        self.eng_frame = (self.eng_frame + 1) % n;
-        cx.notify();
     }
 
     // ---- ctl `tabs`: the tab strip, scripted ---------------------------------
@@ -11935,10 +13664,12 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if let Some(prev) = self.focus_read.take().and_then(|w| w.upgrade()) {
-            prev.update(cx, |v, _| v.set_being_read(false));
+            prev.update(cx, |v, cx| v.set_being_read(false, cx));
         }
-        pane.update(cx, |v, _| v.set_being_read(true));
+        pane.update(cx, |v, cx| v.set_being_read(true, cx));
         self.focus_read = Some(pane.downgrade());
+        self.focus_inline = false;
+        self.focus_turn_nav = transcript::TurnNav::default();
         // Each FOCUS opens at fit-to-modal; the header slider takes it from there.
         self.focus_zoom = 1.0;
         // A fresh open lands at the NEWEST end, with nothing selected.
@@ -11954,6 +13685,10 @@ impl Workspace {
         self.focus_layout = None;
         self.focus_sel = None;
         self.focus_sel_drag = false;
+        self.focus_doc_holding = false;
+        // Another pane's conversation is not this one's; the render starts
+        // reading this pane's, if it has one bound.
+        self.focus_talk = None;
         // Defer the focus: this runs from the 👓 header button's mouse-down
         // listener, so a synchronous `window.focus` gets grabbed straight back by
         // the root container's tracked focus handle (the same race new_tab/split
@@ -11966,17 +13701,178 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Close the FOCUS modal and clear the read flag on its pane (if still open).
+    /// Close the FOCUS modal and clear the read flag on its pane (if still open),
+    /// which takes back a document the pane lent it — let go first, if a press
+    /// on it was still held.
     fn close_focus_read(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.focus_doc_holding) {
+            if let Some(view) = self.focus_lent(cx) {
+                view.update(cx, |v, cx| v.release(cx));
+            }
+        }
         if let Some(pane) = self.focus_read.take().and_then(|w| w.upgrade()) {
-            pane.update(cx, |v, _| v.set_being_read(false));
+            pane.update(cx, |v, cx| v.set_being_read(false, cx));
         }
         self.focus_sel = None;
         self.focus_sel_drag = false;
         *self.focus_map.lock().unwrap() = None;
         // free the (potentially 10k-row) memoised layout with the modal
         self.focus_layout = None;
+        // and stop reading the conversation: dropping it ends its task
+        self.focus_talk = None;
+        self.focus_inline = false;
+        self.focus_turn_nav = transcript::TurnNav::default();
         cx.notify();
+    }
+
+    /// One Ctrl+Up/Down names one human turn. No wheel events or prompt-history
+    /// keys are sent to either CLI, including while the transcript is loading.
+    fn jump_human_turn(
+        &mut self,
+        pane: Entity<TerminalView>,
+        next: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let same = self
+            .focus_read
+            .as_ref()
+            .and_then(|p| p.upgrade())
+            .is_some_and(|p| p == pane);
+        if !same {
+            if next {
+                return;
+            }
+            self.open_focus_read(pane, window, cx);
+            self.focus_inline = true;
+        }
+        self.focus_turn_nav.queue(next);
+        self.focus_at_bottom = false;
+        cx.notify();
+    }
+
+    /// Start reading the conversation at `path` for the FOCUS reader: each half
+    /// second, off the main thread, the transcript's new lines are folded in and
+    /// — when that changed anything, or a tool call was opened or closed — the
+    /// conversation is drawn again and handed across, the agent's side under
+    /// `agent` (the pane's own label: CLAUDE, CODEX). Dropping the returned
+    /// [`ReaderTalk`] stops it.
+    fn read_talk(
+        path: std::path::PathBuf,
+        ink: transcript::Ink,
+        agent: String,
+        cx: &mut Context<Self>,
+    ) -> ReaderTalk {
+        let open: Arc<Mutex<(std::collections::HashSet<usize>, u64)>> = Arc::default();
+        let (you, empty) = {
+            let s = lang::current().strings();
+            (s.reader_you, s.reader_empty)
+        };
+        let shared = open.clone();
+        let file = path.clone();
+        let read = cx.spawn(async move |this, cx| {
+            let mine = file.clone();
+            let mut tail = transcript::Tail::new(file);
+            let mut talk = transcript::Conversation::new();
+            let mut drawn_for: Option<(u64, u64)> = None;
+            let mut drawings = 0u64;
+            loop {
+                let (open, ink, agent) = (shared.clone(), ink.clone(), agent.clone());
+                let (t, c, drawing) = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let mut restarted = false;
+                        if let Ok(new) = tail.poll() {
+                            if new.reset {
+                                // Another conversation: the calls opened in the
+                                // last one are not this one's, and its count of
+                                // changes starts again, so the last drawing's key
+                                // says nothing about it.
+                                talk = transcript::Conversation::new();
+                                open.lock().unwrap_or_else(|e| e.into_inner()).0.clear();
+                                restarted = true;
+                            }
+                            for line in &new.lines {
+                                talk.fold(line);
+                            }
+                        }
+                        let (set, turned) = {
+                            let o = open.lock().unwrap_or_else(|e| e.into_inner());
+                            (o.0.clone(), o.1)
+                        };
+                        let key = (talk.rev(), turned);
+                        let drawing = (restarted || Some(key) != drawn_for).then(|| {
+                            let words = transcript::Words {
+                                you,
+                                agent: &agent,
+                                empty,
+                            };
+                            (key, transcript::draw(&talk, &ink, &words, &set))
+                        });
+                        (tail, talk, drawing)
+                    })
+                    .await;
+                tail = t;
+                talk = c;
+                if let Some((key, d)) = drawing {
+                    drawn_for = Some(key);
+                    drawings += 1;
+                    let drawn = TalkDrawn {
+                        rev: drawings,
+                        doc: Arc::new(d.doc),
+                        opens: Arc::new(d.opens),
+                        turns: Arc::new(d.turns),
+                    };
+                    // Only into the conversation this task reads: a reader that
+                    // moved on to another pane has another.
+                    let landed = this.update(cx, |ws: &mut Workspace, cx| {
+                        if let Some(talk) = ws.focus_talk.as_mut().filter(|t| t.path == mine) {
+                            talk.drawn = Some(drawn);
+                            cx.notify();
+                        }
+                    });
+                    if landed.is_err() {
+                        return;
+                    }
+                }
+                // Half a second between reads of the file, and a twentieth
+                // between looks at the open calls, so a click opens one at once.
+                let turned = shared.lock().unwrap_or_else(|e| e.into_inner()).1;
+                for _ in 0..10 {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(50))
+                        .await;
+                    if shared.lock().unwrap_or_else(|e| e.into_inner()).1 != turned {
+                        break;
+                    }
+                }
+            }
+        });
+        ReaderTalk {
+            path,
+            drawn: None,
+            open,
+            _read: read,
+        }
+    }
+
+    /// Escape, seen before any pane sees it: close the FOCUS reader here,
+    /// properly, unless the pane it reads holds the keyboard. That pane closes
+    /// it itself, after offering the key to a document it lent the reader — an
+    /// open note box or a brief's own dialog goes first — by asking for
+    /// `close_focus_read`; with the keyboard anywhere else, nothing else would.
+    /// Answers whether it closed the reader.
+    fn escape_closes_the_reader(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
+        let Some(pane) = self.focus_read.as_ref().and_then(|w| w.upgrade()) else {
+            // Its pane has gone, and nothing is drawn: nothing to close.
+            self.focus_read = None;
+            return false;
+        };
+        if pane.focus_handle(cx).contains_focused(window, cx) {
+            return false;
+        }
+        self.close_focus_read(cx);
+        true
     }
 
     /// An agent finished in `pane` (the bell edge). If Parker is looking at that
@@ -12204,10 +14100,11 @@ impl Workspace {
     /// work than the wall already does per frame — a few `/proc` reads and the
     /// status line the HUD parses anyway. The transcript reading happens off
     /// this thread, in [`toolprop::resolve_probes`].
+    ///
+    /// Not gated on `follows_tool`: the same read also feeds the Workbench's
+    /// model dial, which a user who turned the tool glyphs off still sees. The
+    /// gate is applied where the face is, in [`Self::apply_tool_faces`].
     fn tool_probe_requests(&self, cx: &App) -> Vec<toolprop::ToolProbeReq> {
-        if !toolprop::follows_tool() {
-            return vec![];
-        }
         let mut out = vec![];
         for tab in &self.tabs {
             let mut leaves = vec![];
@@ -12246,15 +14143,40 @@ impl Workspace {
         probes: Vec<(EntityId, toolprop::ToolProbe, bool)>,
         cx: &mut Context<Self>,
     ) {
+        // The reader binds its conversation off this sweep, so a binding that
+        // appears, moves or goes under an open reader redraws it now, rather
+        // than on whatever next happens to redraw the window.
+        let read = self
+            .focus_read
+            .as_ref()
+            .and_then(|w| w.upgrade())
+            .map(|p| p.entity_id());
+        let bound = |ws: &Self| {
+            read.and_then(|id| ws.tool_probe.get(&id))
+                .and_then(|p| p.path().map(std::path::Path::to_path_buf))
+        };
+        let was = bound(self);
         self.tool_probe = probes.iter().map(|(id, pr, _)| (*id, pr.clone())).collect();
+        if bound(self) != was {
+            cx.notify();
+        }
+        let follows = toolprop::follows_tool();
         for (id, probe, working) in probes {
-            let want = working
+            let want = (follows && working)
                 .then_some(probe.tool.as_deref())
                 .flatten()
                 .and_then(toolprop::face);
             let Some(leaf) = self.pane_by_id(id) else {
                 continue;
             };
+            // The Workbench's model dial names its version off this read.
+            // Idempotent, so an unchanged model costs no render. Only a
+            // reading is pushed: a sweep that could not bind the transcript
+            // this time knows nothing new, and the agent leaving is cleared by
+            // the pane itself on departure.
+            if let Some(model) = probe.model.clone() {
+                leaf.update(cx, |v, cx| v.set_running_model(Some(model), cx));
+            }
             if leaf.read(cx).tool_face != want {
                 leaf.update(cx, |v, cx| {
                     v.tool_face = want;
@@ -12350,6 +14272,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A header button can belong to a pane that did not hold focus. Record
+        // its seat before the popup takes focus, so Escape and a successful
+        // in-place launch both return the keyboard to the pane that opened it.
+        if let Some((id, tab)) = from.and_then(|id| self.tab_with_leaf(id).map(|tab| (id, tab))) {
+            self.tabs[tab].focused = Some(id);
+            self.active = tab;
+        }
         let home = session::home_dir();
         // The scan keeps the newest N and this box has 257 project-shaped
         // directories under the five roots. At 60 a repository nobody had
@@ -12376,6 +14305,8 @@ impl Workspace {
                 .unwrap_or_else(|| harness.default_effort()),
             reach: launcher::Reach::Anywhere,
             from,
+            error: None,
+            local_adapter: launcher::LocalAdapter::load(),
         };
         lp.recompute();
         // Pre-select where the person already is, by path rather than by name:
@@ -12402,7 +14333,7 @@ impl Workspace {
     /// launched pane gets a host pane id, survives this window, and is
     /// deduplicated against a conversation already running.
     fn launch_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(lp) = self.agent_launcher.take() else {
+        let Some(mut lp) = self.agent_launcher.take() else {
             return;
         };
         let Some(project) = lp.project().cloned() else {
@@ -12423,23 +14354,28 @@ impl Workspace {
         // compute its own drop directory from `$TD_PANE_ID`, which the host
         // puts in every pane's environment. Written before the spawn, because
         // the pane id does not exist yet — and not needed, for the same reason.
-        let briefing_path = match (recipe.takes_briefing(), surfacefeed::session_dir()) {
-            (true, Some(dir)) => {
-                let text = recipe.briefing(&format!("{}/$TD_PANE_ID", dir.display()));
-                match launcher::write_briefing(&dir, &text) {
-                    Ok(p) => Some(p),
-                    Err(err) => {
-                        eprintln!(
-                            "terminal-delight: could not write the agent briefing ({err}); \
-                             launching without it"
-                        );
-                        None
-                    }
-                }
+        let launch = (|| {
+            let dir =
+                surfacefeed::session_dir().ok_or("TD could not find its session directory")?;
+            let kit = briefkit::default_root().ok_or("TD could not find its data directory")?;
+            let briefing = recipe.prepare_briefing(&dir, &kit)?;
+            let adapter = if lp.harness == launcher::Harness::Local {
+                Some(lp.local_adapter.as_ref().map_err(|e| e.clone())?)
+            } else {
+                None
+            };
+            let line = recipe.command_line_with_adapter(Some(&briefing), adapter)?;
+            Ok::<_, String>((line, briefing))
+        })();
+        let (line, briefing_path) = match launch {
+            Ok(prepared) => prepared,
+            Err(err) => {
+                lp.error = Some(err);
+                self.agent_launcher = Some(lp);
+                cx.notify();
+                return;
             }
-            _ => None,
         };
-        let line = recipe.command_line(briefing_path.as_deref());
         // Where it goes, decided before it is written down, so the journal
         // records the landing that actually happened rather than the one the
         // button is named after.
@@ -12452,9 +14388,8 @@ impl Workspace {
         // detectable afterwards rather than silent. An integrity mark, not an
         // authentication; the field name says which algorithm.
         if let Some(dir) = surfacefeed::session_dir() {
-            let briefing_fnv = briefing_path
-                .as_deref()
-                .and_then(|p| std::fs::read_to_string(p).ok())
+            let briefing_fnv = std::fs::read_to_string(&briefing_path)
+                .ok()
                 .map(|t| launcher::fingerprint(&t));
             let _ = surfacefeed::journal_event(
                 &dir.join("launches.jsonl"),
@@ -12463,9 +14398,9 @@ impl Workspace {
                     "type": "launch",
                     "at_ms": surfacefeed::now_ms(),
                     "harness": recipe.harness.binary(),
-                    "model": recipe.model,
-                    "effort": recipe.effort.id(),
-                    "reach": recipe.reach.id(),
+                    "model": (recipe.harness != launcher::Harness::Local).then_some(recipe.model),
+                    "effort": (recipe.harness != launcher::Harness::Local).then_some(recipe.effort.id()),
+                    "reach": (recipe.harness != launcher::Harness::Local).then_some(recipe.reach.id()),
                     "cwd": project.path.to_string_lossy(),
                     "command": line,
                     "landing": match landing {
@@ -12990,7 +14925,7 @@ impl Workspace {
             .bg(darken(th.surface, 0.35))
             .border_2()
             .border_color(th.accent.alpha(0.85))
-            .shadow(float_shadows(th.accent))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
             .child(header)
             .child(div().pb_1().flex().flex_col().child(list))
             .child(
@@ -13022,6 +14957,474 @@ impl Workspace {
                     }),
                 )
                 .child(panel),
+        )
+    }
+
+    /// Alt+L: open the LOOKUP panel over every name in the window, centred on
+    /// it. The workspace root takes the keyboard, as it does for find and for
+    /// the same reason: a focused pane would send the query to its shell.
+    fn open_lookup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let entries = self.lookup_entries(cx);
+        let hits = lookup::rank(&entries, "");
+        self.lookup = Some(Lookup {
+            query: EditBuffer::seeded(""),
+            entries,
+            hits,
+            selected: 0,
+        });
+        cx.defer_in(window, |ws, window, cx| {
+            window.focus(&ws.focus_handle, cx);
+        });
+        cx.notify();
+    }
+
+    /// Every name a thing in this window can be found by, in the left bar's
+    /// order with every fold opened: each branch, each tab under it, and under
+    /// each tab its panes, each followed by the note stuck on its glass.
+    ///
+    /// Each name is read the way the surface that draws it reads it — a
+    /// project in capitals as the bar draws it, an unnamed tab by its number as
+    /// the strip does, a pane by the name a person gave it, else the title its
+    /// program set, else its mode — so what is typed is what was seen.
+    fn lookup_entries(&self, cx: &App) -> Vec<lookup::Entry<EntityId>> {
+        use lookup::{count, place, Entry, Kind, Target};
+        let project = |id: Option<u32>| {
+            id.and_then(|id| self.project_at(id))
+                .map(|p| p.label().to_uppercase())
+                .unwrap_or_default()
+        };
+        let group = |id: Option<u32>| {
+            id.and_then(|id| self.groups.iter().find(|g| g.id == id))
+                .map(|g| g.label())
+                .unwrap_or_default()
+        };
+        let places = self.places();
+        let mut out = vec![];
+        for row in self.tree_rows(false, cx) {
+            match row {
+                tree::Row::Project { id, .. } => {
+                    let tabs = places.iter().filter(|p| p.project == Some(id)).count();
+                    out.push(Entry {
+                        kind: Kind::Project,
+                        text: project(Some(id)),
+                        place: place(&[], &count(tabs, "tab")),
+                        target: Target::Project(id),
+                    });
+                }
+                tree::Row::Initiative { id, .. } => {
+                    let parent = self
+                        .groups
+                        .iter()
+                        .find(|g| g.id == id)
+                        .and_then(|g| g.project);
+                    let tabs = places.iter().filter(|p| p.initiative == Some(id)).count();
+                    out.push(Entry {
+                        kind: Kind::Group,
+                        text: group(Some(id)),
+                        place: place(&[&project(parent)], &count(tabs, "tab")),
+                        target: Target::Group(id),
+                    });
+                }
+                tree::Row::Task { index, .. } => {
+                    let Some(tab) = self.tabs.get(index) else {
+                        continue;
+                    };
+                    let at = places.get(index).copied().unwrap_or_default();
+                    let (proj, grp) = (project(at.project), group(at.initiative));
+                    let name = tab.name.clone().unwrap_or_else(|| format!("{}", index + 1));
+                    let mut leaves = vec![];
+                    tab.root.leaves(&mut leaves);
+                    out.push(Entry {
+                        kind: Kind::Tab,
+                        text: name.clone(),
+                        place: place(&[&proj, &grp], &count(leaves.len(), "pane")),
+                        target: Target::Tab(index),
+                    });
+                    for leaf in leaves {
+                        let p = leaf.read(cx);
+                        let mode = p.mode.label();
+                        let title = p
+                            .name
+                            .clone()
+                            .filter(|n| !n.is_empty())
+                            .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+                            .unwrap_or_else(|| mode.to_string());
+                        out.push(Entry {
+                            kind: Kind::Pane,
+                            text: title.clone(),
+                            place: place(&[&proj, &grp, &name], mode),
+                            target: Target::Pane(leaf.entity_id()),
+                        });
+                        let Some(note) = p.saved_note() else {
+                            continue;
+                        };
+                        let Some(words) = lookup::note_line(note.title.as_deref(), &note.text)
+                        else {
+                            continue;
+                        };
+                        out.push(Entry {
+                            kind: Kind::Note,
+                            text: words,
+                            place: place(
+                                &[&proj, &grp, &name, &title],
+                                if note.pinned { "pinned" } else { "" },
+                            ),
+                            target: Target::Pane(leaf.entity_id()),
+                        });
+                    }
+                }
+                tree::Row::Unfiled { .. } => {}
+            }
+        }
+        out
+    }
+
+    /// ↵ in the lookup: go to the chosen row, close the panel, and hand the
+    /// keyboard to wherever that left you.
+    ///
+    /// A tab is activated. A pane, or the note on one, activates the pane's tab
+    /// with that pane focused — the tab re-found from the pane, never from the
+    /// number it had when the panel opened. A branch is a click on it in the
+    /// left bar: its first tab, unless you are already standing in it or it
+    /// holds none, and then the bar unfolds it and puts its highlight there,
+    /// so the answer is on screen either way. A row that has gone meanwhile
+    /// just closes the panel.
+    fn jump_to_lookup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(lk) = self.lookup.take() else {
+            return;
+        };
+        let target = lk
+            .hits
+            .get(lk.selected)
+            .and_then(|h| lk.entries.get(h.entry))
+            .map(|e| e.target);
+        let branch = match target {
+            Some(lookup::Target::Project(id)) => Some(BarBranch::Project(id)),
+            Some(lookup::Target::Group(id)) => Some(BarBranch::Initiative(id)),
+            Some(lookup::Target::Tab(i)) if i < self.tabs.len() => {
+                self.activate_tab(i, window, cx);
+                None
+            }
+            Some(lookup::Target::Pane(id)) => {
+                match self.tab_with_leaf(id) {
+                    Some(tab) => {
+                        self.tabs[tab].focused = Some(id);
+                        self.activate_tab(tab, window, cx);
+                    }
+                    None => self.focus_active(window, cx),
+                }
+                None
+            }
+            _ => {
+                self.focus_active(window, cx);
+                None
+            }
+        };
+        if let Some(branch) = branch {
+            match branch_landing(&self.places(), self.active, branch) {
+                Some(i) => self.activate_tab(i, window, cx),
+                None => {
+                    match branch {
+                        BarBranch::Project(id) => {
+                            if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
+                                p.collapsed = false;
+                            }
+                            self.bar_cursor = Some(tree::RowId::Project(id));
+                        }
+                        BarBranch::Initiative(id) => {
+                            if let Some(g) = self.groups.iter_mut().find(|g| g.id == id) {
+                                g.collapsed = false;
+                            }
+                            self.bar_cursor = Some(tree::RowId::Initiative(id));
+                        }
+                        BarBranch::Unfiled => {}
+                    }
+                    self.save(cx);
+                    self.focus_active(window, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// The LOOKUP panel, in find's frame — the same box, border, glow, query
+    /// field and footer, centred on the window as Ctrl+Shift+F is — over names
+    /// instead of lines. Each row says what it is in the left column, in its
+    /// branch's own colour where it has one and beside the same mark the left
+    /// bar draws (a project's dot, a group's rail); then the name with the
+    /// typed letters lit; then where it sits. The row you are standing on says
+    /// so. Only a window of rows around the selection renders, as in find.
+    fn render_lookup(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        use lookup::{Kind, Target};
+        let lk = self.lookup.as_ref()?;
+        let sk = skin::for_theme(cx, th, 1.0);
+        let (ww, wh) = self
+            .last_win
+            .map(|(_, _, w, h)| (w, h))
+            .unwrap_or((1200., 800.));
+        const ROW_H: f32 = 36.;
+        const VISIBLE: usize = 11;
+        let panel_w = 600_f32.min((ww - 16.).max(240.));
+        let n = lk.hits.len();
+        let shown = n.clamp(1, VISIBLE);
+        let panel_h = 72. + shown as f32 * ROW_H + 26.;
+        let left = ((ww - panel_w) * 0.5).max(8.);
+        let top = ((wh - panel_h) * 0.5).clamp(8., (wh - panel_h - 8.).max(8.));
+        let start = if n <= VISIBLE {
+            0
+        } else {
+            lk.selected.saturating_sub(VISIBLE / 2).min(n - VISIBLE)
+        };
+        let end = (start + VISIBLE).min(n);
+        let here_pane = self.tabs.get(self.active).and_then(|t| t.focused);
+        let q = lk.query.text();
+
+        let input = {
+            let eb = render_edit_buffer(&lk.query, 1.0, th.text, th.accent, th.accent.alpha(0.3));
+            if q.is_empty() {
+                eb.child(
+                    div()
+                        .text_color(th.text.alpha(0.35))
+                        .child("a project, group, tab, pane or note\u{2026}"),
+                )
+            } else {
+                eb
+            }
+        };
+        let header = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_2()
+            .pt_2()
+            .pb_1()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.accent)
+                            .child("\u{1f50e}  LOOKUP"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.))
+                            .text_color(th.text.alpha(0.5))
+                            .child(if q.trim().is_empty() {
+                                lookup::count(n, "name")
+                            } else {
+                                format!("{n} match{}", if n == 1 { "" } else { "es" })
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .rounded(sk.radius())
+                    .bg(th.bg.alpha(0.55))
+                    .border_1()
+                    .border_color(th.accent.alpha(0.4))
+                    .text_size(px(13.))
+                    .child(input),
+            );
+
+        let mut list = div().flex().flex_col().gap_0p5().px_1();
+        for i in start..end {
+            let hit = &lk.hits[i];
+            let Some(e) = lk.entries.get(hit.entry) else {
+                continue;
+            };
+            let selected = i == lk.selected;
+            // The branch's own colour where it has one, the same key the left
+            // bar draws beside it; the sticky note in the palette's yellow,
+            // which is the colour of the paper.
+            let colour = match e.target {
+                Target::Project(id) => self.project_at(id).map(|p| p.color),
+                Target::Group(id) => self.groups.iter().find(|g| g.id == id).map(|g| g.color),
+                _ => None,
+            };
+            let kind_col = match e.kind {
+                Kind::Project | Kind::Group => colour.unwrap_or(th.text.alpha(0.5)),
+                Kind::Tab => th.text.alpha(0.6),
+                Kind::Pane => th.accent,
+                Kind::Note => th.ansi[3],
+            };
+            let mark = match (e.kind, colour) {
+                (Kind::Project, Some(c)) => Some(
+                    div()
+                        .flex_none()
+                        .w(px(7.))
+                        .h(px(7.))
+                        .rounded(sk.radius_pill())
+                        .bg(c),
+                ),
+                (Kind::Group, Some(c)) => Some(
+                    div()
+                        .flex_none()
+                        .w(px(3.))
+                        .h(px(12.))
+                        .rounded(sk.radius())
+                        .bg(c),
+                ),
+                _ => None,
+            };
+            let here = match e.target {
+                Target::Tab(t) => t == self.active,
+                Target::Pane(id) => here_pane == Some(id),
+                _ => false,
+            };
+            let name_line = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(
+                    div().min_w(px(0.)).overflow_hidden().child(
+                        Self::find_snippet(&e.text, &hit.positions, th.accent, th.text)
+                            .text_size(px(11.)),
+                    ),
+                )
+                .when(here, |d| {
+                    d.child(
+                        div()
+                            .flex_none()
+                            .text_size(px(8.))
+                            .text_color(th.accent.alpha(0.75))
+                            .child("here"),
+                    )
+                });
+            let row = div()
+                .id(gpui::SharedString::from(format!("lookup-row-{i}")))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .px_2()
+                .h(px(ROW_H))
+                .rounded(sk.radius())
+                .cursor_pointer()
+                .bg(if selected {
+                    th.accent.alpha(0.16)
+                } else {
+                    hsla(0., 0., 0., 0.)
+                })
+                .border_1()
+                .border_color(if selected {
+                    th.accent.alpha(0.55)
+                } else {
+                    hsla(0., 0., 0., 0.)
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        if let Some(lk) = ws.lookup.as_mut() {
+                            lk.selected = i;
+                        }
+                        ws.jump_to_lookup(window, cx);
+                    }),
+                )
+                .child(
+                    div()
+                        .w(px(64.))
+                        .flex_none()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .children(mark)
+                        .child(
+                            div()
+                                .text_size(px(9.))
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(kind_col)
+                                .child(e.kind.label()),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .overflow_hidden()
+                        .flex()
+                        .flex_col()
+                        .child(name_line)
+                        .child(
+                            div()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_size(px(9.))
+                                .text_color(th.text.alpha(0.45))
+                                .child(e.place.clone()),
+                        ),
+                );
+            list = list.child(row);
+        }
+        if n == 0 {
+            list = list.child(
+                div()
+                    .px_2()
+                    .py_2()
+                    .text_size(px(10.))
+                    .text_color(th.text.alpha(0.4))
+                    .child(format!(
+                        "Nothing here is called \u{201c}{}\u{201d}",
+                        q.trim()
+                    )),
+            );
+        }
+
+        let panel = div()
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .w(px(panel_w))
+            .flex()
+            .flex_col()
+            .rounded(sk.radius_lg())
+            .overflow_hidden()
+            .bg(darken(th.surface, 0.35))
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
+            .font_family(th.font_family.clone())
+            .child(header)
+            .child(div().pb_1().flex().flex_col().child(list))
+            .child(
+                div()
+                    .px_2()
+                    .pb_1()
+                    .pt_0p5()
+                    .text_size(px(8.5))
+                    .text_color(th.text.alpha(0.45))
+                    .child("\u{2191}\u{2193} select \u{00b7} \u{21b5} go \u{00b7} esc close"),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            );
+
+        Some(
+            self.over_the_glass(
+                panel,
+                |ws, window, cx| {
+                    ws.lookup = None;
+                    ws.focus_active(window, cx);
+                    cx.notify();
+                },
+                cx,
+            )
+            .bg(hsla(0., 0., 0., 0.28)),
         )
     }
 
@@ -13155,7 +15558,7 @@ impl Workspace {
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
-            .shadow(float_shadows(th.accent))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
             .flex()
             .flex_col()
             .gap_2()
@@ -13286,7 +15689,7 @@ impl Workspace {
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
-            .shadow(float_shadows(th.accent))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
             .flex()
             .flex_col()
             .gap_2()
@@ -13544,7 +15947,7 @@ impl Workspace {
                 }
                 d
             })
-            .shadow(float_shadows(th.accent))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
             .child(header)
             .child(div().pb_1().flex().flex_col().child(list))
             .child(
@@ -13671,7 +16074,9 @@ impl Workspace {
                             lp.selected = i;
                         }
                         ws.launch_agent(window, cx);
-                        ws.focus_active(window, cx);
+                        if ws.agent_launcher.is_none() {
+                            ws.focus_active(window, cx);
+                        }
                         cx.notify();
                     }),
                 )
@@ -13696,6 +16101,10 @@ impl Workspace {
                                     lp.harness = h;
                                     lp.model_ix = lp.model_ix.min(h.models().len() - 1);
                                     lp.effort = h.clamp_effort(lp.effort);
+                                    if h == launcher::Harness::Local {
+                                        lp.reach = launcher::Reach::Anywhere;
+                                    }
+                                    lp.error = None;
                                 }
                                 cx.notify();
                             }),
@@ -13792,7 +16201,14 @@ impl Workspace {
                 .takes_briefing()
                 .then(|| surfacefeed::session_dir().map(|d| d.join("briefing.txt")))
                 .flatten();
-            recipe.command_line(briefing.as_deref())
+            let adapter = if lp.harness == launcher::Harness::Local {
+                lp.local_adapter.as_ref().map(Some).map_err(|e| e.clone())
+            } else {
+                Ok(None)
+            };
+            adapter
+                .and_then(|a| recipe.command_line_with_adapter(briefing.as_deref(), a))
+                .unwrap_or_else(|e| e)
         };
 
         // Where ↵ will put it, read the same way the launch reads it.
@@ -13870,12 +16286,27 @@ impl Workspace {
             })
             .child(head("HARNESS"))
             .child(harness_row)
-            .child(head("MODEL"))
-            .child(model_row)
-            .child(head("EFFORT"))
-            .child(effort_row)
-            .child(head("REACH"))
-            .child(reach_row)
+            .when(lp.harness != launcher::Harness::Local, |d| {
+                d.child(head("MODEL"))
+                    .child(model_row)
+                    .child(head("EFFORT"))
+                    .child(effort_row)
+                    .child(head("REACH"))
+                    .child(reach_row)
+            })
+            .when(lp.harness == launcher::Harness::Local, |d| {
+                d.child(head(
+                    "Model, effort and permissions come from local-agent.toml",
+                ))
+            })
+            .when_some(lp.error.as_ref(), |d, error| {
+                d.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(th.complement)
+                        .child(error.clone()),
+                )
+            })
             .child(
                 div()
                     .mt_1()
@@ -14310,14 +16741,38 @@ impl Workspace {
         )
     }
 
-    /// FOCUS text-size slider range — a multiplier on the auto-fit scale.
-    /// 1.0 (fit) sits near mid-track so the thumb has travel both ways. The
-    /// low end reaches well below fit so a dense read can shrink to a compact,
-    /// glanceable column (the reader wraps, so smaller never means narrower-only).
-    /// The high end is deliberately modest: past ~1.6× the text is billboard-sized
-    /// and the whole top half of the range was unusable (field-tested at 3.0).
-    const FZ_MIN: f32 = 0.35;
-    const FZ_MAX: f32 = 1.6;
+    /// FOCUS letter-size range, against the pane's own letters.
+    ///
+    /// Until 2026-09-29 the range multiplied an auto-fit that divided the glass by
+    /// the pane's width, so a 48-column pane opened at 3.65× and its smallest
+    /// setting was still 1.28× — the reader could never show a tiny pane at its
+    /// own size, which is the case it is opened for. Against the pane's letters,
+    /// 1.0 is "the same letters, more room", and 0.5–2.5 stays inside what the old
+    /// range actually drew: 0.87× to 5.8× across the panes measured that day, with
+    /// everything past about 1.6× of a full-width pane called billboard-sized.
+    const FZ_MIN: f32 = 0.5;
+    const FZ_MAX: f32 = 2.5;
+
+    /// The FOCUS reader's letter scale, from the pane's letters.
+    ///
+    /// A flat read has its own size: the glass is the window's, and `zoom` alone
+    /// sets the letters, so a narrow pane opens with as many columns as the glass
+    /// holds rather than with its own few columns blown up. Only crawl, which
+    /// never wraps, still fits the pane's grid into the glass (`fit`).
+    fn reader_scale(crawl: bool, fit: f32, zoom: f32) -> f32 {
+        if crawl {
+            (fit * zoom).clamp(0.3, 12.0)
+        } else {
+            zoom.clamp(Self::FZ_MIN, Self::FZ_MAX)
+        }
+    }
+
+    /// One Ctrl+wheel gesture over the FOCUS reader: ten percent a notch,
+    /// multiplied so the steps feel even at either end, held to the slider's
+    /// range. Positive notches are the wheel pushed away, which enlarges.
+    fn focus_zoom_step(zoom: f32, notches: f32) -> f32 {
+        (zoom * 1.1_f32.powf(notches)).clamp(Self::FZ_MIN, Self::FZ_MAX)
+    }
 
     /// Map a window-x to a 0..1 fraction along the FOCUS slider track (`None`
     /// until the track has been measured once).
@@ -14328,6 +16783,337 @@ impl Workspace {
             return None;
         }
         Some(((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0))
+    }
+
+    /// The reader's glass: a panel `w` × `h` in the pane's paper, ringed in its
+    /// accent, lifted off the window by a shadow and the phosphor gauge's glow.
+    /// Whatever the reader reads, it wears the one glass.
+    fn reader_panel(w: f32, h: f32, bg: Hsla, accent: Hsla, phosphor: f32) -> gpui::Div {
+        div()
+            .w(px(w))
+            .h(px(h))
+            .flex()
+            .flex_col()
+            .rounded(px(12.))
+            .overflow_hidden()
+            .bg(bg)
+            .border_2()
+            .border_color(accent.alpha(0.7))
+            .shadow(
+                std::iter::once(BoxShadow {
+                    color: hsla(0., 0., 0., 0.7),
+                    offset: point(px(0.), px(10.)),
+                    blur_radius: px(40.),
+                    spread_radius: px(2.),
+                    inset: false,
+                })
+                .chain(theme::phosphor(
+                    phosphor,
+                    BoxShadow {
+                        color: accent.alpha(0.18),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(48.),
+                        spread_radius: px(2.),
+                        inset: false,
+                    },
+                ))
+                .collect(),
+            )
+    }
+
+    /// Measure the glass's exact on-screen box (physical px) as it paints and
+    /// arm the FOCUS backdrop blur: the CRT post-pass frosts everything outside
+    /// this rect while the panel itself stays razor-sharp, easing in with
+    /// `ramp`. Using the real prepaint bounds (not an analytic centre) keeps the
+    /// sharp/blur edge pixel-aligned through the CSD shadow margin.
+    ///
+    /// `tube` is `(header height, glare, k1, k2)` when "Inherit theme" bends the
+    /// reading area like the pane it reads, registered as the lone warp tube.
+    /// Only the reading area bends, never the header: the slider and the toggle
+    /// are gpui hit-boxes at their flat layout positions, so bending them with
+    /// the glass makes their clicks land off-target. Insetting the tube's top
+    /// past the header keeps the chrome flat and honest — the same rule the
+    /// per-pane tubes follow — while the body still curves.
+    fn reader_frost(ramp: f32, tube: Option<(f32, f32, f32, f32)>) -> gpui::Div {
+        div().absolute().inset_0().child(
+            gpui::canvas(
+                move |bounds, window, _cx| {
+                    let sf = window.scale_factor();
+                    let rect = [
+                        f32::from(bounds.origin.x) * sf,
+                        f32::from(bounds.origin.y) * sf,
+                        f32::from(bounds.size.width) * sf,
+                        f32::from(bounds.size.height) * sf,
+                    ];
+                    crate::warp::set_focus_blur(
+                        rect,
+                        28.0 * sf * ramp, // blur radius (eases in)
+                        16.0 * sf,        // feather across the panel edge
+                        ramp,             // frosted-glass tint (eases in)
+                        12.0 * sf,        // corner radius — matches rounded(12)
+                    );
+                    if let Some((hdr_h, glare, k1, k2)) = tube {
+                        let body_rect = [
+                            rect[0],
+                            rect[1] + hdr_h * sf,
+                            rect[2],
+                            (rect[3] - hdr_h * sf).max(1.0),
+                        ];
+                        crate::warp::register_focus_tube(body_rect, glare, k1, k2, [0.0, 1.0, 1.0]);
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .size_full(),
+        )
+    }
+
+    /// The dim + LOCK scrim over the whole window, holding the reader's glass.
+    /// Built through [`Self::over_the_glass`], so it swallows every mouse event
+    /// (clicks AND scroll) — nothing behind the reader can be focused, scrolled
+    /// or typed into, and you stay in the FOCUS pane — and the frame is flat by
+    /// construction, as it already was through the reader's place on `render`'s
+    /// suppression list. The 0.60 dim rides UNDER the frosted backdrop the CRT
+    /// pass paints (the shader blurs these dimmed pixels). A click on the dimmed
+    /// area outside the glass closes the reader; esc closes it too.
+    fn reader_scrim(
+        &self,
+        glass: impl IntoElement,
+        ramp: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        self.over_the_glass(glass, |ws, _window, cx| ws.close_focus_read(cx), cx)
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(hsla(0., 0., 0., 0.6 * ramp))
+    }
+
+    /// The chip beside the reader's title that names what it reads (figure 06
+    /// of `reports/2026-09-29-alt-r-reader.html`): an agent's conversation in
+    /// the accent, and anything the reader falls back on quieter, so a screen
+    /// never passes for a transcript.
+    fn reader_chip(chip: docopen::ReadChip, accent: Hsla, text: Hsla) -> gpui::Div {
+        let ink = if chip == docopen::ReadChip::Transcript {
+            accent
+        } else {
+            text.alpha(0.6)
+        };
+        div()
+            .flex_none()
+            .px(px(8.))
+            .rounded(px(9.))
+            .border_1()
+            .border_color(ink.alpha(0.55))
+            .text_size(px(10.5))
+            .text_color(ink)
+            .child(chip.label(lang::current().strings()))
+    }
+
+    /// The reader's foot: the pane's own input rows, drawn as the pane draws
+    /// them at the reader's letter size — one row each, never wrapped, cut at
+    /// the glass's edge — on a faint strip under a thin accent rule (figure 04
+    /// of `reports/2026-09-29-alt-r-reader.html`, pin 6). `left` lines its rows
+    /// up with the conversation's.
+    #[allow(clippy::too_many_arguments)]
+    fn reader_foot(
+        rows: &[doc::DocLine],
+        left: f32,
+        row_h: f32,
+        size: f32,
+        family: String,
+        text: Hsla,
+        accent: Hsla,
+    ) -> gpui::Div {
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .py(px(READER_FOOT_PAD))
+            .px(px(left))
+            .bg(text.alpha(0.04))
+            .border_t_1()
+            .border_color(accent.alpha(0.35))
+            .text_size(px(size))
+            .text_color(text)
+            .font_family(family)
+            .children(rows.iter().map(move |r| {
+                let row = div().h(px(row_h)).whitespace_nowrap().overflow_hidden();
+                if r.text.is_empty() {
+                    row
+                } else {
+                    row.child(gpui::StyledText::new(r.text.clone()).with_runs(r.runs.clone()))
+                }
+            }))
+    }
+
+    /// The document the pane being read has lent the reader, if it has one.
+    fn focus_lent(&self, cx: &App) -> Option<Entity<docview::DocumentView>> {
+        self.focus_read.as_ref()?.upgrade()?.read(cx).lent_view()
+    }
+
+    /// `pos` relative to the reader's reading area, as a lent document takes a
+    /// point, and whether it falls inside the area. A document reads flat in
+    /// the reader, so there is no bend to undo. `None` until the area has been
+    /// laid out.
+    fn focus_doc_local(&self, pos: Point<Pixels>) -> Option<(Point<Pixels>, bool)> {
+        let b = (*self.focus_body_bounds.lock().unwrap())?;
+        Some((pos - b.origin, b.contains(&pos)))
+    }
+
+    /// The FOCUS reader over a document its pane has lent it: the terminal's
+    /// glass, holding the pane's own document view at the glass's size.
+    ///
+    /// The view stays the pane's — its notes, its ↪, its links and its place in
+    /// the saved layout — and the reader only draws it and hands it the pointer,
+    /// flat and relative to the view, as the pane would. The keys stay with the
+    /// pane, which pages the view and offers it Escape first (`reader_key`), so
+    /// a note is written here exactly as it is on the pane.
+    ///
+    /// It reads flat. "Inherit theme" bends the terminal's text like its pane;
+    /// a page bent that way would take its pointer through a warp a brief's
+    /// note buttons were never laid out under, so the toggle is not offered.
+    fn focus_document_overlay(
+        &self,
+        pane: &Entity<TerminalView>,
+        view: Entity<docview::DocumentView>,
+        ramp: f32,
+        phosphor: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (ww, wh) = self
+            .last_win
+            .map(|(_, _, w, h)| (w, h))
+            .unwrap_or((1200., 800.));
+        let ReaderGlass {
+            panel_w,
+            panel_h,
+            pad,
+            hdr_h,
+            ..
+        } = ReaderGlass::in_window(ww, wh);
+        let (bg, text, accent) = pane.read(cx).reader_palette(cx);
+        let s = lang::current().strings();
+        let (name, zoom) = {
+            let v = view.read(cx);
+            let name = v
+                .target()
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let zoom = v.zoom_now().map(|z| match z {
+                docview::ImageZoom::Fit => s.float_fit.to_string(),
+                docview::ImageZoom::Scale(z) => format!("{:.0}%", z * 100.0),
+            });
+            (name, zoom)
+        };
+        let header = div()
+            .h(px(hdr_h))
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .px_3()
+            .gap_3()
+            .text_size(px(12.))
+            .text_color(accent)
+            .child(format!("👓  FOCUS · {name}"))
+            .children(zoom.map(|z| div().text_color(text.alpha(0.6)).child(z)))
+            .child(div().text_color(text.alpha(0.6)).child("esc to close"));
+        let store = self.focus_body_bounds.clone();
+        let body = div()
+            .flex_1()
+            .min_h_0()
+            .px(px(pad))
+            .pb(px(pad))
+            .child(
+                div()
+                    .relative()
+                    .size_full()
+                    .overflow_hidden()
+                    .child(
+                        canvas(
+                            move |bounds, _window, _cx| *store.lock().unwrap() = Some(bounds),
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
+                    .child(view),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, ev: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation(); // the glass, not the scrim behind it
+                    let (Some(view), Some((at, true))) =
+                        (ws.focus_lent(cx), ws.focus_doc_local(ev.position))
+                    else {
+                        return;
+                    };
+                    let mods = ev.modifiers;
+                    ws.focus_doc_holding = view.update(cx, |v, cx| v.press(at, mods, window, cx));
+                }),
+            );
+        let panel = Self::reader_panel(panel_w, panel_h, bg, accent, phosphor)
+            .child(header)
+            .child(body)
+            .child(Self::reader_frost(ramp, None))
+            // clicks inside the glass must not fall through to the scrim
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            );
+        self.reader_scrim(panel, ramp, cx)
+            // The wheel over the reader is the document's, wherever the pointer
+            // is: ctrl+wheel zooms it and a plain turn scrolls it, as on its pane.
+            .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
+                cx.stop_propagation();
+                let Some(view) = ws.focus_lent(cx) else {
+                    return;
+                };
+                if ev.modifiers.control {
+                    let notches = theme::wheel_notches(ev.delta);
+                    view.update(cx, |v, cx| v.zoom_by_wheel(notches, cx));
+                } else {
+                    let delta = ev.delta;
+                    view.update(cx, |v, cx| v.wheel(delta, cx));
+                }
+            }))
+            // Here, not on the body: the scrim occludes the window, so the moves
+            // and the release reach only it, as the terminal's selection learned
+            // (#87).
+            .on_mouse_move(cx.listener(|ws, ev: &MouseMoveEvent, _w, cx| {
+                let Some(view) = ws.focus_lent(cx) else {
+                    return;
+                };
+                let local = ws.focus_doc_local(ev.position);
+                if ws.focus_doc_holding {
+                    if ev.pressed_button == Some(MouseButton::Left) {
+                        if let Some((at, _)) = local {
+                            view.update(cx, |v, cx| v.drag(at, cx));
+                        }
+                    } else {
+                        ws.focus_doc_holding = false;
+                        view.update(cx, |v, cx| v.release(cx));
+                    }
+                }
+                let over = local.filter(|(_, inside)| *inside).map(|(at, _)| at);
+                view.update(cx, |v, cx| v.hover(over, cx));
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseUpEvent, _w, cx| {
+                    if std::mem::take(&mut ws.focus_doc_holding) {
+                        if let Some(view) = ws.focus_lent(cx) {
+                            view.update(cx, |v, cx| v.release(cx));
+                        }
+                    }
+                }),
+            )
+            .into_any_element()
     }
 
     /// Map a window position to the source `(row, col)` cell under it in the FOCUS
@@ -14427,10 +17213,36 @@ impl Workspace {
         }
         match self.focus_sel {
             Some((a, b)) if a != b => self.copy_focus_selection(cx),
-            _ => self.focus_sel = None,
+            // A click, not a drag: on a tool call's row it opens the call.
+            Some((a, _)) => {
+                self.focus_sel = None;
+                self.toggle_tool_at(a.0);
+            }
+            None => {}
         }
         cx.notify();
         true
+    }
+
+    /// A click on a tool call's row in the reader's conversation shows what the
+    /// call printed under it, or puts it away — the approved design's one line
+    /// per call, with its output behind a click. `doc_line` is a line of the
+    /// document the reader shows. Answers whether it was a call's row; the
+    /// reading task draws the change within a twentieth of a second.
+    fn toggle_tool_at(&mut self, doc_line: usize) -> bool {
+        let Some((talk, drawn)) = self
+            .focus_talk
+            .as_ref()
+            .and_then(|t| Some((t, t.drawn.as_ref()?)))
+        else {
+            return false;
+        };
+        let mut open = talk.open.lock().unwrap_or_else(|e| e.into_inner());
+        let turned = transcript::toggle(&mut open.0, &drawn.opens, doc_line);
+        if turned {
+            open.1 += 1;
+        }
+        turned
     }
 
     /// Set the FOCUS text-size multiplier from a 0..1 track fraction. Live only;
@@ -14714,7 +17526,7 @@ impl Workspace {
     /// ⚓, the active edge (TOP / BOTTOM), and up/down arrows ▲▼ marking which way
     /// content hugs. Clicking it flips the global toggle. Styled like the panel's
     /// other rows (a bezel button), accent-lit when anchoring to the top.
-    fn anchor_top_toggle(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> gpui::Div {
+    fn anchor_top_toggle(&self, _sk: &skin::Skin, cx: &mut Context<Self>) -> gpui::Div {
         let on = self.anchor_top;
         // ⚓ <edge> <arrow>: ▲ points up when anchoring to the top, ▼ down for the
         // (default) bottom anchor — a glanceable direction cue beside the word.
@@ -14723,7 +17535,7 @@ impl Workspace {
         } else {
             "\u{2693} BOTTOM \u{25bc}"
         };
-        Self::bezel_btn(sk, label, on).on_mouse_down(
+        palette_rule(label, on, &theme::theme(cx)).on_mouse_down(
             MouseButton::Left,
             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                 // keep the panel/scrim from seeing this (no close)
@@ -14733,7 +17545,7 @@ impl Workspace {
         )
     }
 
-    /// Flip the GLOBAL AGENT THEME preference, persist it, and repaint. Off
+    /// Flip the GLOBAL TERMINAL STATE preference, persist it, and repaint. Off
     /// (default) ⇒ a pane that follows outer wears what the window wears; on ⇒
     /// it wears the phosphor of the program inside it. The live value is
     /// published to [`pane::set_agent_tint`] every render frame.
@@ -14743,39 +17555,60 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The OUTER design-panel AGENT THEME control, sibling to the anchor row.
-    ///
-    /// It states the RULE rather than the switch position, because a bare
-    /// on/off cannot say which of two things wins: ✳ OVERRIDES OUTER means an
-    /// agent pane paints itself amber, ✳ FOLLOWS OUTER means it paints like
-    /// every other pane in the window. Only panes that follow outer are
-    /// affected either way — a pane wearing a theme it was given keeps it.
-    fn agent_tint_toggle(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> gpui::Div {
+    /// Flip the agent wall's IMAGES switch, persist it, and repaint. The first
+    /// press on a session that never chose turns the pictures OFF, because
+    /// never chosen draws them.
+    fn toggle_card_art(&mut self, cx: &mut Context<Self>) {
+        self.card_art = Some(!wall_card_art(self.card_art));
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// Global visual-state presets for panes following outer. The legacy
+    /// `agent_tint` saved key also covers remote sessions, editors and consoles.
+    fn terminal_state_toggle(&self, _sk: &skin::Skin, cx: &mut Context<Self>) -> impl IntoElement {
         let on = self.agent_tint;
         let label = if on {
-            "\u{2733} OVERRIDES OUTER"
+            "▣ USES PRESETS"
         } else {
-            "\u{2733} FOLLOWS OUTER"
+            "▣ FOLLOWS OUTER"
         };
-        Self::bezel_btn(sk, label, on).on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                // keep the panel/scrim from seeing this (no close)
-                cx.stop_propagation();
-                ws.toggle_agent_tint(cx);
-            }),
-        )
+        let help_owner = cx.entity().downgrade();
+        let delay = palette_help_delay(self.palette_help_seen, Instant::now());
+        palette_rule(label, on, &theme::theme(cx))
+            .id("terminal-state-toggle")
+            .tooltip_show_delay(delay)
+            .tooltip(move |_w, cx| {
+                if let Some(ws) = help_owner.upgrade() {
+                    ws.update(cx, |ws, cx| {
+                        ws.palette_help_seen = Some(Instant::now());
+                        cx.notify();
+                    });
+                }
+                cx.new(|_| SlotTooltip {
+                    lines: terminal_state::HOVER.iter().map(|s| (*s).into()).collect(),
+                })
+                .into()
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.toggle_agent_tint(cx);
+                }),
+            )
     }
 
     fn activate_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.focus_inline {
+            self.close_focus_read(cx);
+        }
         if i < self.tabs.len() {
             self.active = i;
             // However this activation arrived — a tree click, ctrl+pgup, a ctl
-            // script, a jump from a notification — the strip must contain the
-            // tab it lands on. A narrowed mother bar that does not show the
-            // active tab is a window lying about where you are.
-            self.ensure_scope_shows(i);
-            // ...and the tree must be open down to it, for the same reason.
+            // script, a jump from a notification — the strip follows on its
+            // own: it is the active tab's branch, re-asked every frame. The tree
+            // must be open down to it, so a window never hides where you are.
             self.reveal_active_branch();
             // The keyboard cursor goes back to meaning "wherever you are": the
             // next Ctrl+Alt+↑/↓ re-enters the tree one row off THIS task
@@ -14783,16 +17616,32 @@ impl Workspace {
             // highlight left behind somewhere else in the session, which is
             // where a walk kept starting from.
             self.bar_cursor = None;
+            self.bar_carry = None;
             // Visiting the tab IS reading its finish badges: clear every
             // latched ✅/❌ in it. The focus-in edge alone can miss — a bell
             // that latched while this pane already held (idle) keyboard focus
             // never produces an edge, and the badge froze exactly there.
+            //
+            // It is also where a bench whose agent has gone closes whatever
+            // card was left open on it — same `close_card` the Escape and ✕
+            // paths already use — for the same reason `bar_cursor` gets
+            // dropped just above: arriving is when stale pointer state stops
+            // meaning anything. Without it, the LAUNCH AGENT offer a dead
+            // agent's last card leaves behind never earns `Anchor::Eye`
+            // (`body_anchor` sees a card in the room) and Enter never reaches
+            // it either (`return_launches` sees a selection that is really
+            // just leftovers).
             if let Some(tab) = self.tabs.get(i) {
                 let mut leaves = vec![];
                 tab.root.leaves(&mut leaves);
                 let leaves: Vec<_> = leaves.into_iter().cloned().collect();
                 for p in leaves {
-                    p.update(cx, |v, cx| v.ack_bell(cx));
+                    p.update(cx, |v, cx| {
+                        v.ack_bell(cx);
+                        if !v.mode.is_agent() {
+                            v.bench.close_card();
+                        }
+                    });
                 }
             }
             self.save(cx);
@@ -14897,6 +17746,7 @@ impl Workspace {
         }
         self.confirm_close = None;
         self.tab_menu = None;
+        self.bar_carry = None;
 
         // A close is a retirement, not an ending. The shells keep running in the
         // trash until somebody asks for them back or the holding runs out, which
@@ -14967,6 +17817,7 @@ impl Workspace {
     /// terminal, so the focus watchdog must keep its hands off.
     fn overlay_owns_keyboard(&self) -> bool {
         self.find.is_some()
+            || self.lookup.is_some()
             || self.lang_picker.is_some()
             || self.logo_picker.is_some()
             || self.agent_launcher.is_some()
@@ -15081,6 +17932,14 @@ impl Workspace {
     /// layer at a time: a modal stacked on the agent wall (the savings overlay,
     /// graveyard, plugins) closes first — a second esc then closes the wall.
     /// Returns whether anything was closed. NEVER touches a terminal pane.
+    ///
+    /// The FOCUS reader is not here, because closing it touches a pane: the
+    /// pane it reads has to be told, and given back any document it lent.
+    /// Dropped here, as it was from 2026-06-24, the pane went on believing it
+    /// was being read, and Escape and the page keys never reached its terminal
+    /// again — Esc could no longer interrupt an agent there. The reader closes
+    /// through `close_focus_read`, from the pane's own Escape or from
+    /// [`Workspace::escape_closes_the_reader`].
     fn close_popups(&mut self) -> bool {
         // The attention queue draws over everything and is the cheapest thing to
         // dismiss, so it goes first: Esc with the queue open should fold the
@@ -15111,6 +17970,7 @@ impl Workspace {
             || self.confirm_delete.take().is_some()
             || self.bar_menu.take().is_some()
             || self.find.take().is_some()
+            || self.lookup.take().is_some()
             || self.lang_picker.take().is_some()
             || self.logo_picker.take().is_some()
             || self.agent_launcher.take().is_some()
@@ -15118,7 +17978,6 @@ impl Workspace {
             || self.osd_menu.take().is_some()
             || self.tab_menu.take().is_some()
             || self.group_menu.take().is_some()
-            || self.focus_read.take().is_some()
         {
             return true;
         }
@@ -15204,6 +18063,17 @@ impl Workspace {
         // pane is behind a modal and cannot be typed into.
         if theme::paint_mode(cx) && !m.control && !m.alt && !m.shift {
             let key = ks.key.as_str();
+            // DONE, with no pane holding focus to say it (a focused pane folds
+            // the overlay itself and this branch never sees the key). Return
+            // stops here; escape goes on to close anything else that is open.
+            if key == "enter" || key == "escape" {
+                theme::set_paint_mode(cx, false);
+                ctl::fold_paint_on_my_workspace();
+                cx.notify();
+                if key == "enter" {
+                    return;
+                }
+            }
             if matches!(key, "left" | "right" | "up" | "down") {
                 match paint::arrow(theme::paint_target(cx), key) {
                     paint::Arrow::Walk => {
@@ -15253,8 +18123,22 @@ impl Workspace {
         // for the whole app. A capture-phase handler (see render) catches it even
         // while a terminal holds focus; this is the same dismissal for the
         // no-pane-focused case. Esc NEVER closes a terminal.
+        // A carry is state, not a panel — it draws nothing of its own (see
+        // `bar_carry_show`, which just repoints the existing cursor ring),
+        // so it does not belong in `close_popups`'s list: that list is read
+        // by `every_overlay_esc_can_close_also_flattens_the_glass` as "is
+        // this a warped overlay", and a carry is not one. Handled here,
+        // one step earlier, instead.
+        if ks.key.as_str() == "escape" && self.bar_carry.take().is_some() {
+            self.bar_cursor = None;
+            cx.notify();
+            return;
+        }
         if ks.key.as_str() == "escape" && self.close_popups() {
             cx.notify();
+            return;
+        }
+        if ks.key.as_str() == "escape" && self.escape_closes_the_reader(window, cx) {
             return;
         }
         // The language dropdown owns the keyboard while open: esc closes, ↵ applies
@@ -15317,7 +18201,9 @@ impl Workspace {
                 "enter" => {
                     self.agent_launcher = Some(lp);
                     self.launch_agent(window, cx);
-                    self.focus_active(window, cx);
+                    if self.agent_launcher.is_none() {
+                        self.focus_active(window, cx);
+                    }
                     cx.notify();
                     return;
                 }
@@ -15347,6 +18233,10 @@ impl Workspace {
                     // clamped to the nearest one this harness takes.
                     lp.model_ix = lp.model_ix.min(lp.harness.models().len() - 1);
                     lp.effort = lp.harness.clamp_effort(lp.effort);
+                    if lp.harness == launcher::Harness::Local {
+                        lp.reach = launcher::Reach::Anywhere;
+                    }
+                    lp.error = None;
                     self.agent_launcher = Some(lp);
                     cx.notify();
                     return;
@@ -15359,6 +18249,10 @@ impl Workspace {
                 }
                 "left" | "right" => {
                     let offered = lp.harness.efforts();
+                    if offered.is_empty() {
+                        self.agent_launcher = Some(lp);
+                        return;
+                    }
                     let at = offered.iter().position(|e| *e == lp.effort).unwrap_or(0) as i32;
                     let n = offered.len() as i32;
                     let step = if ks.key == "right" { 1 } else { n - 1 };
@@ -15452,6 +18346,52 @@ impl Workspace {
                 }
             }
         }
+        // The LOOKUP panel owns the keyboard while open, on find's terms: esc
+        // closes, ↵ goes to the selected row, ↑/↓ and tab move the selection,
+        // and everything else edits the query and re-ranks. Alt+L again closes
+        // it, so the chord that opened it is the one that puts it away.
+        if let Some(mut lk) = self.lookup.take() {
+            match ks.key.as_str() {
+                "escape" => {
+                    self.focus_active(window, cx);
+                    cx.notify();
+                    return;
+                }
+                "l" if m.alt && !m.control => {
+                    self.focus_active(window, cx);
+                    cx.notify();
+                    return;
+                }
+                "enter" => {
+                    self.lookup = Some(lk);
+                    self.jump_to_lookup(window, cx);
+                    return;
+                }
+                "tab" if m.shift => {
+                    lk.selected = lk.selected.saturating_sub(1);
+                }
+                "down" | "tab" => {
+                    if !lk.hits.is_empty() {
+                        lk.selected = (lk.selected + 1).min(lk.hits.len() - 1);
+                    }
+                }
+                "up" => {
+                    lk.selected = lk.selected.saturating_sub(1);
+                }
+                _ => {
+                    let before = lk.query.text();
+                    lk.query
+                        .apply(ks.key.as_str(), m, ks.key_char.as_deref(), 80);
+                    if lk.query.text() != before {
+                        lk.hits = lookup::rank(&lk.entries, &lk.query.text());
+                        lk.selected = 0;
+                    }
+                }
+            }
+            self.lookup = Some(lk);
+            cx.notify();
+            return;
+        }
         // The find panel owns the keyboard while open: esc closes, ↵ jumps to the
         // selected hit, ↑/↓ move the selection, everything else edits the query and
         // re-runs the fuzzy search.
@@ -15503,12 +18443,6 @@ impl Workspace {
         // A left-bar menu is dismissed by Esc like every other overlay, and by
         // nothing else — a menu that ate arrow keys would be claiming a
         // navigation model it does not have.
-        if self.eng_table && ks.key.as_str() == "escape" {
-            self.eng_table = false;
-            self.focus_active(window, cx);
-            cx.notify();
-            return;
-        }
         if self.bar_menu.is_some() && ks.key.as_str() == "escape" {
             self.close_bar_menu(cx);
             return;
@@ -15587,6 +18521,30 @@ impl Workspace {
             self.new_tab(window, cx);
             return;
         }
+        // The size chords that are the window's. ctrl+shift+= / ctrl+shift+-
+        // step the outer scale a ctrl+wheel notch, the step the wheel takes over
+        // the chrome; with the FOCUS reader up, ctrl+= / ctrl+- step the reader's
+        // own zoom, as ctrl+wheel over the reader does. A focused pane declines
+        // exactly these (`TerminalView::size_key`), so they bubble here whether
+        // or not a pane holds the keyboard. The unshifted pair with no reader up
+        // is the highlighted pane's, and with no pane focused there is none.
+        if let Some(size) = keylayer::size_chord(&pane::keylayer_key(ks)) {
+            match size {
+                keylayer::Size::Outer(notches) => {
+                    let cur = theme::outer_choice(cx).grade.scale;
+                    self.set_scale(theme::GradeKey::Scale.nudged(cur, notches), cx);
+                }
+                keylayer::Size::Pane(notches) if self.focus_read.is_some() => {
+                    let next = Self::focus_zoom_step(self.focus_zoom, notches);
+                    if (next - self.focus_zoom).abs() > f32::EPSILON {
+                        self.focus_zoom = next;
+                        cx.notify();
+                    }
+                }
+                keylayer::Size::Pane(_) => {}
+            }
+            return;
+        }
         // Ctrl+Shift+U is NOT handled here — it is a pane chord that arrives as
         // `OpenUsagePanel` (see the subscription above), exactly like
         // Ctrl+Shift+A. It sat in this function first and did nothing at all: a
@@ -15618,6 +18576,25 @@ impl Workspace {
                 _ => {}
             }
         }
+        // Only agent terminals decline this chord. Editing surfaces and
+        // ordinary terminal programs keep Ctrl+Up/Down.
+        if keylayer::human_turn_chord(&pane::keylayer_key(ks)) {
+            if let Some((_, id)) = self.focused_pane_tab(window, cx) {
+                if let Some(p) = self.pane_by_id(id).filter(|p| p.read(cx).mode.is_agent()) {
+                    // Terminal input also bubbles after writing bytes. Recheck
+                    // the same ownership table so a bench pass-through cannot
+                    // both type the chord and open the reader.
+                    let claimed = p.update(cx, |p, cx| {
+                        keylayer::route(&pane::keylayer_key(ks), &p.layers_up(cx))
+                            == keylayer::Layer::Window
+                    });
+                    if claimed {
+                        self.jump_human_turn(p, ks.key.as_str() == "down", window, cx);
+                    }
+                }
+            }
+            return;
+        }
         if m.control && m.alt {
             match ks.key.as_str() {
                 // R is the verb the walk was missing. Ctrl+Alt+↑↓ moves the
@@ -15638,11 +18615,33 @@ impl Workspace {
                 // be keys that do nothing visible with the bar hidden, and "the
                 // binding is broken" is the reasonable thing to conclude from a
                 // press with no feedback.
+                // Shift added to any of the three turns the walk into a
+                // carry: the same tree, the same rows, but the active tab
+                // (or the live cursor's task) travels with the arrows
+                // instead of just the highlight. See `bar_carry_move`,
+                // `bar_carry_out`, `bar_carry_in`.
                 "up" | "down" if self.left_bar => {
-                    self.bar_walk(ks.key.as_str() == "down", cx);
+                    let down = ks.key.as_str() == "down";
+                    if m.shift {
+                        self.bar_carry_move(down, cx);
+                    } else {
+                        self.bar_walk(down, cx);
+                    }
                 }
-                "right" if self.left_bar => self.bar_enter(window, cx),
-                "left" if self.left_bar => self.bar_leave(cx),
+                "right" if self.left_bar => {
+                    if m.shift {
+                        self.bar_carry_in(cx);
+                    } else {
+                        self.bar_enter(window, cx);
+                    }
+                }
+                "left" if self.left_bar => {
+                    if m.shift {
+                        self.bar_carry_out(cx);
+                    } else {
+                        self.bar_leave(cx);
+                    }
+                }
                 // Ctrl+Alt+1…9 land straight on a top-level branch. The arrows
                 // are a ring now, so every row is reachable from every other
                 // one — but "reachable" in a session with fifty drawn rows can
@@ -15671,6 +18670,13 @@ impl Workspace {
                 }
                 "h" => {
                     self.split(SplitDir::Col, window, cx);
+                    return;
+                }
+                // Alt+L looks a thing up by name: a project, group or tab in
+                // the left bar, a pane by its title, a sticky note by its
+                // words. The window's, because what it searches is the window.
+                "l" => {
+                    self.open_lookup(window, cx);
                     return;
                 }
                 _ => {}
@@ -15704,14 +18710,6 @@ impl Workspace {
                 }
                 return;
             }
-            // Alt+↑/↓ used to walk YOUR messages inside an agent pane, which
-            // made the vertical half of the pane chord mean something different
-            // depending on what happened to be running in the pane you were
-            // standing in — the one place a navigation key must not be
-            // conditional. All four arrows now move pane focus everywhere; the
-            // ▲/▼ header buttons still jump between messages, and that is the
-            // gesture that gets to be agent-specific because it is drawn ON the
-            // agent pane.
             // Alt+arrows move focus BY DIRECTION: the highlight goes the way you
             // pressed, resolved against the live pane rects (`focus_dir`) rather
             // than the order the leaves happen to be walked in. This used to be a
@@ -16068,25 +19066,24 @@ impl Workspace {
             if drag.engaged {
                 if let Some(drop) = drag.over {
                     if self.apply_bar_drop(drag.what, drop, cx) {
-                        // Filing a task out of the branch the strip is scoped to
-                        // would otherwise leave the active tab off the strip.
-                        self.ensure_scope_shows(self.active);
                         self.save(cx);
                     }
                 }
                 cx.notify();
                 return;
             }
-            // it never travelled: the press was a click on a branch row, and a
-            // click on a branch scopes the strip to it
+            // It never travelled: the press was a click on a branch row, and a
+            // click on a branch GOES there — see `go_to_branch`. It used to pin
+            // the strip's scope and light the row, and once the shut strip
+            // stopped obeying pins (it always carries your own group's tabs),
+            // the light claimed a narrowing nothing drew (#757).
             let to = match drag.what {
-                BarDragged::Initiative(gid) => Some(tree::Scope::Initiative(gid)),
-                BarDragged::Project(pid) => Some(tree::Scope::Project(pid)),
+                BarDragged::Initiative(gid) => Some(BarBranch::Initiative(gid)),
+                BarDragged::Project(pid) => Some(BarBranch::Project(pid)),
                 BarDragged::Task(_) => None,
             };
-            if let Some(to) = to {
-                let next = self.scope.toggled(to);
-                self.set_scope(next, window, cx);
+            if let Some(branch) = to {
+                self.go_to_branch(branch, window, cx);
                 return;
             }
         }
@@ -16331,6 +19328,19 @@ impl Workspace {
                 return Some(DropTarget::Tab { index });
             }
         }
+        // The left bar's own rows — same registry `BarDrag` already fills
+        // every frame, just never read from this side before. Newest-last
+        // like `bar_drop_at`, so the innermost row wins where boxes overlap.
+        let bar_row = {
+            let bar = self.bar_bounds.lock().unwrap();
+            bar.iter()
+                .rev()
+                .find(|(_, rect)| rect.contains(&pos))
+                .map(|(row, _)| *row)
+        };
+        if let Some(row) = bar_row {
+            return self.bar_drop_target(row);
+        }
         // Re-frame band: the cursor is hugging some container's perimeter. The
         // OUTERMOST (largest) qualifying container wins, so hugging the field
         // edge re-splits the whole field; hugging an inner divider re-splits
@@ -16361,6 +19371,43 @@ impl Workspace {
         None
     }
 
+    /// What dropping a dragged PANE on left-bar row `row` would do — a task
+    /// row means "join this tab" (capped at `MAX_PANES`, same as any other
+    /// split), and everything else means "file a fresh tab here", the same
+    /// three landings `BarBranch` already gives a dragged TAB.
+    fn bar_drop_target(&self, row: tree::RowId) -> Option<DropTarget> {
+        Some(match row {
+            tree::RowId::Task(i) => DropTarget::BarTask {
+                index: i,
+                blocked: !may_split(self.tab_pane_count(i)),
+            },
+            tree::RowId::Initiative(g) => DropTarget::BarBranch(BarBranch::Initiative(g)),
+            tree::RowId::Project(p) => DropTarget::BarBranch(BarBranch::Project(p)),
+            tree::RowId::Unfiled => DropTarget::BarBranch(BarBranch::Unfiled),
+        })
+    }
+
+    /// Splice `pane` into tab `t` as an additional pane, refusing when the
+    /// tab is already at `MAX_PANES` — the one door into a tab both the
+    /// strip's drop and the tree's now share, so they cannot quietly
+    /// disagree about the limit the way they used to.
+    fn splice_pane_into_tab(&mut self, t: usize, pane: &Entity<TerminalView>) -> Option<usize> {
+        if !may_split(self.tab_pane_count(t)) {
+            return None;
+        }
+        self.tabs.get_mut(t).map(|tab| {
+            let old = std::mem::replace(&mut tab.root, Node::Leaf(pane.clone()));
+            tab.root = Node::Split {
+                id: next_split_id(),
+                dir: SplitDir::Row,
+                ratio: 0.5,
+                a: Box::new(old),
+                b: Box::new(Node::Leaf(pane.clone())),
+            };
+            t
+        })
+    }
+
     /// Land a dragged sub-tab: pull it out of its source tab (collapsing what it
     /// leaves behind), then either split the pane it was dropped on (L/R/T/B) or
     /// add it to the main tab it was dropped on. The pane is never lost — an
@@ -16385,6 +19432,43 @@ impl Workspace {
         }) else {
             return;
         };
+        // A drop that would exceed MAX_PANES is refused before the pane is
+        // touched at all — the tab strip's own drop and the tree's BarTask
+        // row land in the identical spliced-in-as-a-pane outcome, so both
+        // are refused the identical way. Checked fresh against the live
+        // tabs rather than trusting BarTask's `blocked`, which was computed
+        // at the last hover and the drag may have moved since. Must happen
+        // before extraction: a refused drop has to leave the layout exactly
+        // as it was, and extraction cannot be undone once the source tab
+        // has already been rebuilt around the pane's absence.
+        //
+        // Caught in review: this used to guard only BarTask, and even there
+        // the match arm returned `None` for the blocked case, which fell
+        // through to the "give it a fresh tab" fallback AFTER the pane had
+        // already been pulled out — so a refused drop silently orphaned the
+        // pane into a brand-new tab instead of leaving it alone. The plain
+        // tab-strip drop had the identical gap and nothing guarded it at
+        // all, since it never checked the cap in the first place.
+        let target_index = match &target {
+            DropTarget::Tab { index } => Some(*index),
+            DropTarget::BarTask { index, .. } => Some(*index),
+            _ => None,
+        };
+        if let Some(index) = target_index {
+            let would_empty_source = {
+                let mut v = vec![];
+                self.tabs[from].root.leaves(&mut v);
+                v.len() == 1
+            };
+            let t = if would_empty_source && index > from {
+                index - 1
+            } else {
+                index
+            };
+            if pane_drop_capped(t, from, self.tab_pane_count(t)) {
+                return;
+            }
+        }
 
         let pred = |e: &Entity<TerminalView>| e.entity_id() == dragged;
         let src = self.tabs.remove(from);
@@ -16449,6 +19533,11 @@ impl Workspace {
                     from
                 })
             }
+            // `Tab` (dropped on the strip) and `BarTask` (dropped on the
+            // tree) land the same way — join as an additional pane, capped
+            // at `MAX_PANES` — so both go through the one door that knows
+            // how, `splice_pane_into_tab`, rather than disagreeing about the
+            // limit from two copies of the same splice.
             DropTarget::Tab { index, .. } => {
                 // a source-tab removal shifts later indices down by one
                 let t = if source_emptied && index > from {
@@ -16456,16 +19545,38 @@ impl Workspace {
                 } else {
                     index
                 };
-                self.tabs.get_mut(t).map(|tab| {
-                    let old = std::mem::replace(&mut tab.root, Node::Leaf(pane.clone()));
-                    tab.root = Node::Split {
-                        id: next_split_id(),
-                        dir: SplitDir::Row,
-                        ratio: 0.5,
-                        a: Box::new(old),
-                        b: Box::new(Node::Leaf(pane.clone())),
-                    };
-                    t
+                self.splice_pane_into_tab(t, &pane)
+            }
+            // `blocked` is ignored here on purpose: the early guard above
+            // already refused the drop, computed fresh, if the target was
+            // at the cap by release time — `blocked` is only ever a hover-
+            // time hint for the highlight and ought not decide anything by
+            // the time a release reaches this match.
+            DropTarget::BarTask { index, .. } => {
+                let t = if source_emptied && index > from {
+                    index - 1
+                } else {
+                    index
+                };
+                self.splice_pane_into_tab(t, &pane)
+            }
+            DropTarget::BarBranch(branch) => {
+                let mut fresh = Tab::new(Node::Leaf(pane.clone()), None);
+                match branch {
+                    BarBranch::Project(p) => fresh.project = Some(p),
+                    BarBranch::Initiative(g) => fresh.group = Some(g),
+                    BarBranch::Unfiled => {}
+                }
+                self.tabs.push(fresh);
+                let idx = self.tabs.len() - 1;
+                let slot = match branch {
+                    BarBranch::Initiative(g) => self.end_of_initiative_run(g, idx),
+                    BarBranch::Project(p) => self.end_of_project_run(p, idx),
+                    BarBranch::Unfiled => None,
+                };
+                Some(match slot {
+                    Some(slot) => self.move_tab(idx, slot, cx),
+                    None => idx,
                 })
             }
         };
@@ -16478,6 +19589,36 @@ impl Workspace {
         window.focus(&pane.focus_handle(cx), cx);
         self.save(cx);
         cx.notify();
+    }
+
+    /// Pictures are attentional, in Parker's word: a picture a program drew is
+    /// there while its pane is looked at, and a pane whose tab has stopped
+    /// being shown forgets every picture it held, textures and images both.
+    /// Come back and the screen is the text, as it would be in a terminal that
+    /// had never kept the picture.
+    ///
+    /// Asked every frame against the last frame's answer, rather than hooked
+    /// into `activate_tab`, because a tab stops being shown by more routes than
+    /// one function: a tree click, a keyboard jump, a notification, a pane
+    /// carried to another tab. A pane that was shown and is not now is the
+    /// definition, whatever moved it.
+    fn forget_pictures_out_of_sight(&mut self, cx: &mut Context<Self>) {
+        let mut leaves = vec![];
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.root.leaves(&mut leaves);
+        }
+        let shown: Vec<gpui::WeakEntity<TerminalView>> =
+            leaves.into_iter().map(|pane| pane.downgrade()).collect();
+        let hidden: Vec<Entity<TerminalView>> = self
+            .shown_panes
+            .iter()
+            .filter(|pane| !shown.contains(pane))
+            .filter_map(gpui::WeakEntity::upgrade)
+            .collect();
+        for pane in hidden {
+            pane.update(cx, |view, cx| view.forget_pictures(cx));
+        }
+        self.shown_panes = shown;
     }
 
     fn reap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -16672,16 +19813,48 @@ impl Workspace {
         self.write_grade(&scope, grade, theme::GradePins::only(key.into()), cx);
     }
 
-    /// Reset the active OSD scope's grade to the neutral identity — no monitor
-    /// grading at all (this clears the shipped house grade too, see
-    /// [`theme::Grade::neutral`]). An explicit "I want nothing here", so on a
-    /// pane it pins EVERY channel: reset and "follow outer" are different
-    /// gestures, and neutral is not the same as whatever outer happens to say.
+    /// Reset the active OSD scope's MAIN gauges to the neutral identity — no
+    /// monitor grading at all (this clears the shipped house grade too, see
+    /// [`theme::Grade::reset_gauges`]). An explicit "I want nothing here", so on
+    /// a pane it pins every main-gauge channel: reset and "follow outer" are
+    /// different gestures, and neutral is not the same as whatever outer
+    /// happens to say.
+    ///
+    /// The CRT and crawl sections are left alone. They keep the tube somebody
+    /// tuned for the day it is switched on, and a pane that owned none of them
+    /// goes on following outer's.
     fn reset_grade(&mut self, cx: &mut Context<Self>) {
         let Some(scope) = self.osd_menu.clone() else {
             return;
         };
-        self.write_grade(&scope, theme::Grade::neutral(), theme::GradePins::all(), cx);
+        let grade = self.choice_for(&scope, cx).grade.reset_gauges();
+        self.write_grade(&scope, grade, theme::GradePins::main_gauges(), cx);
+    }
+
+    /// Open the GAUGES tray on `scope`, anchored at `at` (a pane header click)
+    /// or rising from the footer (`None`). The collapsed sections start shut on
+    /// every opening; that is what keeps them easter eggs.
+    fn open_osd(&mut self, scope: MenuScope, at: Option<Point<Pixels>>) {
+        self.osd_menu = Some(scope);
+        self.osd_at = at;
+        self.osd_eggs = OsdEggs::default();
+    }
+
+    /// Flip the active OSD scope's CRT master switch, per-pane via the grade
+    /// group like crawl. Off ⇒ a flat screen; the warp and roll dials stay as
+    /// they are, so switching back on restores the same tube.
+    fn toggle_crt(&mut self, cx: &mut Context<Self>) {
+        let Some(scope) = self.osd_menu.clone() else {
+            return;
+        };
+        let mut grade = self.choice_for(&scope, cx).grade;
+        grade.crt = !grade.crt;
+        self.write_grade(
+            &scope,
+            grade,
+            theme::GradePins::only(theme::GradeChannel::Crt),
+            cx,
+        );
     }
 
     /// Flip the active OSD scope's Star-Wars text-crawl mode (per-pane via the
@@ -16825,13 +19998,17 @@ impl Workspace {
                     .w(px(28.))
                     .text_size(px(9.))
                     .text_color(th.accent)
-                    // Sizes (menu bar, terminal text) read as absolute "110%";
-                    // crawl angle in degrees, crawl depth as a ratio; colour
-                    // channels read as a signed offset ("-12", "+0").
+                    // Sizes (menu bar, terminal text), the phosphor gain and the
+                    // glare read as absolute "110%" — phosphor's 100% is the
+                    // house glow, glare's 0% clear glass; crawl angle in
+                    // degrees, crawl depth as a ratio; colour channels read as a
+                    // signed offset ("-12", "+0").
                     .child(match key {
                         theme::GradeKey::Scale
                         | theme::GradeKey::TextSize
-                        | theme::GradeKey::BenchSize => {
+                        | theme::GradeKey::BenchSize
+                        | theme::GradeKey::Phosphor
+                        | theme::GradeKey::Glare => {
                             format!("{}%", (v * 100.).round() as i32)
                         }
                         theme::GradeKey::CrawlAngle => format!("{}\u{00b0}", v.round() as i32),
@@ -16850,6 +20027,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let mut choice = self.menu_choice(cx);
+        choice.follow_omarchy = Some(false);
         match target {
             WheelTarget::Seed => choice.seed = hex,
             WheelTarget::Text => choice.text = hex,
@@ -16866,7 +20044,11 @@ impl Workspace {
         let choice = self.menu_choice(cx);
         let resolved = theme::resolve(cx, &choice);
         let pick = |o: &Option<String>, derived: Hsla| {
-            o.as_deref().and_then(theme::parse_hex).unwrap_or(derived)
+            if choice.follow_omarchy == Some(true) && palette::current(cx).is_some() {
+                derived
+            } else {
+                o.as_deref().and_then(theme::parse_hex).unwrap_or(derived)
+            }
         };
         [
             (WheelTarget::Seed, "◉", pick(&choice.seed, resolved.accent)),
@@ -16959,11 +20141,16 @@ impl Workspace {
     /// The active OSD scope's resolved tracking dials — the seed a roll slider
     /// starts from when this scope hasn't pinned its own tracking yet.
     fn scope_track_seed(&self, scope: &MenuScope, cx: &App) -> [f32; 3] {
-        let th = match scope {
+        theme::tracking_dials_of(&self.scope_theme(scope, cx))
+    }
+
+    /// The active OSD scope's resolved theme — where a dial the scope has left
+    /// to its theme (the roll bar, the glare) reads its authored value from.
+    fn scope_theme(&self, scope: &MenuScope, cx: &App) -> theme::Theme {
+        match scope {
             MenuScope::Pane(p) => p.read(cx).resolved_theme(cx),
             MenuScope::Outer => (*theme::resolve(cx, &theme::outer_choice(cx))).clone(),
-        };
-        theme::tracking_dials_of(&th)
+        }
     }
 
     /// Set tracking dial component `idx` on the active OSD scope (pane or outer),
@@ -16993,12 +20180,13 @@ impl Workspace {
         &self,
         idx: usize,
         label: &str,
+        dials: [f32; 3],
         th: &theme::Theme,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         const TRACK: f32 = 108.;
         let store = self.track_bounds[idx].clone();
-        let frac = theme::tracking_dials_of(th)[idx].clamp(0.0, 1.0);
+        let frac = dials[idx].clamp(0.0, 1.0);
         div()
             .flex()
             .flex_row()
@@ -17084,9 +20272,16 @@ impl Workspace {
     /// radius) carrying FOUR draggable markers — ◉ seed, T text, C complement,
     /// 👤 human (your-input). You grab whichever marker is nearest the press and
     /// drag it around to set that colour. Drives the same scope as the breakout.
+    /// `note` is the sticky note's paper, drawn on the wheel as a small square
+    /// where its hue and saturation put it. It is not a pip and cannot be
+    /// grabbed: the note has no colour of its own to drag, only a choice of
+    /// which pips it follows, and the square is there so that choice can be
+    /// seen — contrast visibly lands in the arc the pips leave empty.
+    #[allow(dead_code)] // Palette wheel intentionally hidden; saved edits remain valid.
     fn color_wheel(
         &self,
         markers: [(WheelTarget, &'static str, Hsla); 4],
+        note: Hsla,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         const D: f32 = 132.0;
@@ -17121,6 +20316,31 @@ impl Workspace {
                 )
                 .size_full(),
             );
+        // The note's square goes under the pips, so a pip on the same spot is
+        // still the thing a press grabs.
+        {
+            let ang = note.h.rem_euclid(1.0) * std::f32::consts::TAU;
+            let sat = note.s.clamp(0.0, 1.0);
+            let (dx, dy) = (r + ang.cos() * sat * r, r + ang.sin() * sat * r);
+            wheel = wheel.child(
+                div()
+                    .absolute()
+                    .left(px(dx - 6.0))
+                    .top(px(dy - 6.0))
+                    .w(px(12.))
+                    .h(px(12.))
+                    .border_1()
+                    .border_color(hsla(0., 0., 0.08, 0.9))
+                    .bg(note.alpha(1.0))
+                    .shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.6),
+                        offset: point(px(1.), px(1.)),
+                        blur_radius: px(2.),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }]),
+            );
+        }
         // Paint the active (selected) marker LAST so it sits on top of any pile —
         // when a greyscale palette stacks every pip at the centre, the one the
         // PICK row promoted is the visible, grabbable one.
@@ -17177,6 +20397,7 @@ impl Workspace {
     /// hue. Drag it to reach white / grey / black (pair with a low-saturation
     /// marker near the wheel's centre for true neutrals). Industry-standard HSL:
     /// hue + saturation on the disk, lightness here.
+    #[allow(dead_code)] // Companion to the hidden palette wheel.
     fn lightness_bar(&self, cx: &mut Context<Self>) -> gpui::Div {
         const W: f32 = 132.0;
         let store = self.light_bounds.clone();
@@ -17317,12 +20538,12 @@ impl Workspace {
     /// - DONE / BLOCKED — ✅ or ❌, steady rather than pulsing: the past needs a
     ///   glance, not a heartbeat. Cleared by visiting the pane.
     ///
-    /// The animation keys carry `(tab, slot)` so each agent animates on its own
-    /// element — share a key across a tab's badges and gpui reuses one
-    /// animation for all of them.
+    /// The pulse and the blink step on the shared badge clock (`BADGE_STEP`),
+    /// so every badge moves together and the window draws a few frames a
+    /// second for them instead of every frame (#964).
     fn agent_badge_el(badge: AgentBadge, tab: usize, slot: usize, s: f32) -> AnyElement {
         let side = px(15. * s);
-        let key = tab * MAX_TAB_BADGES + slot;
+        let _ = (tab, slot);
         match badge {
             AgentBadge::NeedsInput => div()
                 .relative()
@@ -17339,24 +20560,20 @@ impl Workspace {
                         .absolute()
                         .inset_0()
                         .size_full()
-                        .with_animation(
-                            ("tab-hey-blinker", key),
-                            Animation::new(Duration::from_millis(700)).repeat(),
-                            |el, t| el.opacity(blink_alpha(t)),
-                        ),
+                        // Stepped by the badge clock, not animated per frame:
+                        // see BADGE_STEP.
+                        .opacity(blink_alpha(badge_phase(Duration::from_millis(700)))),
                 )
                 .into_any_element(),
-            AgentBadge::Working => gpui::img(crate::art::robot_png())
-                .w(side)
-                .h(side)
-                .with_animation(
-                    ("tab-agent-pulse", key),
-                    Animation::new(Duration::from_millis(1400))
-                        .repeat()
-                        .with_easing(gpui::bounce(gpui::ease_in_out)),
-                    |el, t| el.opacity(pulse_alpha(t)),
-                )
-                .into_any_element(),
+            AgentBadge::Working => {
+                let eased =
+                    gpui::bounce(gpui::ease_in_out)(badge_phase(Duration::from_millis(1400)));
+                gpui::img(crate::art::robot_png())
+                    .w(side)
+                    .h(side)
+                    .opacity(pulse_alpha(eased))
+                    .into_any_element()
+            }
             AgentBadge::Done => div().text_size(px(11. * s)).child("✅").into_any_element(),
             AgentBadge::Blocked => div().text_size(px(11. * s)).child("❌").into_any_element(),
         }
@@ -17389,6 +20606,82 @@ impl Workspace {
             col = col.child(div().w(px(w * s)).h(px(step)).bg(color));
         }
         col
+    }
+
+    /// A split glyph, drawn from boxes rather than typed: a square frame with
+    /// the half the new pane will open into filled.
+    ///
+    /// It was two characters, `◧` and `⬓`, and only one of them survived the
+    /// font — the same trap as [`Self::triangle`]. `⬓` (U+2B13) sits outside
+    /// the geometric-shapes block the chrome's font carries, so a fallback drew
+    /// it as an empty square with a rule across the bottom. Parker: *"the
+    /// horizontal glyph is not filled in on the bottom and should be"*. Built
+    /// from boxes, the fill is the same in every font, and the pair are the
+    /// same weight because they are the same drawing.
+    ///
+    /// The filled half is where the new pane goes: the right half for a split
+    /// that puts panes side by side, the bottom half for one that stacks them.
+    /// Each button sits on the edge its fill points at — see the corner in
+    /// `bezel_bottom` — so the glyph, its place and its effect all say one
+    /// thing.
+    fn split_glyph(dir: SplitDir, ink: Hsla, s: f32) -> gpui::Div {
+        let side = 13. * s;
+        let frame = div()
+            .flex_none()
+            .w(px(side))
+            .h(px(side))
+            .flex()
+            .border_1()
+            .border_color(ink)
+            // The glyph's own shape, not the chrome's: a split drawn with a
+            // skin's corner radius would stop reading as a window.
+            .rounded(px(1.5 * s))
+            .overflow_hidden();
+        let (old, new) = (div().flex_1(), div().flex_1().bg(ink));
+        match dir {
+            SplitDir::Row => frame.flex_row().child(old).child(new),
+            SplitDir::Col => frame.flex_col().child(old).child(new),
+        }
+    }
+
+    /// One of the corner's two split buttons: a square bezel carrying its
+    /// drawn glyph. The one that stacks panes goes in the bottom bezel and the
+    /// one that sets them side by side at the foot of the right-hand column;
+    /// the same function builds both, so the pair cannot drift apart in size.
+    fn split_button(
+        &self,
+        dir: SplitDir,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let sk = skin::skin(cx, s);
+        let (id, arrow) = match dir {
+            SplitDir::Row => ("split-right", "\u{2192}"),
+            SplitDir::Col => ("split-down", "\u{2193}"),
+        };
+        // The word the buttons used to wear, kept as their hover name — in the
+        // window's own language, with an arrow saying which way it goes.
+        let tip = format!("{} {arrow}", self.lang.strings().ch_split);
+        sk.bezel(false, s)
+            .id(id)
+            .tooltip(move |_w, cx| {
+                cx.new(|_| SlotTooltip {
+                    lines: vec![tip.clone()],
+                })
+                .into()
+            })
+            .flex_none()
+            .w(px(24. * s))
+            .h(px(24. * s))
+            .p(px(0.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(Self::split_glyph(dir, sk.ink.ink, s))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, window, cx| ws.split(dir, window, cx)),
+            )
     }
 
     /// The badges a BRANCH row carries: what its tasks are saying, summed.
@@ -17603,12 +20896,12 @@ impl Workspace {
                 // and the one row whose whole job is to say "these belong to
                 // nobody" was the one saying nothing.
                 //
-                // Not in tension with the strip heading, which deliberately
-                // stays a bare mark for a loose tab (see `place_name`):
-                // there "unfiled" would be the only heading in an unorganised
-                // session, shouting a state. Here it is a divider, and a
-                // divider with filed rows above it and loose rows below has to
-                // name which side is which.
+                // Not in tension with the mother bar's corner, which
+                // deliberately never says "unfiled" for a loose tab: there it
+                // would be the only heading in an unorganised session,
+                // shouting a state. Here it is a divider, and a divider with
+                // filed rows above it and loose rows below has to name which
+                // side is which.
                 //
                 // It is also a drop target — "file this under nothing" is an
                 // answer — so it registers its box and lights up like a branch
@@ -17679,9 +20972,30 @@ impl Workspace {
     /// (`skin::active_row`) and from the scoped branch's lit bar — three
     /// different facts, and a person arrowing past the active task must be able
     /// to see both at once, on the same row, without either disappearing.
-    fn bar_cursor_ring<E: Styled>(&self, row: tree::RowId, th: &theme::Theme, d: E) -> E {
+    fn bar_cursor_ring<E: Styled>(&self, row: tree::RowId, th: &theme::Theme, s: f32, d: E) -> E {
         if self.bar_cursor != Some(row) {
             return d;
+        }
+        if self.bar_carry.is_some() {
+            // Carrying, not just looking — the plain ring below reads as
+            // no different from an ordinary walk, which is exactly what
+            // it was built to be. Parker, on the first cut: *"it must
+            // VISIBLY detach ... indent differently ... further to the
+            // right."* `ml` rather than `pl`: additive to whatever
+            // depth-based padding the row already set, so this never has
+            // to know or preserve that value.
+            //
+            // The first shape of this shadow-and-0.24-alpha answer to that
+            // ask came back "way too much ... brutally glaring": the shift
+            // alone already says "not an ordinary walk"; the colour only
+            // has to say WHOSE, the same job `STANDING_WASH` already does
+            // for the project/group holding the active task. Parker: *"about
+            // equivalent to the secondary highlight with group and project
+            // but COLOURED like the SELECTED one."* Same wash, `th.cursor`
+            // in place of the branch's own colour, no shadow.
+            return d
+                .ml(px(BAR_CARRY_INDENT * s))
+                .bg(th.cursor.alpha(STANDING_WASH));
         }
         d.bg(th.cursor.alpha(0.14)).shadow(vec![BoxShadow {
             color: th.cursor.alpha(0.85),
@@ -17711,11 +21025,6 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let sk = skin::skin(cx, s);
-        let scoped = match branch {
-            BarBranch::Project(id) => self.scope == tree::Scope::Project(id),
-            BarBranch::Initiative(id) => self.scope == tree::Scope::Initiative(id),
-            BarBranch::Unfiled => false,
-        };
         let key = match branch {
             BarBranch::Project(id) => 40_000 + id as usize,
             BarBranch::Initiative(id) => 50_000 + id as usize,
@@ -17762,6 +21071,15 @@ impl Workspace {
         }
 
         let grp = SharedString::from(format!("bar-grp-{key}"));
+        // Where you are standing. The project and the group holding the active
+        // task wear a faint wash in their own colour — Parker: *"a FAINT
+        // indicator of the project and group with the actual cursor on the
+        // left tree"*. It took over from the standing label in the mother
+        // bar's corner, which named one of these rows a window's width away
+        // from it. Faint on purpose, and fainter than the hover: it is a
+        // standing fact about the window, read in passing, and the task row
+        // under it already wears the ring that says exactly which task.
+        let here = branch.holds(self.place_of(self.active));
         let d = div()
             .id(row_id)
             .group(grp)
@@ -17775,22 +21093,31 @@ impl Workspace {
             .gap(px(5. * s))
             .rounded(sk.radius())
             .cursor_pointer()
-            // the scoped branch is lit: the strip beside it is showing exactly
-            // this, and the tree says which branch that is without a legend
-            .when(scoped, |d| {
-                d.bg(color.alpha(0.20)).border_l_2().border_color(th.accent)
+            .when(here, |d| d.bg(color.alpha(STANDING_WASH)))
+            // No pinned light any more. A branch row used to be lit while the
+            // strip was pinned to it, and once the shut strip stopped obeying
+            // pins the light claimed a narrowing nothing drew; a click now GOES
+            // to the branch instead (`go_to_branch`, #757), so the wash above
+            // is the one mark of where you are.
+            .when(drop_hi, |d| d.bg(th.accent.alpha(0.28)))
+            .when(self.pane_drop_hot(row_id_kind) == Some(false), |d| {
+                d.bg(th.accent.alpha(0.28))
             })
-            .when(drop_hi, |d| d.bg(th.accent.alpha(0.28)));
-        // The keyboard ring goes on LAST of the three backgrounds — a row that
-        // is scoped, being dropped onto and under the cursor all at once still
-        // shows where the keyboard is, which is the only one of the three a
-        // person cannot otherwise locate.
-        self.bar_cursor_ring(row_id_kind, th, d)
+            .when(self.pane_drop_hot(row_id_kind) == Some(true), |d| {
+                // The same red `bar_menu_row` already uses for a Danger
+                // tone — one hard-coded red, not a second invention of it.
+                d.bg(hsla(0., 0.72, 0.60, 1.).alpha(0.28))
+            });
+        // The keyboard ring goes on LAST of the backgrounds — a row that is
+        // washed, being dropped onto and under the cursor all at once still
+        // shows where the keyboard is, which is the only one a person cannot
+        // otherwise locate.
+        self.bar_cursor_ring(row_id_kind, th, s, d)
             .hover(move |st| st.bg(color.alpha(0.12)))
             .children(caret)
             // The fold: its own target, wide enough to hit without aiming, so
-            // folding never scopes and scoping never folds. The triangle is
-            // drawn, not typed — see [`Self::triangle`].
+            // folding never navigates and navigating never folds. The triangle
+            // is drawn, not typed — see [`Self::triangle`].
             .child(
                 div()
                     .id(SharedString::from(format!("bar-fold-{key}")))
@@ -17834,19 +21161,9 @@ impl Workspace {
                     .text_size(px(CHROME_NAME_PT * s))
                     .when(is_project, |d| {
                         d.font_weight(gpui::FontWeight::EXTRA_BOLD)
-                            .text_color(if scoped {
-                                th.accent
-                            } else {
-                                th.text.alpha(0.9)
-                            })
+                            .text_color(th.text.alpha(0.9))
                     })
-                    .when(!is_project, |d| {
-                        d.text_color(if scoped {
-                            th.accent
-                        } else {
-                            th.text.alpha(0.82)
-                        })
-                    })
+                    .when(!is_project, |d| d.text_color(th.text.alpha(0.82)))
                     .child(label.clone()),
             )
             .children(self.branch_level_mark(branch, s))
@@ -17915,17 +21232,12 @@ impl Workspace {
                                 over_bay: false,
                             });
                         }
-                        None => {
-                            // UNFILED is a heading, not a branch — there is no
-                            // scope that means "the loose ones", so the press
-                            // asks for the whole session the way the chip does.
-                            // A real toggle since `toggled` started backing out
-                            // to the resting scope: before that it answered
-                            // `All` whatever it was given, so this row could
-                            // widen the strip and never bring it back.
-                            let next = ws.scope.toggled(tree::Scope::All);
-                            ws.set_scope(next, window, cx);
-                        }
+                        // UNFILED: nothing to drag, so the press goes straight
+                        // to the loose tabs, as any other branch press does
+                        // on release. It used to ask for the whole session on
+                        // the strip, and the whole session is no longer a
+                        // thing the strip can show (#757).
+                        None => ws.go_to_branch(branch, window, cx),
                     }
                 }),
             )
@@ -17976,6 +21288,35 @@ impl Workspace {
             tree::Drop::Before(id) if id == row => (false, Some(caret(true))),
             tree::Drop::After(id) if id == row => (false, Some(caret(false))),
             _ => (false, None),
+        }
+    }
+
+    /// Whether left-bar row `row` is where a dragged PANE — not a dragged
+    /// tree row — would land right now, and whether that landing is
+    /// refused. Kept apart from `bar_drop_marks`: a different drag, a
+    /// different source of truth (`drop_target` rather than `bar_drag`), so
+    /// extending one can never silently change what the other lights up.
+    /// `Some(true)` reads as blocked (the tab is already at `MAX_PANES`),
+    /// `Some(false)` as an ordinary landing, `None` as not this row.
+    fn pane_drop_hot(&self, row: tree::RowId) -> Option<bool> {
+        match &self.drop_target {
+            Some(DropTarget::BarTask { index, blocked }) if tree::RowId::Task(*index) == row => {
+                Some(*blocked)
+            }
+            // NOT `BarBranch::from(row)`: that conversion deliberately
+            // collapses every Task row to `Unfiled` (a task triggers no
+            // branch gesture of its own) — reusing it here would light up
+            // every task row in the tree the moment the target was
+            // `BarBranch::Unfiled`. Built the exact target row instead.
+            Some(DropTarget::BarBranch(branch)) => {
+                let target = match branch {
+                    BarBranch::Project(p) => tree::RowId::Project(*p),
+                    BarBranch::Initiative(g) => tree::RowId::Initiative(*g),
+                    BarBranch::Unfiled => tree::RowId::Unfiled,
+                };
+                (target == row).then_some(false)
+            }
+            _ => None,
         }
     }
 
@@ -18035,6 +21376,7 @@ impl Workspace {
         self.bar_cursor_ring(
             tree::RowId::Task(i),
             th,
+            s,
             sk.active_row(
                 div()
                     .id(SharedString::from(format!("bar-task-{i}")))
@@ -18055,6 +21397,17 @@ impl Workspace {
                     .cursor_pointer(),
                 is_active,
             ),
+        )
+        .when(
+            self.pane_drop_hot(tree::RowId::Task(i)) == Some(false),
+            |d| d.bg(th.accent.alpha(0.28)),
+        )
+        .when(
+            self.pane_drop_hot(tree::RowId::Task(i)) == Some(true),
+            |d| {
+                // The same red `bar_menu_row` already uses for a Danger tone.
+                d.bg(hsla(0., 0.72, 0.60, 1.).alpha(0.28))
+            },
         )
         .hover(move |st| st.bg(hsla(0., 0., 1., 0.06)))
         // the task's own colour, if it has one — the same fill its tab
@@ -18639,8 +21992,10 @@ impl Workspace {
         let pill = sk.radius_pill();
         let rad = sk.radius();
         let rows = self.slot_rows();
-        let tally = self.slot_tally(cx);
-        if rows.is_empty() && tally.total() == 0 {
+        // The agent rollup that used to close this slot is in the top right of
+        // the mother bar now (see `render_agent_counter`), so the slot is the
+        // allowance rows and nothing else — and with none of those, nothing.
+        if rows.is_empty() {
             return None;
         }
 
@@ -18651,7 +22006,6 @@ impl Workspace {
         let tick_h = 3.0 * SLOT_RAIL_GROWTH * s;
         // Tall enough for the mark, which is now the row's tallest thing.
         let row_h = (SLOT_MARK_PT + 4.0) * s;
-        let counter_h = 17.0 * s;
         let mark_w = SLOT_MARK_PT;
         let val_w = 30.0;
 
@@ -18918,8 +22272,40 @@ impl Workspace {
             );
         }
 
-        // ---- the rollup, on a bordered line of its own ----------------------
-        //
+        Some(
+            // Declared, not discovered — the tree yields exactly this and not
+            // a pixel more, so a busy day cannot push it out of the bar. The
+            // `6.0` is the stack's own gap between components, counted once
+            // per row; the `5.0` is its bottom padding.
+            stack.h(px(rows.len() as f32 * (row_h + 6.0 * s) + 5.0 * s)),
+        )
+    }
+
+    /// The agent counter: every agent pane's state, tallied, in the top right
+    /// of the mother bar.
+    ///
+    /// It closed the tree's bottom slot, under the allowance rails. Parker, on
+    /// the new layout of the chrome: *"Agents counter is in the top right"* —
+    /// the corner the ticker and the scale had just vacated, and the end of the
+    /// row nearest the attention pill, which counts the same agents by what
+    /// they want from you. Up here it is also on screen with the tree shut,
+    /// which the slot never was.
+    ///
+    /// It is still the door to the agent wall, the surface it is a summary OF.
+    /// That door used to be a robot glyph in this same corner, three feet from
+    /// the counter saying the thing you were about to go and look at; a
+    /// rollup that opens the full view is one control instead of two, and the
+    /// one that survives is the one carrying the numbers.
+    fn render_agent_counter(
+        &self,
+        th: &theme::Theme,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let sk = skin::skin(cx, s);
+        let rad = sk.radius();
+        let text = th.text;
+        let tally = self.slot_tally(cx);
         // The robot is `U+F06A9` out of the Nerd Font TD resolves, checked
         // against `fc-list :charset` rather than assumed: the mock's `🤖`
         // (`U+1F916`) is in no monospace font on this machine and would paint
@@ -18936,22 +22322,17 @@ impl Workspace {
             // parser gap must not be invisible.
             (hud::AgentState::Unknown, tally.unknown, "?"),
         ];
-        // This line is also the door to the agent wall, which is the surface it
-        // is a summary OF. It used to be opened by a robot glyph in the top
-        // right of the mother bar, three feet of screen away from the counter
-        // saying the thing you were about to go and look at. A rollup that
-        // opens the full view is one control instead of two, and the one that
-        // survives is the one carrying the numbers.
         let acc = th.accent;
         let mut counter = div()
-            .id("slot-agent-rollup")
+            .id("agent-rollup")
+            .flex_none()
             .flex()
             .flex_row()
             .items_center()
-            .h(px(counter_h))
-            .gap(px(4.0 * s))
-            .px(px(4.0 * s))
-            .rounded(px(4.0 * s))
+            .h(px(22.0 * s))
+            .gap(px(5.0 * s))
+            .px(px(6.0 * s))
+            .rounded(sk.radius())
             .border_1()
             .border_color(if tally.needs_you() {
                 hsla(0.11, 0.85, 0.60, 1.).alpha(0.55)
@@ -18960,6 +22341,8 @@ impl Workspace {
             })
             .cursor_pointer()
             .hover(move |st| st.bg(acc.alpha(0.14)).border_color(acc.alpha(0.7)))
+            // Propagation stops here or the press also arms the mother bar's
+            // move handle underneath it.
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -18971,8 +22354,11 @@ impl Workspace {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(9.0 * s))
+                    .text_size(px(11.0 * s))
                     .text_color(text.alpha(0.55))
+                    .when_some(pane::chrome_glyph_font('\u{f06a9}', th), |d, family| {
+                        d.font_family(family)
+                    })
                     .child("\u{f06a9}"),
             );
         for (state, n, glyph) in cells {
@@ -18989,32 +22375,21 @@ impl Workspace {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(px(1.0 * s))
-                    .px(px(if chip { 2.5 * s } else { 0. }))
+                    .gap(px(1.5 * s))
+                    .px(px(if chip { 3.0 * s } else { 0. }))
                     .rounded(rad)
                     .bg(if chip {
                         col.alpha(0.22)
                     } else {
                         gpui::transparent_black()
                     })
-                    .text_size(px(8.5 * s))
+                    .text_size(px(10.0 * s))
                     .text_color(col)
                     .child(glyph.to_string())
-                    .child(div().text_size(px(9.0 * s)).child(n.to_string())),
+                    .child(div().text_size(px(10.5 * s)).child(n.to_string())),
             );
         }
-
-        Some(
-            stack
-                .child(counter)
-                // Declared, not discovered — the tree yields exactly this and
-                // not a pixel more, so a busy day cannot push it out of the
-                // bar. The `6.0` is the stack's own gap between components, and
-                // it is counted once per row plus once for the counter.
-                .h(px(rows.len() as f32 * (row_h + 6.0 * s)
-                    + counter_h
-                    + 11.0 * s)),
-        )
+        counter
     }
 
     /// Slice 2: real panes, observed states.
@@ -19142,6 +22517,20 @@ impl Workspace {
                     PaneKind::Unknown => Some(attention::AttentionKind::Unknown),
                     _ => rail_kind(badge, view.rail_state()),
                 };
+                // An ask outranks whatever the screen says, on any kind of
+                // pane. It is not a reading of the screen — the agent said it,
+                // through `request_access` — so it is not a second classifier
+                // of the badge's signals either, and the badge stays the one
+                // ranking of those.
+                let ask = view.access_ask.as_ref().map(|a| attention::AskRow {
+                    what: a.change.ask_words(a.title.as_deref()),
+                    why: a.why.clone(),
+                });
+                let kind = if ask.is_some() {
+                    Some(attention::AttentionKind::Access)
+                } else {
+                    kind
+                };
                 // The words and the instrument used to be chosen here, by a
                 // `match` on the very value above, and stored on the row. They
                 // are `AttentionKind::reason()` and `::source()` now — a caption
@@ -19167,7 +22556,11 @@ impl Workspace {
                     origin: origin.clone(),
                     // None until this pane's lane has been SEEN to change. The
                     // row draws a dash, and never an age it did not measure.
-                    observed_at: view.attention_since(),
+                    // An ask's age is the ask's own: when it arrived.
+                    observed_at: match &view.access_ask {
+                        Some(a) => Some(a.at),
+                        None => view.attention_since(),
+                    },
                     // The line behind the lane, quoted by the pane at the scan
                     // that classified it. Unknown and clean-finish rows have
                     // none, and say so by being absent.
@@ -19177,6 +22570,7 @@ impl Workspace {
                     // file this code picked out, which is a document we chose
                     // rather than one a turn produced.
                     deliverable: view.deliverable(),
+                    ask,
                 });
                 panes.insert(key, leaf.entity_id());
             }
@@ -19295,6 +22689,17 @@ impl Workspace {
                 None,
                 None,
             ),
+            // An ask: no quoted line, because nothing was read off a screen —
+            // the agent's reason is the ask's own, below.
+            (
+                8,
+                Priority::Neutral,
+                AttentionKind::Access,
+                origin("atlas", Some("ingest")),
+                ago(20),
+                None,
+                None,
+            ),
         ];
 
         let obs: Vec<attention::Observation> = rows
@@ -19310,6 +22715,12 @@ impl Workspace {
                         observed_at,
                         evidence: evidence.map(str::to_string),
                         deliverable,
+                        ask: (kind == AttentionKind::Access).then(|| attention::AskRow {
+                            what: access::Change::OpenPane.ask_words(Some("staging db")),
+                            why: "the migration failed there and I need its last 50 lines to \
+                                  say why"
+                                .into(),
+                        }),
                     }
                 },
             )
@@ -19414,16 +22825,194 @@ impl Workspace {
             return false;
         };
         if open_deliverable {
-            let Some(d) = it.deliverable.as_ref() else {
+            let Some(href) = it.deliverable.as_ref().map(|d| d.href.clone()) else {
                 return false;
             };
-            pane::open_with_system(&d.href);
+            self.rail_open_here(&href, cx);
             return true;
         }
         let Some(id) = panes.get(&it.pane).copied() else {
             return false;
         };
         self.pending_jump = Some(id);
+        self.rail_close();
+        true
+    }
+
+    /// A person's answer to the ask waiting on one pane.
+    ///
+    /// **Reached from two places and no others: the row's Yes and No buttons
+    /// and the rail's `y` and `n`.** Both are a person's hand on this window.
+    /// Nothing in `mcp.rs` or `ctl.rs` may name this function, and
+    /// `access::tests::no_agent_facing_surface_can_answer_an_ask` keeps it so —
+    /// an agent that could reach it could answer its own ask, and that would
+    /// look exactly like a person saying yes.
+    ///
+    /// The ask is taken off its pane first, so a second press finds nothing.
+    /// Yes changes the setting the way the person's own control would — the
+    /// right-click mark on a pane, the MCP panel's switch — and saves. No
+    /// changes nothing. Either way the asking agent is told, in one signed line
+    /// typed through the bench's own path, which holds it until that pane is on
+    /// screen like every other line the bench types. The change does not wait
+    /// for that: an agent that retries sees it at once.
+    ///
+    /// `key` is the asking pane's row key (its entity id). Returns whether
+    /// there was an ask there to answer.
+    fn rail_answer(&mut self, key: u64, answer: access::Answer, cx: &mut Context<Self>) -> bool {
+        let Some(asker) = self.leaf_by_key(key) else {
+            return false;
+        };
+        let Some(ask) = asker.update(cx, |v, cx| {
+            cx.notify();
+            v.access_ask.take()
+        }) else {
+            return false;
+        };
+        let outcome = match answer {
+            access::Answer::No => access::Outcome::Kept,
+            access::Answer::Yes => match access::grant_config(ask.change, &mut self.mcp) {
+                Some(outcome) => outcome,
+                None => {
+                    // A pane change: the pane is found by the pid the agent
+                    // named, as it is everywhere an agent names a pane.
+                    match ask.pid.and_then(|pid| self.leaf_by_shell_pid(pid, cx)) {
+                        None => access::Outcome::Gone,
+                        Some(target) => target.update(cx, |v, cx| {
+                            let (mark, outcome) = access::pane_mark(ask.change, v.off_limits);
+                            v.set_off_limits(mark, cx);
+                            outcome
+                        }),
+                    }
+                }
+            },
+        };
+        let line = access::answer_line(surfacefeed::tag(), &ask, answer, outcome);
+        asker.update(cx, |v, cx| v.tell_agent(line, cx));
+        self.save(cx);
+        cx.notify();
+        true
+    }
+
+    /// The live pane whose row key (entity id) is `key`.
+    fn leaf_by_key(&self, key: u64) -> Option<Entity<TerminalView>> {
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            if let Some(l) = leaves.into_iter().find(|l| l.entity_id().as_u64() == key) {
+                return Some(l.clone());
+            }
+        }
+        None
+    }
+
+    /// Tell every pane, on every draw, whether its tab is the one being shown
+    /// — `TerminalView::shown`, which decides whether its screen updates ask
+    /// for a frame now or every `pane::OFFSCREEN_REFRESH` (#964). Set here
+    /// because the draw is the one place that knows exactly what is on
+    /// screen, so a pane that has just come into view is told in that frame.
+    fn mark_shown_panes(&self, cx: &App) {
+        let mut active = Vec::new();
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.root.leaves(&mut active);
+        }
+        for tab in &self.tabs {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let shown = active.iter().any(|a| a.entity_id() == leaf.entity_id());
+                leaf.read(cx).mark_shown(shown);
+            }
+        }
+    }
+
+    /// The live pane whose shell has this pid — the number agents name panes by.
+    fn leaf_by_shell_pid(&self, pid: u32, cx: &App) -> Option<Entity<TerminalView>> {
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            if let Some(l) = leaves
+                .into_iter()
+                .find(|l| l.read(cx).shell_pid() == Some(pid))
+            {
+                return Some(l.clone());
+            }
+        }
+        None
+    }
+
+    /// Open a deliverable from the rail the way Alt+click opens a document:
+    /// a file TD can draw floats over the pane the person is looking at — the
+    /// focused pane when it shows its terminal or its bench, else the first
+    /// that does — and the queue closes so the square is in view. Anything
+    /// else (a URL, a PDF) goes to the desktop, as every deliverable used to.
+    ///
+    /// Reading does not visit: the square opens where the person already is,
+    /// not over the agent that declared it, because opening what a turn
+    /// produced and going to the terminal that produced it stay two acts.
+    /// Parker, 2026-09-25: *"the single click open artifacts will now use this
+    /// instead of goto new window on OS"*.
+    fn rail_open_here(&mut self, href: &str, cx: &mut Context<Self>) {
+        let Some(target) = deliverable_file(href).and_then(|p| docopen::drawable_document(&p))
+        else {
+            pane::open_with_system(href);
+            return;
+        };
+        let said = self.act_on_picked_pane(
+            cx,
+            |v| {
+                matches!(
+                    v.bench.face(),
+                    workbench::Face::Terminal | workbench::Face::Workbench
+                )
+            },
+            "no pane is showing its terminal or its bench to float a document over",
+            // A refused HTML file (no engine) has already gone to the desktop
+            // inside `open_float`, and said why.
+            |view, cx| {
+                let _ = view.open_float(target, None, cx);
+            },
+        );
+        if said.starts_with("err") {
+            pane::open_with_system(href);
+        } else {
+            self.rail_close();
+        }
+    }
+
+    /// "⇲ beside" on the cursor's row: what its turn produced, opened in a
+    /// pane beside the pane that declared it. The pane asks for the split
+    /// exactly as a Ctrl+Alt+click on the path would — so a pane in that tab
+    /// already showing the file is focused, and at four panes it floats over
+    /// the declaring pane — and the queue closes so the person sees where it
+    /// went. Only a file TD can draw goes beside; a URL has nowhere beside to
+    /// go, and `o` still hands anything to the desktop.
+    fn rail_open_beside(&mut self, cx: &mut Context<Self>) -> bool {
+        let (items, panes) = self.rail_waiting(cx);
+        let Some(it) = items.get(self.rail_cursor) else {
+            return false;
+        };
+        let Some(target) = it
+            .deliverable
+            .as_ref()
+            .and_then(|d| deliverable_file(&d.href))
+            .and_then(|p| docopen::drawable_document(&p))
+        else {
+            return false;
+        };
+        let Some(id) = panes.get(&it.pane).copied() else {
+            return false;
+        };
+        let Some(tab) = self.tab_with_leaf(id) else {
+            return false;
+        };
+        let mut leaves = vec![];
+        self.tabs[tab].root.leaves(&mut leaves);
+        let Some(declarer) = leaves.into_iter().find(|l| l.entity_id() == id).cloned() else {
+            return false;
+        };
+        declarer.update(cx, |v, cx| {
+            v.request_beside(target, None, docopen::Asker::Rail, None, cx)
+        });
         self.rail_close();
         true
     }
@@ -19448,6 +23037,24 @@ impl Workspace {
             // reading what a turn produced and visiting the terminal that
             // produced it are different, so they do not share a key.
             "o" => self.rail_activate(true, cx),
+            // And the third: that same document beside the agent that made it.
+            "b" => self.rail_open_beside(cx),
+            // An ask under the cursor, answered. On any other row the key is
+            // declined, so it falls through rather than being eaten.
+            "y" | "n" => {
+                let (items, _) = self.rail_waiting(cx);
+                match items.get(self.rail_cursor).filter(|it| it.ask.is_some()) {
+                    Some(it) => {
+                        let answer = if key == "y" {
+                            access::Answer::Yes
+                        } else {
+                            access::Answer::No
+                        };
+                        self.rail_answer(it.pane, answer, cx)
+                    }
+                    None => false,
+                }
+            }
             // Dock or undock. Refused rather than silently ignored on a window
             // with no room: the press answers false, so it falls through to the
             // pane instead of being eaten by a control that is not on offer.
@@ -19701,6 +23308,10 @@ impl Workspace {
 
     fn rail_ink(kind: attention::AttentionKind, sk: &skin::Skin) -> Hsla {
         match kind {
+            // Amber: the one lane whose answer is a person's to give and the
+            // row's own buttons to take. Not the decision red, which sends a
+            // person to a terminal; this keeps them on the rail.
+            attention::AttentionKind::Access => hsla(0.12, 0.88, 0.58, 1.),
             attention::AttentionKind::Decision => hsla(0., 0.72, 0.60, 1.),
             attention::AttentionKind::Failure => hsla(0.06, 0.74, 0.62, 1.),
             attention::AttentionKind::ReviewReady => hsla(0.40, 0.60, 0.50, 1.),
@@ -19708,13 +23319,43 @@ impl Workspace {
         }
     }
 
-    /// The closed spine: a narrow strip at the right edge carrying the count and
-    /// one pip per kind present.
+    /// The column beside the screen on the right: the attention pill at its
+    /// head and the split-right button at its foot.
     ///
     /// It is a flex sibling of the screen, so it costs the terminals its own
-    /// width and nothing more. The queue it opens draws *over* the panes instead
-    /// of pushing them, which is the property the plan's geometry test checks.
-    fn render_spine(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+    /// width and nothing more. The queue the pill opens draws *over* the panes
+    /// instead of pushing them, which is the property the plan's geometry test
+    /// checks.
+    ///
+    /// The foot is new, and it is why the column is drawn even with the pill
+    /// switched off (`TD_SPINE=0`): the split that sets panes side by side
+    /// stands on the window's RIGHT edge, the vertical axis, across the corner
+    /// from its partner on the bottom edge — see `bezel_bottom`. So `TD_SPINE=0`
+    /// no longer gives the terminals the column's width back.
+    fn render_spine(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let s = theme::outer_choice(cx).grade.scale;
+        let column = div()
+            .flex_none()
+            .w(px((RIGHT_COLUMN_W - 4.) * s))
+            .ml(px(4. * s))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_between()
+            .pt(px(8. * s));
+        let head = match self.render_spine_pill(cx) {
+            Some(pill) => pill,
+            // an empty head keeps the button at the foot
+            None => div(),
+        };
+        column
+            .child(head)
+            .child(self.split_button(SplitDir::Row, s, cx))
+    }
+
+    /// The attention pill at the head of the right-hand column, when the
+    /// queue is switched on.
+    fn render_spine_pill(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
         if !self.rail_on {
             return None;
         }
@@ -19761,95 +23402,85 @@ impl Workspace {
         // Two divs, not one, and the split is what stops the spine being a
         // full-height stripe.
         //
-        // The OUTER div is the flex sibling — it owns the column beside the
-        // screen and is stretched to its full height by the row, which is the
-        // layout contract this surface signed: it costs the terminals its width
-        // and nothing else. The INNER pill is a child of a flex COLUMN, so the
-        // vertical axis is the main axis and it sizes to its own content. One
-        // badge as tall as the things in it, parked at the top, instead of a
-        // rule running the height of the window with three marks near the top of
-        // it.
+        // The OUTER div is `render_spine`'s column — the flex sibling that owns
+        // the space beside the screen and is stretched to its full height by the
+        // row, which is the layout contract this surface signed: it costs the
+        // terminals its width and nothing else. This pill is a child of that
+        // flex COLUMN, so the vertical axis is the main axis and it sizes to its
+        // own content. One badge as tall as the things in it, parked at the top,
+        // instead of a rule running the height of the window with three marks
+        // near the top of it.
         Some(
             div()
-                .flex_none()
-                .w(px(26. * s))
-                .ml(px(4. * s))
                 .flex()
                 .flex_col()
                 .items_center()
-                .pt(px(8. * s))
-                .child(
+                .gap(px(5. * s))
+                // Asymmetric on purpose: the count and the pips are
+                // narrow, so equal padding all round reads as too wide.
+                // The vertical is what gives the badge its shape.
+                .px(px(5. * s))
+                .py(px(7. * s))
+                .rounded(sk.radius())
+                .border_1()
+                // Carried at a lower alpha than the fill it sits on, so
+                // the edge reads as an edge rather than as a second
+                // element. Same pair the tab chips use.
+                .border_color(sk.ink.ink.alpha(0.22))
+                .bg(sk.ink.ink.alpha(0.06))
+                .cursor_pointer()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.rail_toggle(cx);
+                        cx.notify();
+                    }),
+                )
+                // Nothing waiting draws a single dim nought, because an
+                // empty pill and a pill that has not been computed look
+                // the same, and only one of them is true.
+                .when(wanting == 0, |d| {
+                    d.child(
+                        div()
+                            .text_size(px(11. * s))
+                            .text_color(sk.ink.ink_dim)
+                            .child("0"),
+                    )
+                })
+                .children(per_lane.into_iter().map(|(k, n)| {
                     div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(5. * s))
-                        // Asymmetric on purpose: the count and the pips are
-                        // narrow, so equal padding all round reads as too wide.
-                        // The vertical is what gives the badge its shape.
-                        .px(px(5. * s))
-                        .py(px(7. * s))
-                        .rounded(sk.radius())
-                        .border_1()
-                        // Carried at a lower alpha than the fill it sits on, so
-                        // the edge reads as an edge rather than as a second
-                        // element. Same pair the tab chips use.
-                        .border_color(sk.ink.ink.alpha(0.22))
-                        .bg(sk.ink.ink.alpha(0.06))
-                        .cursor_pointer()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.rail_toggle(cx);
-                                cx.notify();
-                            }),
-                        )
-                        // Nothing waiting draws a single dim nought, because an
-                        // empty pill and a pill that has not been computed look
-                        // the same, and only one of them is true.
-                        .when(wanting == 0, |d| {
-                            d.child(
-                                div()
-                                    .text_size(px(11. * s))
-                                    .text_color(sk.ink.ink_dim)
-                                    .child("0"),
-                            )
-                        })
-                        .children(per_lane.into_iter().map(|(k, n)| {
-                            div()
-                                .text_size(px(11. * s))
-                                .text_color(Self::rail_ink(k, &sk))
-                                .child(format!("{n}"))
-                        }))
-                        .when(unknown > 0, |d| {
-                            d.child(
-                                div()
-                                    .text_size(px(9. * s))
-                                    .text_color(sk.ink.ink_dim)
-                                    .child("?"),
-                            )
-                        })
-                        // A dot under the numbers whenever something in them has
-                        // not been looked at yet. Not a second number: the
-                        // question the closed spine answers is "is there
-                        // anything NEW", and a person who wants the breakdown is
-                        // one click from the rows themselves, each of which
-                        // carries its own dot.
-                        //
-                        // It disappears the moment the queue is closed again,
-                        // because closing it IS the look — the same contract the
-                        // finish bell has always had.
-                        .when(unseen > 0, |d| {
-                            d.child(
-                                div()
-                                    .mt(px(1. * s))
-                                    .text_size(px(8. * s))
-                                    .text_color(sk.ink.ink)
-                                    .child("\u{25cf}"),
-                            )
-                        }),
-                ),
+                        .text_size(px(11. * s))
+                        .text_color(Self::rail_ink(k, &sk))
+                        .child(format!("{n}"))
+                }))
+                .when(unknown > 0, |d| {
+                    d.child(
+                        div()
+                            .text_size(px(9. * s))
+                            .text_color(sk.ink.ink_dim)
+                            .child("?"),
+                    )
+                })
+                // A dot under the numbers whenever something in them has
+                // not been looked at yet. Not a second number: the
+                // question the closed spine answers is "is there
+                // anything NEW", and a person who wants the breakdown is
+                // one click from the rows themselves, each of which
+                // carries its own dot.
+                //
+                // It disappears the moment the queue is closed again,
+                // because closing it IS the look — the same contract the
+                // finish bell has always had.
+                .when(unseen > 0, |d| {
+                    d.child(
+                        div()
+                            .mt(px(1. * s))
+                            .text_size(px(8. * s))
+                            .text_color(sk.ink.ink)
+                            .child("\u{25cf}"),
+                    )
+                }),
         )
     }
 
@@ -19927,7 +23558,7 @@ impl Workspace {
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.45))
-            .shadow(float_shadows(th.accent));
+            .shadow(float_shadows(th.accent, th.grade.phosphor));
 
         list = list.child(
             div()
@@ -19953,6 +23584,7 @@ impl Workspace {
                         .child("\u{2191}\u{2193} go")
                         .child("\u{21b5} pane")
                         .child("o open")
+                        .child("b beside")
                         // The pin, drawn inert on a window too narrow to dock
                         // in rather than hidden. A control that disappears at
                         // some width is a control nobody knows exists; one that
@@ -20108,6 +23740,33 @@ impl Workspace {
                         .text_color(sk.ink.ink)
                         .child(it.reason()),
                 )
+                // What an ask is for: the setting in our words, then the
+                // agent's reason in its own, quoted the way the classifier's
+                // line is — because it is the agent's text, and the person is
+                // judging it.
+                .children(it.ask.as_ref().map(|a| {
+                    div()
+                        .mt(px(2. * s))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2. * s))
+                        .child(
+                            div()
+                                .text_size(px(10.5 * s))
+                                .text_color(ink)
+                                .child(a.what.clone()),
+                        )
+                        .child(
+                            div()
+                                .px(px(4. * s))
+                                .py(px(2. * s))
+                                .rounded(px(2. * s))
+                                .bg(sk.ink.ink.alpha(0.06))
+                                .text_size(px(9.5 * s))
+                                .text_color(sk.ink.ink_dim)
+                                .child(format!("\u{201c}{}\u{201d}", a.why)),
+                        )
+                }))
                 // The line the classifier read, quoted. `reason` is our words
                 // for what happened; this is the agent's own, and it is what
                 // turns a row somebody has to trust into a row somebody can
@@ -20151,7 +23810,11 @@ impl Workspace {
                 // changed files and checks need an authoritative source that
                 // does not exist yet. Shown missing, so nobody mistakes an empty
                 // tray for a clean one.
-                .when(on_cursor, |row| {
+                //
+                // Not on an ask. Its fields are about a finished turn, and an
+                // ask is not one; four lines of `unavailable` between the reason
+                // and the buttons would push the answer off the glance.
+                .when(on_cursor && it.ask.is_none(), |row| {
                     row.child(
                         div()
                             .mt(px(4. * s))
@@ -20238,17 +23901,84 @@ impl Workspace {
                                 .child(kind.label()),
                         )
                         .child(d.label.clone())
+                        // "⇲ beside": the same document in a pane beside the
+                        // agent that declared it, through the router a
+                        // Ctrl+Alt+click uses. Offered by the target's name
+                        // alone — the rail is always on screen, and this is
+                        // painted every frame, so it never touches the disk;
+                        // the click checks the file is there to draw.
+                        .children(rail_offers_beside(&d.href).then(|| {
+                            div()
+                                .px(px(4. * s))
+                                .rounded(px(2. * s))
+                                .border_1()
+                                .border_color(hsla(0.58, 0.72, 0.62, 0.6))
+                                .child(SharedString::from("⇲ beside"))
+                                // Its own act, like the link's, and it stops
+                                // there so the link underneath does not also
+                                // hand the file to the desktop.
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.rail_cursor = row_index;
+                                        ws.rail_open_beside(cx);
+                                        cx.notify();
+                                    }),
+                                )
+                        }))
                         // Its own click, and it stops there. Opening what a turn
                         // produced and visiting the terminal that produced it are
                         // two different acts, and reading never does the second.
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
-                                pane::open_with_system(&href);
+                                ws.rail_open_here(&href, cx);
                                 cx.notify();
                             }),
                         )
+                }))
+                // Yes and No, on the row. The only two controls in the window
+                // that answer an ask, and each stops its press here so the row
+                // underneath does not also go to the pane: answering is not
+                // visiting. `y` and `n` do the same for the cursor's row.
+                .children(it.ask.as_ref().map(|_| {
+                    let key = it.pane;
+                    let button = |label: &'static str, yes: bool| {
+                        let answer = if yes {
+                            access::Answer::Yes
+                        } else {
+                            access::Answer::No
+                        };
+                        div()
+                            .px(px(9. * s))
+                            .py(px(2. * s))
+                            .rounded(px(3. * s))
+                            .border_1()
+                            .border_color(if yes { ink } else { sk.ink.ink_dim })
+                            .text_size(px(10. * s))
+                            .text_color(if yes { ink } else { sk.ink.ink })
+                            .cursor_pointer()
+                            .hover(move |st| st.bg(sk.ink.ink.alpha(0.14)))
+                            .child(SharedString::from(label))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.rail_answer(key, answer, cx);
+                                    cx.notify();
+                                }),
+                            )
+                    };
+                    div()
+                        .mt(px(5. * s))
+                        .flex()
+                        .flex_row()
+                        .gap(px(6. * s))
+                        .items_center()
+                        .child(button("Yes  y", true))
+                        .child(button("No  n", false))
                 }));
             // No per-row click handler. The panel takes one click and resolves it
             // through the inverse barrel map, because these boxes are where the
@@ -20449,30 +24179,10 @@ impl Workspace {
         // where "menu bar" sits opposite "85%". Here the value is what the
         // cabinet has on, which is the one thing a person cannot read off the
         // tiles when the worn look is scrolled onto a shelf they are not looking
-        // at.
-        let head = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(10. * scale))
-            .w_full()
-            .child(
-                div()
-                    .text_size(px(10.5 * scale))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(if aimed { th.complement } else { th.faint })
-                    // "OUTER" is the theme tray's own word for this scope
-                    // (`lang::Strings::scope_outer`); the overlay says it in the
-                    // same English the wall's card does.
-                    .child("PAINT THE OUTER"),
-            )
-            .child(
-                div()
-                    .text_size(px(10. * scale))
-                    .text_color(th.accent)
-                    .child(paint::worn_label(&worn)),
-            );
+        // at. "OUTER" is the theme tray's own word for this scope
+        // (`lang::Strings::scope_outer`); the overlay says it in the same English
+        // the wall's cards do.
+        let head = paint::card_head(&th, scale, aimed, "PAINT THE OUTER", &worn);
         // The shelf pills — the visible half of `z`, on their own row so the
         // header keeps the label/value shape it borrowed.
         let pills = (shelves.len() > 1).then(|| {
@@ -20494,33 +24204,23 @@ impl Workspace {
             // Un-aimed it teaches the one gesture that aims it, and nothing
             // else: a legend of keys that would currently land on a PANE is
             // worse than no legend at all.
-            "↑ aims here · a click paints".to_string()
+            "↑ or a click opens it".to_string()
         };
-        let card = div()
-            .occlude()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(8. * scale))
-            .p(px(12. * scale))
-            .rounded(sk.rad_raw(8.))
-            .border_2()
-            .border_color(if aimed {
-                th.accent.alpha(0.85)
-            } else {
-                th.accent.alpha(0.3)
-            })
-            .bg(darken(th.surface, 0.45))
-            .text_color(th.text)
-            .font_family(th.font_family.clone())
-            .shadow(float_shadows(if aimed {
-                th.accent
-            } else {
-                th.accent.alpha(0.35)
-            }))
+        // FOLDED while a pane is aimed: the header and the legend only, one
+        // short card under the mother bar. Open, its thirty-odd tiles hung down
+        // over the panes' own paint cards and cut their top rows off — two
+        // grids fighting for one spot. Parker, 2026-09-25: *"outter overlaps
+        // the inner in a yuky way"*. Only the aimed surface shows a grid now;
+        // the panes dim under the heavy scrim while this one is open.
+        let (pills, grid) = if aimed {
+            (pills, Some(grid))
+        } else {
+            (None, None)
+        };
+        let card = paint::card(&th, &sk, scale, aimed)
             .child(head)
             .children(pills)
-            .child(grid)
+            .children(grid)
             .child(
                 div()
                     .text_size(px(9. * scale))
@@ -20628,35 +24328,6 @@ impl Workspace {
         self.bar_bounds.lock().unwrap().clear();
 
         let rows = self.bar_rows(cx);
-        let scope_label = match self.scope {
-            // bb calls the unnarrowed view "All Threads"; the same word does the
-            // job here, and it is three ASCII letters no font can fail to draw.
-            tree::Scope::All => "all".to_string(),
-            tree::Scope::Project(id) => self.branch_label(BarBranch::Project(id)),
-            tree::Scope::Initiative(id) => self.branch_label(BarBranch::Initiative(id)),
-            // The default names the branch it is standing in rather than the
-            // rule it is following — "the group you are in" is a thing a person
-            // has to translate, and its name is the thing they already know.
-            // Same reading as the heading over the strip (see `place_name`): an
-            // initiative by name, a loose tab by its project, and a session
-            // with nothing filed says `all`, which is exactly what one bucket
-            // holding every tab amounts to.
-            tree::Scope::Branch => {
-                let place = self.place_of(self.active);
-                match (place.initiative, place.project) {
-                    (Some(gid), _) => self.branch_label(BarBranch::Initiative(gid)),
-                    (None, Some(pid)) => self.branch_label(BarBranch::Project(pid)),
-                    (None, None) => "all".to_string(),
-                }
-            }
-        };
-        // Lit when the strip is actually carrying less than the session, which
-        // under the default is a question about the tabs rather than about the
-        // scope: a window where nothing is filed is unpinned AND showing
-        // everything, and a chip claiming a narrowing there would be the old
-        // lie pointing the other way.
-        let places = self.places();
-        let scoped = tree::shown(&places, self.scope, self.active).len() < places.len();
         let header = sk
             .row()
             // Right-click anywhere on the strip opens the tray — what you can
@@ -20670,45 +24341,21 @@ impl Workspace {
                     ws.open_bar_tray(ev.position, cx);
                 }),
             )
-            .child(
-                // the scope chip: what the mother bar is currently showing, and
-                // the one click between this branch and the whole session.
-                // `chip` carries the whole "this one is in effect" decision — a
-                // wash under the default skin, corner brackets under deco — so
-                // this call site never learns which look is running.
-                sk.chip(scoped)
-                    .id("bar-scope")
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                    .cursor_pointer()
-                    // The call site says "this is a small-caps label"; the skin
-                    // decides whether it is also tracked. Under the default skin
-                    // `caps` is the identity, so this is the uppercase the bar
-                    // has always drawn.
-                    .child(sk.caps(&scope_label.to_uppercase()))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                            cx.stop_propagation();
-                            // One press each way, and the label says which way
-                            // the next one goes. Anything pinned lands on ALL
-                            // first — the press a person reaches for when they
-                            // cannot find a tab is "show me everything", never
-                            // "show me a different narrowing".
-                            //
-                            // [`tree::Scope::toggled`] and nothing spelled out
-                            // here: this used to be its own copy of the same
-                            // two lines, and the copies disagreed for a day —
-                            // `toggled` answered ALL both ways while this one
-                            // came back. Every control that widens the strip
-                            // now asks the same function which way it goes.
-                            let next = ws.scope.toggled(tree::Scope::All);
-                            ws.set_scope(next, window, cx);
-                        }),
-                    ),
-            )
+            // Where the scope chip was, an empty stretch that keeps the buttons
+            // at the right-hand end.
+            //
+            // The chip named what the tab strip was carrying — `ALL`, or the
+            // branch you were in — and pressed between the two. With the tree
+            // open the strip is not drawn (the ticker has the top row), so the
+            // chip changed nothing anybody could see. Parker: *"doesn't do
+            // anything anymore because the tabs are not being displayed like
+            // before"*, and *"we clear out the text in the tree actions row"*.
+            // Where you are standing is on the tree's own rows now (see
+            // `branch_row`), and the shut strip carries your group's tabs
+            // whatever a branch row is pinned to — only the whole session
+            // widens it (see `render_strip_head`). This row's glyphs and their
+            // arrangement are the next pass.
+            .child(div().flex_1().min_w_0())
             .child(
                 // fold or unfold the whole tree. One button rather than two,
                 // showing the triangle of what pressing it does: pointing down
@@ -21092,132 +24739,192 @@ impl Workspace {
             .child(close_x)
     }
 
-    /// The name of the branch this window is standing in — the active tab's
-    /// initiative, or the project it hangs from, or nothing.
+    /// The head of the tab strip while the tree is shut: the project, `›`, its
+    /// groups, `›`, and then the tabs of the group you are in — the tree's own
+    /// vernacular, laid on its side.
     ///
-    /// It sits in the mother bar's top-left corner now, beside the app's mark,
-    /// where the words `▸ TERMINAL DELIGHT` used to be. That slot was the widest
-    /// on the busiest row and it said something that never changes; this says
-    /// something that does, and it is the fact you most need when a window holds
-    /// several projects' work.
+    /// With the tree open, the tree says where you are: the task wears its
+    /// ring and the project and group above it a faint wash. Shut, the strip
+    /// was a row of tab names with nothing to say whose they were. Parker, on
+    /// exactly that row: *"we should see project > group > tab vernacular"*;
+    /// and then, on a first cut whose project step widened the strip to every
+    /// tab in the project: *"the PROJECT > GROUPS (should have similar NON TAB
+    /// appearance and project) > showing sibling tabs is proper"*.
     ///
-    /// `width: Some(w)` pins it to a column of exactly that width and centres it
-    /// — how it was drawn as the tab strip's heading, so a long branch name
-    /// truncated inside the column rather than pushing the first tab to the
-    /// right. `None` takes only what the name needs, which is what the header
-    /// row wants. Either way it truncates rather than wrapping: gpui wraps text
-    /// by default, and a wrapped name makes the whole mother bar taller.
-    fn place_name(&self, width: Option<f32>, pt: f32, cx: &mut Context<Self>) -> gpui::Div {
+    /// So the groups are chips, drawn like the project and nothing like a tab
+    /// — the tree's mark and name, no bezel — and the group you are in is lit.
+    /// A press on another group goes to it; a press on the project goes to its
+    /// own ungrouped tabs, when it has any. Nothing here widens the strip into
+    /// a flat list of every tab in the project: the tabs are always your
+    /// group's. What decides the chips is [`strip_chips`].
+    fn render_strip_head(&self, scale: f32, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let chips = strip_chips(&self.places(), self.active);
+        if chips.is_empty() {
+            return None;
+        }
         let th = theme::theme(cx);
-        let s = theme::outer_choice(cx).grade.scale;
-        let mut col = div()
-            .flex()
+        let sk = skin::skin(cx, scale);
+        let sep = || {
+            div()
+                .flex_none()
+                .text_size(px(CHROME_NAME_PT * scale))
+                .text_color(th.text.alpha(0.35))
+                .child("\u{203a}")
+        };
+        let mut head = div()
             .flex_none()
+            .flex()
             .flex_row()
             .items_center()
-            .overflow_hidden()
-            .gap(px(8. * s))
-            .px(px(6. * s));
-        if let Some(w) = width.filter(|w| *w > 0.) {
-            col = col.w(px(w));
+            .gap(px(4. * scale));
+        let has_groups = chips.iter().any(|c| matches!(c, StripChip::Group { .. }));
+        for chip in chips {
+            match chip {
+                StripChip::Project { id, lit, go } => {
+                    let Some(p) = self.project_at(id) else {
+                        continue;
+                    };
+                    // a project's mark is a filled dot, as in the tree
+                    let dot = div()
+                        .w(px(7. * scale))
+                        .h(px(7. * scale))
+                        .rounded(sk.radius_pill())
+                        .bg(p.color);
+                    let name = p.label().to_uppercase();
+                    let el = self.strip_chip(
+                        format!("strip-project-{id}"),
+                        name,
+                        true,
+                        p.color,
+                        dot,
+                        lit,
+                        go,
+                        scale,
+                        cx,
+                    );
+                    head = head.child(el);
+                    // the project is joined to its groups by a `›`; the
+                    // groups themselves sit side by side, as siblings do
+                    if has_groups {
+                        head = head.child(sep());
+                    }
+                }
+                StripChip::Group { id, lit, go } => {
+                    let Some(g) = self.groups.iter().find(|g| g.id == id) else {
+                        continue;
+                    };
+                    // a group's mark is its colour rail stood on end, as in
+                    // the tree
+                    let rail = div()
+                        .w(px(3. * scale))
+                        .h(px(11. * scale))
+                        .rounded(sk.radius())
+                        .bg(g.color);
+                    let el = self.strip_chip(
+                        format!("strip-group-{id}"),
+                        g.label(),
+                        false,
+                        g.color,
+                        rail,
+                        lit,
+                        Some(go),
+                        scale,
+                        cx,
+                    );
+                    head = head.child(el);
+                }
+            }
         }
-        // THE BRANCH THE RAIL READS FOR, never the tab. The project the active
-        // tab is filed under when it has one, else the top-level group it
-        // sits in — the same key the scan uses, so the name and the numbers
-        // beside it can never be about different things. Switching tabs
-        // inside that branch changes nothing here; switching branches does.
-        // A loose tab hangs from nothing and gets the mark and the badge
-        // alone: an unorganised session is not labelled "unfiled".
-        let key = self.eng_key();
-        let branch = match key {
-            EngKey::Project(p) => Some(BarBranch::Project(p)),
-            EngKey::Group(g) => Some(BarBranch::Initiative(g)),
-            EngKey::Unfiled => None,
-        };
-        if let (Some(name), Some(branch)) = (self.eng_key_name(key), branch) {
-            col = col.child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(px(pt))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(th.text)
-                    .child(name.to_uppercase())
-                    // a name in the chrome, so it renames the way every
-                    // other one does — the tree row beside it is the
-                    // same branch and answers to the same gesture
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                            cx.stop_propagation();
-                            ws.start_bar_rename(branch, window, cx);
-                        }),
-                    ),
-            );
-        }
-        col.child(self.eng_badge(pt, cx))
+        // and the head is joined to the tabs after it by one more
+        Some(head.child(sep()))
     }
 
-    /// The persistent badge beside the project's name: its isolation health.
-    ///
-    /// `[4 WT ✓]`, `[2 WT · 1 SHARED]`, `[⚠ 1 FOREIGN]`, `[NO GIT]` — the
-    /// one thing about a project a person wants at a glance without reading a
-    /// ticker: are the things writing into it writing into separate
-    /// directories? Until the first scan has landed it says `SCANNING`,
-    /// because an empty badge would read as "nothing to report", which is a
-    /// different claim.
+    /// One chip of the strip's head — a branch's mark and its name, never a
+    /// tab's bezel. The chip you are in wears a wash of its own colour and
+    /// the brighter ink, and takes no press, since it is where you already
+    /// are; any other chip with somewhere to go is a door to that branch.
+    #[allow(clippy::too_many_arguments)]
+    fn strip_chip(
+        &self,
+        id: String,
+        name: String,
+        project: bool,
+        color: Hsla,
+        mark: gpui::Div,
+        lit: bool,
+        go: Option<usize>,
+        scale: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let sk = skin::skin(cx, scale);
+        // A project is the heading you are always under, so its name stays
+        // bright; a group is bright only while you are in it.
+        let ink = if lit || project {
+            sk.ink.ink_lit
+        } else {
+            sk.ink.ink_dim
+        };
+        let mut chip = div()
+            .id(SharedString::from(id))
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(5. * scale))
+            .px(px(5. * scale))
+            .py(px(1. * scale))
+            .rounded(sk.radius())
+            .when(lit, |d| d.bg(color.alpha(STRIP_CHIP_WASH)))
+            .child(mark.flex_none())
+            .child(
+                div()
+                    // truncates rather than wrapping: a wrapped name would make
+                    // the whole mother bar taller
+                    .max_w(px(180. * scale))
+                    .truncate()
+                    .text_size(px(CHROME_NAME_PT * scale))
+                    .when(project, |d| d.font_weight(gpui::FontWeight::EXTRA_BOLD))
+                    .text_color(ink)
+                    .child(name),
+            );
+        if let Some(to) = go.filter(|_| !lit) {
+            chip = chip
+                .cursor_pointer()
+                .hover(move |st| st.bg(color.alpha(STRIP_CHIP_WASH * 0.75)))
+                // Propagation stops here or the press also arms the mother
+                // bar's move handle underneath it.
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        ws.activate_tab(to, window, cx);
+                    }),
+                );
+        }
+        chip
+    }
+
+    /// Window-wide attention, derived from all cached projects. A clear local
+    /// project cannot silence an alert elsewhere; unknown and stale stay visible.
     fn eng_badge(&self, pt: f32, cx: &mut Context<Self>) -> gpui::Div {
         let th = theme::theme(cx);
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
-        let mut segments = match self.eng.get(&self.eng_key()) {
-            Some(r) => r.badge.clone(),
-            None => vec![engstate::Segment {
-                text: "SCANNING".into(),
-                tone: engstate::Tone::Muted,
-            }],
+        let snapshot = &self.coordination_store().snapshot;
+        let status = snapshot.attention_severity();
+        let label = self.coordination_store().attention_summary();
+        let ink = match status {
+            Some(coordination::Severity::Alert) => th.ansi[1],
+            Some(coordination::Severity::Warning) => th.ansi[3],
+            _ => th.text,
         };
-        // the afterglow's dot: something happened here in the last quarter
-        // hour, and the ticker has the sentence
-        if !self.eng_afterglow().is_empty() {
-            segments.push(engstate::Segment {
-                text: "\u{25c6}".into(),
-                tone: engstate::Tone::Good,
-            });
-        }
-        let mut chip = sk
+        let chip = sk
             .bezel(false, s)
             .flex_none()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(5. * s))
             .text_size(px(pt * 0.8))
             .font_weight(gpui::FontWeight::SEMIBOLD)
-            .border_color(th.text.alpha(0.22));
-        for (i, seg) in segments.iter().enumerate() {
-            if i > 0 {
-                chip = chip.child(
-                    div()
-                        .text_color(th.text.alpha(0.35))
-                        .child("\u{00b7}".to_string()),
-                );
-            }
-            let ink = self.eng_ink(seg.tone, &th);
-            // A warning wears a wash as well as its ink. On an amber palette
-            // the ansi yellow is a hair from the text colour, and `1 SHARED`
-            // read exactly like `3 WT` beside it; a tint behind the words is
-            // a difference every palette can show.
-            let warn = seg.tone == engstate::Tone::Warn;
-            chip = chip.child(
-                div()
-                    .text_color(ink)
-                    .when(warn, |d| {
-                        d.px(px(4. * s)).rounded(sk.radius()).bg(ink.alpha(0.16))
-                    })
-                    .child(seg.text.clone()),
-            );
-        }
+            .text_color(ink)
+            .child(label);
         // click: unfold it into the table. Propagation stops here so the
         // mother bar's move handle does not also arm on the press.
         chip.on_mouse_down(
@@ -21235,6 +24942,7 @@ impl Workspace {
     fn toggle_eng_table(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.eng_table = !self.eng_table;
         if self.eng_table {
+            self.coord_view = coordination::View::default();
             self.commit_all_renames(cx);
             self.bar_menu = None;
             window.focus(&self.focus_handle, cx);
@@ -21260,227 +24968,7 @@ impl Workspace {
         if !self.eng_table {
             return None;
         }
-        let sk = skin::skin(cx, s);
-        let st = self.eng_state();
-        let mono = |d: gpui::Div| d.font_family("monospace").text_size(px(10.5 * s));
-        let cell = |w: f32, ink: Hsla, text: String| {
-            mono(div())
-                .flex_none()
-                .w(px(w * s))
-                .overflow_hidden()
-                .truncate()
-                .text_color(ink)
-                .child(text)
-        };
-        // Air at the top. The heading row sat on the border and the title on
-        // the heading; Parker: "just need a bit better spacing along the
-        // top". More above than below, since the eye enters from the rail.
-        let mut rows = div()
-            .flex()
-            .flex_col()
-            .gap(px(4. * s))
-            .px(px(12. * s))
-            .pt(px(11. * s))
-            .pb(px(9. * s))
-            .min_w(px(700. * s));
-        // The house menu's heading row first: what surface this is, and the
-        // keys it answers to — the NEEDS ME panel's recipe, so a person who
-        // has learned one panel has learned this one.
-        rows = rows.child(
-            div()
-                .flex()
-                .flex_row()
-                .justify_between()
-                .px(px(3. * s))
-                .pb(px(9. * s))
-                .text_size(px(9.5 * s))
-                .text_color(sk.ink.ink_dim)
-                .child("PROJECT RAIL \u{b7} the badge, unfolded")
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap(px(6. * s))
-                        .child("click the badge")
-                        .child("esc"),
-                ),
-        );
-        // then what this is a table OF, and how fresh it is
-        let name = self
-            .eng_key_name(self.eng_key())
-            .map(|n| n.to_uppercase())
-            .unwrap_or_else(|| "UNFILED".into());
-        let freshness = match st {
-            Some(st) => format!(
-                "read {}s ago in {}ms",
-                st.scanned_at.elapsed().as_secs(),
-                st.took.as_millis()
-            ),
-            None => "not read yet".into(),
-        };
-        rows = rows.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .pb(px(7. * s))
-                .child(
-                    div()
-                        .text_size(px(11. * s))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(th.text)
-                        .child(name),
-                )
-                .child(
-                    div()
-                        .text_size(px(9.5 * s))
-                        .text_color(th.text.alpha(0.5))
-                        .child(freshness),
-                ),
-        );
-        let Some(st) = st else {
-            return Some(self.eng_table_frame(&sk, th, s, rows, cx));
-        };
-        let muted = th.text.alpha(0.55);
-        let warn = self.eng_ink(engstate::Tone::Warn, th);
-        // column heads
-        rows = rows.child(
-            div()
-                .flex()
-                .flex_row()
-                .gap(px(8. * s))
-                .child(cell(210., muted, "line".into()))
-                .child(cell(60., muted, "".into()))
-                .child(cell(110., muted, "uncommitted".into()))
-                .child(cell(60., muted, "vs main".into()))
-                .child(cell(200., muted, "writing here".into())),
-        );
-        let main_name = st
-            .primary()
-            .and_then(|r| r.main_ref.as_deref())
-            .map(|m| m.rsplit('/').next().unwrap_or(m).to_string());
-        for c in &st.checkouts {
-            let is_primary = st.primary().is_some_and(|p| p.id == c.repo);
-            let line = if is_primary {
-                c.line()
-            } else {
-                let repo = st
-                    .repos
-                    .iter()
-                    .find(|r| r.id == c.repo)
-                    .map(|r| r.name.as_str())
-                    .unwrap_or("?");
-                format!("{} ({repo})", c.line())
-            };
-            let kind = if c.shared() { "SHARED" } else { "WT" };
-            let kind_ink = if c.shared() { warn } else { th.accent };
-            let dirt = match (c.dirty, c.delta) {
-                (Some(0), _) => "clean".to_string(),
-                (Some(n), Some((a, d))) => format!("{n} dirty +{a} \u{2212}{d}"),
-                (Some(n), None) => format!("{n} dirty"),
-                (None, _) => "unmeasured".to_string(),
-            };
-            let dirt_ink = match c.dirty {
-                Some(0) => muted,
-                Some(_) => th.text,
-                None => muted,
-            };
-            let vs = match c.ahead_behind {
-                _ if Some(c.line()) == main_name => "\u{2014}".to_string(),
-                Some((a, b)) => format!("\u{2191}{a} \u{2193}{b}"),
-                None => "?".to_string(),
-            };
-            let who: Vec<String> = c
-                .writers
-                .iter()
-                .map(|w| format!("{} ({})", w.label.to_lowercase(), w.tab_name))
-                .collect();
-            rows = rows.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap(px(8. * s))
-                    .child(cell(210., th.text, line))
-                    .child(cell(60., kind_ink, kind.into()))
-                    .child(cell(110., dirt_ink, dirt))
-                    .child(cell(60., th.text, vs))
-                    .child(cell(200., th.text, who.join(", "))),
-            );
-        }
-        // the drift and the panes in no repository
-        let mut notes: Vec<(Hsla, String)> = Vec::new();
-        for f in &st.foreign {
-            notes.push((
-                warn,
-                format!(
-                    "\u{26a0} {} is filed here but working in {}",
-                    f.writer.tab_name, f.repo_name
-                ),
-            ));
-        }
-        for v in &st.visitors {
-            notes.push((
-                muted,
-                match &v.filed_under {
-                    Some(u) => format!(
-                        "\u{25cc} {} is working here but filed under {u}",
-                        v.writer.tab_name
-                    ),
-                    None => format!("\u{25cc} {} is working here, unfiled", v.writer.tab_name),
-                },
-            ));
-        }
-        for w in &st.no_git {
-            notes.push((muted, format!("{} is in no repository", w.tab_name)));
-        }
-        if let Some(r) = st.primary() {
-            if let Some(n) = r.worktrees_on_disk {
-                let in_use = st.primary_checkouts().len() as u32;
-                if n > in_use {
-                    notes.push((
-                        muted,
-                        format!("{n} worktrees of {} on disk, {in_use} in use", r.name),
-                    ));
-                }
-            }
-        }
-        if !notes.is_empty() {
-            rows = rows.child(div().h(px(1.)).mt(px(4. * s)).bg(th.text.alpha(0.12)));
-            for (ink, text) in notes {
-                rows = rows.child(mono(div()).text_color(ink).child(text));
-            }
-        }
-        // the afterglow, oldest first, with how long ago
-        let glow = self.eng_afterglow();
-        if !glow.is_empty() {
-            rows = rows.child(div().h(px(1.)).mt(px(4. * s)).bg(th.text.alpha(0.12)));
-            let key = self.eng_key();
-            let now = Instant::now();
-            if let Some(log) = self.eng_events.get(&key) {
-                for (at, e) in log {
-                    let age = now.duration_since(*at).as_secs();
-                    let when = if age < 60 {
-                        format!("{age}s ago")
-                    } else {
-                        format!("{}m ago", age / 60)
-                    };
-                    rows = rows.child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap(px(8. * s))
-                            .child(cell(60., muted, when))
-                            .child(
-                                mono(div())
-                                    .text_color(th.text)
-                                    .child(format!("\u{25c6} {e}")),
-                            ),
-                    );
-                }
-            }
-        }
-        Some(self.eng_table_frame(&sk, th, s, rows, cx))
+        Some(self.render_coordination(th, s, cx))
     }
 
     /// The scrim and the panel around the table — the same shape as every
@@ -21503,12 +24991,17 @@ impl Workspace {
             .pt(px(6. * s))
             .text_size(px(8.5 * s))
             .text_color(th.accent.alpha(0.8))
-            .child("esc or click outside to close");
+            .child("Escape: back, then close · click outside to close");
         self.over_the_glass(
             div()
-                .id("eng-table-panel")
+                .id(SharedString::from(format!(
+                    "git-inspector:{:?}:{}",
+                    self.coord_view.depth, self.coord_view.page
+                )))
                 .absolute()
                 .left(px(12. * s))
+                .right(px(12. * s))
+                .max_w(px(800. * s))
                 .top(px(50. * s))
                 .max_h(px(self.tray_max_h(50. * s)))
                 .overflow_x_hidden()
@@ -21517,13 +25010,19 @@ impl Workspace {
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.45))
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 // a click inside the panel is the panel's, not the scrim's
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
-                .child(rows.child(footer)),
+                .child(
+                    rows.child(footer)
+                        .id("git-inspector-rows")
+                        .max_h(px(self.tray_max_h(50. * s)))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.coordination_scroll()),
+                ),
             |ws, window, cx| {
                 ws.eng_table = false;
                 ws.focus_active(window, cx);
@@ -21578,120 +25077,6 @@ impl Workspace {
                 }),
             )
             .child(panel)
-    }
-
-    /// The ink a tone is drawn in. Bound here and nowhere else, so the model
-    /// never names a colour and the palette decides what "warn" looks like.
-    fn eng_ink(&self, tone: engstate::Tone, th: &theme::Theme) -> Hsla {
-        match tone {
-            engstate::Tone::Plain => th.text,
-            engstate::Tone::Muted => th.text.alpha(0.55),
-            engstate::Tone::Good => th.accent,
-            // the palette's own yellow: every theme has one, and it is the
-            // colour a shell already uses for "look at this"
-            engstate::Tone::Warn => th.ansi[3],
-        }
-    }
-
-    /// The ticker: one frame of the active project's engineering state, and
-    /// its heartbeat. Takes the middle of the top row when the tree is open —
-    /// the tabs it replaces there are the spine's task rows, already on
-    /// screen an inch below.
-    fn render_ticker(&self, scale: f32, cx: &mut Context<Self>) -> gpui::Div {
-        let th = theme::theme(cx);
-        let mut row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .min_w_0()
-            .flex_1()
-            .gap(px(12. * scale));
-        let Some(st) = self.eng_state() else {
-            return row;
-        };
-        // a thin rule between the badge and the ticker, as the mockup drew it
-        row = row.child(
-            div()
-                .flex_none()
-                .w(px(1.))
-                .h(px(14. * scale))
-                .bg(th.text.alpha(0.18)),
-        );
-        let frames = self.eng_frames();
-        if frames.is_empty() {
-            // silence means healthy: the badge already said what there is to
-            // say, and an empty middle is the breathing room that makes the
-            // next non-empty frame land
-            return row.child(div().min_w_0().flex_1());
-        }
-        let frame = &frames[self.eng_frame % frames.len()];
-        row = row.child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .truncate()
-                .text_size(px(11.5 * scale))
-                .text_color(self.eng_ink(frame.tone, &th))
-                .child(frame.text.clone()),
-        );
-        // the frame counter, so a reader knows there are more and how far
-        // round they are — "3/7" in the quietest ink
-        if frames.len() > 1 {
-            row = row.child(
-                div()
-                    .flex_none()
-                    .text_size(px(9.5 * scale))
-                    .text_color(th.text.alpha(0.35))
-                    .child(format!(
-                        "{}/{}",
-                        (self.eng_frame % frames.len()) + 1,
-                        frames.len()
-                    )),
-            );
-        }
-        if let Some(p) = st.primary().and_then(|r| r.pulse) {
-            row = row.child(self.render_pulse(&p, scale, cx));
-        }
-        row
-    }
-
-    /// The heartbeat: twelve bars, one per five minutes of the last hour,
-    /// oldest on the left. Not a graph to study — peripheral vision tells you
-    /// the project is hot. A calm hour is twelve baseline dots, drawn rather
-    /// than omitted, so an absent instrument and a quiet one look different.
-    fn render_pulse(&self, p: &[u32; 12], scale: f32, cx: &mut Context<Self>) -> gpui::Div {
-        let th = theme::theme(cx);
-        let max = p.iter().copied().max().unwrap_or(0).max(1) as f32;
-        let mut bars = div()
-            .flex_none()
-            .flex()
-            .flex_row()
-            .items_end()
-            .gap(px(1.5 * scale))
-            .h(px(12. * scale));
-        for (i, &v) in p.iter().enumerate() {
-            // newest bars brightest, so the eye reads direction as well as size
-            let age = (11 - i) as f32 / 11.;
-            let ink = if v == 0 {
-                th.text.alpha(0.18)
-            } else {
-                th.accent.alpha(0.45 + 0.55 * (1. - age))
-            };
-            let h = if v == 0 {
-                2. * scale
-            } else {
-                (3. + 9. * (v as f32 / max)) * scale
-            };
-            bars = bars.child(
-                div()
-                    .flex_none()
-                    .w(px(3. * scale))
-                    .h(px(h))
-                    .rounded(px(1.))
-                    .bg(ink),
-            );
-        }
-        bars
     }
 
     /// The tab-config wheel: the same HSV disk as the theme breakout, carrying
@@ -21898,7 +25283,7 @@ fn over_the_glass_tip(th: &theme::Theme, sk: &skin::Skin, s: f32) -> gpui::Div {
         .border_2()
         .border_color(th.accent.alpha(0.85))
         .bg(darken(th.surface, 0.45))
-        .shadow(float_shadows(th.accent))
+        .shadow(float_shadows(th.accent, th.grade.phosphor))
 }
 
 /// The hover over one of the bottom slot's allowance rows: the provider, then
@@ -21937,6 +25322,7 @@ struct ThemeTooltip {
     name: SharedString,
     /// `Some` only for the custom slot — the file to reveal/open.
     path: Option<PathBuf>,
+    swatches: Option<Vec<Hsla>>,
 }
 
 impl Render for ThemeTooltip {
@@ -21948,8 +25334,21 @@ impl Render for ThemeTooltip {
             div()
                 .text_size(px(12. * s))
                 .text_color(sk.ink.ink)
+                .max_w(px(240. * s))
                 .child(self.name.clone()),
         );
+        if let Some(colours) = &self.swatches {
+            card = card.child(div().flex().flex_row().gap(px(3. * s)).children(
+                colours.iter().map(|c| {
+                    div()
+                        .w(px(11. * s))
+                        .h(px(16. * s))
+                        .border_1()
+                        .border_color(th.text.alpha(0.2))
+                        .bg(*c)
+                }),
+            ));
+        }
         if let Some(path) = self.path.clone() {
             card = card
                 .child(
@@ -21975,6 +25374,90 @@ impl Render for ThemeTooltip {
         }
         card
     }
+}
+
+fn palette_help_delay(last: Option<Instant>, now: Instant) -> Duration {
+    if last.is_some_and(|t| now.saturating_duration_since(t) < Duration::from_millis(1800)) {
+        Duration::from_millis(180)
+    } else {
+        Duration::from_millis(800)
+    }
+}
+
+enum PalettePreview {
+    Omarchy(String),
+    Custom(Box<ThemeChoice>),
+}
+
+impl PalettePreview {
+    /// Resolve only when help opens, rather than parsing every palette per frame.
+    fn colours(&self, cx: &App) -> Option<Vec<Hsla>> {
+        match self {
+            Self::Omarchy(id) => {
+                let palette = palette::find(cx, id)?;
+                let t = theme::overlay_palette(&theme::theme(cx), &palette.toml).ok()?;
+                let mut colours = vec![t.bg, t.text, t.accent];
+                colours.extend_from_slice(&t.ansi[1..7]);
+                Some(colours)
+            }
+            Self::Custom(choice) => {
+                let t = theme::resolve(cx, choice);
+                Some(vec![t.bg, t.text, t.accent, t.complement, t.human])
+            }
+        }
+    }
+}
+
+fn palette_help<E: gpui::StatefulInteractiveElement>(
+    button: E,
+    name: impl Into<SharedString>,
+    preview: Option<PalettePreview>,
+    path: Option<PathBuf>,
+    delay: Duration,
+    owner: gpui::WeakEntity<Workspace>,
+) -> E {
+    let name = name.into();
+    let interactive = path.is_some();
+    let build = move |_w: &mut Window, cx: &mut App| -> gpui::AnyView {
+        if let Some(ws) = owner.upgrade() {
+            ws.update(cx, |ws, cx| {
+                ws.palette_help_seen = Some(Instant::now());
+                cx.notify();
+            });
+        }
+        let swatches = preview.as_ref().and_then(|p| p.colours(cx));
+        let name = if preview.is_some() && swatches.is_none() {
+            format!("{name}\nPalette unavailable").into()
+        } else {
+            name.clone()
+        };
+        cx.new(|_| ThemeTooltip {
+            name,
+            swatches,
+            path: path.clone(),
+        })
+        .into()
+    };
+    let button = button.tooltip_show_delay(delay);
+    if interactive {
+        button.hoverable_tooltip(build)
+    } else {
+        button.tooltip(build)
+    }
+}
+
+fn palette_rule(label: &str, on: bool, th: &theme::Theme) -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .py_1()
+        .text_size(px(10.))
+        .cursor_pointer()
+        .child(label.to_string())
+        .child(slider_switch(on, th))
 }
 
 /// Theme-icon button for the breakout menu: glyph over a tiny caption naming the
@@ -22011,7 +25494,7 @@ fn theme_icon_btn(th: &theme::Theme, icon: &str, label: &str, active: bool) -> g
         .text_color(white().alpha(0.95))
         .child(inner)
     } else {
-        b.bg(darken(th.surface, 0.8))
+        b.bg(darken(th.surface, 0.8).alpha(0.5))
             .border_color(th.accent.alpha(0.35))
             .text_color(th.text)
             .child(inner)
@@ -22046,7 +25529,89 @@ fn color_mode_btn(th: &theme::Theme, icon: &str, caption: &str, active: bool) ->
         .text_color(white().alpha(0.95))
         .child(inner)
     } else {
-        b.bg(darken(th.surface, 0.8))
+        b.bg(darken(th.surface, 0.8).alpha(0.5))
+            .border_color(th.accent.alpha(0.35))
+            .text_color(th.text)
+            .child(inner)
+    }
+}
+
+/// A STICKY NOTE button: the paper that mode would give, drawn as a tiny note
+/// with its pin and two lines of ink, over a caption. The button IS the preview,
+/// so the three can be compared before any is pressed, and they recolour as a
+/// wheel pip is dragged.
+fn note_paper_btn(
+    th: &theme::Theme,
+    paper: &sticky::Paper,
+    caption: &str,
+    active: bool,
+) -> gpui::Div {
+    let ink = |w: f32| div().w(px(w)).h(px(1.5)).bg(paper.ink.alpha(0.7));
+    let sheet = div()
+        .relative()
+        .w(px(26.))
+        .h(px(18.))
+        .bg(paper.base)
+        .border_b_1()
+        .border_color(darken(paper.base, 0.7))
+        .shadow(vec![BoxShadow {
+            color: hsla(0., 0., 0., 0.55),
+            offset: point(px(1.), px(1.5)),
+            blur_radius: px(2.),
+            spread_radius: px(0.),
+            inset: false,
+        }])
+        .flex()
+        .flex_col()
+        .justify_end()
+        .gap(px(2.5))
+        .px(px(4.))
+        .pb(px(3.))
+        .child(ink(15.))
+        .child(ink(10.))
+        .child(
+            div()
+                .absolute()
+                .top(px(1.5))
+                .left(px(11.))
+                .w(px(4.))
+                .h(px(4.))
+                .rounded_full()
+                .bg(paper.pin),
+        );
+    let inner = div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(3.))
+        .child(sheet)
+        .child(
+            div()
+                .text_size(px(TRAY_NOTE_CAPTION))
+                .whitespace_nowrap()
+                .child(caption.to_string()),
+        );
+    let b = div()
+        .w(px(TRAY_NOTE_BTN_W))
+        .h(px(TRAY_MODE_BTN_H))
+        .flex()
+        .items_center()
+        .justify_center()
+        .overflow_hidden()
+        .rounded_md()
+        .border_1()
+        .cursor_pointer();
+    if active {
+        b.bg(linear_gradient(
+            135.,
+            linear_color_stop(th.accent.alpha(0.45), 0.),
+            linear_color_stop(th.accent.alpha(0.15), 1.),
+        ))
+        .border_color(th.accent)
+        .text_color(white().alpha(0.95))
+        .child(inner)
+    } else {
+        b.bg(darken(th.surface, 0.8).alpha(0.5))
             .border_color(th.accent.alpha(0.35))
             .text_color(th.text)
             .child(inner)
@@ -22129,20 +25694,23 @@ fn agent_program_glow(fallback: Hsla, label: &str) -> Hsla {
 /// same grammar as focused terminal panes and floating panels: a crisp phosphor
 /// rim, soft bloom, downward cast shadow, and tight contact shadow. `live=false`
 /// keeps the physical lift but turns the phosphor mostly off for idle/dead rows.
-fn agent_card_shadows(glow: Hsla, live: bool) -> Vec<BoxShadow> {
+/// `phosphor` is the gauge reading the bloom goes through; the rim and the two
+/// shadows do not, so a card turned all the way down is still a raised card.
+fn agent_card_shadows(glow: Hsla, live: bool, phosphor: f32) -> Vec<BoxShadow> {
     let (rim, halo, cast, contact) = if live {
         (0.82, 0.38, 0.48, 0.42)
     } else {
         (0.26, 0.10, 0.34, 0.32)
     };
-    vec![
-        BoxShadow {
-            color: glow.alpha(rim),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(0.),
-            spread_radius: px(1.),
-            inset: false,
-        },
+    let mut out = vec![BoxShadow {
+        color: glow.alpha(rim),
+        offset: point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(1.),
+        inset: false,
+    }];
+    out.extend(theme::phosphor(
+        phosphor,
         BoxShadow {
             color: glow.alpha(halo),
             offset: point(px(0.), px(1.)),
@@ -22150,6 +25718,8 @@ fn agent_card_shadows(glow: Hsla, live: bool) -> Vec<BoxShadow> {
             spread_radius: px(if live { 1. } else { 0. }),
             inset: false,
         },
+    ));
+    out.extend([
         BoxShadow {
             color: hsla(0., 0., 0., cast),
             offset: point(px(0.), px(12.)),
@@ -22164,7 +25734,8 @@ fn agent_card_shadows(glow: Hsla, live: bool) -> Vec<BoxShadow> {
             spread_radius: px(-2.),
             inset: false,
         },
-    ]
+    ]);
+    out
 }
 
 /// Shadow stack for any surface that floats ABOVE the workspace (modals + menus).
@@ -22174,17 +25745,22 @@ fn agent_card_shadows(glow: Hsla, live: bool) -> Vec<BoxShadow> {
 /// workspace beneath it sits in shadow. `glow` is the rim colour (the theme
 /// accent; a danger hue for destructive dialogs). Pair with `.border_2()` in the
 /// same hue, and `.rounded_*()` so the glow follows the corners.
-pub(crate) fn float_shadows(glow: Hsla) -> Vec<BoxShadow> {
-    vec![
-        // the doubled border: a crisp 1px outer ring in the rim colour
-        BoxShadow {
-            color: glow.alpha(0.9),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(0.),
-            spread_radius: px(1.),
-            inset: false,
-        },
-        // the lit border casting light: a soft phosphor glow around the rim
+///
+/// `phosphor` is the gauge reading the halo goes through (the scope's
+/// `grade.phosphor`). Only the halo: the doubled border is a line and the two
+/// dark shadows are the lift, and neither is light.
+pub(crate) fn float_shadows(glow: Hsla, phosphor: f32) -> Vec<BoxShadow> {
+    // the doubled border: a crisp 1px outer ring in the rim colour
+    let mut out = vec![BoxShadow {
+        color: glow.alpha(0.9),
+        offset: point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(1.),
+        inset: false,
+    }];
+    // the lit border casting light: a soft phosphor glow around the rim
+    out.extend(theme::phosphor(
+        phosphor,
         BoxShadow {
             color: glow.alpha(0.5),
             offset: point(px(0.), px(1.)),
@@ -22192,6 +25768,8 @@ pub(crate) fn float_shadows(glow: Hsla) -> Vec<BoxShadow> {
             spread_radius: px(2.),
             inset: false,
         },
+    ));
+    out.extend([
         // the shadow that light casts on the workspace below — broad, dark, downward
         BoxShadow {
             color: hsla(0., 0., 0., 0.62),
@@ -22208,7 +25786,8 @@ pub(crate) fn float_shadows(glow: Hsla) -> Vec<BoxShadow> {
             spread_radius: px(-2.),
             inset: false,
         },
-    ]
+    ]);
+    out
 }
 
 /// `Hsla` → `#rrggbb` (drops alpha) for storing a wheel-picked seed colour.
@@ -22343,8 +25922,12 @@ fn render_node(
             let id = e.entity_id();
             let is_focused = focused == Some(id);
             // highlight in the PANE's own theme (override / mode tint), not the
-            // outer chrome's; shadows (not border width) so the grid never reflows
-            let acc = e.read(cx).resolved_theme(cx).accent;
+            // outer chrome's; shadows (not border width) so the grid never reflows.
+            // Its glow follows the pane's own phosphor gauge for the same reason.
+            let (acc, glow) = {
+                let pth = e.read(cx).resolved_theme(cx);
+                (pth.accent, pth.grade.phosphor)
+            };
             // is a dragged sub-tab hovering THIS pane right now? which side?
             let drop_zone = match drop {
                 Some(DropTarget::Split { pane, zone, .. }) if *pane == id => Some(*zone),
@@ -22371,7 +25954,7 @@ fn render_node(
                 // flex box, so the grid never reflows — only inner content shifts 1px)
                 .when(is_focused, |d| d.border_2())
                 .when(is_focused, |d| {
-                    d.shadow(vec![
+                    let mut stack = vec![
                         // crisp 1px outer ring: reads as a double border
                         BoxShadow {
                             color: acc.alpha(0.9),
@@ -22389,7 +25972,10 @@ fn render_node(
                             spread_radius: px(1.),
                             inset: false,
                         },
-                        // soft accent halo around the live tube
+                    ];
+                    // soft accent halo around the live tube
+                    stack.extend(theme::phosphor(
+                        glow,
                         BoxShadow {
                             color: acc.alpha(0.55),
                             offset: point(px(0.), px(0.)),
@@ -22397,7 +25983,8 @@ fn render_node(
                             spread_radius: px(2.),
                             inset: false,
                         },
-                    ])
+                    ));
+                    d.shadow(stack)
                 })
                 // measure this pane's box (entity → rect) for drop hit-testing
                 .child(
@@ -22609,12 +26196,17 @@ impl Render for Workspace {
         // A new pass, so the attention projection is recomputed once for it and
         // then shared by every surface that asks. See [`Workspace::rail_memo`].
         self.rail_frame = self.rail_frame.wrapping_add(1);
+        self.mark_shown_panes(cx);
         self.reap(window, cx);
+        self.forget_pictures_out_of_sight(cx);
         // Holdings past their window, let go of here because the render pass is
         // the only clock a workspace has — and because the tray that offers them
         // is built further down this same pass, so it can never draw an offer
         // this sweep would have taken.
         self.sweep_trash(cx);
+        // Who each brief's ↪ sends to, before any pane in this pass draws its
+        // notes bar.
+        self.label_note_sends(cx);
         // The bay doors, eased toward wherever the drag says they should be —
         // and the fire behind them.
         //
@@ -22711,6 +26303,11 @@ impl Render for Workspace {
             // Window exists; defer so the tab build never runs mid-render.
             cx.defer_in(window, |ws, window, cx| ws.drain_pending_adopts(window, cx));
         }
+        if !self.pending_pointer.is_empty() {
+            cx.defer_in(window, |ws, window, cx| {
+                ws.drain_pending_pointer(window, cx)
+            });
+        }
         // Publish the active UI language so panes can localise their own chrome.
         lang::set_current(self.lang);
         // Publish the global anchor-to-top setting so every pane's render (which
@@ -22770,6 +26367,7 @@ impl Render for Workspace {
                 || self.help_open
                 || self.tab_menu.is_some()
                 || self.find.is_some()
+                || self.lookup.is_some()
                 || self.lang_picker.is_some()
                 || self.logo_picker.is_some()
                 || self.agent_launcher.is_some()
@@ -22808,7 +26406,7 @@ impl Render for Workspace {
             if let Some(pane) = first {
                 FOCUS_DEMO_ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
                 eprintln!("terminal-delight: TD_FOCUS_DEMO — auto-opening FOCUS modal");
-                pane.update(cx, |v, _| v.set_being_read(true));
+                pane.update(cx, |v, cx| v.set_being_read(true, cx));
                 self.focus_read = Some(pane.downgrade());
                 cx.notify();
             }
@@ -22833,6 +26431,20 @@ impl Render for Workspace {
         if std::env::var("TD_TRAY_DEMO").is_ok() && self.theme_menu.is_none() {
             self.theme_menu = Some(MenuScope::Outer);
             cx.notify();
+        }
+        // demo/capture hook (TD_OSD_DEMO): open the OUTER display tray, the
+        // other tray raised from the bottom-right glyph row, so a change to
+        // where that row's panels open can be photographed in both of them
+        // without a pointer, which this machine cannot inject.
+        // `TD_OSD_DEMO=crt` / `=crawl` also opens that collapsed section, so
+        // the easter eggs can be photographed open as well as shut.
+        if let Ok(demo) = std::env::var("TD_OSD_DEMO") {
+            if self.osd_menu.is_none() {
+                self.open_osd(MenuScope::Outer, None);
+                self.osd_eggs.crt = demo.split(',').any(|s| s == "crt");
+                self.osd_eggs.crawl = demo.split(',').any(|s| s == "crawl");
+                cx.notify();
+            }
         }
         // demo/capture hook (TD_SAVINGS_DEMO): open the </> LeanCTX savings overlay
         // with FICTIONAL data (never the real ~/.lean-ctx ledger), so the surface
@@ -23124,6 +26736,12 @@ impl Render for Workspace {
                         }),
                     ),
             );
+            // Then where these tabs live, in the tree's own words: the project,
+            // its groups, and yours lit — see `render_strip_head`. With the
+            // tree shut it is the only place left that says so.
+            if let Some(head) = self.render_strip_head(scale, cx) {
+                tab_strip = tab_strip.child(head);
+            }
         }
         // while a tab is being dragged, an accent bar marks the slot it'd land in
         let dragging_tab = self.tab_drag.as_ref().is_some_and(|d| d.engaged)
@@ -23159,12 +26777,18 @@ impl Render for Workspace {
         // not even sibling groups — this is BROKEN"*.
         //
         // Both readings are the same requirement: the strip and the label have
-        // to describe each other. So the filter stays [`tree::Scope::shows`],
-        // the chip stays the one control, and the unpinned scope it starts on
-        // is the active tab's branch — named on the chip, followed when you
-        // move, and one press from the whole session when you want it.
+        // to describe each other.
+        //
+        // The chip has gone, and the label is the strip's own head now — the
+        // project, its groups as chips, yours lit (`render_strip_head`) — so
+        // the strip carries YOUR GROUP'S tabs and nothing wider. A pinned
+        // project used to put every tab in the project here, and Parker, shown
+        // exactly that: *"PROJECT > GROUPS ... > showing sibling tabs is
+        // proper"*. There is no pin left to put anything else here: a click on
+        // a branch row goes there instead (#757), so the strip is always
+        // `tree::family` of the active tab.
         let places = self.places();
-        let family = tree::shown(&places, self.scope, self.active);
+        let family = tree::family(&places, self.active);
         // the caret marks a gap between visible tabs, not a tab index — see
         // [`tree::caret_gap`], which is where the non-contiguous case is argued
         let caret_at = drop_slot.map(|s| tree::caret_gap(&family, s));
@@ -23344,36 +26968,23 @@ impl Render for Workspace {
                 }),
             );
 
-        // The split buttons read as primary actions: taller (matched to the
-        // window-control buttons), roomier, larger glyph+label — so they never
-        // get crowded off the bar or look like an afterthought.
-        let split_btn = |label: &str| {
-            Self::bezel_btn_s(&sk, label, false, scale)
-                .h(px(26. * scale))
-                .px(px(10. * scale))
-                .py(px(0.))
-                .text_size(px(13. * scale))
-                .flex()
-                .items_center()
-                .justify_center()
-        };
-        let cluster = div()
-            .flex()
-            .flex_row()
-            .gap(px(5. * scale))
-            .items_center()
-            .child(split_btn(&format!("◧ {}", s.ch_split)).on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                    ws.split(SplitDir::Row, window, cx)
-                }),
-            ))
-            .child(split_btn(&format!("⬓ {}", s.ch_split)).on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                    ws.split(SplitDir::Col, window, cx)
-                }),
-            ));
+        // THE CORNER'S TWO ACTIONS, one on each axis.
+        //
+        // They stood side by side at the end of this bezel as `◧ split` and
+        // `⬓ split` — the same word twice, told apart by a glyph one font
+        // could not draw. Parker: *"The pane split is in the corner... so
+        // HORIZONTAL should be on the horizontal axis and vertical on the
+        // vertical axis"*. So the corner holds them the way a window's edges
+        // hold its panes: the split that STACKS panes lies on the bottom edge,
+        // here, and the split that sets them SIDE BY SIDE stands on the right
+        // edge, at the foot of the column the attention pill heads (see
+        // `render_spine`). Each glyph's filled half points at the edge it is
+        // on, which is where the new pane opens.
+        //
+        // The word went in the move. A button standing on the right edge is
+        // only as wide as the column it stands in, and "split" said nothing
+        // the drawn glyphs do not — they were always what told the two apart.
+        let split_down = self.split_button(SplitDir::Col, scale, cx);
 
         // Frameless window controls — only when the OS gave us none (client-side
         // decorations). A small minimize / maximize-toggle / close cluster that
@@ -23435,12 +27046,16 @@ impl Render for Workspace {
 
         // ---- the chrome's glyph row, and what it becomes on a thin tile ----
         //
-        // These live at the BOTTOM LEFT now, not the top right. The top row had
-        // become the busiest line in the window — brand, five menu glyphs, the
-        // size scrubber, the split cluster, the window buttons — while the
-        // bottom bezel carried one sentence naming the focused pane, which the
-        // pane's own header already says, in the pane you are looking at. So
-        // the glyphs moved to the quiet row and the sentence went.
+        // These live at the BOTTOM RIGHT, beside the scale that sizes them and
+        // short of the corner's split. The top row had become the busiest line
+        // in the window — brand, five menu glyphs, the size scrubber, the split
+        // cluster, the window buttons — while the bottom bezel carried one
+        // sentence naming the focused pane, which the pane's own header already
+        // says. So the glyphs moved to the quiet row and the sentence went.
+        // They sat first at its LEFT end, as the tree's footer; Parker then
+        // sent them and the scale to the other end: *"menu scale + menu glyphs
+        // go down bottom right"*, which makes the bottom right the one place
+        // the window's own controls are kept.
         //
         // Past `CHROME_NARROW` they stop fitting beside the tab and pane counts
         // and collapse to a single `…` that raises them as a menu. Nothing is
@@ -23471,8 +27086,7 @@ impl Render for Workspace {
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    ws.osd_menu = Some(MenuScope::Outer);
-                    ws.osd_at = None;
+                    ws.open_osd(MenuScope::Outer, None);
                     cx.notify();
                 }),
             );
@@ -23541,25 +27155,15 @@ impl Render for Workspace {
                 }),
             );
 
-        // The glyph row is the left bar's FOOTER, so it takes the bar's width
-        // (95% of it) and spreads its buttons across that, rather than huddling
-        // four small glyphs at the window's corner with a hundred pixels of
-        // nothing beside them. The 5% it gives back is what keeps the row from
-        // reading as an edge-to-edge strip.
-        //
-        // With the bar closed there is no column to be the footer of, so the
-        // row falls back to its natural width and its own gaps.
-        let is_footer = self.left_bar && !chrome_narrow;
+        // At its natural width with its own gaps. As the tree's footer it was
+        // stretched across the bar's width; at the right-hand end there is no
+        // column under it to be the footer of, and a cluster is what reads as
+        // one group of controls beside the scale.
         let chrome_icons = div()
             .flex()
             .flex_row()
             .items_center()
-            .when(is_footer, |d| {
-                d.w(px(self.left_bar_w * scale * 0.95))
-                    .justify_between()
-                    .px(px(2. * scale))
-            })
-            .when(!is_footer, |d| d.gap(px(12. * scale)))
+            .gap(px(12. * scale))
             .map(|d| {
                 if chrome_narrow {
                     d.child(ic_more)
@@ -23572,12 +27176,15 @@ impl Render for Workspace {
                 }
             });
 
-        // THE MIDDLE of the top row: the project rail while the tree is open
-        // — the tabs it would list there are the spine's task rows, an inch
-        // below — and the tab strip while the tree is shut, when the strip is
-        // the only listing of the tabs there is.
+        // THE MIDDLE of the top row: the ticker while the tree is open, hung
+        // straight off the corner's badge — the tabs it would list there are
+        // the spine's task rows, an inch below — and the tab strip while the
+        // tree is shut, when the strip is the only listing of the tabs there
+        // is. The ticker is `flex_1` like the strip, but its pieces keep their
+        // own widths inside it, so it reads from the corner outward and the
+        // row's slack collects at its far end rather than inside it.
         let middle: gpui::AnyElement = if self.left_bar {
-            self.render_ticker(scale, cx).into_any_element()
+            div().flex_1().into_any_element()
         } else {
             tab_strip.into_any_element()
         };
@@ -23586,8 +27193,8 @@ impl Render for Workspace {
             .min_h(px(43. * scale))
             .flex_none()
             .flex()
-            // ONE ROW — the mark and the branch's name, then the tabs, then the
-            // scale and the frame buttons.
+            // ONE ROW — the mark and the project's badge, then the ticker or
+            // the tabs, then the agent counter and the frame buttons.
             //
             // It was two stacked rows, and for a good reason at the time: the
             // strip used to be capped at 55% of the bar and wrapped inside that
@@ -23637,19 +27244,21 @@ impl Render for Workspace {
                 }),
             )
             .child(
-                // THE CORNER: the app's MARK, then the PROJECT this window is
-                // standing in, then that project's isolation badge.
+                // THE CORNER: the app's MARK, then the isolation badge of the
+                // project this window is standing in — and, with the tree
+                // open, the ticker hangs straight off it (see `middle`).
                 //
                 // It used to read `▸ TERMINAL DELIGHT` — the widest thing on
                 // the busiest row, spent saying something that never changes
                 // and that the window's own title already says. Then it named
-                // the active BRANCH, in a box pinned to the tree's width and
-                // sitting directly above the spine row already lit for that
-                // same branch: one fact, said twice, in the two most prominent
-                // places in the window. Now the words say which project, and
-                // the badge says what kind of engineering situation is inside
-                // it — a thing the tree cannot say, because the tree is the
-                // DECLARED organisation and the badge is read off the disk.
+                // the active BRANCH, then the PROJECT, as a standing label.
+                // Parker, on the last of those: *"scrap the standing project /
+                // group label"* and *"hang our ticker to start over there"*.
+                // Where you are standing is the tree's to say now — its
+                // project and group rows are washed faintly for the task you
+                // are in (see `branch_row`) — and the corner keeps what the
+                // tree cannot say: what kind of engineering situation is
+                // inside that project, read off the disk rather than declared.
                 div()
                     .flex_none()
                     // A minimum, not a height. It was `h(22)` from the days the
@@ -23675,7 +27284,7 @@ impl Render for Workspace {
                             .w(px(18. * scale))
                             .h(px(18. * scale)),
                     )
-                    .child(self.place_name(None, 13. * scale, cx)),
+                    .child(self.eng_badge(13. * scale, cx)),
             )
             // the void: no control, no rule, no handle. What makes the strip
             // read as belonging to the screen rather than to the tree.
@@ -23685,12 +27294,11 @@ impl Render for Workspace {
             // slack that used to be dead space on two rows.
             .child(middle)
             .child(
-                // Never compressed or pushed off. The menu glyphs used to lead
-                // this group and the splits followed them; both are at the
-                // bottom now, which leaves this end holding the menu-bar SCALE
-                // and the window's own frame buttons — the scale because it
-                // sizes this very bar, and the frame buttons because they are
-                // the compositor's furniture rather than TD's.
+                // Never compressed or pushed off. The menu glyphs, the splits
+                // and the scale all live at the bottom right now, which leaves
+                // this end holding the AGENT COUNTER — Parker: *"Agents counter
+                // is in the top right"* — and the window's own frame buttons,
+                // which are the compositor's furniture rather than TD's.
                 div()
                     .flex_none()
                     .flex()
@@ -23699,7 +27307,7 @@ impl Render for Workspace {
                     .gap(px(12. * scale))
                     // its own margin, since the row carries no gap
                     .ml(px(12. * scale))
-                    .child(scrubber)
+                    .child(self.render_agent_counter(&th, scale, cx))
                     .child(win_controls),
             );
 
@@ -23711,58 +27319,57 @@ impl Render for Workspace {
             .flex()
             .flex_row()
             .items_center()
-            .justify_between()
-            .gap(px(12. * scale))
-            .px(px(12. * scale))
+            .justify_end()
+            .gap(px(14. * scale))
+            .pl(px(12. * scale))
+            // The right end stops where the SCREEN stops, not where the window
+            // does: the column beside the screen (the attention pill over the
+            // split-right button, `render_spine`) comes down to meet this row,
+            // and the square of bezel under it is the corner both split
+            // buttons sit against. The sum is that column's footprint — its
+            // `26` and its `4` of margin — plus the screen's own `mx_2`.
+            .pr(px(RIGHT_COLUMN_W * scale + 8.))
             // Headroom over the glyph row, so the buttons sit in a band of
             // their own rather than against the tree's bottom edge.
             .pt(px(7. * scale))
             .pb(px(3. * scale))
             .text_size(px(10.5 * scale))
             .text_color(th.text)
-            // THE MENU ROW, at the left — where the top right's glyphs went.
+            // Nothing at the left any more. What was there last was the menu
+            // glyphs, as the tree's footer, and before them
+            // `🎨 · <focused pane title>` — which went rather than moving,
+            // because the focused pane draws its own title in its own header.
             //
-            // What was here was `🎨 · <focused pane title>`, and it went
-            // rather than moving: the focused pane draws its own title in its
-            // own header, so the sentence restated, at the far bottom corner of
-            // the window, something already written at the top of the thing you
-            // are looking at.
+            // THE RIGHT END is where the window's own controls are kept: what
+            // the window holds, the menu glyphs and the scale that sizes
+            // them, and in the corner the split that stacks panes.
+            //
+            // `● READY` is long gone from here — it was lit green in every
+            // frame TD has ever drawn, so it never once distinguished one
+            // state from another. A status light that cannot say anything else
+            // is a decoration in the shape of an instrument.
+            .child(format!(
+                "{} {} · {} {}",
+                tab_count,
+                if tab_count == 1 { s.st_tab } else { s.st_tabs },
+                pane_count,
+                if pane_count == 1 {
+                    s.st_pane
+                } else {
+                    s.st_panes
+                }
+            ))
             .child(chrome_icons)
-            .child(
-                // THE ACTING END, at the right: what the window holds, then the
-                // two things you do to it.
-                //
-                // The splits came down from the top row, which now carries only
-                // the menu-bar scale and the window's own frame buttons. And
-                // `● READY` is gone — it was lit green in every frame TD has
-                // ever drawn, so it never once distinguished one state from
-                // another. A status light that cannot say anything else is a
-                // decoration in the shape of an instrument, and it was sitting
-                // in the slot two real controls needed.
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap(px(10. * scale))
-                    .items_center()
-                    .child(format!(
-                        "{} {} · {} {}",
-                        tab_count,
-                        if tab_count == 1 { s.st_tab } else { s.st_tabs },
-                        pane_count,
-                        if pane_count == 1 {
-                            s.st_pane
-                        } else {
-                            s.st_panes
-                        }
-                    ))
-                    .child(cluster),
-            );
+            .child(scrubber)
+            .child(split_down);
 
         // ---- theme breakout: icon grid + seed swatches, per scope ----
         let menu_overlay = self.theme_menu.clone().map(|scope| {
             let is_pane = matches!(scope, MenuScope::Pane(_));
             let cur = self.menu_choice(cx);
             let t = self.lang.strings();
+            let help_owner = cx.entity().downgrade();
+            let help_delay = palette_help_delay(self.palette_help_seen, Instant::now());
             // Theme-group "follow outer" state — only panes can inherit.
             let following = match &scope {
                 MenuScope::Pane(p) => p.read(cx).appearance.inherit_theme,
@@ -23775,34 +27382,23 @@ impl Render for Workspace {
             for (id, icon, lbl) in theme::all_themes(cx) {
                 let active = cur.id == id;
                 let cur_c = cur.clone();
-                let tip_name: SharedString = id.clone().into();
                 let tip_path = (id == "custom").then(theme::theme_path);
-                let mk_tip = move |_w: &mut Window, cx: &mut App| -> gpui::AnyView {
-                    cx.new(|_| ThemeTooltip {
-                        name: tip_name.clone(),
-                        path: tip_path.clone(),
-                    })
-                    .into()
-                };
                 let tlbl = match lbl.as_str() {
-                    "quiet" => t.thm_quiet,
-                    "field" => t.thm_field,
-                    "tactical" => t.thm_tactical,
-                    "hacker" => t.thm_hacker,
-                    "gamba" => t.thm_gamba,
-                    "custom" => t.thm_custom,
-                    _ => lbl.as_str(),
+                    "quiet" => t.thm_quiet, "field" => t.thm_field,
+                    "tactical" => t.thm_tactical, "hacker" => t.thm_hacker,
+                    "custom" => t.thm_custom, _ => lbl.as_str(),
                 };
-                let btn = theme_icon_btn(&th, &icon, tlbl, active)
-                    .id(SharedString::from(format!("theme-btn-{id}")))
-                    .tooltip_show_delay(Duration::from_millis(1500))
-                    .map(|b| {
-                        if id == "custom" {
-                            b.hoverable_tooltip(mk_tip)
-                        } else {
-                            b.tooltip(mk_tip)
-                        }
-                    });
+                let help = match lbl.as_str() {
+                    "quiet" => "Light screen; no scanlines, glow, or flicker.",
+                    "field" => "Matte screen, faint scanlines, low glow.",
+                    "tactical" => "Bright glow, raised bezel, slight flicker.",
+                    "deco" => "Minimal CRT texture; may request matching trim.",
+                    "hacker" => "Green phosphor, scanlines, glow, tracking, flicker, jiggle.",
+                    _ => "Edit the live theme file.",
+                };
+                let btn = palette_help(theme_icon_btn(&th, &icon, tlbl, active)
+                    .id(SharedString::from(format!("theme-btn-{id}"))), help, None,
+                    tip_path, help_delay, help_owner.clone());
                 theme_row = theme_row.child(btn.on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -23841,6 +27437,12 @@ impl Render for Workspace {
                 skin_row = skin_row.child(
                     theme_icon_btn(&th, &icon, &id, lit)
                         .id(SharedString::from(format!("skin-btn-{id}")))
+                        .map(|b| palette_help(b, match id.as_str() {
+                            "default" => "Rounded controls and filled selections.",
+                            "deco" => "Square edges, double rules, spaced capitals, lit edge.",
+                            "console" => "Minimal outlines, open spacing, active leading rail.",
+                            _ => "Custom control styling.",
+                        }, None, None, help_delay, help_owner.clone()))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
@@ -23860,7 +27462,7 @@ impl Render for Workspace {
             if skin_pinned {
                 skin_row = skin_row.child(
                     theme_icon_btn(&th, "\u{25ce}", "theme", false)
-                        .id("skin-btn-follow")
+                        .id("skin-btn-follow").map(|b| palette_help(b, "Let the theme choose the trim.", None, None, help_delay, help_owner.clone()))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|_ws, _: &MouseDownEvent, _w, cx| {
@@ -23872,93 +27474,44 @@ impl Render for Workspace {
                 );
             }
 
-            // The three colours live as draggable markers ON the wheel — ◉ seed,
-            // T text, C complement. Grab one and drag it around to set it.
-            let wheel = self.color_wheel(self.wheel_markers(cx), cx);
-            let lbar = self.lightness_bar(cx);
-            // PICK row — promote a pip to the front. With a greyscale palette every
-            // marker stacks at the wheel's centre, so the same one always grabs;
-            // clicking a chip here makes that pip active (front-most + amber ring)
-            // and a centre-drag then pulls *it* out. Also what the lightness bar
-            // follows. Each chip wears its marker's colour for at-a-glance ID.
-            let active_t = self.wheel_active;
-            let mut pick_row = div()
+            let note_colours = notepaper::ThemeColours::of(&theme::resolve(cx, &cur));
+            let papers = theme::NotePaper::ALL.map(|m| (m, sticky::paper(m, &note_colours)));
+            // STICKY NOTE: which of the theme's own colours a note is drawn in —
+            // contrast, accent, mute, in the order Parker gave them. Three
+            // little notes in the colours they would be, so the row previews
+            // itself; the pressed one is also the square on the wheel.
+            let mut note_row = div()
                 .flex()
                 .flex_row()
-                .items_center()
                 .justify_center()
-                .gap_2()
-                .text_size(px(9.));
-            for (target, glyph, col) in self.wheel_markers(cx) {
-                let on = target == active_t;
-                let gcol = if col.l > 0.55 {
-                    hsla(0., 0., 0.08, 0.95)
-                } else {
-                    white()
+                .gap(px(TRAY_NOTE_GAP));
+            for (mode, paper) in papers {
+                let cur_c = cur.clone();
+                let cap = match mode {
+                    theme::NotePaper::Contrast => t.np_contrast,
+                    theme::NotePaper::Accent => t.np_accent,
+                    theme::NotePaper::Mute => t.np_mute,
                 };
-                let idn = match target {
-                    WheelTarget::Seed => "pick-seed",
-                    WheelTarget::Text => "pick-text",
-                    WheelTarget::Complement => "pick-comp",
-                    WheelTarget::Human => "pick-human",
-                };
-                pick_row = pick_row.child(
-                    div()
-                        .id(idn)
-                        .w(px(18.))
-                        .h(px(18.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(sk.radius_pill())
-                        .border_2()
-                        .border_color(if on {
-                            hsla(0.09, 0.9, 0.6, 1.0)
-                        } else {
-                            th.text.alpha(0.25)
-                        })
-                        .bg(col)
-                        .text_color(gcol)
-                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                        .cursor_pointer()
-                        .child(glyph)
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.wheel_active = target;
-                                cx.notify();
-                            }),
-                        ),
-                );
-            }
-            // Small chips to clear an override back to theme/dynamic-derived.
-            let mut seed_row = div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_center()
-                .gap_2()
-                .text_size(px(9.));
-            for (target, idn, lbl) in [
-                (WheelTarget::Seed, "wr-seed", "↺◉"),
-                (WheelTarget::Text, "wr-text", "↺T"),
-                (WheelTarget::Complement, "wr-comp", "↺C"),
-                (WheelTarget::Human, "wr-human", "↺👤"),
-            ] {
-                seed_row = seed_row.child(
-                    div()
-                        .id(idn)
-                        .text_color(th.text.alpha(0.5))
-                        .cursor_pointer()
-                        .child(lbl)
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.set_wheel_color_for(target, None, cx);
-                            }),
-                        ),
+                note_row = note_row.child(
+                    note_paper_btn(&th, &paper, cap, cur.note == mode)
+                        .id(SharedString::from(format!("note-paper-{mode:?}")))
+                        .map(|b| palette_help(b, match mode {
+                            theme::NotePaper::Contrast => "Use a vivid hue distinct from the accent.",
+                            theme::NotePaper::Accent => "Use the theme's accent colour.",
+                            theme::NotePaper::Mute => "Neutral paper from text and surface colours.",
+                        }, None, None, help_delay, help_owner.clone())).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.set_menu_choice(
+                                ThemeChoice {
+                                    note: mode,
+                                    ..cur_c.clone()
+                                },
+                                cx,
+                            );
+                        }),
+                    ),
                 );
             }
             let mut color_row = div().flex().flex_row().gap_2();
@@ -23971,7 +27524,13 @@ impl Render for Workspace {
                     theme::ColorMode::OnTheme => t.cm_theme,
                 };
                 color_row =
-                    color_row.child(color_mode_btn(&th, mode.icon(), cap, active).on_mouse_down(
+                    color_row.child(color_mode_btn(&th, mode.icon(), cap, active)
+                        .id(SharedString::from(format!("program-colour-{mode:?}")))
+                        .map(|b| palette_help(b, match mode {
+                            theme::ColorMode::Default => "Keep colours sent by programs.",
+                            theme::ColorMode::Monochrome => "Use shades of the text colour.",
+                            theme::ColorMode::OnTheme => "Shift program hues around the accent colour.",
+                        }, None, None, help_delay, help_owner.clone())).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -23994,7 +27553,8 @@ impl Render for Workspace {
                 let cur_c = cur.clone();
                 let active = !cur.syntax;
                 syntax_row =
-                    syntax_row.child(color_mode_btn(&th, "○", t.sc_off, active).on_mouse_down(
+                    syntax_row.child(color_mode_btn(&th, "○", t.sc_off, active).id("syntax-off")
+                        .map(|b| palette_help(b, "Leave plain text without added highlights.", None, None, help_delay, help_owner.clone())).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -24018,7 +27578,14 @@ impl Render for Workspace {
                     theme::SyntaxScheme::Markdown => t.sc_mark,
                 };
                 syntax_row = syntax_row.child(
-                    color_mode_btn(&th, scheme.icon(), cap, active).on_mouse_down(
+                    color_mode_btn(&th, scheme.icon(), cap, active)
+                        .id(SharedString::from(format!("syntax-{scheme:?}")))
+                        .map(|b| palette_help(b, match scheme {
+                            theme::SyntaxScheme::Code => "Highlight keywords, strings, numbers, paths, flags, comments.",
+                            theme::SyntaxScheme::Agentic => "Highlight callouts, tool calls, links, and lists.",
+                            theme::SyntaxScheme::Logs => "Highlight levels, timestamps, durations, and paths.",
+                            theme::SyntaxScheme::Markdown => "Highlight headings, emphasis, code, links, quotes, lists.",
+                        }, None, None, help_delay, help_owner.clone())).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -24034,42 +27601,21 @@ impl Render for Workspace {
                     ),
                 );
             }
-            // INVERT lives ABOVE the colour picker (it flips whatever set you pick).
-            // The pill states its mode outright — ○ default / ◐ inverted — so the
-            // toggle reads as on/off at a glance rather than a bare icon.
-            let invert_bar = {
-                let cur_c = cur.clone();
-                let on = cur.invert;
-                let (glyph, cap) = if on {
-                    ("◐", "inverted")
-                } else {
-                    ("○", "default")
-                };
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_size(px(9.))
-                            .text_color(th.text.alpha(0.55))
-                            .child("INVERT"),
-                    )
-                    .child(color_mode_btn(&th, glyph, cap, on).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.set_menu_choice(
-                                ThemeChoice {
-                                    invert: !cur_c.invert,
-                                    ..cur_c.clone()
-                                },
-                                cx,
-                            );
-                        }),
-                    ))
-            };
+            let invert_bar = palette_rule("INVERT", cur.invert, &th).id("palette-invert")
+                .map(|b| palette_help(b, "Swap dark and light treatment.", None, None, help_delay, help_owner.clone()))
+                .on_mouse_down(MouseButton::Left, cx.listener({ let cur = cur.clone(); move |ws, _, _, cx| {
+                    cx.stop_propagation(); ws.set_menu_choice(ThemeChoice { invert: !cur.invert, ..cur.clone() }, cx);
+                }}));
+            let inherit_bar = (!is_pane).then(|| {
+                let on = cur.follow_omarchy == Some(true);
+                let (available, _) = palette::current_status(cx);
+                let title = if on && !available { "INHERIT · unavailable" } else { "INHERIT" };
+                palette_rule(title, on, &th).id("palette-inherit")
+                    .map(|b| palette_help(b, "Follow Omarchy's selected theme.", None, None, help_delay, help_owner.clone()))
+                    .on_mouse_down(MouseButton::Left, cx.listener({ let cur = cur.clone(); move |ws, _, _, cx| {
+                        cx.stop_propagation(); let mut c = cur.clone(); c.follow_omarchy = Some(!on); ws.set_menu_choice(c, cx);
+                    }}))
+            });
             let label = |s: &str| {
                 div()
                     .text_size(px(9.))
@@ -24095,48 +27641,85 @@ impl Render for Workspace {
                         .bg(th.faint.alpha(0.22)),
                 )
             };
-            // ---- dynamics glyph column: the theme tray is a vertical box of
-            // dynamics (glyph only — no caption, no hover). The seed wheel below
-            // stays the colour knob; the dynamic decides how that seed becomes the
-            // palette. Overflow wraps into more columns to the right.
-            let mut dyn_entries: Vec<(theme::Dynamic, bool)> = theme::Dynamic::NAMED
-                .iter()
-                .cloned()
-                .map(|d| {
-                    let active = cur.dynamic.same_kind(&d);
-                    (d, active)
+            // ---- the theme column: the desktop's own themes, as Omarchy's
+            // picker lists them ([`palette::offered`]), glyph only. Its hover
+            // holds the name and palette. Each tile has its theme's background and
+            // glyph in the theme's accent ([`glyph`]), so the colour of a theme is
+            // on its tile before anyone reads a name. The custom wheel's cog
+            // closes the column. Overflow wraps into more columns to the right.
+            //
+            // Until 2026-10-16 this column was TD's eleven colour sets. Parker:
+            // *"TD themes suck! Omarchy themes are GOLD"*. The Terminal Delight
+            // palette, the look a fresh install wears, still leads: it is a
+            // desktop theme like the others, and TD carries a copy of it.
+            //
+            // A tile is a `paint::Pick`, so a theme and the custom set replace
+            // each other here exactly as they do in the paint overlay, and one
+            // tile is lit.
+            let mut chips = palette::chips(cx);
+            if let Some(i) = chips.iter().position(|c| c.id == palette::TERMINAL_DELIGHT) {
+                let td = chips.remove(i);
+                chips.insert(0, td);
+            }
+            let mut dyn_entries: Vec<(paint::Pick, bool, Option<palette::Chip>)> = chips
+                .into_iter()
+                .map(|c| {
+                    let active = cur.follow_omarchy != Some(true)
+                        && cur.palette.as_deref() == Some(c.id.as_str());
+                    (paint::Pick::Palette(c.id.clone()), active, Some(c))
                 })
                 .collect();
             dyn_entries.push((
-                theme::Dynamic::Custom(Box::default()),
-                matches!(cur.dynamic, theme::Dynamic::Custom(_)),
+                paint::Pick::Set(theme::Dynamic::Custom(Box::default())),
+                cur.follow_omarchy != Some(true)
+                    && matches!(cur.dynamic, theme::Dynamic::Custom(_)),
+                None,
             ));
             const PER_COL: usize = 10; // fill a column vertically before wrapping
+            let columns = dyn_entries.len().div_ceil(PER_COL);
+            let glyph_col_w = TRAY_GLYPH_COL_W.max(
+                columns as f32 * 40.
+                    + columns.saturating_sub(1) as f32 * (2. * TRAY_GAP + TRAY_SEP),
+            );
             let mut dyn_cols = div().flex().flex_row().gap_2();
             for (ci, chunk) in dyn_entries.chunks(PER_COL).enumerate() {
                 if ci > 0 {
                     dyn_cols = dyn_cols.child(vsep());
                 }
-                let mut col = div().flex().flex_col().gap_2();
-                for (d, active) in chunk {
+                let mut col = div().flex().flex_col().gap(px(TRAY_GLYPH_GAP));
+                for (pick, active, chip) in chunk {
                     let active = *active;
-                    let glyph = d.glyph().to_string();
-                    // A per-set swatch tints the plain symbol glyphs (❖ ⚡ ☼ …) to
-                    // their palette colour so the tray reads at a glance; colour
-                    // emoji ignore the tint and keep their own hues.
-                    let swatch = d.swatch();
-                    let box_id = SharedString::from(format!("dyn-{}", d.label()));
-                    let d_click = d.clone();
+                    let box_id = SharedString::from(match chip {
+                        Some(c) => format!("dyn-{}", c.id),
+                        None => "dyn-custom".to_string(),
+                    });
+                    let pick_click = pick.clone();
                     let cur_c = cur.clone();
-                    col = col.child(
-                        div()
-                            .id(box_id)
-                            .w(px(40.))
-                            .h(px(40.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(sk.rad_raw(6.))
+                    let tile = div()
+                        .id(box_id)
+                        .w(px(40.))
+                        .h(px(40.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(sk.rad_raw(6.))
+                        .cursor_pointer();
+                    let tile = match chip {
+                        // The theme in miniature: its screen colour, ringed in
+                        // its accent, its glyph in its accent. The lit ring is
+                        // the scope's own text colour, which is this theme's
+                        // when it is the one worn.
+                        Some(c) => {
+                            let tile = tile.bg(c.bg);
+                            let tile = if active {
+                                tile.border_2().border_color(th.text)
+                            } else {
+                                tile.border_1().border_color(c.chips[0].alpha(0.55))
+                            };
+                            tile.child(glyph::element(&c.id, c.chips[0], 20.))
+                        }
+                        // The custom wheel's cog, in the tray's own ink.
+                        None => tile
                             .border_1()
                             .border_color(if active {
                                 th.accent
@@ -24149,168 +27732,81 @@ impl Render for Workspace {
                                 darken(th.surface, 0.3)
                             })
                             .text_size(px(18.))
-                            .text_color(match (swatch, active) {
-                                (Some(c), true) => c,
-                                (Some(c), false) => c.alpha(0.85),
-                                (None, true) => th.text,
-                                (None, false) => th.text.alpha(0.7),
-                            })
-                            .cursor_pointer()
-                            .child(glyph)
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    // Picking a colour set clears the wheel
-                                    // overrides so its signature palette shows;
-                                    // the user then tweaks from there.
-                                    ws.set_menu_choice(
-                                        ThemeChoice {
-                                            dynamic: d_click.clone(),
-                                            seed: None,
-                                            text: None,
-                                            complement: None,
-                                            ..cur_c.clone()
-                                        },
-                                        cx,
-                                    );
-                                }),
-                            ),
-                    );
+                            .text_color(if active { th.text } else { th.text.alpha(0.7) })
+                            .child(theme::Dynamic::Custom(Box::default()).glyph()),
+                    };
+                    let (name, preview) = if let Some(c) = chip {
+                        (c.id.replace('-', " ").to_uppercase(),
+                            Some(PalettePreview::Omarchy(c.id.clone())))
+                    } else {
+                        let mut g = theme::ThemeGroup::of(&cur);
+                        paint::stamp(&mut g, pick);
+                        ("CUSTOM".to_string(),
+                            Some(PalettePreview::Custom(Box::new(cur.clone().with_group(g)))))
+                    };
+                    let tile = palette_help(tile, name, preview, None, help_delay, help_owner.clone());
+                    col = col.child(tile.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            // Picking a tile clears the wheel overrides
+                            // so its signature colours show, and a set
+                            // and a palette replace each other — the
+                            // paint overlay's own stamp, so the two
+                            // pickers cannot disagree about a pick.
+                            let mut g = theme::ThemeGroup::of(&cur_c);
+                            paint::stamp(&mut g, &pick_click);
+                            ws.set_menu_choice(cur_c.clone().with_group(g), cx);
+                        }),
+                    ));
                 }
                 dyn_cols = dyn_cols.child(col);
             }
-            // THE TRAY IS THREE COLUMNS, and the split is what makes it fit.
-            //
-            // It used to be two — the glyph column, then everything else stacked
-            // in one ~125px strip — and that strip outgrew the screen. The cap in
-            // `tray_max_h` is the terminal band, so the overflow did not spill: it
-            // scrolled, and ANCHOR plus the pass-down button sat below the fold
-            // where nobody scrolled to find them. A control you cannot see is a
-            // control you do not have, and adding AGENT THEME made it two.
-            //
-            // So the middle column takes the four PICKERS (what you press to
-            // choose a look) and the right column takes the WHEEL and the window
-            // RULES (what you drag, and what the window does with the result).
-            // Widening is what buys the height back: the same rows in a column
-            // half as tall, because each row now fits three buttons instead of
-            // two. Measured against the 46px DESIGN button: TRAY_PICKER_W is
-            // exactly three of them plus their gaps, so DESIGN wraps 3+3+1
-            // rather than 2+2+2+1, and SYNTAX wraps 3+2 rather than 2+2+1. The
-            // widths live at module scope so `tray_pickers_h` can assert the fit
-            // against the real inventory instead of against a number typed here.
-            let pickers = div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .flex_none()
-                .w(px(TRAY_PICKER_W))
-                .child(
-                    div()
-                        .text_size(px(8.5))
-                        .text_color(th.text.alpha(0.45))
-                        .child(if is_pane { t.scope_pane } else { t.scope_outer }),
-                )
-                .child(hsep())
-                .child(label(t.t_theme))
-                .child(theme_row)
-                // SKIN sits directly under DESIGN because they are the two halves
-                // of the same question — DESIGN is what colour the chrome is,
-                // SKIN is what shape it is — and separating them across the panel
-                // would hide that they are siblings.
-                //
-                // The heading is a literal rather than a `t.` key, matching
-                // ANCHOR below. Both are untranslated and both belong to the
-                // same gap, tracked as #406.
-                .when(!is_pane, |d| {
-                    d.child(hsep()).child(label("SKIN")).child(skin_row)
-                })
-                .child(hsep())
-                .child(label(t.t_program))
-                .child(color_row)
-                .child(hsep())
-                .child(label(t.t_syntax))
-                .child(syntax_row);
-            // The right-hand column: the seed wheel and its text axes, then the
-            // rules the window applies to what you chose (appended below).
-            let mut controls = div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .flex_none()
-                .w(px(TRAY_WHEEL_COL_W))
-                // min-width 0 lets captions wrap inside the column instead of
-                // forcing the panel wider than its frame (the overflow bug).
-                .min_w(px(0.))
-                .child(label(t.t_wheel))
-                .child(div().flex().justify_center().py_1().child(wheel))
-                .child(div().flex().justify_center().child(lbar))
-                .child(div().flex().justify_center().pt_1().child(pick_row))
-                .child(seed_row);
-            // The anchor toggle is GLOBAL (not per-pane), so it shows only in the
-            // OUTER design panel. A short ANCHOR label + the ⚓ TOP/BOTTOM ▲▼ pill.
+            let area = |title: &str, width: f32| div().flex().flex_col().gap_2().flex_none()
+                .w(px(width + 2. * TRAY_AREA_PAD)).p(px(TRAY_AREA_PAD))
+                .rounded(sk.rad_raw(6.)).border_1().border_color(th.accent.alpha(0.4))
+                .bg(th.surface.alpha(0.35)).child(label(title));
+            let themes = area("THEME", glyph_col_w).child(dyn_cols)
+                .child(hsep()).child(label(t.t_note)).child(note_row);
+            let pickers = area("STYLE", TRAY_PICKER_W)
+                .child(label(t.t_theme)).child(theme_row)
+                .when(!is_pane, |d| d.child(hsep()).child(label("SKIN")).child(skin_row))
+                .child(hsep()).child(label(t.t_program)).child(color_row)
+                .child(label(t.t_syntax)).child(syntax_row);
+            let mut controls = area("RULES", TRAY_RULES_COL_W)
+                .child(label(if is_pane { t.scope_pane } else { t.scope_outer }))
+                .child(invert_bar).children(inherit_bar);
             if !is_pane {
-                // The outer end of the pane's "follow outer" toggle: one press
-                // puts every pane back on the window's theme. The count is what
-                // would change, so a window already in one theme reads 0 and the
-                // button sits inactive instead of claiming to have done work.
                 let stray = self.panes_off_outer_theme(cx);
-                let lbl = if stray == 0 {
-                    format!("⤓ {}", t.pass_down)
-                } else {
-                    format!("⤓ {} ({})", t.pass_down, stray)
-                };
-                controls = controls
-                    // AGENT THEME sits immediately above the pass-down button
-                    // because they are the two ends of one question: pass-down
-                    // decides which panes follow the window, and this decides
-                    // whether following the window actually means wearing it.
-                    // Heading is a literal for the same reason ANCHOR/SKIN are
-                    // (#406).
-                    .child(hsep())
-                    .child(label("AGENT THEME"))
-                    .child(div().flex().child(self.agent_tint_toggle(&sk, cx)))
-                    .child(hsep())
-                    .child(label("ANCHOR"))
-                    .child(div().flex().child(self.anchor_top_toggle(&sk, cx)))
-                    .child(Self::bezel_btn(&sk, &lbl, stray > 0).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.pass_theme_down(cx);
-                        }),
-                    ));
-            }
-            if is_pane {
-                // Per-group toggle: on = this pane's theme follows the outer scope
-                // live; off = it keeps its own retained theme. Non-destructive.
-                let lbl = if following {
-                    format!("◉ {}", t.follow_outer)
-                } else {
-                    format!("◯ {}", t.follow_outer)
-                };
-                controls = controls.child(Self::bezel_btn(&sk, &lbl, following).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        if let Some(scope) = ws.theme_menu.clone() {
-                            ws.toggle_theme_inherit(&scope, cx);
-                        }
-                    }),
-                ));
+                let text = if stray == 0 { format!("⤓ {}", t.pass_down) } else { format!("⤓ {} ({stray})", t.pass_down) };
+                controls = controls.child(hsep())
+                    .child(label("TERMINAL STATE"))
+                    .child(self.terminal_state_toggle(&sk, cx))
+                    .child(hsep()).child(label("ANCHOR"))
+                    .child(self.anchor_top_toggle(&sk, cx).id("palette-anchor").map(|b| palette_help(b, "Keep content against the selected edge.", None, None, help_delay, help_owner.clone())))
+                    .child(Self::bezel_btn(&sk, &text, stray > 0).id("palette-pass-down")
+                        .map(|b| palette_help(b, "Reattach panes; preserve saved choices and display overrides.", None, None, help_delay, help_owner.clone()))
+                        .on_mouse_down(MouseButton::Left, cx.listener(|ws, _, _, cx| { cx.stop_propagation(); ws.pass_theme_down(cx); })));
+            } else {
+                controls = controls.child(palette_rule(t.follow_outer, following, &th).id("palette-follow-outer")
+                    .map(|b| palette_help(b, "Use the window theme as it changes.", None, None, help_delay, help_owner.clone()))
+                    .on_mouse_down(MouseButton::Left, cx.listener(|ws, _, _, cx| {
+                        cx.stop_propagation(); if let Some(scope) = ws.theme_menu.clone() { ws.toggle_theme_inherit(&scope, cx); }
+                    })));
             }
             // A sub-tab icon click anchors the tray at the click (right edge at
-            // the cursor, opening down-left like the global menu); clamp it fully
-            // on-screen. The global/outer menu (menu_at == None) keeps its fixed
-            // top-right anchor under the titlebar control.
+            // the cursor, opening down-left); clamp it fully on-screen. The
+            // outer menu (menu_at == None) is raised from the 🎨 glyph at the
+            // bottom right, so it rises from above that row — see
+            // `over_the_footer`.
             // Width and open-height are computed at module scope from the column
             // widths the render above uses, so a test can hold them against the
             // real inventory. The tray no longer matches the DISPLAY (⛭) tray's
             // 300 — that pairing was worth having while both were one stacked
             // strip, and it is not worth a tray whose bottom rows you scroll to.
-            const PANEL_W: f32 = TRAY_PANEL_W;
+            let panel_w = TRAY_PANEL_W + glyph_col_w - TRAY_GLYPH_COL_W;
             let panel_h_est = tray_panel_h_est();
-            let mut panel = div().id("theme-panel").absolute().w(px(PANEL_W));
+            let mut panel = div().id("theme-panel").absolute().w(px(panel_w));
             // Where the tray's top edge lands decides how tall it may be, so
             // the anchor is computed first and kept.
             let tray_top = match self.menu_at {
@@ -24318,22 +27814,24 @@ impl Render for Workspace {
                     let vh = f32::from(window.viewport_size().height);
                     (f32::from(at.y) + 6.).clamp(8., (vh - panel_h_est - 8.).max(8.))
                 }
-                None => 36.,
+                // Rising from the footer, the highest its top may reach is the
+                // top of the band it hangs over, so that is what caps it.
+                None => self.tray_band().0,
             };
             panel = match self.menu_at {
                 Some(at) => {
                     let vw = f32::from(window.viewport_size().width);
-                    let right = (vw - f32::from(at.x)).clamp(8., (vw - PANEL_W - 8.).max(8.));
+                    let right = (vw - f32::from(at.x)).clamp(8., (vw - panel_w - 8.).max(8.));
                     panel.right(px(right)).top(px(tray_top))
                 }
-                None => panel.top(px(tray_top)).right(px(150.)),
+                None => over_the_footer(panel, scale),
             };
             panel = panel
                 .p_3()
                 .rounded(sk.rad_raw(6.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
-                .bg(darken(th.surface, 0.6))
+                .bg(th.surface.alpha(0.82))
                 // never spill past the RENDER: clip horizontally, scroll a
                 // tall tray vertically rather than running down over the
                 // bottom bezel. The cap is the terminal band this tray hangs
@@ -24342,7 +27840,7 @@ impl Render for Workspace {
                 .max_h(px(self.tray_max_h(tray_top)))
                 .overflow_x_hidden()
                 .overflow_y_scroll()
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_row()
                 .gap_3()
@@ -24352,24 +27850,7 @@ impl Render for Workspace {
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
-                // Left: the INVERT mode bar stacked ABOVE the vertical dynamics
-                // glyph column(s). Then the PICKERS (design · skin · program ·
-                // syntax), then the WHEEL and the window rules — each behind its
-                // own hairline. `flex_none` on all three: a column that shrinks
-                // re-wraps its buttons, and re-wrapping is how the tray got tall.
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .flex_none()
-                        .gap_2()
-                        .child(invert_bar)
-                        .child(dyn_cols),
-                )
-                .child(vsep())
-                .child(pickers)
-                .child(vsep())
-                .child(controls);
+                .child(themes).child(pickers).child(controls);
             // full-screen scrim: click anywhere outside closes
             div()
                 .absolute()
@@ -24413,20 +27894,38 @@ impl Render for Workspace {
                     theme::GradeKey::Background => t.g_background,
                     theme::GradeKey::Gamma => t.g_gamma,
                     theme::GradeKey::Scale => t.g_menu_bar,
-                    theme::GradeKey::Warp => t.g_warp,
+                    theme::GradeKey::Phosphor => t.g_phosphor,
                     _ => _name,
                 };
-                rows = rows.child(self.slider_row(key, name, grade.get(key), &th, cx));
+                // A main gauge always holds its own position (pinned by
+                // `main_gauges_always_hold_a_position`); only a dial left to the
+                // theme answers `None`, and those live in the CRT section.
+                if let Some(v) = grade.get(key) {
+                    rows = rows.child(self.slider_row(key, name, v, &th, cx));
+                }
             }
+            // The foot of the tray: one faint disclosure row per easter egg.
+            // Deliberately quieter than every label above it — somebody has to
+            // go looking.
+            let egg_row = |id: &'static str, open: bool, name: &str| {
+                div()
+                    .id(id)
+                    .text_size(px(9.))
+                    .text_color(th.text.alpha(if open { 0.55 } else { 0.28 }))
+                    .cursor_pointer()
+                    .child(format!("{} {}", if open { "▾" } else { "▸" }, name))
+            };
             const PANEL_W: f32 = 300.;
-            const PANEL_H_EST: f32 = 328.; // 8 slider rows + reset + follow-outer
+            const PANEL_H_EST: f32 = 346.; // 10 slider rows + reset + follow-outer
             let mut panel = div().id("osd-panel").absolute().w(px(PANEL_W));
             let tray_top = match self.osd_at {
                 Some(at) => {
                     let vh = f32::from(window.viewport_size().height);
                     (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.))
                 }
-                None => 36.,
+                // raised from the display glyph at the bottom right: capped by
+                // the band's top, as the theme tray is
+                None => self.tray_band().0,
             };
             panel = match self.osd_at {
                 Some(at) => {
@@ -24434,7 +27933,7 @@ impl Render for Workspace {
                     let right = (vw - f32::from(at.x)).clamp(8., (vw - PANEL_W - 8.).max(8.));
                     panel.right(px(right)).top(px(tray_top))
                 }
-                None => panel.top(px(tray_top)).right(px(110.)),
+                None => over_the_footer(panel, scale),
             };
             panel = panel
                 // Nine slider rows on a short window is taller than the render
@@ -24448,7 +27947,7 @@ impl Render for Workspace {
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -24472,67 +27971,62 @@ impl Render for Workspace {
                             ws.reset_grade(cx);
                         }),
                     ),
-                )
-                // warp now rides the grade channels above (GradeKey::Warp), so it
-                // scopes to pane/outer like the rest of the DISPLAY tray.
-                .child(self.track_slider(0, t.d_roll, &th, cx))
-                .child(self.track_slider(1, t.d_roll_spd, &th, cx))
-                .child(self.track_slider(2, t.d_roll_size, &th, cx))
-                .child(
-                    div()
-                        .id("track-reset")
-                        .text_size(px(9.))
-                        .text_color(th.text.alpha(0.5))
-                        .cursor_pointer()
-                        .child(format!("↺ {}", t.d_roll_reset))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                // clear THIS scope's tracking override → back to the
-                                // theme's authored roll bar (per-pane via the grade).
-                                if let Some(scope) = ws.osd_menu.clone() {
-                                    let mut g = ws.choice_for(&scope, cx).grade;
-                                    g.tracking = None;
-                                    ws.write_grade(
-                                        &scope,
-                                        g,
-                                        theme::GradePins::only(theme::GradeChannel::Tracking),
-                                        cx,
-                                    );
-                                }
-                            }),
-                        ),
                 );
-            // ---- TEXT CRAWL: per-pane Star-Wars crawl toggle + its two knobs.
-            // Rides the grade group like everything else here, so it scopes to
-            // pane/outer and inherits via "follow outer". The angle/depth sliders
-            // only appear while crawl is on.
-            {
+            if is_pane {
+                // Grade-group toggle, independent of the theme tray's: on = this
+                // pane's monitor grade tracks the outer sliders live; off = it
+                // keeps its own. Non-destructive (PaneTheme::toggle_grade).
+                // Above the two collapsed rows, which stay the tray's last lines.
+                let lbl = if following {
+                    format!("◉ {}", t.follow_outer)
+                } else {
+                    format!("◯ {}", t.follow_outer)
+                };
+                panel = panel.child(Self::bezel_btn(&sk, &lbl, following).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        if let Some(scope) = ws.osd_menu.clone() {
+                            ws.toggle_grade_inherit(&scope, cx);
+                        }
+                    }),
+                ));
+            }
+            // ---- TEXT CRAWL: per-pane Star-Wars crawl toggle + its two knobs,
+            // behind the first collapsed row. Rides the grade group like
+            // everything else here, so it scopes to pane/outer and inherits via
+            // "follow outer". The angle/depth sliders only appear while crawl is
+            // on.
+            panel = panel.child(
+                egg_row("osd-egg-crawl", self.osd_eggs.crawl, t.d_crawl_hdr).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.osd_eggs.crawl = !ws.osd_eggs.crawl;
+                        cx.notify();
+                    }),
+                ),
+            );
+            if self.osd_eggs.crawl {
                 let crawl_on = grade.crawl;
-                let mut block = div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(label(t.d_crawl_hdr))
-                    .child(
-                        Self::bezel_btn(
-                            &sk,
-                            &if crawl_on {
-                                format!("\u{25a3} {}", t.d_crawl_on)
-                            } else {
-                                format!("\u{25a2} {}", t.d_crawl_off)
-                            },
-                            crawl_on,
-                        )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.toggle_crawl(cx);
-                            }),
-                        ),
-                    );
+                let mut block = div().flex().flex_col().gap_1().child(
+                    Self::bezel_btn(
+                        &sk,
+                        &if crawl_on {
+                            format!("\u{25a3} {}", t.d_crawl_on)
+                        } else {
+                            format!("\u{25a2} {}", t.d_crawl_off)
+                        },
+                        crawl_on,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.toggle_crawl(cx);
+                        }),
+                    ),
+                );
                 if crawl_on {
                     block = block
                         .child(self.slider_row(
@@ -24552,24 +28046,98 @@ impl Render for Workspace {
                 }
                 panel = panel.child(block);
             }
-            if is_pane {
-                // Grade-group toggle, independent of the theme tray's: on = this
-                // pane's monitor grade tracks the outer sliders live; off = it
-                // keeps its own. Non-destructive (PaneTheme::toggle_grade).
-                let lbl = if following {
-                    format!("◉ {}", t.follow_outer)
-                } else {
-                    format!("◯ {}", t.follow_outer)
-                };
-                panel = panel.child(Self::bezel_btn(&sk, &lbl, following).on_mouse_down(
+            // ---- CRT: the master switch, then the tube it switches — warp, the
+            // glass glare and the roll bar — behind the second collapsed row. Off is a flat
+            // screen, and the knobs only appear while it is on, as crawl's do:
+            // the dials keep their values either way, so switching on restores
+            // exactly the tube they describe (see `theme::flatten_tube`).
+            panel = panel.child(
+                egg_row("osd-egg-crt", self.osd_eggs.crt, t.d_crt_hdr).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
-                        if let Some(scope) = ws.osd_menu.clone() {
-                            ws.toggle_grade_inherit(&scope, cx);
-                        }
+                        ws.osd_eggs.crt = !ws.osd_eggs.crt;
+                        cx.notify();
                     }),
-                ));
+                ),
+            );
+            if self.osd_eggs.crt {
+                let crt_on = grade.crt;
+                let mut block = div().flex().flex_col().gap_1().child(
+                    Self::bezel_btn(
+                        &sk,
+                        &if crt_on {
+                            format!("\u{25a3} {}", t.d_crt_on)
+                        } else {
+                            format!("\u{25a2} {}", t.d_crt_off)
+                        },
+                        crt_on,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.toggle_crt(cx);
+                        }),
+                    ),
+                );
+                if crt_on {
+                    // The grade's own dials when it has them — a flattened
+                    // resolved theme would read the roll as zero — and the
+                    // scope's authored roll bar when it defers to the theme.
+                    let dials = grade
+                        .tracking
+                        .unwrap_or_else(|| self.scope_track_seed(&scope, cx));
+                    // Glare the same way: the grade's own when it has one, else
+                    // the glass the scope's theme authored, so the knob opens
+                    // where the reflection already is.
+                    let glare = match grade.glare {
+                        Some(g) => g,
+                        None => self.scope_theme(&scope, cx).screen_glare,
+                    };
+                    block = block
+                        .child(self.slider_row(
+                            theme::GradeKey::Warp,
+                            t.g_warp,
+                            grade.warp,
+                            &th,
+                            cx,
+                        ))
+                        .child(self.slider_row(theme::GradeKey::Glare, t.d_glare, glare, &th, cx))
+                        .child(self.track_slider(0, t.d_roll, dials, &th, cx))
+                        .child(self.track_slider(1, t.d_roll_spd, dials, &th, cx))
+                        .child(self.track_slider(2, t.d_roll_size, dials, &th, cx))
+                        .child(
+                            div()
+                                .id("track-reset")
+                                .text_size(px(9.))
+                                .text_color(th.text.alpha(0.5))
+                                .cursor_pointer()
+                                .child(format!("↺ {}", t.d_roll_reset))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        // clear THIS scope's tracking override →
+                                        // back to the theme's authored roll bar
+                                        // (per-pane via the grade).
+                                        if let Some(scope) = ws.osd_menu.clone() {
+                                            let mut g = ws.choice_for(&scope, cx).grade;
+                                            g.tracking = None;
+                                            ws.write_grade(
+                                                &scope,
+                                                g,
+                                                theme::GradePins::only(
+                                                    theme::GradeChannel::Tracking,
+                                                ),
+                                                cx,
+                                            );
+                                        }
+                                    }),
+                                ),
+                        );
+                }
+                panel = panel.child(block);
             }
             // full-screen scrim: click anywhere outside closes
             div()
@@ -24587,6 +28155,7 @@ impl Render for Workspace {
 
         // ---- Find: fuzzy search in this pane (Ctrl+F) or every pane (Ctrl+Shift+F) ----
         let find_overlay = self.render_find(&th, cx);
+        let lookup_overlay = self.render_lookup(&th, cx);
         let lang_picker_overlay = self.render_lang_picker(&th, cx);
         let logo_picker_overlay = self.render_logo_picker(&th, cx);
         let agent_launcher_overlay = self.render_agent_launcher(&th, cx);
@@ -24732,6 +28301,30 @@ impl Render for Workspace {
                     ws.mcp.writable = !ws.mcp.writable;
                     ws.save(cx);
                     cx.notify();
+                }),
+            );
+            // The IMAGES switch: the plain wall, for anyone who reads the cards
+            // for their words and numbers and finds the portraits noise. It takes
+            // the whole art window out (logo, robot and crest alike) rather than
+            // blanking the picture inside it, because an empty frame is not
+            // cleaner than a full one.
+            let show_art = wall_card_art(self.card_art);
+            let images_btn = Self::bezel_btn(
+                &sk,
+                &if show_art {
+                    format!("\u{25c9} {}", t.m_images_on)
+                } else {
+                    format!("\u{25cb} {}", t.m_images_off)
+                },
+                show_art,
+            )
+            .id("mcp-btn-images")
+            .hover(|s| s.border_color(th.accent))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.toggle_card_art(cx);
                 }),
             );
 
@@ -25216,7 +28809,7 @@ impl Render for Workspace {
                         .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
                         .unwrap_or_else(|| p.mode.label().to_string());
                     let rt = p.runtime();
-                    let exposed = mcp::should_expose(&self.mcp, is_agent);
+                    let exposed = mcp::should_expose(&self.mcp, is_agent, p.off_limits);
                     let status = p.agent_status();
                     // The card's chat-scroller. An IDLE agent's live input box is
                     // wasted space — show the LAST USER PROMPT (what you asked it)
@@ -25599,7 +29192,7 @@ impl Render for Workspace {
                         .w(px(228. * cs))
                         .min_w(px(228. * cs))
                         .max_w(px(228. * cs))
-                        .h(px(296. * cs))
+                        .h(px(wall_card_h(cs, show_art)))
                         .flex_none()
                         .flex_shrink_0()
                         // MTG-style card FRAME: the metallic body takes this
@@ -25617,7 +29210,11 @@ impl Render for Workspace {
                             linear_color_stop(brighten(theme_col, 1.1).alpha(0.34), 0.),
                             linear_color_stop(darken(theme_col, 0.5).alpha(0.5), 1.),
                         ))
-                        .shadow(agent_card_shadows(status_glow, live_glow))
+                        .shadow(agent_card_shadows(
+                            status_glow,
+                            live_glow,
+                            th.grade.phosphor,
+                        ))
                         .cursor_pointer()
                         .hover(move |s| s.border_color(kind_col.alpha(0.6)))
                         .on_mouse_down(
@@ -25717,12 +29314,14 @@ impl Render for Workspace {
                                         .text_color(row_text.alpha(0.4))
                                         .child(line2),
                                 )
-                                // ART WINDOW: the per-terminal logo as the card "portrait"
-                                .child(
+                                // ART WINDOW: the per-terminal logo as the card "portrait".
+                                // Built only while the IMAGES switch is on: the plain
+                                // wall constructs none of it, its warp tube included.
+                                .children(show_art.then(|| {
                                     div()
                                         .flex_none()
                                         .w_full()
-                                        .h(px(116. * cs))
+                                        .h(px(WALL_ART_H * cs))
                                         .overflow_hidden()
                                         .relative()
                                         // the logo's tiny-CRT bezel: a dark
@@ -25904,8 +29503,8 @@ impl Render for Workspace {
                                                     linear_color_stop(white().alpha(0.0), 0.55),
                                                 ),
                                             ),
-                                        ),
-                                )
+                                        )
+                                }))
                                 // STAT BAR: model/service + effort. Status lives in
                                 // the bottom-right chip beside the ✓/✕/○ marker.
                                 .child({
@@ -26020,13 +29619,20 @@ impl Render for Workspace {
                                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                                 .text_color(status_glow)
                                                 .when(live_glow, |d| {
-                                                    d.shadow(vec![gpui::BoxShadow {
-                                                        color: status_glow.alpha(0.85),
-                                                        offset: point(px(0.), px(0.)),
-                                                        blur_radius: px(11.),
-                                                        spread_radius: px(0.7),
-                                                        inset: false,
-                                                    }])
+                                                    d.shadow(
+                                                        theme::phosphor(
+                                                            th.grade.phosphor,
+                                                            gpui::BoxShadow {
+                                                                color: status_glow.alpha(0.85),
+                                                                offset: point(px(0.), px(0.)),
+                                                                blur_radius: px(11.),
+                                                                spread_radius: px(0.7),
+                                                                inset: false,
+                                                            },
+                                                        )
+                                                        .into_iter()
+                                                        .collect(),
+                                                    )
                                                 })
                                                 .child(
                                                     div().text_size(px(13. * cs)).child(pip_glyph),
@@ -26063,7 +29669,7 @@ impl Render for Workspace {
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .child(gname.to_uppercase()),
                     );
-                list = list.child(group_section(header, gcol, cards));
+                list = list.child(group_section(header, gcol, cards, th.grade.phosphor));
             }
             if ri == 0 {
                 list = list.child(label(t.m_no_panes.to_string()));
@@ -26096,7 +29702,7 @@ impl Render for Workspace {
                 } else {
                     darken(th.surface, 0.6)
                 })
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -26202,28 +29808,48 @@ impl Render for Workspace {
                         t.m_read_only
                     }
                 )))
-                .child(section(
-                    "MCP SERVER",
+                .child(
+                    // The wall's own controls, in two groups: what the MCP server
+                    // does, and how the cards look. The size slider used to end
+                    // the server's row, where it read as a fifth server setting.
                     div()
                         .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
+                        .flex_row()
+                        .flex_wrap()
+                        .gap_3()
+                        .child(section(
+                            "MCP SERVER",
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .flex_wrap()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(enable_btn)
+                                        .child(expose_btn)
+                                        .child(events_btn)
+                                        .child(writes_btn),
+                                )
+                                .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
+                                .into_any_element(),
+                        ))
+                        .child(section(
+                            t.m_cards,
                             div()
                                 .flex()
                                 .flex_row()
-                                .flex_wrap()
                                 .items_center()
-                                .gap_1()
-                                .child(enable_btn)
-                                .child(expose_btn)
-                                .child(events_btn)
-                                .child(writes_btn)
-                                .child(card_slider),
-                        )
-                        .child(label(format!("{exposed}/{total} {}", t.m_exposed)))
-                        .into_any_element(),
-                ))
+                                .gap_2()
+                                .child(images_btn)
+                                .child(card_slider)
+                                .into_any_element(),
+                        )),
+                )
                 .child({
                     // Each filter DIMENSION (group · program · state) lives in its
                     // own lightly-themed card so they read as distinct controls; the
@@ -26650,7 +30276,7 @@ impl Render for Workspace {
                         .border_2()
                         .border_color(dead_border)
                         .bg(dead_bg)
-                        .shadow(agent_card_shadows(dead_glow, false))
+                        .shadow(agent_card_shadows(dead_glow, false, th.grade.phosphor))
                         .cursor_pointer()
                         .hover(move |s| s.border_color(dead_hover))
                         // ---- content column: a dim dead-dot, the kind chip, the
@@ -26796,7 +30422,7 @@ impl Render for Workspace {
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -27070,14 +30696,12 @@ impl Render for Workspace {
                         }),
                     )
             };
-            let scale_top = 74. * scale;
-            let panel = div()
-                .id("scale-panel")
-                .absolute()
-                .top(px(scale_top))
-                .right(px(12. * scale))
+            // Over its own button, which is at the bottom right — see
+            // `over_the_footer`. It grows UPWARD, so the cap is measured from
+            // the band's top, like the other panels raised from that row.
+            let panel = over_the_footer(div().id("scale-panel").absolute(), scale)
                 .w(px(240.))
-                .max_h(px(self.tray_max_h(scale_top)))
+                .max_h(px(self.tray_max_h(self.tray_band().0)))
                 .overflow_x_hidden()
                 .overflow_y_scroll()
                 .p_4()
@@ -27087,7 +30711,7 @@ impl Render for Workspace {
                 .bg(darken(th.surface, 0.45))
                 .text_color(th.text)
                 .font_family(th.font_family.clone())
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_3()
@@ -27167,17 +30791,24 @@ impl Render for Workspace {
                     .text_size(px(11.5))
                     .text_color(th.text)
                     .hover(|s| s.bg(th.accent.alpha(0.2)))
-                    .child(div().w(px(18.)).flex_none().child(glyph.to_string()))
+                    .child(
+                        div()
+                            .w(px(18.))
+                            .flex_none()
+                            .when_some(
+                                glyph
+                                    .chars()
+                                    .next()
+                                    .and_then(|c| pane::chrome_glyph_font(c, &th)),
+                                |d, family| d.font_family(family),
+                            )
+                            .child(glyph.to_string()),
+                    )
                     .child(div().flex_1().min_w(px(0.)).child(label.to_string()))
             };
-            let panel = div()
-                .id("more-panel")
-                .absolute()
-                // Under its own button, which is at the bottom left now. A menu
-                // that opens at the opposite corner from the thing that raised
-                // it reads as a different control firing.
-                .bottom(px((pane::HICON + 10.) * scale))
-                .left(px(12. * scale))
+            // Over its own button, which is at the bottom right — see
+            // `over_the_footer`.
+            let panel = over_the_footer(div().id("more-panel").absolute(), scale)
                 .w(px(230.))
                 // It grows UPWARD from the footer, so its own top edge is what
                 // the cap has to be measured from: the band's top, since a menu
@@ -27193,7 +30824,7 @@ impl Render for Workspace {
                 .bg(darken(th.surface, 0.45))
                 .text_color(th.text)
                 .font_family(th.font_family.clone())
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_0p5()
@@ -27202,10 +30833,12 @@ impl Render for Workspace {
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
                 // The agent wall LEADS here, and it is the one entry with no
-                // glyph on the chrome at all: its door is the rollup line at
-                // the bottom of the left bar. That bar can be closed, so
-                // without this row a closed bar plus a narrow window would
-                // leave the surface TD is steered from with no door.
+                // glyph on the chrome at all: its door is the agent counter in
+                // the top right. That counter is on screen with the tree open
+                // or shut, but this menu is what a narrow window has instead
+                // of its glyph row, and a list of the window's surfaces that
+                // left out the one TD is steered from would be a list with a
+                // hole in it.
                 .child(entry("\u{f06a9}", s.s_amcp, "more-mcp").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -27230,8 +30863,7 @@ impl Render for Workspace {
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
                         ws.more_menu = false;
-                        ws.osd_menu = Some(MenuScope::Outer);
-                        ws.osd_at = None;
+                        ws.open_osd(MenuScope::Outer, None);
                         cx.notify();
                     }),
                 ))
@@ -27365,6 +30997,9 @@ impl Render for Workspace {
                         row("Alt+V / H · Ctrl+Alt+D", s.split),
                         row("Alt+W", s.close_pane),
                         row("Alt+K", s.toggle_bench),
+                        row("Alt+A", s.launch_agent),
+                        row("Alt+L", s.lookup),
+                        row("Alt+G", s.git_coordination),
                         row("Ctrl+W", s.close_tab),
                         row("Ctrl+Alt+↑↓←→", s.walk_tree),
                         row("Ctrl+Alt+1…9", s.jump_branch),
@@ -27391,8 +31026,11 @@ impl Render for Workspace {
                 .child(section(
                     s.s_links,
                     vec![
-                        row(s.k_shift_ctrl_click, s.open_link),
+                        row(s.k_ctrl_click, s.open_link),
+                        row(s.k_shift_click, s.reveal_link),
                         row(s.k_super_ctrl_click, s.reveal_link),
+                        row(s.k_alt_click, s.open_here),
+                        row(s.k_ctrl_alt_click, s.open_beside),
                     ],
                 ));
             let col_b = div()
@@ -27415,14 +31053,17 @@ impl Render for Workspace {
                         row("Ctrl+Shift+D", s.themes_wheel),
                         row(&format!("⛭ {}", s.k_display_tray), s.display_tray),
                         row("Ctrl+Shift+G", s.display_tray),
+                        row("Ctrl+wheel ↑ / ↓", s.outer_size),
+                        row("Ctrl+Shift+= / -", s.outer_size_key),
                         row(s.k_text_size_key, s.text_size),
+                        row("Ctrl+= / -", s.text_size),
                         row(s.k_warp_dial, s.warp),
                     ],
                 ))
                 .child(section(
                     s.s_agents,
                     vec![
-                        row("▲ / ▼", s.jump_msg),
+                        row("Ctrl+↑ / ↓", s.jump_msg),
                         row("Alt+R", s.focus),
                         row(s.k_focus_inherit_key, s.focus_inherit),
                         row("Alt+1 … 4", s.bench_shelf),
@@ -27433,6 +31074,7 @@ impl Render for Workspace {
                         row(s.k_wheel_key, s.pan_focus),
                         row(s.k_input_colour, s.input_colour),
                         row("Ctrl+Shift+N", s.rail),
+                        row("Ctrl+Shift+M", s.handed_over),
                         row(&format!("🤖 {}", s.k_mother_bar), s.mcp),
                         row("Ctrl+Shift+A", s.mcp),
                         row("Ctrl+Shift+U / Y", s.usage),
@@ -27462,7 +31104,6 @@ impl Render for Workspace {
                     vec![
                         row(s.kf_themes, s.f_themes),
                         row(s.kf_perpane, s.f_perpane),
-                        row(s.kf_wheel, s.f_wheel),
                         row(s.kf_grade, s.f_grade),
                     ],
                 ));
@@ -27478,7 +31119,6 @@ impl Render for Workspace {
                         row(s.kf_warp, s.f_warp),
                         row(s.kf_scan, s.f_scan),
                         row(s.kf_crawl, s.f_crawl),
-                        row(&format!("🎰 {}", s.gamba_name), s.f_gamba),
                     ],
                 ))
                 .child(section(
@@ -27559,10 +31199,11 @@ impl Render for Workspace {
                     }),
                 );
             let panel = div()
+                .id("help-panel")
                 .w(gpui::relative(0.94))
                 .max_w(px(940.))
-                .max_h(gpui::relative(0.88))
-                .overflow_hidden()
+                .max_h(px(help_vh * 0.88))
+                .overflow_y_scroll()
                 .p_5()
                 .rounded(sk.rad_raw(8.))
                 .border_2()
@@ -27578,7 +31219,7 @@ impl Render for Workspace {
                     }
                     d
                 })
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_4()
@@ -27611,12 +31252,11 @@ impl Render for Workspace {
                         ),
                 )
                 .child(
-                    // The body SCROLLS. It is capped against the viewport, and the
-                    // panel clips (overflow_hidden) — without this the last rows
-                    // were simply cut off with no way to reach them, which is how
-                    // "right-click a tab" went missing on a short window.
+                    // Scroll the whole card: reserving a fixed 150px for the
+                    // header and footer clips rows when those controls wrap.
                     div()
                         .id("help-body")
+                        .flex_none()
                         .flex()
                         .map(|d| {
                             if help_narrow {
@@ -27626,9 +31266,6 @@ impl Render for Workspace {
                             }
                         })
                         .w_full()
-                        .min_h(px(0.))
-                        .max_h(px((help_vh * 0.88 - 150.).max(120.)))
-                        .overflow_y_scroll()
                         .child(if help_features { feat_a } else { col_a })
                         .child(if help_features { feat_b } else { col_b }),
                 )
@@ -27905,7 +31542,6 @@ impl Render for Workspace {
                                         Some(BarDragged::Task(t)) => ws.file_task(t, into),
                                         Some(BarDragged::Project(_)) | None => {}
                                     }
-                                    ws.ensure_scope_shows(ws.active);
                                     ws.save(cx);
                                     cx.notify();
                                 }),
@@ -27941,7 +31577,7 @@ impl Render for Workspace {
                     .border_1()
                     .border_color(th.accent.alpha(0.85))
                     .bg(darken(th.surface, 0.6))
-                    .shadow(float_shadows(th.accent))
+                    .shadow(float_shadows(th.accent, th.grade.phosphor))
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -28087,7 +31723,7 @@ impl Render for Workspace {
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.6))
-                .shadow(float_shadows(th.accent))
+                .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -28154,56 +31790,104 @@ impl Render for Workspace {
         if focus_on && focus_ramp < 1.0 {
             window.request_animation_frame();
         }
-        let focus_overlay = if let Some(pane) = self.focus_read.as_ref().and_then(|w| w.upgrade()) {
+        // What the pane being read lends the reader, asked every frame: a
+        // document it shows is read as that document, and anything else is read
+        // as its terminal (`docopen::read_from`).
+        let focus_pane = self.focus_read.as_ref().and_then(|w| w.upgrade());
+        let focus_doc = focus_pane
+            .as_ref()
+            .and_then(|pane| pane.update(cx, |v, cx| v.reader_document(cx)));
+        let focus_overlay = if let (Some(pane), Some(view)) = (&focus_pane, focus_doc) {
+            Some(self.focus_document_overlay(pane, view, focus_ramp, th.grade.phosphor, cx))
+        } else if let Some(pane) = focus_pane {
             let snap = pane.update(cx, |v, cx| v.mirror_snapshot(cx));
+            // An agent pane whose transcript the sweep bound for certain reads
+            // its conversation, where the reader can fold that agent's records
+            // (Claude Code's and Codex's: `PaneMode::reads_transcript`). A binding that
+            // appears, moves or goes while the reader is up starts, restarts or
+            // stops the reading; until the first read lands, and in crawl, the
+            // reader reads the screen.
+            let bound = (snap.talk && !snap.crawl)
+                .then(|| {
+                    self.tool_probe
+                        .get(&pane.entity_id())
+                        .and_then(|p| p.path().map(std::path::Path::to_path_buf))
+                })
+                .flatten();
+            match bound {
+                Some(path) if self.focus_talk.as_ref().is_some_and(|t| t.path == path) => {}
+                Some(path) => {
+                    eprintln!(
+                        "terminal-delight: the reader reads the conversation in {}",
+                        path.display()
+                    );
+                    let ink = pane.read(cx).reader_ink(cx);
+                    let agent = pane.read(cx).mode.label().to_string();
+                    self.focus_talk = Some(Self::read_talk(path, ink, agent, cx));
+                }
+                None => self.focus_talk = None,
+            }
+            let chip = docopen::read_chip(snap.agent, self.focus_talk.is_some(), snap.alt_screen);
+            let talk = self.focus_talk.as_ref().and_then(|t| t.drawn.clone());
             let (ww, wh) = self
                 .last_win
                 .map(|(_, _, w, h)| (w, h))
                 .unwrap_or((1200., 800.));
-            let panel_w = (ww * 0.8).max(320.);
-            let panel_h = (wh * 0.8).max(240.);
-            // Reader padding: a third roomier than the old 16px so the text
-            // breathes inside the glass.
-            let pad = 21.0_f32;
-            // Side padding scales with the panel — a fixed 21px reads as a hairline
-            // margin on a wide monitor. 7% each side keeps the text off the glass
-            // edge at any size, with the old 21px as the floor on a small window.
-            let pad_x = (panel_w * 0.07).max(pad);
-            let hdr_h = 30.0_f32;
-            let avail_w = (panel_w - pad_x * 2.).max(1.);
-            let avail_h = (panel_h - hdr_h - pad * 2.).max(1.);
+            let inline_rect = self
+                .focus_inline
+                .then(|| pane.read(cx).tube_rect())
+                .flatten();
+            let glass = match inline_rect {
+                Some((_, _, w, h)) => ReaderGlass::in_pane(w, h),
+                None => ReaderGlass::in_window(ww, wh),
+            };
+            let ReaderGlass {
+                panel_w,
+                panel_h,
+                pad,
+                pad_x,
+                hdr_h,
+                avail_w,
+                avail_h,
+            } = glass;
             let content_w = (snap.cols as f32 * snap.cell_w).max(1.);
             let content_h = (snap.rows as f32 * snap.cell_h).max(1.);
-            // Auto-fit (1.0 on the slider) = fill the WIDTH.
-            //
-            // The mirror carries the source pane's grid rows, already hard-broken at
-            // ITS column count — so no mirrored row is ever longer than `snap.cols`
-            // and re-wrapping them at a wider `fit_cols` can never lengthen a line.
-            // Fitting to height therefore left the text in a narrow column with the
-            // panel's whole width empty either side: a 57-column pane opened into a
-            // full-screen reader read as a thin ribbon.
-            //
-            // Scaling to the width instead makes those columns span the glass, which
-            // is the whole point of a reader. A short read no longer fills the height
-            // — `v_offset` centres it, which looks deliberate where a thin ribbon
-            // looked broken. Crawl doesn't wrap at all, so it keeps the both-axes fit
-            // that guarantees each whole row stays visible.
-            let fit = if snap.crawl {
-                (avail_w / content_w).min(avail_h / content_h)
-            } else {
-                avail_w / content_w
-            }
-            .clamp(0.7, 6.0);
-            // The header slider rides on top of the fit: 1.0 = fit-to-modal. The
-            // reader WRAPS rather than scrolling sideways, so a bigger size never
-            // runs lines off the edge — it just wraps more; a smaller size shows a
-            // compact column. The floor sits well under 1.0 so a dense read can
-            // shrink right down (the old 0.5 floor still felt huge on small panes).
-            let ms = (fit * self.focus_zoom).clamp(0.3, 12.0);
-            let cell_h = snap.cell_h * ms;
+            // The reader's size is its own. A flat read draws the pane's letters at
+            // `focus_zoom` (1.0 = as the pane draws them) across the glass's whole
+            // width, so a narrow pane opens with as many columns as the glass holds
+            // — about 175 × 46 in a 1,576 × 950 window — instead of its own few
+            // columns blown up to fill it. Scaling the pane's width to the glass
+            // (2026-08-31) ended the thin ribbon a narrow pane used to read as, but
+            // made the letters the pane's width decided: 3.65× on a 48-column pane.
+            // Crawl doesn't wrap, so it alone still fits the grid on both axes,
+            // which keeps each whole row visible.
+            let fit = (avail_w / content_w)
+                .min(avail_h / content_h)
+                .clamp(0.7, 6.0);
+            let ms = Self::reader_scale(snap.crawl, fit, self.focus_zoom);
+            // The row height the mirror's row divs are drawn at: gpui rounds an
+            // authored height to whole device pixels, and the virtual window
+            // below (which rows to build, where the first sits, the total
+            // height) must count in the same rows or a long read drifts.
+            let cell_h = crate::pane::laid_out_length(snap.cell_h * ms, window.scale_factor());
             let glyph_w = (snap.cell_w * ms).max(0.5);
+            // Under a conversation, the pane's own input rows, live: a transcript
+            // holds a reply only once each block of it is finished, and never
+            // what is being typed, so the foot carries the turn in flight. The
+            // reading area gives the foot its height.
+            let foot = if talk.is_some() {
+                pane.read(cx).input_rows(cx)
+            } else {
+                Vec::new()
+            };
+            let foot_h = if foot.is_empty() {
+                0.0
+            } else {
+                foot.len() as f32 * cell_h + 2.0 * READER_FOOT_PAD
+            };
+            let avail_h = (avail_h - foot_h).max(cell_h);
             // "Inherit theme": bend + glare the panel like the pane it mirrors.
-            let inherit = self.focus_inherit_theme;
+            let inherit = self.focus_inherit_theme && !self.focus_inline;
             let (k1, k2, glare) = (snap.k1, snap.k2, snap.glare);
             // FOCUS inherits crawl: the rows are already in the crawl font (baked
             // into the runs) and, in crawl mode, the modal centres each row exactly
@@ -28235,14 +31919,21 @@ impl Render for Workspace {
             // rows outright. With the whole scrollback in the document this is
             // the difference between an Arc clone and re-wrapping ~10k logical
             // lines on every frame the pointer twitches.
+            //
+            // An agent's conversation is a document too, drawn from its
+            // transcript; it counts its own revisions, so the key says whose.
+            let (reader_doc, source, rev) = match &talk {
+                Some(d) => (d.doc.clone(), FocusSource::Transcript, d.rev),
+                None => (snap.doc.clone(), FocusSource::Grid, snap.doc_rev),
+            };
             let vrows: Arc<Vec<doc::VisualRow>> = if crawl {
                 Arc::new(Vec::new())
             } else {
-                let key = (snap.doc_rev, fit_cols);
+                let key = (source, rev, fit_cols);
                 match &self.focus_layout {
                     Some((k, rows)) if *k == key => rows.clone(),
                     _ => {
-                        let rows = Arc::new(doc::layout(&snap.doc, fit_cols));
+                        let rows = Arc::new(doc::layout(&reader_doc, fit_cols));
                         self.focus_layout = Some((key, rows.clone()));
                         rows
                     }
@@ -28253,6 +31944,15 @@ impl Render for Workspace {
             let row_count = if crawl { snap.rows } else { vrows.len() };
             let total_h = row_count as f32 * cell_h;
             self.focus_overflow = (total_h - avail_h).max(0.0);
+            // A selected human turn can sit at the top even near the live end.
+            // Blank space below the newest turn is preferable to a clamp that
+            // makes several different jumps land on the same viewport.
+            if self.focus_turn_nav.active() {
+                if let Some(last) = talk.as_ref().and_then(|d| d.turns.last()) {
+                    let row = vrows.partition_point(|r| r.doc_line < *last);
+                    self.focus_overflow = self.focus_overflow.max(row as f32 * cell_h);
+                }
+            }
             self.focus_line_h = cell_h;
             self.focus_page_h = avail_h;
             // Follow-bottom: a MIRROR keeps the prompt in view. While pinned, new
@@ -28264,6 +31964,23 @@ impl Render for Workspace {
             if self.focus_at_bottom {
                 self.focus_scroll_y = f32::MAX;
             }
+            if let Some(d) = &talk {
+                match self.focus_turn_nav.resolve(&d.turns) {
+                    Some(transcript::TurnTarget::Turn(line)) => {
+                        let row = vrows.partition_point(|r| r.doc_line < line);
+                        self.focus_scroll_y = row as f32 * cell_h;
+                        self.focus_at_bottom = false;
+                    }
+                    Some(transcript::TurnTarget::Live) if self.focus_inline => {
+                        cx.defer_in(window, |ws, _window, cx| ws.close_focus_read(cx));
+                    }
+                    Some(transcript::TurnTarget::Live) => {
+                        self.focus_scroll_y = self.focus_overflow;
+                        self.focus_at_bottom = true;
+                    }
+                    None => {}
+                }
+            }
             self.focus_scroll_y = self.focus_scroll_y.clamp(0.0, self.focus_overflow);
             let scroll_y = self.focus_scroll_y;
             // Centre a short read vertically: when the whole thing fits, split the
@@ -28271,24 +31988,18 @@ impl Render for Workspace {
             // blank band jammed against the top OR the bottom. Once it overflows
             // this is 0 and the wheel pans `scroll_y` from the top.
             let v_offset = (avail_h - total_h).max(0.0) * 0.5;
-            // Horizontal frame: size it to the FULL grid width at this zoom (capped
-            // at the panel), NOT to the live content. Sizing to content made the
-            // whole block re-centre and JIGGLE sideways every time a line's length
-            // changed — fatal for a reader whose eye is locked on one spot. The grid
-            // width is fixed, so the left edge never moves. When the grid is narrower
-            // than the glass (a zoomed-down read) this fixed frame is centred;
-            // otherwise it fills and left-anchors at `pad`.
-            let body_w = if crawl {
-                avail_w
-            } else {
-                (snap.cols as f32 * glyph_w).min(avail_w)
-            };
-            let h_offset = ((avail_w - body_w) * 0.5).max(0.0);
+            // Horizontal frame: the glass's whole inner width, NOT the live content.
+            // Sizing to content made the whole block re-centre and JIGGLE sideways
+            // every time a line's length changed — fatal for a reader whose eye is
+            // locked on one spot. The frame is fixed, so the left edge never moves.
+            // It used to be the pane's grid width at this zoom, which is what kept
+            // the text to the pane's own columns; the reader's text now wraps at
+            // its own width (`fit_cols`), so its frame is the glass.
+            let body_w = avail_w;
             // Left inset of the content this frame — the hit-test maps clicks against
-            // it, so it must include the side padding AND the centring offset. It
-            // tracks `pad_x`, not `pad`: get this wrong and every reader click lands
-            // one margin's worth off.
-            let content_left = pad_x + h_offset;
+            // it. It tracks `pad_x`, not `pad`: get this wrong and every reader click
+            // lands one margin's worth off.
+            let content_left = pad_x;
             let base_size = snap.base_size * ms;
             // Stash this frame's layout + document so a click in the reading area
             // maps back to a document position for selection + copy. Both are Arc
@@ -28305,7 +32016,7 @@ impl Render for Workspace {
                 doc: if crawl {
                     Arc::new(doc::Document::default())
                 } else {
-                    snap.doc.clone()
+                    reader_doc.clone()
                 },
                 line_h: cell_h,
                 glyph_w,
@@ -28412,179 +32123,137 @@ impl Render for Workspace {
                 .text_size(px(12.))
                 .text_color(snap.accent)
                 .child(
-                    // left cluster: title + the persistent inherit-theme toggle
+                    // left cluster: title, what the reader is reading, and the
+                    // persistent inherit-theme toggle
                     div()
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap_3()
-                        .child(format!("👓  FOCUS · {}", snap.title))
+                        .child(format!(
+                            "{} · {}",
+                            if self.focus_inline {
+                                "CHAT HISTORY"
+                            } else {
+                                "👓  FOCUS"
+                            },
+                            snap.title
+                        ))
+                        .child(Self::reader_chip(chip, snap.accent, snap.text))
                         .child(self.focus_inherit_toggle(snap.accent, snap.text, cx)),
                 )
                 // text-size slider for the pane under scrutiny (live, per-open)
                 .child(self.focus_zoom_slider(snap.accent, snap.text, cx))
                 .child(div().text_color(snap.text.alpha(0.6)).child("esc to close"));
-            let panel = div()
-                .w(px(panel_w))
-                .h(px(panel_h))
-                .flex()
-                .flex_col()
-                .rounded(px(12.))
-                .overflow_hidden()
-                .bg(snap.bg)
-                .border_2()
-                .border_color(snap.accent.alpha(0.7))
-                .shadow(vec![
-                    BoxShadow {
-                        color: hsla(0., 0., 0., 0.7),
-                        offset: point(px(0.), px(10.)),
-                        blur_radius: px(40.),
-                        spread_radius: px(2.),
-                        inset: false,
-                    },
-                    BoxShadow {
-                        color: snap.accent.alpha(0.18),
-                        offset: point(px(0.), px(0.)),
-                        blur_radius: px(48.),
-                        spread_radius: px(2.),
-                        inset: false,
-                    },
-                ])
-                .child(header)
-                .child(
-                    // The reading area: a clip box with the mirror absolutely
-                    // anchored inside it. Absolute positioning (not a flex child +
-                    // margins) pins the vertical origin deterministically:
-                    // `top = pad + v_offset - scroll_y`. `v_offset` centres a short
-                    // read (slack split top/bottom); once the read overflows it's 0
-                    // and the wheel pans `scroll_y` from the top. The fixed-width
-                    // frame is centred horizontally at `content_left`. A press here
-                    // starts a click-drag text selection (mapped back to a source
-                    // cell through the warp); the trailing probe canvas captures this
-                    // box's exact on-screen rect so the hit-test stays curve-accurate.
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_hidden()
-                        .relative()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation(); // don't let the panel/scrim close
-                                match ws.focus_cell_at(ev.position) {
-                                    Some(cell) => {
-                                        ws.focus_sel = Some((cell, cell));
-                                        ws.focus_sel_drag = true;
-                                    }
-                                    None => ws.focus_sel = None,
-                                }
-                                cx.notify();
-                            }),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .top(px(body_top))
-                                .left(px(content_left))
-                                .flex()
-                                .flex_col()
-                                .child(body),
-                        )
-                        .child(
-                            div().absolute().inset_0().child(
-                                gpui::canvas(
-                                    {
-                                        let store = self.focus_body_bounds.clone();
-                                        move |bounds, _window, _cx| {
-                                            *store.lock().unwrap() = Some(bounds);
-                                        }
-                                    },
-                                    |_, _, _, _| {},
-                                )
-                                .size_full(),
-                            ),
-                        ),
-                )
-                // Measure the panel's exact on-screen box (physical px) and arm
-                // the FOCUS backdrop blur: the CRT post-pass frosts everything
-                // outside this rect while the panel itself stays razor-sharp.
-                // Using the real prepaint bounds (not an analytic centre) keeps
-                // the sharp/blur edge pixel-aligned through the CSD shadow margin.
-                // When "Inherit theme" is on, the same rect is also registered as
-                // the lone warp tube so the reader bends + glares like its pane.
-                .child(
-                    div().absolute().inset_0().child(
-                        gpui::canvas(
-                            move |bounds, window, _cx| {
-                                let sf = window.scale_factor();
-                                let rect = [
-                                    f32::from(bounds.origin.x) * sf,
-                                    f32::from(bounds.origin.y) * sf,
-                                    f32::from(bounds.size.width) * sf,
-                                    f32::from(bounds.size.height) * sf,
-                                ];
-                                crate::warp::set_focus_blur(
-                                    rect,
-                                    28.0 * sf * focus_ramp, // blur radius (eases in)
-                                    16.0 * sf,              // feather across the panel edge
-                                    focus_ramp,             // frosted-glass tint (eases in)
-                                    12.0 * sf,              // corner radius — matches rounded(12)
-                                );
-                                if inherit {
-                                    // Warp ONLY the reading area, never the header
-                                    // chrome. The slider + "Inherit theme" toggle are
-                                    // gpui hit-boxes at their flat layout positions, so
-                                    // bending them with the glass makes their clicks
-                                    // land off-target (you have to aim well above the
-                                    // control). Insetting the tube's top past the
-                                    // header keeps the chrome flat + honest — the same
-                                    // rule the per-pane tubes follow — while the body
-                                    // still curves. crawl stays identity: the body
-                                    // already centres crawl rows for readable mirroring.
-                                    let body_rect = [
-                                        rect[0],
-                                        rect[1] + hdr_h * sf,
-                                        rect[2],
-                                        (rect[3] - hdr_h * sf).max(1.0),
-                                    ];
-                                    crate::warp::register_focus_tube(
-                                        body_rect,
-                                        glare,
-                                        k1,
-                                        k2,
-                                        [0.0, 1.0, 1.0],
-                                    );
-                                }
-                            },
-                            |_, _, _, _| {},
-                        )
-                        .size_full(),
-                    ),
-                )
-                // clicks inside the panel must not fall through to the scrim
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
-                );
-            // Dim + LOCK scrim over the whole window. `.occlude()` makes it
-            // swallow every mouse event (clicks AND scroll) so nothing behind
-            // the modal can be focused, scrolled, or typed into — you stay in
-            // the FOCUS pane. The 0.60 dim rides UNDER the frosted backdrop the
-            // CRT pass paints (the shader blurs these dimmed pixels). A click on
-            // the dimmed area outside the panel closes it; esc closes too.
-            Some(
+            let header = if self.focus_inline {
                 div()
-                    .absolute()
-                    .inset_0()
-                    .occlude()
+                    .h(px(hdr_h))
+                    .flex_none()
                     .flex()
                     .items_center()
-                    .justify_center()
-                    .bg(hsla(0., 0., 0., 0.6 * focus_ramp))
+                    .justify_between()
+                    .px_2()
+                    .text_size(px(10.0))
+                    .text_color(snap.accent)
+                    .child("CHAT HISTORY")
+                    .child("Ctrl+↑↓ · Esc")
+            } else {
+                header
+            };
+            let panel =
+                Self::reader_panel(panel_w, panel_h, snap.bg, snap.accent, th.grade.phosphor)
+                    .child(header)
+                    .child(
+                        // The reading area: a clip box with the mirror absolutely
+                        // anchored inside it. Absolute positioning (not a flex child +
+                        // margins) pins the vertical origin deterministically:
+                        // `top = pad + v_offset - scroll_y`. `v_offset` centres a short
+                        // read (slack split top/bottom); once the read overflows it's 0
+                        // and the wheel pans `scroll_y` from the top. The fixed-width
+                        // frame is centred horizontally at `content_left`. A press here
+                        // starts a click-drag text selection (mapped back to a source
+                        // cell through the warp); the trailing probe canvas captures this
+                        // box's exact on-screen rect so the hit-test stays curve-accurate.
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .relative()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation(); // don't let the panel/scrim close
+                                    match ws.focus_cell_at(ev.position) {
+                                        Some(cell) => {
+                                            ws.focus_sel = Some((cell, cell));
+                                            ws.focus_sel_drag = true;
+                                        }
+                                        None => ws.focus_sel = None,
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top(px(body_top))
+                                    .left(px(content_left))
+                                    .flex()
+                                    .flex_col()
+                                    .child(body),
+                            )
+                            .child(
+                                div().absolute().inset_0().child(
+                                    gpui::canvas(
+                                        {
+                                            let store = self.focus_body_bounds.clone();
+                                            move |bounds, _window, _cx| {
+                                                *store.lock().unwrap() = Some(bounds);
+                                            }
+                                        },
+                                        |_, _, _, _| {},
+                                    )
+                                    .size_full(),
+                                ),
+                            ),
+                    )
+                    .children((!foot.is_empty()).then(|| {
+                        Self::reader_foot(
+                            &foot,
+                            content_left,
+                            cell_h,
+                            base_size,
+                            snap.font_family.clone(),
+                            snap.text,
+                            snap.accent,
+                        )
+                    }))
+                    // The frost around the glass, and — with "Inherit theme" on — the
+                    // same rect registered as the lone warp tube so the reader bends
+                    // and glares like its pane. crawl stays identity: the body
+                    // already centres crawl rows for readable mirroring.
+                    .when(!self.focus_inline, |panel| {
+                        panel.child(Self::reader_frost(
+                            focus_ramp,
+                            inherit.then_some((hdr_h, glare, k1, k2)),
+                        ))
+                    })
+                    // clicks inside the panel must not fall through to the scrim
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| ws.close_focus_read(cx)),
-                    )
+                        cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                    );
+            let reader = if let Some((x, y, _, _)) = inline_rect {
+                div()
+                    .absolute()
+                    .left(px(x))
+                    .top(px(y))
+                    .child(panel.rounded(px(0.)).shadow(Vec::new()))
+            } else {
+                self.reader_scrim(panel, focus_ramp, cx)
+            };
+            Some(
+                reader
                     // The reader wraps, so it only ever overflows VERTICALLY; the
                     // wheel pans it so the off-screen rows are reachable. There is no
                     // horizontal axis to pan. At the top/bottom edge (or when the read
@@ -28592,22 +32261,20 @@ impl Render for Workspace {
                     // scrollback — the wheel is never lost.
                     .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
                         // ctrl+wheel is the size gesture and never a pan. The
-                        // reader mirrors the GRID on both faces (see
-                        // `the_focus_reader_mirrors_the_grid_on_both_faces`), so
-                        // the dial it turns is the grid's, named here rather
-                        // than resolved from the cursor: the scrim covers the
-                        // window, so where the pointer is says nothing about
-                        // which region of the pane is being read.
+                        // reader has a size of its own, so the dial it turns is
+                        // its own: the pane behind the scrim keeps its letters.
+                        // It used to turn the pane's text dial, when the reader's
+                        // letters were the pane's scaled up; now that would
+                        // resize a pane nobody is looking at.
                         //
                         // It halts, like the pane's own handler. Before this the
                         // chord panned the reader AND — propagation never
                         // stopped — resized the outer bar behind it.
                         if ev.modifiers.control {
-                            if let Some(pane) = ws.focus_read.as_ref().and_then(|w| w.upgrade()) {
-                                let notches = theme::wheel_notches(ev.delta);
-                                pane.update(cx, |v, cx| {
-                                    v.nudge_size(theme::GradeKey::TextSize, notches, cx)
-                                });
+                            let notches = theme::wheel_notches(ev.delta);
+                            let next = Self::focus_zoom_step(ws.focus_zoom, notches);
+                            if (next - ws.focus_zoom).abs() > f32::EPSILON {
+                                ws.focus_zoom = next;
                                 cx.notify();
                             }
                             cx.stop_propagation();
@@ -28649,7 +32316,7 @@ impl Render for Workspace {
                             ws.focus_drag_release(cx);
                         }),
                     )
-                    .child(panel),
+                    .into_any_element(),
             )
         } else {
             None
@@ -28769,7 +32436,7 @@ impl Render for Workspace {
             // makes "opening the queue does not resize a pane" true by
             // construction rather than by measurement.
             .children(self.render_rail_docked(cx))
-            .children(self.render_spine(cx));
+            .child(self.render_spine(cx));
 
         let root = div()
             .size_full()
@@ -28783,10 +32450,22 @@ impl Render for Workspace {
             // CAPTURE phase so it fires even while a terminal pane holds focus
             // (the terminal never sees the Esc, so it can't be sent to the shell).
             // With no popup open, Esc falls through to the focused terminal as usual.
-            .capture_key_down(cx.listener(|ws, ev: &KeyDownEvent, _w, cx| {
+            // The FOCUS reader is the exception both ways: it is closed here only
+            // when the pane it reads does not hold the keyboard, and otherwise by
+            // that pane, which has to hear the Esc (`escape_closes_the_reader`).
+            .capture_key_down(cx.listener(|ws, ev: &KeyDownEvent, window, cx| {
                 if ev.keystroke.key.as_str() == "escape" && ws.close_popups() {
                     cx.stop_propagation();
                     cx.notify();
+                    return;
+                }
+                if ws.coordination_capture_key(&ev.keystroke, window, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
+                if ev.keystroke.key.as_str() == "escape" && ws.escape_closes_the_reader(window, cx)
+                {
+                    cx.stop_propagation();
                     return;
                 }
                 // The attention queue owns the keyboard while it is open, and it
@@ -28833,37 +32512,44 @@ impl Render for Workspace {
                     ))
                     .border_2()
                     .border_color(th.accent.alpha(0.45))
-                    .shadow(vec![
-                        // upper-left light source: glint biased to (1,1)
-                        BoxShadow {
-                            color: white().alpha(0.14),
-                            offset: point(px(1.), px(1.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(0.),
-                            inset: true,
-                        },
-                        BoxShadow {
-                            color: hsla(0., 0., 0., 0.5),
-                            offset: point(px(-2.), px(-2.)),
-                            blur_radius: px(3.),
-                            spread_radius: px(0.),
-                            inset: true,
-                        },
-                        BoxShadow {
-                            color: hsla(0., 0., 0., 0.6),
-                            offset: point(px(4.), px(6.)),
-                            blur_radius: px(22.),
-                            spread_radius: px(0.),
-                            inset: false,
-                        },
-                        BoxShadow {
-                            color: th.accent.alpha(0.10 * th.glow),
-                            offset: point(px(0.), px(0.)),
-                            blur_radius: px(30.),
-                            spread_radius: px(2.),
-                            inset: false,
-                        },
-                    ])
+                    .shadow(
+                        vec![
+                            // upper-left light source: glint biased to (1,1)
+                            BoxShadow {
+                                color: white().alpha(0.14),
+                                offset: point(px(1.), px(1.)),
+                                blur_radius: px(0.),
+                                spread_radius: px(0.),
+                                inset: true,
+                            },
+                            BoxShadow {
+                                color: hsla(0., 0., 0., 0.5),
+                                offset: point(px(-2.), px(-2.)),
+                                blur_radius: px(3.),
+                                spread_radius: px(0.),
+                                inset: true,
+                            },
+                            BoxShadow {
+                                color: hsla(0., 0., 0., 0.6),
+                                offset: point(px(4.), px(6.)),
+                                blur_radius: px(22.),
+                                spread_radius: px(0.),
+                                inset: false,
+                            },
+                        ]
+                        .into_iter()
+                        .chain(theme::phosphor(
+                            th.grade.phosphor,
+                            BoxShadow {
+                                color: th.accent.alpha(0.10 * th.glow),
+                                offset: point(px(0.), px(0.)),
+                                blur_radius: px(30.),
+                                spread_radius: px(2.),
+                                inset: false,
+                            },
+                        ))
+                        .collect::<Vec<_>>(),
+                    )
                     .child(bezel_top)
                     .child(stage)
                     .child(bezel_bottom)
@@ -28891,6 +32577,8 @@ impl Render for Workspace {
                     .children(focus_overlay)
                     // the find panel rides on top too (its own scrim locks input)
                     .children(find_overlay)
+                    // and the lookup, which is find's twin over names
+                    .children(lookup_overlay)
                     // the language dropdown rides above even the help modal it opens from
                     .children(lang_picker_overlay)
                     // the per-pane logo picker rides on top too (its scrim locks input)
@@ -28915,6 +32603,36 @@ impl Render for Workspace {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    /// The help modal's LINKS section names every click on a path as it is
+    /// now: Ctrl opens with the desktop, Shift reveals (it used to open, and
+    /// shared a row with Ctrl), Super+Ctrl still reveals, Alt opens the
+    /// floating square, and Ctrl+Alt opens a pane beside. Source-scanned
+    /// because the modal needs a live window.
+    #[test]
+    fn the_help_names_every_click_on_a_path() {
+        let src = include_str!("main.rs");
+        let code = &src[..src
+            .find("\n#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests")
+            .unwrap_or(src.len())];
+        let at = code.find("s.s_links,").expect("the links section");
+        let section = &code[at..at + code[at..].find("],").expect("end of the section")];
+        let rows = [
+            "row(s.k_ctrl_click, s.open_link)",
+            "row(s.k_shift_click, s.reveal_link)",
+            "row(s.k_super_ctrl_click, s.reveal_link)",
+            "row(s.k_alt_click, s.open_here)",
+            "row(s.k_ctrl_alt_click, s.open_beside)",
+        ];
+        let mut last = 0;
+        for row in rows {
+            let pos = section
+                .find(row)
+                .unwrap_or_else(|| panic!("the help is missing {row}"));
+            assert!(pos >= last, "{row} is out of order");
+            last = pos;
+        }
+    }
 
     // ---- trays stay inside the render ----------------------------------
     //
@@ -29102,49 +32820,28 @@ mod tests {
             .join("\n")
     }
 
-    /// A window opens unpinned — on the branch its active tab is in — and never
-    /// on a bar that hides the tab it just activated.
+    /// A window has no scope to open on: the strip is always the active tab's
+    /// own branch, and nothing in a state file can say otherwise.
     ///
-    /// Both halves are about the same afternoon. The strip began obeying the
-    /// scope chip, and a restored scope — a value the file's own doc claimed
-    /// was "checked against the active tab" by code that did not exist — put a
-    /// window's active tab off its own bar. The narrowing is now a gesture that
-    /// lasts as long as the window, and the restore performs the check.
-    ///
-    /// The opening scope itself moved once more the same evening: `All` opened
-    /// every window with the whole session across the top, which is the strip
-    /// scoping exists to prevent. `Default` is the branch scope, so this asserts
-    /// the code takes the default rather than naming a variant — and a future
-    /// change of default is then a change to one line in `tree.rs`, with that
-    /// module's own test standing over it.
+    /// A restored scope once put a window's active tab off its own bar, and an
+    /// opening scope of `All` put the whole session across the top. Both were
+    /// states a window could be left in. With branch pins retired (#757) there
+    /// is no such state: the `SavedScope` a file may still carry is parsed and
+    /// dropped, never read back and never written.
     #[test]
-    fn a_window_opens_unpinned_and_the_strip_holds_the_tab_it_opens() {
+    fn a_window_has_no_scope_and_the_strip_is_the_active_tab_s_branch() {
         let src = shipped_code();
-
-        let at = src
-            .find("self.active = saved.active.min(")
-            .expect("the restore path");
-        let region = &src[at..(at + 700).min(src.len())];
         assert!(
-            region.contains("self.ensure_scope_shows(self.active)"),
-            "restore corrects a scope that would hide the tab it opens on"
-        );
-
-        assert!(
-            src.contains("scope: tree::Scope::default(),"),
-            "a restored window starts on the scope nothing can strand"
+            !src.contains("scope: tree::Scope"),
+            "the workspace holds no scope any more"
         );
         assert!(
-            !src.contains("scope: tree::Scope::All,"),
-            "and never opens pinned to the whole session"
+            src.contains("let family = tree::family(&places, self.active);"),
+            "the strip is the active tab's own branch, asked every frame"
         );
         assert!(
-            !src.contains("saved.scope.map(tree::Scope::from)"),
-            "and does not take the scope back out of the file"
-        );
-        assert!(
-            !src.contains("scope: Some(self.scope.into())"),
-            "…which means it must not be written there either"
+            !src.contains("saved.scope.map(") && !src.contains("scope: Some("),
+            "a saved scope is neither read back nor written"
         );
     }
 
@@ -29736,7 +33433,7 @@ mod tests {
                 "fn render_left_bar(",
             ),
             ("the left bar", "fn render_left_bar(", "fn tab_button("),
-            ("the tab strip", "fn tab_button(", "fn place_name("),
+            ("the tab strip", "fn tab_button(", "fn eng_badge("),
             ("the bar's glyph buttons", "fn hicon_s(", "fn bezel_btn("),
         ] {
             let body = region(from, to);
@@ -30041,10 +33738,12 @@ mod tests {
             &src[at..at + end]
         };
 
+        // The mother bar names no branch any more; the tree's rows are where a
+        // branch's name is drawn, and the same rule holds there.
         assert!(
-            body("fn place_name").contains(".truncate()"),
-            "the project name must truncate: gpui wraps by default, so a long \
-             name grows the mother bar instead of clipping inside its rail"
+            body("fn branch_row(").contains(".whitespace_nowrap()"),
+            "a branch name must not wrap: gpui wraps by default, so a long name \
+             would take a second line and grow its row"
         );
 
         // and the fallback has to actually say something
@@ -30574,29 +34273,71 @@ mod tests {
         );
     }
 
-    /// The menu glyphs are at the bottom left, and the bezel names no pane.
+    /// The window's own controls are kept at the bottom right, and the bezel
+    /// names no pane.
     ///
-    /// Two halves of one move. The top row had become the busiest line in the
+    /// Three moves, one rule. The top row had become the busiest line in the
     /// window while the bottom bezel carried a sentence the focused pane's own
     /// header already says — so the glyphs went down and the sentence went.
+    /// Then Parker sent the glyphs and the scale to the RIGHT end of it:
+    /// *"menu scale + menu glyphs go down bottom right"*, with the corner's
+    /// split beyond them.
     #[test]
-    fn the_menu_glyphs_live_at_the_bottom_left_and_the_bezel_names_no_pane() {
+    fn the_windows_own_controls_live_at_the_bottom_right_and_the_bezel_names_no_pane() {
         let src = shipped_src();
         let region = |sig: &str| -> &str {
             let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
             let end = src[at..].find("\n        let ").expect("end of region");
             &src[at..at + end]
         };
+        let code = shipped_code();
+        let code_region = |sig: &str| -> String {
+            let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = code[at..].find("\n        let ").expect("end of region");
+            code[at..at + end].to_string()
+        };
         let bottom = region("let bezel_bottom = div()");
         let top = region("let bezel_top = div()");
         assert!(
-            bottom.contains(".child(chrome_icons)"),
-            "the menu glyph row belongs to the bottom bezel now"
+            bottom.contains(".child(chrome_icons)") && bottom.contains(".child(scrubber)"),
+            "the menu glyphs and the scale that sizes them belong to the bottom \
+             bezel"
         );
         assert!(
-            !top.contains("chrome_icons"),
+            !top.contains("chrome_icons") && !top.contains("scrubber"),
             "…and must not also be up top: two copies of one control is worse \
              than either place for it"
+        );
+        // At the RIGHT end: the row packs to its end, and nothing is placed
+        // ahead of the counts — the left end is empty now. Read from code
+        // only, so this comment cannot answer it.
+        let bottom_code = code_region("let bezel_bottom = div()");
+        assert!(
+            bottom_code.contains(".justify_end()") && !bottom_code.contains(".justify_between()"),
+            "the bottom bezel packs its controls to the right-hand end"
+        );
+        let order = [
+            "tab_count,",
+            ".child(chrome_icons)",
+            ".child(scrubber)",
+            ".child(split_down)",
+        ];
+        let at: Vec<usize> = order
+            .iter()
+            .map(|n| {
+                bottom_code
+                    .find(n)
+                    .unwrap_or_else(|| panic!("{n} missing from the bottom bezel"))
+            })
+            .collect();
+        assert!(
+            at.windows(2).all(|w| w[0] < w[1]),
+            "left to right: what the window holds, the glyphs, the scale, then \
+             the corner's split — got {at:?} for {order:?}"
+        );
+        assert!(
+            !code.contains("let is_footer"),
+            "the glyph row is no longer the tree's footer, stretched to its width"
         );
         // The sentence. Spelled in pieces so this test's own source does not
         // answer the search — see `shipped_src`.
@@ -30621,23 +34362,93 @@ mod tests {
             "with headroom above it, or the buttons sit against the tree's edge"
         );
 
-        // The acting end. The splits came down here and the status light went.
+        // The corner. The split that stacks panes lies on the bottom edge; its
+        // partner stands on the right edge (see the axes test below), and the
+        // status light that used to share this end is gone.
         assert!(
-            bottom.contains(".child(cluster)"),
-            "the split buttons are at the bottom right now"
+            bottom.contains(".child(split_down)") && !top.contains("split_down"),
+            "the split-down button is at the bottom right, and only there"
         );
-        assert!(!top.contains(".child(cluster)"), "…and not also up top");
         let ready = ["ch", "ready"].join("_");
         assert!(
             !src.contains(&ready),
             "the READY light is gone: it was lit in every frame TD ever drew, \
              so it never distinguished one state from another"
         );
-        // What is left in the top right: the scale that sizes this very bar,
-        // and the compositor's own frame buttons.
+        // What is left in the top right: the agent counter, and the
+        // compositor's own frame buttons.
         assert!(
-            top.contains(".child(scrubber)") && top.contains(".child(win_controls)"),
-            "the top right keeps the menu-bar scale and the window buttons"
+            top.contains(".child(self.render_agent_counter(")
+                && top.contains(".child(win_controls)"),
+            "the top right holds the agent counter and the window buttons"
+        );
+    }
+
+    /// The corner's two splits sit one on each axis, and draw their glyphs.
+    ///
+    /// They stood side by side as `◧ split` and `⬓ split`, and the second
+    /// glyph came out of a fallback font as an empty square with a rule across
+    /// it. Parker: *"HORIZONTAL should be on the horizontal axis and vertical
+    /// on the vertical axis... + the horizontal glyph is not filled in on the
+    /// bottom and should be"*. So: one builder for both buttons, the stacking
+    /// split on the bottom edge, the side-by-side split at the foot of the
+    /// right-hand column, and no typed split glyph left anywhere in the code.
+    #[test]
+    fn the_corners_splits_sit_one_on_each_axis_and_draw_their_glyphs() {
+        let code = shipped_code();
+        let body = |sig: &str| -> String {
+            let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = code[at..].find("\n    }\n").expect("end of fn");
+            code[at..at + end].to_string()
+        };
+        // On the bottom edge: the split that STACKS panes.
+        assert!(
+            code.contains("let split_down = self.split_button(SplitDir::Col, scale, cx);"),
+            "the bottom bezel's split is the one that stacks panes"
+        );
+        // On the right edge: the split that sets them SIDE BY SIDE, at the foot
+        // of the column the attention pill heads — drawn even with the pill off.
+        let spine = body("    fn render_spine(&self");
+        assert!(
+            spine.contains("self.split_button(SplitDir::Row, s, cx)"),
+            "the right-hand column carries the side-by-side split"
+        );
+        assert!(
+            !spine.contains("return None"),
+            "the column is drawn whether or not the pill is on, or the split \
+             loses its edge with TD_SPINE=0"
+        );
+        // One builder, drawn glyphs, and neither typed glyph anywhere.
+        let button = body("    fn split_button(");
+        assert!(
+            button.contains("Self::split_glyph(dir,"),
+            "both buttons draw their glyph rather than typing one"
+        );
+        for typed in ['\u{25e7}', '\u{2b13}'] {
+            assert!(
+                !code.contains(typed),
+                "{typed} is typed into the chrome again — a fallback font drew \
+                 U+2B13 as an outline, which is the bug this replaced"
+            );
+        }
+        // The glyph fills the half the new pane opens into, and each button
+        // stands on the edge its fill points at: right half for a side-by-side
+        // split, bottom half for a stacked one — the new half is always the
+        // SECOND child of a row or a column.
+        let glyph = body("    fn split_glyph(");
+        assert!(
+            glyph.contains("SplitDir::Row => frame.flex_row().child(old).child(new)")
+                && glyph.contains("SplitDir::Col => frame.flex_col().child(old).child(new)")
+                && glyph.contains("div().flex_1().bg(ink)"),
+            "the filled half is the new pane's: right for Row, bottom for Col"
+        );
+        // And the bottom bezel stops short of the column, so its split meets
+        // the corner rather than running under the one above it.
+        assert!(
+            code.contains(".pr(px(RIGHT_COLUMN_W * scale + 8.))")
+                && spine.contains(".w(px((RIGHT_COLUMN_W - 4.) * s))")
+                && spine.contains(".ml(px(4. * s))"),
+            "the bezel's right inset and the column's footprint are one number"
         );
     }
 
@@ -30693,6 +34504,72 @@ mod tests {
             pane_src[at..at + end].contains("cx.stop_propagation();"),
             "a pane that sized itself must halt the wheel, or this handler \
              sizes the menu bar off the same notch"
+        );
+    }
+
+    /// Guard the separate dispatch branches: a turn jump cannot consume Alt.
+    #[test]
+    fn ctrl_vertical_arrows_jump_human_turns_and_alt_keeps_pane_focus() {
+        let code = shipped_code();
+        let at = code
+            .find("    fn on_key(&mut self, ev: &KeyDownEvent")
+            .unwrap();
+        let end = code[at..].find("\n    }\n").unwrap();
+        let body = &code[at..at + end];
+        let jump = body
+            .find("self.jump_human_turn(p, ks.key.as_str() == \"down\", window, cx)")
+            .unwrap();
+        let ctrl = body
+            .find("if keylayer::human_turn_chord(&pane::keylayer_key(ks))")
+            .unwrap();
+        let alt = body.rfind("if m.alt && !m.control").unwrap();
+        assert!(ctrl < jump && jump < alt);
+        assert!(!body[alt..].contains("jump_human_turn"));
+        assert!(body[alt..].contains("self.focus_dir(ks.key.as_str(), window, cx)"));
+        assert!(body[ctrl..jump].contains("p.read(cx).mode.is_agent()"));
+        assert!(pane::PaneMode::Claude.is_agent());
+        assert!(pane::PaneMode::Codex.is_agent());
+        assert!(!pane::PaneMode::Shell.is_agent());
+    }
+
+    /// The window's half of the size chords steps as its wheel does.
+    ///
+    /// ctrl+shift+= / ctrl+shift+- is ctrl+wheel over the chrome from the
+    /// keyboard, and with the FOCUS reader up ctrl+= / ctrl+- is ctrl+wheel
+    /// over the reader. The pane declines exactly those two cases
+    /// (`TerminalView::size_key`, held by its behaviour tests), so this branch
+    /// is where they land. Asked of the one table, stepped by the wheels' own
+    /// steps, and never sizing a pane's text, which is the pane's to do.
+    ///
+    /// Mutation-tested: an open-coded outer step, an open-coded reader step,
+    /// and a branch that turns the pane's text dial each fail this test.
+    #[test]
+    fn the_windows_size_chords_step_as_its_wheels_do() {
+        let code = shipped_code();
+        let at = code
+            .find("    fn on_key(&mut self, ev: &KeyDownEvent")
+            .expect("Workspace::on_key");
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        let body = &code[at..at + end];
+        let chord = body
+            .find("keylayer::size_chord(&pane::keylayer_key(ks))")
+            .expect("the window must ask the one table which chord this is");
+        let branch = &body[chord..];
+        let branch = &branch[..branch
+            .find("\n            return;\n        }")
+            .expect("the branch ends by keeping the key")];
+
+        assert!(
+            branch.contains("theme::GradeKey::Scale.nudged(cur, notches)"),
+            "the outer pair steps the menu-bar dial by the wheel's own notch"
+        );
+        assert!(
+            branch.contains("Self::focus_zoom_step(self.focus_zoom, notches)"),
+            "with the reader up, the plain pair steps the reader as its wheel does"
+        );
+        assert!(
+            !branch.contains("GradeKey::TextSize") && !branch.contains("nudge_size"),
+            "the window never sizes a pane's text: the pane answers that pair itself"
         );
     }
 
@@ -30800,8 +34677,12 @@ mod tests {
         let c = EngKey::Unfiled;
         let keys = [a, b, c];
         let secs = |n: u64| Duration::from_secs(n);
-        // active stale → active, however stale the others are
+        // Ties prefer the active branch; older unseen branches cannot starve.
         assert_eq!(next_stale(&keys, |_| secs(999)), Some(a));
+        assert_eq!(
+            next_stale(&keys, |k| if *k == a { secs(21) } else { secs(90) }),
+            Some(b)
+        );
         // active fresh → the stalest of the others
         let age = |k: &EngKey| match k {
             EngKey::Project(_) => secs(1),
@@ -30857,7 +34738,9 @@ mod tests {
             ("render_logo_picker", 1),
             ("render_paint_outer", 1),
             ("render_rail", 1),
-            ("render", 5),
+            // Five until 2026-09-29, when the FOCUS reader's scrim moved into
+            // `reader_scrim`, built through `over_the_glass`.
+            ("render", 4),
         ];
         assert!(
             sites.iter().any(|(n, _)| n == "over_the_glass"),
@@ -30957,7 +34840,7 @@ mod tests {
             "border_2()",
             "th.accent.alpha(0.85)",
             "darken(th.surface, 0.45)",
-            "float_shadows(th.accent)",
+            "float_shadows(th.accent, th.grade.phosphor)",
         ] {
             assert!(
                 panel.contains(token),
@@ -30987,7 +34870,11 @@ mod tests {
         let known: &[(&str, usize)] = &[
             ("render_savings_overlay", 1),
             ("render_bar_slot", 1),
-            ("render", 2),
+            ("terminal_state_toggle", 1),
+            // Concise palette help, including Custom's interactive editor link.
+            ("palette_help", 2),
+            // the corner's two split buttons, both built by this one function
+            ("split_button", 1),
         ];
         for (name, count) in &hung {
             assert_eq!(
@@ -31084,28 +34971,28 @@ mod tests {
         );
     }
 
-    /// The FOCUS reader names the dial it turns instead of guessing at one.
+    /// The FOCUS reader turns its own size dial, and never the pane's.
     ///
     /// Its scrim `.occlude()`s the whole window, so the reader's own wheel
-    /// handler is the only one a flick reaches — and where the pointer happens
-    /// to be says nothing about which region of the mirrored pane is being
-    /// read. The reader mirrors the GRID on both faces (see
-    /// `the_focus_reader_mirrors_the_grid_on_both_faces` in pane.rs), so the
-    /// grid's dial is the answer and it is written down here rather than
-    /// resolved from a cursor that is standing on a modal.
+    /// handler is the only one a flick reaches. Until 2026-09-29 the reader's
+    /// letters were the pane's scaled to the glass, so the chord turned the
+    /// pane's text dial. The reader now has a size of its own, and turning the
+    /// pane's dial would resize a pane nobody is looking at while the reader
+    /// followed along — so the chord steps the reader's zoom, and the pane's
+    /// text size must not appear in the branch at all.
     ///
     /// It also has to HALT, and take ctrl before the pan. Before that the chord
     /// scrolled the reader and — propagation never stopped — resized the outer
     /// bar behind it, off one flick.
     ///
-    /// Mutation-tested: dropping the halt, putting the pan first, and swapping
-    /// the named dial for the bench's each fail this test.
+    /// Mutation-tested: dropping the halt, putting the pan first, and turning
+    /// the pane's text dial again each fail this test.
     #[test]
     fn the_focus_reader_does_not_pan_on_the_size_chord() {
         let code = shipped_code();
         let at = code
-            .find("if let Some(pane) = ws.focus_read.as_ref()")
-            .expect("the FOCUS reader's wheel handler");
+            .find("if ws.focus_overflow > 0.0")
+            .expect("the FOCUS reader's wheel pan");
         // Back up to the top of the listener so the ctrl branch is in view.
         let at = code[..at]
             .rfind(".on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent")
@@ -31129,10 +35016,14 @@ mod tests {
 
         let branch = &body[ctrl..pan];
         assert!(
-            branch.contains("theme::GradeKey::TextSize"),
-            "the reader mirrors the GRID, so the grid's dial is the one it \
-             turns — and it says so, rather than resolving a region from a \
-             pointer that is standing on the scrim"
+            branch.contains("Self::focus_zoom_step(ws.focus_zoom, notches)"),
+            "the reader has its own size, so the chord steps the reader's zoom"
+        );
+        assert!(
+            !branch.contains("GradeKey::TextSize"),
+            "the chord must leave the pane's text size alone: the reader no \
+             longer draws the pane's letters scaled up, so resizing the pane \
+             would change a pane nobody is looking at"
         );
         assert!(
             branch.contains("theme::wheel_notches("),
@@ -31145,17 +35036,103 @@ mod tests {
         );
     }
 
+    /// The reader opens a narrow pane at the pane's own letters, as wide as the
+    /// glass — the case it is opened for.
+    ///
+    /// Parker's window on 2026-09-29: 1,576 × 950 logical px, cells 6.19 px wide
+    /// and 14.73 tall (JetBrains Mono at 14 px, 20 px rows, text grade 0.7365).
+    /// Until then a 48 × 51 pane opened at 3.65× its letters with its own 48
+    /// columns across the glass, about twelve rows at a time, and the slider's
+    /// smallest setting was still 1.28×. Parker: "If I open a reader for a tiny,
+    /// tiny pane, it's exactly because it's a tiny pane and I can't read it."
+    #[test]
+    fn the_reader_opens_a_narrow_pane_at_its_own_letters_across_the_glass() {
+        let glass = ReaderGlass::in_window(1576.0, 950.0);
+        let (cell_w, cell_h) = (14.0 * 0.7365 * 0.6, 20.0 * 0.7365);
+        let fit = (glass.avail_w / (48.0 * cell_w))
+            .min(glass.avail_h / (51.0 * cell_h))
+            .clamp(0.7, 6.0);
+
+        let ms = Workspace::reader_scale(false, fit, 1.0);
+        assert_eq!(
+            ms, 1.0,
+            "a flat read opens at the pane's own letters, whatever its width"
+        );
+        assert_eq!((glass.avail_w / (cell_w * ms)).floor() as usize, 175);
+        assert_eq!((glass.avail_h / (cell_h * ms)).floor() as usize, 46);
+
+        assert!(
+            Workspace::reader_scale(false, fit, Workspace::FZ_MIN) < 1.0,
+            "the slider can still go below the pane's letters for a dense read"
+        );
+        assert!(
+            Workspace::reader_scale(false, fit, Workspace::FZ_MAX) > 2.0,
+            "…and well above them for a big one"
+        );
+        assert!(
+            (Workspace::reader_scale(true, fit, 1.0) - fit).abs() < 1e-6,
+            "crawl never wraps, so it alone keeps fitting the grid to the glass"
+        );
+    }
+
+    /// Ctrl+wheel over the reader steps its own zoom: evenly, reversibly, and
+    /// only within the slider's range.
+    #[test]
+    fn ctrl_wheel_steps_the_readers_zoom_evenly_within_the_slider() {
+        let up = Workspace::focus_zoom_step(1.0, 1.0);
+        assert!(
+            (up - 1.1).abs() < 1e-6,
+            "one notch away enlarges by a tenth"
+        );
+        let back = Workspace::focus_zoom_step(up, -1.0);
+        assert!(
+            (back - 1.0).abs() < 1e-6,
+            "a notch each way comes back to the start"
+        );
+        assert_eq!(Workspace::focus_zoom_step(2.4, 5.0), Workspace::FZ_MAX);
+        assert_eq!(Workspace::focus_zoom_step(0.55, -5.0), Workspace::FZ_MIN);
+    }
+
+    /// The reader's text frame is the glass, never the pane's width.
+    ///
+    /// The frame used to be the pane's grid width at the reader's zoom, which is
+    /// what held a narrow pane's read to its own few columns however wide the
+    /// glass was. A mutation back to that fails here.
+    #[test]
+    fn the_reader_frames_its_text_at_the_glass_not_the_pane() {
+        let code = shipped_code();
+        // The terminal's read, not a document's: the document overlay has a
+        // glass of its own and no text frame.
+        let terminal = code
+            .find("v.mirror_snapshot(cx));")
+            .expect("the FOCUS overlay reading the terminal");
+        let overlay = terminal
+            + code[terminal..]
+                .find("} = glass;")
+                .expect("the FOCUS overlay's glass");
+        let at = overlay
+            + code[overlay..]
+                .find("let body_w =")
+                .expect("the reader's text frame");
+        let stmt = &code[at..at + code[at..].find(';').expect("end of statement")];
+        assert!(
+            !stmt.contains("snap.cols"),
+            "the reader's frame must not come from the pane's columns: `{stmt}`"
+        );
+    }
+
     /// The header's top-left corner says which PROGRAM this is once, in a mark,
-    /// and then says something that changes.
+    /// then the project's state, and the ticker hangs straight off it.
     ///
     /// It used to read `▸ TERMINAL DELIGHT` — the widest thing on the busiest
     /// row, spent on a string that never changes and that the window title
-    /// already carries. The strip heading below it said the active branch's
-    /// name, so a session whose project is called Terminal Delight printed the
-    /// same three words twice, stacked, in the two most prominent places in the
-    /// window. The mark does the identifying; the words do the informing.
+    /// already carries. Then it named the branch, then the project, as a
+    /// standing label; Parker: *"scrap the standing project / group label"*
+    /// and *"hang our ticker to start over there"*. The mark does the
+    /// identifying, the badge and the ticker do the informing, and the tree
+    /// says where you are standing.
     #[test]
-    fn the_header_corner_carries_the_mark_and_the_projects_state() {
+    fn the_header_corner_carries_window_attention_and_retires_the_ticker() {
         let src = shipped_src();
         let region = |sig: &str| -> &str {
             let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
@@ -31168,9 +35145,16 @@ mod tests {
             "the corner draws the app's own mark"
         );
         assert!(
-            top.contains("self.place_name(None,"),
-            "…and beside it, the project this window is standing in, at its \
-             natural width"
+            top.contains(".child(self.eng_badge(13. * scale, cx))"),
+            "…and beside it, the badge of the project this window is standing in"
+        );
+        // No standing name. Parker: "scrap the standing project / group
+        // label" — the tree's washed rows say where you are standing now.
+        // Read from code, so this comment cannot answer it.
+        let code = shipped_code();
+        assert!(
+            !code.contains("fn place_name(") && !top.contains("eng_key_name("),
+            "the corner no longer names the project or group"
         );
         // The words are gone. Spelled in pieces so this test's own source does
         // not answer the search — see `shipped_src`.
@@ -31201,7 +35185,7 @@ mod tests {
         let choice = region("let middle: gpui::AnyElement");
         assert!(
             choice.contains("if self.left_bar")
-                && choice.contains("self.render_ticker(")
+                && choice.contains("div().flex_1()")
                 && choice.contains("tab_strip.into_any_element()"),
             "the middle is the rail with the tree open and the strip with it \
              shut — both, chosen by self.left_bar"
@@ -31218,35 +35202,286 @@ mod tests {
             !row_head.contains(".gap(px("),
             "the mother bar's row must carry no gap"
         );
-        // The corner names the PROJECT, uppercase as the tree draws it, and
-        // carries the badge — never the branch. Switching tabs must not
-        // change the corner; switching projects must.
-        let name = {
-            let at = src.find("    fn place_name").expect("place_name");
+        // The ticker HANGS OFF the corner: the corner, then the void, then the
+        // middle — nothing between them to push the ticker across the row.
+        let corner = top.find(".child(self.eng_badge(").expect("the badge");
+        let void = top.find("w(px(strip_void))").expect("the void");
+        let middle = top.find(".child(middle)").expect("the middle");
+        assert!(
+            corner < void && void < middle,
+            "the ticker must start straight after the corner's badge"
+        );
+        // The badge is read by the key the scan uses — a project, else a
+        // top-level group, else the loose tabs — so it is always about the
+        // branch the ticker is reading for.
+        let badge = {
+            let at = src.find("    fn eng_badge").expect("eng_badge");
             let end = src[at..].find("\n    }\n").expect("end of fn");
             &src[at..at + end]
         };
         assert!(
-            name.contains("width: Option<f32>") && name.contains("pt: f32"),
-            "place_name takes its column width and its size from the caller"
+            badge.contains("self.coordination_store().snapshot"),
+            "the badge must read the same key the ticker reads"
+        );
+    }
+
+    /// The tree washes the rows you are standing in: the active task's
+    /// project and its group, and nothing else.
+    #[test]
+    fn the_tree_marks_the_project_and_group_the_active_task_stands_in() {
+        let grouped = tree::Place {
+            project: Some(3),
+            initiative: Some(7),
+        };
+        assert!(BarBranch::Project(3).holds(grouped), "its project");
+        assert!(BarBranch::Initiative(7).holds(grouped), "its group");
+        assert!(
+            !BarBranch::Project(4).holds(grouped),
+            "not a sibling project"
         );
         assert!(
-            name.contains(".child(name.to_uppercase())"),
-            "the corner spells the project the way the tree does"
+            !BarBranch::Initiative(8).holds(grouped),
+            "not a sibling group"
+        );
+        assert!(!BarBranch::Unfiled.holds(grouped), "never the divider");
+        let loose = tree::Place::default();
+        for b in [
+            BarBranch::Project(3),
+            BarBranch::Initiative(7),
+            BarBranch::Unfiled,
+        ] {
+            assert!(!b.holds(loose), "a loose task stands in no branch: {b:?}");
+        }
+        // Drawn from the same place the rest of the tree reads, faint, and the
+        // only mark of where you are: the pinned light it used to sit under is
+        // gone with the pins (#757).
+        let code = shipped_code();
+        let row = {
+            let at = code.find("    fn branch_row(").expect("branch_row");
+            let end = code[at..].find("\n    }\n").expect("end of fn");
+            code[at..at + end].to_string()
+        };
+        assert!(
+            row.contains("branch.holds(self.place_of(self.active))") && row.contains(".when(here,"),
+            "the wash is decided by where the active task actually is"
         );
         assert!(
-            name.contains("self.eng_badge(pt, cx)"),
-            "the corner carries the isolation badge"
+            !row.contains("scoped") && !row.contains("border_l_2()"),
+            "no row wears a pinned light any more"
         );
         assert!(
-            name.contains("self.eng_key()") && name.contains("self.eng_key_name("),
-            "the corner must name the branch the rail READS for, by the same key \
-             the scan uses — a project, else a top-level group, else nothing. \
-             Naming the project alone drew a bare mark over Parker's JOB group"
+            STANDING_WASH < 0.12,
+            "fainter than the hover, or it stops being a faint indicator"
+        );
+    }
+
+    /// A click on a branch row goes there — the strip's chips' act — and pins
+    /// nothing.
+    ///
+    /// A row click used to pin the strip's scope and light the row. Once the
+    /// shut strip stopped obeying pins, the light claimed a narrowing nothing
+    /// drew. Parker, on retiring pins rather than inventing a meaning for
+    /// them: *"Concur - go ahead"* (#757).
+    #[test]
+    fn a_branch_row_click_goes_there_and_pins_nothing() {
+        let at = |project: Option<u32>, initiative: Option<u32>| tree::Place {
+            project,
+            initiative,
+        };
+        let places = [
+            at(Some(12), Some(11)), // 0
+            at(Some(12), None),     // 1
+            at(Some(12), Some(13)), // 2
+            at(Some(7), None),      // 3
+            at(None, None),         // 4
+        ];
+        // Somewhere else: the branch's first tab, in tab order.
+        assert_eq!(
+            branch_landing(&places, 3, BarBranch::Initiative(13)),
+            Some(2)
+        );
+        assert_eq!(branch_landing(&places, 3, BarBranch::Project(12)), Some(0));
+        assert_eq!(branch_landing(&places, 0, BarBranch::Project(7)), Some(3));
+        assert_eq!(branch_landing(&places, 0, BarBranch::Unfiled), Some(4));
+        // Already there: nothing to do — a click on where you stand moves
+        // nothing, grouped or loose, project or group.
+        assert_eq!(branch_landing(&places, 2, BarBranch::Initiative(13)), None);
+        assert_eq!(branch_landing(&places, 1, BarBranch::Project(12)), None);
+        assert_eq!(branch_landing(&places, 2, BarBranch::Project(12)), None);
+        assert_eq!(branch_landing(&places, 4, BarBranch::Unfiled), None);
+        // A branch with no tab has nowhere to go.
+        assert_eq!(branch_landing(&places, 0, BarBranch::Initiative(99)), None);
+
+        // And the click paths really go, rather than pin.
+        let code = shipped_code();
+        let up = body_of(&code, "fn on_mouse_up");
+        assert!(
+            up.contains("self.go_to_branch(branch, window, cx);"),
+            "a branch row released without a drag goes to its branch"
         );
         assert!(
-            !name.contains("group_title"),
-            "the corner never draws the strip's old group heading"
+            !code.contains("fn set_scope(") && !code.contains(".toggled("),
+            "nothing sets or toggles a pin any more"
+        );
+        let go = body_of(&code, "fn go_to_branch");
+        assert!(
+            go.contains("branch_landing(&self.places(), self.active, branch)")
+                && go.contains("self.activate_tab(i, window, cx);"),
+            "going to a branch is activating its landing tab, nothing more"
+        );
+    }
+
+    /// The tree's actions row carries no scope text.
+    ///
+    /// The chip named what the tab strip was carrying and toggled it, but with
+    /// the tree open the strip is not drawn, so it changed nothing anybody could
+    /// see — Parker: *"doesn't do anything anymore"*, *"we clear out the text in
+    /// the tree actions row"*.
+    #[test]
+    fn the_tree_actions_row_carries_no_scope_text() {
+        let code = shipped_code();
+        let bar = {
+            let at = code
+                .find("    fn render_left_bar(")
+                .expect("render_left_bar");
+            let end = code[at..].find("\n    }\n").expect("end of fn");
+            code[at..at + end].to_string()
+        };
+        assert!(
+            !bar.contains("bar-scope") && !bar.contains("scope_label"),
+            "the scope chip is gone from the actions row"
+        );
+        // The three buttons stay, at the right-hand end.
+        for id in ["bar-fold-all", "bar-new-project", "bar-hide"] {
+            assert!(bar.contains(id), "the actions row lost {id}");
+        }
+    }
+
+    /// With the tree shut, the strip reads project › groups › your group's
+    /// tabs, and the groups are chips, not tabs.
+    ///
+    /// Parker, on the shut strip reading `▶ Research ×` with nothing before it:
+    /// *"we should see project > group > tab vernacular"*; then, on a first cut
+    /// whose project step flattened the strip into every tab in the project:
+    /// *"the PROJECT > GROUPS (should have similar NON TAB appearance and
+    /// project) > showing sibling tabs is proper"*.
+    #[test]
+    fn the_shut_strip_reads_project_then_groups_then_your_groups_tabs() {
+        let at = |project: Option<u32>, initiative: Option<u32>| tree::Place {
+            project,
+            initiative,
+        };
+        // A project (12) with a loose tab, two groups (11, 13), and a
+        // top-level group (40) and an unfiled tab elsewhere in the session.
+        let places = [
+            at(Some(12), Some(11)), // 0
+            at(Some(12), None),     // 1 — the project's own
+            at(Some(12), Some(13)), // 2
+            at(None, Some(40)),     // 3
+            at(Some(12), Some(13)), // 4
+            at(None, None),         // 5
+        ];
+        // Standing in group 13: the project, then its groups in the tree's
+        // order, 13 lit; the project can take you to its own tab.
+        assert_eq!(
+            strip_chips(&places, 4),
+            vec![
+                StripChip::Project {
+                    id: 12,
+                    lit: false,
+                    go: Some(1)
+                },
+                StripChip::Group {
+                    id: 11,
+                    lit: false,
+                    go: 0
+                },
+                StripChip::Group {
+                    id: 13,
+                    lit: true,
+                    go: 2
+                },
+            ]
+        );
+        // Standing in the project's own tabs: the project is lit, no group is.
+        let loose = strip_chips(&places, 1);
+        assert_eq!(
+            loose[0],
+            StripChip::Project {
+                id: 12,
+                lit: true,
+                go: Some(1)
+            }
+        );
+        assert!(loose[1..]
+            .iter()
+            .all(|c| matches!(c, StripChip::Group { lit: false, .. })));
+        // Another project's groups never appear, and a top-level group heads
+        // its own strip alone.
+        assert_eq!(
+            strip_chips(&places, 3),
+            vec![StripChip::Group {
+                id: 40,
+                lit: true,
+                go: 3
+            }]
+        );
+        // Filed nowhere: no head at all.
+        assert!(strip_chips(&places, 5).is_empty());
+        // A project whose every tab is in a group has nowhere of its own.
+        let all_grouped = [at(Some(7), Some(1)), at(Some(7), Some(2))];
+        assert_eq!(
+            strip_chips(&all_grouped, 1)[0],
+            StripChip::Project {
+                id: 7,
+                lit: false,
+                go: None
+            }
+        );
+
+        // And the strip really is built that way.
+        let code = shipped_code();
+        let strip = {
+            let at = code.find("let mut tab_strip = div()").expect("the strip");
+            let end = code[at..].find("let caret_at =").expect("the tabs");
+            code[at..at + end].to_string()
+        };
+        let shut = strip
+            .find("if !self.left_bar {")
+            .expect("the shut-tree branch");
+        let head = strip
+            .find("self.render_strip_head(scale, cx)")
+            .expect("the head");
+        assert!(
+            shut < head,
+            "the head is drawn in the shut-tree strip, where no tree says where \
+             the tabs live"
+        );
+        // Your group's tabs, always: there is no pin left to widen them.
+        assert!(
+            strip.contains("tree::family(&places, self.active)"),
+            "the strip carries your group's tabs, never a pinned project's"
+        );
+        // Chips, not tabs: no bezel, and a press goes to the branch rather than
+        // re-scoping the strip.
+        let chip = {
+            let at = code.find("    fn strip_chip(").expect("strip_chip");
+            let end = code[at..].find("\n    }\n").expect("end of fn");
+            code[at..at + end].to_string()
+        };
+        assert!(
+            !chip.contains("bezel") && !chip.contains("sk.tab("),
+            "a chip must not wear a tab's or a button's frame"
+        );
+        assert!(
+            chip.contains("cx.stop_propagation();")
+                && chip.contains("ws.activate_tab(to, window, cx);")
+                && !chip.contains("set_scope"),
+            "a chip goes to its branch, and never flattens the strip"
+        );
+        assert!(
+            code.contains(".child(\"\\u{203a}\")"),
+            "the levels are joined by ›, the breadcrumb's own separator"
         );
     }
 
@@ -31358,23 +35593,38 @@ mod tests {
         }
     }
 
-    /// The agent wall opens from the rollup that summarises it.
+    /// The agent wall opens from the counter that summarises it, and that
+    /// counter is in the top right.
     ///
-    /// It used to open from a robot glyph in the top right — three feet of
-    /// screen from the counter saying the thing you were about to go and look
-    /// at. A rollup that opens the full view is one control instead of two, and
-    /// the survivor is the one carrying the numbers.
+    /// The wall used to open from a robot glyph in the top right — three feet
+    /// of screen from the counter saying the thing you were about to go and
+    /// look at. A rollup that opens the full view is one control instead of
+    /// two, and the survivor is the one carrying the numbers. It lived in the
+    /// tree's bottom slot until Parker put it where the glyph had been:
+    /// *"Agents counter is in the top right"*.
     #[test]
-    fn the_agent_wall_opens_from_the_rollup_it_summarises() {
+    fn the_agent_wall_opens_from_the_counter_that_summarises_it() {
         let src = shipped_src();
-        let slot = {
-            let at = src.find("fn render_bar_slot").expect("the slot");
+        let body = |sig: &str| -> &str {
+            let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
             let end = src[at..].find("\n    }\n").expect("end of fn");
             &src[at..at + end]
         };
+        let counter = body("    fn render_agent_counter(");
         assert!(
-            slot.contains("slot-agent-rollup") && slot.contains("ws.mcp_menu = true"),
-            "the rollup line must be the wall's door"
+            counter.contains(".id(\"agent-rollup\")") && counter.contains("ws.mcp_menu = true"),
+            "the counter must be the wall's door"
+        );
+        assert!(
+            counter.contains("cx.stop_propagation();"),
+            "…and stop the press there, or it also arms the mother bar's move \
+             handle underneath it"
+        );
+        // One counter, in one place.
+        let slot = body("fn render_bar_slot");
+        assert!(
+            !slot.contains("self.slot_tally(") && !slot.contains("mcp_menu"),
+            "the tree's bottom slot no longer carries a second counter"
         );
         // The glyph it replaced is gone from the chrome — needle in pieces.
         let old_button = ["ic", "mcp"].join("_");
@@ -31394,10 +35644,82 @@ mod tests {
             "the … menu must still list the agent wall, for a closed left bar"
         );
         assert!(
-            more.contains(".bottom(px(") && more.contains(".left(px("),
-            "and the … panel opens under its own button, which is bottom-left \
+            more.contains("over_the_footer(div().id(\"more-panel\")"),
+            "and the … panel opens over its own button, which is bottom-right \
              now — a menu that opens at the far corner reads as a different \
              control firing"
+        );
+        let scale = {
+            let at = src.find("let scale_overlay =").expect("the scale menu");
+            let end = src[at..].find("\n        let ").expect("end of region");
+            &src[at..at + end]
+        };
+        assert!(
+            scale.contains("over_the_footer(div().id(\"scale-panel\")")
+                && !scale.contains(".top(px("),
+            "the scale's panel opens over its button at the bottom right, not \
+             where the button used to be"
+        );
+    }
+
+    /// Every panel the bottom-right controls raise opens over them.
+    ///
+    /// The scale and the `…` menu moved with their buttons; the theme and
+    /// display trays kept hanging from under the top bar, at the far end of
+    /// the window from the glyphs that raise them. Now all four take their
+    /// anchor from `over_the_footer`, and the two trays measure their height
+    /// cap from the top of the band they rise into.
+    #[test]
+    fn every_panel_the_bottom_right_controls_raise_opens_over_them() {
+        let code = shipped_code();
+        let region = |sig: &str| -> String {
+            let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+            let end = code[at..].find("\n        let ").expect("end of region");
+            code[at..at + end].to_string()
+        };
+        // The one anchor: up from the footer, in from the right-hand column.
+        let anchor = body_of(&code, "fn over_the_footer");
+        assert!(
+            anchor.contains(".bottom(px((pane::HICON + 10.) * scale))")
+                && anchor.contains(".right(px(RIGHT_COLUMN_W * scale + 12.))"),
+            "the footer anchor must rise from above the bottom bezel and stop \
+             at the right-hand column"
+        );
+        // Both trays use it when they are raised from the glyph row, and cap
+        // their height from the band's top rather than from a fixed 36.
+        for (what, sig, id) in [
+            ("theme", "let menu_overlay =", "theme-panel"),
+            ("display", "let osd_overlay =", "osd-panel"),
+        ] {
+            let tray = region(sig);
+            assert!(
+                tray.contains(&format!("\"{id}\"")),
+                "the {what} tray region no longer holds its panel"
+            );
+            assert!(
+                tray.contains("None => over_the_footer(panel, scale),"),
+                "the {what} tray, raised from the glyph row, must open over it"
+            );
+            assert!(
+                tray.contains("None => self.tray_band().0,"),
+                "the {what} tray rises, so its cap is measured from the band's top"
+            );
+            assert!(
+                !tray.contains("None => panel.top(px(tray_top))"),
+                "the {what} tray still hangs from under the top bar"
+            );
+        }
+        // Four panels, one anchor — no fifth copy of the numbers anywhere.
+        assert_eq!(
+            code.matches("over_the_footer(").count(),
+            4,
+            "the scale, the … menu and the two trays are the panels the \
+             bottom-right controls raise"
+        );
+        assert_eq!(
+            code.matches("(pane::HICON + 10.) * scale").count(),
+            1,
+            "the footer offset is spelled once, in over_the_footer"
         );
     }
 
@@ -31442,6 +35764,7 @@ mod tests {
 
     fn leaf_with(pane_id: Option<u64>, cwd: &str, resume: Option<&str>) -> SavedNode {
         SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: Some(cwd.into()),
             resume: resume.map(str::to_string),
@@ -31449,6 +35772,7 @@ mod tests {
             logo: None,
             note: None,
             pane_id,
+            document: None,
         }
     }
 
@@ -31591,7 +35915,7 @@ mod tests {
             .map(|t| {
                 let mut work = vec![];
                 t.node
-                    .for_each_claim(&mut |_, resume, _| work.push(resume.clone()));
+                    .for_each_claim(&mut |_, _, resume, _| work.push(resume.clone()));
                 (t.name.clone(), work)
             })
             .collect()
@@ -31827,6 +36151,8 @@ mod tests {
             plan.tabs,
             vec![vec![LeafPlan::Respawn {
                 restore: session::PaneRestore {
+                    program: None,
+                    mark: None,
                     cwd: Some("/work".into()),
                     resume: Some("codex resume abc".into()),
                     logo: None,
@@ -32243,6 +36569,512 @@ mod tests {
         // the invariant, not the values.
         const _: () = assert!(MAX_PANES < LEGACY_PANE_CEILING);
         const _: () = assert!(LEGACY_PANE_CEILING == 8, "the CRT warp draws eight tubes");
+    }
+
+    // ── off-limits to agents ───────────────────────────────────────────────
+
+    /// The mark survives a restart, is written only when set, and every file
+    /// written before it existed reads back as NOT marked — how those panes
+    /// behaved.
+    ///
+    /// Mutation-tested: dropping `#[serde(default)]` from the reader's field,
+    /// and writing the field when false, each fail this.
+    #[test]
+    fn the_off_limits_mark_survives_a_restart_and_old_files_read_unmarked() {
+        let marked = SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: Some("/work".into()),
+            resume: None,
+            name: None,
+            logo: None,
+            note: None,
+            pane_id: Some(7),
+            document: None,
+            off_limits: true,
+        };
+        let text = toml::to_string(&marked).expect("a leaf serialises");
+        assert!(text.contains("off_limits = true"), "{text}");
+        let back: SavedNode = toml::from_str(&text).expect("and reads back");
+        assert!(matches!(
+            back,
+            SavedNode::Leaf {
+                off_limits: true,
+                ..
+            }
+        ));
+
+        let plain = SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: Some("/work".into()),
+            resume: None,
+            name: None,
+            logo: None,
+            note: None,
+            pane_id: Some(7),
+            document: None,
+            off_limits: false,
+        };
+        let text = toml::to_string(&plain).expect("a leaf serialises");
+        assert!(!text.contains("off_limits"), "false is not written: {text}");
+
+        // A leaf as every file before today wrote it.
+        let old: SavedNode =
+            toml::from_str("[Leaf]\ncwd = \"/work\"\npane_id = 7\n").expect("an old leaf reads");
+        assert!(matches!(
+            old,
+            SavedNode::Leaf {
+                off_limits: false,
+                ..
+            }
+        ));
+    }
+
+    /// Only a person sets or lifts the mark. The one writer of a pane's
+    /// `off_limits` outside the two restores is `toggle_off_limits`, and the
+    /// one caller of that is the right-click menu — no control-socket verb, no
+    /// MCP verb and nothing in the workspace reaches it, because the control
+    /// socket and MCP both answer agents, and a mark an agent could lift would
+    /// be decoration.
+    ///
+    /// Scanned with comments skipped, so a sentence about the field cannot
+    /// pass for a write, and keyed on the owning function, so a new write
+    /// fails here by name rather than by count.
+    ///
+    /// Mutation-tested: a `ctl` verb that sets the mark, and a second call to
+    /// the toggle, each fail this.
+    #[test]
+    fn only_a_person_sets_or_lifts_off_limits() {
+        let cut = |src: &'static str, marker: &str| -> &'static str {
+            &src[..src.find(marker).unwrap_or(src.len())]
+        };
+        let main_code = cut(
+            include_str!("main.rs"),
+            "\n#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests",
+        );
+        let files = [
+            ("main.rs", main_code),
+            ("pane.rs", cut(include_str!("pane.rs"), "\n#[cfg(test)]")),
+            ("ctl.rs", cut(include_str!("ctl.rs"), "\n#[cfg(test)]")),
+            ("mcp.rs", cut(include_str!("mcp.rs"), "\n#[cfg(test)]")),
+            (
+                "mcp_transport.rs",
+                cut(include_str!("mcp_transport.rs"), "\n#[cfg(test)]"),
+            ),
+        ];
+        let mut writes = Vec::new();
+        let mut toggles = Vec::new();
+        let mut sets = Vec::new();
+        for (file, code) in files {
+            let mut owner = "<file>";
+            for line in code.lines() {
+                let t = line.trim_start();
+                if t.starts_with("//") {
+                    continue;
+                }
+                if let Some(rest) = ["fn ", "pub fn ", "pub(crate) fn ", "pub(super) fn "]
+                    .iter()
+                    .find_map(|p| t.strip_prefix(p))
+                {
+                    owner = rest.split(['(', '<']).next().unwrap_or(rest);
+                }
+                if t.contains(".off_limits = ") {
+                    writes.push(format!("{file} {owner}: {t}"));
+                }
+                if t.contains("toggle_off_limits(") && !t.contains("fn toggle_off_limits(") {
+                    toggles.push(format!("{file} {owner}: {t}"));
+                }
+                if t.contains("set_off_limits(") && !t.contains("fn set_off_limits(") {
+                    sets.push(format!("{file} {owner}: {t}"));
+                }
+            }
+        }
+        // The second person's path: a Yes on the rail to an agent's ask. It sets
+        // the mark through the same toggle, and it is reached from the rail's
+        // answer and nowhere else — `access::tests` keeps the two agent-facing
+        // files from naming that answer.
+        assert_eq!(
+            sets,
+            vec!["main.rs rail_answer: v.set_off_limits(mark, cx);"],
+            "the mark is set from somewhere other than a person's answer on the rail"
+        );
+        writes.sort();
+        assert_eq!(
+            writes,
+            vec![
+                "main.rs build_node: view.off_limits = off_limits;",
+                "main.rs build_node_attached: view.off_limits = off_limits;",
+                "pane.rs toggle_off_limits: self.off_limits = !self.off_limits;",
+            ],
+            "something other than a person's gesture or a restore writes the mark"
+        );
+        toggles.sort();
+        assert_eq!(
+            toggles,
+            vec![
+                "pane.rs render: v.toggle_off_limits(cx);",
+                "pane.rs set_off_limits: self.toggle_off_limits(cx);",
+            ],
+            "the toggle is reached from somewhere other than the right-click menu or \
+             a person's answer on the rail"
+        );
+    }
+
+    /// An ask is answered from the rail's two person-facing handlers and from
+    /// nowhere else in the window: the Yes and No buttons on the row, and the
+    /// `y` / `n` keys while the queue is open. `access::tests` keeps the
+    /// agent-facing files out; this keeps the rest of the window honest, so a
+    /// later convenience — answering from a menu, a timer, a restore — has to
+    /// come through here and be argued for.
+    ///
+    /// Mutation-tested: a call from `rail_activate` fails this.
+    #[test]
+    fn an_ask_is_answered_only_by_the_rails_buttons_and_keys() {
+        let src = include_str!("main.rs");
+        let code = &src[..src
+            .find("\n#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests")
+            .unwrap_or(src.len())];
+        let mut owner = "<file>";
+        let mut callers = Vec::new();
+        for line in code.lines() {
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            if let Some(rest) = ["fn ", "pub fn ", "pub(crate) fn ", "pub(super) fn "]
+                .iter()
+                .find_map(|p| t.strip_prefix(p))
+            {
+                owner = rest.split(['(', '<']).next().unwrap_or(rest);
+            }
+            if t.contains("rail_answer(") && !t.contains("fn rail_answer(") {
+                callers.push(owner);
+            }
+        }
+        callers.sort_unstable();
+        assert_eq!(
+            callers,
+            vec!["rail_key", "rail_panel"],
+            "an ask is answered from somewhere other than the rail's keys and buttons"
+        );
+    }
+
+    /// Every place the window decides exposure passes the pane's own mark,
+    /// except the one that is always the caller's own pane. The gate taking
+    /// the mark as an argument made the compiler name every site; this keeps a
+    /// site from answering it with a literal `false` and quietly re-opening an
+    /// off-limits pane.
+    ///
+    /// Mutation-tested: passing `false` from `mcp_snapshot` fails this.
+    #[test]
+    fn every_exposure_decision_reads_the_panes_mark() {
+        let src = include_str!("main.rs");
+        let code = &src[..src
+            .find("\n#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests")
+            .unwrap_or(src.len())];
+        // Each call's arguments, up to its own closing parenthesis.
+        let args_of = |rest: &'static str| -> String {
+            let mut depth = 0usize;
+            let mut out = String::new();
+            for ch in rest.chars() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' if depth == 0 => break,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                out.push(ch);
+            }
+            out.split_whitespace().collect::<Vec<_>>().join(" ")
+        };
+        let calls: Vec<String> = code
+            .split("mcp::should_expose(")
+            .skip(1)
+            .map(args_of)
+            .collect();
+        // The snapshot, the search, the open-document gate and the panel; the
+        // fifth site, the write gate, is `may_write`, checked below.
+        assert_eq!(calls.len(), 5, "{calls:?}");
+        let reads_mark = calls.iter().filter(|c| c.contains("off_limits")).count();
+        let literal_false: Vec<&String> = calls
+            .iter()
+            .filter(|c| c.trim_end().trim_end_matches(',').ends_with("false"))
+            .collect();
+        assert_eq!(reads_mark, 4, "a site stopped reading the mark: {calls:?}");
+        assert_eq!(
+            literal_false.len(),
+            1,
+            "only open_document, always the caller's own pane, may pass false: {calls:?}"
+        );
+        let open = live_fn("fn mcp_open(");
+        assert!(
+            open.contains("mcp::should_expose(&self.mcp, leaf.read(cx).mode.is_agent(), false)")
+        );
+        let writes = live_fn("fn apply_mcp_config(");
+        assert!(
+            writes.contains("mcp::may_write(")
+                && writes.contains("p.off_limits")
+                && writes.contains("patch.own_pane"),
+            "the write gate reads the mark and the own-pane exception: {writes}"
+        );
+    }
+
+    /// The control socket's bench verbs reach a running agent's terminal (`say`,
+    /// `choose`, `submit`) or its composer (`type`), and the socket answers any
+    /// process running as you, agents included — so none of the four may pick
+    /// an off-limits pane, and each says why when that leaves nothing to pick.
+    ///
+    /// Mutation-tested: dropping `!v.off_limits` from `bench_say`'s picker
+    /// fails this.
+    #[test]
+    fn the_sockets_bench_verbs_never_pick_an_off_limits_pane() {
+        for verb in [
+            "pub(crate) fn bench_say(",
+            "pub(crate) fn bench_type(",
+            "pub(crate) fn bench_choose(",
+            "pub(crate) fn bench_submit(",
+        ] {
+            let body: String = live_fn(verb)
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                body.contains("!v.off_limits"),
+                "{verb} can pick an off-limits pane: {body}"
+            );
+            assert!(body.contains("off-limits pane takes"), "{verb} says why");
+        }
+    }
+
+    /// The tab badges step on the badge clock instead of animating per frame
+    /// (#964): a repeating gpui animation asks for every frame while on screen,
+    /// which with an agent working somewhere is always, and the whole window
+    /// redrew sixty times a second for a 15-pixel robot.
+    ///
+    /// Mutation-tested: the pulse's `.with_animation(` put back fails this.
+    #[test]
+    fn tab_badges_step_on_the_badge_clock_instead_of_every_frame() {
+        let ms = Duration::from_millis;
+        let blink = ms(700);
+        // Held still inside a step, moved at the next one.
+        assert_eq!(stepped_phase(ms(0), blink), stepped_phase(ms(174), blink));
+        assert_ne!(stepped_phase(ms(174), blink), stepped_phase(ms(175), blink));
+        // A blink cycle is four steps and comes back round.
+        let steps: Vec<f32> = (0..5)
+            .map(|i| stepped_phase(BADGE_STEP * i, blink))
+            .collect();
+        assert_eq!(steps[0], steps[4]);
+        assert!(steps.iter().take(4).all(|p| (0.0..1.0).contains(p)));
+        // And nothing in the badges asks gpui for per-frame frames.
+        let badge = live_fn("fn agent_badge_el(");
+        assert!(!badge.contains(".with_animation("), "{badge}");
+        assert!(badge.contains("badge_phase("));
+    }
+
+    /// This file's own code, cut at its test module, and the body of one
+    /// function in it — for the rules a `Workspace` cannot be built to test,
+    /// since it needs a live gpui `Window`.
+    fn live_fn(sig: &str) -> &'static str {
+        let src = include_str!("main.rs");
+        let code = &src[..src
+            .find("\n#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests")
+            .unwrap_or(src.len())];
+        let at = code.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
+        let end = code[at..].find("\n    }\n").expect("end of fn");
+        &code[at..at + end]
+    }
+
+    /// Ctrl+Alt+click on a path a pane in the tab is already showing brings
+    /// that pane forward; it does not open the file a second time, and it does
+    /// not matter how many panes the tab holds.
+    #[test]
+    fn a_document_already_showing_in_the_tab_is_focused_not_opened_twice() {
+        let a = std::path::Path::new("/tmp/a.md");
+        let b = std::path::Path::new("/tmp/b.png");
+        // Leaves stand for panes: which file each one's Document face shows.
+        let three: [Option<&std::path::Path>; 3] = [None, Some(b), Some(a)];
+        let showing = |l: &Option<&std::path::Path>| l.map(|p| p.to_path_buf());
+        assert_eq!(beside(&three, showing, b), Beside::Focus(1));
+        assert_eq!(beside(&three, showing, a), Beside::Focus(2));
+        // A full tab still focuses what it already shows, rather than floating
+        // a second copy over the pane that asked.
+        let four: [Option<&std::path::Path>; 4] = [None, None, None, Some(a)];
+        assert_eq!(beside(&four, showing, a), Beside::Focus(3));
+    }
+
+    /// Four panes is the cap on a split, so the fifth is refused and the
+    /// document floats over the pane that asked instead; three still split.
+    #[test]
+    fn a_fifth_pane_is_refused_and_the_document_floats_instead() {
+        let a = std::path::Path::new("/tmp/a.md");
+        let showing = |l: &Option<&std::path::Path>| l.map(|p| p.to_path_buf());
+        let three: [Option<&std::path::Path>; 3] = [None; 3];
+        let four: [Option<&std::path::Path>; 4] = [None; 4];
+        let one: [Option<&std::path::Path>; 1] = [None];
+        assert_eq!(beside(&one, showing, a), Beside::Split);
+        assert_eq!(beside(&three, showing, a), Beside::Split);
+        assert_eq!(beside(&four, showing, a), Beside::Float);
+        // A legacy tab above the cap floats too; it is never "corrected".
+        let six: [Option<&std::path::Path>; 6] = [None; 6];
+        assert_eq!(beside(&six, showing, a), Beside::Float);
+    }
+
+    /// The split puts the document on the RIGHT of the clicked pane, side by
+    /// side, shows it through the one way onto the Document face, hands focus
+    /// back to the pane that was clicked once the click has settled, and
+    /// writes the layout down. Source-scanned: the workspace needs a Window.
+    #[test]
+    fn the_document_split_keeps_focus_on_the_pane_that_was_clicked() {
+        let split = live_fn("fn split_with_document(");
+        assert!(
+            split.contains("SplitDir::Row"),
+            "a side-by-side row, a vertical divider"
+        );
+        assert!(
+            split.contains(".split_leaf("),
+            "split_leaf puts the new pane on side b, the right"
+        );
+        assert!(
+            split.contains(".show_document(target, carry, cx)"),
+            "the Document face is reached through show_document"
+        );
+        let deferred = split
+            .find("cx.defer_in(window, move |_ws, window, cx| {")
+            .expect("focus is handed back after the click settles");
+        let refocus = split
+            .find("window.focus(&from.focus_handle(cx), cx)")
+            .expect("focus goes back to the pane that was clicked");
+        assert!(deferred < refocus, "inside the deferred closure");
+        assert!(split.contains("self.save(cx)"), "the layout is written");
+        // And the request that reaches it is decided by `beside`, so the
+        // dedupe and the cap are the ones the tests above hold.
+        let open = live_fn("fn open_doc_beside(");
+        assert!(open.contains("match beside("), "{open}");
+        assert!(open.contains("Beside::Focus(i)") && open.contains("Beside::Float"));
+    }
+
+    /// `open_document` goes through the router a Ctrl+Alt+click goes through,
+    /// on the caller's pane and no other: "beside" is that pane asking for a
+    /// split, so the tests above — a file already showing is focused, and at
+    /// four panes it floats — are its tests too; "here" is Alt+click's square.
+    /// And an agent's request is not a click, so it is never debounced away,
+    /// and at four panes it gets a square rather than nothing.
+    #[test]
+    fn open_document_goes_through_the_click_router_on_the_callers_pane() {
+        let open = live_fn("fn mcp_open(");
+        assert!(
+            open.contains("shell_pid() == Some(request.pid)"),
+            "the pane is the one the request names, which is the caller: {open}"
+        );
+        assert!(
+            open.contains(
+                "request_beside(request.target, None, docopen::Asker::Mcp, Some(reply), cx)"
+            ),
+            "beside goes through the pane's own request: {open}"
+        );
+        assert!(open.contains(".open_here(request.target, cx)"), "{open}");
+        assert!(
+            open.contains("mcp::should_expose("),
+            "the policy is asked again: {open}"
+        );
+        let route = live_fn("fn open_doc_beside(");
+        assert!(
+            route.contains("matches!(ev.by, Asker::Click | Asker::Menu) && !self.debounced()"),
+            "only a pointer is debounced: {route}"
+        );
+        assert!(
+            route.contains("if ev.by != Asker::Float || !v.has_float() {"),
+            "at four panes anything but a promoted square gets a square: {route}"
+        );
+    }
+
+    /// "⇲ beside" on a deliverable row opens it beside the pane that DECLARED
+    /// it, through the same router, and is offered only for a local file whose
+    /// name TD draws — judged by name, because the rail paints every frame.
+    #[test]
+    fn the_rail_opens_a_deliverable_beside_the_pane_that_declared_it() {
+        assert_eq!(
+            deliverable_file("file:///home/p/reports/a%20brief.html"),
+            Some(PathBuf::from("/home/p/reports/a brief.html"))
+        );
+        assert_eq!(
+            deliverable_file("/home/p/notes.md"),
+            Some(PathBuf::from("/home/p/notes.md"))
+        );
+        assert_eq!(deliverable_file("https://github.com/o/r/pull/7"), None);
+        assert_eq!(
+            deliverable_file("report.html"),
+            None,
+            "relative names nothing"
+        );
+        assert!(rail_offers_beside("file:///home/p/r.html"));
+        assert!(rail_offers_beside("/home/p/shot.png"));
+        assert!(
+            !rail_offers_beside("/home/p/data.csv"),
+            "not a file TD draws"
+        );
+        assert!(
+            !rail_offers_beside("https://example.com/r.html"),
+            "a URL has no pane"
+        );
+        let beside = live_fn("fn rail_open_beside(");
+        assert!(
+            beside.contains("panes.get(&it.pane)"),
+            "the declaring pane: {beside}"
+        );
+        assert!(
+            beside.contains("request_beside(target, None, docopen::Asker::Rail, None, cx)"),
+            "{beside}"
+        );
+        assert!(
+            beside.contains("docopen::drawable_document("),
+            "the click checks the file"
+        );
+        let src = include_str!("main.rs");
+        let chip = &src[src
+            .find(concat!("SharedString::from(", "\"⇲ beside\")"))
+            .expect("the chip")..];
+        let chip = &chip[..chip.find("}))").expect("end of the chip")];
+        assert!(
+            chip.contains("cx.stop_propagation()") && chip.contains("ws.rail_open_beside(cx)"),
+            "the chip acts, and the link under it does not also fire: {chip}"
+        );
+    }
+
+    /// `ctl bench off` turns a window of benches back to its terminals. A pane
+    /// showing a document is not a bench, and is left on its document.
+    #[test]
+    fn ctl_bench_off_leaves_a_document_pane_on_its_document() {
+        let faces = live_fn("pub(crate) fn set_all_faces(");
+        let guard = faces
+            .find("if view.bench.face() == workbench::Face::Document {")
+            .expect("set_all_faces skips a pane on its Document face");
+        let set = faces.find("view.set_face(").expect("the faces are set");
+        assert!(guard < set, "the guard comes before any face is set");
+        assert!(
+            !faces.contains("view.toggle_face("),
+            "toggle is terminal ⇄ bench, not alt+k's walk onto a document"
+        );
+    }
+
+    /// Promoting the floating square moves its view into the new pane; the
+    /// file is never opened a second time for it. The square comes down
+    /// before its view is shown anywhere else.
+    #[test]
+    fn promotion_moves_the_view_and_never_reopens_the_file() {
+        let split = live_fn("fn split_with_document(");
+        let release = split
+            .find("v.release_float(cx)")
+            .expect("the square comes down");
+        let show = split.find(".show_document(").expect("the face goes up");
+        assert!(
+            release < show,
+            "the square first, so no view is drawn twice"
+        );
+        assert!(
+            !split.contains("DocumentView::new("),
+            "the split never makes a view of its own"
+        );
     }
 
     #[test]
@@ -33132,6 +37964,7 @@ mod tests {
         let doc = include_str!("../../docs/attention-spine.md");
         let src = concat!(
             include_str!("attention.rs"),
+            include_str!("access.rs"),
             include_str!("pane.rs"),
             include_str!("screenread.rs"),
             include_str!("mcp.rs"),
@@ -33158,8 +37991,11 @@ mod tests {
         let missing: Vec<&str> = cited
             .into_iter()
             .filter(|name| {
-                let needle = format!("fn {name}(");
-                !src.contains(&needle) && !here.contains(&needle)
+                // A generic function is still the function: `fn request_access<G>(`.
+                let needles = [format!("fn {name}("), format!("fn {name}<")];
+                !needles
+                    .iter()
+                    .any(|n| src.contains(n.as_str()) || here.contains(n.as_str()))
             })
             .collect();
         assert!(
@@ -33224,6 +38060,34 @@ mod tests {
     /// `rail_waiting`, and this is the check that keeps them there: a future
     /// edit that reaches for `rail_rows` or `rail_queue` in either place turns
     /// this red rather than silently focusing a neighbour's terminal.
+    /// A deliverable opened from the rail floats in TD, over the pane the
+    /// person is looking at, when TD can draw it; only anything else goes to
+    /// the desktop. Parker: *"the single click open artifacts will now use
+    /// this instead of goto new window on OS"*.
+    #[test]
+    fn a_rail_deliverable_opens_in_td_before_the_desktop() {
+        let src = include_str!("main.rs");
+        let at = src.find("fn rail_open_here(").expect("rail_open_here");
+        let body = &src[at..at + src[at..].find("\n    }\n").expect("end")];
+        let drawable = body
+            .find("docopen::drawable_document(")
+            .expect("asks TD first");
+        let float = body
+            .find("view.open_float(target, None, cx)")
+            .expect("the square");
+        let desktop = body
+            .find("pane::open_with_system(href)")
+            .expect("the fallback");
+        assert!(drawable < desktop && drawable < float, "{body}");
+        assert!(body.contains("workbench::Face::Terminal | workbench::Face::Workbench"));
+        assert!(
+            body.contains("self.rail_close()"),
+            "the queue gets out of the way"
+        );
+        // The row's own click takes the same road as the key.
+        assert!(src.contains("ws.rail_open_here(&href, cx);"));
+    }
+
     #[test]
     fn the_cursor_and_the_click_resolve_a_row_through_the_same_list() {
         let src = include_str!("main.rs");
@@ -33238,6 +38102,13 @@ mod tests {
         assert!(
             !body.contains("self.rail_rows(cx)"),
             "the raw projection includes unknown rows the queue never draws"
+        );
+        // And a deliverable opened from the row goes through the one place
+        // that decides between TD's square and the desktop.
+        assert!(body.contains("self.rail_open_here(&href, cx)"), "{body}");
+        assert!(
+            !body.contains("open_with_system"),
+            "not straight to the desktop"
         );
         // And the click handler must not re-resolve its own list either.
         let click = src
@@ -34241,6 +39112,65 @@ mod tests {
     }
 
     #[test]
+    fn carry_depth_zoom_clamps_at_both_ends() {
+        assert_eq!(CarryDepth::Task.out(), CarryDepth::Initiative);
+        assert_eq!(CarryDepth::Initiative.out(), CarryDepth::Project);
+        assert_eq!(
+            CarryDepth::Project.out(),
+            CarryDepth::Project,
+            "no fourth layer to zoom into"
+        );
+        assert_eq!(CarryDepth::Project.in_(), CarryDepth::Initiative);
+        assert_eq!(CarryDepth::Initiative.in_(), CarryDepth::Task);
+        assert_eq!(
+            CarryDepth::Task.in_(),
+            CarryDepth::Task,
+            "can't zoom in past the task itself"
+        );
+    }
+
+    #[test]
+    fn carry_depth_after_move_resets_only_on_escalation() {
+        use CarryDepth::{Initiative, Project, Task};
+        // Landed at the depth the press started at, whatever that was:
+        // keep it. This is the ordinary Task-depth case, and an explicit
+        // zoom's first Up/Down at the depth it zoomed to.
+        assert_eq!(carry_depth_after_move(Task, Some(Task)), Task);
+        assert_eq!(
+            carry_depth_after_move(Initiative, Some(Initiative)),
+            Initiative
+        );
+        assert_eq!(carry_depth_after_move(Project, Some(Project)), Project);
+        // Landed WIDER than the press started at: the cascade had to
+        // escalate, so the next press starts narrow again. Reverting this
+        // to an unconditional Task-reset (the bug this fix corrected) would
+        // still pass here for the Task-start cases below, but not these.
+        assert_eq!(carry_depth_after_move(Task, Some(Initiative)), Task);
+        assert_eq!(carry_depth_after_move(Task, Some(Project)), Task);
+        assert_eq!(carry_depth_after_move(Initiative, Some(Project)), Task);
+        // Moved nothing at all: leave the zoom exactly where it was.
+        assert_eq!(carry_depth_after_move(Task, None), Task);
+        assert_eq!(carry_depth_after_move(Initiative, None), Initiative);
+        assert_eq!(carry_depth_after_move(Project, None), Project);
+    }
+
+    #[test]
+    fn pane_drop_capped_never_blocks_a_drop_back_onto_its_own_tab() {
+        // A tab at the cap: dropping one of its own panes back onto
+        // itself must not be refused — it is a rearrangement, not a
+        // growth. This is the case review caught an earlier version of
+        // the guard getting wrong.
+        assert!(!pane_drop_capped(2, 2, MAX_PANES));
+        // Even a legacy tab already OVER the cap must not be blocked from
+        // rearranging its own panes.
+        assert!(!pane_drop_capped(2, 2, LEGACY_PANE_CEILING));
+        // A different tab at the cap DOES refuse an incoming pane.
+        assert!(pane_drop_capped(3, 2, MAX_PANES));
+        // A different tab under the cap accepts one.
+        assert!(!pane_drop_capped(3, 2, MAX_PANES - 1));
+    }
+
+    #[test]
     fn scratch_decision_covers_force_seed_and_ownership() {
         // took the workspace's session → restore it, no seed
         let (scratch, seed) = scratch_decision(false, true, None, None);
@@ -34280,11 +39210,198 @@ mod tests {
         assert_eq!(window_title(true, "2"), "terminal-delight — scratch");
     }
 
+    // ── the xdg-terminal-exec contract ─────────────────────────────────────
+
+    fn words(w: &[&str]) -> Vec<String> {
+        w.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The four flags are read in any order, and `-e` takes the rest of the
+    /// line as the program and its arguments — a later `--app-id` included,
+    /// because by then it belongs to the program.
+    ///
+    /// Mutation-tested: stopping `-e` at the next flag fails this.
+    #[test]
+    fn a_contract_launch_reads_the_four_flags_in_any_order() {
+        let dir = |p: &str| p == "/work";
+        let want = Contract {
+            app_id: Some("org.td.tracer".into()),
+            title: Some("T".into()),
+            dir: Some("/work".into()),
+            exec: Some(words(&["htop", "-d", "5"])),
+        };
+        for line in [
+            [
+                "--app-id=org.td.tracer",
+                "--title=T",
+                "--working-directory=/work",
+            ],
+            [
+                "--working-directory=/work",
+                "--title=T",
+                "--app-id=org.td.tracer",
+            ],
+        ] {
+            let mut argv = words(&line);
+            argv.extend(words(&["-e", "htop", "-d", "5"]));
+            assert_eq!(parse_contract(&argv, dir), Some(Ok(want.clone())));
+        }
+        let c = parse_contract(&words(&["-e", "sh", "--app-id=not-mine"]), dir)
+            .expect("a contract launch")
+            .expect("accepted");
+        assert_eq!(c.app_id, None, "after -e the words are the program's");
+        assert_eq!(c.exec, Some(words(&["sh", "--app-id=not-mine"])));
+        // No -e at all: a terminal in that directory, as Super+Return asks.
+        let c = parse_contract(&words(&["--working-directory=/work"]), dir)
+            .expect("a contract launch")
+            .expect("accepted");
+        assert_eq!(c.exec, None);
+        assert_eq!(c.dir, Some("/work".into()));
+    }
+
+    /// Anything outside the four is refused with the reason, and refusing
+    /// opens nothing: `--hold` is xdg-terminal-exec's fifth key, which this
+    /// entry does not declare, so a caller sending it is how we learn somebody
+    /// needs it.
+    ///
+    /// Mutation-tested: ignoring an unknown word fails this.
+    #[test]
+    fn a_contract_launch_refuses_what_it_does_not_know() {
+        let dir = |p: &str| p == "/work";
+        for (argv, says) in [
+            (vec!["-e"], "needs a program"),
+            (vec!["--app-id=org.x", "--hold", "-e", "sh"], "`--hold`"),
+            (vec!["--title=T", "--class=x"], "`--class=x`"),
+            (vec!["--working-directory=/nowhere"], "not a directory"),
+            (vec!["--app-id=", "-e", "sh"], "needs an id"),
+        ] {
+            let got = parse_contract(&words(&argv), dir).expect("a contract launch");
+            let why = got.expect_err("refused");
+            assert!(why.contains(says), "{argv:?}: {why}");
+            match classify(&words(&argv), dir) {
+                Launch::Reply { code, .. } => assert_eq!(code, 2, "{argv:?}"),
+                other => panic!("{argv:?} opened something: {other:?}"),
+            }
+        }
+    }
+
+    /// Every word the binary knew before still means what it meant: only the
+    /// contract's own flags, FIRST, start a contract launch.
+    ///
+    /// Mutation-tested: letting any leading `--x=` start a contract fails this.
+    #[test]
+    fn every_word_the_binary_already_knew_still_means_it() {
+        let dir = |p: &str| p == "/work";
+        for argv in [
+            vec![],
+            vec!["--help"],
+            vec!["-V"],
+            vec!["ctl", "ping"],
+            vec!["/work"],
+            vec!["--frobnicate=1"],
+            vec!["default-terminal", "status"],
+        ] {
+            let argv = words(&argv);
+            assert_eq!(parse_contract(&argv, dir), None, "{argv:?}");
+            assert_eq!(
+                classify(&argv, dir),
+                dispatch(argv.first().map(String::as_str), dir),
+                "{argv:?}"
+            );
+        }
+        assert!(matches!(
+            classify(&words(&["--frobnicate=1"]), dir),
+            Launch::Reply { code: 2, .. }
+        ));
+    }
+
+    /// A contract launch is a window: it must not get the printing verbs'
+    /// SIGPIPE disposition, which would let one broken write kill it.
+    #[test]
+    fn a_contract_launch_is_a_window_not_a_printer() {
+        assert!(!prints_and_exits(&Launch::Contract(Contract::default())));
+    }
+
+    /// The first pane runs the program after `-e` directly, in the asked-for
+    /// directory or the caller's own, and wears the app-id's mark; an app-id
+    /// that means nothing to us draws no mark.
+    #[test]
+    fn the_first_pane_of_a_contract_runs_the_program() {
+        let c = Contract {
+            app_id: Some("org.omarchy.local-ai".into()),
+            title: None,
+            dir: Some("/work".into()),
+            exec: Some(words(&["claude", "--model", "local"])),
+        };
+        let seed = contract_seed(&c, Some("/home".into()));
+        assert_eq!(seed.cwd.as_deref(), Some("/work"));
+        assert_eq!(
+            seed.program,
+            Some(("claude".into(), words(&["--model", "local"])))
+        );
+        assert_eq!(seed.mark, Some("LOCAL MODEL"));
+        assert_eq!(seed.resume, None, "nothing is typed");
+        let plain = contract_seed(
+            &Contract {
+                app_id: Some("org.td.tracer".into()),
+                ..Contract::default()
+            },
+            Some("/home".into()),
+        );
+        assert_eq!(
+            plain.cwd.as_deref(),
+            Some("/home"),
+            "the caller's directory"
+        );
+        assert_eq!(plain.program, None, "a shell");
+        assert_eq!(plain.mark, None);
+        assert_eq!(launch_mark("org.omarchy.local-ai"), Some("LOCAL MODEL"));
+        assert_eq!(launch_mark("terminal-delight"), None);
+    }
+
+    /// The packaged desktop entry declares exactly the flags the parser reads.
+    /// Built here the way xdg-terminal-exec builds a command from an entry —
+    /// each key's value with the caller's value joined on, then the Exec key
+    /// and the command — and parsed back, so the entry and the parser cannot
+    /// drift apart.
+    ///
+    /// Mutation-tested: changing the entry's `X-TerminalArgDir` to `--dir=`
+    /// fails this.
+    #[test]
+    fn the_packaged_entry_speaks_the_contract_the_parser_reads() {
+        let entry = include_str!("../../packaging/terminal-delight.desktop");
+        let key = |k: &str| -> String {
+            entry
+                .lines()
+                .find_map(|l| l.strip_prefix(&format!("{k}=")))
+                .unwrap_or_else(|| panic!("the entry has no {k}"))
+                .to_string()
+        };
+        for (k, v) in defaultterm::KEYS {
+            assert_eq!(key(k), v, "{k}");
+        }
+        let mut argv = vec![
+            format!("{}org.omarchy.local-ai", key("X-TerminalArgAppId")),
+            format!("{}Local AI", key("X-TerminalArgTitle")),
+            format!("{}/work", key("X-TerminalArgDir")),
+            key("X-TerminalArgExec"),
+        ];
+        argv.extend(words(&["bash", "-c", "exec \"$@\"", "local-ai", "htop"]));
+        let c = parse_contract(&argv, |p| p == "/work")
+            .expect("a contract launch")
+            .expect("accepted");
+        assert_eq!(c.app_id.as_deref(), Some("org.omarchy.local-ai"));
+        assert_eq!(c.title.as_deref(), Some("Local AI"));
+        assert_eq!(c.dir, Some("/work".into()));
+        assert_eq!(c.exec.map(|e| e.len()), Some(5));
+    }
+
     #[test]
     fn version_and_help_are_answered_without_opening_a_window() {
         let (text, code) = flag_reply(Some("--version")).expect("--version is answered");
         assert_eq!(code, 0);
         assert!(text.starts_with("terminal-delight "), "{text}");
+        assert!(text.contains(vt::CORE_NAME), "{text}");
         assert_eq!(flag_reply(Some("-V")).map(|r| r.1), Some(0));
         let (help, code) = flag_reply(Some("--help")).expect("--help is answered");
         assert_eq!(code, 0);
@@ -34443,6 +39560,7 @@ mod tests {
     #[test]
     fn only_the_first_pane_in_a_directory_keeps_a_shared_resume() {
         let leaf = |resume: Option<&str>| SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: Some("/home/me".into()),
             resume: resume.map(str::to_string),
@@ -34450,11 +39568,13 @@ mod tests {
             logo: None,
             note: None,
             pane_id: None,
+            document: None,
         };
         let resumes = |tabs: &mut [SavedTab]| {
             let mut out = vec![];
             for tab in tabs.iter_mut() {
-                tab.node.for_each_claim(&mut |_, r, _| out.push(r.clone()));
+                tab.node
+                    .for_each_claim(&mut |_, _, r, _| out.push(r.clone()));
             }
             out
         };
@@ -34517,6 +39637,7 @@ mod tests {
             pinned: false,
         };
         let claim = |pane: Option<u64>, resume: Option<&str>, text: &str| SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: Some("/home/me".into()),
             resume: resume.map(str::to_string),
@@ -34524,6 +39645,7 @@ mod tests {
             logo: None,
             note: Some(note(text)),
             pane_id: pane,
+            document: None,
         };
         let tab = |node: SavedNode| SavedTab {
             level: None,
@@ -34546,7 +39668,7 @@ mod tests {
         let mut ids = vec![];
         let mut notes = vec![];
         for t in tabs.iter_mut() {
-            t.node.for_each_claim(&mut |pane, _, _| ids.push(*pane));
+            t.node.for_each_claim(&mut |_, pane, _, _| ids.push(*pane));
             if let SavedNode::Leaf { note, .. } = &t.node {
                 notes.push(note.as_ref().map(|n| n.text.clone()));
             }
@@ -34580,6 +39702,7 @@ mod tests {
     #[test]
     fn a_claim_taken_away_says_so_on_the_glass() {
         let blank = |pane: Option<u64>| SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: Some("claude --resume rm".into()),
@@ -34587,8 +39710,10 @@ mod tests {
             logo: None,
             note: None,
             pane_id: pane,
+            document: None,
         };
         let spoken = |pane: Option<u64>| SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: Some("claude --resume rm".into()),
@@ -34601,6 +39726,7 @@ mod tests {
                 pinned: true,
             }),
             pane_id: pane,
+            document: None,
         };
         let tab = |node: SavedNode| SavedTab {
             level: None,
@@ -34643,6 +39769,131 @@ mod tests {
         assert!(theirs.pinned, "and took their pin out while we were at it");
     }
 
+    /// Two live agents that each resume "the newest one here" are two agents,
+    /// and a save must not tell either of them it is a fresh shell (#919).
+    ///
+    /// Modelled on session 1 on 2026-10-13: panes 212 and 213, both Codex in
+    /// `cinema-delight`, both recorded as `codex resume --last` because Codex
+    /// keeps no rollout open, each mid-way through its own conversation. Every
+    /// save stamped DUPLICATE TAB onto 213, the next reattach painted it, and
+    /// Parker asked whether he had typed into the wrong agent.
+    #[test]
+    fn a_save_never_tells_a_live_pane_it_is_a_fresh_shell() {
+        let leaf = |pane: Option<u64>, cwd: &str, resume: &str| SavedNode::Leaf {
+            off_limits: false,
+            appearance: PaneTheme::default(),
+            cwd: Some(cwd.into()),
+            resume: Some(resume.into()),
+            name: None,
+            logo: None,
+            note: None,
+            pane_id: pane,
+            document: None,
+        };
+        let tab = |node: SavedNode| SavedTab {
+            level: None,
+            name: None,
+            color: None,
+            text_color: None,
+            group: None,
+            node,
+            project: None,
+        };
+        let notes = |tabs: &[SavedTab]| -> Vec<bool> {
+            tabs.iter()
+                .map(|t| matches!(&t.node, SavedNode::Leaf { note: Some(_), .. }))
+                .collect()
+        };
+        let resumes = |tabs: &mut [SavedTab]| {
+            let mut out = vec![];
+            for tab in tabs.iter_mut() {
+                tab.node
+                    .for_each_claim(&mut |_, _, r, _| out.push(r.clone()));
+            }
+            out
+        };
+
+        // Two live terminals, one directory, one line between them.
+        let mut tabs = vec![
+            tab(leaf(Some(212), "/w/cinema", "codex resume --last")),
+            tab(leaf(Some(213), "/w/cinema", "codex resume --last")),
+        ];
+        dedupe_resumes(&mut tabs);
+        assert_eq!(
+            notes(&tabs),
+            [false, false],
+            "a live pane was told it is a fresh shell"
+        );
+
+        // A bare agent names no conversation, so nothing collides at all; and
+        // "the newest one here" in another directory is another conversation.
+        let mut tabs = vec![
+            tab(leaf(Some(1), "/a", "claude")),
+            tab(leaf(Some(2), "/b", "claude")),
+            tab(leaf(Some(3), "/a", "codex resume --last")),
+            tab(leaf(Some(4), "/b", "codex resume --last")),
+        ];
+        dedupe_resumes(&mut tabs);
+        assert_eq!(notes(&tabs), [false; 4]);
+        assert_eq!(
+            resumes(&mut tabs),
+            [
+                Some("claude".to_string()),
+                Some("claude".to_string()),
+                Some("codex resume --last".to_string()),
+                Some("codex resume --last".to_string()),
+            ],
+            "a line that collides with nothing was rewritten"
+        );
+
+        // The forecast still holds where it is true: a leaf holding no terminal
+        // will be started again, and the second of two in one place is told so.
+        let mut tabs = vec![
+            tab(leaf(None, "/w/cinema", "codex resume --last")),
+            tab(leaf(None, "/w/cinema", "codex resume --last")),
+        ];
+        dedupe_resumes(&mut tabs);
+        assert_eq!(notes(&tabs), [false, true]);
+        assert_eq!(
+            resumes(&mut tabs)[1].as_deref(),
+            Some("codex"),
+            "the second still opens its own agent"
+        );
+    }
+
+    /// The note already sitting in the session files comes off a pane that
+    /// reattaches to its own terminal, and nothing else does.
+    #[test]
+    fn a_bound_pane_sheds_the_duplicate_note_and_keeps_its_own() {
+        let ours = duplicate_leaf_note();
+        let stamped = SavedNote {
+            title: ours.title.clone(),
+            text: ours.text.clone(),
+            seed: 0,
+            pinned: false,
+        };
+        let theirs = SavedNote {
+            title: Some("DUPLICATE TAB".into()),
+            text: "I opened this one twice on purpose".into(),
+            seed: 5,
+            pinned: true,
+        };
+        assert!(
+            note_on_reattach(Some(&stamped), true).is_none(),
+            "a reattach repainted DUPLICATE TAB on a terminal it bound"
+        );
+        assert_eq!(
+            note_on_reattach(Some(&stamped), false).map(|n| n.text),
+            Some(ours.text),
+            "a leaf really respawned lost the explanation"
+        );
+        assert_eq!(
+            note_on_reattach(Some(&theirs), true).map(|n| n.text),
+            Some(theirs.text.clone()),
+            "somebody's own note that only shares the headline was taken"
+        );
+    }
+
     /// The invariant, stated as itself: whatever goes in, no terminal is claimed
     /// twice on the way out.
     ///
@@ -34653,6 +39904,7 @@ mod tests {
     #[test]
     fn no_terminal_is_claimed_twice_on_the_way_out() {
         let leaf = |pane: Option<u64>, resume: Option<&str>| SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: resume.map(str::to_string),
@@ -34660,6 +39912,7 @@ mod tests {
             logo: None,
             note: None,
             pane_id: pane,
+            document: None,
         };
         let tab = |node: SavedNode| SavedTab {
             level: None,
@@ -34687,7 +39940,7 @@ mod tests {
         let mut seen_panes = std::collections::HashSet::new();
         let mut seen_work = std::collections::HashSet::new();
         for t in tabs.iter_mut() {
-            t.node.for_each_claim(&mut |pane, resume, _| {
+            t.node.for_each_claim(&mut |_, pane, resume, _| {
                 if let Some(id) = *pane {
                     assert!(seen_panes.insert(id), "pane {id} is claimed twice");
                 }
@@ -34723,6 +39976,7 @@ mod tests {
     #[test]
     fn count_saved_leaves_walks_the_split_tree() {
         let leaf = || SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: None,
@@ -34730,6 +39984,7 @@ mod tests {
             logo: None,
             note: None,
             pane_id: None,
+            document: None,
         };
         assert_eq!(count_saved_leaves(&leaf()), 1);
         let split = SavedNode::Split {
@@ -34877,6 +40132,136 @@ mod tests {
         );
     }
 
+    /// A split showing a document writes the document into its leaf — the
+    /// path and where the page was scrolled — and reads back the same. An
+    /// unmeasured scroll (a picture, or a page never laid out) is `None`, and
+    /// stays `None` through the file: it is not written as 0.0, the top of the
+    /// page, and is not read back as it.
+    #[test]
+    fn a_document_leaf_round_trips_its_path_and_scroll_through_the_state_file() {
+        let round_trip = |document: Option<SavedDocument>| -> (String, SavedNode) {
+            let mut t: Tree<u32> = Tree::Leaf(1);
+            t.split_leaf(&|l| *l == 1, SplitDir::Row, 2);
+            let saved = t.to_saved_with(&|l| LeafState {
+                document: (*l == 2).then(|| document.clone()).flatten(),
+                ..Default::default()
+            });
+            let text = toml::to_string(&SavedTab {
+                level: None,
+                name: None,
+                color: None,
+                text_color: None,
+                group: None,
+                node: saved,
+                project: None,
+            })
+            .expect("serialize");
+            let back: SavedTab = toml::from_str(&text).expect("deserialize");
+            (text, back.node)
+        };
+        let right_leaf = |node: &SavedNode| -> Option<SavedDocument> {
+            let SavedNode::Split { a, b, .. } = node else {
+                panic!("a split");
+            };
+            assert!(
+                matches!(&**a, SavedNode::Leaf { document: None, .. }),
+                "the shell the document was opened beside stays a terminal"
+            );
+            match &**b {
+                SavedNode::Leaf { document, .. } => document.clone(),
+                _ => panic!("a leaf on the right"),
+            }
+        };
+
+        let page = SavedDocument {
+            path: "/home/me/notes/two words.md".into(),
+            scroll: Some(0.37),
+        };
+        let (_, back) = round_trip(Some(page.clone()));
+        assert_eq!(right_leaf(&back), Some(page), "path and place both kept");
+
+        let picture = SavedDocument {
+            path: "/home/me/shot.png".into(),
+            scroll: None,
+        };
+        let (text, back) = round_trip(Some(picture.clone()));
+        assert!(
+            !text.contains("scroll"),
+            "an unmeasured scroll is not written at all: {text}"
+        );
+        let kept = right_leaf(&back).expect("the document");
+        assert_eq!(kept.scroll, None, "None stays None, never 0.0");
+        assert_eq!(kept, picture);
+
+        // A place at the very top is a measurement, and it is kept as one.
+        let top = SavedDocument {
+            path: "/home/me/notes/a.md".into(),
+            scroll: Some(0.0),
+        };
+        let (_, back) = round_trip(Some(top.clone()));
+        assert_eq!(right_leaf(&back), Some(top));
+    }
+
+    /// A layout written before documents existed has no `document` key on any
+    /// leaf, and every leaf reads back as the terminal it was — the table form
+    /// and the older bare `"Leaf"` string alike.
+    #[test]
+    fn a_layout_written_before_documents_reads_every_leaf_as_a_terminal() {
+        let old = r#"
+active = 0
+[[tabs]]
+[tabs.node.Split]
+dir = "Row"
+ratio = 0.5
+[tabs.node.Split.a.Leaf]
+cwd = "/home/me"
+pane_id = 1
+[tabs.node.Split.b.Leaf]
+cwd = "/home/me/notes"
+resume = "claude --resume 4a1c"
+pane_id = 2
+[[tabs]]
+node = "Leaf"
+"#;
+        let state: StateFile = toml::from_str(old).expect("an old layout still loads");
+        let mut leaves = 0;
+        fn walk(n: &SavedNode, leaves: &mut usize) {
+            match n {
+                SavedNode::Leaf { document, .. } => {
+                    assert_eq!(*document, None, "an old leaf is a terminal");
+                    *leaves += 1;
+                }
+                SavedNode::Split { a, b, .. } => {
+                    walk(a, leaves);
+                    walk(b, leaves);
+                }
+            }
+        }
+        for tab in &state.tabs {
+            walk(&tab.node, &mut leaves);
+        }
+        assert_eq!(leaves, 3, "every leaf was read");
+    }
+
+    /// Both restores — a window attached to a session host and one that owns
+    /// its terminals — put a saved document back on its pane, through the one
+    /// function that does it. Source-scanned: a restore needs a live Window.
+    #[test]
+    fn both_restores_put_a_saved_document_back() {
+        for sig in ["fn build_node_attached(", "fn build_node(saved"] {
+            let body = live_fn(sig);
+            assert!(
+                body.contains("restore_document_on(&pane, document.as_ref(), cx)"),
+                "{sig} drops the leaf's document"
+            );
+        }
+        let put = live_fn("fn restore_document_on(");
+        assert!(put.contains("view.restore_document(&d.path, d.scroll, cx)"));
+        // What gets written is what the pane says it shows.
+        let saved = live_fn("fn to_saved(&self, cx: &App)");
+        assert!(saved.contains(".saved_document(cx)"));
+    }
+
     #[test]
     fn legacy_state_file_with_string_leaf_still_loads() {
         let legacy = r#"
@@ -35010,6 +40395,79 @@ id = "hacker"
     }
 
     #[test]
+    fn a_fresh_install_boots_flat_with_the_crt_dials_it_keeps() {
+        // No state file at all: `load_state` hands `build` the default.
+        let outer = settled_outer(&StateFile::default());
+        let house = theme::house_outer();
+        assert!(!outer.grade.crt, "flat");
+        assert_eq!(
+            outer.palette.as_deref(),
+            Some(palette::TERMINAL_DELIGHT),
+            "in TD colours"
+        );
+        // The legacy top-level fold runs on a fresh install too; it must not
+        // swap the kept tube for the old classic dial.
+        assert_eq!(outer.grade.warp, theme::WARP_MAX, "warp kept at +150");
+        assert_eq!(outer.grade.tracking, house.grade.tracking, "roll kept");
+        assert_eq!(outer.grade, house.grade, "nothing else moved either");
+        assert!(
+            StateFile::default().focus_inherit,
+            "the reader wears the pane"
+        );
+    }
+
+    #[test]
+    fn this_machines_session_still_boots_its_tube() {
+        // The head of this machine's session file on 2026-09-25, trimmed to
+        // what settles the outer, and written before the CRT switch existed.
+        let saved: StateFile = toml::from_str(
+            r#"active = 0
+tabs = []
+scale = 0.8500000238418579
+track = [0.5203396081924438, 0.8148148059844971, 0.2068965584039688]
+warp = 1.5
+
+[theme]
+color = "on-theme"
+id = "custom"
+palette = "terminal-delight"
+syntax = true
+syntax_scheme = "agentic"
+
+[theme.grade]
+background = 0.5
+brightness = 0.2588020861148834
+colour = 1.0
+contrast = 0.59940105676651
+crawl_angle = 12.0
+crawl_depth = 2.5
+gamma = 0.5
+scale = 0.8500000238418579
+text = 0.5
+text_size = 0.7365000247955322
+tracking = [0.5203396081924438, 0.8148148059844971, 0.2068965584039688]
+warp = 1.5
+"#,
+        )
+        .unwrap();
+        let outer = settled_outer(&saved);
+        assert!(outer.grade.crt, "no `crt` key: the tube stays on");
+        assert_eq!(outer.grade.warp, 1.5);
+        assert_eq!(outer.grade.tracking, saved.track);
+        assert!(
+            !saved.focus_inherit,
+            "a file with no `focus_inherit` keeps the reader it always had"
+        );
+        // …and saving it back writes no switch it never had.
+        let wire = toml::to_string(&StateFile {
+            theme: Some(outer),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(!wire.contains("crt"), "{wire}");
+    }
+
+    #[test]
     fn state_with_pane_theme_round_trips() {
         let state = StateFile {
             panes: 0,
@@ -35032,6 +40490,7 @@ id = "hacker"
                 text_color: None,
                 group: None,
                 node: SavedNode::Leaf {
+                    off_limits: false,
                     appearance: PaneTheme::from_legacy(ThemeChoice {
                         id: "hacker".into(),
                         seed: None,
@@ -35043,6 +40502,7 @@ id = "hacker"
                     logo: None,
                     note: None,
                     pane_id: None,
+                    document: None,
                 },
                 project: None,
             }],
@@ -35083,6 +40543,7 @@ id = "hacker"
                 text_color: None,
                 group: None,
                 node: SavedNode::Leaf {
+                    off_limits: false,
                     appearance: PaneTheme::default(),
                     cwd: Some("/home/user/proj".into()),
                     resume: Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d".into()),
@@ -35090,6 +40551,7 @@ id = "hacker"
                     logo: None,
                     note: None,
                     pane_id: None,
+                    document: None,
                 },
                 project: None,
             }],
@@ -35117,6 +40579,7 @@ id = "hacker"
         // a grouped tab with its own fill + text override, plus a group carrying
         // its own colours + collapsed state, must all survive serialize→reload.
         let leaf = || SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: None,
@@ -35124,6 +40587,7 @@ id = "hacker"
             logo: None,
             note: None,
             pane_id: None,
+            document: None,
         };
         let state = StateFile {
             panes: 0,
@@ -35242,7 +40706,7 @@ node = "Leaf"
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
-        assert!(back.agent_tint, "the AGENT THEME toggle persists");
+        assert!(back.agent_tint, "the TERMINAL STATE toggle persists");
         // … and every session file written before this existed — which is all of
         // them — loads as FOLLOWS OUTER. That is the behaviour change: the tint
         // used to be unconditional, so absence has to mean off, not "as before".
@@ -35254,6 +40718,117 @@ node = "Leaf"
         );
     }
 
+    /// The wall's IMAGES switch persists, and a session that never touched it
+    /// keeps its pictures without that being written down as a choice.
+    #[test]
+    fn the_wall_images_switch_persists_and_never_choosing_keeps_the_pictures() {
+        // Turning the pictures off survives a save/load …
+        let state = StateFile {
+            card_art: Some(false),
+            ..Default::default()
+        };
+        let body = toml::to_string(&state).expect("serializes");
+        let back: StateFile = toml::from_str(&body).expect("round-trips");
+        assert_eq!(back.card_art, Some(false), "the IMAGES switch persists");
+        assert!(!wall_card_art(back.card_art), "…and draws the plain wall");
+        // … every file written before the switch existed has no opinion, and
+        // keeps none: absent loads as `None`, and `None` draws the pictures.
+        let old: StateFile =
+            toml::from_str("active = 0\n[[tabs]]\nnode = \"Leaf\"\n").expect("loads old file");
+        assert_eq!(
+            old.card_art, None,
+            "never chosen is not the same as chose on"
+        );
+        assert!(
+            wall_card_art(old.card_art),
+            "a wall that never chose keeps its pictures"
+        );
+        // … and a fresh state file does not record a choice nobody made.
+        let fresh = toml::to_string(&StateFile::default()).expect("serializes");
+        assert!(
+            !fresh.contains("card_art"),
+            "an unchosen switch must not be saved as a choice"
+        );
+    }
+
+    /// The phosphor gauge moves the LIGHT and nothing else. At the house setting
+    /// a floating surface and a wall card each cast the one halo they always
+    /// did, all the way down they cast none, and at every setting the crisp rims
+    /// and the dark shadows that lift them are the same shadows — so a panel
+    /// turned all the way down is still bordered and still raised.
+    #[test]
+    fn the_phosphor_gauge_moves_the_halos_and_leaves_the_rims_and_the_lift() {
+        let ink = hsla(0.33, 0.9, 0.6, 1.0);
+        // Light is a coloured, blurred, outer shadow. A rim has no blur and a
+        // lift shadow is black, so neither counts.
+        let lit = |s: &BoxShadow| !s.inset && s.blur_radius > px(0.) && s.color.l > 0.0;
+        let fixed = |v: &[BoxShadow]| v.iter().filter(|s| !lit(s)).cloned().collect::<Vec<_>>();
+        let stacks: [(&str, fn(Hsla, f32) -> Vec<BoxShadow>); 3] = [
+            ("a floating surface", |c, g| float_shadows(c, g)),
+            ("a live wall card", |c, g| agent_card_shadows(c, true, g)),
+            ("an idle wall card", |c, g| agent_card_shadows(c, false, g)),
+        ];
+        for (what, at) in stacks {
+            let house = at(ink, 1.0);
+            let dark = at(ink, 0.0);
+            assert_eq!(
+                house.iter().filter(|s| lit(s)).count(),
+                1,
+                "{what}: one halo"
+            );
+            assert_eq!(
+                dark.iter().filter(|s| lit(s)).count(),
+                0,
+                "{what}: none at zero"
+            );
+            assert_eq!(fixed(&dark), fixed(&house), "{what}: rims and lift at zero");
+            assert_eq!(
+                fixed(&at(ink, theme::PHOSPHOR_MAX)),
+                fixed(&house),
+                "{what}: rims and lift at the top"
+            );
+        }
+        // The house setting is the stack as it was before the gauge existed.
+        let halo = float_shadows(ink, 1.0)
+            .into_iter()
+            .find(|s| lit(s))
+            .expect("halo");
+        assert_eq!((halo.color.a, halo.blur_radius), (0.5, px(22.)));
+    }
+
+    /// The plain wall's card is the pictured card minus its art window and the
+    /// gap above it, and nothing else. The feed box under the window is
+    /// `flex_1`, so a card that kept its height would hand the whole window to
+    /// that box: a tall, mostly empty well, which is the opposite of plain.
+    #[test]
+    fn the_plain_card_gives_back_exactly_its_art_window() {
+        for cs in [0.7, 1.0, 1.6] {
+            let given_back = wall_card_h(cs, true) - wall_card_h(cs, false);
+            assert!(
+                (given_back - (WALL_ART_H * cs + WALL_CARD_GAP)).abs() < 0.01,
+                "at card scale {cs} the plain card gave back {given_back:.1}px, \
+                 not the art window and its gap"
+            );
+        }
+        // The window the switch removes is the one the arithmetic subtracts:
+        // both read one constant, so neither can drift from the other.
+        let code = shipped_code();
+        assert!(
+            code.contains(".h(px(wall_card_h(cs, show_art)))"),
+            "the card's height follows the IMAGES switch"
+        );
+        assert!(
+            code.contains(".children(show_art.then(|| {")
+                && code.contains(".h(px(WALL_ART_H * cs))"),
+            "the art window is built only while shown, at the height the card gives back"
+        );
+        assert!(
+            !code.contains("296. * cs") && !code.contains("116. * cs"),
+            "a literal card or window height is a second copy of a number the \
+             switch's arithmetic depends on"
+        );
+    }
+
     /// The design tray has to FIT — every control reachable without scrolling.
     ///
     /// Driven by the real inventory, which is the only thing that makes it a
@@ -35262,6 +40837,20 @@ node = "Leaf"
     /// estimate has to stay inside the height the tray declares it may open at.
     /// When this fails, the answer is another column or a wider one — not a
     /// bigger `TRAY_PANEL_H_EST`, which only moves the fold.
+    #[test]
+    fn palette_help_waits_then_tracks_neighbouring_options() {
+        let now = Instant::now();
+        assert_eq!(palette_help_delay(None, now), Duration::from_millis(800));
+        assert_eq!(
+            palette_help_delay(Some(now - Duration::from_millis(100)), now),
+            Duration::from_millis(180)
+        );
+        assert_eq!(
+            palette_help_delay(Some(now - Duration::from_secs(3)), now),
+            Duration::from_millis(800)
+        );
+    }
+
     #[test]
     fn the_design_tray_fits_the_shortest_screen_it_promises() {
         let cap = tray_cap((0., TRAY_FIT_BAND), 36.);
@@ -35279,7 +40868,7 @@ node = "Leaf"
             skin::picker_max_count(),
             theme::ColorMode::ALL.len(),
             theme::SyntaxScheme::ALL.len() + 1,
-        ) + tray_wheel_col_h(2, 1);
+        ) + tray_rules_h(4, 1);
         assert!(
             stacked > cap,
             "if one column fits again the split is dead weight — delete it deliberately, \
@@ -35301,17 +40890,20 @@ node = "Leaf"
             tray_wrap_rows(theme::picker_count(), TRAY_BTN_W, TRAY_PICKER_W) <= 3,
             "PICKERS must take three DESIGN buttons per row — two is the old tall tray"
         );
-        assert!(
-            TRAY_WHEEL_COL_W >= TRAY_WHEEL_H,
-            "the WHEEL column has to hold the {TRAY_WHEEL_H}px wheel"
-        );
-        assert!(
-            TRAY_GLYPH_COL_W >= 2. * 40. + TRAY_GAP * 2. + TRAY_SEP,
-            "the glyph column holds two 40px colour-set columns and their rule"
-        );
-        assert!(
-            TRAY_GLYPH_COL_W >= TRAY_MODE_BTN_W + TRAY_GAP + 40.,
-            "…and the INVERT bar above them: a heading plus a mode button"
+        const {
+            assert!(
+                TRAY_GLYPH_COL_W >= 2. * 40. + TRAY_GAP * 2. + TRAY_SEP,
+                "the glyph column holds two 40px colour-set columns and their rule"
+            );
+            assert!(
+                3. * TRAY_NOTE_BTN_W + 2. * TRAY_NOTE_GAP + TRAY_FIT_SLACK <= TRAY_GLYPH_COL_W,
+                "the THEME column holds the three STICKY NOTE papers on one row"
+            );
+        }
+        assert_eq!(
+            theme::NotePaper::ALL.len(),
+            3,
+            "a fourth paper does not fit that row — give it a second one"
         );
     }
 
@@ -35504,6 +41096,7 @@ node = "Leaf"
     fn pane_restore_logo_round_trips_through_state_toml() {
         // A leaf with a logo serializes it and reads it back via build_node's DTO.
         let node = SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: None,
@@ -35511,6 +41104,7 @@ node = "Leaf"
             logo: Some("/home/u/Pictures/acme.png".to_string()),
             note: None,
             pane_id: None,
+            document: None,
         };
         let toml = toml::to_string(&node).expect("serialize leaf");
         assert!(
@@ -35726,6 +41320,7 @@ node = "Leaf"
     fn nested_layout_round_trips_and_legacy_split_defaults_ratio() {
         // a 3-deep tree: Row( Col(leaf,leaf) @0.7 , leaf ) @0.3
         let leaf = || SavedNode::Leaf {
+            off_limits: false,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: None,
@@ -35733,6 +41328,7 @@ node = "Leaf"
             logo: None,
             note: None,
             pane_id: None,
+            document: None,
         };
         let node = SavedNode::Split {
             dir: SplitDir::Row,
@@ -35816,6 +41412,36 @@ fn blink_alpha(t: f32) -> f32 {
     } else {
         0.0
     }
+}
+
+/// How often the tab badges' pulse and blink move (#964). They used to be
+/// per-frame gpui animations, and a repeating animation asks for EVERY frame
+/// while it is on screen — with an agent working somewhere, always — so the
+/// whole window redrew sixty times a second to breathe a 15-pixel robot. perf
+/// on Parker's window: drawing was over half its main thread. Stepped at this
+/// rate the pulse has eight steps and the blink four, and the window draws
+/// about six frames a second for them.
+const BADGE_STEP: Duration = Duration::from_millis(175);
+
+/// When the badge clock started, so every badge steps together.
+static BADGE_EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+/// A moving badge was drawn since the badge timer last looked.
+static BADGES_MOVING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Where a `period`-long badge cycle is, `elapsed` after the epoch, held still
+/// for each [`BADGE_STEP`]. Pure, for the test.
+fn stepped_phase(elapsed: Duration, period: Duration) -> f32 {
+    let step = BADGE_STEP.as_millis().max(1);
+    let held = elapsed.as_millis() / step * step;
+    let period = period.as_millis().max(1);
+    (held % period) as f32 / period as f32
+}
+
+/// The badge clock's current phase for a `period`-long cycle, and a note to
+/// the badge timer that something on screen is moving.
+fn badge_phase(period: Duration) -> f32 {
+    BADGES_MOVING.store(true, std::sync::atomic::Ordering::Relaxed);
+    stepped_phase(BADGE_EPOCH.get_or_init(Instant::now).elapsed(), period)
 }
 
 /// What ONE agent pane is saying on the mother bar. Every agent in a tab earns
@@ -36021,6 +41647,8 @@ fn scratch_decision(
     let seeded = cwd.is_some() || resume.is_some();
     let seed = if seeded {
         Some(session::PaneRestore {
+            program: None,
+            mark: None,
             cwd,
             resume,
             logo: None,
@@ -36234,6 +41862,12 @@ terminal-delight — a CRT terminal built for agent work
 Usage:
   terminal-delight               open a window, restoring this workspace's saved layout
   terminal-delight <dir>         open a window whose first terminal starts in <dir>
+  terminal-delight [--app-id=<id>] [--title=<t>] [--working-directory=<dir>] [-e <program> [args...]]
+                                 open a quick window the way xdg-terminal-exec asks:
+                                 -e runs <program> in it, and the window closes when it ends
+  terminal-delight default-terminal [status|on|off]
+                                 make Terminal Delight the terminal Omarchy opens, or put
+                                 back exactly what was there before
   terminal-delight ctl <cmd>     drive a RUNNING instance over its control socket
   terminal-delight mcp           relay MCP over stdio into a RUNNING instance
   terminal-delight probe <pid>   report a terminal's cwd + resumable agent session, as JSON
@@ -36276,7 +41910,17 @@ Environment:
 fn flag_reply(first: Option<&str>) -> Option<(String, i32)> {
     match first {
         Some("--version" | "-V") => {
-            Some((format!("terminal-delight {}", env!("CARGO_PKG_VERSION")), 0))
+            // The core is named because a window can outlive the build it was
+            // started from, and which emulator a running process has is the
+            // first question when a pane draws something wrong.
+            Some((
+                format!(
+                    "terminal-delight {} (terminal core: {})",
+                    env!("CARGO_PKG_VERSION"),
+                    vt::CORE_NAME
+                ),
+                0,
+            ))
         }
         Some("--help" | "-h") => Some((USAGE.to_string(), 0)),
         Some(flag) if flag.starts_with('-') => Some((
@@ -36284,6 +41928,118 @@ fn flag_reply(first: Option<&str>) -> Option<(String, i32)> {
             2,
         )),
         _ => None,
+    }
+}
+
+/// What an `xdg-terminal-exec` caller asked for — the Default Terminal
+/// Specification's four keys, spelled the way `packaging/terminal-delight.desktop`
+/// declares them. Those are foot's spellings, which Omarchy already ships:
+/// `X-TerminalArgAppId=--app-id=`, `X-TerminalArgTitle=--title=`,
+/// `X-TerminalArgDir=--working-directory=` and `X-TerminalArgExec=-e`.
+///
+/// `None` everywhere is a contract launch too: `xdg-terminal-exec` with no
+/// arguments asks for a terminal and nothing else.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Contract {
+    app_id: Option<String>,
+    title: Option<String>,
+    dir: Option<PathBuf>,
+    /// The program and its arguments, after `-e`. Never empty when `Some`.
+    exec: Option<Vec<String>>,
+}
+
+/// The contract's four flags. The three that carry a value end in `=`, because
+/// the desktop entry joins the value on rather than passing it as a second word.
+const CONTRACT_FLAGS: [&str; 4] = ["--app-id=", "--title=", "--working-directory=", "-e"];
+
+/// `argv[1..]` → a contract launch, or the refusal it is owed; `None` when the
+/// first word is not one of the contract's flags and [`dispatch`] judges it.
+///
+/// Only a FIRST argument that is a contract flag makes this a contract launch,
+/// so every word the binary already knew — a verb, `--help`, a directory —
+/// means what it meant. After that every argument must be one of the four, in
+/// any order, up to `-e`, which takes the rest of the line as the program and
+/// its arguments, flags and all. Anything else is refused rather than ignored:
+/// a caller sending a fifth key is how we find out it exists, and refusing
+/// costs nothing because no window has opened. A repeated flag takes the last
+/// value, as `getopt` would.
+fn parse_contract(
+    args: &[String],
+    is_dir: impl Fn(&str) -> bool,
+) -> Option<Result<Contract, String>> {
+    let is_flag = |a: &str| {
+        CONTRACT_FLAGS.iter().any(|f| {
+            if f.ends_with('=') {
+                a.starts_with(f)
+            } else {
+                a == *f
+            }
+        })
+    };
+    if !is_flag(args.first()?) {
+        return None;
+    }
+    let mut c = Contract::default();
+    for (i, a) in args.iter().enumerate() {
+        if a == "-e" {
+            let rest = &args[i + 1..];
+            if rest.is_empty() {
+                return Some(Err("`-e` needs a program to run".into()));
+            }
+            c.exec = Some(rest.to_vec());
+            break;
+        } else if let Some(v) = a.strip_prefix("--app-id=") {
+            if v.is_empty() {
+                return Some(Err("`--app-id=` needs an id".into()));
+            }
+            c.app_id = Some(v.to_string());
+        } else if let Some(v) = a.strip_prefix("--title=") {
+            c.title = (!v.is_empty()).then(|| v.to_string());
+        } else if let Some(v) = a.strip_prefix("--working-directory=") {
+            if !is_dir(v) {
+                return Some(Err(format!("`--working-directory={v}` is not a directory")));
+            }
+            c.dir = Some(PathBuf::from(v));
+        } else {
+            return Some(Err(format!(
+                "`{a}` is not one of the launch options \
+                 (--app-id=, --title=, --working-directory=, -e)"
+            )));
+        }
+    }
+    Some(Ok(c))
+}
+
+/// The mark a pane wears for the app-id it was launched under.
+///
+/// What the app-id says, and nothing more. `org.omarchy.local-ai` is Omarchy's
+/// Local AI plugin opening a coding agent on a model running on this machine;
+/// WHICH model is not in the app-id, and finding out would mean reading the
+/// agent's gateway key out of its environment, so the mark does not try.
+fn launch_mark(app_id: &str) -> Option<&'static str> {
+    match app_id {
+        "org.omarchy.local-ai" => Some("LOCAL MODEL"),
+        _ => None,
+    }
+}
+
+/// The first pane of a contract launch: the program after `-e` run directly
+/// (never typed into a shell), in the asked-for directory or the caller's own,
+/// wearing the app-id's mark.
+fn contract_seed(c: &Contract, here: Option<PathBuf>) -> session::PaneRestore {
+    session::PaneRestore {
+        cwd: c
+            .dir
+            .clone()
+            .or(here)
+            .map(|d| d.to_string_lossy().into_owned()),
+        program: c
+            .exec
+            .as_ref()
+            .and_then(|argv| argv.split_first())
+            .map(|(program, args)| (program.clone(), args.to_vec())),
+        mark: c.app_id.as_deref().and_then(launch_mark),
+        ..Default::default()
     }
 }
 
@@ -36347,6 +42103,9 @@ enum Verb {
     /// for the resolver — a record nobody can inspect is a record nobody can
     /// debug, and this one decides what a person sees on a bench.
     Conversation,
+    /// Make Terminal Delight the terminal `xdg-terminal-exec` opens, or put
+    /// back exactly what was there before (see [`defaultterm`]).
+    DefaultTerminal,
 }
 
 /// Whether the broken-pipe gate in `tests/broken_pipe.rs` can run a verb — and
@@ -36457,6 +42216,14 @@ const VERBS: &[VerbSpec] = &[
         // disk, which is what makes `bindings` ungatable.
         piping: Piping::Streams(&["zzz-no-such-conversation"]),
     },
+    VerbSpec {
+        word: "default-terminal",
+        verb: Verb::DefaultTerminal,
+        typed: true,
+        piping: Piping::Ungated(
+            "on and off write the person's ~/.config/xdg-terminals.list, and status reads it — a suite must not depend on that file",
+        ),
+    },
 ];
 
 /// One row of [`VERBS`].
@@ -36498,6 +42265,21 @@ enum Launch {
     /// Open a window. `open_here` is `Some` only for a positional naming a
     /// directory that exists.
     Window { open_here: Option<PathBuf> },
+    /// Open a quick window the way `xdg-terminal-exec` asked: see [`Contract`].
+    Contract(Contract),
+}
+
+/// Classify `argv[1..]`: a contract launch first, because only its own flags
+/// start one, then everything [`dispatch`] already knew.
+fn classify(args: &[String], is_dir: impl Fn(&str) -> bool) -> Launch {
+    match parse_contract(args, &is_dir) {
+        Some(Ok(c)) => Launch::Contract(c),
+        Some(Err(why)) => Launch::Reply {
+            text: format!("terminal-delight: {why}\n\n{USAGE}"),
+            code: 2,
+        },
+        None => dispatch(args.first().map(String::as_str), &is_dir),
+    }
 }
 
 /// Classify `argv[1]`: a known verb, then the flag gate, then a positional
@@ -36542,7 +42324,7 @@ fn dispatch(first: Option<&str>, is_dir: impl Fn(&str) -> bool) -> Launch {
 /// rather than as a list of the two printing arms, so a third printing arm
 /// added later inherits the behaviour instead of quietly missing it.
 fn prints_and_exits(launch: &Launch) -> bool {
-    !matches!(launch, Launch::Window { .. })
+    !matches!(launch, Launch::Window { .. } | Launch::Contract(_))
 }
 
 /// Restore the default SIGPIPE disposition, for a process that is about to
@@ -36577,7 +42359,7 @@ fn main() {
     // verbs are plain subprocesses the desktop and agents shell out to, so they
     // must land ahead of any gpui and any env mutation.
     let argv: Vec<String> = std::env::args().collect();
-    let launch = dispatch(argv.get(1).map(String::as_str), |p| {
+    let launch = classify(argv.get(1..).unwrap_or_default(), |p| {
         std::path::Path::new(p).is_dir()
     });
     // One gate for every printing path, decided structurally rather than per
@@ -36585,7 +42367,7 @@ fn main() {
     if prints_and_exits(&launch) {
         quiet_on_a_closed_pipe();
     }
-    let open_here = match launch {
+    let (open_here, contract) = match launch {
         Launch::Verb(verb) => {
             let code = match verb {
                 Verb::EmitDemo => demo::emit_and_block(),
@@ -36599,6 +42381,7 @@ fn main() {
                 Verb::Skin => skin::run_cli(&argv[2..]),
                 Verb::Surface => surfacefeed::run_cli(&argv[2..]),
                 Verb::Conversation => benchstore::run_cli(&argv[2..]),
+                Verb::DefaultTerminal => defaultterm::run_cli(&argv[2..]),
             };
             std::process::exit(code);
         }
@@ -36610,18 +42393,19 @@ fn main() {
             }
             std::process::exit(code);
         }
-        Launch::Window { open_here } => open_here,
+        Launch::Window { open_here } => (open_here, None),
+        Launch::Contract(c) => (None, Some(c)),
     };
 
     // Give every shell we spawn a real terminal type. gpui launches us from the
-    // desktop/WM with TERM unset, and alacritty_terminal's `tty::new` does NOT
-    // set one — so without this, child shells inherit an empty TERM, readline
+    // desktop/WM with TERM unset, and spawning a pseudoterminal does NOT set
+    // one — so without this, child shells inherit an empty TERM, readline
     // can't look up the `clear_screen` capability, and Ctrl+L silently no-ops
     // (the prompt never pops to the top). `setup_env` picks the `alacritty`
     // terminfo if installed, else the universally-present `xterm-256color`, and
     // advertises 24-bit colour (COLORTERM=truecolor). Must run before any PTY is
     // spawned; it mutates the process env, so keep it ahead of the gpui app/threads.
-    alacritty_terminal::tty::setup_env();
+    vt::pty::setup_env();
 
     // Decide boot mode before the window opens. An EXPLICITLY-scratch launch —
     // forced scratch (TD_SCRATCH, the Ctrl+Alt+T quick window), a seeded tear-off
@@ -36635,7 +42419,10 @@ fn main() {
     // restorable windows as you actually keep open. The flock (held by exactly
     // one live process per id, released early at quit-start) is the old
     // machine-global MASTER lock, scoped down to one session.
-    let force = std::env::var_os("TD_SCRATCH").is_some();
+    // A contract launch is a quick window too: it never claims or writes a
+    // session and never starts a host, so a program opened through
+    // `xdg-terminal-exec` cannot disturb the window you are working in.
+    let force = std::env::var_os("TD_SCRATCH").is_some() || contract.is_some();
     let seed_cwd = std::env::var("TD_SEED_CWD").ok().filter(|s| !s.is_empty());
     let seed_resume = std::env::var("TD_SEED_RESUME")
         .ok()
@@ -36744,6 +42531,12 @@ fn main() {
         instance::adopt_legacy(&instance::legacy_state_path(), &instance::state_path());
     }
     let (scratch, seed) = scratch_decision(force, owns_session, seed_cwd, seed_resume);
+    // The contract's own pane replaces any seed the environment carried: the
+    // caller named the program and the directory, and they win.
+    let seed = match &contract {
+        Some(c) => Some(contract_seed(c, std::env::current_dir().ok())),
+        None => seed,
+    };
     // `terminal-delight <dir>`: a real, session-owning window whose FIRST
     // terminal starts in that directory. Deliberately not routed through
     // `scratch_decision` — a seeded tear-off is a throwaway, but asking for a
@@ -36755,11 +42548,20 @@ fn main() {
     });
     // A demo window keeps the plain name: it is a faithful twin for screen
     // sharing, not a workspace's scratch terminal.
-    let title = if demo {
+    let title = if let Some(t) = contract.as_ref().and_then(|c| c.title.clone()) {
+        t
+    } else if demo {
         "terminal-delight".to_string()
     } else {
         window_title(scratch, &key)
     };
+    // The app-id the caller asked for, which is how Hyprland's rules and the
+    // dock tell this window apart (Omarchy's Local AI asks for
+    // `org.omarchy.local-ai`). Otherwise the one packaging/ declares.
+    let app_id = contract
+        .as_ref()
+        .and_then(|c| c.app_id.clone())
+        .unwrap_or_else(|| "terminal-delight".to_string());
 
     application().run(move |cx: &mut App| {
         let host = host.clone();
@@ -36774,6 +42576,10 @@ fn main() {
         // …and the user's own shortlist across both vocabularies, which the
         // paint overlay shows as its first shelf. Seeded on first run.
         fav::init(cx);
+        // A new install's directory-logo map: `/` → TD's own mark, so its panes
+        // wear the app's logo instead of `＋ logo`. Only when no map exists at
+        // all; must precede the first workspace, which loads the map.
+        dirlogo::seed_if_absent();
         // Release the workspace claim at the very start of shutdown — `on_app_quit`
         // handlers run BEFORE windows/PTYs tear down (App::shutdown), so this
         // frees the lock seconds ahead of actual process exit. That is what lets
@@ -36781,6 +42587,15 @@ fn main() {
         // of the reopen racing the closing process's PTY teardown linger.
         cx.on_app_quit(|_cx| {
             instance::release();
+            async move {}
+        })
+        .detach();
+        // The page engine's browser goes with TD: closed, reaped and its
+        // profile removed here, on an orderly quit. A TD that dies instead
+        // takes the browser with it by the kernel's parent-death signal, and
+        // the next TD sweeps the profile it left.
+        cx.on_app_quit(|cx| {
+            docview::shutdown(cx);
             async move {}
         })
         .detach();
@@ -36825,8 +42640,9 @@ fn main() {
                     ..Default::default()
                 }),
                 // WM_CLASS / Wayland app_id — must match terminal-delight.desktop
-                // (packaging/) for the dock to pick up our icon.
-                app_id: Some("terminal-delight".into()),
+                // (packaging/) for the dock to pick up our icon, unless a
+                // contract launch named its own.
+                app_id: Some(app_id.clone()),
                 // Frameless: no OS titlebar — the cabinet IS the chrome. We draw
                 // our own move handle (the mother bar), resize edges + window
                 // controls (see `csd` + the bezel_top control cluster).

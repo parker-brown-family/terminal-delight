@@ -1,0 +1,13 @@
+NOTES — brief.html
+2 notes on 2 elements · 2 concurs.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[finding-the-island-is-the] The island is the record
+  · The revision goes on both islands.
+
+[fig-01-two-writers-one] 01 · Two writers, one file
+  · Draw the browser and TD side by side.
+
+[ask-stamp-a-revision-on] Stamp a revision on the island?  ✓ concur
+
+[ask-keep-the-plain-text] Keep the plain-text mirror?  ✓ concur

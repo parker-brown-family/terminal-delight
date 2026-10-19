@@ -1,0 +1,1864 @@
+//! Which printed paths open inside the pane, and where the floating square goes.
+//!
+//! # What this module decides
+//!
+//! A path in the scrollback can be Alt+clicked open in a floating square over
+//! the pane that printed it. That needs two answers before any view exists:
+//! *is this a document TD can draw*, and *where does the square go*. Both are
+//! here, and neither needs a window to answer.
+//!
+//! **Drawable** means Markdown, HTML, an image, a video, a sound, or a PDF. The
+//! name decides for the first two. An image has to prove it: a `.png` that is
+//! really a log file would open as an empty square, so a raster name must also
+//! carry a raster signature in its first bytes, and a file with no extension at
+//! all counts as an image when it carries one (screenshot tools often drop the
+//! suffix). SVG is text, so it has no signature to check and its name decides.
+//! A video has to prove it the same way, by its container's signature, but a
+//! video never goes by its bytes alone: an HEIC photo opens with the same
+//! `ftyp` box an MP4 does. A sound is the same again, and never goes by its
+//! bytes alone either: an MP3 with no tag opens on two bytes that plenty of
+//! other files open on. A PDF proves it with `%PDF-`, which belongs to nothing
+//! else, so a file with no extension that starts with it is a PDF.
+//!
+//! **Where it goes** is a square beside the line that was clicked: right-aligned,
+//! just below that line when it fits and above it when it does not, and never
+//! outside the screen. It is measured in the pane's own logical pixels, relative
+//! to the screen's top-left, so a resized pane carries it along.
+//!
+//! **What a modified click does** on a path or link is one table,
+//! [`click_intent`], and the right-click menu's link rows are another,
+//! [`link_menu`]. Moving the square by its strip and finding which of its
+//! controls a pointer is on are here too ([`drag_to`], [`float_hit_at`]); the
+//! pane un-bends the pointer before asking, so everything in this file is flat.
+//!
+//! # Why this module imports nothing
+//!
+//! Zero `use` statements, like `keylayer.rs`: it compiles standalone, so
+//! `rustc --test app/src/docopen.rs` runs these tests in about a second rather
+//! than a full `cargo test`. The one impure function, [`drawable_document`],
+//! reads sixteen bytes and nothing else.
+
+/// What kind of document a path is, as far as drawing it goes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DocKind {
+    Markdown,
+    Html,
+    Image,
+    /// Played by libmpv (`docview/mpv.rs`), with sound: once, as a clip, in
+    /// the square, and looping on the Document face.
+    Video,
+    /// Played the way a video is, with its sound drawn as a moving waveform
+    /// where a video's picture would be.
+    Audio,
+    /// Drawn a tile at a time by poppler (`docview/poppler.rs`), as one
+    /// column of pages.
+    Pdf,
+}
+
+impl DocKind {
+    /// Whether it plays rather than sits still: a video or a sound. Either
+    /// one opens in the square as a clip, above whatever square is up, and
+    /// closes itself at its end.
+    pub fn plays(self) -> bool {
+        matches!(self, DocKind::Video | DocKind::Audio)
+    }
+}
+
+/// A document a click asked for: the file, and what it was recognised as.
+///
+/// Not `DocumentSource`: that name is already the FOCUS reader's trait in
+/// `doc.rs`, which `pane.rs` imports by name, and a reader of `pane.rs` should
+/// never have to guess which of the two a line means.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct DocTarget {
+    pub path: std::path::PathBuf,
+    pub kind: DocKind,
+}
+
+/// By the file name alone, case-insensitively. Used where the file may not be
+/// there to read, and as the first half of [`doc_kind`].
+pub fn doc_kind_by_name(path: &std::path::Path) -> Option<DocKind> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "md" | "markdown" => Some(DocKind::Markdown),
+        "html" | "htm" => Some(DocKind::Html),
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "svg" => Some(DocKind::Image),
+        "mp4" | "m4v" | "mov" | "webm" | "mkv" | "ogv" | "avi" => Some(DocKind::Video),
+        "mp3" | "m4a" | "aac" | "flac" | "wav" | "ogg" | "oga" | "opus" | "weba" => {
+            Some(DocKind::Audio)
+        }
+        "pdf" => Some(DocKind::Pdf),
+        _ => None,
+    }
+}
+
+/// What every PDF starts with. The spec lets a header sit anywhere in the
+/// first kilobyte; a file whose first bytes are anything else is not one TD
+/// guesses at, and the click falls through to what it did before.
+fn pdf_signature(head: &[u8]) -> bool {
+    head.starts_with(b"%PDF-")
+}
+
+/// The containers a video name is checked against: ISO media (MP4, M4V, and
+/// QuickTime, whose oldest files open on a box other than `ftyp`), Matroska
+/// and WebM, Ogg, and AVI.
+fn video_signature(head: &[u8]) -> bool {
+    let boxed = head.len() >= 8
+        && [b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip"]
+            .iter()
+            .any(|b| &head[4..8] == *b);
+    boxed
+        || head.starts_with(b"\x1a\x45\xdf\xa3")
+        || head.starts_with(b"OggS")
+        || (head.len() >= 12 && head.starts_with(b"RIFF") && &head[8..12] == b"AVI ")
+}
+
+/// The containers and streams a sound's name is checked against: an ID3 tag
+/// or a bare MPEG frame (MP3, and AAC in ADTS, which shares the frame's eleven
+/// set bits), FLAC, WAVE, Ogg (Vorbis and Opus), ISO media (M4A), and WebM.
+fn audio_signature(head: &[u8]) -> bool {
+    let frame = head.len() >= 2 && head[0] == 0xff && head[1] & 0xe0 == 0xe0;
+    frame
+        || head.starts_with(b"ID3")
+        || head.starts_with(b"fLaC")
+        || head.starts_with(b"OggS")
+        || head.starts_with(b"\x1a\x45\xdf\xa3")
+        || (head.len() >= 8 && &head[4..8] == b"ftyp")
+        || (head.len() >= 12 && head.starts_with(b"RIFF") && &head[8..12] == b"WAVE")
+}
+
+/// The formats gpui decodes that announce themselves in their first bytes.
+fn raster_signature(head: &[u8]) -> bool {
+    head.starts_with(b"\x89PNG\r\n\x1a\n")
+        || head.starts_with(b"\xff\xd8\xff")
+        || head.starts_with(b"GIF87a")
+        || head.starts_with(b"GIF89a")
+        || (head.len() >= 12 && head.starts_with(b"RIFF") && &head[8..12] == b"WEBP")
+        || head.starts_with(b"BM")
+}
+
+/// By the name, then checked against the first bytes of the file.
+///
+/// A raster name on bytes that are not a raster is not drawable. A name TD does
+/// not know, on bytes that are a raster, is an image. SVG, Markdown and HTML are
+/// by name only: they are text, and text has no signature worth trusting. A
+/// video or sound name needs a container's signature, and neither is ever found
+/// by its bytes alone (see the module notes). A PDF needs `%PDF-`, and with no
+/// extension at all `%PDF-` is enough.
+pub fn doc_kind(path: &std::path::Path, head: &[u8]) -> Option<DocKind> {
+    let is_svg = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+    match doc_kind_by_name(path) {
+        Some(DocKind::Image) if is_svg => Some(DocKind::Image),
+        Some(DocKind::Image) => raster_signature(head).then_some(DocKind::Image),
+        Some(DocKind::Video) => video_signature(head).then_some(DocKind::Video),
+        Some(DocKind::Audio) => audio_signature(head).then_some(DocKind::Audio),
+        Some(DocKind::Pdf) => pdf_signature(head).then_some(DocKind::Pdf),
+        Some(kind) => Some(kind),
+        None if path.extension().is_none() && raster_signature(head) => Some(DocKind::Image),
+        None if path.extension().is_none() && pdf_signature(head) => Some(DocKind::Pdf),
+        None => None,
+    }
+}
+
+/// The document at `path`, if it is a regular file TD can draw.
+///
+/// Reads the first sixteen bytes, which is every signature [`doc_kind`] checks.
+/// A directory named `notes.md` is not a document, and neither is a file that
+/// cannot be opened: the click then falls through to whatever it did before.
+pub fn drawable_document(path: &std::path::Path) -> Option<DocTarget> {
+    if !std::fs::metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let mut head = [0u8; 16];
+    let n = {
+        let mut f = std::fs::File::open(path).ok()?;
+        let mut filled = 0;
+        while filled < head.len() {
+            match std::io::Read::read(&mut f, &mut head[filled..]) {
+                Ok(0) => break,
+                Ok(k) => filled += k,
+                Err(_) => return None,
+            }
+        }
+        filled
+    };
+    let kind = doc_kind(path, &head[..n])?;
+    Some(DocTarget {
+        path: path.to_path_buf(),
+        kind,
+    })
+}
+
+/// Where a document is scrolled: the top edge of the view as a fraction of the
+/// document's height, `0.0..=1.0`. A fraction rather than pixels, because it
+/// survives the page reflowing at another width.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct DocScroll {
+    pub top: f32,
+}
+
+/// What following a link out of a document does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LinkRoute {
+    /// A file TD can draw: it takes the square's place, where the square is.
+    Replace,
+    /// A web or mail address, or a local file TD does not draw: the desktop.
+    Desktop,
+    /// Any other scheme. A document is somebody's text, and a click on it
+    /// should not reach every URL handler the desktop has registered.
+    Refuse,
+}
+
+/// Where a link a document emitted goes. `target` is an absolute path or a
+/// URL; `drawable` is whether the path is a document TD can draw, which the
+/// caller asks [`drawable_document`], the one step here that reads the disk.
+pub fn link_route(target: &str, drawable: bool) -> LinkRoute {
+    if target.starts_with('/') {
+        return if drawable {
+            LinkRoute::Replace
+        } else {
+            LinkRoute::Desktop
+        };
+    }
+    let lower = target.to_ascii_lowercase();
+    if ["http://", "https://", "mailto:"]
+        .iter()
+        .any(|s| lower.starts_with(s))
+    {
+        LinkRoute::Desktop
+    } else {
+        LinkRoute::Refuse
+    }
+}
+
+/// Where a document view is sitting: in a floating square over the terminal
+/// face, or filling a pane as its Document face. One view can move from the
+/// first to the second — promotion hands the square's view to the new pane
+/// rather than opening the file again — so the view is told which it is in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DocSeat {
+    Float,
+    Face,
+}
+
+/// What the FOCUS reader reads on a pane.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ReadFrom {
+    /// The terminal: its screen and history, joined where it wrapped.
+    Grid,
+    /// One of the pane's documents, lent to the reader while it reads and
+    /// handed back when it closes. The pane keeps it — its links, its ↪, its
+    /// place in the saved layout — and only the box it is drawn in changes.
+    Document(DocSeat),
+}
+
+/// What Alt+R reads on a pane showing `face`, with a floating square drawn
+/// over it or not.
+///
+/// The reader enlarges what the person was looking at. A pane opened to show
+/// a document reads the document. A square floating over the terminal or the
+/// bench is what covers them, and Escape puts it away when the terminal is
+/// wanted (decision 4 of the reader's first gate, `docs/plans/alt-r-reader/`,
+/// approved 2026-09-29). Everything else reads the terminal, the workbench
+/// face included — Parker, the same day: *"The Workbench is already a
+/// processed thing"* — and the scrollback the bench hides by default is what
+/// a person opens the reader there to see.
+///
+/// Before this the reader read the terminal on every face, so a document pane
+/// showed the shell it was made with, hidden behind the document.
+pub fn read_from(face: crate::workbench::Face, square_up: bool) -> ReadFrom {
+    use crate::workbench::Face;
+    match (face, square_up) {
+        (Face::Document, _) => ReadFrom::Document(DocSeat::Face),
+        (Face::Terminal | Face::Workbench, true) => ReadFrom::Document(DocSeat::Float),
+        (Face::Terminal | Face::Workbench, false) => ReadFrom::Grid,
+    }
+}
+
+/// What the FOCUS reader says it is reading, on the chip beside its title,
+/// when it reads a pane as text.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ReadChip {
+    /// An agent's conversation, from its transcript.
+    Transcript,
+    /// An agent's screen: its transcript is not bound for certain, and the
+    /// reader never guesses whose conversation to show.
+    Screen,
+    /// A shell's history.
+    Scrollback,
+    /// A program on the alternate screen, which keeps no history: vim, htop.
+    AltScreen,
+}
+
+/// The chip for a pane read as text. An agent reads its conversation when the
+/// sweep bound its transcript for certain, and says it is reading the screen
+/// when it did not; anything else is a program on the alternate screen or a
+/// shell's scrollback. The approved design names the source on the reader's
+/// face (figure 06 of `reports/2026-09-29-alt-r-reader.html`), so a fallback
+/// never passes for the real thing.
+pub fn read_chip(agent: bool, bound: bool, alt_screen: bool) -> ReadChip {
+    match (agent, bound, alt_screen) {
+        (true, true, _) => ReadChip::Transcript,
+        (true, false, _) => ReadChip::Screen,
+        (false, _, true) => ReadChip::AltScreen,
+        (false, _, false) => ReadChip::Scrollback,
+    }
+}
+
+impl ReadChip {
+    pub fn label(self, s: &crate::lang::Strings) -> &'static str {
+        match self {
+            ReadChip::Transcript => s.reader_transcript,
+            ReadChip::Screen => s.reader_screen,
+            ReadChip::Scrollback => s.reader_scrollback,
+            ReadChip::AltScreen => s.reader_alt_screen,
+        }
+    }
+}
+
+/// Who asked for a document to open beside the pane. It decides one thing:
+/// what happens when the tab already holds four panes. A floating square
+/// asking to become a split stays the square it is and says why; anything
+/// else opens a square instead, so the document is on screen either way.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Asker {
+    /// Ctrl+Alt+click on a path in the grid.
+    Click,
+    /// "Open beside" in the right-click menu.
+    Menu,
+    /// The floating square's "⇲ split", or a second Alt+click on its path.
+    Float,
+    /// `ctl doc beside`, the gesture without a pointer.
+    Ctl,
+    /// `open_document`, an agent opening its own deliverable beside itself.
+    Mcp,
+    /// "open beside" on the attention rail's deliverable row.
+    Rail,
+}
+
+/// Why a floating square is open when a split was asked for. Said in the
+/// square's own strip: TD has no general toast, and the square is where the
+/// person is already looking.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FloatNote {
+    /// The tab already holds four panes, which is as many as a split may make.
+    FourPanes,
+}
+
+/// Whether an Alt+click on `clicked` promotes the square already floating,
+/// rather than opening another: it does when the square is showing that same
+/// file. The second click is the "yes, I want this beside me" the first one
+/// did not say.
+pub fn promotes(floating: Option<&std::path::Path>, clicked: &std::path::Path) -> bool {
+    floating == Some(clicked)
+}
+
+/// What a key does on a pane's Document face.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum DocKey {
+    /// `0`: fit the picture to the pane.
+    Fit,
+    /// `1`: one image pixel per device pixel.
+    Actual,
+    /// `+` (or `=`, the same key unshifted): one zoom step in.
+    ZoomIn,
+    /// `-`: one zoom step out.
+    ZoomOut,
+    /// An arrow: move the view by this many logical pixels, as a wheel turn
+    /// would — positive moves the document right and down.
+    Pan(f32, f32),
+    /// PageUp (`-1`) or PageDown (`1`): most of a screen at a time.
+    Page(i8),
+}
+
+/// How far one arrow press moves the document, in logical pixels: a wheel
+/// notch's worth, so the arrows and the wheel travel alike.
+pub const DOC_ARROW_STEP: f32 = 48.0;
+
+/// The Document face's own keys. `None` for every other key, which the face
+/// swallows all the same: the shell behind it is hidden, and typing into
+/// something nobody can see is the bug this face exists not to have.
+///
+/// Only unmodified keys (Shift aside, which `+` needs on most layouts) are the
+/// face's: a chord is somebody else's, and the window and the pane have
+/// already been asked for theirs before a key gets this far.
+pub fn doc_face_key(key: &str, alt: bool, control: bool, platform: bool) -> Option<DocKey> {
+    if alt || control || platform {
+        return None;
+    }
+    Some(match key {
+        "0" => DocKey::Fit,
+        "1" => DocKey::Actual,
+        "+" | "=" => DocKey::ZoomIn,
+        "-" => DocKey::ZoomOut,
+        "left" => DocKey::Pan(DOC_ARROW_STEP, 0.0),
+        "right" => DocKey::Pan(-DOC_ARROW_STEP, 0.0),
+        "up" => DocKey::Pan(0.0, DOC_ARROW_STEP),
+        "down" => DocKey::Pan(0.0, -DOC_ARROW_STEP),
+        "pageup" => DocKey::Page(-1),
+        "pagedown" => DocKey::Page(1),
+        _ => return None,
+    })
+}
+
+/// What an Alt+click on the pointer's line does.
+#[derive(Clone, PartialEq, Debug)]
+pub enum AltClick {
+    /// Copy the rejoined command line, as Alt+click always has.
+    Copy,
+    /// Open the document under the pointer in a floating square.
+    OpenHere(DocTarget),
+}
+
+/// Alt+click, decided.
+///
+/// A document under the pointer wins, on any line and on the alt screen too:
+/// the pointer is on the path, so the path is what was meant. Otherwise a
+/// command line copies, exactly as before, and never on the alt screen, where
+/// rows are a canvas rather than flowed text. `None` leaves the click alone.
+pub fn alt_click(
+    on_alt_screen: bool,
+    line_is_command: bool,
+    doc: Option<DocTarget>,
+) -> Option<AltClick> {
+    if let Some(doc) = doc {
+        return Some(AltClick::OpenHere(doc));
+    }
+    (line_is_command && !on_alt_screen).then_some(AltClick::Copy)
+}
+
+/// The modifier keys a click was made with, as the click table reads them.
+///
+/// Built from `gpui::Modifiers` where the click arrives, so this file keeps
+/// its zero imports. `platform` is Super on Linux.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct Mods {
+    pub alt: bool,
+    pub control: bool,
+    pub shift: bool,
+    pub platform: bool,
+}
+
+/// What a left click on the grid does, before any selection starts.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ClickIntent {
+    /// Open the document under the pointer in a floating square.
+    OpenHere,
+    /// Ctrl+Alt on a document: open it in a new pane to the right of this
+    /// one, keeping focus where it was.
+    OpenBeside,
+    /// Copy the command line the Alt chip is framing.
+    CopyChip,
+    /// Show the file in the file manager with the item selected.
+    Reveal,
+    /// Hand the link or path to the desktop's opener.
+    OpenWithDesktop,
+    /// None of the above: the click starts a selection, as a plain click does.
+    Pass,
+}
+
+/// Every modified left click on a path or link, as one table.
+///
+/// Read top to bottom; the first row that matches decides:
+///
+/// A loopback URL that serves `target`'s own file, answered with `target`.
+///
+/// An artifact card lists the same brief twice: TARGET, the file, and SERVED,
+/// a `http://127.0.0.1:<port>/<name>` copy an agent served for a browser. An
+/// Alt+click on the SERVED row means the document, and the page engine stays
+/// off the network, so the file is what opens. `None` for any URL that is not
+/// loopback, or that serves a different file name — that one goes to the
+/// desktop like any other web link.
+pub fn loopback_target(link: &str, target: &str) -> Option<String> {
+    let rest = link
+        .strip_prefix("http://")
+        .or_else(|| link.strip_prefix("https://"))?;
+    let (host, path) = rest.split_once('/')?;
+    let host = host.rsplit_once(':').map_or(host, |(h, port)| {
+        if port.chars().all(|c| c.is_ascii_digit()) {
+            h
+        } else {
+            host
+        }
+    });
+    if !matches!(host, "127.0.0.1" | "localhost" | "[::1]") {
+        return None;
+    }
+    let served = path
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .rsplit('/')
+        .next()
+        .unwrap_or("");
+    let file = target
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("");
+    (!served.is_empty() && served == file).then(|| target.to_string())
+}
+
+/// | held          | under the pointer          | does            |
+/// |---------------|----------------------------|-----------------|
+/// | ctrl+alt      | a document                 | OpenBeside      |
+/// | alt           | a document                 | OpenHere        |
+/// | alt           | an armed copy chip         | CopyChip        |
+/// | super+ctrl    | a file on this disk        | Reveal          |
+/// | shift         | a file on this disk        | Reveal          |
+/// | shift or ctrl | any link                   | OpenWithDesktop |
+/// | anything else |                            | Pass            |
+///
+/// Shift+click on a file used to open it, the same as Ctrl+click; it reveals
+/// now, so the two modifiers stop meaning one thing. A web link has nothing on
+/// disk to reveal, so Shift keeps opening it. Super keeps Alt out of the
+/// document rows: Super+Ctrl was already reveal, and nothing should change
+/// underneath a gesture somebody already knows.
+pub fn click_intent(
+    m: Mods,
+    on_document: bool,
+    on_link: bool,
+    revealable: bool,
+    chip_armed: bool,
+) -> ClickIntent {
+    if m.alt && on_document && !m.platform {
+        return if m.control {
+            ClickIntent::OpenBeside
+        } else {
+            ClickIntent::OpenHere
+        };
+    }
+    if m.alt && chip_armed {
+        return ClickIntent::CopyChip;
+    }
+    if m.platform && m.control && revealable {
+        return ClickIntent::Reveal;
+    }
+    if m.shift && revealable {
+        return ClickIntent::Reveal;
+    }
+    if (m.shift || m.control) && on_link {
+        return ClickIntent::OpenWithDesktop;
+    }
+    ClickIntent::Pass
+}
+
+/// One row of the link half of the right-click menu.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LinkItem {
+    OpenHere,
+    OpenBeside,
+    OpenWithDesktop,
+    Reveal,
+    CopyLink,
+}
+
+/// The link rows of the right-click menu, in the order they are drawn.
+///
+/// Only rows that do something: a document opens here or beside, anything
+/// opens with the desktop, a file on this disk reveals, and every link can be
+/// copied. Copy link is what Alt+click used to give on a command line that
+/// was mostly a path; now that Alt+click opens the path, the copy lives here.
+pub fn link_menu(is_document: bool, revealable: bool) -> Vec<LinkItem> {
+    let mut items = Vec::with_capacity(5);
+    if is_document {
+        items.push(LinkItem::OpenHere);
+        items.push(LinkItem::OpenBeside);
+    }
+    items.push(LinkItem::OpenWithDesktop);
+    if revealable {
+        items.push(LinkItem::Reveal);
+    }
+    items.push(LinkItem::CopyLink);
+    items
+}
+
+/// The floating square: flat, in logical pixels, relative to the top-left of
+/// the pane's screen (the area below the header).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct FloatRect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl FloatRect {
+    /// Whether a screen-relative point falls inside the square.
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
+    }
+}
+
+/// Gap between the square and the screen's edges.
+const FLOAT_INSET: f32 = 12.0;
+/// Gap between the square and the line it was opened from.
+const FLOAT_GAP: f32 = 6.0;
+
+/// Where a square first opens.
+///
+/// Its side is 56% of the screen's width, or 84% of its height when that is
+/// smaller, so it never covers the whole pane. Right-aligned with an inset. Its
+/// top sits just below the clicked line when the square fits there, otherwise
+/// it ends just above the line, and either way it is clamped inside the screen;
+/// on a pane too short for either, the clamp can put it over the line itself.
+/// The 56% is the mockup's number, not a measurement.
+pub fn float_home(screen_w: f32, screen_h: f32, line_top: f32, line_bottom: f32) -> FloatRect {
+    let side = (0.56 * screen_w).min(0.84 * screen_h).max(0.0);
+    let x = screen_w - FLOAT_INSET - side;
+    let below = line_bottom + FLOAT_GAP;
+    let y = if below + side <= screen_h - FLOAT_INSET {
+        below
+    } else {
+        line_top - FLOAT_GAP - side
+    };
+    clamp_float(
+        FloatRect {
+            x,
+            y,
+            w: side,
+            h: side,
+        },
+        screen_w,
+        screen_h,
+    )
+}
+
+/// The square's strip: its file's name and its controls, across the top.
+pub const FLOAT_STRIP_H: f32 = 22.0;
+
+/// How far a clip's box sits inside the square it covers, on every side
+/// below the strip, so the square's own rim shows round it.
+const CLIP_INSET: f32 = 24.0;
+
+/// Pure. Where a clip's box opens over the square it covers: inside it, below
+/// the square's strip, with the square's rim still showing round it. It reads
+/// as a box on top of the page, which is what it is, rather than the page
+/// turning into a video. A square too small to leave a rim round a box of the
+/// smallest size a square can be resized to is covered whole.
+pub fn clip_home(below: FloatRect) -> FloatRect {
+    let inside = FloatRect {
+        x: below.x + CLIP_INSET,
+        y: below.y + FLOAT_STRIP_H + CLIP_INSET,
+        w: below.w - 2.0 * CLIP_INSET,
+        h: below.h - FLOAT_STRIP_H - 2.0 * CLIP_INSET,
+    };
+    if inside.w < FLOAT_MIN_W || inside.h < FLOAT_MIN_H {
+        below
+    } else {
+        inside
+    }
+}
+
+/// The shape of a sound's waveform, width over height: the picture mpv draws
+/// for a file that has only sound (`docview/mpv.rs`).
+pub const SOUND_SHAPE: f32 = 2.5;
+
+/// Pure. A sound's box, cut from the box a clip would get (`clip`): as wide,
+/// from the same top, and only as tall as its strip, a waveform of
+/// [`SOUND_SHAPE`] across the whole width, and `bar_h` for the bar below it.
+/// A sound has no picture to fill a square with, so the rest of whatever it
+/// covers stays in sight. Never taller than `clip`, never shorter than a
+/// square can be resized to.
+pub fn sound_box(clip: FloatRect, bar_h: f32) -> FloatRect {
+    let fits = FLOAT_STRIP_H + clip.w / SOUND_SHAPE + bar_h;
+    FloatRect {
+        h: fits.max(FLOAT_MIN_H).min(clip.h),
+        ..clip
+    }
+}
+
+/// Keep a square inside the screen, shrinking it first if the screen became
+/// smaller than the square.
+pub fn clamp_float(r: FloatRect, screen_w: f32, screen_h: f32) -> FloatRect {
+    let w = r.w.min(screen_w).max(0.0);
+    let h = r.h.min(screen_h).max(0.0);
+    FloatRect {
+        x: r.x.clamp(0.0, (screen_w - w).max(0.0)),
+        y: r.y.clamp(0.0, (screen_h - h).max(0.0)),
+        w,
+        h,
+    }
+}
+
+/// How far the pointer travels on the strip before a press becomes a drag.
+/// The literal the pane drag uses, so the two feel the same under the hand.
+pub const FLOAT_DRAG_ENGAGE: f32 = 6.0;
+
+/// A press on the square's strip, on its way to becoming a move.
+///
+/// Every point is flat (un-bent through the tube's inverse) and in window
+/// pixels. `origin` is where the square was when the press landed, so the
+/// square follows the pointer's travel rather than accumulating per-move
+/// rounding.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct FloatDrag {
+    pub start: (f32, f32),
+    pub at: (f32, f32),
+    pub origin: FloatRect,
+    pub engaged: bool,
+    /// `None` moves the square; `Some` resizes it by the edges named.
+    pub edges: Option<Edges>,
+}
+
+impl FloatDrag {
+    pub fn new(start: (f32, f32), origin: FloatRect) -> Self {
+        Self {
+            start,
+            at: start,
+            origin,
+            engaged: false,
+            edges: None,
+        }
+    }
+
+    /// A press on an edge, on its way to becoming a resize.
+    pub fn resize(start: (f32, f32), origin: FloatRect, edges: Edges) -> Self {
+        Self {
+            edges: Some(edges),
+            ..Self::new(start, origin)
+        }
+    }
+}
+
+/// Which edges of the square a resize moves. The top edge is the strip, and
+/// pressing the strip moves the square, so the top only ever moves as half of
+/// a top corner.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Edges {
+    pub left: bool,
+    pub right: bool,
+    pub top: bool,
+    pub bottom: bool,
+}
+
+/// How far inside the square's border an edge can be grabbed, in logical
+/// pixels: wide enough to find with a trackpad, narrow enough to leave the
+/// document its clicks.
+pub const FLOAT_GRIP: f32 = 7.0;
+/// How far in from a corner a press grabs the corner, on both axes: twice the
+/// edge's grip, because a corner is the thing a hand reaches for.
+pub const FLOAT_CORNER: f32 = 14.0;
+/// The smallest a resize leaves the square: the strip's controls still fit.
+pub const FLOAT_MIN_W: f32 = 200.0;
+pub const FLOAT_MIN_H: f32 = 120.0;
+
+/// The edges a screen-relative point grabs, inside the square. Any of the
+/// four corners, within [`FLOAT_CORNER`] of it on both axes, grabs the two
+/// edges that meet there. Otherwise the left, right or bottom border within
+/// [`FLOAT_GRIP`] grabs that edge alone; the top border between its corners
+/// is the strip, which moves the square.
+pub fn float_edge_at(r: FloatRect, x: f32, y: f32) -> Option<Edges> {
+    if !r.contains(x, y) {
+        return None;
+    }
+    let near_left = x < r.x + FLOAT_CORNER;
+    let near_right = x >= r.x + r.w - FLOAT_CORNER;
+    let near_top = y < r.y + FLOAT_CORNER;
+    let near_bottom = y >= r.y + r.h - FLOAT_CORNER;
+    if (near_left || near_right) && (near_top || near_bottom) {
+        return Some(Edges {
+            left: near_left,
+            right: near_right,
+            top: near_top,
+            bottom: near_bottom,
+        });
+    }
+    let edges = Edges {
+        left: x < r.x + FLOAT_GRIP,
+        right: x >= r.x + r.w - FLOAT_GRIP,
+        top: false,
+        bottom: y >= r.y + r.h - FLOAT_GRIP,
+    };
+    (edges.left || edges.right || edges.bottom).then_some(edges)
+}
+
+/// Move a drag to `flat` and answer where the square is drawn now.
+///
+/// Nothing moves until the pointer has travelled more than
+/// [`FLOAT_DRAG_ENGAGE`] from the press, so a click on the strip that wobbles
+/// a pixel does not nudge the square. Once engaged it stays engaged, even if
+/// the pointer comes back, and the square is clamped inside the screen: it
+/// can be pushed against an edge but never through it.
+pub fn drag_to(d: &mut FloatDrag, flat: (f32, f32), screen_w: f32, screen_h: f32) -> FloatRect {
+    d.at = flat;
+    let (dx, dy) = (flat.0 - d.start.0, flat.1 - d.start.1);
+    if !d.engaged && (dx * dx + dy * dy).sqrt() > FLOAT_DRAG_ENGAGE {
+        d.engaged = true;
+    }
+    if !d.engaged {
+        return d.origin;
+    }
+    let Some(edges) = d.edges else {
+        return clamp_float(
+            FloatRect {
+                x: d.origin.x + dx,
+                y: d.origin.y + dy,
+                ..d.origin
+            },
+            screen_w,
+            screen_h,
+        );
+    };
+    // A resize keeps the far edge where it was: the right edge moves alone,
+    // and the left edge moves with the square's right side pinned. Never
+    // smaller than the minimum, never past the screen.
+    let o = d.origin;
+    let mut r = o;
+    if edges.right {
+        r.w = (o.w + dx).min(screen_w - o.x).max(FLOAT_MIN_W);
+    }
+    if edges.left {
+        let right_side = o.x + o.w;
+        let x = (o.x + dx).min(right_side - FLOAT_MIN_W).max(0.0);
+        r.x = x;
+        r.w = right_side - x;
+    }
+    if edges.bottom {
+        r.h = (o.h + dy).min(screen_h - o.y).max(FLOAT_MIN_H);
+    }
+    if edges.top {
+        let bottom_side = o.y + o.h;
+        let y = (o.y + dy).min(bottom_side - FLOAT_MIN_H).max(0.0);
+        r.y = y;
+        r.h = bottom_side - y;
+    }
+    clamp_float(r, screen_w, screen_h)
+}
+
+/// What part of the floating square a flat point is on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FloatHit {
+    /// The title strip, anywhere a button is not: pressing here moves it.
+    Strip,
+    /// "⇲ split": move the document into a pane of its own, beside this one.
+    Split,
+    /// "↗ desktop": open the file with the desktop's own application.
+    Desktop,
+    /// "✕ esc": close the square, as Escape does.
+    Close,
+    /// Zoom out one step.
+    ZoomOut,
+    /// Between fitting the square and one image pixel per device pixel.
+    ZoomFit,
+    /// Zoom in one step.
+    ZoomIn,
+    /// The document itself.
+    Body,
+    /// Within a grip of the left, right or bottom edge: pressing here
+    /// resizes the square.
+    Resize(Edges),
+    /// The square a clip's box is covering, where the box is not. Drawn, and
+    /// deaf: a press here does nothing, rather than falling through to the
+    /// terminal under both of them.
+    Covered,
+}
+
+/// One region of the square as it was laid out, flat, in window pixels.
+/// Recorded while the square paints, so a button's width follows its font
+/// and nothing here guesses it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct FloatZone {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub hit: FloatHit,
+}
+
+/// The topmost zone containing a flat point: the last recorded wins, because
+/// zones are recorded in paint order and a button paints over its strip.
+/// Left and top edges are inside, right and bottom outside, so two zones that
+/// share an edge never both claim it.
+pub fn float_hit_at(zones: &[FloatZone], x: f32, y: f32) -> Option<FloatZone> {
+    zones
+        .iter()
+        .rev()
+        .find(|z| x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h)
+        .copied()
+}
+
+/// A pane of a tab, as the ↪ rule reads it: whether an agent is running in it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SendLeaf {
+    pub agent: bool,
+}
+
+/// Which pane a brief's ↪ sends its notes to, by index into the tab's leaves,
+/// and how it was chosen.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SendTo {
+    /// The pane the brief is beside: the floating square's own pane, or the
+    /// pane a split was opened beside.
+    Beside(usize),
+    /// The pane the brief is beside is not an agent (or is gone from the
+    /// tab), so the nearest agent pane in the tab's order.
+    Nearest(usize),
+}
+
+impl SendTo {
+    pub fn index(self) -> usize {
+        match self {
+            SendTo::Beside(i) | SendTo::Nearest(i) => i,
+        }
+    }
+}
+
+/// Where ↪ on a brief sends, over one tab's leaves in their order.
+///
+/// `host` is the leaf the brief is drawn on: the pane a square floats over,
+/// or a split's own pane. `beside` is the leaf it sits beside — `host` itself
+/// for a square, the pane the split was opened beside for a split, `None` when
+/// that pane is no longer in the tab or was never recorded.
+///
+/// The pane beside it wins when an agent runs there. Otherwise the nearest
+/// agent pane in the tab by leaf order, the earlier of two equally near;
+/// `None` when the tab holds no agent, which draws no button. A split's own
+/// pane is never the target, even with an agent in it: its terminal is behind
+/// the document, and a paste there lands where nobody can see it.
+pub fn send_to(leaves: &[SendLeaf], host: usize, beside: Option<usize>) -> Option<SendTo> {
+    if let Some(b) = beside.filter(|b| leaves.get(*b).is_some_and(|l| l.agent)) {
+        return Some(SendTo::Beside(b));
+    }
+    leaves
+        .iter()
+        .enumerate()
+        .filter(|(i, l)| l.agent && *i != host)
+        .min_by_key(|(i, _)| (i.abs_diff(host), *i))
+        .map(|(i, _)| SendTo::Nearest(i))
+}
+
+/// What ↪ calls the pane it sends to: "agent" when the tab holds one agent
+/// pane, and that pane's own name when it holds more, so the person can see
+/// which prompt the notes will land in before pressing.
+pub fn send_label(agents_in_tab: usize, name: &str) -> String {
+    if agents_in_tab <= 1 {
+        return "agent".to_string();
+    }
+    const MAX: usize = 24;
+    let name = name.trim();
+    if name.chars().count() <= MAX {
+        name.to_string()
+    } else {
+        let cut: String = name.chars().take(MAX - 1).collect();
+        format!("{}…", cut.trim_end())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    /// Parker's own card, 2026-09-25: TARGET and SERVED name one brief.
+    #[test]
+    fn a_served_loopback_copy_means_the_cards_own_file() {
+        let target = "file:///home/parker/Work/terminal-delight/reports/2026-09-19-live-question-escape-vectors.html";
+        let served = "http://127.0.0.1:8611/2026-09-19-live-question-escape-vectors.html";
+        assert_eq!(loopback_target(served, target).as_deref(), Some(target));
+        assert_eq!(
+            loopback_target(
+                "http://localhost:8611/2026-09-19-live-question-escape-vectors.html?x=1#top",
+                target
+            )
+            .as_deref(),
+            Some(target),
+            "a query or fragment does not change the file"
+        );
+        // Not loopback: a web link, and it goes to the desktop.
+        assert_eq!(
+            loopback_target(
+                "https://example.com/2026-09-19-live-question-escape-vectors.html",
+                target
+            ),
+            None
+        );
+        // Loopback, but a different file: not this card's document.
+        assert_eq!(
+            loopback_target("http://127.0.0.1:8611/other.html", target),
+            None
+        );
+        // A bare host with no file names nothing.
+        assert_eq!(loopback_target("http://127.0.0.1:8611/", target), None);
+        assert_eq!(loopback_target(target, target), None, "a file is not a URL");
+    }
+
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+    const JPEG: &[u8] = b"\xff\xd8\xff\xe0\0\x10JFIF\0";
+
+    fn sq() -> FloatRect {
+        FloatRect {
+            x: 100.0,
+            y: 50.0,
+            w: 400.0,
+            h: 300.0,
+        }
+    }
+
+    fn e(left: bool, right: bool, top: bool, bottom: bool) -> Edges {
+        Edges {
+            left,
+            right,
+            top,
+            bottom,
+        }
+    }
+
+    /// Parker: "gotta be able to RESIZE the floating box", then "gotta resize
+    /// corners from ANY of the 4 corners". Each corner grabs the two edges
+    /// that meet there; the left, right and bottom edges grab alone; the top
+    /// between its corners is the strip, which moves the square.
+    #[test]
+    fn a_float_edge_is_grabbed_within_its_grip() {
+        let r = sq();
+        let at = |x, y| float_edge_at(r, x, y);
+        assert_eq!(at(102.0, 200.0), Some(e(true, false, false, false)));
+        assert_eq!(at(498.0, 200.0), Some(e(false, true, false, false)));
+        assert_eq!(at(300.0, 346.0), Some(e(false, false, false, true)));
+        assert_eq!(
+            at(105.0, 55.0),
+            Some(e(true, false, true, false)),
+            "top left"
+        );
+        assert_eq!(
+            at(492.0, 55.0),
+            Some(e(false, true, true, false)),
+            "top right"
+        );
+        assert_eq!(
+            at(105.0, 342.0),
+            Some(e(true, false, false, true)),
+            "bottom left"
+        );
+        assert_eq!(
+            at(492.0, 342.0),
+            Some(e(false, true, false, true)),
+            "bottom right"
+        );
+        assert_eq!(
+            at(300.0, 52.0),
+            None,
+            "the top between its corners is the strip"
+        );
+        assert_eq!(at(300.0, 200.0), None, "the middle is the document");
+        assert_eq!(at(90.0, 200.0), None, "outside the square grabs nothing");
+    }
+
+    #[test]
+    fn a_float_resizes_from_the_edge_it_was_grabbed_by() {
+        let (sw, sh) = (1000.0, 800.0);
+        // The bottom-right corner, dragged out 150 by 80.
+        let mut d = FloatDrag::resize((498.0, 348.0), sq(), e(false, true, false, true));
+        let r = drag_to(&mut d, (648.0, 428.0), sw, sh);
+        assert_eq!((r.x, r.y, r.w, r.h), (100.0, 50.0, 550.0, 380.0));
+        // The top-left corner, dragged up and left: the bottom-right stays put.
+        let mut d = FloatDrag::resize((102.0, 52.0), sq(), e(true, false, true, false));
+        let r = drag_to(&mut d, (72.0, 22.0), sw, sh);
+        assert_eq!((r.x, r.y, r.w, r.h), (70.0, 20.0, 430.0, 330.0));
+        // The top-right corner shrinks it no smaller than the minimum, and the
+        // bottom stays where it was.
+        let mut d = FloatDrag::resize((498.0, 52.0), sq(), e(false, true, true, false));
+        let r = drag_to(&mut d, (0.0, 900.0), sw, sh);
+        assert_eq!((r.w, r.h, r.y + r.h), (FLOAT_MIN_W, FLOAT_MIN_H, 350.0));
+        // The left edge, dragged right: the right side stays put.
+        let mut d = FloatDrag::resize((101.0, 200.0), sq(), e(true, false, false, false));
+        let r = drag_to(&mut d, (151.0, 200.0), sw, sh);
+        assert_eq!((r.x, r.w, r.x + r.w), (150.0, 350.0, 500.0));
+        // Never smaller than the minimum, from either side.
+        let mut d = FloatDrag::resize((101.0, 200.0), sq(), e(true, false, false, false));
+        let r = drag_to(&mut d, (900.0, 200.0), sw, sh);
+        assert_eq!((r.w, r.x + r.w), (FLOAT_MIN_W, 500.0));
+        let mut d = FloatDrag::resize((300.0, 348.0), sq(), e(false, false, false, true));
+        assert_eq!(drag_to(&mut d, (300.0, 0.0), sw, sh).h, FLOAT_MIN_H);
+        // Never past the screen.
+        let mut d = FloatDrag::resize((498.0, 348.0), sq(), e(false, true, false, true));
+        let r = drag_to(&mut d, (5000.0, 5000.0), sw, sh);
+        assert!(r.x + r.w <= sw && r.y + r.h <= sh, "{r:?}");
+        let mut d = FloatDrag::resize((102.0, 52.0), sq(), e(true, false, true, false));
+        let r = drag_to(&mut d, (-500.0, -500.0), sw, sh);
+        assert!(r.x >= 0.0 && r.y >= 0.0, "{r:?}");
+        // A wobble under the engage distance changes nothing.
+        let mut d = FloatDrag::resize((498.0, 348.0), sq(), e(false, true, false, true));
+        assert_eq!(drag_to(&mut d, (501.0, 350.0), sw, sh), sq());
+    }
+
+    #[test]
+    fn a_markdown_html_image_video_or_pdf_name_is_drawable_and_anything_else_is_not() {
+        for (name, want) in [
+            ("a.md", DocKind::Markdown),
+            ("A.MARKDOWN", DocKind::Markdown),
+            ("brief.html", DocKind::Html),
+            ("BRIEF.HTM", DocKind::Html),
+            ("x.png", DocKind::Image),
+            ("x.JPG", DocKind::Image),
+            ("x.jpeg", DocKind::Image),
+            ("x.webp", DocKind::Image),
+            ("x.gif", DocKind::Image),
+            ("x.bmp", DocKind::Image),
+            ("x.Svg", DocKind::Image),
+            ("clip.mp4", DocKind::Video),
+            ("clip.WEBM", DocKind::Video),
+            ("take.mov", DocKind::Video),
+            ("song.mp3", DocKind::Audio),
+            ("TAKE.OGG", DocKind::Audio),
+            ("take.opus", DocKind::Audio),
+            ("paper.pdf", DocKind::Pdf),
+            ("INVOICE.PDF", DocKind::Pdf),
+        ] {
+            assert_eq!(doc_kind_by_name(Path::new(name)), Some(want), "{name}");
+        }
+        for name in [
+            "notes.txt",
+            "paper.pdfx",
+            "Makefile",
+            "archive.tar.gz",
+            ".md",
+        ] {
+            assert_eq!(doc_kind_by_name(Path::new(name)), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_png_name_on_bytes_that_are_not_an_image_is_not_drawable() {
+        assert_eq!(doc_kind(Path::new("x.png"), b"hello, world"), None);
+        assert_eq!(doc_kind(Path::new("x.png"), PNG), Some(DocKind::Image));
+        // Any raster signature will do: gpui decodes by the bytes, not the name.
+        assert_eq!(doc_kind(Path::new("x.png"), JPEG), Some(DocKind::Image));
+        assert_eq!(doc_kind(Path::new("x.png"), b""), None);
+    }
+
+    #[test]
+    fn an_image_with_no_extension_is_recognised_by_its_first_bytes() {
+        assert_eq!(doc_kind(Path::new("shot"), JPEG), Some(DocKind::Image));
+        assert_eq!(
+            doc_kind(Path::new("shot"), b"RIFF\x24\0\0\0WEBPVP8 "),
+            Some(DocKind::Image)
+        );
+        assert_eq!(doc_kind(Path::new("shot"), b"#!/bin/sh\n"), None);
+        // An extension TD does not know is not a guess at an image, even on
+        // image bytes: `.dat` is somebody's format, and it is not ours to draw.
+        assert_eq!(doc_kind(Path::new("frame.dat"), PNG), None);
+    }
+
+    /// A video name is drawable on the bytes of a container mpv plays, and
+    /// not on anything else. A log file named `.mp4` would open a square that
+    /// never shows a frame.
+    #[test]
+    fn a_video_name_needs_a_container_signature() {
+        let mp4 = b"\0\0\0\x20ftypisom\0\0\x02\0";
+        let old_mov = b"\0\0\0\x08wide\0\0\0\0mdat";
+        let webm = b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81";
+        let ogg = b"OggS\0\x02\0\0\0\0\0\0";
+        let avi = b"RIFF\x24\0\0\0AVI LIST";
+        for (name, head) in [
+            ("clip.mp4", &mp4[..]),
+            ("clip.M4V", &mp4[..]),
+            ("take.mov", &mp4[..]),
+            ("take.mov", &old_mov[..]),
+            ("clip.webm", &webm[..]),
+            ("clip.mkv", &webm[..]),
+            ("clip.ogv", &ogg[..]),
+            ("clip.avi", &avi[..]),
+        ] {
+            assert_eq!(
+                doc_kind(Path::new(name), head),
+                Some(DocKind::Video),
+                "{name}"
+            );
+        }
+        assert_eq!(doc_kind(Path::new("clip.mp4"), b"not a video at all"), None);
+        assert_eq!(doc_kind(Path::new("clip.mp4"), b""), None);
+        assert_eq!(
+            doc_kind(Path::new("clip.avi"), b"RIFF\x24\0\0\0WEBPVP8 "),
+            None
+        );
+    }
+
+    /// A sound's name is drawable on its own container's first bytes, and on
+    /// nothing else: a log named `.mp3` would open a box mpv can never fill.
+    /// And no sound is found by its bytes alone: an MP3 with no tag opens on
+    /// two bytes that are not worth trusting by themselves.
+    #[test]
+    fn a_sound_name_needs_its_signature_and_a_sound_never_goes_by_bytes_alone() {
+        let id3 = b"ID3\x04\0\0\0\0\0\x23TSSE";
+        let mp3 = b"\xff\xfb\x90\x64\0\0\0\0";
+        let adts = b"\xff\xf1\x50\x80\x2f\xff\xfc";
+        let flac = b"fLaC\0\0\0\x22\x10\0";
+        let wav = b"RIFF\x24\0\0\0WAVEfmt ";
+        let ogg = b"OggS\0\x02\0\0\0\0\0\0";
+        let m4a = b"\0\0\0\x20ftypM4A \0\0\x02\0";
+        let weba = b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81";
+        for (name, head) in [
+            ("song.mp3", &id3[..]),
+            ("song.MP3", &mp3[..]),
+            ("song.aac", &adts[..]),
+            ("take.flac", &flac[..]),
+            ("take.wav", &wav[..]),
+            ("take.ogg", &ogg[..]),
+            ("take.oga", &ogg[..]),
+            ("take.opus", &ogg[..]),
+            ("song.m4a", &m4a[..]),
+            ("take.weba", &weba[..]),
+        ] {
+            assert_eq!(
+                doc_kind(Path::new(name), head),
+                Some(DocKind::Audio),
+                "{name}"
+            );
+        }
+        assert_eq!(doc_kind(Path::new("song.mp3"), b"not a sound at all"), None);
+        assert_eq!(doc_kind(Path::new("take.wav"), b""), None);
+        assert_eq!(
+            doc_kind(Path::new("take.wav"), b"RIFF\x24\0\0\0AVI LIST"),
+            None,
+            "a film named as a sound"
+        );
+        assert_eq!(doc_kind(Path::new("take"), &ogg[..]), None);
+        assert_eq!(doc_kind(Path::new("take"), &id3[..]), None);
+    }
+
+    /// A video and a sound both play, and open as a clip; nothing else does.
+    #[test]
+    fn only_a_video_or_a_sound_plays() {
+        assert!(DocKind::Video.plays());
+        assert!(DocKind::Audio.plays());
+        for still in [
+            DocKind::Markdown,
+            DocKind::Html,
+            DocKind::Image,
+            DocKind::Pdf,
+        ] {
+            assert!(!still.plays(), "{still:?}");
+        }
+    }
+
+    /// No video is found by its bytes alone: a photo from a phone opens with
+    /// the same `ftyp` box an MP4 does, and it is not a video.
+    #[test]
+    fn a_video_is_never_recognised_without_its_name() {
+        let heic = b"\0\0\0\x18ftypheic\0\0\0\0";
+        assert_eq!(doc_kind(Path::new("IMG_0001"), heic), None);
+        assert_eq!(doc_kind(Path::new("IMG_0001.heic"), heic), None);
+        assert_eq!(
+            doc_kind(Path::new("rec"), b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81"),
+            None
+        );
+    }
+
+    /// A PDF name is drawable only on `%PDF-`: a log named `.pdf` would open
+    /// a square poppler can never fill. And `%PDF-` belongs to nothing else,
+    /// so a download that lost its suffix is still a PDF, where an extension
+    /// TD does not know is not a guess at one.
+    #[test]
+    fn a_pdf_is_recognised_by_its_header_and_needs_it() {
+        let pdf = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n";
+        assert_eq!(doc_kind(Path::new("paper.pdf"), pdf), Some(DocKind::Pdf));
+        assert_eq!(doc_kind(Path::new("paper.PDF"), pdf), Some(DocKind::Pdf));
+        assert_eq!(doc_kind(Path::new("paper.pdf"), b"not a pdf at all"), None);
+        assert_eq!(doc_kind(Path::new("paper.pdf"), b""), None);
+        assert_eq!(doc_kind(Path::new("paper.pdf"), b" %PDF-1.7"), None);
+        assert_eq!(doc_kind(Path::new("download"), pdf), Some(DocKind::Pdf));
+        assert_eq!(doc_kind(Path::new("scan.dat"), pdf), None);
+        // A PDF's bytes under an image's name are not a picture.
+        assert_eq!(doc_kind(Path::new("scan.png"), pdf), None);
+    }
+
+    #[test]
+    fn svg_markdown_and_html_are_by_name_whatever_the_bytes() {
+        assert_eq!(
+            doc_kind(Path::new("a.svg"), b"<svg xmlns"),
+            Some(DocKind::Image)
+        );
+        assert_eq!(doc_kind(Path::new("a.md"), PNG), Some(DocKind::Markdown));
+        assert_eq!(doc_kind(Path::new("a.html"), b""), Some(DocKind::Html));
+    }
+
+    #[test]
+    fn a_directory_named_like_a_document_is_not_drawable() {
+        let dir = std::env::temp_dir().join(format!("td-docopen-{}", std::process::id()));
+        let named = dir.join("notes.md");
+        std::fs::create_dir_all(&named).unwrap();
+        assert_eq!(drawable_document(&named), None);
+        let png = dir.join("shot.png");
+        std::fs::write(&png, PNG).unwrap();
+        assert_eq!(
+            drawable_document(&png),
+            Some(DocTarget {
+                path: png.clone(),
+                kind: DocKind::Image
+            })
+        );
+        assert_eq!(drawable_document(&dir.join("missing.png")), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn alt_click_opens_a_document_and_copies_a_command_line() {
+        let doc = DocTarget {
+            path: "/tmp/a.png".into(),
+            kind: DocKind::Image,
+        };
+        assert_eq!(
+            alt_click(false, false, Some(doc.clone())),
+            Some(AltClick::OpenHere(doc.clone()))
+        );
+        // The pointer on a path inside a command line opens the path.
+        assert_eq!(
+            alt_click(false, true, Some(doc.clone())),
+            Some(AltClick::OpenHere(doc.clone()))
+        );
+        assert_eq!(
+            alt_click(true, false, Some(doc.clone())),
+            Some(AltClick::OpenHere(doc))
+        );
+        assert_eq!(alt_click(false, true, None), Some(AltClick::Copy));
+        assert_eq!(alt_click(true, true, None), None);
+        assert_eq!(alt_click(false, false, None), None);
+    }
+
+    /// A link inside a document either takes the square's place, when it names
+    /// a file TD can draw, or goes to the desktop. Nothing else is opened: a
+    /// document is somebody's text, and its links are not all worth following.
+    #[test]
+    fn a_followed_link_replaces_the_square_or_goes_to_the_desktop() {
+        assert_eq!(link_route("/docs/next.md", true), LinkRoute::Replace);
+        assert_eq!(link_route("/docs/shot.png", true), LinkRoute::Replace);
+        assert_eq!(link_route("/docs/data.csv", false), LinkRoute::Desktop);
+        assert_eq!(
+            link_route("https://example.com/a.md", false),
+            LinkRoute::Desktop
+        );
+        assert_eq!(link_route("HTTP://example.com", false), LinkRoute::Desktop);
+        assert_eq!(
+            link_route("mailto:p@example.com", false),
+            LinkRoute::Desktop
+        );
+        for refused in ["javascript:alert(1)", "ssh://host", "steam://run/1", "x"] {
+            assert_eq!(link_route(refused, false), LinkRoute::Refuse, "{refused}");
+        }
+    }
+
+    fn inside(r: FloatRect, w: f32, h: f32) -> bool {
+        r.x >= 0.0 && r.y >= 0.0 && r.x + r.w <= w + 1e-3 && r.y + r.h <= h + 1e-3
+    }
+
+    #[test]
+    fn a_float_opens_below_its_line_and_above_it_near_the_bottom() {
+        let (w, h) = (1000.0, 800.0);
+        // Line near the top: the square starts just under it.
+        let top = float_home(w, h, 40.0, 60.0);
+        assert!(top.y > 60.0 && top.y < 80.0, "{top:?}");
+        assert!((top.w - 560.0).abs() < 1e-3 && top.w == top.h);
+        assert!(
+            (top.x + top.w - (w - 12.0)).abs() < 1e-3,
+            "right-aligned: {top:?}"
+        );
+        // Line on the last row: the square ends just above it.
+        let bottom = float_home(w, h, 760.0, 780.0);
+        assert!(bottom.y + bottom.h <= 760.0, "{bottom:?}");
+        for line in [0.0, 100.0, 300.0, 500.0, 780.0] {
+            assert!(
+                inside(float_home(w, h, line, line + 20.0), w, h),
+                "line at {line}"
+            );
+        }
+        // A short, wide pane takes 84% of its height instead.
+        let wide = float_home(2000.0, 300.0, 0.0, 20.0);
+        assert!(
+            (wide.h - 252.0).abs() < 1e-3 && inside(wide, 2000.0, 300.0),
+            "{wide:?}"
+        );
+    }
+
+    fn m(alt: bool, control: bool, shift: bool, platform: bool) -> Mods {
+        Mods {
+            alt,
+            control,
+            shift,
+            platform,
+        }
+    }
+
+    /// One row per line of the gesture table (mockup 04, "Every click on a
+    /// path, before and after"), plus the rows that must NOT change.
+    ///
+    /// `(mods, on_document, on_link, revealable, chip_armed) -> intent`. A
+    /// document is always a link and always revealable; a web link is a link
+    /// and nothing else.
+    #[test]
+    fn every_click_on_a_path_does_what_the_gesture_table_says() {
+        use ClickIntent::*;
+        let none = Mods::default();
+        let alt = m(true, false, false, false);
+        let ctrl = m(false, true, false, false);
+        let shift = m(false, false, true, false);
+        let ctrl_alt = m(true, true, false, false);
+        let super_ctrl = m(false, true, false, true);
+        let ctrl_shift = m(false, true, true, false);
+        let rows: [(&str, Mods, bool, bool, bool, bool, ClickIntent); 17] = [
+            // Ctrl+click opens with the desktop: unchanged, path or web link.
+            (
+                "ctrl, document",
+                ctrl,
+                true,
+                true,
+                true,
+                false,
+                OpenWithDesktop,
+            ),
+            (
+                "ctrl, plain path",
+                ctrl,
+                false,
+                true,
+                true,
+                false,
+                OpenWithDesktop,
+            ),
+            (
+                "ctrl, web link",
+                ctrl,
+                false,
+                true,
+                false,
+                false,
+                OpenWithDesktop,
+            ),
+            // Shift+click REVEALS a file now. It used to open it.
+            ("shift, plain path", shift, false, true, true, false, Reveal),
+            ("shift, document", shift, true, true, true, false, Reveal),
+            // ...but a web link has nothing on disk, so Shift keeps opening it.
+            (
+                "shift, web link",
+                shift,
+                false,
+                true,
+                false,
+                false,
+                OpenWithDesktop,
+            ),
+            // The ladder's order: shift is asked before ctrl.
+            (
+                "ctrl+shift, path",
+                ctrl_shift,
+                false,
+                true,
+                true,
+                false,
+                Reveal,
+            ),
+            // Alt on a document opens the square, even on a command line.
+            ("alt, document", alt, true, true, true, false, OpenHere),
+            ("alt, document, chip", alt, true, true, true, true, OpenHere),
+            // Alt anywhere else copies the command line, as it always did.
+            (
+                "alt, command line",
+                alt,
+                false,
+                false,
+                false,
+                true,
+                CopyChip,
+            ),
+            ("alt, nothing", alt, false, false, false, false, Pass),
+            // Ctrl+Alt on a document is the split's; off one it copies.
+            (
+                "ctrl+alt, document",
+                ctrl_alt,
+                true,
+                true,
+                true,
+                false,
+                OpenBeside,
+            ),
+            (
+                "ctrl+alt, command",
+                ctrl_alt,
+                false,
+                false,
+                false,
+                true,
+                CopyChip,
+            ),
+            // Super+Ctrl reveals, unchanged, and a web link still opens.
+            (
+                "super+ctrl, path",
+                super_ctrl,
+                false,
+                true,
+                true,
+                false,
+                Reveal,
+            ),
+            (
+                "super+ctrl, web",
+                super_ctrl,
+                false,
+                true,
+                false,
+                false,
+                OpenWithDesktop,
+            ),
+            // No modifier, or a modifier on nothing: a selection starts.
+            ("plain, document", none, true, true, true, true, Pass),
+            ("shift, nothing", shift, false, false, false, false, Pass),
+        ];
+        for (name, mods, doc, link, reveal, chip, want) in rows {
+            assert_eq!(click_intent(mods, doc, link, reveal, chip), want, "{name}");
+        }
+    }
+
+    /// A path TD can draw gets "Open here" and "Open beside" first, and every
+    /// link can be copied, which is where the copy Alt+click gave up on a path
+    /// now lives.
+    #[test]
+    fn the_menu_on_a_document_path_offers_open_here_open_beside_and_copy_link() {
+        assert_eq!(
+            link_menu(true, true),
+            vec![
+                LinkItem::OpenHere,
+                LinkItem::OpenBeside,
+                LinkItem::OpenWithDesktop,
+                LinkItem::Reveal,
+                LinkItem::CopyLink
+            ]
+        );
+        // A file TD cannot draw keeps everything but Open here.
+        assert_eq!(
+            link_menu(false, true),
+            vec![
+                LinkItem::OpenWithDesktop,
+                LinkItem::Reveal,
+                LinkItem::CopyLink
+            ]
+        );
+    }
+
+    #[test]
+    fn the_menu_on_a_web_link_offers_neither_open_here_nor_reveal() {
+        assert_eq!(
+            link_menu(false, false),
+            vec![LinkItem::OpenWithDesktop, LinkItem::CopyLink]
+        );
+    }
+
+    /// The chip names the source, over every combination: an agent's
+    /// transcript only when it is bound for certain, its screen said to be a
+    /// screen otherwise, and a shell's history or the alternate screen for
+    /// anything that is not an agent.
+    #[test]
+    fn the_readers_chip_names_its_source() {
+        for alt in [false, true] {
+            assert_eq!(read_chip(true, true, alt), ReadChip::Transcript);
+            assert_eq!(read_chip(true, false, alt), ReadChip::Screen);
+        }
+        for bound in [false, true] {
+            assert_eq!(read_chip(false, bound, true), ReadChip::AltScreen);
+            assert_eq!(read_chip(false, bound, false), ReadChip::Scrollback);
+        }
+        let en = crate::lang::Lang::En.strings();
+        assert_eq!(ReadChip::Transcript.label(en), "TRANSCRIPT · live");
+        assert_eq!(ReadChip::Screen.label(en), "SCREEN · transcript not bound");
+    }
+
+    /// Alt+R reads what the pane shows, over every face with a square up or
+    /// not: the document a pane was opened to show, a square floating over
+    /// the terminal or the bench, and otherwise the terminal — never the bench
+    /// itself, which is already drawn to be read.
+    #[test]
+    fn the_reader_reads_what_the_pane_shows() {
+        use crate::workbench::Face;
+        for square_up in [false, true] {
+            assert_eq!(
+                read_from(Face::Document, square_up),
+                ReadFrom::Document(DocSeat::Face),
+                "a document pane reads its document, square or not"
+            );
+        }
+        for face in [Face::Terminal, Face::Workbench] {
+            assert_eq!(
+                read_from(face, true),
+                ReadFrom::Document(DocSeat::Float),
+                "{face:?} with a square over it reads the square"
+            );
+            assert_eq!(
+                read_from(face, false),
+                ReadFrom::Grid,
+                "{face:?} alone reads the terminal"
+            );
+        }
+    }
+
+    /// Alt+click on the path the square is already showing is the second
+    /// click that promotes it to a split; on any other path it opens that
+    /// path instead, and with no square up it simply opens.
+    #[test]
+    fn a_second_alt_click_on_the_floating_path_promotes_it() {
+        let a = Path::new("/tmp/a.md");
+        let b = Path::new("/tmp/b.md");
+        assert!(promotes(Some(a), a));
+        assert!(!promotes(Some(a), b));
+        assert!(!promotes(None, a));
+    }
+
+    /// The Document face's keys, as the ruling lists them: 0 fits, 1 is actual
+    /// size, + and − step the zoom, the arrows pan, PageUp and PageDown page.
+    /// A chord is never the face's, and neither is a letter: those are
+    /// swallowed by the face, not acted on.
+    #[test]
+    fn the_document_face_keys_zoom_pan_and_page() {
+        let k = |key| doc_face_key(key, false, false, false);
+        assert_eq!(k("0"), Some(DocKey::Fit));
+        assert_eq!(k("1"), Some(DocKey::Actual));
+        assert_eq!(k("+"), Some(DocKey::ZoomIn));
+        assert_eq!(k("="), Some(DocKey::ZoomIn), "+ without its shift");
+        assert_eq!(k("-"), Some(DocKey::ZoomOut));
+        assert_eq!(k("pageup"), Some(DocKey::Page(-1)));
+        assert_eq!(k("pagedown"), Some(DocKey::Page(1)));
+        // An arrow moves the view, so the document moves the other way.
+        assert_eq!(k("down"), Some(DocKey::Pan(0.0, -DOC_ARROW_STEP)));
+        assert_eq!(k("up"), Some(DocKey::Pan(0.0, DOC_ARROW_STEP)));
+        assert_eq!(k("right"), Some(DocKey::Pan(-DOC_ARROW_STEP, 0.0)));
+        assert_eq!(k("left"), Some(DocKey::Pan(DOC_ARROW_STEP, 0.0)));
+        for other in ["a", "2", "enter", "escape", "space", "tab"] {
+            assert_eq!(k(other), None, "{other}");
+        }
+        assert_eq!(doc_face_key("0", false, true, false), None, "ctrl+0");
+        assert_eq!(doc_face_key("down", true, false, false), None, "alt+down");
+        assert_eq!(doc_face_key("1", false, false, true), None, "super+1");
+    }
+
+    fn origin() -> FloatRect {
+        FloatRect {
+            x: 400.0,
+            y: 100.0,
+            w: 300.0,
+            h: 300.0,
+        }
+    }
+
+    /// A press that wobbles is a click, not a move: the square stays put
+    /// until the pointer has gone more than six pixels, then follows it
+    /// exactly, and keeps following when it comes back inside the six.
+    #[test]
+    fn a_float_drag_engages_only_past_six_pixels() {
+        let mut d = FloatDrag::new((500.0, 110.0), origin());
+        assert_eq!(drag_to(&mut d, (504.0, 113.0), 1000.0, 800.0), origin());
+        assert!(!d.engaged, "five pixels is a wobble");
+        let r = drag_to(&mut d, (507.0, 110.0), 1000.0, 800.0);
+        assert!(d.engaged, "seven pixels is a move");
+        assert_eq!((r.x, r.y), (407.0, 100.0));
+        let r = drag_to(&mut d, (501.0, 111.0), 1000.0, 800.0);
+        assert!(d.engaged, "an engaged drag stays engaged");
+        assert_eq!((r.x, r.y), (401.0, 101.0));
+        assert_eq!((r.w, r.h), (300.0, 300.0), "a move never resizes");
+    }
+
+    /// Dragged far past any edge, the square stops against it.
+    #[test]
+    fn a_float_dragged_past_the_edge_stays_inside_its_pane() {
+        let (w, h) = (1000.0, 800.0);
+        for to in [
+            (-5000.0, -5000.0),
+            (5000.0, -5000.0),
+            (5000.0, 5000.0),
+            (-5000.0, 5000.0),
+        ] {
+            let mut d = FloatDrag::new((500.0, 110.0), origin());
+            let r = drag_to(&mut d, to, w, h);
+            assert!(inside(r, w, h), "{to:?} -> {r:?}");
+            assert_eq!((r.w, r.h), (300.0, 300.0), "{to:?}: pushed, not squashed");
+        }
+        let mut d = FloatDrag::new((500.0, 110.0), origin());
+        let r = drag_to(&mut d, (5000.0, 110.0), w, h);
+        assert_eq!((r.x, r.y), (700.0, 100.0), "against the right edge");
+    }
+
+    /// A button paints over its strip, so it is found first; a point between
+    /// two zones that share an edge belongs to exactly one of them.
+    #[test]
+    fn a_strip_button_is_found_over_the_strip_it_sits_on() {
+        let zones = [
+            FloatZone {
+                x: 0.0,
+                y: 0.0,
+                w: 300.0,
+                h: 22.0,
+                hit: FloatHit::Strip,
+            },
+            FloatZone {
+                x: 240.0,
+                y: 0.0,
+                w: 30.0,
+                h: 22.0,
+                hit: FloatHit::Desktop,
+            },
+            FloatZone {
+                x: 270.0,
+                y: 0.0,
+                w: 30.0,
+                h: 22.0,
+                hit: FloatHit::Close,
+            },
+            FloatZone {
+                x: 0.0,
+                y: 22.0,
+                w: 300.0,
+                h: 278.0,
+                hit: FloatHit::Body,
+            },
+        ];
+        let hit = |x, y| float_hit_at(&zones, x, y).map(|z| z.hit);
+        assert_eq!(hit(10.0, 10.0), Some(FloatHit::Strip));
+        assert_eq!(hit(250.0, 10.0), Some(FloatHit::Desktop));
+        assert_eq!(hit(270.0, 10.0), Some(FloatHit::Close));
+        assert_eq!(hit(269.9, 10.0), Some(FloatHit::Desktop));
+        assert_eq!(hit(100.0, 22.0), Some(FloatHit::Body));
+        assert_eq!(hit(300.0, 10.0), None);
+    }
+
+    #[test]
+    fn a_float_is_clamped_inside_a_screen_that_shrank() {
+        let r = FloatRect {
+            x: 900.0,
+            y: 700.0,
+            w: 500.0,
+            h: 500.0,
+        };
+        let c = clamp_float(r, 400.0, 300.0);
+        assert!(inside(c, 400.0, 300.0), "{c:?}");
+        assert_eq!((c.w, c.h), (400.0, 300.0));
+        assert!(c.contains(10.0, 10.0) && !c.contains(400.0, 10.0));
+    }
+
+    /// A clip's box opens inside the square it covers, leaving the square's
+    /// strip (its file's name and its ✕) and a rim of the square showing, so
+    /// the page plainly is still there underneath. A square too small for
+    /// that is covered whole rather than given a box smaller than any square
+    /// can be.
+    #[test]
+    fn a_clip_opens_inside_the_square_it_covers_below_its_strip() {
+        let page = FloatRect {
+            x: 300.0,
+            y: 40.0,
+            w: 600.0,
+            h: 600.0,
+        };
+        let clip = clip_home(page);
+        assert!(
+            clip.y >= page.y + FLOAT_STRIP_H,
+            "the strip shows: {clip:?}"
+        );
+        assert!(
+            clip.x > page.x && clip.x + clip.w < page.x + page.w,
+            "{clip:?}"
+        );
+        assert!(clip.y + clip.h < page.y + page.h, "{clip:?}");
+        assert!(clip.w >= FLOAT_MIN_W && clip.h >= FLOAT_MIN_H);
+        let small = FloatRect {
+            x: 10.0,
+            y: 10.0,
+            w: FLOAT_MIN_W + 20.0,
+            h: FLOAT_MIN_H + 20.0,
+        };
+        assert_eq!(clip_home(small), small);
+    }
+
+    /// A sound's box is a band: as wide as a clip's and from the same top,
+    /// but only tall enough for its strip, a waveform of the sound's shape
+    /// across the width, and its bar, so most of the page stays in sight.
+    /// It never grows past the clip's box, nor shrinks below a square.
+    #[test]
+    fn a_sounds_box_is_a_band_as_tall_as_its_waveform() {
+        let clip = FloatRect {
+            x: 324.0,
+            y: 86.0,
+            w: 552.0,
+            h: 530.0,
+        };
+        let band = sound_box(clip, 24.0);
+        assert_eq!((band.x, band.y, band.w), (clip.x, clip.y, clip.w));
+        let wave = band.h - FLOAT_STRIP_H - 24.0;
+        assert!(
+            (band.w / wave - SOUND_SHAPE).abs() < 0.01,
+            "the waveform keeps its shape: {band:?}"
+        );
+        assert!(band.h < clip.h, "{band:?}");
+        let low = FloatRect { h: 150.0, ..clip };
+        assert_eq!(sound_box(low, 24.0), low, "no taller than the clip's box");
+        let narrow = FloatRect { w: 200.0, ..clip };
+        assert_eq!(
+            sound_box(narrow, 24.0).h,
+            FLOAT_MIN_H.max(22.0 + 80.0 + 24.0)
+        );
+    }
+
+    fn tab(agents: &[bool]) -> Vec<SendLeaf> {
+        agents.iter().map(|&agent| SendLeaf { agent }).collect()
+    }
+
+    /// ↪ goes to the pane the brief is beside when an agent runs there: a
+    /// square's own pane, a split's opener.
+    #[test]
+    fn send_goes_to_the_pane_the_brief_is_beside() {
+        // A square over an agent, another agent next to it.
+        assert_eq!(
+            send_to(&tab(&[true, true]), 1, Some(1)),
+            Some(SendTo::Beside(1))
+        );
+        // A split (leaf 2) opened beside the agent in leaf 0, with another
+        // agent nearer to it in leaf 1.
+        assert_eq!(
+            send_to(&tab(&[true, true, false]), 2, Some(0)),
+            Some(SendTo::Beside(0))
+        );
+    }
+
+    /// Otherwise the nearest agent pane in the tab, the earlier of two
+    /// equally near — and never the split's own pane, whose terminal is
+    /// behind the document.
+    #[test]
+    fn send_falls_back_to_the_nearest_agent_in_the_tab() {
+        // The opener is a shell now; the agents sit one and two away.
+        assert_eq!(
+            send_to(&tab(&[false, true, false, true]), 2, Some(0)),
+            Some(SendTo::Nearest(1)),
+            "two equally near: the earlier"
+        );
+        // A restored split with no recorded opener.
+        assert_eq!(
+            send_to(&tab(&[false, false, true]), 0, None),
+            Some(SendTo::Nearest(2))
+        );
+        // An agent running in the split's own pane is not a target.
+        assert_eq!(send_to(&tab(&[true, false]), 0, Some(1)), None);
+        // A square over a shell, with an agent beside it.
+        assert_eq!(
+            send_to(&tab(&[false, true]), 0, Some(0)),
+            Some(SendTo::Nearest(1))
+        );
+    }
+
+    /// No agent pane in the tab: nothing to send to, so no button.
+    #[test]
+    fn send_has_no_target_without_an_agent_beside_the_brief() {
+        assert_eq!(send_to(&tab(&[false, false, false]), 1, Some(0)), None);
+        assert_eq!(send_to(&tab(&[false]), 0, Some(0)), None);
+        assert_eq!(send_to(&tab(&[]), 0, None), None);
+        // An opener index past the tab is a pane that left it.
+        assert_eq!(send_to(&tab(&[false]), 0, Some(7)), None);
+    }
+
+    /// One agent is "agent"; with a choice the button names the pane, cut to
+    /// fit a bar.
+    #[test]
+    fn send_names_the_pane_only_when_there_is_a_choice() {
+        assert_eq!(send_label(1, "claude · brief-beside"), "agent");
+        assert_eq!(send_label(2, "CLAUDE"), "CLAUDE");
+        let long = send_label(3, "an agent pane whose title runs on and on");
+        assert!(long.ends_with('…') && long.chars().count() <= 24, "{long}");
+    }
+}

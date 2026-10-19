@@ -443,6 +443,12 @@ pub struct Tally {
 
 impl Tally {
     /// Every agent pane counted.
+    ///
+    /// Test-only since the rollup moved to the top right of the mother bar:
+    /// its one caller was the slot deciding it had nothing to draw, and the
+    /// counter is drawn whatever the count, because it is also the agent
+    /// wall's door and zero is a real answer.
+    #[cfg(test)]
     pub fn total(&self) -> u32 {
         self.working + self.blocked + self.errored + self.finished + self.idle + self.unknown
     }

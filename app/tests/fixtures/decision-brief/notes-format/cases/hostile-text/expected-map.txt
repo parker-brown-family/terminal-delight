@@ -1,0 +1,16 @@
+NOTES — brief.html
+7 notes on 3 elements.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[finding-the-island-is-the] The island is the record
+  · ends a script </script><b>LEAKED-1</b> and </SCRIPT > too
+  · opens a comment <!-- then <!--<script> double-escapes, and <![CDATA[ x ]]>
+  · closes a comment --> LEAKED-2 and --!> LEAKED-3, keeps ---
+
+[fig-01-two-writers-one] 01 · Two writers, one file
+  · ünïcødé — “quoted” ✓ 🎯 日本語
+  · line one line two line four
+
+[callout-a-callout-that-takes] A callout that takes a note.
+  · crlf line next, a bell  and a line separator   here
+  · </script> baked by another writer, with <!-- and --> inside

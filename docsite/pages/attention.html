@@ -1,0 +1,72 @@
+<script type="application/json" data-page>
+{
+  "title": "Attention",
+  "description": "How Terminal Delight tells you which agent needs you: badges on each tab, a count at the right edge, the NEEDS ME queue in priority order, a ping and a desktop notification when an agent finishes where you aren't looking.",
+  "updated": "2026-09-25",
+  "trueOf": "main at d7cf383",
+  "summary": "Which agent needs you, and in what order"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Every agent gets a badge on its tab. A small robot breathes while it works, a yellow <b>HEY</b> blinks when it's waiting on you, and <code>✅</code> or <code>❌</code> says how it finished. Visiting the pane clears the finish.</p>
+<p>At the top of the right edge, a pill counts what's waiting, by kind: red for a decision, orange for a failure, green for work to review. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> opens the <b>NEEDS ME</b> queue, which lists them in order, each with the line from the screen that raised it. <kbd>↵</kbd> takes you to the pane.</p>
+<p>When an agent finishes in a pane you aren't watching, it pings, and a desktop notification goes out with the agent's last message. Clicking the notification brings you to it.</p>
+<p class="invite">Technical has the queue's order, its keys, and how each signal is detected.</p>
+</section>
+
+<section data-register="technical" data-headline="Signals and the queue">
+<h3>One state, every surface</h3>
+<p>The tab badge, the left bar, the pill and the queue all read one value per agent. Waiting on you beats working, which beats a finish; a finish is <code>❌</code> if an error was on screen when it happened, otherwise <code>✅</code>.</p>
+<table>
+  <thead><tr><th>Badge</th><th>Means</th><th>Queue lane</th></tr></thead>
+  <tbody>
+    <tr><td>robot with a blinking <b>HEY</b></td><td>a question or permission prompt is on screen, or an open question on the workbench</td><td><code>DECISION</code></td></tr>
+    <tr><td><code>❌</code></td><td>finished against an error</td><td><code>FAILED</code></td></tr>
+    <tr><td><code>✅</code></td><td>finished, not yet seen</td><td><code>REVIEW</code></td></tr>
+    <tr><td>breathing robot</td><td>working</td><td>none</td></tr>
+    <tr><td>none</td><td>the screen matched no rule</td><td><code>UNKNOWN</code>, never counted</td></tr>
+  </tbody>
+</table>
+<p>A tab shows up to four badges and <code>+N</code> for the rest. The <a href="/left-bar">left bar</a> rolls them up onto each group and project. The pane header says the same in words: <code>❓ your turn</code>, <code>✘ blocked</code>, <code>✔ done</code>, <code>exited</code> or <code>live</code>.</p>
+
+<h3>How it's detected</h3>
+<p>Every 120 ms each pane reads its bottom rows. A prompt counts as waiting on you unless you've already answered it on that same screen. A finish is an agent that stops thinking for 300 ms after thinking for more than 1.2 seconds, or rings the terminal bell mid-turn. Focusing the pane acknowledges it.</p>
+
+<h3>The pill</h3>
+<p>One number per lane, in the lane's colour; a dim <code>0</code> when nothing is waiting; <code>?</code> when some panes couldn't be read; <code>●</code> when something is unseen. Click it to open the queue. <code>TD_SPINE=0</code> hides it.</p>
+
+<h3>The queue</h3>
+<p><code>NEEDS ME · &lt;n&gt;</code>, sorted by your level for the project, then lane (decision, failure, review, unknown), then oldest first, then pane. The order holds still while the queue is open; anything new joins at the bottom.</p>
+<p>Each row has a <code>●</code> if unseen, the lane, where it is (<code>group:tab</code>), its age, the reason (<code>Stopped at a prompt</code>, <code>Finished against a wall</code>, <code>Finished, not yet seen</code>), and the screen line that raised it. An age nobody saw start reads <code>—</code>, never zero. Panes that couldn't be read fold into one line: <code>3 more panes could not be read</code>. With nothing waiting: <code>Nothing is waiting on you.</code></p>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>↓</kbd> <kbd>j</kbd> <kbd>Tab</kbd> / <kbd>↑</kbd> <kbd>k</kbd></td><td>next / previous</td></tr>
+    <tr><td><kbd>Home</kbd> <kbd>End</kbd>, <kbd>1</kbd>–<kbd>9</kbd></td><td>first, last, that row</td></tr>
+    <tr><td><kbd>↵</kbd></td><td>go to the pane</td></tr>
+    <tr><td><kbd>o</kbd></td><td>open the agent's deliverable</td></tr>
+    <tr><td><kbd>b</kbd></td><td>open it in a pane beside the agent</td></tr>
+    <tr><td><kbd>p</kbd></td><td>dock the queue beside the panes, or float it again; windows narrower than 1280 px can't dock</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>close</td></tr>
+  </tbody>
+</table>
+
+<h3>Deliverables</h3>
+<p>An agent can name what it produced with the MCP tool <code>declare_deliverable</code>: a label of up to 48 characters and an absolute path or full URL. It needs <a href="/mcp">writes</a> on. The row then shows <code>html</code>, <code>md</code> or <code>open</code> and the label, and <code>⇲ beside</code> when Terminal Delight can draw the file itself. The tray under the selected row also has <code>changes</code> and <code>checks</code>, which read <code>unavailable</code> in this build.</p>
+
+<h3>Levels</h3>
+<p>Right-click a project, group or tab in the left bar and choose <code>Promote</code> or <code>Demote</code>; choose it again to clear. Promoted work sorts first (<code>▲</code>, green), demoted last (<code>▼</code>, blue). A level passes down to everything inside, and the nearest one set wins.</p>
+
+<h3>The finish</h3>
+<p>A pane you aren't watching plays a short built-in ping when its agent finishes, through <code>ffplay</code>, or <code>pw-play</code> without it. There's no setting for the sound. Then, unless the window is active with that pane focused, <code>notify-send</code> posts a notification titled <code>tab → pane</code>, marked <code>❓ … — your move</code>, <code>❌ … — blocked</code> or <code>✅ …</code>. Its text is the agent's last message, when Terminal Delight is sure which conversation the pane holds, or else the last two lines on screen. <b>Jump to pane</b> raises the window through Hyprland and focuses it.</p>
+
+<h3>Turning it down</h3>
+<p>The <code>🔔</code> in the chrome opens <code>NOTIFICATIONS</code>, which writes <code>~/.config/terminal-delight/notifications.toml</code>:</p>
+<pre><code>system = true    # desktop notifications
+marquee = false  # a chasing-bulb banner across the top of the window</code></pre>
+<p>With <code>system</code> off, nothing reaches the desktop and no transcript is read. With both off, the badge and the ping remain.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">Badges and the pill: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>agent_badge</code>); the queue, levels and deliverables: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/attention.rs">attention.rs</a>; detection: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>; the ping: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/bell.rs">bell.rs</a>; notifications: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/notify.rs">notify.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/notifpref.rs">notifpref.rs</a>.</li>
+</ol>

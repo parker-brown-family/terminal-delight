@@ -89,14 +89,15 @@ const GREY: &str = "\x1b[90m";
 
 /// A tiny deterministic PRNG (xorshift64*) so a pane's content is stable for a
 /// given seed but each pane on a wall differs. We can't use `rand`/`Math.random`
-/// here and want reproducible tests anyway.
-struct Rng(u64);
+/// here and want reproducible tests anyway. The core's throughput instrument
+/// (`vt/rio.rs`) builds its streams from it too.
+pub(crate) struct Rng(u64);
 impl Rng {
-    fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         // avoid the zero fixed-point
         Rng(seed ^ 0x9e37_79b9_7f4a_7c15 | 1)
     }
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         let mut x = self.0;
         x ^= x >> 12;
         x ^= x << 25;
@@ -104,10 +105,10 @@ impl Rng {
         self.0 = x;
         x.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
-    fn pick<T: Copy>(&mut self, xs: &[T]) -> T {
+    pub(crate) fn pick<T: Copy>(&mut self, xs: &[T]) -> T {
         xs[(self.next() as usize) % xs.len()]
     }
-    fn range(&mut self, lo: u64, hi: u64) -> u64 {
+    pub(crate) fn range(&mut self, lo: u64, hi: u64) -> u64 {
         lo + self.next() % (hi - lo + 1)
     }
 }

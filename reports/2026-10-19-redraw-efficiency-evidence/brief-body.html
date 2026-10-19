@@ -1,0 +1,112 @@
+<header class="top">
+  <div class="eyebrow">Terminal Delight · efficiency · 19 October 2026</div>
+  <h1>Less work between changes</h1>
+  <p class="lede">TD now reuses quiet panes’ text drawing and skips screen-update messages from hidden panes. In the mixed-pane test, window CPU fell <strong>@@MIXED_REDUCTION@@%</strong>. The main cost is retained memory; the main uncertainty is how much your changing mix of agents benefits.</p>
+  <div class="stamps"><span class="tag measured">Measured on this machine</span><span>@@SHIP_STATUS@@</span><span>About six minutes · details unfold below</span></div>
+</header>
+<main>
+<section id="results">
+  <h2><span class="n">01</span> The gain</h2>
+  <p>You asked for the remaining savings in drawing and busy hidden panes. Both had avoidable work. These measurements compare the new changes with the already-optimized build, so earlier savings are not counted again.</p>
+  <figure id="fig-measured-cpu">
+    <div class="fig-head"><span class="lbl">01</span><strong>CPU for the same work</strong><span class="tag measured">Measured</span></div>
+    <div class="legend"><span class="before-key">Before</span><span class="after-key">After</span><span>100% = one full CPU core · lower is better</span></div>
+    @@CPU_CHART@@
+    <figcaption><strong>Retaining quiet text saves CPU when another pane changes.</strong> Dots show every paired observation; bars show medians. Four panes shared each test window. The hidden test used thirty synthetic agent panes behind one quiet tab. These are TD window measurements; agent computation and the rest of the desktop are outside these bars. @@HIDDEN_CONCLUSION@@</figcaption>
+  </figure>
+  <p>The benefit needs an explanation beyond a lower number. A profile of the old drawing path showed where to look.</p>
+</section>
+<section id="cause">
+  <h2><span class="n">02</span> Repeated layout</h2>
+  <figure id="fig-profile">
+    <div class="fig-head"><span class="lbl">02</span><strong>One changing pane made quiet text expensive</strong><span class="tag measured">Measured</span></div>
+    <div class="profile-strip"><div class="layout-share">At least 51%<small>laying out elements</small></div><div>49%<small>other sampled work</small></div></div>
+    <div class="pane-row"><div class="mini-terminal active"><b>Changing at 20 Hz</b><i>working 00000416▌</i></div><div class="mini-terminal"><b>Quiet</b><i>unchanged text</i></div><div class="mini-terminal"><b>Quiet</b><i>unchanged text</i></div><div class="mini-terminal"><b>Quiet</b><i>unchanged text</i></div></div>
+    <figcaption><strong>The window kept laying out rows that had not changed.</strong> In a separate 20-second profile, 406 samples from the main drawing thread included at least 50.99% in layout functions. This is a share of sampled thread work, not a prediction of total CPU savings. The live-session profile had only nineteen samples and was too sparse to rank causes.</figcaption>
+  </figure>
+  <p>Keeping a whole pane’s drawing would skip important work: its position must be registered each frame for TD’s distortion effects. The fix therefore retains only the text grid.</p>
+  <figure id="fig-cache-boundary">
+    <div class="fig-head"><span class="lbl">03</span><strong>The reuse boundary</strong><span class="tag measured">Code and tests</span></div>
+    <div class="pane-boundary">
+      <div class="chrome">Pane header, input handling and geometry <b>run each frame</b></div>
+      <div class="grid-boundary"><strong>Terminal text</strong><div class="decision-path"><span>Same painted rows<br>and geometry</span><b>→</b><span class="good-node">Reuse layout<br>and drawing</span></div><div class="decision-path"><span>Text, cursor, selection,<br>colour or size changes</span><b>→</b><span class="blue-node">Draw fresh<br>in this frame</span></div></div>
+      <div class="chrome">Pictures, documents, overlays and effects <b>keep their own paths</b></div>
+    </div>
+    <figcaption><strong>Unchanged text is reused while the pane stays interactive.</strong> The comparison uses the final rows people see, including the cursor, selection and colours. Geometry and inherited text style also participate in the drawing library’s checks. This is checked by render and invalidation tests. Whole-pane reuse was rejected because it could skip per-frame effect registration.</figcaption>
+  </figure>
+  <p>The text can now stay unchanged between frames. Hidden output still has an earlier opportunity to avoid work: before its screen-update message reaches the interface.</p>
+</section>
+<section id="hidden">
+  <h2><span class="n">03</span> Hidden output</h2>
+  <p>Those messages arrived with each output chunk, even when the pane was hidden. The parser must keep reading; the interface can wait until its existing check or until you show the pane.</p>
+  <figure id="fig-hidden-flow">
+    <div class="fig-head"><span class="lbl">04</span><strong>Output keeps arriving; needless screen messages stop</strong><span class="tag measured">Code and tests</span></div>
+    <div class="flow"><div class="blue-node">Agent writes output</div><span>↓</span><div class="blue-node">Terminal parses it<br><small>latest text and scrollback stay current</small></div><span>↓</span><div class="fork"><div class="good-node"><b>Screen changed</b><p>Hidden: record the change.<br>Use the existing clock.<br>Shown: draw current text.</p></div><div class="blue-node"><b>Protocol or state event</b><p>Colour request, title, bell, exit:<br>continue through immediately.</p></div></div></div>
+    <div class="cadence"><span><b>1 second</b>hidden housekeeping, unchanged</span><span><b>5 seconds</b>background refresh, unchanged</span><span><b>On activation</b>read the latest grid</span></div>
+    <figcaption><strong>This removes interface wakeups without slowing the terminal parser.</strong> The test sends forty writes separately, confirms each reached the grid, and observes zero screen callbacks while hidden. A title still arrives before the test clock advances. Existing protocol, prompt, completion and resize tests remain in place. No new sleeping interval was introduced.</figcaption>
+  </figure>
+  <p>Both changes depend on recognizing when reuse is unsafe. That is where the tests had to challenge the implementation.</p>
+</section>
+<section id="adversarial">
+  <h2><span class="n">04</span> What failed</h2>
+  <figure id="fig-adversarial-tests">
+    <div class="fig-head"><span class="lbl">05</span><strong>The tests rejected stale drawing and missing savings</strong><span class="tag measured">Observed failures</span></div>
+    <div class="test-path"><div class="failure"><b>First cache design</b><p>Update the retained view during its parent’s draw.</p><strong>New text and cursor tests failed.</strong><small>The drawing library had already collected that frame’s invalidations.</small></div><span>→</span><div class="good-node"><b>Corrected design</b><p>Replace the retained view when the final painted content changes.</p><strong>Fresh drawing in the same frame.</strong><small>Identical content keeps the previous view.</small></div></div>
+    <div class="fault-pair"><div><b>Disable text reuse</b><span class="fail-word">Quiet-grid test fails</span></div><div><b>Restore hidden wakeups</b><span class="fail-word">Hidden-output test fails</span></div></div>
+    <figcaption><strong>Passing tests alone were insufficient.</strong> Deliberately removing both optimizations caused the two intended failures; 246 other pane tests still passed. The source was then restored and checked. Native testing also exercised real tab activation, documents and a window restart against the old terminal host, preserving both shell identities. @@FINAL_TESTS@@</figcaption>
+  </figure>
+  <p>Correctness tests explain why the changes are safe enough to ship. The unfavorable workloads and memory measurements decide whether they are worth keeping.</p>
+</section>
+<section id="tradeoffs">
+  <h2><span class="n">05</span> Cost and uncertainty</h2>
+  <figure id="fig-tradeoffs">
+    <div class="fig-head"><span class="lbl">06</span><strong>What we pay for the reduction</strong></div>
+    <table class="wide"><thead><tr><th>Tradeoff</th><th>What the evidence says</th></tr></thead><tbody>
+      <tr><td><span class="tag measured">Memory</span></td><td>@@MEMORY@@ The measurement includes allocator and renderer state, so it cannot isolate the text cache’s exact size.</td></tr>
+      <tr><td><span class="tag measured">Busy panes</span></td><td>@@SATURATED@@ Comparing rows and making a new view still cost work when text changes. The stress test checks that cost under continuous output.</td></tr>
+      <tr><td><span class="tag measured">Timing bias</span></td><td>@@AA@@ Reversing launch order gave @@REVERSE@@. Both binaries used equal window sizes on the same isolated display.</td></tr>
+      <tr><td><span class="tag inferred">User experience</span></td><td>Fresh output, selection, cursor, scrolling, palette changes and resizing pass the tests. Typing latency and frame-time tails were not measured; unchanged scheduling alone does not prove they are identical.</td></tr>
+      <tr><td><span class="unknown-label">Unknown</span></td><td>Whole-machine CPU reduction, battery life and the benefit during your actual day remain unmeasured. CRT effects were off in the controlled tests.</td></tr>
+    </tbody></table>
+    <figcaption><strong>The gain is specific to these workloads.</strong> Tests ran on a temporary headless output while the physical displays stayed asleep and the desktop remained locked. Windows rendered there, and a native capture verified fresh text. This controls the comparison; it does not reproduce every compositor, animation or agent workload you use.</figcaption>
+  </figure>
+  <p>The least certain engineering choice was replacing the cached view on every content change. It guarantees fresh drawing, but costs allocation. The busy-pane measurements above are the direct check on that tradeoff.</p>
+  <figure id="fig-host-version">
+    <div class="fig-head"><span class="lbl">07</span><strong>An earlier fix still awaits a new terminal host</strong><span class="tag inferred">CPU attribution</span></div>
+    <div class="fork"><div class="blue-node"><b>TD window</b><p>Drawing and interface updates.<br>Can be replaced while shells keep running.</p></div><div class="failure"><b>Process keeping terminals alive</b><p>The live host still runs older code.<br>Its conversation lookup can read whole files.</p></div></div>
+    <div class="cadence"><span><b>Old lookup</b>reads the whole candidate file</span><span><b>New lookup</b>reads its first 4 KiB</span><span><b>Current sessions</b>kept alive</span></div>
+    <figcaption><strong>Replacing the window does not replace the process holding your running agents.</strong> New hosts already contain the earlier bounded-read fix. The synthetic-agent fixture triggered lookup despite having no conversations; its old hosts showed CPU bursts. Source inspection makes the old lookup a plausible cause, but this run did not profile those bursts. Restarting the live host would interrupt its terminals, so it was preserved.</figcaption>
+  </figure>
+</section>
+<section id="resolution">
+  <h2><span class="n">06</span> Where I stopped</h2>
+  <div class="grill">
+    <div class="ask" id="ask-keep-measured-reuse"><h3>Keep the measured reuse</h3><p class="rec">Recommendation: keep the narrow text cache and hidden screen-event filter. @@KEEP_REASON@@</p></div>
+    <div class="ask" id="ask-preserve-current-cadence"><h3>Keep the current hidden clock</h3><p class="rec">Recommendation: retain the one-second check. Lengthening it risks slower attention and completion updates; these changes remove work without that exchange.</p></div>
+    <div class="ask" id="ask-watch-regression-signs"><h3>Use concrete rollback signals</h3><p class="rec">Stale text on activation, a selection that fails to repaint, or repeatable CPU growth in the same stress test would invalidate this release. The previous version remains available for a GUI-only rollback.</p></div>
+  </div>
+  <p>@@DEPLOYMENT@@</p>
+  <button class="linkbtn" data-open="d-evidence">Measurements, test receipts and source</button>
+</section>
+</main>
+<footer><p>Built with the decision-brief notes system. Click a note marker to annotate a figure or recommendation; save into file to carry those notes back.</p></footer>
+<dialog id="d-evidence"><div class="dlg-head"><h2>Evidence</h2><button data-close class="x">×</button></div><div class="dlg-body">
+  <h3>What was compared</h3>
+  <p>Baseline: clean main at <code>396f857</code>, with the same application tree as installed <code>f597f3c</code>. Candidate: the two changes described here, built with the same release configuration and dependency checkout. Neither timing binary contains profiling instrumentation. Binary hashes and source provenance accompany the measurements.</p>
+  <p>Each visible run used two simultaneous 1000 × 700 floating windows on one private workspace, one monitor and equal scale. CPU came from process tick deltas over eight seconds. Each hidden observation lasted ten seconds. Start times guarded against PID reuse; geometry was checked before and after. Hosts were measured separately. No build, profiler or browser QA ran during these samples. Synthetic writers were separate processes.</p>
+  <p>The mixed test used one 20 Hz writer and three unchanged panes. The all-busy test used four 20 Hz writers; their updates can arrive at different times, so some frames still benefit from reuse. The stress test used four 100 Hz writers to reduce that opportunity. Hidden fixtures used thirty host-classified synthetic Codex panes plus one quiet visible tab; writer counters and parsed text checked that a lower number did not come from stopped output.</p>
+  <p>The plain hidden control uses the same writer under the filename <code>worker.py</code>. The original <code>codex-fixture.py</code> path triggers the existing substring-based agent classifier, which starts conversation lookup for a Python program. This reproduces the already-open agent-classification issue. The older host used for compatibility also predates the bounded-header read fix, so the synthetic-agent results include behavior absent from a newly started current host. All original pairs remain in the table.</p>
+  <h3>All paired observations</h3>
+  @@PAIR_TABLE@@
+  <h3>Reading the numbers</h3>
+  <p>A drop from 17% to 12% of one core saves five percentage points of one core. It does not make the whole computer 29% faster. Relative reductions are the median of the individual paired reductions. Memory is proportional set size: shared pages are divided among processes, so process startup and sharing affect it.</p>
+  <p>The CPU profile sampled only the main thread in user space, at 99 Hz. Summing the listed layout symbols gives 50.99%; symbols below one percent were omitted. That is why the figure says “at least.” The separate nineteen-sample live profile is retained as inconclusive evidence.</p>
+  <h3>Validation and limits</h3>
+  <p>Tests include positive controls: a forced refresh must actually redraw; a visible output event must resume delivery; every hidden write must reach the parser individually. Changed rows are tested without relying on a generation counter. The initial mutable-child approach failed before replacement-by-content passed. Fault controls intentionally disable caching and the hidden gate, then restore source bytes in a finally block and verify hashes.</p>
+  <p>The native test used the existing older host binary, with no wire-format changes. It verified hidden output, keyboard tab activation, shell input protection, terminal/workbench switching, opening and scrolling Markdown, GUI closure and reconnection with the same shell PIDs and start times. It is a targeted smoke test, not a complete manual tour of every visual effect.</p>
+  <p>One experiment wrapper exited with a syntax error after all ten reverse-order hidden observations completed: I edited its file to prepare the next fixture while the shell was still using it. Its exit trap cleaned the owned windows and hosts, which were checked absent. The measurements and assertions had already completed; they are retained. Later fixtures use the syntax-checked script without edits during execution.</p>
+  <p>@@FINAL_TESTS@@ Both core configurations passed strict Clippy and formatting. Existing ignored tests remain ignored; their count is disclosed in the receipts. @@FINAL_VERIFICATION@@</p>
+  <p>XERJ remained on hold throughout this work. Its service and tooling were not used.</p>
+  <h3>Files and lineage</h3>
+  @@EVIDENCE_LINKS@@
+</div></dialog>

@@ -1,0 +1,31 @@
+{
+ "release": "current",
+ "pins": "Three READER NOTES comments, left by saves before format 1 appended instead of replacing. Only the last is rewritten; the two before it stay byte-identical.",
+ "notes_file": "brief.html",
+ "concur_support": "supported",
+ "format": "1",
+ "rev_before": "2026-09-21T09:01:00.000Z",
+ "notes_text": "{\n \"finding-the-island-is-the\": [\n  {\n   \"text\": \"The note the island holds.\",\n   \"title\": \"The island is the record\",\n   \"ts\": \"2026-09-21 09:00\"\n  }\n ]\n}",
+ "refuse": null,
+ "shown_before": {
+  "note_count": "1",
+  "concur_count": "0",
+  "notes": {
+   "finding-the-island-is-the": "1"
+  },
+  "concurs": []
+ },
+ "shown_after": {
+  "note_count": "2",
+  "concur_count": "0",
+  "notes": {
+   "finding-the-island-is-the": "2"
+  },
+  "concurs": []
+ },
+ "writes": [
+  "notes-island",
+  "concurs-island",
+  "mirror-replaced"
+ ]
+}

@@ -1,0 +1,12 @@
+{
+ "rev": "2026-09-24T20:05:00.000Z",
+ "edits": [
+  {
+   "op": "add",
+   "nid": "finding-nothing-to-annotate",
+   "title": "Nothing to annotate",
+   "text": "Refused: there is nowhere to put this.",
+   "ts": "2026-09-24 20:00"
+  }
+ ]
+}

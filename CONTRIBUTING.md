@@ -139,8 +139,16 @@ Zed's `terminal` / `terminal_view` crates are **GPL-3.0-or-later — study only,
 never copy**. You may learn *architectural facts* from Zed ("wrap `Term` in an
 `Arc<FairMutex>`, forward events over a channel, send `Msg::Resize` on bounds
 change"). You may **not** transcribe function bodies, identifiers, or structure.
-Write the terminal seam from the `alacritty_terminal` docs.rs API (Apache-2.0),
-not with Zed source open. See `docs/PLAN.md` §2.
+Write the terminal seam, `app/src/vt/`, from the published sources and APIs of
+the cores it wraps — `rio-vt` (MIT) and the fallback `alacritty_terminal`
+(Apache-2.0) — not with Zed source open. See `docs/PLAN.md` §2, and
+`docs/plans/core-swap-rio/` for why the seam is shaped the way it is.
+
+Anything that reads a terminal goes through `crate::vt`; nothing outside
+`app/src/vt/` may name `rio_vt` or `alacritty_terminal`, and
+`vt::boundary::no_file_outside_vt_names_a_core_crate` fails the build if one
+does. Run the suite on both cores before changing the seam:
+`cargo test` and `cargo test --features core-alacritty`.
 
 ### PRs
 

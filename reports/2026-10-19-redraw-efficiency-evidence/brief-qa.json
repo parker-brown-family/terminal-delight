@@ -1,0 +1,132 @@
+[
+  {
+    "width": 1100,
+    "overflow": false,
+    "figures": 7,
+    "coverage": [
+      [
+        "figure",
+        7,
+        7
+      ],
+      [
+        ".grill .ask",
+        3,
+        3
+      ],
+      [
+        "table.wide tbody tr",
+        5,
+        5
+      ]
+    ],
+    "anchors": true,
+    "labels": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "wallpaper": "\"wallpaper · vantablack · 2-layers-deep.jpg\"",
+    "missingModals": 0,
+    "tableNotes": true,
+    "placeholders": false,
+    "notes": {
+      "map": "NOTES — 2026-10-19-td-redraw-efficiency.html\n2 notes on 2 elements · 1 concur.\nEach [anchor] is an element id in that file — search it to find the passage.\n\n[fig-01-cpu-for-the] 01 CPU for the same work\n  · QA saved note figure .note-btn\n\n[ask-keep-the-measured-reuse] Keep the measured reuse  ✓ concur\n  · QA saved note .grill .ask .note-btn\n",
+      "modal": true,
+      "concur": true,
+      "figure": true,
+      "ask": true
+    },
+    "saved": true
+  },
+  {
+    "width": 720,
+    "overflow": false,
+    "figures": 7,
+    "coverage": [
+      [
+        "figure",
+        7,
+        7
+      ],
+      [
+        ".grill .ask",
+        3,
+        3
+      ],
+      [
+        "table.wide tbody tr",
+        5,
+        5
+      ]
+    ],
+    "anchors": true,
+    "labels": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "wallpaper": "\"wallpaper · vantablack · 2-layers-deep.jpg\"",
+    "missingModals": 0,
+    "tableNotes": true,
+    "placeholders": false,
+    "notes": {
+      "map": "NOTES — 2026-10-19-td-redraw-efficiency.html\n2 notes on 2 elements · 1 concur.\nEach [anchor] is an element id in that file — search it to find the passage.\n\n[fig-01-cpu-for-the] 01 CPU for the same work\n  · QA saved note figure .note-btn\n\n[ask-keep-the-measured-reuse] Keep the measured reuse  ✓ concur\n  · QA saved note .grill .ask .note-btn\n",
+      "modal": true,
+      "concur": true,
+      "figure": true,
+      "ask": true
+    }
+  },
+  {
+    "width": 390,
+    "overflow": false,
+    "figures": 7,
+    "coverage": [
+      [
+        "figure",
+        7,
+        7
+      ],
+      [
+        ".grill .ask",
+        3,
+        3
+      ],
+      [
+        "table.wide tbody tr",
+        5,
+        5
+      ]
+    ],
+    "anchors": true,
+    "labels": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "wallpaper": "\"wallpaper · vantablack · 2-layers-deep.jpg\"",
+    "missingModals": 0,
+    "tableNotes": true,
+    "placeholders": false,
+    "notes": {
+      "map": "NOTES — 2026-10-19-td-redraw-efficiency.html\n2 notes on 2 elements · 1 concur.\nEach [anchor] is an element id in that file — search it to find the passage.\n\n[fig-01-cpu-for-the] 01 CPU for the same work\n  · QA saved note figure .note-btn\n\n[ask-keep-the-measured-reuse] Keep the measured reuse  ✓ concur\n  · QA saved note .grill .ask .note-btn\n",
+      "modal": true,
+      "concur": true,
+      "figure": true,
+      "ask": true
+    }
+  }
+]

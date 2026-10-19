@@ -1,0 +1,210 @@
+{
+  "anchors": [
+    {
+      "id": "fig-01-a-stable-signal",
+      "nid": "fig-01-a-stable-signal"
+    },
+    {
+      "id": "fig-02-count-the-shared",
+      "nid": "fig-02-count-the-shared"
+    },
+    {
+      "id": "fig-03-three-depths-one",
+      "nid": "fig-03-three-depths-one"
+    },
+    {
+      "id": "fig-04-coverage-survives-the",
+      "nid": "fig-04-coverage-survives-the"
+    },
+    {
+      "id": "fig-05-collect",
+      "nid": "fig-05-collect"
+    },
+    {
+      "id": "fig-06-group",
+      "nid": "fig-06-group"
+    },
+    {
+      "id": "fig-07-expose",
+      "nid": "fig-07-expose"
+    },
+    {
+      "id": "fig-08-prove-one-route",
+      "nid": "fig-08-prove-one-route"
+    },
+    {
+      "id": "ask-entry-point",
+      "nid": "ask-entry-point"
+    },
+    {
+      "id": "ask-signal-policy",
+      "nid": "ask-signal-policy"
+    },
+    {
+      "id": "ask-first-release",
+      "nid": "ask-first-release"
+    },
+    {
+      "id": "sub-reuse",
+      "nid": "sub-reuse"
+    },
+    {
+      "id": "sub-footprint-gap",
+      "nid": "sub-footprint-gap"
+    },
+    {
+      "id": "sub-grouping-gap",
+      "nid": "sub-grouping-gap"
+    },
+    {
+      "id": "sub-exposure-boundary",
+      "nid": "sub-exposure-boundary"
+    },
+    {
+      "id": "sub-relay-amendment",
+      "nid": "sub-relay-amendment"
+    },
+    {
+      "id": "sub-design-amendments",
+      "nid": "sub-design-amendments"
+    },
+    {
+      "id": "sub-picture-provenance",
+      "nid": "sub-picture-provenance"
+    },
+    {
+      "id": "sub-identity-and-scope",
+      "nid": "sub-identity-and-scope"
+    },
+    {
+      "id": "sub-required-coverage",
+      "nid": "sub-required-coverage"
+    },
+    {
+      "id": "sub-display-rules",
+      "nid": "sub-display-rules"
+    },
+    {
+      "id": "sub-stable-snapshots",
+      "nid": "sub-stable-snapshots"
+    },
+    {
+      "id": "sub-mcp-parity",
+      "nid": "sub-mcp-parity"
+    },
+    {
+      "id": "sub-authorization-before-derivation",
+      "nid": "sub-authorization-before-derivation"
+    },
+    {
+      "id": "sub-file-map",
+      "nid": "sub-file-map"
+    },
+    {
+      "id": "sub-acceptance",
+      "nid": "sub-acceptance"
+    },
+    {
+      "id": "sub-execution-boundary",
+      "nid": "sub-execution-boundary"
+    }
+  ],
+  "coverage": [
+    [
+      ".grill .ask",
+      3,
+      3
+    ],
+    [
+      "figure",
+      8,
+      8
+    ],
+    [
+      ".card",
+      0,
+      0
+    ],
+    [
+      ".finding",
+      0,
+      0
+    ],
+    [
+      ".tile",
+      0,
+      0
+    ],
+    [
+      ".esc-list li",
+      0,
+      0
+    ],
+    [
+      "table.wide tbody tr",
+      0,
+      0
+    ],
+    [
+      ".callout",
+      0,
+      0
+    ]
+  ],
+  "svg": [
+    [
+      true,
+      true,
+      true
+    ],
+    [
+      true,
+      true,
+      true
+    ],
+    [
+      true,
+      true,
+      true
+    ],
+    [
+      true,
+      true,
+      true
+    ],
+    [
+      true,
+      true,
+      true
+    ]
+  ],
+  "badDialogs": 0,
+  "emptyDialogs": [],
+  "wallpaper": true,
+  "external": [],
+  "figures": [
+    "01",
+    "02",
+    "03",
+    "04",
+    "05",
+    "06",
+    "07",
+    "08"
+  ],
+  "overflow1100": false,
+  "overflow968": false,
+  "overflow720": false,
+  "overflow390": false,
+  "simulatedFocus": true,
+  "escapeToProject": true,
+  "escapeToAll": true,
+  "closed": true,
+  "map": "NOTES — 2026-10-18-git-coordination-rail.html\n1 notes on 1 elements · 1 concur.\nEach [anchor] is an element id in that file — search it to find the passage.\n\n[ask-entry-point] Entry Point\n  · Verification note: keep the entry point visible.\n\n[ask-signal-policy] Signal Policy  ✓ concur\n",
+  "saved": true,
+  "reopenedNotes": true,
+  "reopenedConcur": true,
+  "d-evidence": true,
+  "d-contract": true,
+  "errors": []
+}

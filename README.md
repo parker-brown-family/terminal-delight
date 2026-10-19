@@ -2,8 +2,10 @@
 
 A **GPU-native Linux terminal** with a hot-reloadable, CRT-flavored visual identity.
 Rust end-to-end: [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui)
-(Zed's GPU UI framework) renders everything; [`alacritty_terminal`](https://docs.rs/alacritty_terminal)
-does the VT emulation; your real shell runs on a real PTY.
+(Zed's GPU UI framework) renders everything; [`rio-vt`](https://crates.io/crates/rio-vt),
+the core of the [Rio](https://rioterm.com) terminal, does the VT emulation; your real
+shell runs on a real PTY, and pictures programs draw with the Kitty graphics protocol
+appear in the pane.
 
 > Goal: **2-5-20 terminals in one window · native-snappy · web-app polished ·
 > modify-at-will themes · open source.** See [docs/PLAN.md](docs/PLAN.md) for the
@@ -181,7 +183,10 @@ knowing this project exists.
 app/src/main.rs   Workspace: panes, split/focus/close, layout persistence
 app/src/pane.rs   TerminalView: grid render (styled runs), input→PTY bytes,
                   selection, scrollback, clipboard, CRT-lite, latency probe
-app/src/term.rs   the seam: alacritty_terminal tty+EventLoop (clean-room, Apache-2.0 API)
+app/src/term.rs   a pane's terminal: core, read loop, PTY or host socket, event channel
+app/src/vt/       the core boundary: TD's own types, read loop (pump.rs), PTY (pty.rs),
+                  replica socket (socket.rs), rio-vt adapter (rio.rs), and the
+                  alacritty_terminal fallback (alacritty.rs, --features core-alacritty)
 app/src/theme.rs  TOML themes, hot-reload watcher, gpui Global
 app/src/warp.rs   per-pane warp registry feeding the td-crt-pass renderer patch
 app/src/bell.rs   per-pane agent-finished bell (sound pick/trim, ffplay playback)

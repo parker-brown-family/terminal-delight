@@ -33,14 +33,17 @@ if (!pwPath) {
 const { chromium } = await createRequire(import.meta.url)(pwPath);
 
 /* id, path, and whether the theme is expected to reach :root. The cabinets
-   are painted on the strip only — see assets/kiosk-chrome.js. */
+   are painted on the strip only — see assets/kiosk-chrome.js.
+
+   info.html left the family on 2026-09-24. It now wears the vanilla
+   Terminal Delight shell (assets/td-shell.*) that the docs site shares, with
+   its own glass/paper modes, so it carries no strip and takes no Omarchy
+   palette. The strip on the other pages still links to it. */
 const KIOSKS = [
-  { id: 'info',    path: '/info.html',        root: true  },
   { id: 'omarchy', path: '/omarchy.html',     root: true  },
   { id: 'agents',  path: '/agents.html',      root: true  },
   { id: 'tv',      path: '/tv.html',          root: false },
   { id: 'global',  path: '/global.html',      root: false },
-  { id: 'gamba',   path: '/gamba.html',       root: false },
   { id: 'crawl',   path: '/start-crawl.html', root: false },
 ];
 
@@ -95,29 +98,25 @@ for (const k of KIOSKS) {
   check(`${k.id}: has social tags`, head.og >= 4, `${head.og} og tags`);
   check(`${k.id}: has a CSP`, head.csp);
 
-  const strip = await page.evaluate(() => {
-    const s = document.querySelector('.kiosk-strip');
-    if (!s) return null;
-    return {
-      links: s.querySelectorAll('a.k-link').length,
-      here: (s.querySelector('.k-here') || {}).textContent || null,
-      rail: s.querySelectorAll('.kiosk-chip').length,
-    };
-  });
-  check(`${k.id}: family strip renders`, !!strip);
-  if (strip) {
-    /* Six links plus the page itself named as current: no kiosk is a dead
-       end any more, and none of them links to itself. */
-    check(`${k.id}: strip links the other six`, strip.links === 6, `${strip.links} links`);
-    check(`${k.id}: strip marks the current page`, !!strip.here);
-  }
+  /* The family strip was removed on 2026-09-24: on the Omarchy kiosk it
+     stacked a second top bar over the page's own navigation. It must not
+     come back. Every kiosk still needs a way back to the info page — as a
+     link, or, on the cabinets, as a button drawn on the CRT whose target
+     sits in a script table (`url:'info.html'`) rather than in an <a>. */
+  const out = await page.evaluate(() => ({
+    strip: !!document.querySelector('.kiosk-strip'),
+    anchor: [...document.querySelectorAll('a[href]')].some((a) => /(^|\/)(info|index)(\.html)?([#?].*)?$/.test(a.getAttribute('href'))),
+    drawn: /url\s*:\s*['"](\/?info(\.html)?|\/)([#?][^'"]*)?['"]/.test(document.documentElement.innerHTML),
+  }));
+  check(`${k.id}: no family strip`, !out.strip);
+  check(`${k.id}: has a way back to info`, out.anchor || out.drawn, `anchor=${out.anchor} drawn=${out.drawn}`);
   await page.close();
 }
 
 /* ---- 3. the pick travels, and lands where it should -------------------- */
 {
   const page = await ctx.newPage();
-  await page.goto(BASE + '/info.html', { waitUntil: 'domcontentloaded' });
+  await page.goto(BASE + '/agents.html', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(350);
 
   /* Probe the role variable AND a real element's rendered colour. The obvious
@@ -130,35 +129,30 @@ for (const k of KIOSKS) {
     ink: getComputedStyle(document.querySelector('p, a, li') || document.body).color,
   }));
   const before = await snap();
-  await page.evaluate(() => {
-    const chip = document.querySelector('.kiosk-chip[data-name="tokyo-night"]');
-    if (chip) chip.click();
-  });
-  await page.waitForTimeout(120);
+  /* The agent wall's own picker lived in the family strip and went with it,
+     so the pick is stored the way the Omarchy kiosk's picker stores it, and
+     the wall is reloaded to wear it. */
+  await page.evaluate(() => localStorage.setItem('td-kiosk-theme', 'tokyo-night'));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(350);
   const after = await snap();
-  check('info repaints when a theme is picked',
+  check('agents wears a stored pick',
     after.bg === '#1a1b26' && before.ink !== after.ink,
     `--bg ${before.bg} -> ${after.bg}; ink ${before.ink} -> ${after.ink}`);
 
   /* Same storage, different page: this is the thing that did not exist
      before — a theme chosen on one kiosk being worn by the next. */
-  await page.goto(BASE + '/agents.html', { waitUntil: 'domcontentloaded' });
-  const carried = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
-  check('the pick travels to agents', carried === 'tokyo-night', `data-theme=${carried}`);
-
   await page.goto(BASE + '/omarchy.html', { waitUntil: 'domcontentloaded' });
   const carried2 = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
   check('the pick travels to omarchy', carried2 === 'tokyo-night', `data-theme=${carried2}`);
 
-  /* And the cabinets do NOT get repainted: GAMBA keeps its own red. A root
+  /* And the cabinets do NOT get repainted: the TV keeps its own brass. A root
      paint would have silently replaced it with the palette's. */
-  await page.goto(BASE + '/gamba.html', { waitUntil: 'domcontentloaded' });
-  const gamba = await page.evaluate(() => ({
-    red: getComputedStyle(document.documentElement).getPropertyValue('--red').trim(),
-    stripFg: getComputedStyle(document.querySelector('.kiosk-strip')).getPropertyValue('--fg').trim(),
+  await page.goto(BASE + '/tv.html', { waitUntil: 'domcontentloaded' });
+  const cabinet = await page.evaluate(() => ({
+    brass: getComputedStyle(document.documentElement).getPropertyValue('--brass').trim(),
   }));
-  check('gamba keeps its own --red', gamba.red === '#f75a33', `--red=${gamba.red}`);
-  check('gamba strip wears the theme', gamba.stripFg.length > 0, `--fg on strip = "${gamba.stripFg}"`);
+  check('TV keeps its own --brass', cabinet.brass === '#caa84e', `--brass=${cabinet.brass}`);
 
   await page.evaluate(() => localStorage.clear());
   await page.close();

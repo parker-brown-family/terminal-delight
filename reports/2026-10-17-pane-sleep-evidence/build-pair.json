@@ -1,0 +1,14 @@
+{
+  "baseline_source": "2b4a6b3963061f28408d1e43971dfa144b9242f8",
+  "candidate_source": "6736bc79dbc13c940c5233dc8f6c67c5461fdee3",
+  "same_checkout_path": "/home/parker/Work/terminal-delight/.worktrees/pane-sleep",
+  "profile": "normal release --locked; no test features",
+  "build_exit_codes": [
+    0,
+    0
+  ],
+  "baseline_binary": "/home/parker/.local/lib/terminal-delight/td-2b4a6b3-pane-sleep-baseline",
+  "baseline_sha256": "8e6f2d5cd7a14119d8f40eb6123727f351fe959c49144119c0906a4ee4f046f0",
+  "candidate_binary": "/home/parker/.local/lib/terminal-delight/td-6736bc7-pane-sleep",
+  "candidate_sha256": "b6633efafc276d6f2f3f15dd70927b746c77deaa0b5a9de3ab384885af7bd353"
+}

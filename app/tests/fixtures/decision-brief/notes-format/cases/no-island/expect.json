@@ -1,0 +1,18 @@
+{
+ "release": null,
+ "pins": "A page with no notes system at all. It reads as read-only, not as an empty map, and a write is refused: NoIsland.",
+ "notes_file": null,
+ "concur_support": null,
+ "format": null,
+ "rev_before": null,
+ "notes_text": null,
+ "refuse": "NoIsland",
+ "shown_before": {
+  "note_count": null,
+  "concur_count": null,
+  "notes": {},
+  "concurs": []
+ },
+ "shown_after": null,
+ "writes": null
+}

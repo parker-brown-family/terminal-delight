@@ -1,0 +1,8 @@
+{
+  "status": "rejected_control",
+  "accepted_as_guard_proof": false,
+  "reason": "The first F1 control failed while locating on_key because its source reader was still truncated. The automatic name-only failure match was insufficient; this run is not proof that the routing assertion rejected the inserted branch.",
+  "original_record": "guard-control-invalid-original.json",
+  "original_log": "guard-cutoff-invalid.log",
+  "required_replacement": "First pass the unmodified guard, then require the specific 'on_key looks at `key.as_str()` itself' assertion on the F1 mutant."
+}

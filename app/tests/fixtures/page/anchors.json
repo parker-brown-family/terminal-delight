@@ -1,0 +1,10 @@
+[
+  { "nid": "verdict-tiles-not-pages", "title": "Tiles not pages", "dialog": null },
+  { "nid": "fig-01-the-page-in", "title": "01 · The page in bands", "dialog": null },
+  { "nid": "verdict-one-browser", "title": "One browser", "dialog": null },
+  { "nid": "finding-anchors-hold", "title": "Anchors hold", "dialog": null },
+  { "nid": "fig-02-five-on-the", "title": "02 · Five on the GPU", "dialog": null },
+  { "nid": "verdict-no-network", "title": "No network", "dialog": null },
+  { "nid": "sub-first-source", "title": "First source", "dialog": "d-evidence" },
+  { "nid": "sub-second-source", "title": "Second source", "dialog": "d-evidence" }
+]

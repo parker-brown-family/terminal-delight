@@ -1,48 +1,35 @@
-//! G0b seam — real shell via alacritty_terminal (Option A from docs/PLAN.md §2).
-//! Written clean-room against the crate's public API (docs.rs + registry source).
+//! A pane's terminal: a core behind TD's boundary (`crate::vt`), TD's own read
+//! loop over a pseudoterminal or a session host's socket, and the channel the
+//! pane reads the terminal's events from.
 //!
-//! alacritty_terminal's EventLoop owns the PTY reader thread, the VTE parser
-//! pump, and the writer. We provide: an EventListener proxy that ships events
-//! onto an async channel (consumed by the gpui entity), and keystroke bytes in
-//! via the Notifier. NOTE: Event::PtyWrite (query responses like DA/DSR) is
-//! emitted through the proxy and NOT auto-routed back to the PTY — the consumer
-//! must bounce it via the notifier or interactive apps hang.
+//! NOTE: `Event::PtyWrite` (a reply to a program's question — DA, DSR) arrives
+//! through the proxy and is NOT written back to the program by the loop — the
+//! pane must bounce it through the notifier, or interactive programs hang
+//! waiting for an answer.
 
 use std::fs::File;
 use std::io;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use alacritty_terminal::{
-    event::{Event as TermEvent, EventListener, WindowSize},
-    event_loop::{EventLoop, Msg, Notifier},
-    grid::Dimensions,
-    sync::FairMutex,
-    term::{Config, Term},
-    tty,
-};
+use crate::vt::{self, Event as TermEvent, Listener, Notifier, TermSize, WindowSize};
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 
-/// Grid dimensions for Term::new (the crate's own TermSize lives in its test module).
-#[derive(Clone, Copy, Debug)]
+/// A terminal's grid, in cells.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GridSize {
     pub cols: usize,
     pub rows: usize,
 }
 
-impl Dimensions for GridSize {
-    fn total_lines(&self) -> usize {
-        self.rows
-    }
-    fn screen_lines(&self) -> usize {
-        self.rows
-    }
-    fn columns(&self) -> usize {
-        self.cols
+impl GridSize {
+    /// The size a core is told: this grid, and one cell's pixels.
+    pub fn with_cell(self, cell_width: u16, cell_height: u16) -> TermSize {
+        TermSize::new(self.cols, self.rows, cell_width, cell_height)
     }
 }
 
-/// Forwards terminal events from the EventLoop thread onto an async channel,
+/// Forwards terminal events from the read loop onto an async channel,
 /// and bumps the session's content generation as it does — every event marks a
 /// moment the emulation state may have changed, so "the counter moved" is a
 /// sound (if slightly over-eager) proxy for "the grid is different now".
@@ -51,12 +38,14 @@ impl Dimensions for GridSize {
 pub struct EventProxy {
     events: UnboundedSender<TermEvent>,
     generation: Arc<AtomicU64>,
+    screen_wakeups: Arc<AtomicBool>,
     /// Whether a program's question to the terminal is answered from here.
     answers_here: bool,
 }
 
 /// Who answers the questions a program asks the terminal — what are you (DA),
-/// where is the cursor (DSR) — each of which must be answered exactly once.
+/// where is the cursor (DSR), how big is the text area (`CSI 14 t`) — each of
+/// which must be answered exactly once.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Answers {
     /// This process owns the pseudoterminal, so it answers. Note that it does
@@ -79,19 +68,39 @@ impl EventProxy {
         Self {
             events,
             generation,
+            screen_wakeups: Arc::new(AtomicBool::new(true)),
             answers_here: answers == Answers::Here,
         }
     }
 }
 
-impl EventListener for EventProxy {
+impl Listener for EventProxy {
     fn send_event(&self, event: TermEvent) {
         // The counter moves for every event, forwarded or swallowed: it is the
         // invalidation token for cached views, and an event we decline to
         // answer still means the emulation has moved on. A replica whose
         // generation stopped advancing would freeze every cache built on it.
         self.generation.fetch_add(1, Ordering::Relaxed);
-        if !self.answers_here && matches!(event, TermEvent::PtyWrite(_)) {
+        // A hidden pane reads the grid on its existing housekeeping clock.
+        // Do not schedule a UI task for each chunk of invisible output. The
+        // generation still advances, and every non-screen event still travels.
+        if matches!(event, TermEvent::Wakeup) && !self.screen_wakeups.load(Ordering::Relaxed) {
+            return;
+        }
+        // `CSI 14 t` travels as its own event rather than as a `PtyWrite`, so
+        // it has to be named: the host answers it from the geometry it holds,
+        // and a pane answering it too would type a second reply at the program.
+        //
+        // A colour question (`ColorRequest`) is the opposite case and is
+        // passed on deliberately. The host has no theme and answers nothing;
+        // the pane answers from the colours it draws, so swallowing it here
+        // would leave it unanswered, which was issue 719.
+        if !self.answers_here
+            && matches!(
+                event,
+                TermEvent::PtyWrite(_) | TermEvent::TextAreaSizeRequest(_)
+            )
+        {
             return;
         }
         let _ = self.events.unbounded_send(event);
@@ -99,7 +108,7 @@ impl EventListener for EventProxy {
 }
 
 pub struct Session {
-    pub term: Arc<FairMutex<Term<EventProxy>>>,
+    pub term: vt::Shared,
     pub notifier: Notifier,
     /// Taken once by the UI entity to drive event handling.
     pub events: Option<UnboundedReceiver<TermEvent>>,
@@ -124,6 +133,9 @@ pub struct Session {
     /// changed generation merely *permits* change (title/bell events bump it
     /// too), which errs on the safe side for cache invalidation.
     pub generation: Arc<AtomicU64>,
+    /// Visibility gate for screen-only events. Parsing and protocol events
+    /// are independent; activation renders the latest grid before waiting.
+    pub screen_wakeups: Arc<AtomicBool>,
 }
 
 impl Session {
@@ -138,21 +150,19 @@ impl Session {
     ///
     /// On a replica the second half is not a syscall but a sentence: the size
     /// is announced to whoever owns the pseudoterminal (see
-    /// [`crate::socketpty::SocketPty`]), because a terminal that more than one
-    /// client may be looking at is told its size rather than inferring it.
+    /// [`crate::vt::socket::SocketSource`]), because a terminal that more than
+    /// one client may be looking at is told its size rather than inferring it.
+    ///
+    /// The cell's pixels go to the core as well as the kernel: a core places a
+    /// program's pictures in cells, and answers `CSI 16 t`, from them.
     pub fn resize(&self, size: GridSize, cell_width: u16, cell_height: u16) {
-        let window_size = WindowSize {
-            num_lines: size.rows as u16,
-            num_cols: size.cols as u16,
-            cell_width,
-            cell_height,
-        };
-        let _ = self.notifier.0.send(Msg::Resize(window_size));
+        let size = size.with_cell(cell_width, cell_height);
+        self.notifier.resize(size.window_size());
         self.term.lock().resize(size);
     }
 }
 
-/// Everything `tty::new` needs to start a shell, plus the environment the
+/// Everything a pseudoterminal needs to start a shell, plus the environment the
 /// caller wants stamped into it.
 pub struct SpawnSpec {
     pub size: GridSize,
@@ -162,20 +172,27 @@ pub struct SpawnSpec {
     /// failing the pane.
     pub cwd: Option<std::path::PathBuf>,
     pub env: Vec<(String, String)>,
+    /// A program to run as the terminal's child instead of the user's shell,
+    /// with its arguments — what `-e` asks for on a launch through
+    /// `xdg-terminal-exec`. Run directly, never typed into a shell, so nothing
+    /// in its arguments is ever read by one.
+    pub program: Option<(String, Vec<String>)>,
 }
 
 /// Spawn the user's default shell on a PTY, emulation wired, I/O thread running.
 #[allow(dead_code)]
 pub fn spawn(size: GridSize, cell_width: u16, cell_height: u16) -> io::Result<Session> {
-    spawn_in(size, cell_width, cell_height, None)
+    spawn_in(size, cell_width, cell_height, None, None)
 }
 
-/// `spawn`, but the shell starts in `cwd` (session restore).
+/// `spawn`, but the shell starts in `cwd` (session restore) — or, given a
+/// `program`, that program runs there instead of the shell.
 pub fn spawn_in(
     size: GridSize,
     cell_width: u16,
     cell_height: u16,
     cwd: Option<std::path::PathBuf>,
+    program: Option<&(String, Vec<String>)>,
 ) -> io::Result<Session> {
     let spec = SpawnSpec {
         size,
@@ -183,31 +200,33 @@ pub fn spawn_in(
         cell_height,
         cwd,
         env: vec![],
+        program: program.cloned(),
     };
     let pty = spawn_pty(&spec)?;
-    // Read before the pseudoterminal is handed to the event loop, which takes
-    // ownership of it: a generic `T` has neither of these accessors.
+    // Read before the pseudoterminal is handed to the loop, which takes
+    // ownership of it and asks only what every source can answer.
     let master = pty.file().try_clone().ok();
     let shell_pid = pty.child().id();
-    wire_event_loop(pty, size, master, Some(shell_pid), Answers::Here)
+    wire_pump(
+        Box::new(pty),
+        size.with_cell(cell_width, cell_height),
+        master,
+        Some(shell_pid),
+        Answers::Here,
+        None,
+    )
 }
 
 /// The pseudoterminal half of a spawn: a real kernel object with a real child.
-pub fn spawn_pty(spec: &SpawnSpec) -> io::Result<tty::Pty> {
-    let window_size = WindowSize {
-        num_lines: spec.size.rows as u16,
-        num_cols: spec.size.cols as u16,
-        cell_width: spec.cell_width,
-        cell_height: spec.cell_height,
-    };
-
-    let mut options = tty::Options {
+pub fn spawn_pty(spec: &SpawnSpec) -> io::Result<vt::pty::PtySource> {
+    let mut options = vt::pty::Options {
         working_directory: spec.cwd.clone().filter(|d| d.is_dir()),
         ..Default::default()
     };
     for (name, value) in &spec.env {
         options.env.insert(name.clone(), value.clone());
     }
+    options.shell = spec.program.clone();
     // A demo window runs THIS binary as every pane's program — a frozen screen of
     // lorem-ipsum styled like a real agent session — instead of the user's shell.
     // So a shared demo shows no real shell, cwd, scrollback, or secret, yet flows
@@ -215,44 +234,39 @@ pub fn spawn_pty(spec: &SpawnSpec) -> io::Result<tty::Pty> {
     // on TD_DEMO, which is set only for the spawned demo window (see main).
     if std::env::var_os("TD_DEMO").is_some() {
         if let Ok(exe) = std::env::current_exe() {
-            options.shell = Some(tty::Shell::new(
+            options.shell = Some((
                 exe.to_string_lossy().into_owned(),
                 vec!["--td-emit-demo".to_string()],
             ));
         }
     }
-    tty::new(&options, window_size, 0)
+    let size = spec.size.with_cell(spec.cell_width, spec.cell_height);
+    vt::pty::spawn(&options, size.window_size())
 }
 
-/// The emulator half: a `Term`, alacritty's own event loop over whatever the
-/// terminal actually is, and the channel the pane reads events from.
+/// The emulator half: a core, TD's read loop over whatever the terminal
+/// actually is, and the channel the pane reads events from.
 ///
-/// Generic over the pseudoterminal because the client's is a socket
-/// ([`crate::socketpty::SocketPty`]) and the bounds are exactly the ones
-/// `EventLoop::new` states. `master` and `shell_pid` are passed in rather than
-/// asked of `pty`: a generic `T` has no `.file()` or `.child()`, and on a
-/// replica neither exists to ask.
-pub fn wire_event_loop<T>(
-    pty: T,
-    size: GridSize,
+/// Any [`vt::pump::Source`] will do — a pseudoterminal this window started, or
+/// a session host's socket — which is what makes a replica an ordinary
+/// [`Session`]. `master` and `shell_pid` are passed in rather than asked of the
+/// source, because on a replica neither exists to ask. `tap` sees each chunk of
+/// output under the terminal's lock before it is parsed.
+pub fn wire_pump(
+    source: Box<dyn vt::pump::Source>,
+    size: TermSize,
     master: Option<File>,
     shell_pid: Option<u32>,
     answers: Answers,
-) -> io::Result<Session>
-where
-    T: tty::EventedPty + alacritty_terminal::event::OnResize + Send + 'static,
-{
+    tap: Option<Box<dyn vt::pump::Tap>>,
+) -> io::Result<Session> {
     let (tx, rx) = unbounded();
     let generation = Arc::new(AtomicU64::new(0));
-    let proxy = EventProxy::new(tx, generation.clone(), answers);
-    let term = Arc::new(FairMutex::new(Term::new(
-        Config::default(),
-        &size,
-        proxy.clone(),
-    )));
-    let event_loop = EventLoop::new(term.clone(), proxy, pty, false, false)?;
-    let notifier = Notifier(event_loop.channel());
-    let _io_thread = event_loop.spawn(); // owns its thread; lives as long as the PTY
+    let proxy = Arc::new(EventProxy::new(tx, generation.clone(), answers));
+    let screen_wakeups = proxy.screen_wakeups.clone();
+    let term = vt::shared(vt::Term::new(size, proxy.clone()));
+    // The loop owns its thread and lives as long as the program it reads.
+    let (notifier, _thread) = vt::pump::spawn(term.clone(), proxy, source, tap)?;
 
     Ok(Session {
         term,
@@ -261,6 +275,7 @@ where
         master,
         shell_pid,
         generation,
+        screen_wakeups,
     })
 }
 
@@ -271,12 +286,12 @@ pub struct AttachStreams {
     /// the snapshot of everything this pane has printed, then its live output.
     pub bytes: std::os::unix::net::UnixStream,
     /// A resize is a control verb, never a byte-stream fact. Called from the
-    /// event loop's own thread, hence `Send`.
+    /// read loop's own thread, hence `Send`.
     pub announce_resize: Box<dyn FnMut(WindowSize) + Send + 'static>,
 }
 
-/// THE SEAM: a terminal this process does not own, driven by alacritty's stock
-/// event loop over a socket, into an ordinary [`Session`].
+/// THE SEAM: a terminal this process does not own, driven by TD's read loop
+/// over a socket, into an ordinary [`Session`].
 ///
 /// The same type comes back as [`spawn_in`] returns, which is the whole point —
 /// every one of the pane's reads (styled lines, selection, scrollback, the
@@ -284,10 +299,12 @@ pub struct AttachStreams {
 /// scroll position stay client state by construction, because they were never
 /// anywhere else.
 ///
-/// `shell_pid` is what the host reported: an attribute of a process this window
-/// did not start, or `None` if the host named none.
+/// `size` is the host's, cell included: the snapshot on the stream was encoded
+/// from a grid of exactly that shape. `shell_pid` is what the host reported: an
+/// attribute of a process this window did not start, or `None` if the host
+/// named none.
 pub fn attach_in(
-    size: GridSize,
+    size: TermSize,
     streams: AttachStreams,
     shell_pid: Option<u32>,
 ) -> io::Result<(Session, crate::gridwire::ReplicaGuard)> {
@@ -295,18 +312,60 @@ pub fn attach_in(
         bytes,
         announce_resize,
     } = streams;
-    let pty = crate::socketpty::SocketPty::with_resize(bytes, announce_resize)?;
-    // Shared with the reader the event loop is about to own: the count of bytes
-    // that have actually reached this replica's parser, which is the clock the
-    // divergence guard reads.
-    let consumed = pty.consumed();
-    let session = wire_event_loop(pty, size, None, shell_pid, Answers::Elsewhere)?;
+    let source = vt::socket::SocketSource::with_resize(bytes, announce_resize)?;
+    // Shared with the loop's tap: the count of bytes that have actually reached
+    // this replica's parser, which is the clock the divergence guard reads.
+    let consumed = Arc::new(AtomicU64::new(0));
+    let tap = vt::socket::CountingTap(consumed.clone());
+    let session = wire_pump(
+        Box::new(source),
+        size,
+        None,
+        shell_pid,
+        Answers::Elsewhere,
+        Some(Box::new(tap)),
+    )?;
     let guard = crate::gridwire::ReplicaGuard::new(
         session.term.clone(),
         session.generation.clone(),
         consumed,
     );
     Ok((session, guard))
+}
+
+/// A terminal this process owns, running `program` rather than the user's
+/// shell: a real pseudoterminal, a real child, and everything above the child
+/// — the read loop, the parser, the core — the code a pane runs.
+///
+/// For tests, which need to choose what the terminal prints. [`spawn_in`]
+/// deliberately runs whatever shell the person has, and a test that depended
+/// on their prompt or their rc files would be testing their machine.
+#[cfg(test)]
+pub(crate) fn spawn_program(
+    size: GridSize,
+    cell_px: (u16, u16),
+    program: &str,
+    args: &[&str],
+) -> io::Result<Session> {
+    let options = vt::pty::Options {
+        shell: Some((
+            program.to_string(),
+            args.iter().map(|a| a.to_string()).collect(),
+        )),
+        ..Default::default()
+    };
+    let size = size.with_cell(cell_px.0, cell_px.1);
+    let pty = vt::pty::spawn(&options, size.window_size())?;
+    let master = pty.file().try_clone().ok();
+    let shell_pid = pty.child().id();
+    wire_pump(
+        Box::new(pty),
+        size,
+        master,
+        Some(shell_pid),
+        Answers::Here,
+        None,
+    )
 }
 
 /// How long a keystroke takes to come back, with and without the seam.
@@ -318,8 +377,8 @@ pub fn attach_in(
 /// session host owns two socket hops away — and the difference between them is
 /// the cost of the seam.
 ///
-/// **The signal is the content generation**, which alacritty's own reader bumps
-/// once per parse cycle (`event_loop.rs:167`) after the bytes it read are in the
+/// **The signal is the content generation**, which TD's read loop bumps once
+/// per parse (a `Wakeup`, from `vt::pump`) after the bytes it read are in the
 /// grid. So a sample is exactly: write a byte the way the GUI writes one, and
 /// wait until the terminal has drawn what came back. Not a proxy for that, and
 /// not a sleep.
@@ -337,8 +396,6 @@ pub fn attach_in(
 mod echo_bench {
     use std::io::Write;
     use std::time::{Duration, Instant};
-
-    use alacritty_terminal::event::Notify;
 
     use super::*;
 
@@ -411,24 +468,7 @@ mod echo_bench {
             cols: 100,
             rows: 28,
         };
-        let window_size = WindowSize {
-            num_lines: size.rows as u16,
-            num_cols: size.cols as u16,
-            cell_width: 8,
-            cell_height: 20,
-        };
-        let options = tty::Options {
-            shell: Some(tty::Shell::new(
-                prog.to_string(),
-                args.iter().map(|a| a.to_string()).collect(),
-            )),
-            ..Default::default()
-        };
-        let pty = tty::new(&options, window_size, 0).expect("a pseudoterminal");
-        let master = pty.file().try_clone().ok();
-        let shell_pid = pty.child().id();
-        wire_event_loop(pty, size, master, Some(shell_pid), Answers::Here)
-            .expect("wire the event loop")
+        spawn_program(size, (8, 20), prog, args).expect("a pseudoterminal")
     }
 
     /// The same shape, two socket hops away: a real session host in its own
@@ -515,7 +555,8 @@ mod echo_bench {
                 GridSize {
                     cols: 100,
                     rows: 28,
-                },
+                }
+                .with_cell(8, 20),
                 AttachStreams {
                     bytes: stream,
                     announce_resize: Box::new(move |size: WindowSize| {
@@ -638,9 +679,9 @@ mod echo_bench {
 ///
 /// A socket pair stands in for the host: one end is handed to [`attach_in`] and
 /// becomes an ordinary [`Session`], the other is written to and read from the
-/// way a session host would. Nothing here is a mock — it is alacritty's own
-/// event loop, parser and `Term`, which is the whole argument for cutting the
-/// seam at a file descriptor.
+/// way a session host would. Nothing here is a mock — it is TD's own read loop
+/// and the compiled-in core, which is the whole argument for cutting the seam at
+/// a file descriptor.
 #[cfg(test)]
 mod attached {
     use std::io::{Read, Write};
@@ -648,13 +689,9 @@ mod attached {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
-    use alacritty_terminal::event::Event as TermEvent;
-    use alacritty_terminal::index::{Column, Line};
-    use alacritty_terminal::term::{Config, Term};
-    use alacritty_terminal::vte::ansi::Processor;
-
     use super::*;
     use crate::gridwire::{grid_hash, GridCheck, GuardVerdict, Unsettled};
+    use crate::vt::{Column, Line, Point, Term};
 
     fn within(limit: Duration, mut done: impl FnMut() -> bool) -> bool {
         let deadline = Instant::now() + limit;
@@ -682,7 +719,7 @@ mod attached {
         let announced: Arc<Mutex<Vec<WindowSize>>> = Arc::default();
         let heard = announced.clone();
         let (session, guard) = attach_in(
-            GridSize { cols, rows },
+            GridSize { cols, rows }.with_cell(8, 16),
             AttachStreams {
                 bytes: client,
                 announce_resize: Box::new(move |size| {
@@ -726,7 +763,7 @@ mod attached {
         let term = pair.session.term.clone();
         assert!(
             within(Duration::from_secs(5), || {
-                term.lock().grid()[Line(1)][Column(4)].c == 'd'
+                term.lock().cell(Point::new(Line(1), Column(4))).c == 'd'
             }),
             "the host's bytes never reached the replica"
         );
@@ -780,13 +817,107 @@ mod attached {
         );
     }
 
+    /// A colour question reaches the pane from a replica, because the pane is
+    /// what answers it: the host has no theme (issue 719). First the filter
+    /// on its own, then end to end over a real replica's byte stream, where
+    /// the question arrives exactly once, with a reply format that ends the
+    /// way the question did.
+    #[test]
+    fn a_replica_passes_a_colour_question_to_its_pane() {
+        use crate::vt::Rgb;
+        let reply: Arc<dyn Fn(Rgb) -> String + Sync + Send> =
+            Arc::new(|c| format!("{:02x}{:02x}{:02x}", c.r, c.g, c.b));
+        let (tx, mut rx) = unbounded();
+        let replica = EventProxy::new(tx, Arc::new(AtomicU64::new(0)), Answers::Elsewhere);
+        replica.send_event(TermEvent::ColorRequest(257, reply));
+        assert!(
+            matches!(rx.try_recv(), Ok(TermEvent::ColorRequest(257, _))),
+            "a replica swallowed a colour question nobody else answers"
+        );
+
+        let mut pair = attached(20, 5, Some(1));
+        let mut events = pair.session.events.take().expect("events");
+        pair.host
+            .write_all(b"\x1b]11;?\x07done")
+            .expect("host writes");
+        let term = pair.session.term.clone();
+        assert!(
+            within(Duration::from_secs(5), || {
+                term.lock().cell(Point::new(Line(0), Column(3))).c == 'e'
+            }),
+            "the host's bytes never reached the replica"
+        );
+        let mut asked = 0;
+        while let Ok(event) = events.try_recv() {
+            if let TermEvent::ColorRequest(index, format) = event {
+                assert_eq!(index, 257, "OSC 11 asks for the default background");
+                let bg = Rgb {
+                    r: 0x10,
+                    g: 0x14,
+                    b: 0x1c,
+                };
+                assert_eq!(format(bg), "\x1b]11;rgb:1010/1414/1c1c\x07");
+                asked += 1;
+            }
+        }
+        assert_eq!(asked, 1, "one question, one event");
+    }
+
+    #[test]
+    fn a_replica_swallows_a_size_question_the_host_answers() {
+        // `CSI 14 t` asks for the text area in pixels. The host answers it
+        // from the geometry it holds; a replica forwarding it too would hand
+        // the pane a question that, once the pane learned to answer it, would
+        // be answered twice — and the second reply reaches the program as
+        // typed input. alacritty sends this one as its own event rather than
+        // as a `PtyWrite`, so the filter has to name it.
+        let reply: Arc<dyn Fn(WindowSize) -> String + Sync + Send> =
+            Arc::new(|size| format!("{}x{}", size.num_cols, size.num_lines));
+
+        let (tx, mut rx) = unbounded();
+        let replica = EventProxy::new(tx, Arc::new(AtomicU64::new(0)), Answers::Elsewhere);
+        replica.send_event(TermEvent::TextAreaSizeRequest(reply.clone()));
+        assert!(
+            rx.try_recv().is_err(),
+            "a replica forwarded a size question the host has already answered"
+        );
+
+        let (tx, mut rx) = unbounded();
+        let local = EventProxy::new(tx, Arc::new(AtomicU64::new(0)), Answers::Here);
+        local.send_event(TermEvent::TextAreaSizeRequest(reply));
+        assert!(
+            matches!(rx.try_recv(), Ok(TermEvent::TextAreaSizeRequest(_))),
+            "a terminal we own must still hand the question to its pane"
+        );
+
+        // And end to end: the question arriving on a real replica's byte
+        // stream is parsed, and nothing about it reaches the pane. The marker
+        // follows it in the same write, so once the marker is on the grid the
+        // parser has already been past the question.
+        let mut pair = attached(20, 5, Some(1));
+        let mut events = pair.session.events.take().expect("events");
+        pair.host.write_all(b"\x1b[14tdone").expect("host writes");
+        let term = pair.session.term.clone();
+        assert!(
+            within(Duration::from_secs(5), || {
+                term.lock().cell(Point::new(Line(0), Column(3))).c == 'e'
+            }),
+            "the host's bytes never reached the replica"
+        );
+        while let Ok(event) = events.try_recv() {
+            assert!(
+                !matches!(event, TermEvent::TextAreaSizeRequest(_)),
+                "a replica passed a size question on to its pane"
+            );
+        }
+    }
+
     #[test]
     fn keystrokes_go_up_the_socket_and_a_resize_does_not() {
         // A size is a fact the owner is told, never one it infers from the byte
         // stream: more than one client may be looking, and a resize mixed into
         // the output is a resize somebody has to guess the end of.
         let mut pair = attached(20, 5, Some(1));
-        use alacritty_terminal::event::Notify;
         pair.session.notifier.notify(b"ls -la\n".to_vec());
         pair.host
             .set_read_timeout(Some(Duration::from_secs(5)))
@@ -826,13 +957,12 @@ mod attached {
 
     /// An independent terminal fed the same bytes — what a host's own grid
     /// would look like, without a host.
-    fn authoritative(cols: usize, rows: usize, bytes: &[u8]) -> Term<EventProxy> {
+    fn authoritative(cols: usize, rows: usize, bytes: &[u8]) -> Term {
         let (tx, _rx) = unbounded();
         let proxy = EventProxy::new(tx, Arc::new(AtomicU64::new(0)), Answers::Here);
-        let size = GridSize { cols, rows };
-        let mut term = Term::new(Config::default(), &size, proxy);
-        let mut parser: Processor = Processor::new();
-        parser.advance(&mut term, bytes);
+        let size = GridSize { cols, rows }.with_cell(8, 16);
+        let mut term = Term::new(size, Arc::new(proxy));
+        term.advance(bytes);
         term
     }
 
@@ -915,7 +1045,7 @@ mod attached {
     fn scrolling_the_replica_is_not_divergence() {
         // A person reading their scrollback is not a client that has gone
         // wrong. The hash covers the terminal; the view belongs to the viewer.
-        use alacritty_terminal::grid::Scroll;
+        use crate::vt::Scroll;
         let mut pair = attached(20, 3, Some(1));
         let bytes = b"a\r\nb\r\nc\r\nd\r\ne\r\nf\r\n";
         pair.host.write_all(bytes).expect("host writes");
@@ -940,26 +1070,28 @@ mod attached {
 
 /// Headless, deterministic terminal-correctness matrix.
 ///
-/// These tests drive the emulator the way the real I/O thread does
-/// (`event_loop.rs:154` calls `parser.advance(&mut **terminal, bytes)`), but
-/// SYNCHRONOUSLY and with NO PTY, NO child shell, and NO sleeps: we build a
-/// bare [`Term`] + a `vte::ansi::Processor`, feed raw control bytes with
-/// `processor.advance(&mut term, bytes)`, then assert on the resulting grid /
-/// mode / emitted events. That makes them fast and CI-stable (a real
-/// PTY+shell+sleep loop is the flaky pattern we deliberately avoid).
+/// These tests drive the core the way the real read loop does (`vt::pump`
+/// calls `term.advance(bytes)` under the lock), but SYNCHRONOUSLY and with NO
+/// PTY, NO child shell, and NO sleeps: we build a bare [`crate::vt::Term`],
+/// feed raw control bytes, then assert on the resulting grid / mode / emitted
+/// events. That makes them fast and CI-stable (a real PTY+shell+sleep loop is
+/// the flaky pattern we deliberately avoid).
 ///
-/// Grid/cell access mirrors the production read path in `pane.rs`
-/// (`grid[Line(y)][Column(x)].{c,flags,fg}`, `term.mode().contains(...)`).
+/// They run against whichever core is compiled in, and the suite is run on
+/// both: a test that passes on `--features core-alacritty` and fails on the
+/// default is a difference between the cores, and each one is either fixed in
+/// the rio adapter or recorded in `docs/plans/core-swap-rio/evidence/`.
+///
+/// Cell access mirrors the production read path in `pane.rs`
+/// (`row(Line(y))[Column(x)].{c,flags,fg}`, `term.mode().contains(...)`).
 #[cfg(test)]
 mod correctness {
     use std::sync::{Arc, Mutex};
 
-    use alacritty_terminal::event::{Event as TermEvent, EventListener};
-    use alacritty_terminal::grid::{Dimensions, Scroll};
-    use alacritty_terminal::index::{Column, Line};
-    use alacritty_terminal::term::cell::Flags;
-    use alacritty_terminal::term::{ClipboardType, Config, Term, TermMode};
-    use alacritty_terminal::vte::ansi::{Color, NamedColor, Processor};
+    use crate::vt::{
+        ClipboardType, Color, Column, Event as TermEvent, Flags, Line, Listener, NamedColor, Point,
+        Scroll, Term, TermMode,
+    };
 
     use super::GridSize;
 
@@ -975,33 +1107,33 @@ mod correctness {
         }
     }
 
-    impl EventListener for Recorder {
+    impl Listener for Recorder {
         fn send_event(&self, event: TermEvent) {
             self.0.lock().unwrap().push(event);
         }
     }
 
-    /// A fresh emulator + parser + event recorder at the given size.
-    fn harness(cols: usize, rows: usize) -> (Term<Recorder>, Processor, Recorder) {
-        let size = GridSize { cols, rows };
+    /// A fresh core (its parser inside) + event recorder at the given size.
+    fn harness(cols: usize, rows: usize) -> (Term, Recorder) {
+        let size = GridSize { cols, rows }.with_cell(8, 16);
         let rec = Recorder::default();
-        let term = Term::new(Config::default(), &size, rec.clone());
-        (term, Processor::new(), rec)
+        let term = Term::new(size, Arc::new(rec.clone()));
+        (term, rec)
     }
 
     /// 80x24 default — the common case.
-    fn term80() -> (Term<Recorder>, Processor, Recorder) {
+    fn term80() -> (Term, Recorder) {
         harness(80, 24)
     }
 
-    /// Feed bytes into the emulator exactly as the real reader thread does.
-    fn feed(term: &mut Term<Recorder>, p: &mut Processor, bytes: &[u8]) {
-        p.advance(term, bytes);
+    /// Feed bytes into the core exactly as the real read loop does.
+    fn feed(term: &mut Term, bytes: &[u8]) {
+        term.advance(bytes);
     }
 
     /// The `char` at a live-screen cell (row/col, 0-based from the top).
-    fn ch(term: &Term<Recorder>, row: i32, col: usize) -> char {
-        term.grid()[Line(row)][Column(col)].c
+    fn ch(term: &Term, row: i32, col: usize) -> char {
+        term.cell(Point::new(Line(row), Column(col))).c
     }
 
     /// The FOCUS reader's vertical fill rests on one assumption: that rows which
@@ -1013,22 +1145,22 @@ mod correctness {
     /// notice, which is precisely the bug the document model was built to end.
     #[test]
     fn scrolled_off_rows_stay_readable_at_negative_line_indices() {
-        let (mut term, mut p, _) = harness(20, 5);
+        let (mut term, _) = harness(20, 5);
         // 12 numbered lines through a 5-row screen: 7 must scroll into history
         for i in 0..12 {
-            feed(&mut term, &mut p, format!("line{i}\r\n").as_bytes());
+            feed(&mut term, format!("line{i}\r\n").as_bytes());
         }
 
-        let top = term.grid().topmost_line().0;
+        let top = term.topmost_line().0;
         assert!(top < 0, "history must extend above line 0, got {top}");
         // 12 written lines plus the blank row the last newline opens = 13 rows
         // through a 5-row screen, so 8 are displaced into history.
         assert_eq!(top, -8, "history depth");
-        assert_eq!(term.grid().history_size(), 8);
+        assert_eq!(term.history_size(), 8);
 
         let row_text = |l: i32| -> String {
             (0..20)
-                .map(|c| term.grid()[Line(l)][Column(c)].c)
+                .map(|c| term.cell(Point::new(Line(l), Column(c))).c)
                 .collect::<String>()
                 .trim_end()
                 .to_string()
@@ -1042,18 +1174,18 @@ mod correctness {
     }
 
     /// The flags at a live-screen cell.
-    fn flags(term: &Term<Recorder>, row: i32, col: usize) -> Flags {
-        term.grid()[Line(row)][Column(col)].flags
+    fn flags(term: &Term, row: i32, col: usize) -> Flags {
+        term.cell(Point::new(Line(row), Column(col))).flags
     }
 
     /// Read the live top row as a string, skipping wide-char spacers (the same
     /// thing `pane.rs::live_rows` does for the HUD).
-    fn row_text(term: &Term<Recorder>, row: i32) -> String {
-        let grid = term.grid();
-        let cols = grid.columns();
+    fn row_text(term: &Term, row: i32) -> String {
+        let cells = term.row(Line(row));
+        let cols = term.columns();
         let mut s = String::new();
         for c in 0..cols {
-            let cell = &grid[Line(row)][Column(c)];
+            let cell = &cells[Column(c)];
             if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
                 continue;
             }
@@ -1069,14 +1201,14 @@ mod correctness {
     #[test]
     fn fresh_term_has_expected_dimensions() {
         let (term, ..) = term80();
-        assert_eq!(term.grid().columns(), 80);
-        assert_eq!(term.grid().screen_lines(), 24);
+        assert_eq!(term.columns(), 80);
+        assert_eq!(term.screen_lines(), 24);
     }
 
     #[test]
     fn plain_ascii_lands_on_the_grid() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"hello");
+        let (mut term, _) = term80();
+        feed(&mut term, b"hello");
         assert_eq!(row_text(&term, 0), "hello");
         assert_eq!(ch(&term, 0, 0), 'h');
         assert_eq!(ch(&term, 0, 4), 'o');
@@ -1084,8 +1216,8 @@ mod correctness {
 
     #[test]
     fn newline_and_carriage_return_move_the_cursor() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"ab\r\ncd");
+        let (mut term, _) = term80();
+        feed(&mut term, b"ab\r\ncd");
         assert_eq!(row_text(&term, 0), "ab");
         assert_eq!(row_text(&term, 1), "cd");
     }
@@ -1094,8 +1226,8 @@ mod correctness {
     fn fresh_term_starts_with_no_history() {
         let (term, ..) = term80();
         // total_lines == screen_lines until the screen overflows into history.
-        assert_eq!(term.grid().total_lines(), term.grid().screen_lines());
-        assert_eq!(term.grid().display_offset(), 0);
+        assert_eq!(term.total_lines(), term.screen_lines());
+        assert_eq!(term.display_offset(), 0);
     }
 
     // ----------------------------------------------------------------------
@@ -1104,24 +1236,24 @@ mod correctness {
 
     #[test]
     fn cjk_sets_wide_char_flag() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, "你".as_bytes());
+        let (mut term, _) = term80();
+        feed(&mut term, "你".as_bytes());
         assert!(flags(&term, 0, 0).contains(Flags::WIDE_CHAR));
         assert_eq!(ch(&term, 0, 0), '你');
     }
 
     #[test]
     fn cjk_occupies_a_spacer_cell() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, "你".as_bytes());
+        let (mut term, _) = term80();
+        feed(&mut term, "你".as_bytes());
         // The cell immediately right of a wide char is a spacer (no glyph).
         assert!(flags(&term, 0, 1).contains(Flags::WIDE_CHAR_SPACER));
     }
 
     #[test]
     fn cjk_advances_cursor_by_two_columns() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, "你A".as_bytes());
+        let (mut term, _) = term80();
+        feed(&mut term, "你A".as_bytes());
         // 你 at col0(+spacer col1), 'A' lands at col2.
         assert_eq!(ch(&term, 0, 2), 'A');
         assert!(!flags(&term, 0, 2).contains(Flags::WIDE_CHAR));
@@ -1129,8 +1261,8 @@ mod correctness {
 
     #[test]
     fn multiple_cjk_pack_two_columns_each() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, "日本語".as_bytes());
+        let (mut term, _) = term80();
+        feed(&mut term, "日本語".as_bytes());
         assert_eq!(ch(&term, 0, 0), '日');
         assert!(flags(&term, 0, 1).contains(Flags::WIDE_CHAR_SPACER));
         assert_eq!(ch(&term, 0, 2), '本');
@@ -1141,8 +1273,8 @@ mod correctness {
 
     #[test]
     fn ascii_is_not_wide() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"A");
+        let (mut term, _) = term80();
+        feed(&mut term, b"A");
         assert!(!flags(&term, 0, 0).contains(Flags::WIDE_CHAR));
         assert!(!flags(&term, 0, 1).contains(Flags::WIDE_CHAR_SPACER));
     }
@@ -1152,9 +1284,9 @@ mod correctness {
         // A 2-wide glyph cannot start in the final column of an odd-width grid;
         // alacritty marks the trailing cell LEADING_WIDE_CHAR_SPACER and wraps
         // the glyph to the next line. Use a 3-col grid so col2 is the last.
-        let (mut term, mut p, _) = harness(3, 4);
-        feed(&mut term, &mut p, b"AB"); // fill col0,col1; cursor at col2 (last)
-        feed(&mut term, &mut p, "你".as_bytes());
+        let (mut term, _) = harness(3, 4);
+        feed(&mut term, b"AB"); // fill col0,col1; cursor at col2 (last)
+        feed(&mut term, "你".as_bytes());
         // The wide char could not fit at col2, so it wrapped to row1 col0.
         assert!(
             flags(&term, 2 - 2, 2).contains(Flags::LEADING_WIDE_CHAR_SPACER)
@@ -1169,8 +1301,8 @@ mod correctness {
 
     #[test]
     fn emoji_is_wide() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, "😀".as_bytes());
+        let (mut term, _) = term80();
+        feed(&mut term, "😀".as_bytes());
         assert!(flags(&term, 0, 0).contains(Flags::WIDE_CHAR));
         assert!(flags(&term, 0, 1).contains(Flags::WIDE_CHAR_SPACER));
         assert_eq!(ch(&term, 0, 0), '😀');
@@ -1178,8 +1310,8 @@ mod correctness {
 
     #[test]
     fn text_after_emoji_lands_two_columns_over() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, "😀X".as_bytes());
+        let (mut term, _) = term80();
+        feed(&mut term, "😀X".as_bytes());
         assert_eq!(ch(&term, 0, 2), 'X');
     }
 
@@ -1190,8 +1322,8 @@ mod correctness {
         // rather than consuming extra columns: the base cell stays WIDE_CHAR
         // and the visible advance is still 2 columns, with the trailing text
         // landing right after the spacer.
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, "👨‍👩‍👧!".as_bytes());
+        let (mut term, _) = term80();
+        feed(&mut term, "👨‍👩‍👧!".as_bytes());
         assert!(flags(&term, 0, 0).contains(Flags::WIDE_CHAR));
         assert!(flags(&term, 0, 1).contains(Flags::WIDE_CHAR_SPACER));
         // Trailing '!' is the first non-spacer after the cluster.
@@ -1202,8 +1334,8 @@ mod correctness {
     #[test]
     fn combining_accent_does_not_consume_a_column() {
         // 'e' + U+0301 (combining acute) is one grid cell, not two.
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, "e\u{0301}X".as_bytes());
+        let (mut term, _) = term80();
+        feed(&mut term, "e\u{0301}X".as_bytes());
         // 'X' must be at col1: the accent attached to the 'e' cell.
         assert_eq!(ch(&term, 0, 1), 'X');
     }
@@ -1220,17 +1352,17 @@ mod correctness {
 
     #[test]
     fn decset_1049_enters_alt_screen() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[?1049h");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[?1049h");
         assert!(term.mode().contains(TermMode::ALT_SCREEN));
     }
 
     #[test]
     fn decrst_1049_leaves_alt_screen() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[?1049h");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[?1049h");
         assert!(term.mode().contains(TermMode::ALT_SCREEN));
-        feed(&mut term, &mut p, b"\x1b[?1049l");
+        feed(&mut term, b"\x1b[?1049l");
         assert!(!term.mode().contains(TermMode::ALT_SCREEN));
     }
 
@@ -1243,25 +1375,25 @@ mod correctness {
         // (vim, less, tmux, fzf, $PAGER) are covered by the tests above; this
         // assertion pins the no-op so a future crate bump that adds 1047 support
         // turns this red and prompts a real toggle assertion.
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[?1047h");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[?1047h");
         assert!(!term.mode().contains(TermMode::ALT_SCREEN));
     }
 
     #[test]
     fn alt_screen_content_is_isolated_from_primary() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"primary");
-        feed(&mut term, &mut p, b"\x1b[?1049h");
+        let (mut term, _) = term80();
+        feed(&mut term, b"primary");
+        feed(&mut term, b"\x1b[?1049h");
         // Alt screen starts blank (no primary content bleeds through).
         assert_eq!(row_text(&term, 0), "");
         // 1049 SAVES the cursor, so it is still at the column after "primary".
         // Real full-screen apps home the cursor before drawing; do the same so
         // the written text is deterministic regardless of the saved column.
-        feed(&mut term, &mut p, b"\x1b[H");
-        feed(&mut term, &mut p, b"alt");
+        feed(&mut term, b"\x1b[H");
+        feed(&mut term, b"alt");
         assert_eq!(row_text(&term, 0), "alt");
-        feed(&mut term, &mut p, b"\x1b[?1049l");
+        feed(&mut term, b"\x1b[?1049l");
         // Primary content restored on exit.
         assert_eq!(row_text(&term, 0), "primary");
     }
@@ -1272,56 +1404,56 @@ mod correctness {
 
     #[test]
     fn mouse_click_mode_1000() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[?1000h");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[?1000h");
         assert!(term.mode().contains(TermMode::MOUSE_REPORT_CLICK));
-        feed(&mut term, &mut p, b"\x1b[?1000l");
+        feed(&mut term, b"\x1b[?1000l");
         assert!(!term.mode().contains(TermMode::MOUSE_REPORT_CLICK));
     }
 
     #[test]
     fn mouse_drag_mode_1002() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[?1002h");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[?1002h");
         assert!(term.mode().contains(TermMode::MOUSE_DRAG));
     }
 
     #[test]
     fn mouse_motion_mode_1003() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[?1003h");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[?1003h");
         assert!(term.mode().contains(TermMode::MOUSE_MOTION));
     }
 
     #[test]
     fn sgr_mouse_mode_1006() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[?1006h");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[?1006h");
         assert!(term.mode().contains(TermMode::SGR_MOUSE));
-        feed(&mut term, &mut p, b"\x1b[?1006l");
+        feed(&mut term, b"\x1b[?1006l");
         assert!(!term.mode().contains(TermMode::SGR_MOUSE));
     }
 
     #[test]
     fn utf8_mouse_mode_1005() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[?1005h");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[?1005h");
         assert!(term.mode().contains(TermMode::UTF8_MOUSE));
     }
 
     #[test]
     fn focus_event_mode_1004() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[?1004h");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[?1004h");
         assert!(term.mode().contains(TermMode::FOCUS_IN_OUT));
-        feed(&mut term, &mut p, b"\x1b[?1004l");
+        feed(&mut term, b"\x1b[?1004l");
         assert!(!term.mode().contains(TermMode::FOCUS_IN_OUT));
     }
 
     #[test]
     fn alternate_scroll_mode_1007() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[?1007h");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[?1007h");
         assert!(term.mode().contains(TermMode::ALTERNATE_SCROLL));
     }
 
@@ -1337,10 +1469,10 @@ mod correctness {
 
     #[test]
     fn bracketed_paste_toggles() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[?2004h");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[?2004h");
         assert!(term.mode().contains(TermMode::BRACKETED_PASTE));
-        feed(&mut term, &mut p, b"\x1b[?2004l");
+        feed(&mut term, b"\x1b[?2004l");
         assert!(!term.mode().contains(TermMode::BRACKETED_PASTE));
     }
 
@@ -1350,30 +1482,30 @@ mod correctness {
 
     #[test]
     fn app_cursor_keys_mode_1() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[?1h");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[?1h");
         assert!(term.mode().contains(TermMode::APP_CURSOR));
-        feed(&mut term, &mut p, b"\x1b[?1l");
+        feed(&mut term, b"\x1b[?1l");
         assert!(!term.mode().contains(TermMode::APP_CURSOR));
     }
 
     #[test]
     fn show_cursor_mode_25() {
-        let (mut term, mut p, _) = term80();
+        let (mut term, _) = term80();
         // SHOW_CURSOR is set by default; ?25l hides it.
         assert!(term.mode().contains(TermMode::SHOW_CURSOR));
-        feed(&mut term, &mut p, b"\x1b[?25l");
+        feed(&mut term, b"\x1b[?25l");
         assert!(!term.mode().contains(TermMode::SHOW_CURSOR));
-        feed(&mut term, &mut p, b"\x1b[?25h");
+        feed(&mut term, b"\x1b[?25h");
         assert!(term.mode().contains(TermMode::SHOW_CURSOR));
     }
 
     #[test]
     fn line_wrap_mode_7() {
-        let (mut term, mut p, _) = term80();
+        let (mut term, _) = term80();
         // LINE_WRAP (autowrap, DECAWM) is on by default.
         assert!(term.mode().contains(TermMode::LINE_WRAP));
-        feed(&mut term, &mut p, b"\x1b[?7l");
+        feed(&mut term, b"\x1b[?7l");
         assert!(!term.mode().contains(TermMode::LINE_WRAP));
     }
 
@@ -1383,17 +1515,17 @@ mod correctness {
 
     #[test]
     fn overflow_grows_history() {
-        let (mut term, mut p, _) = harness(20, 4); // 4 visible rows
-        let before = term.grid().total_lines();
+        let (mut term, _) = harness(20, 4); // 4 visible rows
+        let before = term.total_lines();
         assert_eq!(before, 4);
         // Print 10 lines: 6 must spill into scrollback history.
         for i in 0..10 {
-            feed(&mut term, &mut p, format!("L{i}\r\n").as_bytes());
+            feed(&mut term, format!("L{i}\r\n").as_bytes());
         }
-        let after = term.grid().total_lines();
+        let after = term.total_lines();
         assert!(after > before, "history did not grow: {before} -> {after}");
         // history = total - screen.
-        assert_eq!(after - term.grid().screen_lines(), after - 4);
+        assert_eq!(after - term.screen_lines(), after - 4);
         assert!(
             after - 4 >= 6,
             "expected >=6 history rows, got {}",
@@ -1403,33 +1535,33 @@ mod correctness {
 
     #[test]
     fn display_offset_zero_at_bottom() {
-        let (mut term, mut p, _) = harness(20, 4);
+        let (mut term, _) = harness(20, 4);
         for i in 0..10 {
-            feed(&mut term, &mut p, format!("L{i}\r\n").as_bytes());
+            feed(&mut term, format!("L{i}\r\n").as_bytes());
         }
         // Not scrolled back yet — viewport pinned to the live bottom.
-        assert_eq!(term.grid().display_offset(), 0);
+        assert_eq!(term.display_offset(), 0);
     }
 
     #[test]
     fn scroll_display_moves_offset_into_history() {
-        let (mut term, mut p, _) = harness(20, 4);
+        let (mut term, _) = harness(20, 4);
         for i in 0..10 {
-            feed(&mut term, &mut p, format!("L{i}\r\n").as_bytes());
+            feed(&mut term, format!("L{i}\r\n").as_bytes());
         }
         term.scroll_display(Scroll::Delta(3));
-        assert_eq!(term.grid().display_offset(), 3);
+        assert_eq!(term.display_offset(), 3);
         term.scroll_display(Scroll::Top);
-        assert!(term.grid().display_offset() > 0);
+        assert!(term.display_offset() > 0);
         term.scroll_display(Scroll::Bottom);
-        assert_eq!(term.grid().display_offset(), 0);
+        assert_eq!(term.display_offset(), 0);
     }
 
     #[test]
     fn scrolled_back_content_is_a_prior_line() {
-        let (mut term, mut p, _) = harness(20, 6);
+        let (mut term, _) = harness(20, 6);
         for i in 0..20 {
-            feed(&mut term, &mut p, format!("line{i}\r\n").as_bytes());
+            feed(&mut term, format!("line{i}\r\n").as_bytes());
         }
         term.scroll_display(Scroll::Top);
         // The very top of history is the oldest retained line.
@@ -1441,58 +1573,131 @@ mod correctness {
     // (g) ANSI 16-colour cell fg.
     // ----------------------------------------------------------------------
 
-    fn fg(term: &Term<Recorder>, row: i32, col: usize) -> Color {
-        term.grid()[Line(row)][Column(col)].fg
+    fn fg(term: &Term, row: i32, col: usize) -> Color {
+        term.cell(Point::new(Line(row), Column(col))).fg
     }
 
     #[test]
     fn sgr_31_sets_named_red_fg() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[31mR");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[31mR");
         assert_eq!(fg(&term, 0, 0), Color::Named(NamedColor::Red));
     }
 
     #[test]
     fn sgr_32_sets_named_green_fg() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[32mG");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[32mG");
         assert_eq!(fg(&term, 0, 0), Color::Named(NamedColor::Green));
     }
 
     #[test]
     fn sgr_34_sets_named_blue_fg() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[34mB");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[34mB");
         assert_eq!(fg(&term, 0, 0), Color::Named(NamedColor::Blue));
     }
 
     #[test]
     fn sgr_91_sets_bright_red_fg() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[91mr");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[91mr");
         assert_eq!(fg(&term, 0, 0), Color::Named(NamedColor::BrightRed));
     }
 
     #[test]
     fn sgr_0_resets_fg_to_default() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[31mR\x1b[0mD");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[31mR\x1b[0mD");
         assert_eq!(fg(&term, 0, 0), Color::Named(NamedColor::Red));
         assert_eq!(fg(&term, 0, 1), Color::Named(NamedColor::Foreground));
     }
 
     #[test]
     fn sgr_256_indexed_fg() {
-        let (mut term, mut p, _) = term80();
+        let (mut term, _) = term80();
         // 38;5;208 = indexed orange.
-        feed(&mut term, &mut p, b"\x1b[38;5;208mX");
+        feed(&mut term, b"\x1b[38;5;208mX");
         assert_eq!(fg(&term, 0, 0), Color::Indexed(208));
+    }
+
+    /// A synchronized update draws nothing until it closes, even when the read
+    /// that opens it carries half of the frame. alacritty held the rest of
+    /// that read back; rio-vt held back only the reads after it, so a frame
+    /// that straddled two reads was drawn torn — until the guard in
+    /// `vt/text.rs` began handing the core the rest of such a read as a read
+    /// of its own.
+    #[test]
+    fn a_synchronized_update_opened_mid_read_draws_nothing_until_it_closes() {
+        let (mut term, _) = term80();
+        feed(&mut term, b"before\r\n\x1b[?2026hFRAME");
+        assert_eq!(row_text(&term, 0), "before");
+        assert_eq!(row_text(&term, 1), "", "part of the frame was drawn early");
+        feed(&mut term, b"\x1b[?2026l");
+        assert_eq!(row_text(&term, 1), "FRAME");
+    }
+
+    /// A blank takes the pen's background and nothing else, however it was
+    /// made. xterm's rule, and alacritty's: the green, the inverse and the
+    /// underline reach the characters written with the pen, never the blanks
+    /// an erase, a scroll, an inserted line or a cleared screen leaves. On
+    /// rio-vt the last three used to carry the whole pen, so a line that
+    /// scrolled in under inverse was drawn inverted from edge to edge — and an
+    /// erase read its red back as a palette index rather than as red.
+    #[test]
+    fn a_blank_takes_the_pens_background_and_nothing_else() {
+        const PEN: &str = "\x1b[4;7;32;41m";
+        let cases = [
+            (
+                "an erase",
+                6,
+                2,
+                format!("abcdef\x1b[1;3H{PEN}\x1b[K"),
+                (0, 4),
+            ),
+            ("a scroll", 6, 2, format!("{PEN}a\r\nb\r\nc"), (1, 3)),
+            (
+                "an inserted line",
+                6,
+                3,
+                format!("x\r\ny\x1b[1;1H{PEN}\x1b[1L"),
+                (0, 2),
+            ),
+            (
+                "a cleared screen",
+                6,
+                2,
+                format!("abcdef{PEN}\x1b[2J"),
+                (1, 2),
+            ),
+        ];
+        for (how, cols, rows, bytes, (row, col)) in cases {
+            let (mut term, _) = harness(cols, rows);
+            feed(&mut term, bytes.as_bytes());
+            let blank = term.cell(Point::new(Line(row), Column(col)));
+            assert_eq!(blank.c, ' ', "{how}");
+            assert_eq!(
+                blank.bg,
+                Color::Named(NamedColor::Red),
+                "{how}: the background"
+            );
+            assert_eq!(
+                blank.fg,
+                Color::Named(NamedColor::Foreground),
+                "{how}: no pen colour"
+            );
+            assert!(
+                blank.flags.is_empty(),
+                "{how}: no pen flags, {:?}",
+                blank.flags
+            );
+        }
     }
 
     #[test]
     fn sgr_truecolor_fg() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[38;2;10;20;30mX");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[38;2;10;20;30mX");
         match fg(&term, 0, 0) {
             Color::Spec(rgb) => {
                 assert_eq!((rgb.r, rgb.g, rgb.b), (10, 20, 30));
@@ -1503,22 +1708,22 @@ mod correctness {
 
     #[test]
     fn sgr_bold_sets_bold_flag() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[1mX");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[1mX");
         assert!(flags(&term, 0, 0).contains(Flags::BOLD));
     }
 
     #[test]
     fn sgr_underline_sets_underline_flag() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[4mX");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[4mX");
         assert!(flags(&term, 0, 0).contains(Flags::UNDERLINE));
     }
 
     #[test]
     fn sgr_inverse_sets_inverse_flag() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"\x1b[7mX");
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b[7mX");
         assert!(flags(&term, 0, 0).contains(Flags::INVERSE));
     }
 
@@ -1528,15 +1733,15 @@ mod correctness {
 
     #[test]
     fn osc8_hyperlink_attaches_uri_to_cells() {
-        let (mut term, mut p, _) = term80();
+        let (mut term, _) = term80();
         // OSC 8 ; ; URI ST  text  OSC 8 ; ; ST   (BEL-terminated form)
         feed(
             &mut term,
-            &mut p,
             b"\x1b]8;;https://example.com\x07link\x1b]8;;\x07",
         );
-        let cell = &term.grid()[Line(0)][Column(0)];
-        let hl = cell.hyperlink().expect("cell 0 should carry a hyperlink");
+        let hl = term
+            .hyperlink(Point::new(Line(0), Column(0)))
+            .expect("cell 0 should carry a hyperlink");
         assert_eq!(hl.uri(), "https://example.com");
         // 'l' of "link" is the painted glyph.
         assert_eq!(ch(&term, 0, 0), 'l');
@@ -1544,38 +1749,58 @@ mod correctness {
 
     #[test]
     fn osc8_hyperlink_with_id_param() {
-        let (mut term, mut p, _) = term80();
+        let (mut term, _) = term80();
         feed(
             &mut term,
-            &mut p,
             b"\x1b]8;id=42;https://rust-lang.org\x07rust\x1b]8;;\x07",
         );
-        let hl = term.grid()[Line(0)][Column(0)]
-            .hyperlink()
+        let hl = term
+            .hyperlink(Point::new(Line(0), Column(0)))
             .expect("hyperlink present");
         assert_eq!(hl.uri(), "https://rust-lang.org");
-        // alacritty's Hyperlink::id() returns &str; the explicit id is preserved.
+        // An explicit id is preserved as the program wrote it.
         assert_eq!(hl.id(), "42");
     }
 
     #[test]
     fn osc8_close_stops_attaching_links() {
-        let (mut term, mut p, _) = term80();
-        feed(
-            &mut term,
-            &mut p,
-            b"\x1b]8;;https://a.test\x07A\x1b]8;;\x07B",
-        );
-        assert!(term.grid()[Line(0)][Column(0)].hyperlink().is_some());
+        let (mut term, _) = term80();
+        feed(&mut term, b"\x1b]8;;https://a.test\x07A\x1b]8;;\x07B");
+        assert!(term.hyperlink(Point::new(Line(0), Column(0))).is_some());
         // 'B' is printed after the link was closed — no hyperlink.
-        assert!(term.grid()[Line(0)][Column(1)].hyperlink().is_none());
+        assert!(term.hyperlink(Point::new(Line(0), Column(1))).is_none());
     }
 
     #[test]
     fn cells_without_osc8_have_no_hyperlink() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"plain");
-        assert!(term.grid()[Line(0)][Column(0)].hyperlink().is_none());
+        let (mut term, _) = term80();
+        feed(&mut term, b"plain");
+        assert!(term.hyperlink(Point::new(Line(0), Column(0))).is_none());
+    }
+
+    /// A link longer than the row wraps, and the half on the next row is the
+    /// same link, id and all: the pane reads one file from either half and
+    /// frames both rows. A long name `ls --hyperlink` prints in a narrow pane
+    /// is this, and the link carries no id of its own, as eza's and ls's do not.
+    #[test]
+    fn osc8_link_wrapped_across_rows_is_one_link_on_both() {
+        let (mut term, _) = harness(10, 4);
+        feed(
+            &mut term,
+            b"\x1b]8;;file:///tmp/a-long-name.md\x1b\\a-long-name.md\x1b]8;;\x1b\\",
+        );
+        let head = term
+            .hyperlink(Point::new(Line(0), Column(9)))
+            .expect("the first row carries it");
+        let tail = term
+            .hyperlink(Point::new(Line(1), Column(0)))
+            .expect("the wrapped row carries it");
+        assert_eq!(head, tail, "one link on both rows");
+        assert_eq!(tail.uri(), "file:///tmp/a-long-name.md");
+        assert!(
+            term.hyperlink(Point::new(Line(1), Column(4))).is_none(),
+            "the link closes after the name"
+        );
     }
 
     // ----------------------------------------------------------------------
@@ -1585,9 +1810,9 @@ mod correctness {
 
     #[test]
     fn osc52_copy_emits_clipboard_store() {
-        let (mut term, mut p, rec) = term80();
+        let (mut term, rec) = term80();
         // base64("hi") == "aGk=".
-        feed(&mut term, &mut p, b"\x1b]52;c;aGk=\x07");
+        feed(&mut term, b"\x1b]52;c;aGk=\x07");
         let stored: Vec<_> = rec
             .events()
             .into_iter()
@@ -1601,9 +1826,9 @@ mod correctness {
 
     #[test]
     fn osc52_decodes_longer_payload() {
-        let (mut term, mut p, rec) = term80();
+        let (mut term, rec) = term80();
         // base64("terminal-delight") == "dGVybWluYWwtZGVsaWdodA==".
-        feed(&mut term, &mut p, b"\x1b]52;c;dGVybWluYWwtZGVsaWdodA==\x07");
+        feed(&mut term, b"\x1b]52;c;dGVybWluYWwtZGVsaWdodA==\x07");
         let stored: Vec<_> = rec
             .events()
             .into_iter()
@@ -1617,8 +1842,8 @@ mod correctness {
 
     #[test]
     fn osc52_invalid_base64_emits_nothing() {
-        let (mut term, mut p, rec) = term80();
-        feed(&mut term, &mut p, b"\x1b]52;c;not-valid-base64!!!\x07");
+        let (mut term, rec) = term80();
+        feed(&mut term, b"\x1b]52;c;not-valid-base64!!!\x07");
         let any_store = rec
             .events()
             .into_iter()
@@ -1632,8 +1857,8 @@ mod correctness {
 
     #[test]
     fn osc0_sets_window_title() {
-        let (mut term, mut p, rec) = term80();
-        feed(&mut term, &mut p, b"\x1b]0;my-title\x07");
+        let (mut term, rec) = term80();
+        feed(&mut term, b"\x1b]0;my-title\x07");
         let titled = rec
             .events()
             .into_iter()
@@ -1647,42 +1872,42 @@ mod correctness {
 
     #[test]
     fn cup_positions_the_cursor() {
-        let (mut term, mut p, _) = term80();
+        let (mut term, _) = term80();
         // CUP row3 col5 (1-based) then write — lands at grid (2,4).
-        feed(&mut term, &mut p, b"\x1b[3;5fZ");
+        feed(&mut term, b"\x1b[3;5fZ");
         assert_eq!(ch(&term, 2, 4), 'Z');
     }
 
     #[test]
     fn ed_clears_the_screen() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"dirty\r\nmore");
-        feed(&mut term, &mut p, b"\x1b[2J");
+        let (mut term, _) = term80();
+        feed(&mut term, b"dirty\r\nmore");
+        feed(&mut term, b"\x1b[2J");
         assert_eq!(row_text(&term, 0), "");
         assert_eq!(row_text(&term, 1), "");
     }
 
     #[test]
     fn el_clears_to_end_of_line() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"keepXXXX");
+        let (mut term, _) = term80();
+        feed(&mut term, b"keepXXXX");
         // Move cursor back to col4 and erase to EOL.
-        feed(&mut term, &mut p, b"\x1b[1;5H\x1b[K");
+        feed(&mut term, b"\x1b[1;5H\x1b[K");
         assert_eq!(row_text(&term, 0), "keep");
     }
 
     #[test]
     fn backspace_moves_left_without_erasing() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"ab\x08c");
+        let (mut term, _) = term80();
+        feed(&mut term, b"ab\x08c");
         // 'c' overwrites 'b'.
         assert_eq!(row_text(&term, 0), "ac");
     }
 
     #[test]
     fn tab_advances_to_next_stop() {
-        let (mut term, mut p, _) = term80();
-        feed(&mut term, &mut p, b"a\tb");
+        let (mut term, _) = term80();
+        feed(&mut term, b"a\tb");
         assert_eq!(ch(&term, 0, 0), 'a');
         // Default tab stops every 8 columns → 'b' at col8.
         assert_eq!(ch(&term, 0, 8), 'b');
@@ -1690,8 +1915,8 @@ mod correctness {
 
     #[test]
     fn autowrap_pushes_overflow_to_next_row() {
-        let (mut term, mut p, _) = harness(4, 4);
-        feed(&mut term, &mut p, b"abcdef");
+        let (mut term, _) = harness(4, 4);
+        feed(&mut term, b"abcdef");
         assert_eq!(row_text(&term, 0), "abcd");
         assert_eq!(row_text(&term, 1), "ef");
     }

@@ -1,0 +1,27 @@
+   Compiling terminal-delight v0.3.0 (/home/parker/Work/terminal-delight/.worktrees/pane-sleep/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.18s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (/home/parker/Work/terminal-delight/app/target/debug/deps/terminal_delight-943fb19e4403fece)
+
+running 7 tests
+test pane::housekeeping_tests::hidden_resize_interrupts_sleep_and_keeps_the_last_target ... ok
+test pane::housekeeping_tests::only_locally_owned_ptys_get_a_foreground_watcher ... ok
+test pane::housekeeping_tests::hidden_completion_waits_for_scroll_settle ... ok
+test pane::housekeeping_tests::hidden_completion_keeps_its_short_debounce_without_a_busy_loop ... ok
+test pane::housekeeping_tests::hidden_prompt_is_detected_by_the_one_second_fallback ... ok
+
+thread 'pane::housekeeping_tests::hidden_housekeeping_sleeps_and_visibility_edges_wake_it' (2809019) panicked at src/pane/housekeeping_tests.rs:65:5:
+assertion failed: pane.read(|v| v.housekeeping_ticks) > before
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test pane::housekeeping_tests::hidden_housekeeping_sleeps_and_visibility_edges_wake_it ... FAILED
+test pane::housekeeping_tests::a_hidden_stream_and_colour_query_do_not_wait_for_housekeeping ... ok
+
+failures:
+
+failures:
+    pane::housekeeping_tests::hidden_housekeeping_sleeps_and_visibility_edges_wake_it
+
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 2307 filtered out; finished in 3.89s
+
+error: test failed, to rerun pass `--bin terminal-delight`
