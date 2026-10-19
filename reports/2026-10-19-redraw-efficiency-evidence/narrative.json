@@ -1,0 +1,470 @@
+{
+  "file": "reports/2026-10-19-td-redraw-efficiency.html",
+  "subject": "The measured gains, correctness risks and costs of reducing repeated TD text drawing and hidden output callbacks.",
+  "reader": "Parker owns and uses Terminal Delight with many coding agents. He authorized fixes and wants measured gains, tradeoffs and uncertainties in plain English, without reading Rust.",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.63
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.7
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "argument",
+      "probabilities": {
+        "journey": 0.09,
+        "catalogue": 0.02,
+        "argument": 0.75,
+        "report": 0.14,
+        "none_of_the_above": 0
+      },
+      "confidence": 0.69
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Less work between changes",
+      "text": "TD now reuses quiet panes\u2019 text drawing and skips screen-update messages from hidden panes. In the mixed-pane test, window CPU fell 29% . The main cost is retained memory; the main uncertainty is how much your changing mix of agents benefits. \n\n Measured on this machine Verified release \u00b7 paired measurements and native checks complete About six minutes \u00b7 details unfold below",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.55,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.05,
+            "1": 0.37,
+            "2": 0.56,
+            "3": 0.02
+          },
+          "confidence": 0.51
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.19
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.84
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0.02,
+            "complication": 0,
+            "turn": 0.27,
+            "consequence": 0.7,
+            "resolution": 0,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.65
+        }
+      },
+      "latency_ms": 394.29686701623723,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "01 The gain",
+      "text": "You asked for the remaining savings in drawing and busy hidden panes. Both had avoidable work. These measurements compare the new changes with the already-optimized build, so earlier savings are not counted again. \n\n 01 CPU for the same work Measured \n\n Before After 100% = one full CPU core \u00b7 lower is better \n\n One busy + three quiet \n Before \n 16.9% \n After \n 12.1% \n 0 25 50% of one core \n Four busy panes \u00b7 20 Hz each \n Before \n 18.4% \n After \n 14.2% \n 0 25 50% of one core \n Four busy panes \u00b7 100 Hz each \n Before \n 20.7% \n After \n 16.4% \n 0 25 50% of one core \n Thirty hidden plain programs \n Before \n 4.9% \n After \n 3.4% \n 0 25 50% of one core \n Thirty hidden synthetic agents \u00b7 variable result \n Before \n 44.2% \n After \n 43.1% \n 0 25 50% of one core \n\n Retaining quiet text saves CPU when another pane changes. Dots show every paired observation; bars show medians. Four panes shared each test window. The hidden test used thirty synthetic agent panes behind one quiet tab. These are TD window measurements; agent computation and the rest of the desktop are outside these bars. Plain hidden programs saved 1.4 points at the median. Synthetic agents improved in 6 of 10 pairs; that noisier result does not establish a dependable agent-workload gain. \n\nThe benefit needs an explanation beyond a lower number. A profile of the old drawing path showed where to look.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.11,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.18,
+            "1": 0.54,
+            "2": 0.28,
+            "3": 0
+          },
+          "confidence": 0.54
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.24
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.66,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.38,
+            "1": 0.58,
+            "2": 0.04,
+            "3": 0
+          },
+          "confidence": 0.58
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.92
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0.03,
+            "complication": 0.07,
+            "turn": 0.12,
+            "consequence": 0.63,
+            "resolution": 0.01,
+            "aside": 0.12,
+            "none_of_the_above": 0.02
+          },
+          "confidence": 0.57
+        }
+      },
+      "latency_ms": 377.48415098758414,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "02 Repeated layout",
+      "text": "02 One changing pane made quiet text expensive Measured \n\nAt least 51% laying out elements \n49% other sampled work \n\n Changing at 20 Hz working 00000416\u258c \n Quiet unchanged text \n Quiet unchanged text \n Quiet unchanged text \n\n The window kept laying out rows that had not changed. In a separate 20-second profile, 406 samples from the main drawing thread included at least 50.99% in layout functions. This is a share of sampled thread work, not a prediction of total CPU savings. The live-session profile had only nineteen samples and was too sparse to rank causes. \n\nKeeping a whole pane\u2019s drawing would skip important work: its position must be registered each frame for TD\u2019s distortion effects. The fix therefore retains only the text grid. \n\n 03 The reuse boundary Code and tests \n\nPane header, input handling and geometry run each frame \n\n Terminal text \n Same painted rows\nand geometry \u2192 Reuse layout\nand drawing \n Text, cursor, selection,\ncolour or size changes \u2192 Draw fresh\nin this frame \n\nPictures, documents, overlays and effects keep their own paths \n\n Unchanged text is reused while the pane stays interactive. The comparison uses the final rows people see, including the cursor, selection and colours. Geometry and inherited text style also participate in the drawing library\u2019s checks. This is checked by render and invalidation tests. Whole-pane reuse was rejected because it could skip per-frame effect registration.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.4,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.07,
+            "1": 0.46,
+            "2": 0.46,
+            "3": 0.01
+          },
+          "confidence": 0.45
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.49
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.7,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.39,
+            "1": 0.53,
+            "2": 0.08,
+            "3": 0
+          },
+          "confidence": 0.53
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.3
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.09,
+            "turn": 0.76,
+            "consequence": 0.13,
+            "resolution": 0.01,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.72
+        }
+      },
+      "latency_ms": 769.5252620032988,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "03 Hidden output",
+      "text": "Text reuse helps visible panes. A hidden pane has another cost: each chunk of output used to send the interface a message even though there was nothing to show. \n\n 04 Output keeps arriving; needless screen messages stop Code and tests \n\nAgent writes output \u2193 \nTerminal parses it\n latest text and scrollback stay current \u2193 \n\n Screen changed \nHidden: record the change.\nUse the existing clock.\nShown: draw current text. \n Protocol or state event \nColour request, title, bell, exit:\ncontinue through immediately. \n\n 1 second hidden housekeeping, unchanged 5 seconds background refresh, unchanged On activation read the latest grid \n\n This removes interface wakeups without slowing the terminal parser. The test sends forty writes separately, confirms each reached the grid, and observes zero screen callbacks while hidden. A title still arrives before the test clock advances. Existing protocol, prompt, completion and resize tests remain in place. No new sleeping interval was introduced. \n\nBoth changes depend on recognizing when reuse is unsafe. That is where the tests had to challenge the implementation.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.24,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.1,
+            "1": 0.56,
+            "2": 0.33,
+            "3": 0
+          },
+          "confidence": 0.57
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.26
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.03,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.05,
+            "1": 0.88,
+            "2": 0.07,
+            "3": 0
+          },
+          "confidence": 0.88
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.83
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.04,
+            "turn": 0.85,
+            "consequence": 0.11,
+            "resolution": 0,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.82
+        }
+      },
+      "latency_ms": 360.9449359937571,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "04 What failed",
+      "text": "05 The tests rejected stale drawing and missing savings Observed failures \n\n First cache design \nUpdate the retained view during its parent\u2019s draw. New text and cursor tests failed. The drawing library had already collected that frame\u2019s invalidations. \u2192 \n Corrected design \nReplace the retained view when the final painted content changes. Fresh drawing in the same frame. Identical content keeps the previous view. \n\n Disable text reuse Quiet-grid test fails \n Restore hidden wakeups Hidden-output test fails \n\n Passing tests alone were insufficient. Deliberately removing both optimizations caused the two intended failures; 246 other pane tests still passed. The source was then restored and checked. Native testing also exercised real tab activation, documents and a window restart against the old terminal host, preserving both shell identities. The integrated release suites passed 2,465 default-core tests and 2,418 alternate-core tests, with nine ignored in each. \n\nCorrectness tests explain why the changes are safe enough to ship. The unfavorable workloads and memory measurements decide whether they are worth keeping.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.31,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.11,
+            "1": 0.48,
+            "2": 0.4,
+            "3": 0.01
+          },
+          "confidence": 0.47
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.19
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.52,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.51,
+            "1": 0.45,
+            "2": 0.04,
+            "3": 0
+          },
+          "confidence": 0.47
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.83
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.36,
+            "turn": 0.08,
+            "consequence": 0.43,
+            "resolution": 0.06,
+            "aside": 0.07,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.33
+        }
+      },
+      "latency_ms": 372.25996900815517,
+      "failure": null
+    },
+    {
+      "index": 6,
+      "heading": "05 Cost and uncertainty",
+      "text": "06 What we pay for the reduction \n | \n | Tradeoff | What the evidence says \n\n | Memory | One mixed run showed +12.5 MiB for the new window; reversing launch order showed \u22121.2 MiB. Two identical old builds differed by +47.4 MiB. The added storage is one retained text viewport per rendered pane; its resident-memory cost remains unresolved. The measurement includes allocator and renderer state, so it cannot isolate the text cache\u2019s exact size. \n\n | Busy panes | At 100 updates per second in each of four panes, window CPU went from 20.7% to 16.4% of one core, with improvement in all five pairs. Comparing rows and making a new view still cost work when text changes. The stress test checks that cost under continuous output. \n\n | Timing bias | Two identical old builds differed by -0.12 to +0.25 CPU points across five pairs. Reversing launch order gave a 29.1% median paired reduction. Both binaries used equal window sizes on the same isolated display. \n\n | User experience | Fresh output, selection, cursor, scrolling, palette changes and resizing pass the tests. Typing latency and frame-time tails were not measured; unchanged scheduling alone does not prove they are identical. \n\n | Unknown | Whole-machine CPU reduction, battery life and the benefit during your actual day remain unmeasured. CRT effects were off in the controlled tests. \n\n The gain is specific to these workloads. Tests ran on a temporary headless output while the physical displays stayed asleep and the desktop remained locked. Windows rendered there, and a native capture verified fresh text. This controls the comparison; it does not reproduce every compositor, animation or agent workload you use. \n\nThe least certain engineering choice was replacing the cached view on every content change. It guarantees fresh drawing, but costs allocation. The busy-pane measurements above are the direct check on that tradeoff. \n\n 07 An earlier fix still awaits a new terminal host CPU attribution \n\n TD window \nDrawing and interface updates.\nCan be replaced while shells keep running. \n Process keeping terminals alive \nThe live host still runs older code.\nIts conversation lookup can read whole files. \n\n Old lookup reads the whole candidate file New lookup reads its first 4 KiB Current sessions kept alive \n\n Replacing the window does not replace the process holding your running agents. New hosts already contain the earlier bounded-read fix. The synthetic-agent fixture triggered lookup despite having no conversations; its old hosts showed CPU bursts. Source inspection makes the old lookup a plausible cause, but this run did not profile those bursts. Restarting the live host would interrupt its terminals, so it was preserved.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.41,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.08,
+            "1": 0.43,
+            "2": 0.49,
+            "3": 0
+          },
+          "confidence": 0.41
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.21
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.47,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.59,
+            "1": 0.36,
+            "2": 0.05,
+            "3": 0
+          },
+          "confidence": 0.54
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.57
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.01,
+            "turn": 0,
+            "consequence": 0.99,
+            "resolution": 0,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.99
+        }
+      },
+      "latency_ms": 398.39156495872885,
+      "failure": null
+    },
+    {
+      "index": 7,
+      "heading": "06 Where I stopped",
+      "text": "Keep the measured reuse \nRecommendation: keep the narrow text cache and hidden screen-event filter. The drawing reduction repeated across launch orders and busy workloads. The hidden filter removes screen callbacks and reduces CPU in the plain-program control; the agent workload remains uncertain. \n\n Keep the current hidden clock \nRecommendation: retain the one-second check. Lengthening it risks slower attention and completion updates; these changes remove work without that exchange. \n\n Use concrete rollback signals \nStale text on activation, a selection that fails to repaint, or repeatable CPU growth in the same stress test would invalidate this release. The previous version remains available for a GUI-only rollback. \n\nThe release replaces the window while the existing terminal host keeps running. The preceding version remains available for rollback; the local delivery copy records the completed installation. \n Measurements, test receipts and source \n\nBuilt with the decision-brief notes system. Click a note marker to annotate a figure or recommendation; save into file to carry those notes back. \n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.26,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.11,
+            "1": 0.53,
+            "2": 0.35,
+            "3": 0.01
+          },
+          "confidence": 0.52
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.22
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.01,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.12,
+            "1": 0.76,
+            "2": 0.11,
+            "3": 0.01
+          },
+          "confidence": 0.75
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.14
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0,
+            "consequence": 0,
+            "resolution": 1,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 1
+        }
+      },
+      "latency_ms": 247.8812810149975,
+      "failure": null
+    }
+  ]
+}

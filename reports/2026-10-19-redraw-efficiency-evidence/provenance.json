@@ -14,5 +14,8 @@
   "runtime_display": "HEADLESS-1; physical DPMS off; desktop locked; render_unfocused fixture windows",
   "integration_base": "6f32ac96d8aaadc3aeecc2244a39418eb4ffe453",
   "reverse_hidden_script_exit": 2,
-  "reverse_hidden_script_exit_note": "All ten observations and their assertions completed. Editing the active script for the next fixture changed its later parse, causing a final syntax error. EXIT cleanup ran; no owned windows/hosts remained. Captured measurements retained, not rerun or selected away."
+  "reverse_hidden_script_exit_note": "All ten observations and their assertions completed. Editing the active script for the next fixture changed its later parse, causing a final syntax error. EXIT cleanup ran; no owned windows/hosts remained. Captured measurements retained, not rerun or selected away.",
+  "integrated_binary_sha256": "e974e1b5a7d7259435099156882c1af76ef4173033857b21765bd0627ef2f78f",
+  "paired_observations": 55,
+  "memory_attribution": "Unresolved: identical-build PSS difference exceeded baseline/candidate differences."
 }
