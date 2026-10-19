@@ -173,6 +173,8 @@ pub struct Key<'a> {
 /// nothing to say about `route(k, a, b, c, d, e, f, g)`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Up {
+    /// The terminal belongs to an agent with human turns to navigate.
+    pub agent: bool,
     pub paint: bool,
     pub ctx_menu: bool,
     pub header_menu: bool,
@@ -242,7 +244,17 @@ type Rung = (Layer, fn(&Key, &Up) -> bool);
 const LADDER: [Rung; 13] = [
     (Layer::Help, |k, _| k.key == "f1"),
     (Layer::Face, |k, _| k.alt && !k.control && k.key == "k"),
-    (Layer::Window, |k, _| window_chord(k.key, k.alt, k.control)),
+    (Layer::Window, |k, u| {
+        window_chord(k.key, k.alt, k.control)
+            || (human_turn_chord(k)
+                && u.agent
+                && !u.paint
+                && !u.sticky
+                && !u.rename
+                && !note_caret(u)
+                && !u.document
+                && !u.bench)
+    }),
     (Layer::Paint, |k, u| u.paint && paints(k)),
     (Layer::CtxMenu, |k, u| u.ctx_menu && k.key == "escape"),
     (Layer::HeaderMenu, |k, u| u.header_menu && k.key == "escape"),
@@ -270,6 +282,12 @@ pub fn route(k: &Key, up: &Up) -> Layer {
         }
     }
     Layer::Terminal
+}
+
+/// Ctrl+Up/Down steps through human turns. The routing table claims it only
+/// on an agent terminal; shell programs and editing surfaces keep their keys.
+pub fn human_turn_chord(k: &Key) -> bool {
+    k.control && !k.alt && !k.shift && !k.platform && !k.function && matches!(k.key, "up" | "down")
 }
 
 /// Chords the WINDOW owns — never a pane's content, on either of its faces.
@@ -564,6 +582,63 @@ mod tests {
         }
     }
 
+    #[test]
+    fn human_turn_arrows_belong_only_to_agent_terminals() {
+        for key in ["up", "down"] {
+            let agent = Up {
+                agent: true,
+                ..Up::default()
+            };
+            assert_eq!(route(&ctrl(key), &agent), Layer::Window);
+            assert_eq!(route(&ctrl(key), &Up::default()), Layer::Terminal);
+            assert_eq!(route(&alt(key), &agent), Layer::Window);
+            assert!(!human_turn_chord(&alt(key)));
+            assert!(!human_turn_chord(&ctrl_shift(key)));
+            for up in [
+                Up {
+                    sticky: true,
+                    ..agent
+                },
+                Up {
+                    rename: true,
+                    ..agent
+                },
+                Up {
+                    document: true,
+                    ..agent
+                },
+                Up {
+                    bench: true,
+                    ..agent
+                },
+                Up {
+                    float: true,
+                    float_caret: true,
+                    ..agent
+                },
+                Up {
+                    paint: true,
+                    ..agent
+                },
+            ] {
+                assert_ne!(route(&ctrl(key), &up), Layer::Window);
+            }
+            assert_eq!(
+                route(
+                    &ctrl(key),
+                    &Up {
+                        reader: true,
+                        ..agent
+                    }
+                ),
+                Layer::Window
+            );
+        }
+        for key in ["left", "right", "c", "home", "end", "pageup", "pagedown"] {
+            assert!(!human_turn_chord(&ctrl(key)));
+        }
+    }
+
     // ── the ladder, as a whole ──────────────────────────────────────────────
 
     /// Nothing up, nothing claimed: the key is the terminal's.
@@ -622,8 +697,9 @@ mod tests {
             ctrl_shift("v"),
             shift_insert(),
         ];
-        for bits in 0u16..8192 {
+        for bits in 0u16..16384 {
             let up = Up {
+                agent: bits & 8192 != 0,
                 paint: bits & 1 != 0,
                 ctx_menu: bits & 2 != 0,
                 header_menu: bits & 4 != 0,
@@ -1520,6 +1596,7 @@ mod tests {
     #[test]
     fn the_help_modal_is_reachable_from_under_everything() {
         let everything = Up {
+            agent: true,
             paint: true,
             ctx_menu: true,
             header_menu: true,

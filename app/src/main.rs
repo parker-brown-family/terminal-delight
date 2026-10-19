@@ -13653,7 +13653,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// One Alt+arrow names one human turn. No wheel events or prompt-history
+    /// One Ctrl+Up/Down names one human turn. No wheel events or prompt-history
     /// keys are sent to either CLI, including while the transcript is loading.
     fn jump_human_turn(
         &mut self,
@@ -18504,6 +18504,25 @@ impl Workspace {
                 _ => {}
             }
         }
+        // Only agent terminals decline this chord. Editing surfaces and
+        // ordinary terminal programs keep Ctrl+Up/Down.
+        if keylayer::human_turn_chord(&pane::keylayer_key(ks)) {
+            if let Some((_, id)) = self.focused_pane_tab(window, cx) {
+                if let Some(p) = self.pane_by_id(id).filter(|p| p.read(cx).mode.is_agent()) {
+                    // Terminal input also bubbles after writing bytes. Recheck
+                    // the same ownership table so a bench pass-through cannot
+                    // both type the chord and open the reader.
+                    let claimed = p.update(cx, |p, cx| {
+                        keylayer::route(&pane::keylayer_key(ks), &p.layers_up(cx))
+                            == keylayer::Layer::Window
+                    });
+                    if claimed {
+                        self.jump_human_turn(p, ks.key.as_str() == "down", window, cx);
+                    }
+                }
+            }
+            return;
+        }
         if m.control && m.alt {
             match ks.key.as_str() {
                 // R is the verb the walk was missing. Ctrl+Alt+↑↓ moves the
@@ -18618,16 +18637,6 @@ impl Workspace {
                     self.open_focus_read(p, window, cx);
                 }
                 return;
-            }
-            // Alt+↑/↓ walks the human's messages in Claude and Codex. Keep
-            // this ahead of pane focus: the pane has already withheld these
-            // chords from the PTY through keylayer::window_chord.
-            if matches!(ks.key.as_str(), "up" | "down") {
-                if let Some(p) = leaves.get(cur).filter(|p| p.read(cx).mode.is_agent()) {
-                    let p = (*p).clone();
-                    self.jump_human_turn(p, ks.key.as_str() == "down", window, cx);
-                    return;
-                }
             }
             // Alt+arrows move focus BY DIRECTION: the highlight goes the way you
             // pressed, resolved against the live pane rects (`focus_dir`) rather
@@ -31001,7 +31010,7 @@ impl Render for Workspace {
                 .child(section(
                     s.s_agents,
                     vec![
-                        row("Alt+↑ / ↓", s.jump_msg),
+                        row("Ctrl+↑ / ↓", s.jump_msg),
                         row("Alt+R", s.focus),
                         row(s.k_focus_inherit_key, s.focus_inherit),
                         row("Alt+1 … 4", s.bench_shelf),
@@ -32094,7 +32103,7 @@ impl Render for Workspace {
                     .text_size(px(10.0))
                     .text_color(snap.accent)
                     .child("CHAT HISTORY")
-                    .child("Alt+↑↓ · Esc")
+                    .child("Ctrl+↑↓ · Esc")
             } else {
                 header
             };
@@ -34445,11 +34454,9 @@ mod tests {
         );
     }
 
-    /// The pane hands Alt+arrows to the window. Human-message navigation must
-    /// run before directional focus, and use the common Claude/Codex predicate.
-    /// The pane behaviour tests exercise the actual scrollback landings.
+    /// Guard the separate dispatch branches: a turn jump cannot consume Alt.
     #[test]
-    fn alt_vertical_arrows_reach_human_prompts_before_pane_focus() {
+    fn ctrl_vertical_arrows_jump_human_turns_and_alt_keeps_pane_focus() {
         let code = shipped_code();
         let at = code
             .find("    fn on_key(&mut self, ev: &KeyDownEvent")
@@ -34458,28 +34465,15 @@ mod tests {
         let body = &code[at..at + end];
         let jump = body
             .find("self.jump_human_turn(p, ks.key.as_str() == \"down\", window, cx)")
-            .expect("Alt+Down is next, Alt+Up previous");
-        let focus = body
-            .rfind("self.focus_dir(ks.key.as_str(), window, cx)")
             .unwrap();
-        assert!(jump < focus);
-        let branch = &body[body[..jump]
-            .rfind("if matches!(ks.key.as_str(), \"up\" | \"down\")")
-            .unwrap()..focus];
-        assert!(
-            branch.contains("p.read(cx).mode.is_agent()"),
-            "both Claude and Codex use human navigation"
-        );
-        assert!(
-            branch.contains("return;"),
-            "a prompt jump cannot also change pane focus"
-        );
-        for key in ["up", "down"] {
-            assert!(
-                keylayer::window_chord(key, true, false),
-                "the pane must withhold the chord from the PTY"
-            );
-        }
+        let ctrl = body
+            .find("if keylayer::human_turn_chord(&pane::keylayer_key(ks))")
+            .unwrap();
+        let alt = body.rfind("if m.alt && !m.control").unwrap();
+        assert!(ctrl < jump && jump < alt);
+        assert!(!body[alt..].contains("jump_human_turn"));
+        assert!(body[alt..].contains("self.focus_dir(ks.key.as_str(), window, cx)"));
+        assert!(body[ctrl..jump].contains("p.read(cx).mode.is_agent()"));
         assert!(pane::PaneMode::Claude.is_agent());
         assert!(pane::PaneMode::Codex.is_agent());
         assert!(!pane::PaneMode::Shell.is_agent());

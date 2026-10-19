@@ -3740,7 +3740,7 @@ pub(crate) fn fuzzy_match(hay: &str, needle: &str) -> Option<(i64, Vec<usize>)> 
 /// width on the terminal instead of on controls. The pane header now keeps only
 /// 🎨 (theme) and 📊 (display).
 ///
-/// Alt+↑/↓ walks your own messages in an agent pane, and Alt+R opens the
+/// Ctrl+↑/↓ walks your own messages in an agent pane, and Alt+R opens the
 /// FOCUS reader. Flip either back to `true` to restore its glyph and its ⋯ entry.
 const SHOW_HUMAN_NAV_GLYPH: bool = false;
 const SHOW_FOCUS_GLYPH: bool = false;
@@ -6941,8 +6941,9 @@ impl TerminalView {
     ///
     /// One read per keystroke, so every layer is judged against the same instant
     /// — the alternative is a ladder whose rungs disagree about what is open.
-    fn layers_up(&self, cx: &mut Context<Self>) -> crate::keylayer::Up {
+    pub(crate) fn layers_up(&self, cx: &mut Context<Self>) -> crate::keylayer::Up {
         crate::keylayer::Up {
+            agent: self.mode.is_agent(),
             paint: theme::paint_mode(cx),
             ctx_menu: self.ctx_menu.is_some(),
             header_menu: self.hdr_overflow.is_some(),
@@ -7741,7 +7742,7 @@ impl TerminalView {
     /// (`next = true`) of *your own* messages. The viewport top is grid line
     /// `-display_offset`; we step to the nearest human line above/below it and
     /// scroll so it lands at the top. Stepping past the newest snaps to live.
-    /// Driven by Alt+↑/↓ and the optional ▲/▼ header buttons in agent panes.
+    /// Driven by the optional ▲/▼ header buttons; Ctrl+↑/↓ opens transcript turns.
     pub fn scroll_to_human(&mut self, next: bool, cx: &mut Context<Self>) {
         // In the anchor-top INVERTED read the newest message sits at the TOP, so
         // the ▲/▼ directions flip: "up" steps toward NEWER, "down"
