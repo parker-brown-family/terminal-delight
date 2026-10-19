@@ -92,6 +92,10 @@ chmod +x terminal-delight-x86_64.AppImage
 ```
 
 It's a single self-contained file and **MIT-licensed** (see [License](#license)).
+Each release lists the file's SHA-256 beside it. Release candidates, which preview
+the next stable release, are on the [releases page](https://github.com/parker-brown-family/terminal-delight/releases)
+marked *Pre-release*. The schedule and what each release is checked for are in
+[RELEASING.md](RELEASING.md).
 Graphics drivers (Vulkan/OpenGL, Wayland/X11) are used from your system, like any
 native app. The optional agent-finished **bell** plays through your system
 `ffplay` (install `ffmpeg` to hear it) and stays silent if it's absent; the

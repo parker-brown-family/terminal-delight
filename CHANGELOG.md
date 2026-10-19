@@ -84,6 +84,13 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added
 
+- **Release candidates, and a digest on every download.** Each stable release is
+  now preceded by a candidate (`vX.Y.Z-rc.N`), marked *Pre-release* on the
+  releases page, that people can try before it becomes the download the install
+  page serves. Every release lists the AppImage's SHA-256 and the commit it was
+  built from. A release is published only after every check passed for that
+  commit. The schedule and the checks are in `RELEASING.md`.
+
 - **A name in an `ls` listing opens by Alt+click.** When a listing puts each
   file's path behind its name, as `ls --hyperlink` and `eza --hyperlink` do,
   Alt+click opens exactly the file listed, in the floating square, or with

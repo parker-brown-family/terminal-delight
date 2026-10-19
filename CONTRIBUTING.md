@@ -8,20 +8,36 @@ Rust for the first one.
 
 First, one rule that shapes everything:
 
-## The one hard rule: source-only, no prebuilt binaries
+## Licensing, and where binaries come from
 
-terminal-delight's own source is **MIT**. But the pinned Zed dependency graph
-links **GPL-3.0-or-later** crates (`ztracing`, `ztracing_macro`, `zlog`) into the
-*built binary* through `gpui -> sum_tree`. So:
+terminal-delight is **MIT**, and so is the AppImage it ships. The pinned Zed
+dependency graph would link three GPL-3.0-or-later crates (`ztracing`,
+`ztracing_macro`, `zlog`) into the binary through `gpui -> sum_tree`.
+`docs/patches/0002-sever-gpl-crates.patch` removes them, `scripts/prepare-gpui.sh`
+applies it, and `cargo deny check` (allowlist in `app/deny.toml`, **no GPL
+exceptions**) fails CI if any copyleft crate comes back. See
+[`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) for the full story.
 
-- **Source** stays cleanly MIT — those GPL crates are never redistributed in this
-  tree; you build them yourself from your own Zed checkout.
-- **A distributed binary** is a derivative work of the GPL crates and would have
-  to ship under GPL-3.0-or-later with corresponding source.
+That makes two rules for contributors:
 
-**Do not attach prebuilt binaries to PRs, issues, or releases.** See
-[`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) for the full story. By
-contributing you agree your contribution is licensed MIT (the repo's license).
+- **Keep the graph permissive.** A new dependency must pass `cargo deny check`.
+  Never widen `deny.toml` to admit a copyleft licence.
+- **Binaries come only from CI.** Releases are built and published by the
+  workflow described in [`RELEASING.md`](RELEASING.md), from a tagged commit,
+  with a recorded digest. Do not attach a binary you built to a pull request or
+  an issue. Nobody can verify what it was built from, so it cannot be trusted
+  or redistributed.
+
+By contributing you agree your contribution is licensed MIT (the repo's
+license).
+
+## Changelog
+
+A pull request that changes something a user can see or has to do adds a line
+under `## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md), in the section it
+belongs to (*Added*, *Changed*, *Fixed*, *Removed*, *Security*). Describe what
+someone using Terminal Delight notices, not what the code does. If it changes a
+config file, a default or a key, say what an upgrading user should do.
 
 ---
 
