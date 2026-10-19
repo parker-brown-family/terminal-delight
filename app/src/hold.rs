@@ -50,23 +50,6 @@ pub enum Kind {
     Pane,
 }
 
-impl Kind {
-    /// What a tray row calls this, in the words the left bar already uses.
-    ///
-    /// The tray offers projects, groups, tabs and panes in one list, and
-    /// `Recover "UX"` means four different things across them — so each row says
-    /// which it is rather than leaving it to be inferred from a name that may
-    /// be shared.
-    pub fn noun(self) -> &'static str {
-        match self {
-            Kind::Project => "project",
-            Kind::Initiative => "group",
-            Kind::Task => "tab",
-            Kind::Pane => "pane",
-        }
-    }
-}
-
 /// What went into the trash, and what it is still worth.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Holding<T> {

@@ -1165,10 +1165,27 @@ fn resume_claim(cwd: Option<&str>, cmd: &str) -> Option<String> {
 /// Whether a saved note is the one `dedupe_resumes` writes, rather than words
 /// a person or an agent chose. Matched on the whole text, so a hand-written note
 /// that merely starts "DUPLICATE TAB" is theirs.
+///
+/// The note is written in whatever language the window spoke when it was
+/// saved, and the session file outlives a language switch, so every language's
+/// wording is ours — and so is the English written before notes were
+/// translated, should the English table ever be reworded.
 fn is_duplicate_leaf_note(note: &SavedNote) -> bool {
-    let ours = duplicate_leaf_note();
-    note.title == ours.title && note.text == ours.text
+    let said = |title: &str, text: &str| note.title.as_deref() == Some(title) && note.text == text;
+    said(LEGACY_DUPLICATE_NOTE.0, LEGACY_DUPLICATE_NOTE.1)
+        || lang::Lang::ALL.iter().any(|l| {
+            let ui = l.strings().ui;
+            said(ui.dup_note_title, ui.dup_note_text)
+        })
 }
+
+/// The duplicate-leaf note's words as every session file before 2026-10-19
+/// carries them, kept apart from the English table so a rewording there never
+/// strands the notes already saved.
+const LEGACY_DUPLICATE_NOTE: (&str, &str) = (
+    "DUPLICATE TAB",
+    "Two tabs named one conversation. The first kept it; this is a fresh shell.",
+);
 
 /// A resume command with the session part stripped — `claude --continue` becomes
 /// `claude`. Restoring a duplicate should still open the agent, just in a
@@ -1184,7 +1201,12 @@ fn default_ratio() -> f32 {
 /// First-run invitation: a fresh window names its very first tab AND that tab's
 /// sole sub-terminal with this hint, so the right-click-to-rename gesture teaches
 /// itself. Every other tab / split opened afterwards gets the normal default.
-const FIRST_RUN_HINT: &str = "RIGHT CLICK TO RENAME";
+///
+/// Written as a name, in the window's language at the moment it is written: a
+/// name is a person's words once it is saved, so nothing reads it back.
+fn first_run_hint(l: lang::Lang) -> &'static str {
+    l.strings().ui.tab_first_run_hint
+}
 
 /// The left bar shows by default in a session that has never said otherwise.
 ///
@@ -2285,6 +2307,17 @@ impl TabGroup {
     fn label(&self) -> String {
         self.name.clone().unwrap_or_else(|| unnamed_group(self.id))
     }
+
+    /// The same name with the generated fallback left in English, for what an
+    /// agent reads (the engineering scan) rather than what a person sees.
+    fn english_label(&self) -> String {
+        self.name.clone().unwrap_or_else(|| {
+            lang::fill(
+                lang::EN.ui.bar_unnamed_group,
+                &[("id", &self.id.to_string())],
+            )
+        })
+    }
 }
 
 /// What an unnamed group is called, in the one place that decides it.
@@ -2297,8 +2330,13 @@ impl TabGroup {
 ///
 /// Four sites spelled this string out separately. A default that four places
 /// decide is a default that eventually disagrees with itself.
+///
+/// In the window's language: this is what a person reads on the bar.
 fn unnamed_group(id: u32) -> String {
-    format!("group {id}")
+    lang::fill(
+        lang::current().strings().ui.bar_unnamed_group,
+        &[("id", &id.to_string())],
+    )
 }
 
 /// A branch that was deleted, holding everything needed to put it back.
@@ -2402,11 +2440,12 @@ enum Landed {
 }
 
 impl Landed {
-    fn says(self) -> &'static str {
+    fn says(self, l: lang::Lang) -> &'static str {
+        let ui = l.strings().ui;
         match self {
-            Landed::Seat => "back where it was",
-            Landed::Tab => "back in its tab, in a new seat",
-            Landed::NewTab => "back as its own tab",
+            Landed::Seat => ui.bay_landed_seat,
+            Landed::Tab => ui.bay_landed_tab,
+            Landed::NewTab => ui.bay_landed_newtab,
         }
     }
 }
@@ -2429,17 +2468,36 @@ enum BaySays {
 }
 
 impl BaySays {
-    fn line(self) -> String {
+    fn line(self, lang: lang::Lang) -> String {
+        let ui = lang.strings().ui;
         match self {
-            BaySays::Held => "held \u{2014} ctrl+shift+z brings it back".to_string(),
-            BaySays::Reopened(l) => l.says().to_string(),
-            BaySays::Empty => "nothing left to bring back".to_string(),
+            BaySays::Held => ui.bay_held.to_string(),
+            BaySays::Reopened(l) => l.says(lang).to_string(),
+            BaySays::Empty => ui.bay_empty.to_string(),
         }
     }
 }
 
 /// How long the bay keeps saying it.
 const BAY_SAYS_FOR: Duration = Duration::from_secs(6);
+
+/// The trash tray's offer for one holding, `{label}` still to fill.
+///
+/// The tray offers projects, groups, tabs and panes in one list, and
+/// `Recover "UX"` means four different things across them — so each row says
+/// which it is rather than leaving it to be inferred from a name that may be
+/// shared. One whole line per kind rather than a noun spliced into one
+/// sentence, because what is being recovered decides the grammar around the
+/// name.
+fn recover_line(l: lang::Lang, kind: hold::Kind) -> &'static str {
+    let ui = l.strings().ui;
+    match kind {
+        hold::Kind::Project => ui.bar_m_recover_project,
+        hold::Kind::Initiative => ui.bar_m_recover_group,
+        hold::Kind::Task => ui.bar_m_recover_tab,
+        hold::Kind::Pane => ui.bar_m_recover_pane,
+    }
+}
 
 /// The outer layer of the left bar's tree: a PROJECT, holding initiatives (tab
 /// groups) and any tasks filed straight under it.
@@ -2468,9 +2526,23 @@ impl Project {
     /// order rather than by position, so a rename is never undone by a
     /// reorder.
     fn label(&self) -> String {
-        self.name
-            .clone()
-            .unwrap_or_else(|| format!("project {}", self.id))
+        self.name.clone().unwrap_or_else(|| {
+            lang::fill(
+                lang::current().strings().ui.bar_unnamed_project,
+                &[("id", &self.id.to_string())],
+            )
+        })
+    }
+
+    /// The same name with the generated fallback left in English, for what an
+    /// agent reads (the engineering scan) rather than what a person sees.
+    fn english_label(&self) -> String {
+        self.name.clone().unwrap_or_else(|| {
+            lang::fill(
+                lang::EN.ui.bar_unnamed_project,
+                &[("id", &self.id.to_string())],
+            )
+        })
     }
 }
 
@@ -2496,12 +2568,6 @@ enum McpFilter {
     Group(u32),
     Ungrouped,
 }
-
-/// Shown when the panel has nothing to read and nothing that could write it.
-const NO_COLLECTOR: &str = "cannot locate a usage collector, or this binary";
-/// Shown when nothing has been collected yet. Not an error: the collectors ride
-/// inside the binary, so the fix is the refresh button, not an install.
-const NO_RECORDS: &str = "nothing collected yet \u{2014} press refresh";
 
 /// Which ledger the </> overlay is showing.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -5166,10 +5232,18 @@ fn hangups_of(shown: &[u64], closing: &[u64]) -> Vec<u64> {
 /// so two notes on ONE screen are not the same quadrilateral, and two of these
 /// are never on one screen — they are the leaves of a duplicate, which is a
 /// tab apart by definition.
+///
+/// Written in the language the window speaks now, because a person reads it;
+/// `is_duplicate_leaf_note` recognises it in any of them.
 fn duplicate_leaf_note() -> sticky::Saved {
+    duplicate_leaf_note_in(lang::current())
+}
+
+fn duplicate_leaf_note_in(l: lang::Lang) -> sticky::Saved {
+    let ui = l.strings().ui;
     sticky::Saved {
-        title: Some("DUPLICATE TAB".into()),
-        text: "Two tabs named one conversation. The first kept it; this is a fresh shell.".into(),
+        title: Some(ui.dup_note_title.into()),
+        text: ui.dup_note_text.into(),
         seed: 0,
         pinned: false,
     }
@@ -6181,10 +6255,11 @@ impl Workspace {
             }
             let first_pane = leaves.first().map(|p| (*p).clone());
             if let Some(tab) = ws.tabs.first_mut() {
-                tab.name = Some(FIRST_RUN_HINT.into());
+                tab.name = Some(first_run_hint(ws.lang).into());
             }
             if let Some(pane) = first_pane {
-                pane.update(cx, |v, _| v.name = Some(FIRST_RUN_HINT.into()));
+                let hint = first_run_hint(ws.lang);
+                pane.update(cx, |v, _| v.name = Some(hint.into()));
             }
         } else {
             ws.restore_tree(&saved);
@@ -8262,21 +8337,33 @@ impl Workspace {
     fn harvest_agent(&mut self, session_id: String, cx: &mut Context<Self>) {
         let home = session::home_dir();
         let plugins = plugins::discover(&home);
+        // The status is stored finished, in the language of the moment it was
+        // set; a language switch shows the next result in the new one.
+        let ui = self.lang.strings().ui;
         let Some(cdx) = plugins.iter().find(|m| m.name == "context-delight") else {
-            self.harvest_status = Some("context-delight plugin not found (install cdx-mcp)".into());
+            self.harvest_status = Some(ui.plg_cdx_missing.into());
             cx.notify();
             return;
         };
         let dir = plugins::harvest_dir(&home);
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.harvest_status = Some(format!("cannot create {}: {e}", dir.display()));
+            self.harvest_status = Some(lang::fill(
+                ui.plg_cannot_create,
+                &[
+                    ("dir", &dir.display().to_string()),
+                    ("error", &e.to_string()),
+                ],
+            ));
             cx.notify();
             return;
         }
         let out = dir.join(format!("{session_id}.cdx"));
         self.harvest_status = match plugins::harvest(cdx, &session_id, &out) {
             Ok(msg) => Some(msg),
-            Err(e) => Some(format!("harvest failed: {e}")),
+            Err(e) => Some(lang::fill(
+                ui.plg_harvest_failed,
+                &[("error", &e.to_string())],
+            )),
         };
         cx.notify();
     }
@@ -8293,9 +8380,9 @@ impl Workspace {
         self.savings_tab = OverlayTab::Savings;
         let home = session::home_dir();
         let plugins = plugins::discover(&home);
+        let ui = self.lang.strings().ui;
         let Some(lc) = plugins.iter().find(|m| m.name == "leanctx-savings") else {
-            self.savings_status =
-                Some("leanctx-savings plugin not found (install leanctx-mcp)".into());
+            self.savings_status = Some(ui.plg_leanctx_missing.into());
             self.savings_view = None;
             self.savings_menu = true;
             cx.notify();
@@ -8314,7 +8401,10 @@ impl Workspace {
             },
             Err(e) => {
                 self.savings_view = None;
-                self.savings_status = Some(format!("savings failed: {e}"));
+                self.savings_status = Some(lang::fill(
+                    ui.plg_savings_failed,
+                    &[("error", &e.to_string())],
+                ));
             }
         }
         self.savings_menu = true;
@@ -9014,7 +9104,10 @@ impl Workspace {
         }
         let home = session::home_dir();
         if usage::refresh_command(&home).is_none() {
-            self.usage_status = Some(NO_COLLECTOR.into());
+            // Shown when the panel has nothing to read and nothing that could
+            // write it. Stored finished, so it speaks the language of the moment
+            // it was found and the next refresh speaks the current one.
+            self.usage_status = Some(self.lang.strings().ui.use_no_collector.into());
             cx.notify();
             return;
         }
@@ -9079,6 +9172,7 @@ impl Workspace {
             .unwrap_or_else(|| harness.default_effort());
         let acc = th.accent;
         let txt = th.text;
+        let ui = self.lang.strings().ui;
         // The same pill the subscription row below wears, in three states:
         // chosen (accent, filled), in force but unchosen (quiet edge, no
         // fill), and neither.
@@ -9133,7 +9227,11 @@ impl Workspace {
                         } else {
                             txt.alpha(0.40)
                         })
-                        .child(if chosen { "chosen" } else { "unset" }),
+                        .child(if chosen {
+                            ui.lcfg_chosen
+                        } else {
+                            ui.lcfg_unset
+                        }),
                 )
         };
         let pills = || div().flex().flex_row().flex_wrap().items_center().gap_1p5();
@@ -9224,7 +9322,7 @@ impl Workspace {
                             .text_size(px(10.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.complement)
-                            .child("LAUNCH AGENT CONFIG"),
+                            .child(ui.lcfg_hdr),
                     )
                     .on_mouse_down(
                         MouseButton::Left,
@@ -9236,18 +9334,26 @@ impl Workspace {
                     ),
             )
             .when(open, |d| {
-                d.child(row("harness", harness_chips, pref.harness().is_some()))
-                    .when(harness != launcher::Harness::Local, |d| {
-                        d.child(row("model", model_chips, pref.model_ix(harness).is_some()))
-                            .child(row("effort", effort_chips, pref.effort(harness).is_some()))
-                    })
-                    .when(harness == launcher::Harness::Local, |d| {
-                        d.child(
-                            div()
-                                .text_size(px(10.))
-                                .child("The local runner uses local-agent.toml"),
-                        )
-                    })
+                d.child(row(
+                    ui.lcfg_harness,
+                    harness_chips,
+                    pref.harness().is_some(),
+                ))
+                .when(harness != launcher::Harness::Local, |d| {
+                    d.child(row(
+                        ui.lcfg_model,
+                        model_chips,
+                        pref.model_ix(harness).is_some(),
+                    ))
+                    .child(row(
+                        ui.lcfg_effort,
+                        effort_chips,
+                        pref.effort(harness).is_some(),
+                    ))
+                })
+                .when(harness == launcher::Harness::Local, |d| {
+                    d.child(div().text_size(px(10.)).child(ui.lcfg_local_note))
+                })
             })
     }
 
@@ -9274,12 +9380,16 @@ impl Workspace {
             .filter(|r| r.has_content())
             .collect();
 
+        let ui = self.lang.strings().ui;
         // ---- nothing to draw: name the writer, not just the absence ----------
         if drawable.is_empty() {
             let msg = self
                 .usage_status
                 .clone()
-                .unwrap_or_else(|| NO_RECORDS.to_string());
+                // Nothing collected yet. Not an error: the collectors ride
+                // inside the binary, so the fix is the refresh button, not an
+                // install.
+                .unwrap_or_else(|| ui.use_no_records.to_string());
             let looked = usage::dirs(&session::home_dir())
                 .iter()
                 .map(|p| p.to_string_lossy().into_owned())
@@ -9296,18 +9406,13 @@ impl Workspace {
                     div()
                         .text_size(px(9.5))
                         .text_color(th.text.alpha(0.65))
-                        .child(
-                            "One JSON record per subscription, written by a collector that knows \
-                             how to ask that vendor. This binary carries the collectors \
-                             (`terminal-delight agent-usage update`, needs python3); on Omarchy \
-                             its own collectors write the same records on their own timer.",
-                        ),
+                        .child(ui.use_explain_records),
                 )
                 .child(
                     div()
                         .text_size(px(8.5))
                         .text_color(th.text.alpha(0.42))
-                        .child(format!("looked in {looked}")),
+                        .child(lang::fill(ui.use_looked_in, &[("dirs", &looked)])),
                 );
         }
 
@@ -9426,7 +9531,7 @@ impl Workspace {
             for l in &rec.limits {
                 let col = pressure(l.percent);
                 let resets = usage::until(&l.resets_at, now)
-                    .map(|t| format!("resets in {t}"))
+                    .map(|t| lang::fill(ui.use_resets_in, &[("duration", &t)]))
                     .unwrap_or_default();
                 list = list.child(
                     div()
@@ -9493,9 +9598,9 @@ impl Workspace {
                                     .text_size(px(9.))
                                     .text_color(th.text.alpha(0.55))
                                     .child(if b.estimated {
-                                        "left (estimated)"
+                                        ui.use_left_estimated
                                     } else {
-                                        "left"
+                                        ui.use_left
                                     }),
                             )
                             .child(div().flex_1().min_w(px(0.)))
@@ -9503,9 +9608,12 @@ impl Workspace {
                                 div()
                                     .text_size(px(9.))
                                     .text_color(th.text.alpha(0.5))
-                                    .child(format!(
-                                        "{:.2} spent of {:.2} funded",
-                                        b.spent, b.funded
+                                    .child(lang::fill(
+                                        ui.use_spent_of_funded,
+                                        &[
+                                            ("spent", &format!("{:.2}", b.spent)),
+                                            ("funded", &format!("{:.2}", b.funded)),
+                                        ],
                                     )),
                             ),
                     )
@@ -9515,16 +9623,21 @@ impl Workspace {
 
         // ---- today -----------------------------------------------------------
         let today = if rec.has_prompt_stats {
-            format!(
-                "{} tokens  \u{00b7}  {} prompts  \u{00b7}  {} sessions",
-                hud::fmt_tokens(rec.today_tokens),
-                rec.today_prompts,
-                rec.today_sessions
+            lang::fill(
+                ui.use_today_full,
+                &[
+                    ("tokens", &hud::fmt_tokens(rec.today_tokens)),
+                    ("prompts", &rec.today_prompts.to_string()),
+                    ("sessions", &rec.today_sessions.to_string()),
+                ],
             )
         } else {
             // a billing API reports tokens and nothing else; a confident zero
             // for prompts would be a number the collector never had.
-            format!("{} tokens", hud::fmt_tokens(rec.today_tokens))
+            lang::fill(
+                ui.use_today_tokens,
+                &[("tokens", &hud::fmt_tokens(rec.today_tokens))],
+            )
         };
         body = body.child(
             div()
@@ -9536,7 +9649,7 @@ impl Workspace {
                     div()
                         .text_size(px(9.))
                         .text_color(th.text.alpha(0.5))
-                        .child("TODAY"),
+                        .child(ui.use_hdr_today),
                 )
                 .child(div().text_size(px(10.5)).text_color(th.text).child(today)),
         );
@@ -9588,7 +9701,7 @@ impl Workspace {
                         div()
                             .text_size(px(9.))
                             .text_color(th.text.alpha(0.5))
-                            .child("LAST 7 DAYS"),
+                            .child(ui.use_hdr_last7),
                     )
                     .child(list),
             );
@@ -9645,19 +9758,21 @@ impl Workspace {
                         div()
                             .text_size(px(9.))
                             .text_color(th.text.alpha(0.5))
-                            .child("BY MODEL"),
+                            .child(ui.use_hdr_by_model),
                     )
                     .child(list)
                     .child(
                         div()
                             .text_size(px(8.5))
                             .text_color(th.text.alpha(0.45))
-                            .child(format!(
-                                "in {}  \u{00b7}  out {}  \u{00b7}  cache read {}  \u{00b7}  cache write {}",
-                                hud::fmt_tokens(i),
-                                hud::fmt_tokens(o),
-                                hud::fmt_tokens(cr),
-                                hud::fmt_tokens(cw)
+                            .child(lang::fill(
+                                ui.use_token_split,
+                                &[
+                                    ("input", &hud::fmt_tokens(i)),
+                                    ("output", &hud::fmt_tokens(o)),
+                                    ("cache_read", &hud::fmt_tokens(cr)),
+                                    ("cache_write", &hud::fmt_tokens(cw)),
+                                ],
                             )),
                     ),
             );
@@ -9666,12 +9781,16 @@ impl Workspace {
         // ---- provenance, and the button that re-asks --------------------------
         let mut prov: Vec<String> = Vec::new();
         if let Some(t) = usage::since(&rec.updated_at, usage::now_epoch()) {
-            prov.push(format!("collected {t}"));
+            prov.push(lang::fill(ui.use_collected_ago, &[("ago", &t)]));
         }
         if rec.total_prompts > 0 {
-            prov.push(format!(
-                "{} prompts over {} sessions, {} active days",
-                rec.total_prompts, rec.total_sessions, rec.active_days
+            prov.push(lang::fill(
+                ui.use_totals,
+                &[
+                    ("prompts", &rec.total_prompts.to_string()),
+                    ("sessions", &rec.total_sessions.to_string()),
+                    ("days", &rec.active_days.to_string()),
+                ],
             ));
         }
         let prov = prov.join("  \u{00b7}  ");
@@ -9702,9 +9821,9 @@ impl Workspace {
                         .cursor_pointer()
                         .hover(move |st| st.bg(acc.alpha(0.15)))
                         .child(if refreshing {
-                            "\u{21bb} collecting\u{2026}"
+                            ui.use_collecting
                         } else {
-                            "\u{21bb} refresh"
+                            ui.use_refresh
                         })
                         .on_mouse_down(
                             MouseButton::Left,
@@ -9754,6 +9873,7 @@ impl Workspace {
         // logo + colour read identically under every TD theme.
         let green = hsla(0.43, 0.68, 0.55, 1.);
         let white = hsla(0., 0., 0.96, 1.);
+        let ui = self.lang.strings().ui;
         // The lean-ctx mark is theme-INDEPENDENT on purpose — white "Lean", green
         // "CTX", a </> chip on a dark ground — so the logo reads identically under
         // every TD theme. The usage face gets TD's own accent instead: those
@@ -9798,7 +9918,7 @@ impl Workspace {
                 div()
                     .text_size(px(10.))
                     .text_color(white.alpha(0.5))
-                    .child("token savings"),
+                    .child(ui.sav_token_savings),
             );
         let usage_brand = div()
             .flex()
@@ -9823,20 +9943,20 @@ impl Workspace {
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
                     .text_size(px(15.))
                     .text_color(th.text)
-                    .child("Subscription"),
+                    .child(ui.sav_subscription),
             )
             .child(
                 div()
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
                     .text_size(px(15.))
                     .text_color(th.accent)
-                    .child("usage"),
+                    .child(ui.sav_usage_word),
             )
             .child(
                 div()
                     .text_size(px(10.))
                     .text_color(th.text.alpha(0.5))
-                    .child("what each plan has left"),
+                    .child(ui.sav_usage_sub),
             );
 
         let tab = self.savings_tab;
@@ -9909,16 +10029,16 @@ impl Workspace {
                 .cursor_pointer()
                 .hover(move |st| st.bg(acc.alpha(0.12)))
                 .child(if left_mode {
-                    "bar · what's left"
+                    ui.sav_bar_left
                 } else {
-                    "bar · what's spent"
+                    ui.sav_bar_spent
                 })
                 .tooltip(move |_w, cx| {
                     cx.new(|_| SlotTooltip {
                         lines: vec![
-                            "the left bar's allowance rails".into(),
-                            "bar LENGTH is whatever this chip says".into(),
-                            "bar COLOUR is always how much is spent".into(),
+                            ui.sav_tip_rails.into(),
+                            ui.sav_tip_length.into(),
+                            ui.sav_tip_colour.into(),
                         ],
                     })
                     .into()
@@ -9956,8 +10076,8 @@ impl Workspace {
                     // control for a widget the card in front of you has nothing
                     // to do with.
                     .when(tab == OverlayTab::Usage, |d| d.child(bar_chip))
-                    .child(tab_chip("savings", OverlayTab::Savings, cx))
-                    .child(tab_chip("usage", OverlayTab::Usage, cx)),
+                    .child(tab_chip(ui.sav_tab_savings, OverlayTab::Savings, cx))
+                    .child(tab_chip(ui.sav_tab_usage, OverlayTab::Usage, cx)),
             );
 
         if tab == OverlayTab::Usage {
@@ -9993,13 +10113,21 @@ impl Workspace {
                     .flex_row()
                     .items_end()
                     .gap_6()
-                    .child(stat(hud::fmt_tokens(v.tokens_saved), "tokens saved", green))
+                    .child(stat(
+                        hud::fmt_tokens(v.tokens_saved),
+                        ui.sav_stat_tokens,
+                        green,
+                    ))
                     .child(stat(
                         format!("{:.0}%", v.gain_pct),
-                        "compression",
+                        ui.sav_stat_compression,
                         th.accent,
                     ))
-                    .child(stat(format!("${:.0}", v.usd), "USD saved", th.complement))
+                    .child(stat(
+                        format!("${:.0}", v.usd),
+                        ui.sav_stat_usd,
+                        th.complement,
+                    ))
                     .child(div().flex_1().min_w(px(0.)))
                     .child(
                         div()
@@ -10018,9 +10146,9 @@ impl Workspace {
                 div()
                     .text_size(px(10.))
                     .text_color(th.text.alpha(0.75))
-                    .child(format!(
-                        "across {} agents (per-agent \u{2248} estimated):",
-                        v.agent_count
+                    .child(lang::fill(
+                        ui.sav_across_agents,
+                        &[("n", &v.agent_count.to_string())],
                     )),
             );
             let mut alist = div().flex().flex_col().gap_1();
@@ -10059,7 +10187,7 @@ impl Workspace {
                                 .w(px(64.))
                                 .flex_none()
                                 .text_color(th.text.alpha(0.55))
-                                .child(format!("{} calls", a.calls)),
+                                .child(lang::fill(ui.sav_calls, &[("n", &a.calls.to_string())])),
                         )
                         .child(div().flex_1().min_w(px(0.)))
                         .child(
@@ -10133,7 +10261,7 @@ impl Workspace {
                             div()
                                 .text_size(px(9.5))
                                 .text_color(th.text.alpha(0.55))
-                                .child("top files by compression:"),
+                                .child(ui.sav_top_files),
                         )
                         .child(flist),
                 );
@@ -10164,7 +10292,7 @@ impl Workspace {
                 div()
                     .text_size(px(10.5))
                     .text_color(th.text.alpha(0.6))
-                    .child("no rollup read yet \u{2014} not zero saved"),
+                    .child(ui.sav_no_rollup),
             );
         }
 
@@ -10228,7 +10356,7 @@ impl Workspace {
                 div()
                     .text_size(px(8.5))
                     .text_color(th.accent.alpha(0.8))
-                    .child("Escape: back, then close · click outside to close"),
+                    .child(lang::current().strings().ui.sav_footer),
             );
 
         div()
@@ -10536,30 +10664,37 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         use docview::notes_ui::Said;
+        let ui = self.lang.strings().ui;
         let said = match self.notes_send_target(from.entity_id(), ev.seat, cx) {
-            None => {
-                Said::Refused("no agent pane is beside this brief now — ⎘ copy map instead".into())
-            }
+            None => Said::Refused(ui.doc_no_agent_beside.into()),
             Some((target, who)) => match target.update(cx, |v, cx| v.send_notes(&ev.map, cx)) {
                 Ok(landed) => {
+                    // `who` is compared in English — "agent" is the word
+                    // `send_label` answers with when nothing names the pane —
+                    // and only the sentence drawn from it is translated. One
+                    // whole phrase per case, because "whose" and "which place"
+                    // agree with each other differently in every language.
+                    let named = who != "agent";
                     let (place, chars) = match landed {
-                        pane::NotesLanded::Prompt(n) => ("prompt", n),
-                        pane::NotesLanded::Composer(n) => ("composer on the bench", n),
+                        pane::NotesLanded::Prompt(n) if named => (ui.doc_named_prompt, n),
+                        pane::NotesLanded::Prompt(n) => (ui.doc_agents_prompt, n),
+                        pane::NotesLanded::Composer(n) if named => (ui.doc_named_composer, n),
+                        pane::NotesLanded::Composer(n) => (ui.doc_agents_composer, n),
                     };
-                    let prompt = if who == "agent" {
-                        format!("the agent's {place}")
-                    } else {
-                        format!("{who}'s {place}")
-                    };
+                    let prompt = lang::fill(place, &[("who", &who)]);
                     // A send saves as it goes; this counts only what a
                     // brief that cannot be saved into kept out of the file.
                     let unsaved = match ev.unsaved {
                         0 => String::new(),
-                        1 => " · it includes 1 edit not saved into the file".to_string(),
-                        n => format!(" · it includes {n} edits not saved into the file"),
+                        n => self.lang.count(&ui.doc_unsaved, n),
                     };
-                    Said::Done(format!(
-                        "in {prompt}, not sent · {chars} characters{unsaved} · press Enter there"
+                    Said::Done(lang::fill(
+                        ui.doc_landed_in,
+                        &[
+                            ("place", &prompt),
+                            ("chars", &chars.to_string()),
+                            ("unsaved", &unsaved),
+                        ],
                     ))
                 }
                 Err(why) => Said::Refused(why),
@@ -11122,7 +11257,12 @@ impl Workspace {
             .tabs
             .get(i)
             .and_then(|t| t.name.clone())
-            .unwrap_or_else(|| format!("tab {}", i + 1));
+            .unwrap_or_else(|| {
+                lang::fill(
+                    self.lang.strings().ui.tab_unnamed_trash,
+                    &[("n", &(i + 1).to_string())],
+                )
+            });
         let was_active = self.active == i;
 
         // Every tube in the tab goes dark at once, if this is the tab on screen.
@@ -11513,6 +11653,7 @@ impl Workspace {
         let (which, at) = self.bar_menu?;
         let sk = skin::skin(cx, s);
         let now = Instant::now();
+        let ui = self.lang.strings().ui;
 
         let mut items = div()
             .flex()
@@ -11525,40 +11666,37 @@ impl Workspace {
             BarMenu::Header => {
                 items = items
                     .child(
-                        Self::bar_menu_row(&sk, s, "New project", MenuTone::Plain).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                                cx.stop_propagation();
-                                ws.bar_menu = None;
-                                ws.new_project_with_terminal(window, cx);
-                            }),
-                        ),
+                        Self::bar_menu_row(&sk, s, ui.bar_m_new_project, MenuTone::Plain)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    ws.bar_menu = None;
+                                    ws.new_project_with_terminal(window, cx);
+                                }),
+                            ),
                     )
                     .child(
-                        Self::bar_menu_row(&sk, s, "New group", MenuTone::Plain).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                                cx.stop_propagation();
-                                ws.bar_menu = None;
-                                ws.new_group_with_terminal(None, window, cx);
-                            }),
-                        ),
+                        Self::bar_menu_row(&sk, s, ui.bar_m_new_group, MenuTone::Plain)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    ws.bar_menu = None;
+                                    ws.new_group_with_terminal(None, window, cx);
+                                }),
+                            ),
                     )
                     .child(
-                        Self::bar_menu_row(
-                            &sk,
-                            s,
-                            "Adopt loose tabs into their directories",
-                            MenuTone::Plain,
-                        )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.bar_menu = None;
-                                ws.adopt_projects_from_dirs(cx);
-                            }),
-                        ),
+                        Self::bar_menu_row(&sk, s, ui.bar_m_adopt_loose, MenuTone::Plain)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.bar_menu = None;
+                                    ws.adopt_projects_from_dirs(cx);
+                                }),
+                            ),
                     );
 
                 // Only what is still real. A holding past its window is never
@@ -11570,7 +11708,7 @@ impl Workspace {
                     .map(|h| {
                         (
                             h.id,
-                            format!("Recover {} \u{201c}{}\u{201d}", h.kind.noun(), h.label),
+                            lang::fill(recover_line(self.lang, h.kind), &[("label", &h.label)]),
                             h.left(now).map(hold::remaining_label).unwrap_or_default(),
                         )
                     })
@@ -11582,7 +11720,7 @@ impl Workspace {
                         .child(Self::bar_menu_row(
                             &sk,
                             s,
-                            "Nothing to recover",
+                            ui.bar_m_nothing_recover,
                             MenuTone::Quiet,
                         ));
                 } else {
@@ -11592,7 +11730,10 @@ impl Workspace {
                             Self::bar_menu_row(
                                 &sk,
                                 s,
-                                SharedString::from(format!("{label} \u{2014} {left}")),
+                                SharedString::from(lang::fill(
+                                    ui.bar_m_recover_left,
+                                    &[("label", &label), ("left", &left)],
+                                )),
                                 MenuTone::Plain,
                             )
                             .on_mouse_down(
@@ -11606,7 +11747,7 @@ impl Workspace {
                         );
                     }
                     items = items.child(
-                        Self::bar_menu_row(&sk, s, "Empty the trash", MenuTone::Danger)
+                        Self::bar_menu_row(&sk, s, ui.bar_m_empty_trash, MenuTone::Danger)
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -11635,25 +11776,26 @@ impl Workspace {
                     .children(self.level_rows(which, &sk, s, cx))
                     .child(Self::bar_menu_rule(th, s))
                     .child(
-                        Self::bar_menu_row(&sk, s, "New tab here", MenuTone::Plain).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                                cx.stop_propagation();
-                                ws.bar_menu = None;
-                                ws.new_tab_in(
-                                    tree::Place {
-                                        project: Some(id),
-                                        initiative: None,
-                                    },
-                                    Naming::Prompt,
-                                    window,
-                                    cx,
-                                );
-                            }),
-                        ),
+                        Self::bar_menu_row(&sk, s, ui.bar_m_new_tab_here, MenuTone::Plain)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    ws.bar_menu = None;
+                                    ws.new_tab_in(
+                                        tree::Place {
+                                            project: Some(id),
+                                            initiative: None,
+                                        },
+                                        Naming::Prompt,
+                                        window,
+                                        cx,
+                                    );
+                                }),
+                            ),
                     )
                     .child(
-                        Self::bar_menu_row(&sk, s, "New group here", MenuTone::Plain)
+                        Self::bar_menu_row(&sk, s, ui.bar_m_new_group_here, MenuTone::Plain)
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -11665,7 +11807,7 @@ impl Workspace {
                     )
                     .child(Self::bar_menu_rule(th, s))
                     .child(
-                        Self::bar_menu_row(&sk, s, "Rename", MenuTone::Plain).on_mouse_down(
+                        Self::bar_menu_row(&sk, s, ui.bar_m_rename, MenuTone::Plain).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                                 cx.stop_propagation();
@@ -11675,7 +11817,7 @@ impl Workspace {
                         ),
                     )
                     .child(
-                        Self::bar_menu_row(&sk, s, "Fold everything beneath", MenuTone::Plain)
+                        Self::bar_menu_row(&sk, s, ui.bar_m_fold_beneath, MenuTone::Plain)
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -11690,7 +11832,12 @@ impl Workspace {
                         Self::bar_menu_row(
                             &sk,
                             s,
-                            SharedString::from(Self::delete_label(Some(groups), tabs, panes)),
+                            SharedString::from(Self::delete_label(
+                                self.lang,
+                                Some(groups),
+                                tabs,
+                                panes,
+                            )),
                             // Drawn inert when this branch is the whole session:
                             // the bar will refuse it, and a live-looking row
                             // that refuses is how people learn to distrust the
@@ -11718,26 +11865,27 @@ impl Workspace {
                     .children(self.level_rows(which, &sk, s, cx))
                     .child(Self::bar_menu_rule(th, s))
                     .child(
-                        Self::bar_menu_row(&sk, s, "New tab here", MenuTone::Plain).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                                cx.stop_propagation();
-                                ws.bar_menu = None;
-                                ws.new_tab_in(
-                                    tree::Place {
-                                        project: None,
-                                        initiative: Some(id),
-                                    },
-                                    Naming::Prompt,
-                                    window,
-                                    cx,
-                                );
-                            }),
-                        ),
+                        Self::bar_menu_row(&sk, s, ui.bar_m_new_tab_here, MenuTone::Plain)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    ws.bar_menu = None;
+                                    ws.new_tab_in(
+                                        tree::Place {
+                                            project: None,
+                                            initiative: Some(id),
+                                        },
+                                        Naming::Prompt,
+                                        window,
+                                        cx,
+                                    );
+                                }),
+                            ),
                     )
                     .child(Self::bar_menu_rule(th, s))
                     .child(
-                        Self::bar_menu_row(&sk, s, "Rename", MenuTone::Plain).on_mouse_down(
+                        Self::bar_menu_row(&sk, s, ui.bar_m_rename, MenuTone::Plain).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                                 cx.stop_propagation();
@@ -11747,22 +11895,21 @@ impl Workspace {
                         ),
                     )
                     .child(
-                        Self::bar_menu_row(&sk, s, "Colour\u{2026}", MenuTone::Plain)
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.bar_menu = None;
-                                    ws.open_group_menu(id, ev.position, cx);
-                                }),
-                            ),
+                        Self::bar_menu_row(&sk, s, ui.bar_m_colour, MenuTone::Plain).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.bar_menu = None;
+                                ws.open_group_menu(id, ev.position, cx);
+                            }),
+                        ),
                     )
                     .child(Self::bar_menu_rule(th, s))
                     .child(
                         Self::bar_menu_row(
                             &sk,
                             s,
-                            SharedString::from(Self::delete_label(None, tabs, panes)),
+                            SharedString::from(Self::delete_label(self.lang, None, tabs, panes)),
                             if self.would_empty_window(BarBranch::Initiative(id)) {
                                 MenuTone::Quiet
                             } else {
@@ -11787,7 +11934,7 @@ impl Workspace {
                     .children(self.level_rows(which, &sk, s, cx))
                     .child(Self::bar_menu_rule(th, s))
                     .child(
-                        Self::bar_menu_row(&sk, s, "New tab beside this", MenuTone::Plain)
+                        Self::bar_menu_row(&sk, s, ui.bar_m_new_tab_beside, MenuTone::Plain)
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -11798,7 +11945,7 @@ impl Workspace {
                             ),
                     )
                     .child(
-                        Self::bar_menu_row(&sk, s, "Rename", MenuTone::Plain).on_mouse_down(
+                        Self::bar_menu_row(&sk, s, ui.bar_m_rename, MenuTone::Plain).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                                 cx.stop_propagation();
@@ -11811,7 +11958,7 @@ impl Workspace {
                         Self::bar_menu_row(
                             &sk,
                             s,
-                            "Remove from group",
+                            ui.bar_m_remove_from_group,
                             if grouped {
                                 MenuTone::Plain
                             } else {
@@ -11834,9 +11981,9 @@ impl Workspace {
                             &sk,
                             s,
                             SharedString::from(if panes <= 1 {
-                                "Close".to_string()
+                                ui.bar_m_close.to_string()
                             } else {
-                                format!("Close \u{2014} {panes} panes")
+                                lang::fill(ui.bar_m_close_panes, &[("n", &panes.to_string())])
                             }),
                             MenuTone::Danger,
                         )
@@ -11896,21 +12043,22 @@ impl Workspace {
     ///
     /// A line that says "0 groups" is a line that makes somebody stop and work
     /// out whether that matters.
-    fn delete_label(groups: Option<usize>, tabs: usize, panes: usize) -> String {
+    fn delete_label(l: lang::Lang, groups: Option<usize>, tabs: usize, panes: usize) -> String {
+        let ui = l.strings().ui;
         let mut parts: Vec<String> = Vec::new();
         if let Some(g) = groups.filter(|g| *g > 0) {
-            parts.push(format!("{g} group{}", if g == 1 { "" } else { "s" }));
+            parts.push(l.count(&ui.bar_count_group, g));
         }
         if tabs > 0 {
-            parts.push(format!("{tabs} tab{}", if tabs == 1 { "" } else { "s" }));
+            parts.push(l.count(&ui.bar_count_tab, tabs));
         }
         if panes > 0 {
-            parts.push(format!("{panes} pane{}", if panes == 1 { "" } else { "s" }));
+            parts.push(l.count(&ui.bar_count_pane, panes));
         }
         if parts.is_empty() {
-            "Delete".to_string()
+            ui.bar_m_delete.to_string()
         } else {
-            format!("Delete \u{2014} {}", parts.join(", "))
+            lang::fill(ui.bar_m_delete_with, &[("parts", &parts.join(", "))])
         }
     }
 
@@ -12298,14 +12446,14 @@ impl Workspace {
             BarBranch::Project(id) => self
                 .project_at(id)
                 .map(|p| p.label())
-                .unwrap_or_else(|| "project".into()),
+                .unwrap_or_else(|| lang::current().strings().ui.bar_project_fallback.into()),
             BarBranch::Initiative(gid) => self
                 .groups
                 .iter()
                 .find(|g| g.id == gid)
                 .map(|g| g.label())
                 .unwrap_or_else(|| unnamed_group(gid)),
-            BarBranch::Unfiled => "unfiled".into(),
+            BarBranch::Unfiled => lang::current().strings().ui.bar_unfiled.into(),
         }
     }
 
@@ -13273,8 +13421,12 @@ impl Workspace {
     /// unorganised session is not labelled "unfiled" in the corner.
     fn eng_key_name(&self, key: EngKey) -> Option<String> {
         match key {
-            EngKey::Project(p) => self.project_at(p).map(|p| p.label()),
-            EngKey::Group(g) => self.groups.iter().find(|x| x.id == g).map(|g| g.label()),
+            EngKey::Project(p) => self.project_at(p).map(|p| p.english_label()),
+            EngKey::Group(g) => self
+                .groups
+                .iter()
+                .find(|x| x.id == g)
+                .map(|g| g.english_label()),
             EngKey::Unfiled => None,
         }
     }
@@ -13376,12 +13528,12 @@ impl Workspace {
                     let filed = place
                         .project
                         .and_then(|p| self.project_at(p))
-                        .map(|p| p.label())
+                        .map(|p| p.english_label())
                         .or_else(|| {
                             place
                                 .initiative
                                 .and_then(|g| self.groups.iter().find(|x| x.id == g))
-                                .map(|g| g.label())
+                                .map(|g| g.english_label())
                         });
                     others.push((filed, w));
                 }
@@ -13905,10 +14057,12 @@ impl Workspace {
                 ls.iter().any(|p| p.entity_id() == pane.entity_id())
             })
             .map(|i| {
-                self.tabs[i]
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| format!("TAB {}", i + 1))
+                self.tabs[i].name.clone().unwrap_or_else(|| {
+                    lang::fill(
+                        self.lang.strings().ui.notif_tab_fallback,
+                        &[("n", &(i + 1).to_string())],
+                    )
+                })
             })
             .unwrap_or_else(|| "TD".into());
         let (pane_label, shell_pid, fallback) = {
@@ -14749,10 +14903,11 @@ impl Workspace {
         let end = (start + VISIBLE).min(n);
 
         let q = find.query.text();
+        let ui = self.lang.strings().ui;
         let scope_lbl = if global {
-            "FIND \u{2014} ALL PANES"
+            ui.find_hdr_all
         } else {
-            "FIND IN PANE"
+            ui.find_hdr_pane
         };
         let input = {
             let eb = render_edit_buffer(&find.query, 1.0, th.text, th.accent, th.accent.alpha(0.3));
@@ -14760,7 +14915,7 @@ impl Workspace {
                 eb.child(
                     div()
                         .text_color(th.text.alpha(0.35))
-                        .child("type to search\u{2026}"),
+                        .child(ui.find_placeholder),
                 )
             } else {
                 eb
@@ -14793,7 +14948,7 @@ impl Workspace {
                             .child(if q.trim().is_empty() {
                                 String::new()
                             } else {
-                                format!("{n} match{}", if n == 1 { "" } else { "es" })
+                                self.lang.count(&ui.find_match, n)
                             }),
                     ),
             )
@@ -14906,9 +15061,9 @@ impl Workspace {
                     .text_size(px(10.))
                     .text_color(th.text.alpha(0.4))
                     .child(if q.trim().is_empty() {
-                        "Start typing to fuzzy-search the terminal\u{2026}".to_string()
+                        ui.find_empty_prompt.to_string()
                     } else {
-                        format!("No matches for \u{201c}{}\u{201d}", q.trim())
+                        lang::fill(ui.find_no_matches, &[("query", q.trim())])
                     }),
             );
         }
@@ -14935,7 +15090,7 @@ impl Workspace {
                     .pt_0p5()
                     .text_size(px(8.5))
                     .text_color(th.text.alpha(0.45))
-                    .child("\u{2191}\u{2193} select \u{00b7} \u{21b5} jump \u{00b7} esc close"),
+                    .child(ui.find_footer),
             )
             .on_mouse_down(
                 MouseButton::Left,
@@ -14988,6 +15143,7 @@ impl Workspace {
     /// program set, else its mode — so what is typed is what was seen.
     fn lookup_entries(&self, cx: &App) -> Vec<lookup::Entry<EntityId>> {
         use lookup::{count, place, Entry, Kind, Target};
+        let ui = self.lang.strings().ui;
         let project = |id: Option<u32>| {
             id.and_then(|id| self.project_at(id))
                 .map(|p| p.label().to_uppercase())
@@ -15067,7 +15223,7 @@ impl Workspace {
                             text: words,
                             place: place(
                                 &[&proj, &grp, &name, &title],
-                                if note.pinned { "pinned" } else { "" },
+                                if note.pinned { ui.lk_pinned } else { "" },
                             ),
                             target: Target::Pane(leaf.entity_id()),
                         });
@@ -15178,6 +15334,7 @@ impl Workspace {
         let end = (start + VISIBLE).min(n);
         let here_pane = self.tabs.get(self.active).and_then(|t| t.focused);
         let q = lk.query.text();
+        let ui = self.lang.strings().ui;
 
         let input = {
             let eb = render_edit_buffer(&lk.query, 1.0, th.text, th.accent, th.accent.alpha(0.3));
@@ -15185,7 +15342,7 @@ impl Workspace {
                 eb.child(
                     div()
                         .text_color(th.text.alpha(0.35))
-                        .child("a project, group, tab, pane or note\u{2026}"),
+                        .child(ui.lk_placeholder),
                 )
             } else {
                 eb
@@ -15209,7 +15366,7 @@ impl Workspace {
                             .text_size(px(10.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.accent)
-                            .child("\u{1f50e}  LOOKUP"),
+                            .child(format!("\u{1f50e}  {}", ui.lk_hdr)),
                     )
                     .child(
                         div()
@@ -15218,7 +15375,7 @@ impl Workspace {
                             .child(if q.trim().is_empty() {
                                 lookup::count(n, "name")
                             } else {
-                                format!("{n} match{}", if n == 1 { "" } else { "es" })
+                                self.lang.count(&ui.lk_match, n)
                             }),
                     ),
             )
@@ -15300,7 +15457,7 @@ impl Workspace {
                             .flex_none()
                             .text_size(px(8.))
                             .text_color(th.accent.alpha(0.75))
-                            .child("here"),
+                            .child(ui.lk_here),
                     )
                 });
             let row = div()
@@ -15377,10 +15534,7 @@ impl Workspace {
                     .py_2()
                     .text_size(px(10.))
                     .text_color(th.text.alpha(0.4))
-                    .child(format!(
-                        "Nothing here is called \u{201c}{}\u{201d}",
-                        q.trim()
-                    )),
+                    .child(lang::fill(ui.lk_no_match, &[("query", q.trim())])),
             );
         }
 
@@ -15407,7 +15561,7 @@ impl Workspace {
                     .pt_0p5()
                     .text_size(px(8.5))
                     .text_color(th.text.alpha(0.45))
-                    .child("\u{2191}\u{2193} select \u{00b7} \u{21b5} go \u{00b7} esc close"),
+                    .child(ui.lk_footer),
             )
             .on_mouse_down(
                 MouseButton::Left,
@@ -15469,6 +15623,7 @@ impl Workspace {
         let home = session::home_dir();
         let found = plugins::discover(&home);
         let n = found.len();
+        let ui = self.lang.strings().ui;
 
         let mut list = div().flex().flex_col().gap_2();
         if found.is_empty() {
@@ -15476,9 +15631,7 @@ impl Workspace {
                 div()
                     .text_size(px(9.5))
                     .text_color(th.text.alpha(0.6))
-                    .child(
-                        "no plugins found \u{2014} install cdx-mcp (cargo install --path crates/cdx-mcp) or drop a plugin.json under ~/.config/terminal-delight/plugins/",
-                    ),
+                    .child(ui.plg_none_found),
             );
         }
         for (pi, m) in found.iter().enumerate() {
@@ -15580,22 +15733,20 @@ impl Workspace {
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.complement)
-                            .child("PLUGINS"),
+                            .child(ui.plg_hdr),
                     )
                     .child(div().flex_1().min_w(px(0.)))
                     .child(
                         div()
                             .text_color(th.text.alpha(0.7))
-                            .child(format!("{n} installed")),
+                            .child(lang::fill(ui.plg_installed, &[("n", &n.to_string())])),
                     ),
             )
             .child(
                 div()
                     .text_size(px(8.5))
                     .text_color(th.accent.alpha(0.85))
-                    .child(
-                        "plugins are MCP servers terminal-delight launches on demand \u{2014} run their actions from the agent wall or the 🪦 graveyard",
-                    ),
+                    .child(ui.plg_blurb),
             )
             .child(list);
 
@@ -15626,6 +15777,7 @@ impl Workspace {
     /// themselves to disk, and the slider is the control that says so — the
     /// knob is already where the setting is.
     fn render_notif_overlay(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let ui = self.lang.strings().ui;
         if !self.notif_menu {
             return None;
         }
@@ -15714,22 +15866,20 @@ impl Workspace {
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.complement)
-                            .child("NOTIFICATIONS"),
+                            .child(ui.ntf_hdr),
                     ),
             )
             .child(
                 div()
                     .text_size(px(8.5))
                     .text_color(th.accent.alpha(0.85))
-                    .child(
-                        "what a finished agent may do to the rest of the desktop \u{2014} saved to notifications.toml the moment you throw a switch",
-                    ),
+                    .child(ui.ntf_blurb),
             )
             .child(
                 row(
                     "\u{1f5a5}",
-                    "System notifications",
-                    "an agent finishing in a pane you are not watching raises an omarchy toast; clicking it jumps to that pane",
+                    ui.ntf_system_name,
+                    ui.ntf_system_blurb,
                     p.system,
                     "notif-system",
                 )
@@ -15746,8 +15896,8 @@ impl Workspace {
             .child(
                 row(
                     "\u{2728}",
-                    "Marquee",
-                    "the same news as a chasing-bulb banner across the top of this window \u{2014} loud, and off until you ask",
+                    ui.ntf_marquee_name,
+                    ui.ntf_marquee_blurb,
                     p.marquee,
                     "notif-marquee",
                 )
@@ -15759,10 +15909,12 @@ impl Workspace {
                         notifpref::save(ws.notif);
                         // Throwing the switch shows you what you just bought,
                         // so the setting is not a promise about a future agent.
-                        ws.marquee_says = ws
-                            .notif
-                            .marquee
-                            .then(|| ("MARQUEE ON \u{00b7} TD \u{2192} AGENT FINISHED".to_string(), Instant::now()));
+                        ws.marquee_says = ws.notif.marquee.then(|| {
+                            (
+                                ws.lang.strings().ui.ntf_marquee_test.to_string(),
+                                Instant::now(),
+                            )
+                        });
                         cx.notify();
                     }),
                 ),
@@ -15771,9 +15923,7 @@ impl Workspace {
                 div()
                     .text_size(px(8.))
                     .text_color(th.text.alpha(0.45))
-                    .child(
-                        "with both off the news stays inside terminal delight: the tab keeps its \u{1f514} badge and the pane still pings",
-                    ),
+                    .child(ui.ntf_both_off),
             );
 
         Some(
@@ -15810,6 +15960,7 @@ impl Workspace {
         let left = (ww * 0.5 - panel_w * 0.5).clamp(8., (ww - panel_w - 8.).max(8.));
         let top = (wh * 0.28 - panel_h * 0.5).clamp(8., (wh - panel_h - 8.).max(8.));
         let sel = lp.selected.min(shown - 1);
+        let ui = self.lang.strings().ui;
 
         let input = {
             let eb = render_edit_buffer(&lp.query, 1.0, th.text, th.accent, th.accent.alpha(0.3));
@@ -15817,7 +15968,7 @@ impl Workspace {
                 eb.child(
                     div()
                         .text_color(th.text.alpha(0.35))
-                        .child("type a language\u{2026}"),
+                        .child(ui.lng_placeholder),
                 )
             } else {
                 eb
@@ -15841,7 +15992,7 @@ impl Workspace {
                             .text_size(px(10.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.accent)
-                            .child("\u{1f310}  LANGUAGE"),
+                            .child(format!("\u{1f310}  {}", ui.lng_hdr)),
                     )
                     .child(
                         div()
@@ -15922,7 +16073,7 @@ impl Workspace {
                     .py_2()
                     .text_size(px(10.))
                     .text_color(th.text.alpha(0.4))
-                    .child(format!("No language matches \u{201c}{}\u{201d}", q.trim())),
+                    .child(lang::fill(ui.lng_no_match, &[("query", q.trim())])),
             );
         }
 
@@ -15957,7 +16108,7 @@ impl Workspace {
                     .pt_0p5()
                     .text_size(px(8.5))
                     .text_color(th.text.alpha(0.45))
-                    .child("\u{2191}\u{2193} select \u{00b7} \u{21b5} choose \u{00b7} esc close"),
+                    .child(ui.lng_footer),
             )
             .on_mouse_down(
                 MouseButton::Left,
@@ -16014,6 +16165,7 @@ impl Workspace {
         let top = (wh * 0.16).clamp(8., (wh - panel_h - 8.).max(8.));
         let sel = lp.selected.min(lp.order.len().saturating_sub(1));
 
+        let ui = self.lang.strings().ui;
         let head = |text: &'static str| {
             div()
                 .text_size(px(9.5))
@@ -16245,9 +16397,9 @@ impl Workspace {
                         div()
                             .text_size(px(13.))
                             .text_color(th.accent)
-                            .child("⌁ LAUNCH AGENT"),
+                            .child(ui.la_hdr),
                     )
-                    .child(head("a terminal the host owns, already holding an agent")),
+                    .child(head(ui.la_sub)),
             )
             .child(
                 // The filter, with its caret, so it reads as a field rather
@@ -16262,7 +16414,7 @@ impl Workspace {
                     .text_color(th.text)
                     .child(format!("{}▋", lp.query.text())),
             )
-            .child(head("PROJECT"))
+            .child(head(ui.la_project))
             // The one child allowed to give way when the window is short —
             // and never below one row, so a squeeze reads as a list with a
             // scroll's worth hidden rather than as no list at all.
@@ -16281,23 +16433,21 @@ impl Workspace {
                         .px_2()
                         .text_size(px(12.))
                         .text_color(th.complement)
-                        .child("nothing matches — ⌫ to widen"),
+                        .child(ui.la_no_match),
                 )
             })
-            .child(head("HARNESS"))
+            .child(head(ui.la_harness))
             .child(harness_row)
             .when(lp.harness != launcher::Harness::Local, |d| {
-                d.child(head("MODEL"))
+                d.child(head(ui.la_model))
                     .child(model_row)
-                    .child(head("EFFORT"))
+                    .child(head(ui.la_effort))
                     .child(effort_row)
-                    .child(head("REACH"))
+                    .child(head(ui.la_reach))
                     .child(reach_row)
             })
             .when(lp.harness == launcher::Harness::Local, |d| {
-                d.child(head(
-                    "Model, effort and permissions come from local-agent.toml",
-                ))
+                d.child(head(ui.la_local_note))
             })
             .when_some(lp.error.as_ref(), |d, error| {
                 d.child(
@@ -16326,12 +16476,15 @@ impl Workspace {
                     // person cannot see coming and the half they complained
                     // about (#508). Read from the same function the launch
                     // reads, so the label and the landing cannot disagree.
-                    .child(format!(
-                        "↑↓ project · tab model · ⇧tab harness · ←→ effort · ↵ {} · esc close",
-                        match landing {
-                            launcher::Landing::Here => "starts in this pane",
-                            launcher::Landing::NewTab => "opens a new tab",
-                        }
+                    .child(lang::fill(
+                        ui.la_footer,
+                        &[(
+                            "landing",
+                            match landing {
+                                launcher::Landing::Here => ui.la_land_here,
+                                launcher::Landing::NewTab => ui.la_land_newtab,
+                            },
+                        )],
                     )),
             )
             .on_mouse_down(
@@ -16403,6 +16556,7 @@ impl Workspace {
 
         // One labelled input row. `active` highlights the field the keyboard is
         // editing; `placeholder` shows when its buffer is empty.
+        let ui = self.lang.strings().ui;
         let field_row =
             |label: &str,
              eb: &EditBuffer,
@@ -16480,7 +16634,7 @@ impl Workspace {
                             .text_size(px(10.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.accent)
-                            .child("\u{1f5bc}  PANE LOGO"),
+                            .child(format!("\u{1f5bc}  {}", ui.logo_hdr)),
                     )
                     .child(
                         div()
@@ -16497,10 +16651,10 @@ impl Workspace {
             )
             .child(
                 field_row(
-                    "NAME",
+                    ui.logo_fld_name,
                     &lp.name,
                     lp.field == LogoField::Name,
-                    "file name\u{2026}",
+                    ui.logo_fld_name_ph,
                     "",
                 )
                 .id("logo-fld-name")
@@ -16518,10 +16672,10 @@ impl Workspace {
             )
             .child(
                 field_row(
-                    "IN",
+                    ui.logo_fld_in,
                     &lp.loc,
                     lp.field == LogoField::Loc,
-                    "any folder\u{2026}",
+                    ui.logo_fld_in_ph,
                     "\u{1f4c1}",
                 )
                 .id("logo-fld-in")
@@ -16546,9 +16700,9 @@ impl Workspace {
                         th.text.alpha(0.4)
                     })
                     .child(if gated {
-                        "type 3+ chars, or set IN to search now".to_string()
+                        ui.logo_gated_now
                     } else {
-                        "Tab switches NAME / IN".to_string()
+                        ui.logo_hint_tab
                     }),
             )
             .child(
@@ -16558,11 +16712,8 @@ impl Workspace {
                     .text_size(px(8.5))
                     .text_color(th.complement.alpha(0.8))
                     .child(match lp.cwd.as_deref() {
-                        Some(d) => format!(
-                            "\u{21b5} sets the default logo for {} + subdirs (persists)",
-                            tilde(d)
-                        ),
-                        None => "\u{21b5} sets this pane's logo".to_string(),
+                        Some(d) => lang::fill(ui.logo_sets_dir_default, &[("dir", &tilde(d))]),
+                        None => ui.logo_sets_pane.to_string(),
                     }),
             );
 
@@ -16582,8 +16733,8 @@ impl Workspace {
                     .text_color(th.text.alpha(0.7))
                     .child(div().w(px(16.)).flex_none().child("\u{2715}"))
                     .child(div().flex_1().min_w(px(0.)).child(match &ruling_dir {
-                        Some(d) => format!("Remove logo — clears the default for {}", tilde(d)),
-                        None => "Remove logo".to_string(),
+                        Some(d) => lang::fill(ui.logo_remove_dir, &[("dir", &tilde(d))]),
+                        None => ui.logo_remove.to_string(),
                     }))
                     .on_mouse_down(
                         MouseButton::Left,
@@ -16667,11 +16818,11 @@ impl Workspace {
                     .text_size(px(10.))
                     .text_color(th.text.alpha(0.4))
                     .child(if total == 0 {
-                        "No image files found (png/jpg/jpeg/svg/webp)".to_string()
+                        ui.logo_none_found.to_string()
                     } else if gated {
-                        "type 3+ chars, or set IN to search".to_string()
+                        ui.logo_gated.to_string()
                     } else {
-                        format!("No image matches \u{201c}{}\u{201d}", name_q.trim())
+                        lang::fill(ui.logo_no_match, &[("query", name_q.trim())])
                     }),
             );
         }
@@ -16714,9 +16865,7 @@ impl Workspace {
                     .pt_0p5()
                     .text_size(px(8.5))
                     .text_color(th.text.alpha(0.45))
-                    .child(
-                        "\u{2191}\u{2193} select \u{00b7} \u{21b9} field \u{00b7} \u{21b5} choose \u{00b7} esc close",
-                    ),
+                    .child(ui.logo_footer),
             )
             .on_mouse_down(
                 MouseButton::Left,
@@ -17020,9 +17169,9 @@ impl Workspace {
             .gap_3()
             .text_size(px(12.))
             .text_color(accent)
-            .child(format!("👓  FOCUS · {name}"))
+            .child(lang::fill(s.ui.focus_hdr, &[("name", &name)]))
             .children(zoom.map(|z| div().text_color(text.alpha(0.6)).child(z)))
-            .child(div().text_color(text.alpha(0.6)).child("esc to close"));
+            .child(div().text_color(text.alpha(0.6)).child(s.ui.focus_esc));
         let store = self.focus_body_bounds.clone();
         let body = div()
             .flex_1()
@@ -17499,7 +17648,7 @@ impl Workspace {
             .text_size(px(11.))
             .text_color(if on { accent } else { text.alpha(0.7) })
             .child(if on { "◉" } else { "○" })
-            .child("Inherit theme")
+            .child(self.lang.strings().ui.focus_inherit_btn)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -17530,10 +17679,11 @@ impl Workspace {
         let on = self.anchor_top;
         // ⚓ <edge> <arrow>: ▲ points up when anchoring to the top, ▼ down for the
         // (default) bottom anchor — a glanceable direction cue beside the word.
+        let ui = self.lang.strings().ui;
         let label = if on {
-            "\u{2693} TOP \u{25b2}"
+            ui.pal_anchor_top
         } else {
-            "\u{2693} BOTTOM \u{25bc}"
+            ui.pal_anchor_bottom
         };
         palette_rule(label, on, &theme::theme(cx)).on_mouse_down(
             MouseButton::Left,
@@ -17568,10 +17718,11 @@ impl Workspace {
     /// `agent_tint` saved key also covers remote sessions, editors and consoles.
     fn terminal_state_toggle(&self, _sk: &skin::Skin, cx: &mut Context<Self>) -> impl IntoElement {
         let on = self.agent_tint;
+        let ui = self.lang.strings().ui;
         let label = if on {
-            "▣ USES PRESETS"
+            ui.pal_term_presets
         } else {
-            "▣ FOLLOWS OUTER"
+            ui.pal_term_follows
         };
         let help_owner = cx.entity().downgrade();
         let delay = palette_help_delay(self.palette_help_seen, Instant::now());
@@ -19239,7 +19390,12 @@ impl Workspace {
             .tabs
             .get(from)
             .and_then(|t| t.name.clone())
-            .unwrap_or_else(|| format!("pane in tab {}", from + 1));
+            .unwrap_or_else(|| {
+                lang::fill(
+                    self.lang.strings().ui.pane_unnamed_trash,
+                    &[("n", &(from + 1).to_string())],
+                )
+            });
         if from == self.active {
             let mut leaves = vec![];
             self.tabs[from].root.leaves(&mut leaves);
@@ -20052,10 +20208,16 @@ impl Workspace {
         };
         [
             (WheelTarget::Seed, "◉", pick(&choice.seed, resolved.accent)),
-            (WheelTarget::Text, "T", pick(&choice.text, resolved.text)),
+            // The two letters are the initials of TEXT and COMPLEMENT in the
+            // reader's language; the other two markers are pictures.
+            (
+                WheelTarget::Text,
+                self.lang.strings().ui.wheel_marker_text,
+                pick(&choice.text, resolved.text),
+            ),
             (
                 WheelTarget::Complement,
-                "C",
+                self.lang.strings().ui.wheel_marker_complement,
                 pick(&choice.complement, resolved.complement),
             ),
             (
@@ -21693,7 +21855,7 @@ impl Workspace {
         let says = self
             .bay_says
             .filter(|(_, at)| at.elapsed() < BAY_SAYS_FOR)
-            .map(|(what, _)| what.line());
+            .map(|(what, _)| what.line(self.lang));
         // Aimed at the bin, by either gesture that can be.
         let hot = self
             .bar_drag
@@ -21891,9 +22053,9 @@ impl Workspace {
                                     .text_size(px(8. * s))
                                     .text_color(ember.alpha(0.85 * open))
                                     .child(SharedString::from(if hot {
-                                        "release to delete".to_string()
+                                        self.lang.strings().ui.bay_release_to_delete
                                     } else {
-                                        "drop here to delete".to_string()
+                                        self.lang.strings().ui.bay_drop_here_to_delete
                                     })),
                             ),
                     ),
@@ -21936,7 +22098,10 @@ impl Workspace {
                         .justify_center()
                         .text_size(px(9. * s))
                         .text_color(th.text.alpha(0.42 * (1. - open)))
-                        .child(SharedString::from(format!("{held} recoverable"))),
+                        .child(SharedString::from(lang::fill(
+                            self.lang.strings().ui.bay_recoverable_count,
+                            &[("held", &held.to_string())],
+                        ))),
                 )
             })
             // What just happened, for a few seconds, in the same place the count
@@ -22155,15 +22320,23 @@ impl Workspace {
                     (&row.session_label, &row.session),
                     (&row.week_label, &row.week),
                 ] {
-                    let named = if label.is_empty() { "window" } else { label };
+                    let ui = self.lang.strings().ui;
+                    let named = if label.is_empty() {
+                        ui.slot_window_fallback
+                    } else {
+                        label
+                    };
+                    let pct = |p: f32| ((p * 100.).round() as i64).to_string();
                     out.push(match reading {
-                        slot::Reading::Unknown => format!("{named}: no reading"),
-                        slot::Reading::Stale { spent, age } => format!(
-                            "{named}: {}% spent, {age} old",
-                            (spent * 100.).round() as i64
+                        slot::Reading::Unknown => {
+                            lang::fill(ui.slot_no_reading, &[("named", named)])
+                        }
+                        slot::Reading::Stale { spent, age } => lang::fill(
+                            ui.slot_spent_stale,
+                            &[("named", named), ("pct", &pct(*spent)), ("age", age)],
                         ),
                         slot::Reading::Fresh(p) => {
-                            format!("{named}: {}% spent", (p * 100.).round() as i64)
+                            lang::fill(ui.slot_spent, &[("named", named), ("pct", &pct(*p))])
                         }
                     });
                 }
@@ -23267,9 +23440,9 @@ impl Workspace {
         [attention::Priority::Promoted, attention::Priority::Demoted].map(|level| {
             let on = now == Some(level);
             let word = if matches!(level, attention::Priority::Promoted) {
-                "Promote"
+                self.lang.strings().ui.bar_menu_promote
             } else {
-                "Demote"
+                self.lang.strings().ui.bar_menu_demote
             };
             let glyph = level.glyph().unwrap_or("");
             Self::bar_menu_row(
@@ -23559,6 +23732,7 @@ impl Workspace {
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.45))
             .shadow(float_shadows(th.accent, th.grade.phosphor));
+        let ui = self.lang.strings().ui;
 
         list = list.child(
             div()
@@ -23569,9 +23743,9 @@ impl Workspace {
                 .pb(px(5. * s))
                 .text_size(px(9.5 * s))
                 .text_color(sk.ink.ink_dim)
-                .child(format!(
-                    "NEEDS ME \u{b7} {}",
-                    attention::counts(&items).wanting
+                .child(lang::fill(
+                    ui.rail_hdr_needs_me,
+                    &[("count", &attention::counts(&items).wanting.to_string())],
                 ))
                 // The keys, on the surface that has them. A chord nobody can
                 // discover is a chord nobody uses, and there is room for six
@@ -23581,10 +23755,10 @@ impl Workspace {
                         .flex()
                         .flex_row()
                         .gap(px(6. * s))
-                        .child("\u{2191}\u{2193} go")
-                        .child("\u{21b5} pane")
-                        .child("o open")
-                        .child("b beside")
+                        .child(ui.rail_key_go)
+                        .child(ui.rail_key_pane)
+                        .child(ui.rail_key_open)
+                        .child(ui.rail_key_beside)
                         // The pin, drawn inert on a window too narrow to dock
                         // in rather than hidden. A control that disappears at
                         // some width is a control nobody knows exists; one that
@@ -23610,7 +23784,11 @@ impl Workspace {
                                 } else {
                                     sk.ink.ink_dim
                                 })
-                                .child(if pinned { "p unpin" } else { "p pin" }),
+                                .child(if pinned {
+                                    ui.rail_key_unpin
+                                } else {
+                                    ui.rail_key_pin
+                                }),
                         )
                         .child("esc"),
                 ),
@@ -23643,7 +23821,7 @@ impl Workspace {
                     .py(px(8. * s))
                     .text_size(px(11. * s))
                     .text_color(sk.ink.ink_dim)
-                    .child("Nothing is waiting on you."),
+                    .child(ui.rail_empty),
             );
         }
 
@@ -23913,7 +24091,7 @@ impl Workspace {
                                 .rounded(px(2. * s))
                                 .border_1()
                                 .border_color(hsla(0.58, 0.72, 0.62, 0.6))
-                                .child(SharedString::from("⇲ beside"))
+                                .child(SharedString::from(self.lang.strings().ui.rail_beside_chip))
                                 // Its own act, like the link's, and it stops
                                 // there so the link underneath does not also
                                 // hand the file to the desktop.
@@ -23977,8 +24155,8 @@ impl Workspace {
                         .flex_row()
                         .gap(px(6. * s))
                         .items_center()
-                        .child(button("Yes  y", true))
-                        .child(button("No  n", false))
+                        .child(button(self.lang.strings().ui.rail_btn_yes, true))
+                        .child(button(self.lang.strings().ui.rail_btn_no, false))
                 }));
             // No per-row click handler. The panel takes one click and resolves it
             // through the inverse barrel map, because these boxes are where the
@@ -24040,11 +24218,7 @@ impl Workspace {
                     .pt(px(7. * s))
                     .text_size(px(9.5 * s))
                     .text_color(sk.ink.ink_dim)
-                    .child(if n == 1 {
-                        "1 more pane could not be read".to_string()
-                    } else {
-                        format!("{n} more panes could not be read")
-                    }),
+                    .child(self.lang.count(&self.lang.strings().ui.rail_unreadable, n)),
             );
         }
 
@@ -24160,6 +24334,10 @@ impl Workspace {
             .items_start()
             .gap(px(paint::TILE_GAP))
             .max_w(px(paint::grid_w(self.last_win.map(|(_, _, w, _)| w))));
+        // "EFAULT" is the rest of DEFAULT after the tile's own `D` keycap: a
+        // fragment of an English word spelled around a hot key, so it stays
+        // English with the key it hangs from rather than becoming half of a
+        // translated word.
         for e in paint::entries(cx, shelf, &worn, "EFAULT") {
             let pick = e.pick.clone();
             grid = grid.child(paint::tile(&e, &th, &sk).on_mouse_down(
@@ -24180,9 +24358,10 @@ impl Workspace {
         // cabinet has on, which is the one thing a person cannot read off the
         // tiles when the worn look is scrolled onto a shelf they are not looking
         // at. "OUTER" is the theme tray's own word for this scope
-        // (`lang::Strings::scope_outer`); the overlay says it in the same English
-        // the wall's cards do.
-        let head = paint::card_head(&th, scale, aimed, "PAINT THE OUTER", &worn);
+        // (`lang::Strings::scope_outer`), and the heading says it in the
+        // reader's language.
+        let ui = self.lang.strings().ui;
+        let head = paint::card_head(&th, scale, aimed, ui.paint_outer_hdr, &worn);
         // The shelf pills — the visible half of `z`, on their own row so the
         // header keeps the label/value shape it borrowed.
         let pills = (shelves.len() > 1).then(|| {
@@ -24199,12 +24378,17 @@ impl Workspace {
             row
         });
         let legend = if aimed {
-            paint::legend(cx, &["↓ panes"], "d default", &worn)
+            paint::legend(
+                cx,
+                &[ui.paint_outer_legend_panes],
+                ui.paint_outer_legend_default,
+                &worn,
+            )
         } else {
             // Un-aimed it teaches the one gesture that aims it, and nothing
             // else: a legend of keys that would currently land on a PANE is
             // worse than no legend at all.
-            "↑ or a click opens it".to_string()
+            ui.paint_outer_legend_unaimed.to_string()
         };
         // FOLDED while a pane is aimed: the header and the legend only, one
         // short card under the mother bar. Open, its thirty-odd tiles hung down
@@ -25368,7 +25552,7 @@ impl Render for ThemeTooltip {
                         .text_size(px(11. * s))
                         .text_color(th.accent)
                         .cursor_pointer()
-                        .child("▸ Open in editor  ⧉")
+                        .child(lang::current().strings().ui.theme_tip_open_editor)
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             cx.stop_propagation();
                             theme::open_in_default_app(&path);
@@ -25430,7 +25614,11 @@ fn palette_help<E: gpui::StatefulInteractiveElement>(
         }
         let swatches = preview.as_ref().and_then(|p| p.colours(cx));
         let name = if preview.is_some() && swatches.is_none() {
-            format!("{name}\nPalette unavailable").into()
+            format!(
+                "{name}\n{}",
+                lang::current().strings().ui.pal_tip_unavailable
+            )
+            .into()
         } else {
             name.clone()
         };
@@ -27387,21 +27575,31 @@ impl Render for Workspace {
                 let cur_c = cur.clone();
                 let tip_path = (id == "custom").then(theme::theme_path);
                 let tlbl = match lbl.as_str() {
-                    "quiet" => t.thm_quiet, "field" => t.thm_field,
-                    "tactical" => t.thm_tactical, "hacker" => t.thm_hacker,
-                    "custom" => t.thm_custom, _ => lbl.as_str(),
+                    "quiet" => t.thm_quiet,
+                    "field" => t.thm_field,
+                    "tactical" => t.thm_tactical,
+                    "hacker" => t.thm_hacker,
+                    "custom" => t.thm_custom,
+                    "deco" => t.ui.pal_thm_deco,
+                    _ => lbl.as_str(),
                 };
                 let help = match lbl.as_str() {
-                    "quiet" => "Light screen; no scanlines, glow, or flicker.",
-                    "field" => "Matte screen, faint scanlines, low glow.",
-                    "tactical" => "Bright glow, raised bezel, slight flicker.",
-                    "deco" => "Minimal CRT texture; may request matching trim.",
-                    "hacker" => "Green phosphor, scanlines, glow, tracking, flicker, jiggle.",
-                    _ => "Edit the live theme file.",
+                    "quiet" => t.ui.pal_help_theme_quiet,
+                    "field" => t.ui.pal_help_theme_field,
+                    "tactical" => t.ui.pal_help_theme_tactical,
+                    "deco" => t.ui.pal_help_theme_deco,
+                    "hacker" => t.ui.pal_help_theme_hacker,
+                    _ => t.ui.pal_help_theme_custom,
                 };
-                let btn = palette_help(theme_icon_btn(&th, &icon, tlbl, active)
-                    .id(SharedString::from(format!("theme-btn-{id}"))), help, None,
-                    tip_path, help_delay, help_owner.clone());
+                let btn = palette_help(
+                    theme_icon_btn(&th, &icon, tlbl, active)
+                        .id(SharedString::from(format!("theme-btn-{id}"))),
+                    help,
+                    None,
+                    tip_path,
+                    help_delay,
+                    help_owner.clone(),
+                );
                 theme_row = theme_row.child(btn.on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -27437,15 +27635,34 @@ impl Render for Workspace {
                 // reads as "no skin" rather than as "the default one".
                 let lit = id == skin_now;
                 let click_id = id.clone();
+                // The id is the skin's file name and stays as it is; only the
+                // caption under the icon speaks the reader's language, and a
+                // skin somebody wrote themselves keeps the name they gave it.
+                let caption = match id.as_str() {
+                    "default" => t.ui.pal_skin_default,
+                    "deco" => t.ui.pal_skin_deco,
+                    "console" => t.ui.pal_skin_console,
+                    "custom" => t.ui.pal_skin_custom,
+                    other => other,
+                };
                 skin_row = skin_row.child(
-                    theme_icon_btn(&th, &icon, &id, lit)
+                    theme_icon_btn(&th, &icon, caption, lit)
                         .id(SharedString::from(format!("skin-btn-{id}")))
-                        .map(|b| palette_help(b, match id.as_str() {
-                            "default" => "Rounded controls and filled selections.",
-                            "deco" => "Square edges, double rules, spaced capitals, lit edge.",
-                            "console" => "Minimal outlines, open spacing, active leading rail.",
-                            _ => "Custom control styling.",
-                        }, None, None, help_delay, help_owner.clone()))
+                        .map(|b| {
+                            palette_help(
+                                b,
+                                match id.as_str() {
+                                    "default" => t.ui.pal_help_skin_default,
+                                    "deco" => t.ui.pal_help_skin_deco,
+                                    "console" => t.ui.pal_help_skin_console,
+                                    _ => t.ui.pal_help_skin_custom,
+                                },
+                                None,
+                                None,
+                                help_delay,
+                                help_owner.clone(),
+                            )
+                        })
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
@@ -27464,8 +27681,18 @@ impl Render for Workspace {
             // is how a panel teaches people to stop reading it.
             if skin_pinned {
                 skin_row = skin_row.child(
-                    theme_icon_btn(&th, "\u{25ce}", "theme", false)
-                        .id("skin-btn-follow").map(|b| palette_help(b, "Let the theme choose the trim.", None, None, help_delay, help_owner.clone()))
+                    theme_icon_btn(&th, "\u{25ce}", t.ui.pal_skin_follow_theme, false)
+                        .id("skin-btn-follow")
+                        .map(|b| {
+                            palette_help(
+                                b,
+                                t.ui.pal_help_skin_follow_theme,
+                                None,
+                                None,
+                                help_delay,
+                                help_owner.clone(),
+                            )
+                        })
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|_ws, _: &MouseDownEvent, _w, cx| {
@@ -27498,23 +27725,33 @@ impl Render for Workspace {
                 note_row = note_row.child(
                     note_paper_btn(&th, &paper, cap, cur.note == mode)
                         .id(SharedString::from(format!("note-paper-{mode:?}")))
-                        .map(|b| palette_help(b, match mode {
-                            theme::NotePaper::Contrast => "Use a vivid hue distinct from the accent.",
-                            theme::NotePaper::Accent => "Use the theme's accent colour.",
-                            theme::NotePaper::Mute => "Neutral paper from text and surface colours.",
-                        }, None, None, help_delay, help_owner.clone())).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.set_menu_choice(
-                                ThemeChoice {
-                                    note: mode,
-                                    ..cur_c.clone()
+                        .map(|b| {
+                            palette_help(
+                                b,
+                                match mode {
+                                    theme::NotePaper::Contrast => t.ui.pal_help_note_contrast,
+                                    theme::NotePaper::Accent => t.ui.pal_help_note_accent,
+                                    theme::NotePaper::Mute => t.ui.pal_help_note_mute,
                                 },
-                                cx,
-                            );
-                        }),
-                    ),
+                                None,
+                                None,
+                                help_delay,
+                                help_owner.clone(),
+                            )
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.set_menu_choice(
+                                    ThemeChoice {
+                                        note: mode,
+                                        ..cur_c.clone()
+                                    },
+                                    cx,
+                                );
+                            }),
+                        ),
                 );
             }
             let mut color_row = div().flex().flex_row().gap_2();
@@ -27526,26 +27763,37 @@ impl Render for Workspace {
                     theme::ColorMode::Monochrome => t.cm_mono,
                     theme::ColorMode::OnTheme => t.cm_theme,
                 };
-                color_row =
-                    color_row.child(color_mode_btn(&th, mode.icon(), cap, active)
+                color_row = color_row.child(
+                    color_mode_btn(&th, mode.icon(), cap, active)
                         .id(SharedString::from(format!("program-colour-{mode:?}")))
-                        .map(|b| palette_help(b, match mode {
-                            theme::ColorMode::Default => "Keep colours sent by programs.",
-                            theme::ColorMode::Monochrome => "Use shades of the text colour.",
-                            theme::ColorMode::OnTheme => "Shift program hues around the accent colour.",
-                        }, None, None, help_delay, help_owner.clone())).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.set_menu_choice(
-                                ThemeChoice {
-                                    color: mode,
-                                    ..cur_c.clone()
+                        .map(|b| {
+                            palette_help(
+                                b,
+                                match mode {
+                                    theme::ColorMode::Default => t.ui.pal_help_color_ansi,
+                                    theme::ColorMode::Monochrome => t.ui.pal_help_color_mono,
+                                    theme::ColorMode::OnTheme => t.ui.pal_help_color_theme,
                                 },
-                                cx,
-                            );
-                        }),
-                    ));
+                                None,
+                                None,
+                                help_delay,
+                                help_owner.clone(),
+                            )
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.set_menu_choice(
+                                    ThemeChoice {
+                                        color: mode,
+                                        ..cur_c.clone()
+                                    },
+                                    cx,
+                                );
+                            }),
+                        ),
+                );
             }
             // SYNTAX scheme: off, or one of the highlight grammars (code / agentic
             // / logs / markdown). On = recolour default-fg text by the scheme's
@@ -27555,21 +27803,33 @@ impl Render for Workspace {
             {
                 let cur_c = cur.clone();
                 let active = !cur.syntax;
-                syntax_row =
-                    syntax_row.child(color_mode_btn(&th, "○", t.sc_off, active).id("syntax-off")
-                        .map(|b| palette_help(b, "Leave plain text without added highlights.", None, None, help_delay, help_owner.clone())).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.set_menu_choice(
-                                ThemeChoice {
-                                    syntax: false,
-                                    ..cur_c.clone()
-                                },
-                                cx,
-                            );
-                        }),
-                    ));
+                syntax_row = syntax_row.child(
+                    color_mode_btn(&th, "○", t.sc_off, active)
+                        .id("syntax-off")
+                        .map(|b| {
+                            palette_help(
+                                b,
+                                t.ui.pal_help_syntax_off,
+                                None,
+                                None,
+                                help_delay,
+                                help_owner.clone(),
+                            )
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.set_menu_choice(
+                                    ThemeChoice {
+                                        syntax: false,
+                                        ..cur_c.clone()
+                                    },
+                                    cx,
+                                );
+                            }),
+                        ),
+                );
             }
             for scheme in theme::SyntaxScheme::ALL {
                 let active = cur.syntax && cur.syntax_scheme == scheme;
@@ -27583,41 +27843,97 @@ impl Render for Workspace {
                 syntax_row = syntax_row.child(
                     color_mode_btn(&th, scheme.icon(), cap, active)
                         .id(SharedString::from(format!("syntax-{scheme:?}")))
-                        .map(|b| palette_help(b, match scheme {
-                            theme::SyntaxScheme::Code => "Highlight keywords, strings, numbers, paths, flags, comments.",
-                            theme::SyntaxScheme::Agentic => "Highlight callouts, tool calls, links, and lists.",
-                            theme::SyntaxScheme::Logs => "Highlight levels, timestamps, durations, and paths.",
-                            theme::SyntaxScheme::Markdown => "Highlight headings, emphasis, code, links, quotes, lists.",
-                        }, None, None, help_delay, help_owner.clone())).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        .map(|b| {
+                            palette_help(
+                                b,
+                                match scheme {
+                                    theme::SyntaxScheme::Code => t.ui.pal_help_syntax_code,
+                                    theme::SyntaxScheme::Agentic => t.ui.pal_help_syntax_agentic,
+                                    theme::SyntaxScheme::Logs => t.ui.pal_help_syntax_logs,
+                                    theme::SyntaxScheme::Markdown => t.ui.pal_help_syntax_mark,
+                                },
+                                None,
+                                None,
+                                help_delay,
+                                help_owner.clone(),
+                            )
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.set_menu_choice(
+                                    ThemeChoice {
+                                        syntax: true,
+                                        syntax_scheme: scheme,
+                                        ..cur_c.clone()
+                                    },
+                                    cx,
+                                );
+                            }),
+                        ),
+                );
+            }
+            let invert_bar = palette_rule(t.ui.pal_rule_invert, cur.invert, &th)
+                .id("palette-invert")
+                .map(|b| {
+                    palette_help(
+                        b,
+                        t.ui.pal_help_invert,
+                        None,
+                        None,
+                        help_delay,
+                        help_owner.clone(),
+                    )
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener({
+                        let cur = cur.clone();
+                        move |ws, _, _, cx| {
                             cx.stop_propagation();
                             ws.set_menu_choice(
                                 ThemeChoice {
-                                    syntax: true,
-                                    syntax_scheme: scheme,
-                                    ..cur_c.clone()
+                                    invert: !cur.invert,
+                                    ..cur.clone()
                                 },
                                 cx,
                             );
-                        }),
-                    ),
+                        }
+                    }),
                 );
-            }
-            let invert_bar = palette_rule("INVERT", cur.invert, &th).id("palette-invert")
-                .map(|b| palette_help(b, "Swap dark and light treatment.", None, None, help_delay, help_owner.clone()))
-                .on_mouse_down(MouseButton::Left, cx.listener({ let cur = cur.clone(); move |ws, _, _, cx| {
-                    cx.stop_propagation(); ws.set_menu_choice(ThemeChoice { invert: !cur.invert, ..cur.clone() }, cx);
-                }}));
             let inherit_bar = (!is_pane).then(|| {
                 let on = cur.follow_omarchy == Some(true);
                 let (available, _) = palette::current_status(cx);
-                let title = if on && !available { "INHERIT · unavailable" } else { "INHERIT" };
-                palette_rule(title, on, &th).id("palette-inherit")
-                    .map(|b| palette_help(b, "Follow Omarchy's selected theme.", None, None, help_delay, help_owner.clone()))
-                    .on_mouse_down(MouseButton::Left, cx.listener({ let cur = cur.clone(); move |ws, _, _, cx| {
-                        cx.stop_propagation(); let mut c = cur.clone(); c.follow_omarchy = Some(!on); ws.set_menu_choice(c, cx);
-                    }}))
+                let title = if on && !available {
+                    t.ui.pal_rule_inherit_unavailable
+                } else {
+                    t.ui.pal_rule_inherit
+                };
+                palette_rule(title, on, &th)
+                    .id("palette-inherit")
+                    .map(|b| {
+                        palette_help(
+                            b,
+                            t.ui.pal_help_inherit,
+                            None,
+                            None,
+                            help_delay,
+                            help_owner.clone(),
+                        )
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener({
+                            let cur = cur.clone();
+                            move |ws, _, _, cx| {
+                                cx.stop_propagation();
+                                let mut c = cur.clone();
+                                c.follow_omarchy = Some(!on);
+                                ws.set_menu_choice(c, cx);
+                            }
+                        }),
+                    )
             });
             let label = |s: &str| {
                 div()
@@ -27739,15 +28055,20 @@ impl Render for Workspace {
                             .child(theme::Dynamic::Custom(Box::default()).glyph()),
                     };
                     let (name, preview) = if let Some(c) = chip {
-                        (c.id.replace('-', " ").to_uppercase(),
-                            Some(PalettePreview::Omarchy(c.id.clone())))
+                        (
+                            c.id.replace('-', " ").to_uppercase(),
+                            Some(PalettePreview::Omarchy(c.id.clone())),
+                        )
                     } else {
                         let mut g = theme::ThemeGroup::of(&cur);
                         paint::stamp(&mut g, pick);
-                        ("CUSTOM".to_string(),
-                            Some(PalettePreview::Custom(Box::new(cur.clone().with_group(g)))))
+                        (
+                            t.ui.pal_tip_custom.to_string(),
+                            Some(PalettePreview::Custom(Box::new(cur.clone().with_group(g)))),
+                        )
                     };
-                    let tile = palette_help(tile, name, preview, None, help_delay, help_owner.clone());
+                    let tile =
+                        palette_help(tile, name, preview, None, help_delay, help_owner.clone());
                     col = col.child(tile.on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -27765,37 +28086,114 @@ impl Render for Workspace {
                 }
                 dyn_cols = dyn_cols.child(col);
             }
-            let area = |title: &str, width: f32| div().flex().flex_col().gap_2().flex_none()
-                .w(px(width + 2. * TRAY_AREA_PAD)).p(px(TRAY_AREA_PAD))
-                .rounded(sk.rad_raw(6.)).border_1().border_color(th.accent.alpha(0.4))
-                .bg(th.surface.alpha(0.35)).child(label(title));
-            let themes = area("THEME", glyph_col_w).child(dyn_cols)
-                .child(hsep()).child(label(t.t_note)).child(note_row);
-            let pickers = area("STYLE", TRAY_PICKER_W)
-                .child(label(t.t_theme)).child(theme_row)
-                .when(!is_pane, |d| d.child(hsep()).child(label("SKIN")).child(skin_row))
-                .child(hsep()).child(label(t.t_program)).child(color_row)
-                .child(label(t.t_syntax)).child(syntax_row);
-            let mut controls = area("RULES", TRAY_RULES_COL_W)
+            let area = |title: &str, width: f32| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .flex_none()
+                    .w(px(width + 2. * TRAY_AREA_PAD))
+                    .p(px(TRAY_AREA_PAD))
+                    .rounded(sk.rad_raw(6.))
+                    .border_1()
+                    .border_color(th.accent.alpha(0.4))
+                    .bg(th.surface.alpha(0.35))
+                    .child(label(title))
+            };
+            let themes = area(t.ui.pal_hdr_theme, glyph_col_w)
+                .child(dyn_cols)
+                .child(hsep())
+                .child(label(t.t_note))
+                .child(note_row);
+            let pickers = area(t.ui.pal_hdr_style, TRAY_PICKER_W)
+                .child(label(t.t_theme))
+                .child(theme_row)
+                .when(!is_pane, |d| {
+                    d.child(hsep())
+                        .child(label(t.ui.pal_hdr_skin))
+                        .child(skin_row)
+                })
+                .child(hsep())
+                .child(label(t.t_program))
+                .child(color_row)
+                .child(label(t.t_syntax))
+                .child(syntax_row);
+            let mut controls = area(t.ui.pal_hdr_rules, TRAY_RULES_COL_W)
                 .child(label(if is_pane { t.scope_pane } else { t.scope_outer }))
-                .child(invert_bar).children(inherit_bar);
+                .child(invert_bar)
+                .children(inherit_bar);
             if !is_pane {
                 let stray = self.panes_off_outer_theme(cx);
-                let text = if stray == 0 { format!("⤓ {}", t.pass_down) } else { format!("⤓ {} ({stray})", t.pass_down) };
-                controls = controls.child(hsep())
-                    .child(label("TERMINAL STATE"))
+                let text = if stray == 0 {
+                    format!("⤓ {}", t.pass_down)
+                } else {
+                    format!("⤓ {} ({stray})", t.pass_down)
+                };
+                controls = controls
+                    .child(hsep())
+                    .child(label(t.ui.pal_hdr_terminal_state))
                     .child(self.terminal_state_toggle(&sk, cx))
-                    .child(hsep()).child(label("ANCHOR"))
-                    .child(self.anchor_top_toggle(&sk, cx).id("palette-anchor").map(|b| palette_help(b, "Keep content against the selected edge.", None, None, help_delay, help_owner.clone())))
-                    .child(Self::bezel_btn(&sk, &text, stray > 0).id("palette-pass-down")
-                        .map(|b| palette_help(b, "Reattach panes; preserve saved choices and display overrides.", None, None, help_delay, help_owner.clone()))
-                        .on_mouse_down(MouseButton::Left, cx.listener(|ws, _, _, cx| { cx.stop_propagation(); ws.pass_theme_down(cx); })));
+                    .child(hsep())
+                    .child(label(t.ui.pal_hdr_anchor))
+                    .child(
+                        self.anchor_top_toggle(&sk, cx)
+                            .id("palette-anchor")
+                            .map(|b| {
+                                palette_help(
+                                    b,
+                                    t.ui.pal_help_anchor,
+                                    None,
+                                    None,
+                                    help_delay,
+                                    help_owner.clone(),
+                                )
+                            }),
+                    )
+                    .child(
+                        Self::bezel_btn(&sk, &text, stray > 0)
+                            .id("palette-pass-down")
+                            .map(|b| {
+                                palette_help(
+                                    b,
+                                    t.ui.pal_help_pass_down,
+                                    None,
+                                    None,
+                                    help_delay,
+                                    help_owner.clone(),
+                                )
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _, _, cx| {
+                                    cx.stop_propagation();
+                                    ws.pass_theme_down(cx);
+                                }),
+                            ),
+                    );
             } else {
-                controls = controls.child(palette_rule(t.follow_outer, following, &th).id("palette-follow-outer")
-                    .map(|b| palette_help(b, "Use the window theme as it changes.", None, None, help_delay, help_owner.clone()))
-                    .on_mouse_down(MouseButton::Left, cx.listener(|ws, _, _, cx| {
-                        cx.stop_propagation(); if let Some(scope) = ws.theme_menu.clone() { ws.toggle_theme_inherit(&scope, cx); }
-                    })));
+                controls = controls.child(
+                    palette_rule(t.follow_outer, following, &th)
+                        .id("palette-follow-outer")
+                        .map(|b| {
+                            palette_help(
+                                b,
+                                t.ui.pal_help_follow_outer,
+                                None,
+                                None,
+                                help_delay,
+                                help_owner.clone(),
+                            )
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _, _, cx| {
+                                cx.stop_propagation();
+                                if let Some(scope) = ws.theme_menu.clone() {
+                                    ws.toggle_theme_inherit(&scope, cx);
+                                }
+                            }),
+                        ),
+                );
             }
             // A sub-tab icon click anchors the tray at the click (right edge at
             // the cursor, opening down-left); clamp it fully on-screen. The
@@ -27853,7 +28251,9 @@ impl Render for Workspace {
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
-                .child(themes).child(pickers).child(controls);
+                .child(themes)
+                .child(pickers)
+                .child(controls);
             // full-screen scrim: click anywhere outside closes
             div()
                 .absolute()
@@ -28187,6 +28587,7 @@ impl Render for Workspace {
             let filt = self.mcp_filter;
             let state_filt = self.mcp_state_filter;
             let program_filt = self.mcp_program_filter.clone();
+            let ui = self.lang.strings().ui;
             let label = |s: String| {
                 div()
                     .text_size(px(9.))
@@ -28363,8 +28764,8 @@ impl Render for Workspace {
                 let grp = self.group_of(ti);
                 let key = grp.map(|g| g.id);
                 let gname = match grp {
-                    Some(g) => g.name.clone().unwrap_or_else(|| format!("group {}", g.id)),
-                    None => "Ungrouped".to_string(),
+                    Some(g) => g.label(),
+                    None => ui.grp_ungrouped.to_string(),
                 };
                 let gcol = match grp {
                     Some(g) => g.color,
@@ -28464,7 +28865,7 @@ impl Render for Workspace {
                         .text_color(if on { th.text } else { th.text.alpha(0.6) })
                         .cursor_pointer()
                         .hover(|s| s.border_color(th.accent.alpha(0.7)))
-                        .child("ALL")
+                        .child(self.lang.strings().ui.chip_all)
                         .child(
                             div()
                                 .text_color(th.text.alpha(0.4))
@@ -28556,7 +28957,7 @@ impl Render for Workspace {
                         .text_color(if on { th.text } else { th.text.alpha(0.6) })
                         .cursor_pointer()
                         .hover(|s| s.border_color(th.accent.alpha(0.7)))
-                        .child("ANY PROGRAM")
+                        .child(ui.mcp_chip_any_program)
                         .child(
                             div()
                                 .text_color(th.text.alpha(0.4))
@@ -28649,7 +29050,7 @@ impl Render for Workspace {
                         .text_color(if on { th.text } else { th.text.alpha(0.6) })
                         .cursor_pointer()
                         .hover(|s| s.border_color(th.accent.alpha(0.7)))
-                        .child("ANY STATE")
+                        .child(ui.mcp_chip_any_state)
                         .child(
                             div()
                                 .text_color(th.text.alpha(0.4))
@@ -28783,8 +29184,8 @@ impl Render for Workspace {
                     continue;
                 }
                 let gname = match grp {
-                    Some(g) => g.name.clone().unwrap_or_else(|| format!("group {}", g.id)),
-                    None => "Ungrouped".to_string(),
+                    Some(g) => g.label(),
+                    None => ui.grp_ungrouped.to_string(),
                 };
                 let gcol = match grp {
                     Some(g) => g.color,
@@ -28995,7 +29396,7 @@ impl Render for Workspace {
                     let status_label = if is_agent {
                         status.state.label().to_uppercase()
                     } else {
-                        "IDLE".to_string()
+                        ui.mcp_status_idle.to_string()
                     };
                     // a small beveled SWCCG-style stat box (label + value)
                     let stat_box = |label: &str, val: String, col: gpui::Hsla| {
@@ -29514,21 +29915,25 @@ impl Render for Workspace {
                                                 model_disp.clone().map(|m| m.to_uppercase())
                                             })
                                             .unwrap_or_else(|| mode_lbl.to_uppercase());
-                                        stats = stats.child(stat_box("AGENT", chip, kind_col));
+                                        stats = stats.child(stat_box(
+                                            ui.mcp_stat_agent,
+                                            chip,
+                                            kind_col,
+                                        ));
                                         // The call, when the agent wants one. RUN
                                         // and WATCH stay quiet: a wall that
                                         // labels every healthy agent teaches you
                                         // to read past the labels.
                                         if let Some(v) = vit.filter(|v| v.call.needs_you()) {
                                             stats = stats.child(stat_box(
-                                                "CALL",
+                                                ui.mcp_stat_call,
                                                 v.call.label().to_string(),
                                                 hsla(0.008, 0.72, 0.62, 1.0),
                                             ));
                                         }
                                     } else {
                                         stats = stats.child(stat_box(
-                                            "SERVICE",
+                                            ui.mcp_stat_service,
                                             mode_lbl.clone(),
                                             kind_col,
                                         ));
@@ -29714,7 +30119,7 @@ impl Render for Workspace {
                             div()
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                 .text_color(th.complement)
-                                .child("AGENT WALL"),
+                                .child(ui.mcp_hdr_agent_wall),
                         )
                         .child(div().flex_1().min_w(px(0.)))
                         .child(div().text_color(th.text.alpha(0.7)).child(format!(
@@ -29740,7 +30145,7 @@ impl Render for Workspace {
                                 .text_color(hsla(0.43, 0.68, 0.55, 1.))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(hsla(0.43, 0.68, 0.55, 0.22)))
-                                .child("\u{003c}/\u{003e} savings")
+                                .child(ui.mcp_btn_savings)
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -29768,7 +30173,7 @@ impl Render for Workspace {
                                 .text_color(acc)
                                 .cursor_pointer()
                                 .hover(move |s| s.bg(acc.alpha(0.22)))
-                                .child("\u{03a3} usage")
+                                .child(ui.mcp_btn_usage)
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -29797,7 +30202,7 @@ impl Render for Workspace {
                         .flex_wrap()
                         .gap_3()
                         .child(section(
-                            "MCP SERVER",
+                            ui.mcp_sec_server,
                             div()
                                 .flex()
                                 .flex_col()
@@ -29860,7 +30265,10 @@ impl Render for Workspace {
                         // scoped one — titled, because it now has to say on its
                         // own face that it counts the filtered set and not the fleet.
                         .when(show_state_chips, |d| {
-                            d.child(section("AGENT STATE", state_chips.into_any_element()))
+                            d.child(section(
+                                ui.mcp_sec_agent_state,
+                                state_chips.into_any_element(),
+                            ))
                         })
                 })
                 .child(list)
@@ -30011,7 +30419,11 @@ impl Render for Workspace {
                         .find(|s| !s.is_empty())
                         .unwrap_or("~")
                         .to_string(),
-                    None => "unknown".to_string(),
+                    None => lang::current()
+                        .strings()
+                        .ui
+                        .dead_project_unknown
+                        .to_string(),
                 }
             }
             fn proj_hue(s: &str) -> f32 {
@@ -30063,7 +30475,7 @@ impl Render for Workspace {
                         .text_color(if on { th.text } else { th.text.alpha(0.6) })
                         .cursor_pointer()
                         .hover(|s| s.border_color(th.accent.alpha(0.7)))
-                        .child("ALL")
+                        .child(self.lang.strings().ui.chip_all)
                         .child(div().text_color(th.text.alpha(0.4)).child(format!("{n}")))
                         .on_mouse_down(
                             MouseButton::Left,
@@ -30221,17 +30633,21 @@ impl Render for Workspace {
                         .collect();
                     cwd_disp = format!("\u{2026}{tail}");
                 }
-                let title = da
-                    .summary
-                    .clone()
-                    .unwrap_or_else(|| format!("{} session", da.kind.label()));
+                let title = da.summary.clone().unwrap_or_else(|| {
+                    lang::fill(
+                        self.lang.strings().ui.dead_session_fallback,
+                        &[("kind", da.kind.label())],
+                    )
+                });
                 let sid_short: String = da.session_id.chars().take(8).collect();
-                let meta_line = format!(
-                    "{}  \u{00b7}  {}  \u{00b7}  {}  \u{00b7}  {} KB",
-                    cwd_disp,
-                    da.age,
-                    sid_short,
-                    da.bytes / 1024
+                let meta_line = lang::fill(
+                    self.lang.strings().ui.dead_meta_kb,
+                    &[
+                        ("cwd", &cwd_disp),
+                        ("age", &da.age.to_string()),
+                        ("sid", &sid_short),
+                        ("kb", &(da.bytes / 1024).to_string()),
+                    ],
                 );
                 let cwd_click = da.cwd.clone();
                 let resume_click = da.resume_cmd.clone();
@@ -30479,12 +30895,12 @@ impl Render for Workspace {
         });
 
         let confirm_overlay = self.confirm_close.and_then(|i| {
-            let name = self
-                .tabs
-                .get(i)?
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("tab {}", i + 1));
+            let name = self.tabs.get(i)?.name.clone().unwrap_or_else(|| {
+                lang::fill(
+                    self.lang.strings().ui.tab_unnamed,
+                    &[("n", &(i + 1).to_string())],
+                )
+            });
             let n = self.tab_pane_count(i);
             let danger = hsla(0., 0.72, 0.60, 1.);
             // The question this dialog asks changed when the close became a
@@ -30497,32 +30913,27 @@ impl Render for Workspace {
             // holding lives in this window, and closing the last tab closes the
             // window. Whichever branch is drawn, it matches what `close_tab`
             // will actually do.
-            let hours = hold::window_for(n).as_secs() / 3600;
+            let hours = (hold::window_for(n).as_secs() / 3600).to_string();
             let last = self.tabs.len() <= 1;
+            let ui = self.lang.strings().ui;
+            let count = n.to_string();
+            let args = [("name", name.as_str()), ("n", &count), ("hours", &hours)];
             let (btn_label, body) = match (last, n) {
                 (true, 1) => (
-                    "CLOSE TAB".to_string(),
-                    format!(
-                        "\u{201c}{name}\u{201d} is the last tab \u{2014} closing it ends its shell and quits. This can\u{2019}t be undone."
-                    ),
+                    ui.close_btn_tab.to_string(),
+                    lang::fill(ui.close_body_last_one, &args),
                 ),
                 (true, n) => (
-                    format!("CLOSE {n} PANES"),
-                    format!(
-                        "\u{201c}{name}\u{201d} is the last tab \u{2014} closing it ends all {n} shells and quits. This can\u{2019}t be undone."
-                    ),
+                    self.lang.count(&ui.close_btn_panes, n),
+                    lang::fill(ui.close_body_last_many, &args),
                 ),
                 (false, 1) => (
-                    "CLOSE TAB".to_string(),
-                    format!(
-                        "\u{201c}{name}\u{201d} goes to the bay. Its shell keeps running, and ctrl+shift+z brings it back for the next {hours}h."
-                    ),
+                    ui.close_btn_tab.to_string(),
+                    lang::fill(ui.close_body_bay_one, &args),
                 ),
                 (false, n) => (
-                    format!("CLOSE {n} PANES"),
-                    format!(
-                        "\u{201c}{name}\u{201d} holds {n} panes. They go to the bay still running, and come back with ctrl+shift+z for the next {hours}h."
-                    ),
+                    self.lang.count(&ui.close_btn_panes, n),
+                    lang::fill(ui.close_body_bay_many, &args),
                 ),
             };
             let confirm_btn = div()
@@ -30545,7 +30956,7 @@ impl Render for Workspace {
                         ws.close_tab(i, window, cx);
                     }),
                 );
-            let cancel_btn = Self::bezel_btn(&sk, "CANCEL", false).on_mouse_down(
+            let cancel_btn = Self::bezel_btn(&sk, ui.dlg_cancel, false).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
@@ -30556,9 +30967,9 @@ impl Render for Workspace {
             let panel = Self::danger_panel(
                 &sk,
                 &th,
-                "CLOSE TAB?",
+                ui.close_title,
                 body,
-                "Enter to close \u{00b7} Esc to cancel",
+                ui.close_hint,
                 cancel_btn,
                 confirm_btn,
                 cx,
@@ -30589,33 +31000,43 @@ impl Render for Workspace {
         // to stop reading warnings.
         let delete_overlay = self.confirm_delete.and_then(|branch| {
             let (tabs, panes) = self.branch_weight(branch);
-            let (noun, name) = match branch {
-                BarBranch::Project(id) => ("project", self.project_at(id)?.label()),
-                BarBranch::Initiative(id) => {
-                    ("group", self.groups.iter().find(|g| g.id == id)?.label())
-                }
+            let ui = self.lang.strings().ui;
+            // One whole sentence, button and title per kind of branch: what is
+            // being deleted decides the grammar of everything around its name.
+            let (body, btn, title, name) = match branch {
+                BarBranch::Project(id) => (
+                    ui.del_body_project,
+                    ui.del_btn_project,
+                    ui.del_title_project,
+                    self.project_at(id)?.label(),
+                ),
+                BarBranch::Initiative(id) => (
+                    ui.del_body_group,
+                    ui.del_btn_group,
+                    ui.del_title_group,
+                    self.groups.iter().find(|g| g.id == id)?.label(),
+                ),
                 BarBranch::Unfiled => return None,
             };
             let window_label = hold::remaining_label(hold::window_for(panes));
-            let body = format!(
-                "Deleting the {noun} \u{201c}{name}\u{201d} takes {tabs} tab{} and {panes} pane{} \
-                 with it. The shells keep running \u{2014} it is recoverable from the trash at the \
-                 foot of the bar for {}, or until this window closes.",
-                if tabs == 1 { "" } else { "s" },
-                if panes == 1 { "" } else { "s" },
-                window_label.trim_end_matches(" left"),
+            let body = lang::fill(
+                body,
+                &[
+                    ("name", &name),
+                    ("tabs", &self.lang.count(&ui.del_tabs, tabs)),
+                    ("panes", &self.lang.count(&ui.del_panes, panes)),
+                    ("window", window_label.trim_end_matches(" left")),
+                ],
             );
-            let confirm_btn =
-                Self::bezel_btn(&sk, &format!("DELETE {}", noun.to_uppercase()), false)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                            cx.stop_propagation();
-                            ws.confirm_delete = None;
-                            ws.delete_branch(branch, window, cx);
-                        }),
-                    );
-            let cancel_btn = Self::bezel_btn(&sk, "CANCEL", false).on_mouse_down(
+            let confirm_btn = Self::bezel_btn(&sk, btn, false).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    ws.confirm_delete = None;
+                    ws.delete_branch(branch, window, cx);
+                }),
+            );
+            let cancel_btn = Self::bezel_btn(&sk, ui.dlg_cancel, false).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
@@ -30626,9 +31047,9 @@ impl Render for Workspace {
             let panel = Self::danger_panel(
                 &sk,
                 &th,
-                &format!("DELETE {}?", noun.to_uppercase()),
+                title,
                 body,
-                "Enter to delete \u{00b7} Esc to cancel",
+                ui.del_hint,
                 cancel_btn,
                 confirm_btn,
                 cx,
@@ -30663,9 +31084,11 @@ impl Render for Workspace {
         // that opened it and never covers the tabs.
         let scale_overlay = self.scale_menu.then(|| {
             let pct = (scale * 100.).round() as i32;
-            let preset = |label: &'static str, val: f32| {
+            // `key` names the element and stays as it is; `label` is the
+            // caption a person reads.
+            let preset = |key: &'static str, label: &'static str, val: f32| {
                 Self::bezel_btn(&sk, label, (scale - val).abs() < 0.01)
-                    .id(SharedString::from(format!("scale-preset-{label}")))
+                    .id(SharedString::from(format!("scale-preset-{key}")))
                     .hover(|s| s.border_color(th.accent))
                     .on_mouse_down(
                         MouseButton::Left,
@@ -30724,10 +31147,10 @@ impl Render for Workspace {
                         .flex()
                         .flex_row()
                         .gap_2()
-                        .child(preset("S", 0.85))
-                        .child(preset("M", 1.0))
-                        .child(preset("L", 1.25))
-                        .child(preset("XL", 1.5)),
+                        .child(preset("S", s.ui.scale_s, 0.85))
+                        .child(preset("M", s.ui.scale_m, 1.0))
+                        .child(preset("L", s.ui.scale_l, 1.25))
+                        .child(preset("XL", s.ui.scale_xl, 1.5)),
                 )
                 .child(
                     div()
@@ -31032,7 +31455,7 @@ impl Render for Workspace {
                         row("Ctrl+Shift+D", s.themes_wheel),
                         row(&format!("⛭ {}", s.k_display_tray), s.display_tray),
                         row("Ctrl+Shift+G", s.display_tray),
-                        row("Ctrl+wheel ↑ / ↓", s.outer_size),
+                        row(s.ui.help_key_ctrl_wheel, s.outer_size),
                         row("Ctrl+Shift+= / -", s.outer_size_key),
                         row(s.k_text_size_key, s.text_size),
                         row("Ctrl+= / -", s.text_size),
@@ -31304,12 +31727,18 @@ impl Render for Workspace {
         // ---- tab config pane (right-click / ctrl+click a tab) ----
         // Rename, a two-pip colour wheel (▣ fill + T text) scoped to this tab or
         // its group, quick swatches, and group controls — like the other trays.
+        let ui = self.lang.strings().ui;
         let tab_menu_overlay = self
             .tab_menu
             .filter(|_| self.group_menu.is_none())
             .and_then(|i| {
                 let tab = self.tabs.get(i)?;
-                let label = tab.name.clone().unwrap_or_else(|| format!("tab {}", i + 1));
+                let label = tab.name.clone().unwrap_or_else(|| {
+                    lang::fill(
+                        self.lang.strings().ui.tab_unnamed,
+                        &[("n", &(i + 1).to_string())],
+                    )
+                });
                 let grouped = tab.group.is_some();
                 let gid = tab.group;
                 let at = self.tab_menu_at.unwrap_or_default();
@@ -31321,24 +31750,26 @@ impl Render for Workspace {
                     .flex_row()
                     .gap_1()
                     .child(
-                        Self::bezel_btn(&sk, "▣ fill", pip == TabPip::Fill).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.tab_pip = TabPip::Fill;
-                                cx.notify();
-                            }),
-                        ),
+                        Self::bezel_btn(&sk, ui.tab_menu_pip_fill, pip == TabPip::Fill)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.tab_pip = TabPip::Fill;
+                                    cx.notify();
+                                }),
+                            ),
                     )
                     .child(
-                        Self::bezel_btn(&sk, "T text", pip == TabPip::Text).on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.tab_pip = TabPip::Text;
-                                cx.notify();
-                            }),
-                        ),
+                        Self::bezel_btn(&sk, ui.tab_menu_pip_text, pip == TabPip::Text)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.tab_pip = TabPip::Text;
+                                    cx.notify();
+                                }),
+                            ),
                     );
 
                 // quick fill swatches
@@ -31371,7 +31802,7 @@ impl Render for Workspace {
                 }
 
                 // clear the active pip's override (no-op on a group's fill)
-                let clear = Self::bezel_btn(&sk, "clear", false).on_mouse_down(
+                let clear = Self::bezel_btn(&sk, ui.tab_menu_clear, false).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
@@ -31385,13 +31816,13 @@ impl Render for Workspace {
                     div()
                         .text_size(px(9.))
                         .text_color(th.text.alpha(0.7))
-                        .child("group"),
+                        .child(ui.tab_menu_group_hdr),
                 );
                 if grouped {
                     // membership only — the group's own colour / name / fold / disband
                     // live on the group's right-click menu, never on a member tab.
                     group_box = group_box.child(
-                        Self::bezel_btn(&sk, "remove from group", false).on_mouse_down(
+                        Self::bezel_btn(&sk, ui.tab_menu_remove_from_group, false).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
@@ -31400,27 +31831,22 @@ impl Render for Workspace {
                         ),
                     );
                 } else {
-                    group_box =
-                        group_box.child(Self::bezel_btn(&sk, "＋ new group", false).on_mouse_down(
+                    group_box = group_box.child(
+                        Self::bezel_btn(&sk, ui.tab_menu_new_group, false).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                                 cx.stop_propagation();
                                 ws.new_group_from(i, cx);
                             }),
-                        ));
+                        ),
+                    );
                 }
                 // add to an existing OTHER group
                 let others: Vec<(u32, Hsla, String)> = self
                     .groups
                     .iter()
                     .filter(|g| Some(g.id) != gid)
-                    .map(|g| {
-                        (
-                            g.id,
-                            g.color,
-                            g.name.clone().unwrap_or_else(|| format!("group {}", g.id)),
-                        )
-                    })
+                    .map(|g| (g.id, g.color, g.label()))
                     .collect();
                 if !others.is_empty() {
                     let mut add_row = div()
@@ -31433,7 +31859,7 @@ impl Render for Workspace {
                             div()
                                 .text_size(px(9.))
                                 .text_color(th.text.alpha(0.7))
-                                .child("add to:"),
+                                .child(ui.tab_menu_add_to),
                         );
                     for (g_id, g_col, g_name) in others {
                         add_row = add_row.child(
@@ -31475,9 +31901,9 @@ impl Render for Workspace {
                         .text_size(px(9.))
                         .text_color(th.text.alpha(0.7))
                         .child(if grouped {
-                            "project (via group)"
+                            ui.tab_menu_project_via_group
                         } else {
-                            "project"
+                            ui.tab_menu_project
                         }),
                 );
                 let mut chips = div().flex().flex_row().flex_wrap().gap_1().max_w(px(184.));
@@ -31528,7 +31954,7 @@ impl Render for Workspace {
                     );
                 }
                 project_box = project_box.child(chips).child(
-                    Self::bezel_btn(&sk, "＋ new project", false).on_mouse_down(
+                    Self::bezel_btn(&sk, ui.tab_menu_new_project, false).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
@@ -31600,22 +32026,29 @@ impl Render for Workspace {
         // wheel / lightness / swatch widgets edit the group's colours directly.
         let group_menu_overlay = self.group_menu.and_then(|gid| {
             let g = self.groups.iter().find(|g| g.id == gid)?;
-            let gname = g.name.clone().unwrap_or_else(|| format!("group {gid}"));
+            let gname = g.label();
             let collapsed = g.collapsed;
             let at = self.group_menu_at.unwrap_or_default();
             let pip = self.tab_pip;
             let mi = self.tabs.iter().position(|t| t.group == Some(gid))?;
 
-            let fold_btn =
-                Self::bezel_btn(&sk, if collapsed { "expand" } else { "collapse" }, false)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.toggle_group_collapsed(gid, cx);
-                        }),
-                    );
-            let disband_btn = Self::bezel_btn(&sk, "ungroup", false).on_mouse_down(
+            let fold_btn = Self::bezel_btn(
+                &sk,
+                if collapsed {
+                    ui.group_menu_expand
+                } else {
+                    ui.group_menu_collapse
+                },
+                false,
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.toggle_group_collapsed(gid, cx);
+                }),
+            );
+            let disband_btn = Self::bezel_btn(&sk, ui.group_menu_ungroup, false).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
@@ -31629,7 +32062,7 @@ impl Render for Workspace {
                 .flex_row()
                 .gap_1()
                 .child(
-                    Self::bezel_btn(&sk, "▣ fill", pip == TabPip::Fill).on_mouse_down(
+                    Self::bezel_btn(&sk, ui.tab_menu_pip_fill, pip == TabPip::Fill).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -31639,7 +32072,7 @@ impl Render for Workspace {
                     ),
                 )
                 .child(
-                    Self::bezel_btn(&sk, "T text", pip == TabPip::Text).on_mouse_down(
+                    Self::bezel_btn(&sk, ui.tab_menu_pip_text, pip == TabPip::Text).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
@@ -31679,7 +32112,7 @@ impl Render for Workspace {
             }
 
             // clear the active pip (a group's fill never clears; its text lead does)
-            let clear = Self::bezel_btn(&sk, "clear", false).on_mouse_down(
+            let clear = Self::bezel_btn(&sk, ui.tab_menu_clear, false).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
@@ -31714,7 +32147,7 @@ impl Render for Workspace {
                     div()
                         .text_size(px(10.))
                         .text_color(th.text.alpha(0.85))
-                        .child(format!("group · {gname}")),
+                        .child(lang::fill(ui.group_menu_title, &[("name", &gname)])),
                 )
                 .child(div().flex().flex_row().gap_1().child(fold_btn))
                 .child(pip_row)
@@ -32090,6 +32523,7 @@ impl Render for Workspace {
                         line.child(gpui::StyledText::new(vr.text).with_runs(runs))
                     }))
             };
+            let ui = self.lang.strings().ui;
             let header = div()
                 .h(px(hdr_h))
                 .flex_none()
@@ -32109,21 +32543,21 @@ impl Render for Workspace {
                         .flex_row()
                         .items_center()
                         .gap_3()
-                        .child(format!(
-                            "{} · {}",
-                            if self.focus_inline {
-                                "CHAT HISTORY"
-                            } else {
-                                "👓  FOCUS"
-                            },
-                            snap.title
-                        ))
+                        .child(if self.focus_inline {
+                            format!("{} · {}", ui.focus_hdr_chat_history, snap.title)
+                        } else {
+                            lang::fill(ui.focus_hdr, &[("name", &snap.title)])
+                        })
                         .child(Self::reader_chip(chip, snap.accent, snap.text))
                         .child(self.focus_inherit_toggle(snap.accent, snap.text, cx)),
                 )
                 // text-size slider for the pane under scrutiny (live, per-open)
                 .child(self.focus_zoom_slider(snap.accent, snap.text, cx))
-                .child(div().text_color(snap.text.alpha(0.6)).child("esc to close"));
+                .child(
+                    div()
+                        .text_color(snap.text.alpha(0.6))
+                        .child(ui.focus_esc_to_close),
+                );
             let header = if self.focus_inline {
                 div()
                     .h(px(hdr_h))
@@ -32134,7 +32568,7 @@ impl Render for Workspace {
                     .px_2()
                     .text_size(px(10.0))
                     .text_color(snap.accent)
-                    .child("CHAT HISTORY")
+                    .child(ui.focus_hdr_chat_history)
                     .child("Ctrl+↑↓ · Esc")
             } else {
                 header
@@ -32305,6 +32739,7 @@ impl Render for Workspace {
         // release would put it, in that branch's own colour, so a drop is never
         // a guess
         let bar_chip = self.bar_drag.as_ref().filter(|d| d.engaged).map(|d| {
+            let ui = self.lang.strings().ui;
             let named = |row: tree::RowId| match row {
                 tree::RowId::Project(p) => (
                     self.branch_label(BarBranch::Project(p)),
@@ -32321,7 +32756,7 @@ impl Render for Workspace {
                         .unwrap_or_else(|| format!("{}", i + 1)),
                     self.resolved_tab_colors(i).0.unwrap_or(th.faint),
                 ),
-                tree::RowId::Unfiled => ("unfiled".to_string(), th.faint),
+                tree::RowId::Unfiled => (ui.drag_unfiled.to_string(), th.faint),
             };
             // The chip says the VERB as well as the target, because "into
             // client-server" and "above host debts" are different releases and
@@ -32329,15 +32764,15 @@ impl Render for Workspace {
             let (label, color) = match d.over {
                 Some(tree::Drop::Into(row)) => {
                     let (name, c) = named(row);
-                    (format!("into {name}"), c)
+                    (lang::fill(ui.drag_into, &[("name", &name)]), c)
                 }
                 Some(tree::Drop::Before(row)) => {
                     let (name, c) = named(row);
-                    (format!("above {name}"), c)
+                    (lang::fill(ui.drag_above, &[("name", &name)]), c)
                 }
                 Some(tree::Drop::After(row)) => {
                     let (name, c) = named(row);
-                    (format!("below {name}"), c)
+                    (lang::fill(ui.drag_below, &[("name", &name)]), c)
                 }
                 None => ("\u{2026}".to_string(), th.faint),
             };
@@ -32365,7 +32800,7 @@ impl Render for Workspace {
                 .bg(th.accent.alpha(0.9))
                 .text_color(th.bg)
                 .text_size(px(10.5))
-                .child("⇲ moving sub-tab — drop on a pane or tab")
+                .child(self.lang.strings().ui.drag_moving_subtab)
         });
 
         let dragging = self.drag_split;
@@ -32869,25 +33304,25 @@ mod tests {
     #[test]
     fn a_delete_line_counts_only_what_is_actually_there() {
         assert_eq!(
-            Workspace::delete_label(Some(3), 11, 14),
+            Workspace::delete_label(lang::Lang::En, Some(3), 11, 14),
             "Delete \u{2014} 3 groups, 11 tabs, 14 panes"
         );
         assert_eq!(
-            Workspace::delete_label(Some(0), 4, 6),
+            Workspace::delete_label(lang::Lang::En, Some(0), 4, 6),
             "Delete \u{2014} 4 tabs, 6 panes",
             "a project with no groups must not advertise zero of them"
         );
         assert_eq!(
-            Workspace::delete_label(None, 4, 6),
+            Workspace::delete_label(lang::Lang::En, None, 4, 6),
             "Delete \u{2014} 4 tabs, 6 panes"
         );
         assert_eq!(
-            Workspace::delete_label(Some(1), 1, 1),
+            Workspace::delete_label(lang::Lang::En, Some(1), 1, 1),
             "Delete \u{2014} 1 group, 1 tab, 1 pane",
             "singulars, or the most common case reads as broken"
         );
         assert_eq!(
-            Workspace::delete_label(None, 0, 0),
+            Workspace::delete_label(lang::Lang::En, None, 0, 0),
             "Delete",
             "an empty branch names no weight, because it has none"
         );
@@ -33199,18 +33634,30 @@ mod tests {
         // because the group arm legitimately has one.
         let task_at = menus.find("BarMenu::Task(i) => {").expect("the task arm");
         let task_arm = &menus[task_at..];
+        // The rows are drawn from the language pack, so the arm is read for
+        // the field each row draws and the English table for its words.
         assert!(
-            !task_arm.contains("Colour"),
+            !task_arm.contains("Colour") && !task_arm.contains("ui.bar_m_colour"),
             "the tab row grew a colour option again \u{2014} too much proliferation of \
              colours and options"
         );
-        for row in [
-            "New tab beside this",
-            "Rename",
-            "Remove from group",
-            "Close",
+        let en = lang::EN.ui;
+        for (field, row, english) in [
+            (
+                "ui.bar_m_new_tab_beside",
+                "New tab beside this",
+                en.bar_m_new_tab_beside,
+            ),
+            ("ui.bar_m_rename", "Rename", en.bar_m_rename),
+            (
+                "ui.bar_m_remove_from_group",
+                "Remove from group",
+                en.bar_m_remove_from_group,
+            ),
+            ("ui.bar_m_close", "Close", en.bar_m_close),
         ] {
-            assert!(task_arm.contains(row), "the tab row lost its {row:?} row");
+            assert!(task_arm.contains(field), "the tab row lost its {row:?} row");
+            assert_eq!(english, row, "the {row:?} row reads differently in English");
         }
     }
 
@@ -34570,7 +35017,7 @@ mod tests {
     ///   gesture, and what you type lands in whichever one was focused last.
     ///
     /// The first-run seed is the third case and the easiest to miss: the lines
-    /// right after it write `FIRST_RUN_HINT` into the very field a box would be
+    /// right after it write `first_run_hint` into the very field a box would be
     /// editing, so a box open over it commits its empty buffer on the first
     /// click away and takes the hint with it.
     ///
@@ -37011,7 +37458,10 @@ mod tests {
         );
         let src = include_str!("main.rs");
         let chip = &src[src
-            .find(concat!("SharedString::from(", "\"⇲ beside\")"))
+            .find(concat!(
+                "SharedString::from(",
+                "self.lang.strings().ui.rail_beside_chip)"
+            ))
             .expect("the chip")..];
         let chip = &chip[..chip.find("}))").expect("end of the chip")];
         assert!(
@@ -38886,7 +39336,8 @@ mod tests {
         // Absence is drawn. With neither a reading nor an error, the body says
         // it has not read, rather than rendering as nothing.
         assert!(
-            code.contains("no rollup read yet"),
+            code.contains(".child(ui.sav_no_rollup)")
+                && lang::EN.ui.sav_no_rollup.contains("no rollup read yet"),
             "an unread savings face must say so — a blank card under a \
              \"token savings\" wordmark reads as zero saved"
         );
@@ -39871,6 +40322,51 @@ mod tests {
             Some(theirs.text.clone()),
             "somebody's own note that only shares the headline was taken"
         );
+    }
+
+    /// A duplicate note saved by a window speaking German is still ours after
+    /// the window switches language: the session file keeps the words it was
+    /// written in, so the recogniser has to know every language's wording.
+    #[test]
+    fn a_duplicate_note_written_in_another_language_is_still_recognised() {
+        let german = duplicate_leaf_note_in(lang::Lang::De);
+        let stamped = SavedNote {
+            title: german.title.clone(),
+            text: german.text.clone(),
+            seed: 0,
+            pinned: false,
+        };
+        assert!(
+            is_duplicate_leaf_note(&stamped),
+            "a German-written duplicate note was taken for somebody's own words"
+        );
+        assert!(
+            note_on_reattach(Some(&stamped), true).is_none(),
+            "a reattach kept a German duplicate note on a terminal it bound"
+        );
+        let legacy = SavedNote {
+            title: Some(LEGACY_DUPLICATE_NOTE.0.into()),
+            text: LEGACY_DUPLICATE_NOTE.1.into(),
+            seed: 0,
+            pinned: false,
+        };
+        assert!(
+            is_duplicate_leaf_note(&legacy),
+            "the English every older session file carries stopped being recognised"
+        );
+        for l in lang::Lang::ALL {
+            let n = duplicate_leaf_note_in(l);
+            let saved = SavedNote {
+                title: n.title,
+                text: n.text,
+                seed: 0,
+                pinned: false,
+            };
+            assert!(
+                is_duplicate_leaf_note(&saved),
+                "{l:?}'s note is not recognised"
+            );
+        }
     }
 
     /// The invariant, stated as itself: whatever goes in, no terminal is claimed
@@ -41215,13 +41711,21 @@ node = "Leaf"
         let all = [Landed::Seat, Landed::Tab, Landed::NewTab];
         for (i, a) in all.iter().enumerate() {
             for b in &all[i + 1..] {
-                assert_ne!(a.says(), b.says(), "{a:?} and {b:?} read the same");
+                for l in lang::Lang::ALL {
+                    assert_ne!(
+                        a.says(l),
+                        b.says(l),
+                        "{a:?} and {b:?} read the same in {l:?}"
+                    );
+                }
             }
         }
     }
 
     /// Every kind names itself in the tray, and no two share a noun — the row
-    /// `Recover "UX"` is four different offers otherwise.
+    /// `Recover "UX"` is four different offers otherwise. The noun now lives
+    /// inside one whole line per kind, so it is the lines that must differ, in
+    /// every language, and each must still carry the name.
     #[test]
     fn every_retirable_kind_has_its_own_noun() {
         let all = [
@@ -41230,12 +41734,25 @@ node = "Leaf"
             hold::Kind::Task,
             hold::Kind::Pane,
         ];
-        for (i, a) in all.iter().enumerate() {
-            assert!(!a.noun().is_empty());
-            for b in &all[i + 1..] {
-                assert_ne!(a.noun(), b.noun(), "{a:?} and {b:?} read the same");
+        for l in lang::Lang::ALL {
+            for (i, a) in all.iter().enumerate() {
+                assert!(recover_line(l, *a).contains("{label}"));
+                for b in &all[i + 1..] {
+                    assert_ne!(
+                        recover_line(l, *a),
+                        recover_line(l, *b),
+                        "{a:?} and {b:?} read the same in {l:?}"
+                    );
+                }
             }
         }
+        assert_eq!(
+            lang::fill(
+                recover_line(lang::Lang::En, hold::Kind::Initiative),
+                &[("label", "UX")]
+            ),
+            "Recover group \u{201c}UX\u{201d}"
+        );
     }
 
     /// The point of the whole change: no close path may end a shell itself.
