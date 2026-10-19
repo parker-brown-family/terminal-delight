@@ -4395,6 +4395,7 @@ struct Workspace {
     coord_scope: String,
     coord_off_limits_seen: bool,
     coord_view: coordination::View,
+    coord_attention_error: Option<String>,
     coord_rows: std::cell::RefCell<Option<coordination_view::Rows>>,
     coord_scrolls: std::cell::RefCell<std::collections::HashMap<String, gpui::ScrollHandle>>,
     /// The afterglow: what changed between consecutive readings of each
@@ -5914,11 +5915,17 @@ impl Workspace {
             vitals_refreshing: false,
             eng: std::collections::HashMap::new(),
             eng_scanning: false,
-            coord_operator: coordination::Store::new(format!(
-                "{}-operator-{:?}",
-                std::process::id(),
-                coordination::unix_ms()
-            )),
+            coord_operator: {
+                let mut store = coordination::Store::new(format!(
+                    "{}-operator-{:?}",
+                    std::process::id(),
+                    coordination::unix_ms()
+                ));
+                store.operator_memory(coordination::attention::Memory::load(
+                    coordination::attention::path(),
+                ));
+                store
+            },
             coord_authorized: std::sync::Arc::new(coordination::Store::new(format!(
                 "{}-agent-{:?}",
                 std::process::id(),
@@ -5927,6 +5934,7 @@ impl Workspace {
             coord_scope: String::new(),
             coord_off_limits_seen: false,
             coord_view: coordination::View::default(),
+            coord_attention_error: None,
             coord_rows: std::cell::RefCell::new(None),
             coord_scrolls: std::cell::RefCell::new(std::collections::HashMap::new()),
             eng_events: std::collections::HashMap::new(),
@@ -13364,9 +13372,15 @@ impl Workspace {
             log.drain(..excess);
         }
         if let Some(reading) = &state.coordination {
+            self.coord_operator.memory.reload();
             self.coord_operator.update(reading.operator.clone());
             if reading.scope_key == self.coord_scope {
+                let full = self.coordination_full_scope();
                 let store = std::sync::Arc::make_mut(&mut self.coord_authorized);
+                if full {
+                    store.attention_epoch = self.coord_operator.attention_epoch.clone();
+                    store.operator_memory(self.coord_operator.memory.clone());
+                }
                 if let Some(p) = &reading.authorized {
                     store.update(p.clone());
                 } else {
@@ -24839,51 +24853,8 @@ impl Workspace {
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
         let snapshot = &self.coordination_store().snapshot;
-        let status = snapshot.severity();
-        let stale = snapshot
-            .projects
-            .iter()
-            .any(|p| p.age_ms().is_some_and(|age| age > 30000));
-        let age_unknown = snapshot.coverage() == coordination::Coverage::Complete
-            && snapshot.projects.iter().any(|p| p.age_ms().is_none());
-        let complete =
-            snapshot.coverage() == coordination::Coverage::Complete && !stale && !age_unknown;
-        let label = if complete && status == Some(coordination::Severity::Clear) {
-            "GIT".into()
-        } else {
-            let attention = match status {
-                Some(
-                    level @ (coordination::Severity::Alert
-                    | coordination::Severity::Warning
-                    | coordination::Severity::Caution),
-                ) => {
-                    let count = snapshot
-                        .projects
-                        .iter()
-                        .filter(|p| p.severity == Some(level))
-                        .count();
-                    format!(
-                        "{count} {}{}",
-                        level.label(),
-                        if count == 1 { "" } else { "S" }
-                    )
-                }
-                Some(coordination::Severity::Clear) => "CLEAR".into(),
-                None => "UNKNOWN".into(),
-            };
-            let qualifier = if stale {
-                " · STALE"
-            } else if age_unknown {
-                " · AGE UNKNOWN"
-            } else if complete {
-                ""
-            } else if snapshot.coverage() == coordination::Coverage::Unavailable {
-                " · UNREAD"
-            } else {
-                " · PARTIAL"
-            };
-            format!("GIT · {attention}{qualifier}")
-        };
+        let status = snapshot.attention_severity();
+        let label = self.coordination_store().attention_summary();
         let ink = match status {
             Some(coordination::Severity::Alert) => th.ansi[1],
             Some(coordination::Severity::Warning) => th.ansi[3],

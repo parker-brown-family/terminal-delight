@@ -145,19 +145,59 @@ has a way to ask and a person has one place to say yes.
 The GIT attention signal replaces the rotating engineering ticker. Click it for
 projects in this window, expandable group previews, and the relationship evidence.
 Arrow keys select, Enter opens, and Escape returns to the originating selection
-before closing. Ctrl+C copies agent-visible context with the exact next read.
+before closing. Alt+G opens the inspector. Breadcrumbs navigate to their named
+level; Back and Forward preserve navigation history. Ctrl+C copies an assessment
+instruction and agent-visible context with the exact next read. Copying never
+delivers a task, changes Git, or acknowledges a finding.
 
 | Read tool | Arguments | Result |
 |---|---|---|
 | `coordination_overview` | `limit?`, `cursor?` | Urgent authorized projects, causes, coverage, observed groups and exact follow-up requests. |
-| `coordination_project` | `project_id`, `checkout_id?`, `limit?`, `cursor?` | Groups and checkout summaries; specifying a checkout pages its file, rename and conflict evidence. |
+| `coordination_project` | `project_id`, `checkout_id?`, `view?`, `limit?`, `cursor?` | Groups and checkout summaries; `view: "meanings"` pages the explanations. Specifying a checkout pages its file, rename and conflict evidence. |
 | `coordination_cluster` | `project_id`, `cluster_id`, `limit?`, `cursor?` | Panes and known sessions joined to roots, branches, change sources, exact references and paged hotspots. |
 | `coordination_changes` | `epoch`, `since_version` | Scope-local deltas, or `requires_full_snapshot: true` after a restart, permission change or expired history. |
 
 Start with the overview and follow its `read` objects. Limits default to 40 and
-accept 1–100. Cursors bind the epoch, fact version, tool, project and selected
+accept 1–100. Cursors bind the epoch, presentation version, tool, project and selected
 checkout or group. An expired cursor requires restarting that read. History keeps
-32 fact revisions; observation timestamps can refresh without creating a revision.
+32 presentation revisions; observation timestamps can refresh without creating a
+revision. `fact_version` advances on evidence changes; `version` also advances on
+attention changes. `attention_revision` names the metadata revision, and every
+response declares its `attention_audience` and `catalog_version`.
+
+Projects expose `meanings`: typed finding kinds, stable finding IDs, catalog keys,
+typed parameters, headline, significance, limitations, evidence handles, material
+revision, episode, condition and attributed attention state. The four catalog
+kinds are shared working folders, shared paths between working copies, committed
+target-check conflicts, and unresolved index entries. Observation gaps compose
+with them. Unknown detector kinds retain evidence with an explicit fallback.
+Conflicted path counts are affected files, never counts of logical conflicts.
+A valid merge-check conflict remains a conflict even without per-file details.
+
+Only the operator UI can mark a finding seen or declare sharing expected.
+Expectations cover any panes in one named working folder, or an exact file and
+working-copy set, on the recorded branches. Durations are 15 minutes, one hour
+(default), or four hours. Controls show the scope before confirmation and allow
+revocation. Branch or checkout identity changes invalidate the scope; a restart
+requires reconfirmation. Expectations never cover conflicts or missing checks.
+Acknowledged unresolved conflicts remain visible in the compact signal.
+
+Metadata lives outside observed repositories in the user's TD state directory,
+with owner-only permissions, atomic replacement, a nonblocking writer lock,
+revision checks and request deduplication. Records expire from retained metadata
+after seven days; storage is bounded to 512 records. Failed saves report failure
+and retain observations. A corrupt store cannot quiet findings.
+
+Fully exposed snapshots may carry `operator_attention`; that is the operator's
+history, not an external coordinator's inbox. Restricted snapshots use
+`independent_reader`, with no operator declarations or private metadata revision.
+Read tools cannot write this metadata or impersonate its actor. External
+coordinators keep their own cursors and acknowledgement policy.
+
+Material signatures omit titles, routine measurement times, and changing commit
+IDs. Exact evidence still advances `fact_version`. Failed checks retain prior
+conditions as unverified; only a fresh comparable negative check establishes
+absence. A path signature cannot detect every semantic change within that path.
 
 Collection runs in the background. These tools use cached observations and execute
 no Git commands. A shared checkout is counted once in file overlap; occupancy does

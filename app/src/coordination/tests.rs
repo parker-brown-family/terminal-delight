@@ -3,6 +3,8 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod meaning_attention;
+
 fn actor(id: &str, session: Option<&str>, exposed: bool) -> Participant {
     Participant {
         id: id.into(),
