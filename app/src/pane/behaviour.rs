@@ -15,6 +15,40 @@ use super::harness::{
 use crate::docopen::{Asker, DocSeat, FloatHit};
 use crate::workbench::Face;
 
+/// Observe bytes at the host socket, after real GPUI key dispatch. A final
+/// letter fences the claimed chords: if they leaked, it would not arrive first.
+#[gpui::test]
+fn human_turn_chords_keep_shell_bytes_and_never_leak_from_agents(cx: &mut TestAppContext) {
+    use std::io::Read;
+    for mode in [
+        super::PaneMode::Shell,
+        super::PaneMode::Claude,
+        super::PaneMode::Codex,
+    ] {
+        let mut attached = Pane::attached(cx);
+        attached
+            .host
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        attached.pane.running_as(mode.clone());
+        // The startup input guard is 150 ms of wall time.
+        attached.pane.view.update(attached.pane.cx, |v, _| {
+            v.spawned = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        });
+        attached
+            .pane
+            .keys("alt-up alt-down ctrl-up ctrl-down ctrl-left ctrl-right x");
+        let expected: &[u8] = if mode.is_agent() {
+            b"\x1b[1;5D\x1b[1;5Cx"
+        } else {
+            b"\x1b[1;5A\x1b[1;5B\x1b[1;5D\x1b[1;5Cx"
+        };
+        let mut got = vec![0; expected.len()];
+        attached.host.read_exact(&mut got).unwrap();
+        assert_eq!(got, expected, "{mode:?}");
+    }
+}
+
 /// Both CLI carets must lead to the human's turns, skipping replies and the
 /// empty composer. The window's key dispatch is held in main.rs beside its
 /// other chord wiring tests.
