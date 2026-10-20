@@ -1,0 +1,68 @@
+{
+  "binary_sha256": "f430d05d0bd854d2b8b84e010df0f69a4c8c80d1435ea9e60cc1dc1acf666f7e",
+  "sources": {
+    "app/skins/chalk.toml": "74d5be64f807531dc979688dd60c0ecf4cea366bfe54592b87c0a8eac255ce31",
+    "app/src/main.rs": "6c9ec082cac6cf719d39ee3fb75b9b0ae52bec16c26c0b62a32c21c94fbe6958",
+    "app/src/paper.rs": "805be65b3a0288fe86b008a2c1ede73658db4796c43630c9018d524d064e39e8",
+    "app/src/skin.rs": "db93c07b0151290612f3b466862e9203d084e28a065d3f13009aaadc0996fe41",
+    "app/src/paint.rs": "4b676ab195f6a9026e7d90cad9bd14102c645627030f858af22ca00a7f33acad",
+    "app/src/hostctl.rs": "b1508e1aa026a7c3c08afed9ebba9bb7c41340c027123e0c2fc2548d2043894f"
+  },
+  "build": "release-v5",
+  "base_commit": "256ba070475117e1d53a8576fb5019b7d2ee9fbc",
+  "baseline_binary": "td-chalk-surface-c8e4715",
+  "captures": {
+    "before": {
+      "native_png_sha256": "e0f6a01ecd3ee45215edbe533b6a95c2cb478c8575f47df4f786bc11e4d07c2e",
+      "webp_sha256": "685daf1c8f76af6bdd61edba3f27d2c568156164a978edfb5a7b0d21f5504acc",
+      "pixel_difference_ae": "0 (0)"
+    },
+    "current": {
+      "native_png_sha256": "ca289380175d3bedac1187e8773744a80ff2848a68c36ca7ba613ae452240884",
+      "webp_sha256": "021a4c7032cdb7842a492e9be0c9b5c9c513e1895d1a3db4587ff2a51e249eea",
+      "pixel_difference_ae": "0 (0)"
+    },
+    "workspace": {
+      "native_png_sha256": "8f278559ee427c674444c4061041de0bed729634ab11b6c0f634d9699496d9e6",
+      "webp_sha256": "87cec1709a134067762637d2ccd5c5b6a4eecf61dcc3dd215d28cfdc1c56fdcb",
+      "pixel_difference_ae": "0 (0)"
+    },
+    "light": {
+      "native_png_sha256": "abe98af3f7df571d8619a409a1262461afeb17d8b0ca474ced32b377c1efb2f7",
+      "webp_sha256": "ec218728692bc1e0fb060174bb323ac14d8dc84cb9bbe717650a3d63887ad22a",
+      "pixel_difference_ae": "0 (0)"
+    },
+    "queue": {
+      "native_png_sha256": "7eccacb695ea60f4c98eb6fef4f2f9e78aa53a84a6ccb4bfe625d577167e453c",
+      "webp_sha256": "bf69af53c40faf9d4b841b672da7e3a5da2e656f95ec1928766e80d291ff4c4b",
+      "pixel_difference_ae": "0 (0)"
+    },
+    "light-workspace": {
+      "native_png_sha256": "1109ffcc93652770eba7681e3a0a3fff5ef7b0dc657d05c281d0d717ea667124",
+      "webp_sha256": "2c2cbfac56f50e539fabdc8ec96e77a262eb41225c5f03e98c822b990b9ec802",
+      "pixel_difference_ae": "0 (0)"
+    },
+    "paint": {
+      "native_png_sha256": "c09e4a22342319f2cb85dae270018477d8b33ca9e1034eb98799307c9815f6db",
+      "webp_sha256": "ea14bc770f52997c7851e47ff0ecec78efa0dd517dd54b5cb02023cf6b9d833f",
+      "pixel_difference_ae": "0 (0)"
+    },
+    "warp": {
+      "native_png_sha256": "a1a4a6570c86f8a49dccf779fec1acf4b2f2015cc6659ce7f756fba7700a8007",
+      "webp_sha256": "bad2e11f433a7432be3d5b459067f4810c4888ce368693fff259e8beba31f9f1",
+      "pixel_difference_ae": "0 (0)"
+    }
+  },
+  "tests": {
+    "rio": {
+      "passed": 2495,
+      "failed": 0,
+      "ignored": 9
+    },
+    "alacritty": {
+      "passed": 2448,
+      "failed": 0,
+      "ignored": 9
+    }
+  }
+}

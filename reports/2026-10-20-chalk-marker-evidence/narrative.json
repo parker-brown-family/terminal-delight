@@ -1,0 +1,275 @@
+{
+  "file": "reports/2026-10-20-chalk-marker-and-depth.html",
+  "subject": "Native Chalk revision after the centring and tactile-depth feedback",
+  "reader": "Parker, who supplied the screenshots and cotton-paper reference and is reviewing the running material",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.14
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.65
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "journey",
+      "probabilities": {
+        "journey": 0.49,
+        "catalogue": 0.08,
+        "argument": 0.15,
+        "report": 0.26,
+        "none_of_the_above": 0.02
+      },
+      "confidence": 0.36
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Chalk \u00b7 marker and depth",
+      "text": "The selection stroke now crosses the middle of the writing. Labels fit inside their cards, and the paper has a compressed edge and a soft cast shadow. This review follows your latest screenshots and cotton-stock reference.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.82,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.11,
+            "1": 0.26,
+            "2": 0.34,
+            "3": 0.29
+          },
+          "confidence": 0.23
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.04
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.12
+        },
+        "role": {
+          "type": "choice",
+          "choice": "setup",
+          "probabilities": {
+            "setup": 0.53,
+            "complication": 0.01,
+            "turn": 0.05,
+            "consequence": 0.13,
+            "resolution": 0.07,
+            "aside": 0.11,
+            "none_of_the_above": 0.1
+          },
+          "confidence": 0.45
+        }
+      },
+      "latency_ms": 371.00372300483286,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "Centre the writing and its mark",
+      "text": "Your review found two linked problems: the marker underlined the word, and the larger handwriting overflowed the old tiles. Compact line spacing now fits the handwriting. The words sit in the middle of the cards, with small glyph stamps above them. Each caption carries its own irregular marker, so a taller card cannot pull the stroke away from the word. 01 \u00b7 After \u00b7 the same saved theme \nHacker, tactical and agentic fit. The marker crosses the caption; the switches use the same centre line. Compare with the previous build 02 \u00b7 Before \u00b7 the saved Last Horizon theme \nThe previous build puts the mark at the lower edge and leaves too little room beneath the captions. 03 \u00b7 Tree and pane tabs \nThe selected tree row and TERM label use the same uneven centre stroke, with visual overhang beyond their hit targets.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.78,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.29,
+            "2": 0.57,
+            "3": 0.12
+          },
+          "confidence": 0.55
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.27
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.27,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.11,
+            "1": 0.54,
+            "2": 0.32,
+            "3": 0.03
+          },
+          "confidence": 0.51
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.72
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0.14,
+            "turn": 0.59,
+            "consequence": 0.15,
+            "resolution": 0.08,
+            "aside": 0.03,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.52
+        }
+      },
+      "latency_ms": 362.5606650020927,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "Give the paper thickness",
+      "text": "Once the labels fit, your cotton-paper reference sets the next requirement: visible depth. Controls now cast a soft shadow beneath a compressed cotton edge. Regions carry the same edge lighting, while the shared grain adds fibre relief. The pale palette makes those layers easier to judge. 04 \u00b7 Pale stock \u00b7 palette, buttons and rules \nThe paper sits above its surroundings. Highlights and contact shadows supply depth without changing the palette or adding a bright frame. 05 \u00b7 Your cotton-stock reference \nYour photograph sets the depth target: visible stock thickness, soft shadows and fibrous edges. This is the supplied reference, not a Terminal Delight capture. 06 \u00b7 Attention spine and queue \nThe queue, spine and response controls use the same stock depth. The staged cases are fictional. 07 \u00b7 Paint cards \nThe selection is attached to the name area of the card. Paper relief also reaches the palette tiles.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.26,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.14,
+            "1": 0.49,
+            "2": 0.35,
+            "3": 0.02
+          },
+          "confidence": 0.47
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.15
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.06,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.89,
+            "2": 0.08,
+            "3": 0
+          },
+          "confidence": 0.89
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.1
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0.02,
+            "turn": 0.56,
+            "consequence": 0.1,
+            "resolution": 0.25,
+            "aside": 0.05,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.49
+        }
+      },
+      "latency_ms": 377.8539659688249,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "Carry this into the next review",
+      "text": "The same material still follows the active theme. These final windows check pale terminal stock and the existing CRT warp. Your approved bottom-bar controls and messy marker character remain the reference for the next pass. 08 \u00b7 Pale terminal stock \nThe backing, pane rims and surrounding cabinet share the cotton material. Terminal type stays monospace. 09 \u00b7 Last Horizon \u00b7 CRT warp \nThe terminal stock remains inside its existing warp. The cabinet and its raised paper controls stay separate. \n Marker pigment \nCurrent choice: Complement blended 40% toward Human, drawn as a translucent stroke with a dry uneven score. It remains distinct from the live-state colour in the built-in palettes. \n Paper depth \nCurrent choice: a compressed lower edge, lit fibres and two soft contact-shadow layers. Annotate a capture if the stock should feel thicker, softer or less raised. \nYour numbered screenshots, exact feedback and each corrective step are retained in the third-pass record . Notes on these figures can start the next pass from the same surface. Evidence and source \nNative fixtures: 1576 \u00d7 950 logical pixels on the 1.6\u00d7 landscape display. Current-theme scenes copy the saved Last Horizon palette and display grade; pale scenes use Flexoki Light with a neutral grade. Terminal output and attention cases are staged. WebP storage is lossless, checked pixel-for-pixel against each original native PNG. \nRio: 2,495 passed; Alacritty: 2,448 passed. Each has 9 ignored tests. Strict Clippy, formatting and release build passed. Logs, source hashes and the reusable native recipe live in reports/2026-10-20-chalk-marker-evidence/ . \nThe renderer is in app/src/paper.rs ; caption layout and material integration are in skin.rs , main.rs and paint.rs . The verified build is installed for the next GUI launch. The running GUI and session host were left untouched; reopen TD to load the update. Your Chalk selection is already saved. \n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.91,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.17,
+            "2": 0.71,
+            "3": 0.11
+          },
+          "confidence": 0.7
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.4
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.05,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.12,
+            "1": 0.71,
+            "2": 0.16,
+            "3": 0.01
+          },
+          "confidence": 0.7
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.73
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0,
+            "turn": 0.01,
+            "consequence": 0.08,
+            "resolution": 0.54,
+            "aside": 0.35,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.46
+        }
+      },
+      "latency_ms": 370.19613990560174,
+      "failure": null
+    }
+  ]
+}

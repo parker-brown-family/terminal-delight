@@ -1,0 +1,11 @@
+{
+  "installed_at": "2026-10-20T04:26:30.633396+00:00",
+  "launcher": "/home/parker/.local/bin/terminal-delight",
+  "previous_target": "/home/parker/.local/lib/terminal-delight/td-chalk-surface-c8e4715",
+  "installed_target": "/home/parker/.local/lib/terminal-delight/td-chalk-marker-f430d05",
+  "binary_sha256": "f430d05d0bd854d2b8b84e010df0f69a4c8c80d1435ea9e60cc1dc1acf666f7e",
+  "running_gui_pid": 2509534,
+  "running_gui_executable": "/home/parker/.local/lib/terminal-delight/td-chalk-surface-c8e4715",
+  "activation": "next GUI launch; selected Chalk already persisted; live GUI and host left running",
+  "source_manifest_verified": true
+}

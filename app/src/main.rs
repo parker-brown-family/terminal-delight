@@ -25823,6 +25823,9 @@ fn theme_icon_btn(
         .flex_col()
         .items_center()
         .gap_0()
+        .when(sk.is_paper(), |d| {
+            d.justify_center().line_height(gpui::relative(1.15))
+        })
         .child(div().text_size(sk.text_px(14.)).child(icon.to_string()))
         .child(
             div()
@@ -25832,7 +25835,7 @@ fn theme_icon_btn(
         );
     let b = div()
         .w(px(if sk.is_paper() { 56. } else { TRAY_BTN_W }))
-        .h(px(if sk.is_paper() { 50. } else { TRAY_BTN_H }))
+        .h(px(if sk.is_paper() { 54. } else { TRAY_BTN_H }))
         .flex()
         .items_center()
         .justify_center()
@@ -25840,7 +25843,24 @@ fn theme_icon_btn(
         .border_1()
         .cursor_pointer();
     if sk.is_paper() {
-        sk.paper_control(b, active).child(inner)
+        sk.paper_control(b, false).child(
+            div()
+                .size_full()
+                .relative()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(3.))
+                        .left(px(4.))
+                        .text_size(sk.px(11.))
+                        .line_height(gpui::relative(1.0))
+                        .child(icon.to_string()),
+                )
+                .child(sk.paper_caption(label, 11., active)),
+        )
     } else if active {
         b.bg(linear_gradient(
             135.,
@@ -25871,11 +25891,14 @@ fn color_mode_btn(
         .flex_col()
         .items_center()
         .gap_0()
+        .when(sk.is_paper(), |d| {
+            d.justify_center().line_height(gpui::relative(1.15))
+        })
         .child(div().text_size(sk.text_px(15.)).child(icon.to_string()))
         .child(div().text_size(sk.text_px(8.)).child(caption.to_string()));
     let b = div()
         .w(px(TRAY_MODE_BTN_W))
-        .h(px(if sk.is_paper() { 50. } else { TRAY_MODE_BTN_H }))
+        .h(px(if sk.is_paper() { 54. } else { TRAY_MODE_BTN_H }))
         .flex()
         .items_center()
         .justify_center()
@@ -25883,7 +25906,24 @@ fn color_mode_btn(
         .border_1()
         .cursor_pointer();
     if sk.is_paper() {
-        sk.paper_control(b, active).child(inner)
+        sk.paper_control(b, false).child(
+            div()
+                .size_full()
+                .relative()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(3.))
+                        .left(px(4.))
+                        .text_size(sk.px(11.))
+                        .line_height(gpui::relative(1.0))
+                        .child(icon.to_string()),
+                )
+                .child(sk.paper_caption(caption, 11., active)),
+        )
     } else if active {
         b.bg(linear_gradient(
             135.,
@@ -25951,12 +25991,14 @@ fn note_paper_btn(
         .items_center()
         .gap(px(3.))
         .child(sheet)
-        .child(
+        .child(if sk.is_paper() {
+            sk.paper_caption(caption, TRAY_NOTE_CAPTION, active)
+        } else {
             div()
                 .text_size(sk.text_px(TRAY_NOTE_CAPTION))
                 .whitespace_nowrap()
-                .child(caption.to_string()),
-        );
+                .child(caption.to_string())
+        });
     let b = div()
         .w(px(if sk.is_paper() { 60. } else { TRAY_NOTE_BTN_W }))
         .h(px(if sk.is_paper() { 50. } else { TRAY_MODE_BTN_H }))
@@ -25968,7 +26010,8 @@ fn note_paper_btn(
         .border_1()
         .cursor_pointer();
     if sk.is_paper() {
-        sk.paper_control(b, active).child(inner)
+        sk.paper_control(b, false)
+            .child(inner.justify_center().line_height(gpui::relative(1.15)))
     } else if active {
         b.bg(linear_gradient(
             135.,
@@ -26416,7 +26459,7 @@ fn render_node(
                 .when(sk.is_paper(), |d| {
                     d.rounded(px(0.))
                         .border_color(gpui::transparent_black())
-                        .shadow(Vec::new())
+                        .shadow(paper::shadows())
                 })
                 // measure this pane's box (entity → rect) for drop hit-testing
                 .child(
@@ -28164,7 +28207,7 @@ impl Render for Workspace {
                             } else {
                                 tile.border_1().border_color(c.chips[0].alpha(0.55))
                             };
-                            tile.when(sk.is_paper(), |d| d.border_color(gpui::transparent_black()).children(sk.grain()).child(crate::paper::rim(c.chips[0].alpha(0.3), th.accent, active)))
+                            tile.when(sk.is_paper(), |d| d.border_color(gpui::transparent_black()).shadow(paper::shadows()).children(sk.grain()).child(crate::paper::rim(c.chips[0].alpha(0.3), th.accent, active)))
                                 .child(glyph::element(&c.id, c.chips[0], 20.))
                         }
                         // The custom wheel's cog, in the tray's own ink.

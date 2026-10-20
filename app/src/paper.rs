@@ -4,8 +4,8 @@
 use std::sync::{Arc, OnceLock};
 
 use gpui::{
-    canvas, div, fill, point, px, size, Bounds, ContentMask, Div, Hsla, ParentElement, PathBuilder,
-    Pixels, RenderImage, Styled, Window,
+    canvas, div, fill, point, px, size, Bounds, BoxShadow, ContentMask, Div, Hsla, ParentElement,
+    PathBuilder, Pixels, RenderImage, Styled, Window,
 };
 
 const TILE: u32 = 512;
@@ -24,9 +24,14 @@ fn texture() -> Arc<RenderImage> {
         .get_or_init(|| {
             let pixels = image::RgbaImage::from_fn(TILE, TILE, |x, y| {
                 let n = hash(y * TILE + x);
-                let pigment = hash((y / 8) * 24 + x / 8) % 5;
+                let pigment = hash((y / 8) * 67 + x / 8) % 7;
+                let fibre = if hash((y / 2) * 89 + x / 6).is_multiple_of(29) {
+                    8
+                } else {
+                    0
+                };
                 let c = if n & 1 == 0 { 0 } else { 255 };
-                image::Rgba([c, c, c, (n % 5 + pigment / 2) as u8])
+                image::Rgba([c, c, c, (n % 6 + pigment + fibre) as u8])
             });
             Arc::new(RenderImage::new(vec![image::Frame::new(pixels)]))
         })
@@ -93,31 +98,119 @@ fn polygon(bounds: Bounds<Pixels>, points: &[(f32, f32)], ink: Hsla, window: &mu
     }
 }
 
-/// A hand-rubbed pigment stroke. Stable flecks break the edge without animation.
+/// A translucent marker across the middle, with an uneven dry chalk score.
+/// The overhang is visual only; hit targets and text layout remain unchanged.
 fn stroke(bounds: Bounds<Pixels>, ink: Hsla, window: &mut Window) {
     let w = f32::from(bounds.size.width);
     let h = f32::from(bounds.size.height);
-    let y = (h - 6.).max(0.);
-    let points = [
-        (3., y + 1.4),
-        (w * 0.29, y),
-        (w - 4., y + 0.8),
-        (w - 2., y + 3.4),
-        (w * 0.64, y + 4.6),
-        (2., y + 3.8),
-    ];
-    polygon(bounds, &points, ink.alpha(0.55), window);
+    let mid = h * 0.5;
+    let half = (h * 0.23).clamp(2., 7.);
+    polygon(
+        bounds,
+        &[
+            (-2., mid - half + 1.4),
+            (w * 0.30, mid - half - 0.8),
+            (w + 1., mid - half + 0.6),
+            (w + 3., mid + half - 0.9),
+            (w * 0.64, mid + half + 0.8),
+            (-3., mid + half - 0.6),
+        ],
+        ink.alpha(0.30),
+        window,
+    );
+    polygon(
+        bounds,
+        &[
+            (-3., mid + 0.6),
+            (w * 0.29, mid - 1.1),
+            (w + 2., mid - 0.3),
+            (w + 3., mid + 1.0),
+            (w * 0.64, mid + 1.8),
+            (-2., mid + 1.5),
+        ],
+        ink.alpha(0.50),
+        window,
+    );
     for i in 0..14 {
-        let x = 3. + (w - 7.).max(0.) * i as f32 / 14.;
+        let x = -2. + (w + 4.) * i as f32 / 14.;
         let d = (hash(i) % 100) as f32 / 100.;
         window.paint_quad(fill(
             Bounds::new(
-                bounds.origin + point(px(x), px(y + d * 4.)),
+                bounds.origin + point(px(x), px(mid - half + d * 2.)),
                 size(px(1.7), px(0.6)),
             ),
-            ink.alpha(0.75),
+            ink.alpha(0.60),
         ));
     }
+}
+
+/// Soft contact shadow plus a compressed cotton edge, never a luminous frame.
+pub fn shadows() -> Vec<BoxShadow> {
+    vec![
+        BoxShadow {
+            color: gpui::black().alpha(0.34),
+            offset: point(px(2.), px(5.)),
+            blur_radius: px(9.),
+            spread_radius: px(-1.),
+            inset: false,
+        },
+        BoxShadow {
+            color: gpui::black().alpha(0.28),
+            offset: point(px(1.), px(2.)),
+            blur_radius: px(2.),
+            spread_radius: px(0.),
+            inset: false,
+        },
+    ]
+}
+
+fn cast_shadow(bounds: Bounds<Pixels>, window: &mut Window) {
+    window.paint_drop_shadows(bounds, Default::default(), &shadows());
+}
+
+fn edge_path(
+    bounds: Bounds<Pixels>,
+    points: &[(f32, f32)],
+    ink: Hsla,
+    width: f32,
+    window: &mut Window,
+) {
+    let Some((first, rest)) = points.split_first() else {
+        return;
+    };
+    let mut path = PathBuilder::stroke(px(width));
+    path.move_to(bounds.origin + point(px(first.0), px(first.1)));
+    for p in rest {
+        path.line_to(bounds.origin + point(px(p.0), px(p.1)));
+    }
+    if let Ok(path) = path.build() {
+        window.paint_path(path, ink);
+    }
+}
+
+fn cotton_edge(bounds: Bounds<Pixels>, points: &[(f32, f32)], window: &mut Window) {
+    // Each edge has its own sample count: long rails and square tiles must
+    // receive light on the same physical sides, not at a quarter of the list.
+    let horizontal = (f32::from(bounds.size.width) / 6.).ceil().clamp(2., 24.) as usize;
+    let vertical = (f32::from(bounds.size.height) / 6.).ceil().clamp(2., 24.) as usize;
+    let lower: Vec<_> = points[horizontal..2 * horizontal + vertical + 1]
+        .iter()
+        .map(|(x, y)| (*x + 0.8, *y + 1.6))
+        .collect();
+    edge_path(bounds, &lower, gpui::black().alpha(0.38), 3.2, window);
+    edge_path(
+        bounds,
+        &points[..horizontal + 1],
+        gpui::white().alpha(0.28),
+        1.3,
+        window,
+    );
+    let left: Vec<_> = points[2 * horizontal + vertical..]
+        .iter()
+        .copied()
+        .chain(points.first().copied())
+        .collect();
+    edge_path(bounds, &left, gpui::white().alpha(0.14), 1.1, window);
 }
 
 pub fn selection(ink: Hsla) -> Div {
@@ -169,7 +262,7 @@ pub fn gauge(frac: f32, face: Hsla, ink: Hsla, accent: Hsla) -> Div {
 }
 
 /// Full backing. Add this before the control's label, so neither the grain nor
-/// the paper fill is painted over text. The accent is a small lower-edge stamp.
+/// the paper fill is painted over text. The marker crosses the control centre.
 pub fn backing(face: Hsla, accent: Hsla, active: bool) -> Div {
     div().absolute().inset_0().child(
         canvas(
@@ -178,8 +271,9 @@ pub fn backing(face: Hsla, accent: Hsla, active: bool) -> Div {
                 let w = f32::from(bounds.size.width);
                 let h = f32::from(bounds.size.height);
                 let pts = outline(w, h);
-                let shadow: Vec<_> = pts.iter().map(|(x, y)| (*x, *y + 1.4)).collect();
-                polygon(bounds, &shadow, gpui::black().alpha(0.18), window);
+                cast_shadow(bounds, window);
+                let edge: Vec<_> = pts.iter().map(|(x, y)| (*x + 0.6, *y + 2.4)).collect();
+                polygon(bounds, &edge, crate::darken(face, 0.65), window);
                 let mut face = face;
                 if bounds.contains(&window.mouse_position()) {
                     face.l = (face.l + 0.025).min(1.0);
@@ -190,21 +284,8 @@ pub fn backing(face: Hsla, accent: Hsla, active: bool) -> Div {
                     size(px((w - 6.).max(0.)), px((h - 6.).max(0.))),
                 );
                 paint_grain(inner, window);
+                cotton_edge(bounds, &pts, window);
                 if active {
-                    let top = (h * 0.5).max(h - 19.);
-                    polygon(
-                        bounds,
-                        &[
-                            (3., top + 3.),
-                            (w * 0.4, top),
-                            (w - 3., top + 1.),
-                            (w - 2., h - 4.),
-                            (w * 0.6, h - 2.),
-                            (2., h - 3.),
-                        ],
-                        accent.alpha(0.28),
-                        window,
-                    );
                     stroke(bounds, accent, window);
                 }
             },
@@ -223,6 +304,7 @@ pub fn rim(face: Hsla, accent: Hsla, active: bool) -> Div {
                 let w = f32::from(bounds.size.width);
                 let h = f32::from(bounds.size.height);
                 let pts = outline(w, h);
+                cotton_edge(bounds, &pts, window);
                 let mut path = PathBuilder::stroke(px(0.8));
                 path.move_to(bounds.origin + point(px(pts[0].0), px(pts[0].1)));
                 for p in &pts[1..] {

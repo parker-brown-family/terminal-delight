@@ -42,3 +42,4 @@ ink_on_mark = { from = "text" }
 hover = { from = "accent", a = 0.10 }
 mark_wash = { from = "accent", a = 0.06 }
 row_active = { from = "bg", a = 0.90 }
+select = { from = "complement", toward = "human", t = 0.40 }
