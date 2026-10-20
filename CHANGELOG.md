@@ -205,6 +205,14 @@ the changes you may notice in the first hour.
   holds every left-bar entry, every pane by its header title and every sticky
   note by its words, each with where it sits written underneath. Type to narrow
   it, Enter goes there, Escape or a second Alt+L closes it. (#965)
+- **Chalk, a paper skin for the whole window.** Pick Skin → Chalk in the
+  painter's Style area. Controls, menus, gauges and the attention rail become
+  deckled paper with pigment grain and handwritten labels, while the terminal's
+  own text stays monospace. It follows the chosen palette, Terminal Delight's or
+  the Omarchy theme's, light or dark, and sticky notes gain paper fibres, tape
+  and a small flower on their curled corner. It costs a little more to draw: at
+  20 updates a second, about 20% of one core against 16–17% for the default
+  skin. (#1020, #1022)
 - **A GIT signal warns when panes are changing the same files.** One compact
   signal covers every project in the window. Alt+G opens an inspector with a
   card per project, the working copies that share files, and the checkouts,
