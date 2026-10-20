@@ -45,6 +45,7 @@ mod deck;
 mod defaultterm;
 mod demo;
 mod derive;
+mod diag;
 mod dirlogo;
 mod doc;
 mod docopen;
@@ -4507,6 +4508,16 @@ struct Workspace {
     /// The 🔔 notifications panel overlay is open — what a finished agent is
     /// allowed to do to the rest of the desktop (see [`notifpref`]).
     notif_menu: bool,
+    /// The 🐞 bug-report panel is open (see [`diag`]).
+    bug_menu: bool,
+    /// What step 1 of the bug report did while the panel was open: the report
+    /// it wrote, or why it could not. Step 2 is offered only after a report
+    /// exists, and closing the panel starts the ladder again.
+    bug_report: Option<Result<std::path::PathBuf, String>>,
+    /// Crash records newer than the last prepared report, read at startup and
+    /// whenever the panel opens. `None` is "could not look", which draws no
+    /// badge rather than a confident zero.
+    bug_unseen: Option<usize>,
     /// The live notification switches, read once at startup and re-read on the
     /// 2s sweep so an edit to `notifications.toml` (or a second window's
     /// toggle) lands without a restart — the same hot-file contract as
@@ -6128,6 +6139,9 @@ impl Workspace {
             pending_pointer: Vec::new(),
             plugins_menu: false,
             notif_menu: false,
+            bug_menu: false,
+            bug_report: None,
+            bug_unseen: diag::unseen_crashes(),
             notif: notifpref::load(),
             marquee_says: None,
             harvest_status: None,
@@ -16257,6 +16271,273 @@ impl Workspace {
         )
     }
 
+    fn open_bug_menu(&mut self) {
+        self.bug_unseen = diag::unseen_crashes();
+        self.bug_menu = true;
+    }
+
+    fn close_bug_menu(&mut self) {
+        self.bug_menu = false;
+    }
+
+    /// Rung 1 of the consent ladder: write the report on this machine and open
+    /// it where the person can read every word. Nothing is sent. The panel
+    /// closes so the report is what they see; reopening 🐞 offers step 2.
+    fn bug_prepare(&mut self, cx: &mut Context<Self>) {
+        let modes: Vec<pane::PaneMode> = self
+            .all_leaves()
+            .iter()
+            .map(|l| l.read(cx).mode.clone())
+            .collect();
+        let census = diag::Census::of(self.tabs.len(), &modes);
+        match diag::write_report(&census) {
+            Ok(path) => {
+                self.bug_unseen = Some(0);
+                self.bug_report = Some(Ok(path.clone()));
+                self.close_bug_menu();
+                if self.doc_here(&path, cx).starts_with("err") {
+                    pane::open_with_system(&path.to_string_lossy());
+                }
+            }
+            Err(e) => self.bug_report = Some(Err(e.to_string())),
+        }
+    }
+
+    /// The report step 2 can hand over: one prepared and still on disk.
+    fn bug_prepared(&self) -> Option<&std::path::Path> {
+        match &self.bug_report {
+            Some(Ok(p)) if p.is_file() => Some(p),
+            _ => None,
+        }
+    }
+
+    /// Rung 2: start the agent in a new tab, in the report's own directory, told
+    /// to read that one file. Rung 3, filing, happens inside that conversation
+    /// and only on the person's yes — the report's last section says so.
+    fn bug_to_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(dir), Some(agent)) = (
+            self.bug_prepared()
+                .and_then(|p| p.parent())
+                .map(|d| d.to_string_lossy().into_owned()),
+            diag::chosen_agent(),
+        ) else {
+            return;
+        };
+        self.close_bug_menu();
+        self.adopt_pane(
+            Some(dir),
+            Some(diag::agent_run_line(agent)),
+            Seat::Loose,
+            window,
+            cx,
+        );
+    }
+
+    /// 🐞 the bug-report panel: the consent ladder as three rows, each its own
+    /// click, under the promise that no terminal content is ever in a report.
+    fn render_bug_overlay(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if !self.bug_menu {
+            return None;
+        }
+        let ui = self.lang.strings().ui;
+        let prepared = self.bug_prepared();
+        let agent = diag::chosen_agent();
+
+        let row = |glyph: &str, name: String, blurb: String, live: bool, id: &'static str| {
+            div()
+                .id(SharedString::from(id))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_2()
+                .py_2()
+                .rounded_sm()
+                .border_1()
+                .border_color(if live {
+                    th.accent.alpha(0.55)
+                } else {
+                    th.text.alpha(0.12)
+                })
+                .when(live, |d| {
+                    d.cursor_pointer().hover(|s| s.bg(th.accent.alpha(0.15)))
+                })
+                .child(
+                    div()
+                        .text_size(px(15.))
+                        .child(SharedString::from(glyph.to_string())),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(if live { th.text } else { th.text.alpha(0.45) })
+                                .child(SharedString::from(name)),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(8.5))
+                                .text_color(th.text.alpha(if live { 0.6 } else { 0.35 }))
+                                .child(SharedString::from(blurb)),
+                        ),
+                )
+        };
+
+        let agent_name = agent.unwrap_or("claude");
+        let step2_blurb = match (agent, prepared) {
+            (None, _) => ui.bug_agent_none.to_string(),
+            (Some(_), None) => ui.bug_agent_first.to_string(),
+            (Some(a), Some(_)) => ui.bug_agent_blurb.replace("{agent}", a),
+        };
+        let step2_live = agent.is_some() && prepared.is_some();
+
+        let panel = div()
+            .id("bug-panel")
+            .w(px(460.))
+            .max_h(px(self.tray_card_h()))
+            .overflow_x_hidden()
+            .overflow_y_scroll()
+            .p_3()
+            .rounded_md()
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
+            .bg(darken(th.surface, 0.6))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .text_size(px(10.))
+            .text_color(th.text)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(13.))
+                    // The panel's mark is a lock, not the bug again: what it
+                    // promises first is what it will not take.
+                    .child(div().text_size(px(18.)).child("\u{1f512}"))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.complement)
+                            .child(ui.bug_hdr),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(8.5))
+                    .text_color(th.accent.alpha(0.85))
+                    .child(ui.bug_blurb),
+            )
+            .when(
+                self.bug_unseen.is_some_and(|n| n > 0) || diag::crashes_this_run() > 0,
+                |d| {
+                    d.child(
+                        div()
+                            .text_size(px(8.5))
+                            .text_color(gpui::hsla(0.07, 0.9, 0.6, 1.0))
+                            .child(ui.bug_crashed),
+                    )
+                },
+            )
+            .child(
+                row(
+                    "\u{1f4dd}",
+                    ui.bug_prepare_name.to_string(),
+                    ui.bug_prepare_blurb.to_string(),
+                    true,
+                    "bug-prepare",
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.bug_prepare(cx);
+                        cx.notify();
+                    }),
+                ),
+            )
+            .when_some(self.bug_report.as_ref(), |d, done| {
+                let (label, detail) = match done {
+                    Ok(p) => (ui.bug_prepared, p.display().to_string()),
+                    Err(e) => (ui.bug_failed, e.clone()),
+                };
+                d.child(
+                    div()
+                        .text_size(px(8.))
+                        .text_color(th.text.alpha(0.55))
+                        .child(SharedString::from(format!("{label} {detail}"))),
+                )
+            })
+            .child(
+                row(
+                    "\u{1f916}",
+                    ui.bug_agent_name.replace("{agent}", agent_name),
+                    step2_blurb,
+                    step2_live,
+                    "bug-agent",
+                )
+                .when(step2_live, |d| {
+                    d.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                            cx.stop_propagation();
+                            ws.bug_to_agent(w, cx);
+                            cx.notify();
+                        }),
+                    )
+                }),
+            )
+            .child(
+                row(
+                    "\u{1f310}",
+                    ui.bug_github_name.to_string(),
+                    ui.bug_github_blurb.to_string(),
+                    true,
+                    "bug-github",
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        pane::open_with_system(diag::NEW_ISSUE_URL);
+                        ws.close_bug_menu();
+                        cx.notify();
+                    }),
+                ),
+            );
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .bg(th.bg.alpha(0.70))
+                .flex()
+                .items_center()
+                .justify_center()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        ws.close_bug_menu();
+                        cx.notify();
+                    }),
+                )
+                .child(panel),
+        )
+    }
+
     /// 🔔 the notifications panel: the two switches deciding what a finished
     /// agent is allowed to do to the rest of the desktop.
     ///
@@ -18543,6 +18824,7 @@ impl Workspace {
             || self.dead_menu
             || self.plugins_menu
             || self.notif_menu
+            || self.bug_menu
             || self.savings_menu
     }
 
@@ -18667,6 +18949,10 @@ impl Workspace {
         }
         if self.notif_menu {
             self.notif_menu = false;
+            return true;
+        }
+        if self.bug_menu {
+            self.close_bug_menu();
             return true;
         }
         // Standalone modals (only one is ever open at a time; order is moot).
@@ -27414,6 +27700,7 @@ impl Render for Workspace {
                 || self.more_menu
                 || self.plugins_menu
                 || self.notif_menu
+                || self.bug_menu
                 || self.savings_menu
                 || self.dead_menu
                 || self.group_menu.is_some()
@@ -28191,6 +28478,35 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
+        // 🐞 report a bug. A dot on it says TD recorded a crash since the last
+        // report was prepared — Omarchy's crash toast, moved onto the glyph,
+        // because a toast cannot be raised by a process that has just died.
+        let crashed = self.bug_unseen.is_some_and(|n| n > 0) || diag::crashes_this_run() > 0;
+        let ic_bug = Self::hicon_s(&sk, self.bug_menu, scale)
+            .relative()
+            .text_size(sk.text_px(CHROME_GLYPH * scale))
+            .line_height(px(CHROME_GLYPH * scale))
+            .child("\u{1f41e}")
+            .when(crashed, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top(px(1. * scale))
+                        .right(px(1. * scale))
+                        .size(px(6. * scale))
+                        .rounded_full()
+                        // Orange: something failed (the house palette).
+                        .bg(gpui::hsla(0.07, 0.9, 0.55, 1.0)),
+                )
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.open_bug_menu();
+                    cx.notify();
+                }),
+            );
         let ic_plugins = Self::hicon_s(&sk, self.plugins_menu, scale)
             .text_size(sk.text_px(CHROME_GLYPH * scale))
             .line_height(px(CHROME_GLYPH * scale))
@@ -28233,6 +28549,7 @@ impl Render for Workspace {
                         .child(ic_osd)
                         .child(ic_dead)
                         .child(ic_notif)
+                        .child(ic_bug)
                         .child(ic_plugins)
                 }
             });
@@ -29437,6 +29754,7 @@ impl Render for Workspace {
         let agent_launcher_overlay = self.render_agent_launcher(&th, cx);
         let plugins_overlay = self.render_plugins_overlay(&th, cx);
         let notif_overlay = self.render_notif_overlay(&th, cx);
+        let bug_overlay = self.render_bug_overlay(&th, cx);
         // The marquee, while it lives. It ages out on its own — nothing
         // clears it — and it keeps asking for frames so the bulbs chase and
         // the fade actually runs.
@@ -32207,6 +32525,15 @@ impl Render for Workspace {
                         }),
                     ),
                 )
+                .child(entry("\u{1f41e}", s.report_bug, "more-bug").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.more_menu = false;
+                        ws.open_bug_menu();
+                        cx.notify();
+                    }),
+                ))
                 .child(entry("\u{1f9e9}", s.plugins, "more-plugins").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -33916,6 +34243,7 @@ impl Render for Workspace {
                     .children(dead_overlay)
                     .children(plugins_overlay)
                     .children(notif_overlay)
+                    .children(bug_overlay)
                     .children(marquee)
                     .children(savings_overlay)
                     .children(confirm_overlay)
@@ -44016,6 +44344,12 @@ fn main() {
         Launch::Window { open_here } => (open_here, None),
         Launch::Contract(c) => (None, Some(c)),
     };
+
+    // The window's diagnostics go to a log a person can find, and a panic on
+    // any thread leaves a record, before anything that could fail runs. A
+    // window started from the desktop otherwise writes into /dev/null.
+    diag::route_stderr(&diag::Role::Window);
+    diag::install_crash_record(diag::Role::Window);
 
     // Give every shell we spawn a real terminal type. gpui launches us from the
     // desktop/WM with TERM unset, and spawning a pseudoterminal does NOT set
