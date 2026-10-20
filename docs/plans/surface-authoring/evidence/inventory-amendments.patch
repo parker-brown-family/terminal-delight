@@ -1,0 +1,63 @@
+--- a/docs/spec/skin-surface-inventory.md
++++ b/docs/spec/skin-surface-inventory.md
+@@ -68,12 +68,12 @@
+ | Menu-bar SIZE button and track | main.rs:27545–27756 | mixed | UI |
+ | Bottom band | main.rs:28026–28077, `sk.sheet()`. Text is raw `th.text` (28048). Glyph row 27757, `bezel_btn` 20974 | skin, text colour raw | UI |
+ | Left bar tree | `render_left_bar` main.rs:24877. Rows: `bar_row` 21319, `branch_row` 21512, `task_row` 21823 (`sk.active_row` 21879). `bar_cursor_ring` 21474 is a raw `th.cursor` wash. Rename boxes `darken(th.bg,0.8)` (21554, 21857) | mixed | UI |
+-| Left-bar bay and slot rails | `render_bay` 22178, `render_bar_slot` 22481, `under_the_tree` 3516 | skin-leaning, unconfirmed | UI |
++| Left-bar bay and slot rails | `render_bay` 22178 and `render_bar_slot` 22481. `under_the_tree` 3516 is drag targeting, not drawing | mixed: skin inks/corners in bay; skin radii and raw theme tracks in slot; no material call | UI |
+ | Left-bar tray menu | `render_bar_menu` main.rs:11945, `bar_menu_row` 11900, `bar_menu_rule` 11931 | skin | UI |
+ | Pane frame and focus ring | `render_node` main.rs:26600–26720. `rounded_md`, raw shadows, unfocused dim. Paper patch 26683–26707 | bypass (paper patched) | — |
+ | Pane header | pane.rs:10978–10992 | skin | UI (10975) |
+ | TERM / BENCH / DOC slider | pane.rs:10760–10790 | skin | UI |
+-| Handover chip | pane/handed.rs:387 | skin (counted, not read) | UI |
++| Handover chip | pane/handed.rs:387, `handover_chip`; semantic inks, radius and hover, own face and literal type size | mixed; material bypass | inherited UI |
+ | Pane right-click and ⋯ menus | pane.rs:10050–10110, 10610–10650. Raw `th.surface`/`accent`, `rounded(px(8.))` | bypass | grid font (10057, 10614) |
+ | Terminal tube stock | pane.rs:11680–11687 (paper only, inside the warp tube) | paper only | — |
+ | Terminal grid | pane/grid_paint.rs:40 | design | grid font |
+@@ -85,19 +85,19 @@
+ | GAUGES / DISPLAY tray | main.rs:28585–28877 (`osd-panel` 28637) | mixed | UI |
+ | Switches and sliders | `slider_switch` main.rs:1437, `slider_row` 20371, `track_slider` 20660, `lightness_bar` 20897, `tab_lightness_bar` 25751, `card_scale_slider` 17723, `focus_zoom_slider` 17828. `focus_inherit_toggle` 17937 has no skin calls | mixed; `focus_inherit_toggle` bypass | UI |
+ | Paint cards (Super+Alt+P) | `paint::card` paint.rs:417, `paint::tile` 560, shelf chip 691 | mixed | UI (paint.rs:435) |
+-| Sticky note | `sticky::paint` sticky.rs:869, `note_el` pane.rs:11452. Colours from notepaper.rs:367 | own system, by design | Caveat, fixed (sticky.rs:42) |
++| Sticky note | `sticky::paint` sticky.rs:869, `note_el` pane.rs:11452. Base colours from notepaper.rs; Paper overrides Contrast at pane.rs:11453–11461 | own painter plus Paper-specific colours/decoration flag | Caveat, fixed (sticky.rs:42) |
+ | Subscriptions / usage panel | `render_savings_overlay` main.rs:10166, `savings_shell` 10604, `render_usage_body` 9489, `pace_band` 26315 | mixed | UI (10646) |
+-| FOCUS reader (Alt+R) | main.rs:32526–33190. `reader_panel` 17234 raw | bypass, deliberate (keeps the measured monospace) | grid font from the snapshot |
+-| Document square | pane/doc.rs:304 `float_el`, `square_el` ~330–445 | bypass | inherited, unconfirmed |
++| FOCUS reader (Alt+R) | main.rs:32526–33190. `reader_panel` 17234 and `focus_inherit_toggle` 17937 raw | shell/controls bypass; measured content is a separate policy | snapshot font/cell geometry for content |
++| Document square | pane/doc.rs:304 `float_el`, `square_el` 330–445; native strip around DocumentView | native frame/controls bypass; body belongs to its backend | strip inherits; HTML/PDF/media content owns its type or pixels |
+ | Document face and notes bar | pane/doc.rs:1100, docview/notes_ui.rs | bypass | grid font (notes_ui 1725) |
+ | Bench cards | benchdraw.rs: `title_card` 2448, `rail_row` 326, `shelf_tab` 533, `dial_menu` 2696, `spine_frame` 194. Corners skinned (test `every_corner_on_the_bench_goes_through_the_skin`); colours from `benchdraw::ink` 125. No paper | mixed | grid font (14 sites) |
+-| Agent wall and agent cards | main.rs:28898–30677; card 29911–29935, `agent_card_shadows` 26389 | cards bypass; panel mixed | UI |
++| Agent wall and agent cards | main.rs:28898–30677; card 29911–29935, `agent_card_shadows` 26389 | mixed: skin radii/optical type, own fills/shadows/material | UI |
+ | Dead-agent recover manifest | main.rs:30679–31336 | mixed | UI |
+ | Confirm-close and delete-branch dialogs | `danger_panel` main.rs:11796 | mixed | UI |
+ | Help modal | main.rs:31942–31968 | mixed | UI (31958) |
+ | SIZE and … popovers | main.rs:31411–31449, 31510–31567 | mixed | UI |
+ | Tab config pane, group menu | main.rs:32071–32331, 32368–32482 | mixed | UI |
+-| Tooltips | `over_the_glass_tip` main.rs:25843, `SlotTooltip` 25864, `ThemeTooltip` 25894 | mixed | unconfirmed |
++| Tooltips | `over_the_glass_tip` main.rs:25843, `SlotTooltip` 25864, `ThemeTooltip` 25894 | mixed; paper finish, skin sizes/inks | family not explicit in shell; native inheritance unverified |
+ | Marquee toast | `marquee_banner` main.rs:1505 | bypass | UI |
+ | Find (Ctrl+F) | `render_find` main.rs:15149 | bypass | UI |
+ | Lookup (Alt+L) | `render_lookup` main.rs:15595 | mixed | UI |
+@@ -105,8 +105,19 @@
+ | Language picker | main.rs:16241 | bypass | UI |
+ | Agent launcher | `render_agent_launcher` main.rs:16439; shell raw `th.surface` | mixed | UI |
+ | Git coordination overlay | `render_eng_table` main.rs:25525, coordination_view.rs:720 | mixed | UI |
++| Agent-card vitals | main.rs:29765 `bar_row` closure | mixed: skin radius, semantic gradient and unknown state, no material | UI size ramp |
++| Launch-agent configuration | main.rs:9297 `render_launch_defaults` | mixed, child of Subscriptions | UI |
++| Native document note controls | docview/notes_ui.rs:1685 onward: toolbar, editor, attachment and save/discard controls | bypass | explicit theme family in several controls |
++| Document reading progress | docview/progress.rs:132 `rail` | bypass | native indicator |
++| Video transport / PDF status | docview/video.rs:433, docview/pdf.rs:810 | bypass | native controls; hosted media unchanged |
+ | CSD resize edges | csd.rs | n/a | — |
+ 
+ ## Not yet confirmed
+ 
+-The font on tooltips. The document square body font. Where the vitals bars are drawn. The inside of `render_bay`, `render_bar_slot` and `under_the_tree` (judged from usage counts only). Whether `hacker.toml`'s `curvature` key is read (it is not in `FileEffects`).
++Native tooltip family inheritance remains unverified. Document bodies dispatch through their backends; do not treat the body as inherited management text. Vitals are drawn by the wall's `bar_row` closure (main.rs:29765). Bay/slot and the non-painting drag helper are classified above. The legacy hacker.toml `curvature` key has no FileEffects field; author against Grade::warp instead.
++
++## Using this as an authoring checklist
++
++Record material, boundary, emphasis and type separately. The route column is a source-map summary, not a native coverage receipt. Expand workbench Kind templates, composer and menus before certifying that family. The corner guard checks corners only.
++
++Custom TOML can select compiled strategies. It cannot yet author grain, lift, marker geometry or optical font policy: these remain renderer code, and Paper applies the Caveat correction independently of the selected UI family. Keep this capability boundary visible in an authoring skill.
