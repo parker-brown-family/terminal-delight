@@ -2003,7 +2003,7 @@ pub const JA: Strings = Strings {
     artifacts_word: "成果物",
     handed_over: "このエージェントが渡したもの — 一覧を開く",
     text_size: "文字サイズ",
-    outer_size: "外側・メニューの拡大率（メニューや左バーの上で）",
+    outer_size: "外側・メニューの拡大率（メニュー・左バー上）",
     outer_size_key: "外側・メニューの拡大率",
     warp: "画面を湾曲（0 = 平面 → 金魚鉢）",
     jump_msg: "前 / 次の自分のメッセージへ移動",
