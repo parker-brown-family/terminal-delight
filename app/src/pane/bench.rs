@@ -2977,35 +2977,30 @@ impl TerminalView {
         // image when no text type is offered at all, so a browser copy — which
         // offers `text/html` next to `image/png` — pastes markup.
         if self.clipboard_holds_an_image() {
-            // On an AGENT pane the agent does this better than we can. Claude
-            // Code binds ctrl+v to its own image paste, reads the clipboard
-            // with `wl-paste --type image/png`, and puts `[Image #1]` in the
-            // prompt — a chip it can then delete with one backspace. Typing a
-            // path instead produced a hundred-character filename in the middle
-            // of a sentence; Parker, on seeing both: *"the terminal shows
-            // `[Image #n]` --- We want the terminal short style"*.
-            //
-            // So on an agent pane the chord goes straight down the PTY and the
-            // agent shows its own short form. We only save a file where there
-            // is nobody on the far end to do it — a shell has no idea what an
-            // image is, and there a path is the only thing that can be typed.
-            if self.mode.is_agent() {
-                self.bench_keystroke(vec![0x16], cx);
-                // The composer cannot show the agent's `[Image #7]` — it does
-                // not know the number and inventing one would desynchronise
-                // the mirror. It shows that an image went, which is the part
-                // it does know. See [`crate::workbench::Line::note_paste`].
-                if let Some(line) = self.wb_compose.as_mut() {
-                    line.note_paste();
-                }
-                self.composer_follows();
-                cx.notify();
-                return;
-            }
+            // The window owns desktop access. A persistent host may have been
+            // launched without DISPLAY/WAYLAND_DISPLAY, so forwarding Ctrl+V
+            // asks an agent with no clipboard connection to fetch the picture.
+            // Both Claude and Codex recognise a bracketed image path as an
+            // attachment and supply their own compact image chip.
             if let Some(path) = self.clipboard_image_path() {
-                self.bench_typed(path, cx);
-                return;
+                if self.mode.is_agent() {
+                    let text = crate::workbench::paths_as_words(&[path.into()]);
+                    self.bench_keystroke(
+                        [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat(),
+                        cx,
+                    );
+                    if let Some(line) = self.wb_compose.as_mut() {
+                        line.note_paste();
+                    }
+                    self.composer_follows();
+                    cx.notify();
+                } else {
+                    self.bench_typed(path, cx);
+                }
+            } else {
+                eprintln!("terminal-delight: could not read the clipboard image");
             }
+            return;
         }
         let Some(item) = cx.read_from_clipboard() else {
             return;

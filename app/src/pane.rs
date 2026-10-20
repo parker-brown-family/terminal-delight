@@ -7478,6 +7478,15 @@ impl TerminalView {
                 }
             }
         }
+        // Read images in the GUI, not in the agent process: a session host
+        // can outlive the desktop environment it inherited at startup.
+        if !k.alt
+            && crate::workbench::is_paste_chord(k.key, k.control, k.shift)
+            && self.clipboard_holds_an_image()
+        {
+            self.paste_clipboard(cx);
+            return Handled::Declined;
+        }
         if let Some(bytes) = keystroke_bytes(ks) {
             self.send(bytes, cx);
         }
@@ -8296,6 +8305,14 @@ impl TerminalView {
     /// reason a file dropped on a document is not typed into it.
     fn paste_clipboard(&self, cx: &mut Context<Self>) {
         if self.bench.face() == crate::workbench::Face::Document {
+            return;
+        }
+        if self.clipboard_holds_an_image() {
+            if let Some(path) = self.clipboard_image_path() {
+                self.paste_text(&crate::workbench::paths_as_words(&[path.into()]));
+            } else {
+                eprintln!("terminal-delight: could not read the clipboard image");
+            }
             return;
         }
         if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
