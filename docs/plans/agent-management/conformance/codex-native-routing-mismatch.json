@@ -1,0 +1,408 @@
+{
+  "additional_snapshots": [
+    {
+      "actor": {
+        "binding_evidence": "Explicit live process/conversation binding supplied by TD",
+        "executable": {
+          "at_ms": 1792527207547,
+          "source": "/proc/2115368/exe",
+          "state": "observed",
+          "value": "/home/parker/.local/share/mise/installs/codex/0.162.1/bin/codex"
+        },
+        "inference_runtime": {
+          "at_ms": 1792527207550,
+          "source": "Existing app server handshake over same-user UDS",
+          "state": "observed",
+          "value": {
+            "initialize": {
+              "codexHome": "/home/parker/.codex",
+              "platformFamily": "unix",
+              "platformOs": "linux",
+              "userAgent": "codex-tui/0.163.0 (Linux Unknown; x86_64) Alacritty (terminal_delight_management; 0.1)"
+            },
+            "process": {
+              "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+              "pid": 2094675,
+              "start_ticks": 55884588
+            }
+          }
+        },
+        "location": {
+          "pane": 16,
+          "shell": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2112740,
+            "start_ticks": 55896204
+          },
+          "td_session": "1"
+        },
+        "model": {
+          "effort": {
+            "state": "not_collected"
+          },
+          "provider_revision": {
+            "reason": "Provider revision is not exposed by the local harness",
+            "state": "unknown"
+          },
+          "reported": {
+            "state": "not_collected"
+          },
+          "requested": {
+            "at_ms": 1792527207550,
+            "source": "thread/read model configuration; provider response ID unavailable",
+            "state": "observed",
+            "value": "gpt-6.1-sol"
+          }
+        },
+        "observed_at_ms": 1792527207547,
+        "run": {
+          "conversation": "01a14d4a-dcb4-7bb2-bc7a-4f022e62e4f7",
+          "endpoint": "/tmp/codex-daemon-1000/b3758b151dc3c3a878b05ccc2b83e8e8b4e8307804e4e8170b7639a85882f98e",
+          "endpoint_generation": "56:3805484:1792480721:531359949",
+          "harness": "codex",
+          "process": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2115368,
+            "start_ticks": 55896269
+          }
+        },
+        "transcript": {
+          "state": "not_collected"
+        },
+        "version": {
+          "reason": "Running TUI version has not been measured; conversation creation version is not the current process version",
+          "state": "unknown"
+        }
+      },
+      "id": "7b125d4ced68f69af461fa97a7b26db7193b4c2dfbef46665f46b6a1b78c454b"
+    }
+  ],
+  "content_sha256": "41cca884f0d1b064de9c3a618f3f56a9e4c428dad53f5247e45bd41d2ceb8379",
+  "database_id": "01a15af2-8c83-728a-a5fe-655462639079",
+  "envelope": {
+    "caused_by_message": null,
+    "dispatch_before_ms": 1792527807550,
+    "expected_model": null,
+    "experiment": "existing-codex-native-queue",
+    "key": "01a15af2-8c7e-76bf-a577-d6f116783cbc",
+    "parent_request": null,
+    "target": {
+      "conversation": "01a14d4a-dcb4-7bb2-bc7a-4f022e62e4f7",
+      "endpoint": "/tmp/codex-daemon-1000/b3758b151dc3c3a878b05ccc2b83e8e8b4e8307804e4e8170b7639a85882f98e",
+      "endpoint_generation": "56:3805484:1792480721:531359949",
+      "harness": "codex",
+      "process": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2115368,
+        "start_ticks": 55896269
+      }
+    },
+    "text": "Parker authorized building Terminal Delight management of existing agents, and this is one conformance assignment to the already-running Codex pane 16. Please create /home/parker/Work/terminal-delight/reports/agent-management-codex-ipsum.md containing one short Lorem ipsum paragraph, no heading, then report the path here. Keep it quick. We already delivered the original assignment to the existing Claude in pane 42 and verified its file. Implementation is isolated in /home/parker/Work/td-agent-management, branch feat/agent-management. This message is for that loaded process only; if this is the wrong pane, decline. No installation or merge is requested."
+  },
+  "receipt": {
+    "attempts": [
+      2
+    ],
+    "confirmed_by_td": 1,
+    "database_id": "01a15af2-8c83-728a-a5fe-655462639079",
+    "events": [
+      {
+        "at_ms": 1792527207559,
+        "data": {
+          "caller_attribution": "cooperative local pane declaration",
+          "parent_request": null,
+          "recipient": "7b125d4ced68f69af461fa97a7b26db7193b4c2dfbef46665f46b6a1b78c454b",
+          "root_request": "01a15af2-8c86-773b-8b58-3ecdb9ff9958",
+          "sender": "444d740dad7e75eda0a03bac864934808c40687710ce7f46bedfb4541c4ca5ca"
+        },
+        "kind": "accepted",
+        "request": "01a15af2-8c86-773b-8b58-3ecdb9ff9958",
+        "sequence": 1
+      },
+      {
+        "at_ms": 1792527207563,
+        "data": {
+          "adapter": {
+            "revision": "codex-queue-r1",
+            "runtime": {
+              "at_ms": 1792527207550,
+              "source": "Existing app server handshake over same-user UDS",
+              "state": "observed",
+              "value": {
+                "initialize": {
+                  "codexHome": "/home/parker/.codex",
+                  "platformFamily": "unix",
+                  "platformOs": "linux",
+                  "userAgent": "codex-tui/0.163.0 (Linux Unknown; x86_64) Alacritty (terminal_delight_management; 0.1)"
+                },
+                "process": {
+                  "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+                  "pid": 2094675,
+                  "start_ticks": 55884588
+                }
+              }
+            },
+            "td_build": "conformance harness; window integration pending"
+          },
+          "attempt": 1,
+          "attempt_id": "01a15af2-8c8b-7330-9df1-1b22d6d1f062",
+          "recipient": "7b125d4ced68f69af461fa97a7b26db7193b4c2dfbef46665f46b6a1b78c454b"
+        },
+        "kind": "dispatch_intent",
+        "request": "01a15af2-8c86-773b-8b58-3ecdb9ff9958",
+        "sequence": 2
+      },
+      {
+        "at_ms": 1792527207585,
+        "data": {
+          "client_user_message_id": "01a15af2-8c86-773b-8b58-3ecdb9ff9958",
+          "protocol": "codex-app-server-0.163.0",
+          "queue_start": {
+            "confirmed": false,
+            "reason": "Queue ownership confirmed; starting the queue was not confirmed"
+          },
+          "queued_submission_id": "01a15af2-8c91-72e1-a7d0-724ac07498d4",
+          "runtime": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2094675,
+            "start_ticks": 55884588
+          },
+          "scope": "native queue ownership; task completion remains unproven"
+        },
+        "kind": "native_accepted",
+        "request": "01a15af2-8c86-773b-8b58-3ecdb9ff9958",
+        "sequence": 3
+      },
+      {
+        "at_ms": 1792527379913,
+        "data": {
+          "evidence": {
+            "client_user_message_id": "01a15af2-8c86-773b-8b58-3ecdb9ff9958",
+            "completed_at": 1792527247,
+            "output": [
+              {
+                "native_item_id": "msg_02dc8d78c9ccfbba016ad7cb8e7078819aa8816c55fc6e5664",
+                "text": "Declined: this process identifies as pane 3, not pane 16. I did not create the file."
+              }
+            ],
+            "runtime": {
+              "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+              "pid": 2094675,
+              "start_ticks": 55884588
+            },
+            "source": "thread/turns/list; exact native userMessage clientId/id",
+            "started_at": 1792527207,
+            "status": "completed",
+            "thread_id": "01a14d4a-dcb4-7bb2-bc7a-4f022e62e4f7",
+            "turn_id": "01a15af2-8c96-7101-b391-6af6dd806826"
+          },
+          "scope": "reconciled input consumption"
+        },
+        "kind": "native_accepted",
+        "request": "01a15af2-8c86-773b-8b58-3ecdb9ff9958",
+        "sequence": 4
+      },
+      {
+        "at_ms": 1792527379913,
+        "data": {
+          "actor": "7b125d4ced68f69af461fa97a7b26db7193b4c2dfbef46665f46b6a1b78c454b",
+          "evidence": {
+            "client_user_message_id": "01a15af2-8c86-773b-8b58-3ecdb9ff9958",
+            "completed_at": 1792527247,
+            "output": [
+              {
+                "native_item_id": "msg_02dc8d78c9ccfbba016ad7cb8e7078819aa8816c55fc6e5664",
+                "text": "Declined: this process identifies as pane 3, not pane 16. I did not create the file."
+              }
+            ],
+            "runtime": {
+              "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+              "pid": 2094675,
+              "start_ticks": 55884588
+            },
+            "source": "thread/turns/list; exact native userMessage clientId/id",
+            "started_at": 1792527207,
+            "status": "completed",
+            "thread_id": "01a14d4a-dcb4-7bb2-bc7a-4f022e62e4f7",
+            "turn_id": "01a15af2-8c96-7101-b391-6af6dd806826"
+          },
+          "scope": "input consumed; responsibility and result remain separate"
+        },
+        "kind": "recipient_acknowledged",
+        "request": "01a15af2-8c86-773b-8b58-3ecdb9ff9958",
+        "sequence": 5
+      },
+      {
+        "at_ms": 1792527379918,
+        "data": {
+          "actor": "7b125d4ced68f69af461fa97a7b26db7193b4c2dfbef46665f46b6a1b78c454b",
+          "evidence": {
+            "client_user_message_id": "01a15af2-8c86-773b-8b58-3ecdb9ff9958",
+            "completed_at": 1792527247,
+            "output": [
+              {
+                "native_item_id": "msg_02dc8d78c9ccfbba016ad7cb8e7078819aa8816c55fc6e5664",
+                "text": "Declined: this process identifies as pane 3, not pane 16. I did not create the file."
+              }
+            ],
+            "runtime": {
+              "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+              "pid": 2094675,
+              "start_ticks": 55884588
+            },
+            "source": "thread/turns/list; exact native userMessage clientId/id",
+            "started_at": 1792527207,
+            "status": "completed",
+            "thread_id": "01a14d4a-dcb4-7bb2-bc7a-4f022e62e4f7",
+            "turn_id": "01a15af2-8c96-7101-b391-6af6dd806826"
+          },
+          "scope": "correlated native output; no automatic success classification"
+        },
+        "kind": "peer_output",
+        "request": "01a15af2-8c86-773b-8b58-3ecdb9ff9958",
+        "sequence": 6
+      }
+    ],
+    "native_delivery": "native_accepted",
+    "recipient_ack": {
+      "at_ms": 1792527379913,
+      "source": "input consumed; responsibility and result remain separate",
+      "state": "observed",
+      "value": 5
+    },
+    "request": "01a15af2-8c86-773b-8b58-3ecdb9ff9958",
+    "resolution_reports": [],
+    "work_reports": []
+  },
+  "recipient": {
+    "binding_evidence": "Explicit live process/conversation binding supplied by TD",
+    "executable": {
+      "at_ms": 1792527207547,
+      "source": "/proc/2115368/exe",
+      "state": "observed",
+      "value": "/home/parker/.local/share/mise/installs/codex/0.162.1/bin/codex"
+    },
+    "inference_runtime": {
+      "at_ms": 1792527207550,
+      "source": "Existing app server handshake over same-user UDS",
+      "state": "observed",
+      "value": {
+        "initialize": {
+          "codexHome": "/home/parker/.codex",
+          "platformFamily": "unix",
+          "platformOs": "linux",
+          "userAgent": "codex-tui/0.163.0 (Linux Unknown; x86_64) Alacritty (terminal_delight_management; 0.1)"
+        },
+        "process": {
+          "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+          "pid": 2094675,
+          "start_ticks": 55884588
+        }
+      }
+    },
+    "location": {
+      "pane": 16,
+      "shell": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2112740,
+        "start_ticks": 55896204
+      },
+      "td_session": "1"
+    },
+    "model": {
+      "effort": {
+        "state": "not_collected"
+      },
+      "provider_revision": {
+        "reason": "Provider revision is not exposed by the local harness",
+        "state": "unknown"
+      },
+      "reported": {
+        "state": "not_collected"
+      },
+      "requested": {
+        "at_ms": 1792527207550,
+        "source": "thread/read model configuration; provider response ID unavailable",
+        "state": "observed",
+        "value": "gpt-6.1-sol"
+      }
+    },
+    "observed_at_ms": 1792527207547,
+    "run": {
+      "conversation": "01a14d4a-dcb4-7bb2-bc7a-4f022e62e4f7",
+      "endpoint": "/tmp/codex-daemon-1000/b3758b151dc3c3a878b05ccc2b83e8e8b4e8307804e4e8170b7639a85882f98e",
+      "endpoint_generation": "56:3805484:1792480721:531359949",
+      "harness": "codex",
+      "process": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2115368,
+        "start_ticks": 55896269
+      }
+    },
+    "transcript": {
+      "state": "not_collected"
+    },
+    "version": {
+      "reason": "Running TUI version has not been measured; conversation creation version is not the current process version",
+      "state": "unknown"
+    }
+  },
+  "request": "01a15af2-8c86-773b-8b58-3ecdb9ff9958",
+  "schema": 1,
+  "sender": {
+    "binding_evidence": "Explicit live process/conversation binding supplied by TD",
+    "executable": {
+      "at_ms": 1792527207547,
+      "source": "/proc/2696547/exe",
+      "state": "observed",
+      "value": "/home/parker/.local/share/mise/installs/codex/0.162.1/bin/codex"
+    },
+    "inference_runtime": {
+      "reason": "Connect-only probe supplies separate daemon identity per attempt",
+      "state": "unknown"
+    },
+    "location": {
+      "pane": 41,
+      "shell": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2681687,
+        "start_ticks": 59922703
+      },
+      "td_session": "1"
+    },
+    "model": {
+      "effort": {
+        "state": "not_collected"
+      },
+      "provider_revision": {
+        "reason": "Provider revision is not exposed by the local harness",
+        "state": "unknown"
+      },
+      "reported": {
+        "state": "not_collected"
+      },
+      "requested": {
+        "state": "not_collected"
+      }
+    },
+    "observed_at_ms": 1792527207547,
+    "run": {
+      "conversation": "01a15a96-d75b-70f0-85cd-a5000afe45d2",
+      "endpoint": "/tmp/codex-daemon-1000/b3758b151dc3c3a878b05ccc2b83e8e8b4e8307804e4e8170b7639a85882f98e",
+      "endpoint_generation": "56:3805484:1792480721:531359949",
+      "harness": "codex",
+      "process": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2696547,
+        "start_ticks": 59932113
+      }
+    },
+    "transcript": {
+      "state": "not_collected"
+    },
+    "version": {
+      "reason": "Running TUI version has not been measured; conversation creation version is not the current process version",
+      "state": "unknown"
+    }
+  }
+}

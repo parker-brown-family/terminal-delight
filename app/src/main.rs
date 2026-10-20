@@ -67,6 +67,7 @@ mod lang;
 mod launcher;
 mod launchpref;
 mod lookup;
+mod management_mcp;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;

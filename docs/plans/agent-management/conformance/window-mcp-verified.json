@@ -1,0 +1,816 @@
+{
+  "schema": 1,
+  "database_id": "01a15b1f-e51e-7123-94f5-af569db757b9",
+  "request": "01a15b22-2671-7580-976a-df9e33e97909",
+  "envelope": {
+    "key": "01a15b22-2575-740a-8f97-febef5b424cf",
+    "target": {
+      "harness": "claude",
+      "conversation": "ed569b73-f45f-4049-b645-e261689f1db2",
+      "process": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2716326,
+        "start_ticks": 59941099
+      },
+      "endpoint": "/run/user/1000/cc-socks/2716326.sock",
+      "endpoint_generation": "81:77928:1792521286:785871871"
+    },
+    "text": "Parker authorized this live Terminal Delight MCP conformance task to your existing pane 42 process. Please create /home/parker/Work/terminal-delight/reports/agent-management-mcp-ipsum.md containing exactly one short Lorem ipsum paragraph, no heading. Then record a result with agent_reply, referring to the request UUID in TD's header, reply_key 01a15b22-2575-740a-8f97-febf63575918, expected_run {\"harness\": \"claude\", \"conversation\": \"ed569b73-f45f-4049-b645-e261689f1db2\", \"process\": {\"boot_id\": \"5f1f7c2a-12cf-4151-b80c-6f612e533157\", \"pid\": 2716326, \"start_ticks\": 59941099}, \"endpoint\": \"/run/user/1000/cc-socks/2716326.sock\", \"endpoint_generation\": \"81:77928:1792521286:785871871\"}, and evidence [\"/home/parker/Work/terminal-delight/reports/agent-management-mcp-ipsum.md\"]. This is a single brief assignment; do not launch or resume any agent. If agent_reply is not yet in your cached MCP catalogue, it is now exposed by the running window's standard tools/call JSON-RPC handler: send `mcp from 1 42 rpc ` followed by the JSON-RPC tools/call line to /run/user/1000/terminal-delight/ctl-557116.sock. That is the same TD MCP path. Use your own native process and conversation as listed. No sticky note is needed. Keep the result short.",
+    "dispatch_before_ms": 1792530926901,
+    "parent_request": null,
+    "caused_by_message": null,
+    "expected_model": null,
+    "experiment": "window-integrated-mcp-clause-and-result"
+  },
+  "content_sha256": "2fee9dbe765420679ba0f07dd84d55d91efe191f50b118241935edd799057525",
+  "sender": {
+    "run": {
+      "harness": "codex",
+      "conversation": "01a15a96-d75b-70f0-85cd-a5000afe45d2",
+      "process": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2696547,
+        "start_ticks": 59932113
+      },
+      "endpoint": "/tmp/codex-daemon-1000/b3758b151dc3c3a878b05ccc2b83e8e8b4e8307804e4e8170b7639a85882f98e",
+      "endpoint_generation": "56:3805484:1792480721:531359949"
+    },
+    "location": {
+      "td_session": "1",
+      "pane": 41,
+      "shell": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2681687,
+        "start_ticks": 59922703
+      }
+    },
+    "executable": {
+      "state": "observed",
+      "value": "/home/parker/.local/share/mise/installs/codex/0.162.1/bin/codex",
+      "source": "/proc/2696547/exe",
+      "at_ms": 1792530327149
+    },
+    "version": {
+      "state": "unknown",
+      "reason": "Running TUI version has not been measured; conversation creation version is not the current process version"
+    },
+    "inference_runtime": {
+      "state": "unknown",
+      "reason": "Connect-only probe supplies separate daemon identity per attempt"
+    },
+    "model": {
+      "requested": {
+        "state": "unknown",
+        "reason": "No requested model in the bounded transcript observation"
+      },
+      "reported": {
+        "state": "unknown",
+        "reason": "No model response identifier in the bounded transcript observation"
+      },
+      "provider_revision": {
+        "state": "unknown",
+        "reason": "Provider revision is not exposed by the local harness"
+      },
+      "effort": {
+        "state": "unknown",
+        "reason": "Effort has not been reported in the bounded transcript observation"
+      }
+    },
+    "binding_evidence": "Explicit live process/conversation binding supplied by TD",
+    "attribution": {
+      "state": "observed",
+      "value": {
+        "kind": "cooperative_local_pane_declaration",
+        "session": "1",
+        "window": 557116,
+        "binding": "paneident::Bond::Declared"
+      },
+      "source": "TD MCP snapshot; origin declaration is not authentication",
+      "at_ms": 1792530327149
+    },
+    "transcript": {
+      "state": "observed",
+      "value": "/home/parker/.codex/sessions/2026/10/20/rollout-2026-10-20T11-33-17-01a15a96-d75b-70f0-85cd-a5000afe45d2.jsonl",
+      "source": "paneident::Bond::Declared",
+      "at_ms": 1792530327149
+    },
+    "observed_at_ms": 1792530327149
+  },
+  "recipient": {
+    "run": {
+      "harness": "claude",
+      "conversation": "ed569b73-f45f-4049-b645-e261689f1db2",
+      "process": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2716326,
+        "start_ticks": 59941099
+      },
+      "endpoint": "/run/user/1000/cc-socks/2716326.sock",
+      "endpoint_generation": "81:77928:1792521286:785871871"
+    },
+    "location": {
+      "td_session": "1",
+      "pane": 42,
+      "shell": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2713084,
+        "start_ticks": 59939562
+      }
+    },
+    "executable": {
+      "state": "observed",
+      "value": "/home/parker/.local/share/mise/installs/claude/2.1.296/claude",
+      "source": "/proc/2716326/exe",
+      "at_ms": 1792530327135
+    },
+    "version": {
+      "state": "observed",
+      "value": "2.1.296",
+      "source": "/home/parker/.claude/sessions/2716326.json",
+      "at_ms": 1792530327135
+    },
+    "inference_runtime": {
+      "state": "unknown",
+      "reason": "Claude exposes no separate local inference runtime identity"
+    },
+    "model": {
+      "requested": {
+        "state": "unknown",
+        "reason": "No requested model in the bounded transcript observation"
+      },
+      "reported": {
+        "state": "observed",
+        "value": "claude-opus-5-5",
+        "source": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl; assistant 8c6274b7-7f2b-4cb0-b529-d5775585e577",
+        "at_ms": 1792530327139
+      },
+      "provider_revision": {
+        "state": "unknown",
+        "reason": "Provider revision is not exposed by the local harness"
+      },
+      "effort": {
+        "state": "unknown",
+        "reason": "Effort has not been reported in the bounded transcript observation"
+      }
+    },
+    "binding_evidence": "/home/parker/.claude/sessions/2716326.json",
+    "attribution": {
+      "state": "observed",
+      "value": {
+        "kind": "cooperative_local_pane_declaration",
+        "session": "1",
+        "window": 557116,
+        "binding": "paneident::Bond::Declared"
+      },
+      "source": "TD MCP snapshot; origin declaration is not authentication",
+      "at_ms": 1792530327135
+    },
+    "transcript": {
+      "state": "observed",
+      "value": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl",
+      "source": "paneident::Bond::Declared",
+      "at_ms": 1792530327135
+    },
+    "observed_at_ms": 1792530327135
+  },
+  "additional_snapshots": [
+    {
+      "id": "3b098cc0ada7394124d688a4a2ff764199bd8770eade5478441017f2311e125b",
+      "actor": {
+        "run": {
+          "harness": "claude",
+          "conversation": "ed569b73-f45f-4049-b645-e261689f1db2",
+          "process": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2716326,
+            "start_ticks": 59941099
+          },
+          "endpoint": "/run/user/1000/cc-socks/2716326.sock",
+          "endpoint_generation": "81:77928:1792521286:785871871"
+        },
+        "location": {
+          "td_session": "1",
+          "pane": 42,
+          "shell": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2713084,
+            "start_ticks": 59939562
+          }
+        },
+        "executable": {
+          "state": "observed",
+          "value": "/home/parker/.local/share/mise/installs/claude/2.1.296/claude",
+          "source": "/proc/2716326/exe",
+          "at_ms": 1792530327329
+        },
+        "version": {
+          "state": "observed",
+          "value": "2.1.296",
+          "source": "/home/parker/.claude/sessions/2716326.json",
+          "at_ms": 1792530327329
+        },
+        "inference_runtime": {
+          "state": "unknown",
+          "reason": "Claude exposes no separate local inference runtime identity"
+        },
+        "model": {
+          "requested": {
+            "state": "unknown",
+            "reason": "No requested model in the bounded transcript observation"
+          },
+          "reported": {
+            "state": "observed",
+            "value": "claude-opus-5-5",
+            "source": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl; assistant 8c6274b7-7f2b-4cb0-b529-d5775585e577",
+            "at_ms": 1792530327331
+          },
+          "provider_revision": {
+            "state": "unknown",
+            "reason": "Provider revision is not exposed by the local harness"
+          },
+          "effort": {
+            "state": "unknown",
+            "reason": "Effort has not been reported in the bounded transcript observation"
+          }
+        },
+        "binding_evidence": "/home/parker/.claude/sessions/2716326.json",
+        "attribution": {
+          "state": "observed",
+          "value": {
+            "kind": "cooperative_local_pane_declaration",
+            "session": "1",
+            "window": 557116,
+            "binding": "paneident::Bond::Declared"
+          },
+          "source": "TD MCP snapshot; origin declaration is not authentication",
+          "at_ms": 1792530327329
+        },
+        "transcript": {
+          "state": "observed",
+          "value": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl",
+          "source": "paneident::Bond::Declared",
+          "at_ms": 1792530327329
+        },
+        "observed_at_ms": 1792530327329
+      }
+    },
+    {
+      "id": "4b3479234cbf3fece9d9bb4339870d3e5c44664f54b252c28a24d5d7bf756abd",
+      "actor": {
+        "run": {
+          "harness": "claude",
+          "conversation": "ed569b73-f45f-4049-b645-e261689f1db2",
+          "process": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2716326,
+            "start_ticks": 59941099
+          },
+          "endpoint": "/run/user/1000/cc-socks/2716326.sock",
+          "endpoint_generation": "81:77928:1792521286:785871871"
+        },
+        "location": {
+          "td_session": "1",
+          "pane": 42,
+          "shell": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2713084,
+            "start_ticks": 59939562
+          }
+        },
+        "executable": {
+          "state": "observed",
+          "value": "/home/parker/.local/share/mise/installs/claude/2.1.296/claude",
+          "source": "/proc/2716326/exe",
+          "at_ms": 1792530363810
+        },
+        "version": {
+          "state": "observed",
+          "value": "2.1.296",
+          "source": "/home/parker/.claude/sessions/2716326.json",
+          "at_ms": 1792530363810
+        },
+        "inference_runtime": {
+          "state": "unknown",
+          "reason": "Claude exposes no separate local inference runtime identity"
+        },
+        "model": {
+          "requested": {
+            "state": "unknown",
+            "reason": "No requested model in the bounded transcript observation"
+          },
+          "reported": {
+            "state": "observed",
+            "value": "claude-opus-5-5",
+            "source": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl; assistant 83bbe404-519a-40f7-8682-04431a929122",
+            "at_ms": 1792530363814
+          },
+          "provider_revision": {
+            "state": "unknown",
+            "reason": "Provider revision is not exposed by the local harness"
+          },
+          "effort": {
+            "state": "unknown",
+            "reason": "Effort has not been reported in the bounded transcript observation"
+          }
+        },
+        "binding_evidence": "/home/parker/.claude/sessions/2716326.json",
+        "attribution": {
+          "state": "observed",
+          "value": {
+            "kind": "cooperative_local_pane_declaration",
+            "session": "1",
+            "window": 557116,
+            "binding": "paneident::Bond::Declared"
+          },
+          "source": "TD MCP snapshot; origin declaration is not authentication",
+          "at_ms": 1792530363810
+        },
+        "transcript": {
+          "state": "observed",
+          "value": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl",
+          "source": "paneident::Bond::Declared",
+          "at_ms": 1792530363810
+        },
+        "observed_at_ms": 1792530363810
+      }
+    },
+    {
+      "id": "709af8aaf49f67d6c0dbd8fd2e7e4af7cf513358102351057f3812bd4bb33556",
+      "actor": {
+        "run": {
+          "harness": "claude",
+          "conversation": "ed569b73-f45f-4049-b645-e261689f1db2",
+          "process": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2716326,
+            "start_ticks": 59941099
+          },
+          "endpoint": "/run/user/1000/cc-socks/2716326.sock",
+          "endpoint_generation": "81:77928:1792521286:785871871"
+        },
+        "location": {
+          "td_session": "1",
+          "pane": 42,
+          "shell": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2713084,
+            "start_ticks": 59939562
+          }
+        },
+        "executable": {
+          "state": "observed",
+          "value": "/home/parker/.local/share/mise/installs/claude/2.1.296/claude",
+          "source": "/proc/2716326/exe",
+          "at_ms": 1792530333350
+        },
+        "version": {
+          "state": "observed",
+          "value": "2.1.296",
+          "source": "/home/parker/.claude/sessions/2716326.json",
+          "at_ms": 1792530333350
+        },
+        "inference_runtime": {
+          "state": "unknown",
+          "reason": "Claude exposes no separate local inference runtime identity"
+        },
+        "model": {
+          "requested": {
+            "state": "unknown",
+            "reason": "No requested model in the bounded transcript observation"
+          },
+          "reported": {
+            "state": "observed",
+            "value": "claude-opus-5-5",
+            "source": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl; assistant 8c6274b7-7f2b-4cb0-b529-d5775585e577",
+            "at_ms": 1792530333353
+          },
+          "provider_revision": {
+            "state": "unknown",
+            "reason": "Provider revision is not exposed by the local harness"
+          },
+          "effort": {
+            "state": "unknown",
+            "reason": "Effort has not been reported in the bounded transcript observation"
+          }
+        },
+        "binding_evidence": "/home/parker/.claude/sessions/2716326.json",
+        "attribution": {
+          "state": "observed",
+          "value": {
+            "kind": "cooperative_local_pane_declaration",
+            "session": "1",
+            "window": 557116,
+            "binding": "paneident::Bond::Declared"
+          },
+          "source": "TD MCP snapshot; origin declaration is not authentication",
+          "at_ms": 1792530333350
+        },
+        "transcript": {
+          "state": "observed",
+          "value": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl",
+          "source": "paneident::Bond::Declared",
+          "at_ms": 1792530333350
+        },
+        "observed_at_ms": 1792530333350
+      }
+    },
+    {
+      "id": "7914d2221839cb285809653b79d38a73a4632ab8ceb2df49e09d69c24f37d034",
+      "actor": {
+        "run": {
+          "harness": "codex",
+          "conversation": "01a15a96-d75b-70f0-85cd-a5000afe45d2",
+          "process": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2696547,
+            "start_ticks": 59932113
+          },
+          "endpoint": "/tmp/codex-daemon-1000/b3758b151dc3c3a878b05ccc2b83e8e8b4e8307804e4e8170b7639a85882f98e",
+          "endpoint_generation": "56:3805484:1792480721:531359949"
+        },
+        "location": {
+          "td_session": "1",
+          "pane": 41,
+          "shell": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2681687,
+            "start_ticks": 59922703
+          }
+        },
+        "executable": {
+          "state": "observed",
+          "value": "/home/parker/.local/share/mise/installs/codex/0.162.1/bin/codex",
+          "source": "/proc/2696547/exe",
+          "at_ms": 1792530441034
+        },
+        "version": {
+          "state": "unknown",
+          "reason": "Running TUI version has not been measured; conversation creation version is not the current process version"
+        },
+        "inference_runtime": {
+          "state": "unknown",
+          "reason": "Connect-only probe supplies separate daemon identity per attempt"
+        },
+        "model": {
+          "requested": {
+            "state": "unknown",
+            "reason": "No requested model in the bounded transcript observation"
+          },
+          "reported": {
+            "state": "unknown",
+            "reason": "No model response identifier in the bounded transcript observation"
+          },
+          "provider_revision": {
+            "state": "unknown",
+            "reason": "Provider revision is not exposed by the local harness"
+          },
+          "effort": {
+            "state": "unknown",
+            "reason": "Effort has not been reported in the bounded transcript observation"
+          }
+        },
+        "binding_evidence": "Explicit live process/conversation binding supplied by TD",
+        "attribution": {
+          "state": "observed",
+          "value": {
+            "kind": "cooperative_local_pane_declaration",
+            "session": "1",
+            "window": 557116,
+            "binding": "paneident::Bond::Declared"
+          },
+          "source": "TD MCP snapshot; origin declaration is not authentication",
+          "at_ms": 1792530441034
+        },
+        "transcript": {
+          "state": "observed",
+          "value": "/home/parker/.codex/sessions/2026/10/20/rollout-2026-10-20T11-33-17-01a15a96-d75b-70f0-85cd-a5000afe45d2.jsonl",
+          "source": "paneident::Bond::Declared",
+          "at_ms": 1792530441034
+        },
+        "observed_at_ms": 1792530441034
+      }
+    },
+    {
+      "id": "b213b134cd3982d08bd02cfaab8766515bf5eeb708a660ea97aa56a1b9ce34ff",
+      "actor": {
+        "run": {
+          "harness": "claude",
+          "conversation": "ed569b73-f45f-4049-b645-e261689f1db2",
+          "process": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2716326,
+            "start_ticks": 59941099
+          },
+          "endpoint": "/run/user/1000/cc-socks/2716326.sock",
+          "endpoint_generation": "81:77928:1792521286:785871871"
+        },
+        "location": {
+          "td_session": "1",
+          "pane": 42,
+          "shell": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2713084,
+            "start_ticks": 59939562
+          }
+        },
+        "executable": {
+          "state": "observed",
+          "value": "/home/parker/.local/share/mise/installs/claude/2.1.296/claude",
+          "source": "/proc/2716326/exe",
+          "at_ms": 1792530327135
+        },
+        "version": {
+          "state": "observed",
+          "value": "2.1.296",
+          "source": "/home/parker/.claude/sessions/2716326.json",
+          "at_ms": 1792530327135
+        },
+        "inference_runtime": {
+          "state": "unknown",
+          "reason": "Claude exposes no separate local inference runtime identity"
+        },
+        "model": {
+          "requested": {
+            "state": "unknown",
+            "reason": "No requested model in the bounded transcript observation"
+          },
+          "reported": {
+            "state": "observed",
+            "value": "claude-opus-5-5",
+            "source": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl; assistant 8c6274b7-7f2b-4cb0-b529-d5775585e577",
+            "at_ms": 1792530327139
+          },
+          "provider_revision": {
+            "state": "unknown",
+            "reason": "Provider revision is not exposed by the local harness"
+          },
+          "effort": {
+            "state": "unknown",
+            "reason": "Effort has not been reported in the bounded transcript observation"
+          }
+        },
+        "binding_evidence": "/home/parker/.claude/sessions/2716326.json",
+        "attribution": {
+          "state": "observed",
+          "value": {
+            "kind": "cooperative_local_pane_declaration",
+            "session": "1",
+            "window": 557116,
+            "binding": "paneident::Bond::Declared"
+          },
+          "source": "TD MCP snapshot; origin declaration is not authentication",
+          "at_ms": 1792530327135
+        },
+        "transcript": {
+          "state": "observed",
+          "value": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl",
+          "source": "paneident::Bond::Declared",
+          "at_ms": 1792530327135
+        },
+        "observed_at_ms": 1792530327135
+      }
+    }
+  ],
+  "receipt": {
+    "database_id": "01a15b1f-e51e-7123-94f5-af569db757b9",
+    "request": "01a15b22-2671-7580-976a-df9e33e97909",
+    "confirmed_by_td": 1,
+    "native_delivery": "native_accepted",
+    "recipient_ack": {
+      "state": "observed",
+      "value": 7,
+      "source": "recipient-declared disposition; verification remains separate",
+      "at_ms": 1792530363829
+    },
+    "work_reports": [
+      6
+    ],
+    "resolution_reports": [
+      8
+    ],
+    "attempts": [
+      2
+    ],
+    "events": [
+      {
+        "sequence": 1,
+        "request": "01a15b22-2671-7580-976a-df9e33e97909",
+        "at_ms": 1792530327154,
+        "source_time": {
+          "state": "unknown",
+          "reason": "No source timestamp was supplied"
+        },
+        "kind": "accepted",
+        "data": {
+          "sender": "98f6ebf67a83795ddcd027bed5f343b2225883165cbeca47ad47f2f6b3f9a2a6",
+          "recipient": "b213b134cd3982d08bd02cfaab8766515bf5eeb708a660ea97aa56a1b9ce34ff",
+          "root_request": "01a15b22-2671-7580-976a-df9e33e97909",
+          "parent_request": null,
+          "caller_attribution": {
+            "state": "observed",
+            "value": {
+              "kind": "cooperative_local_pane_declaration",
+              "session": "1",
+              "window": 557116,
+              "binding": "paneident::Bond::Declared"
+            },
+            "source": "TD MCP snapshot; origin declaration is not authentication",
+            "at_ms": 1792530327149
+          },
+          "trust": "cooperative local sender attribution; not authentication"
+        }
+      },
+      {
+        "sequence": 2,
+        "request": "01a15b22-2671-7580-976a-df9e33e97909",
+        "at_ms": 1792530327347,
+        "source_time": {
+          "state": "unknown",
+          "reason": "No source timestamp was supplied"
+        },
+        "kind": "dispatch_intent",
+        "data": {
+          "attempt": 1,
+          "attempt_id": "01a15b22-2733-7a73-a572-ab5d9df158c6",
+          "native_request_id": {
+            "state": "observed",
+            "value": "01a15b22-2671-7580-976a-df9e33e97909",
+            "source": "outbound native correlation ID; receipt not established",
+            "at_ms": 1792530327347
+          },
+          "recipient": "3b098cc0ada7394124d688a4a2ff764199bd8770eade5478441017f2311e125b",
+          "adapter": {
+            "revision": "td-management-1",
+            "protocol": "claude",
+            "harness_version": {
+              "state": "observed",
+              "value": "2.1.296",
+              "source": "/home/parker/.claude/sessions/2716326.json",
+              "at_ms": 1792530327329
+            },
+            "inference_runtime": {
+              "state": "unknown",
+              "reason": "Claude exposes no separate local inference runtime identity"
+            },
+            "td_build": "td-experiment-b81f87d13cf6-agent-management"
+          }
+        }
+      },
+      {
+        "sequence": 3,
+        "request": "01a15b22-2671-7580-976a-df9e33e97909",
+        "at_ms": 1792530332363,
+        "source_time": {
+          "state": "unknown",
+          "reason": "No source timestamp was supplied"
+        },
+        "kind": "delivery_unconfirmed",
+        "data": {
+          "reason": "No correlated native receipt within five seconds; no automatic resend",
+          "diagnostics": []
+        }
+      },
+      {
+        "sequence": 4,
+        "request": "01a15b22-2671-7580-976a-df9e33e97909",
+        "at_ms": 1792530333372,
+        "source_time": {
+          "state": "observed",
+          "value": "2026-10-20T21:05:27.483Z",
+          "source": "native source timestamp",
+          "at_ms": 1792530333372
+        },
+        "kind": "native_accepted",
+        "data": {
+          "scope": "reconciled input consumption",
+          "evidence": {
+            "source": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl",
+            "native_message_id": "01a15b22-2671-7580-976a-df9e33e97909",
+            "session_id": "ed569b73-f45f-4049-b645-e261689f1db2",
+            "source_time": "2026-10-20T21:05:27.483Z",
+            "observed_at_ms": 1792530333371,
+            "scope": "exact user-message UUID in recipient transcript"
+          }
+        }
+      },
+      {
+        "sequence": 5,
+        "request": "01a15b22-2671-7580-976a-df9e33e97909",
+        "at_ms": 1792530333372,
+        "source_time": {
+          "state": "observed",
+          "value": "2026-10-20T21:05:27.483Z",
+          "source": "native source timestamp",
+          "at_ms": 1792530333372
+        },
+        "kind": "recipient_acknowledged",
+        "data": {
+          "actor": "709af8aaf49f67d6c0dbd8fd2e7e4af7cf513358102351057f3812bd4bb33556",
+          "scope": "input consumed; responsibility and result remain separate",
+          "evidence": {
+            "source": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl",
+            "native_message_id": "01a15b22-2671-7580-976a-df9e33e97909",
+            "session_id": "ed569b73-f45f-4049-b645-e261689f1db2",
+            "source_time": "2026-10-20T21:05:27.483Z",
+            "observed_at_ms": 1792530333371,
+            "scope": "exact user-message UUID in recipient transcript"
+          }
+        }
+      },
+      {
+        "sequence": 6,
+        "request": "01a15b22-2671-7580-976a-df9e33e97909",
+        "at_ms": 1792530363829,
+        "source_time": {
+          "state": "unknown",
+          "reason": "No source timestamp was supplied"
+        },
+        "kind": "work_reported",
+        "data": {
+          "actor": "4b3479234cbf3fece9d9bb4339870d3e5c44664f54b252c28a24d5d7bf756abd",
+          "report": {
+            "request": "01a15b22-2671-7580-976a-df9e33e97909",
+            "reply_key": "01a15b22-2575-740a-8f97-febf63575918",
+            "expected_run": {
+              "harness": "claude",
+              "conversation": "ed569b73-f45f-4049-b645-e261689f1db2",
+              "process": {
+                "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+                "pid": 2716326,
+                "start_ticks": 59941099
+              },
+              "endpoint": "/run/user/1000/cc-socks/2716326.sock",
+              "endpoint_generation": "81:77928:1792521286:785871871"
+            },
+            "kind": "result",
+            "text": "Created the file with one short Lorem ipsum paragraph, no heading.",
+            "evidence": [
+              "/home/parker/Work/terminal-delight/reports/agent-management-mcp-ipsum.md"
+            ]
+          }
+        }
+      },
+      {
+        "sequence": 7,
+        "request": "01a15b22-2671-7580-976a-df9e33e97909",
+        "at_ms": 1792530363829,
+        "source_time": {
+          "state": "unknown",
+          "reason": "No source timestamp was supplied"
+        },
+        "kind": "recipient_acknowledged",
+        "data": {
+          "actor": "4b3479234cbf3fece9d9bb4339870d3e5c44664f54b252c28a24d5d7bf756abd",
+          "scope": "recipient-declared disposition; verification remains separate",
+          "report_event": 6
+        }
+      },
+      {
+        "sequence": 8,
+        "request": "01a15b22-2671-7580-976a-df9e33e97909",
+        "at_ms": 1792530441039,
+        "source_time": {
+          "state": "unknown",
+          "reason": "No source timestamp was supplied"
+        },
+        "kind": "resolution_reported",
+        "data": {
+          "actor": "7914d2221839cb285809653b79d38a73a4632ab8ceb2df49e09d69c24f37d034",
+          "report": {
+            "request": "01a15b22-2671-7580-976a-df9e33e97909",
+            "reply_key": "01a15b23-e25c-7418-a339-01a853369a60",
+            "expected_run": {
+              "harness": "codex",
+              "conversation": "01a15a96-d75b-70f0-85cd-a5000afe45d2",
+              "process": {
+                "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+                "pid": 2696547,
+                "start_ticks": 59932113
+              },
+              "endpoint": "/tmp/codex-daemon-1000/b3758b151dc3c3a878b05ccc2b83e8e8b4e8307804e4e8170b7639a85882f98e",
+              "endpoint_generation": "56:3805484:1792480721:531359949"
+            },
+            "kind": "verified",
+            "text": "Read the 227-byte UTF-8 file: exactly one nonempty paragraph, no heading. SHA-256 0c278d993b11d3881763a46ced2b7e70cc19ca0b52f00b6b2fe85fd83195b3a5.",
+            "evidence": [
+              "/home/parker/Work/terminal-delight/reports/agent-management-mcp-ipsum.md"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "untrusted_terminal_data": [
+    "targets",
+    "sender",
+    "recipient",
+    "envelope.text",
+    "events[].data",
+    "receipt.events[].data"
+  ],
+  "instance": {
+    "session": "1",
+    "window": 557116,
+    "build": "td-experiment-b81f87d13cf6-agent-management"
+  }
+}

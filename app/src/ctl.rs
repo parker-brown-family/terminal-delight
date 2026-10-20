@@ -340,6 +340,8 @@ enum Cmd {
     /// A whole JSON-RPC line for the MCP handler, verbatim, plus who is asking
     /// when they were able to work it out.
     McpRpc(Option<Caller>, String),
+    /// Receiver identity and asserted origin are separate; never forge `Caller`.
+    Management(Box<crate::management_mcp::Forward>),
     /// Which session this window holds, and its own pid. The verb that lets a
     /// caller find the right window by asking every live one, rather than by
     /// trusting a file or an environment variable to still be true.
@@ -556,6 +558,14 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
     // is taken verbatim and parsed as JSON rather than split into words.
     if let Some(rest) = s.strip_prefix("tabs ") {
         return parse_tabs(rest.trim()).map(Cmd::Tabs);
+    }
+    if let Some(rest) = s.strip_prefix("mcp management ") {
+        if rest.len() > 128 * 1024 {
+            return Err("Management forwarding envelope exceeds 128 KiB".into());
+        }
+        let frame = serde_json::from_str::<crate::management_mcp::Forward>(rest)
+            .map_err(|e| format!("Invalid management forwarding envelope: {e}"))?;
+        return Ok(Cmd::Management(Box::new(frame)));
     }
     // `mcp from <session> <pane|-> rpc <json>` — the same payload with the
     // caller named. Parsed before the bare form so the longer prefix wins, and
@@ -781,6 +791,23 @@ fn handle_conn(
         return;
     }
     let reply = match parse_line(line.trim()) {
+        Ok(Cmd::Management(frame)) => {
+            let peer = td_agent_management::adapters::peer(&stream);
+            let _ = thread::Builder::new()
+                .name("td-ctl-management".into())
+                .spawn(move || {
+                    let answer =
+                        peer.and_then(|peer| crate::management_mcp::receive_forward(*frame, peer));
+                    let value = match answer {
+                        Ok(v) => v,
+                        Err(e) => serde_json::json!({"error":e}),
+                    };
+                    let mut stream = stream;
+                    let _ = stream.set_write_timeout(Some(Duration::from_secs(8)));
+                    let _ = writeln!(stream, "{value}");
+                });
+            return;
+        }
         // `mcp rpc` is the one verb that waits on the gpui main thread (up to
         // the transport's snapshot budget). Serving it inline would stall the
         // single accept loop for seconds, so hand the connection to its own
