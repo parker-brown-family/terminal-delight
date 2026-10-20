@@ -191,11 +191,8 @@ diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_r
 diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
 --- a/crates/gpui_wgpu/src/gpui_wgpu.rs
 +++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
-@@ -10,6 +10,7 @@
- pub use wgpu_renderer::set_crt_warp;
- pub use wgpu_renderer::set_crt_rects;
- pub use wgpu_renderer::set_crt_rects_tubes;
-+pub use wgpu_renderer::set_crt_rects_tubes_bezel;
- pub use wgpu_renderer::set_crt_rects_with_glare;
+@@ -14,2 +14,4 @@
  pub use wgpu_renderer::set_focus_blur;
  pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
++// td-glass-rim: last, so the patch anchors on lines every checkout agrees on
++pub use wgpu_renderer::set_crt_rects_tubes_bezel;
