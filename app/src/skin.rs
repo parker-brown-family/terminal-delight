@@ -2731,6 +2731,7 @@ pub(crate) fn snapshot(cx: &App) -> String {
         serde_json::from_str(&sk.to_json(&choice.id)).expect("resolved skin");
     value["active_skin"] = serde_json::json!(active_id(cx));
     value["scope"] = serde_json::json!("outer");
+    value["palette"] = serde_json::json!(choice.palette);
     value["custom_path"] = serde_json::json!(skin_path());
     value.to_string()
 }
@@ -2870,7 +2871,7 @@ fn source_of(arg: &str, builtin: impl Fn(&str) -> Option<&'static str>) -> Resul
 }
 
 const SKIN_USAGE: &str = "usage: terminal-delight skin [--list] [--skin <id|path>] \
-     [--theme <id|path>] [--scale <n>] [--text-size <n>]\n\
+     [--theme <id|path>] [--palette <id|path>] [--scale <n>] [--text-size <n>]\n\
 \n\
   --list        the skins this build carries, and every way one gets chosen\n\
   --catalogue   versioned native surface inventory, as JSON\n\
@@ -2988,6 +2989,7 @@ pub fn run_cli(args: &[String]) -> i32 {
     let mut strict = false;
     let mut skin_arg = "default".to_string();
     let mut theme_arg = "hacker".to_string();
+    let mut palette_arg = None;
     let mut scale = 1.0f32;
     // Neutral, not zero: an unspecified gauge means "the ramp as authored",
     // and a bench resolved at 0pt would print a table of zeroes that looks
@@ -3004,6 +3006,10 @@ pub fn run_cli(args: &[String]) -> i32 {
             "--theme" => match it.next() {
                 Some(v) => theme_arg = v.clone(),
                 None => return usage_err("--theme wants a value"),
+            },
+            "--palette" => match it.next() {
+                Some(v) => palette_arg = Some(v.clone()),
+                None => return usage_err("--palette wants a bundled id or TD palette path"),
             },
             "--scale" => match it.next().and_then(|v| v.parse().ok()) {
                 Some(v) => scale = v,
@@ -3029,13 +3035,25 @@ pub fn run_cli(args: &[String]) -> i32 {
     if !scale.is_finite() || scale <= 0. || !text_size.is_finite() || text_size <= 0. {
         return usage_err("scale and text-size must be finite and positive");
     }
-    let th = match source_of(&theme_arg, theme::builtin_toml).and_then(|s| theme::parse(&s)) {
+    let mut th = match source_of(&theme_arg, theme::builtin_toml).and_then(|s| theme::parse(&s)) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("terminal-delight skin: theme {e}");
             return 1;
         }
     };
+    if let Some(arg) = &palette_arg {
+        let source = crate::palette::bundled_toml(arg)
+            .map(Ok)
+            .unwrap_or_else(|| fs::read_to_string(arg).map_err(|e| e.to_string()));
+        th = match source.and_then(|s| theme::overlay_palette(&th, &s)) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("terminal-delight skin: palette {arg}: {e}");
+                return 1;
+            }
+        };
+    }
     let spec = match source_of(&skin_arg, builtin_toml).and_then(|s| parse(&s)) {
         Ok(s) => s,
         Err(e) => {
@@ -3053,7 +3071,13 @@ pub fn run_cli(args: &[String]) -> i32 {
     }
 
     let sk = spec.bake(&th, scale).with_type(text_size);
-    println!("{}", sk.to_json(&theme_arg));
+    let mut output: serde_json::Value =
+        serde_json::from_str(&sk.to_json(&theme_arg)).expect("resolved skin");
+    output["palette"] = serde_json::json!(palette_arg);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&output).expect("resolved skin")
+    );
     0
 }
 

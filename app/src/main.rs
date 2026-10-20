@@ -16228,53 +16228,57 @@ impl Workspace {
             return None;
         }
         let ui = self.lang.strings().ui;
+        let sk = skin::skin(cx, th.grade.scale);
         let prepared = self.bug_prepared();
         let agent = diag::chosen_agent();
 
         let row = |glyph: &str, name: String, blurb: String, live: bool, id: &'static str| {
-            div()
-                .id(SharedString::from(id))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_3()
-                .px_2()
-                .py_2()
-                .rounded_sm()
-                .border_1()
-                .border_color(if live {
-                    th.accent.alpha(0.55)
-                } else {
-                    th.text.alpha(0.12)
-                })
-                .when(live, |d| {
-                    d.cursor_pointer().hover(|s| s.bg(th.accent.alpha(0.15)))
-                })
-                .child(
-                    div()
-                        .text_size(px(15.))
-                        .child(SharedString::from(glyph.to_string())),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_0p5()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .child(
-                            div()
-                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                .text_color(if live { th.text } else { th.text.alpha(0.45) })
-                                .child(SharedString::from(name)),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(8.5))
-                                .text_color(th.text.alpha(if live { 0.6 } else { 0.35 }))
-                                .child(SharedString::from(blurb)),
-                        ),
-                )
+            sk.action(
+                div()
+                    .id(SharedString::from(id))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_3()
+                    .px_2()
+                    .py_2()
+                    .rounded(sk.radius())
+                    .border_1()
+                    .border_color(if live {
+                        th.accent.alpha(0.55)
+                    } else {
+                        th.text.alpha(0.12)
+                    })
+                    .when(live, |d| {
+                        d.cursor_pointer().hover(|s| s.bg(th.accent.alpha(0.15)))
+                    })
+                    .child(
+                        div()
+                            .text_size(sk.text_px(15.))
+                            .child(SharedString::from(glyph.to_string())),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                    .text_color(if live { th.text } else { th.text.alpha(0.45) })
+                                    .child(SharedString::from(name)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(sk.text_px(8.5))
+                                    .text_color(th.text.alpha(if live { 0.6 } else { 0.35 }))
+                                    .child(SharedString::from(blurb)),
+                            ),
+                    ),
+                false,
+            )
         };
 
         let agent_name = agent.unwrap_or("claude");
@@ -16292,7 +16296,7 @@ impl Workspace {
             .overflow_x_hidden()
             .overflow_y_scroll()
             .p_3()
-            .rounded_md()
+            .rounded(sk.radius())
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
@@ -16300,7 +16304,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
-            .text_size(px(10.))
+            .text_size(sk.text_px(10.))
             .text_color(th.text)
             .on_mouse_down(
                 MouseButton::Left,
@@ -16312,10 +16316,10 @@ impl Workspace {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .text_size(px(13.))
+                    .text_size(sk.text_px(13.))
                     // The panel's mark is a lock, not the bug again: what it
                     // promises first is what it will not take.
-                    .child(div().text_size(px(18.)).child("\u{1f512}"))
+                    .child(div().text_size(sk.text_px(18.)).child("\u{1f512}"))
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -16325,7 +16329,7 @@ impl Workspace {
             )
             .child(
                 div()
-                    .text_size(px(8.5))
+                    .text_size(sk.text_px(8.5))
                     .text_color(th.accent.alpha(0.85))
                     .child(ui.bug_blurb),
             )
@@ -16334,7 +16338,7 @@ impl Workspace {
                 |d| {
                     d.child(
                         div()
-                            .text_size(px(8.5))
+                            .text_size(sk.text_px(8.5))
                             .text_color(gpui::hsla(0.07, 0.9, 0.6, 1.0))
                             .child(ui.bug_crashed),
                     )
@@ -16364,7 +16368,7 @@ impl Workspace {
                 };
                 d.child(
                     div()
-                        .text_size(px(8.))
+                        .text_size(sk.text_px(8.))
                         .text_color(th.text.alpha(0.55))
                         .child(SharedString::from(format!("{label} {detail}"))),
                 )
@@ -16422,7 +16426,7 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(sk.finish(panel)),
         )
     }
 
@@ -27228,6 +27232,7 @@ impl Render for Workspace {
                     "lookup" => self.open_lookup(window, cx),
                     "plugins" => self.plugins_menu = true,
                     "notifications" => self.notif_menu = true,
+                    "bug" => self.bug_menu = true,
                     "language" => {
                         self.lang_picker = Some(LangPicker {
                             query: EditBuffer::seeded(""),

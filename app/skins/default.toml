@@ -36,7 +36,7 @@ icon = "▢"
 # palettes times two skins is ten working looks rather than ten files.
 #
 #   from    a palette role: bg surface text accent complement human faint cursor
-#           white black ansi0..ansi15
+#           light (the lighter of bg/text) white black ansi0..ansi15
 #   l       multiply lightness   (darken(c, 0.3)  is  l = 0.3)
 #   s       multiply saturation
 #   a       SET alpha            (c.alpha(0.45)   is  a = 0.45)

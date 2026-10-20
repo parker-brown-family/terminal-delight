@@ -167,6 +167,13 @@
         "TD_USAGE_DEMO": "choices"
       },
       "action": null
+    },
+    {
+      "id": "bug",
+      "environment": {
+        "TD_SKIN_SCENE": "bug"
+      },
+      "action": null
     }
   ],
   "surfaces": [
@@ -1321,6 +1328,24 @@
       },
       "policy": "UI family is independent of the terminal grid font; event routing remains pane-local.",
       "fixture": null
+    },
+    {
+      "id": "bug-report",
+      "name": "Bug report panel and actions",
+      "scope": "workspace",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "render_bug_overlay"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Skin frame, action stock and optical UI type; enabled/disabled diagnostics and report state retain their meaning. Opening the fixture never prepares or sends a report.",
+      "fixture": "bug"
     }
   ]
 }

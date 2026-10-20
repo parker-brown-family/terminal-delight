@@ -56,12 +56,13 @@ def main():
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--scene", default="workspace", help="fixture id from this binary's skin --catalogue export")
     parser.add_argument("--theme", default="hacker")
-    parser.add_argument("--palette")
+    parser.add_argument("--palette", help="bundled palette id; overrides the design's default colours")
     parser.add_argument("--size", default="1200x800")
     parser.add_argument("--ui-scale", type=float, default=1.)
     parser.add_argument("--text-scale", type=float, default=1.)
     parser.add_argument("--warp", type=float, default=0.)
     parser.add_argument("--lang", default="en")
+    parser.add_argument("--grade-json", type=Path, help="partial MCP grade in 0..100 percent units, applied only to the private preview")
     parser.add_argument("--visible", action="store_true")
     parser.add_argument("--capture", help='JSON argv array; {pid}, {window} and {output} are replaced, never shell-evaluated')
     parser.add_argument("--hold", action="store_true", help="keep the private window until Enter, for manual inspection")
@@ -69,11 +70,16 @@ def main():
     parser.add_argument("--idle-seconds", type=float, default=0., help="sample this private process's idle CPU and resident memory after capture")
     args = parser.parse_args()
     binary, skin, out = args.binary.resolve(), args.skin.resolve(), args.out.resolve()
+    if args.palette and ("/" in args.palette or "\\" in args.palette):
+        parser.error("native --palette takes a bundled id; the headless resolver also accepts TD palette files")
     width, height = map(int, args.size.split("x"))
     if not (300 <= width <= 4000 and 250 <= height <= 3000):
         parser.error("size must fit a native review window")
     # Validation happens before a window is launched or an output is created.
-    resolved = json.loads(run([str(binary), "skin", "--check", "--skin", str(skin), "--theme", args.theme, "--scale", str(args.ui_scale), "--text-size", str(args.text_scale)]))
+    resolve_args = [str(binary), "skin", "--check", "--skin", str(skin), "--theme", args.theme, "--scale", str(args.ui_scale), "--text-size", str(args.text_scale)]
+    if args.palette:
+        resolve_args += ["--palette", args.palette]
+    resolved = json.loads(run(resolve_args))
     catalogue = json.loads(run([str(binary), "skin", "--catalogue"]))
     fixtures = {fixture["id"]: fixture for fixture in catalogue["fixtures"]}
     if args.scene not in fixtures:
@@ -177,6 +183,11 @@ def main():
         panes = rpc(pid, "list_panes", {})["structuredContent"]["panes"]
         (out / "panes.json").write_text(json.dumps(panes, indent=2) + "\n")
         target = next(p for p in panes if p["tab"] == 0)
+        if args.grade_json:
+            grade = json.loads(args.grade_json.read_text())
+            receipt["grade_override"] = grade
+            rpc(pid, "set_pane_config", {"updates": [{"target": "outer", "config": grade}]})
+        receipt["pane_config"] = rpc(pid, "get_pane_config", {"targets": [target["pid"], "outer"]})
         rpc(pid, "leave_note", {"pid": target["pid"], "title": "NATIVE FIXTURE", "text": "Reference skin; unknown readings stay unknown.", "pin": False})
         if fixture["action"] == "document":
             document = out / "content.md"
@@ -266,11 +277,15 @@ def main():
             request(pid, "skin custom")
             await_skin(lambda s: s == restored)
             await_saved("custom")
+            if digest(Path(f"/proc/{pid}/exe")) != receipt["binary_sha256"]:
+                raise RuntimeError("private restart did not use the validated binary")
             receipt["reload"] = {"valid_edit": "applied", "invalid_edit": "kept previous valid", "file_restore": "exact bytes and live tokens", "selection_restore": "custom", "saved_selection": "custom", "private_restart_selection": persisted["active_skin"]}
             if not args.visible:
                 if not client["floating"]:
                     run(["hyprctl", "dispatch", f"hl.dsp.window.float({{ window = 'address:{client['address']}' }})"])
                 run(["hyprctl", "dispatch", f"hl.dsp.window.resize({{ x = {width}, y = {height}, window = 'address:{client['address']}' }})"])
+                client = next(c for c in json.loads(run(["hyprctl", "clients", "-j"])) if c["pid"] == pid)
+                receipt["geometry_observed"] = client["size"]
             time.sleep(1)
         capture = out / "native.png"
         if args.capture:
