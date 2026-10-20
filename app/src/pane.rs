@@ -10839,6 +10839,19 @@ impl Render for TerminalView {
         // The sticky note and the crawl are the terminal's alone: not on the
         // bench (Parker's rule, see `note_layout`), and not on a document.
         let on_terminal = face_now == crate::workbench::Face::Terminal;
+        // The glass seated in its bezel (`crt::rim`), for a screen the CRT pass
+        // leaves flat. The pass's own flatness test, mirrored: a tube it bends
+        // or crawls is rounded and shaded in the shader, and must not get both.
+        let rim_strength = if sk.is_paper() {
+            0.0
+        } else {
+            crate::workbench::vignette_on(face_now, th.vignette)
+        };
+        let seat_flat_rim = rim_strength > 0.001 && {
+            let (k1, k2) = self.warp_k;
+            let bent = k1.abs() >= 0.0005 || k2.abs() >= 0.0005 || (th.crawl && on_terminal);
+            !bent || crate::warp::is_suppressed()
+        };
         let pane_h = self
             .content_bounds
             .lock()
@@ -11729,6 +11742,15 @@ impl Render for TerminalView {
                     .children(float_cursor)
                     // Over the square: a link in it can be what prompted it.
                     .children(said_el)
+                    // The glass meets its bezel in rounded, shadowed corners.
+                    // Over everything ON the glass, since the lip's shadow falls
+                    // on whatever is there; under the ignition, which is light.
+                    .when(seat_flat_rim, |el| {
+                        el.child(crt::rim(
+                            rim_strength,
+                            graded(th.bg, &th.grade, Channel::Bg),
+                        ))
+                    })
                     // The tube fires. Last child of the SCREEN, so it paints
                     // over the grid but stays inside the registered warp tube —
                     // the curvature and scanlines in the effect are the shader

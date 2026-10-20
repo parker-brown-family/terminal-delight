@@ -29,7 +29,13 @@
 #                             batch of paths a frame draws, rasterised at a
 #                             whole-pixel offset, instead of the surface: a
 #                             sticky note costs ~2 MiB, not ~96 (#962). Delta
-#                             on 0006; applies last.
+#                             on 0006.
+#   0008-glass-rim          — seats each bent tube's glass in a bezel: rounded
+#                             corners in source space, so the warp bends them
+#                             with everything else, and the lip's soft shadow
+#                             on the glass, deepest where two edges meet. The
+#                             shader alone; the renderer's API is unchanged.
+#                             Delta on 0001-0004's crt_pass.wgsl.
 # Idempotent; safe to re-run.
 set -euo pipefail
 
@@ -44,13 +50,16 @@ patch_glyph="$repo_root/docs/patches/0005-glyph-transform.patch"
 patch_gpl="$repo_root/docs/patches/0002-sever-gpl-crates.patch"
 patch_lazy="$repo_root/docs/patches/0006-lazy-path-targets.patch"
 patch_fit="$repo_root/docs/patches/0007-path-targets-fit-the-paths.patch"
+patch_rim="$repo_root/docs/patches/0008-glass-rim.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit"; do
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
-if [ ! -d "$zed_dir/.git" ]; then
+# `-e`, not `-d`: a checkout made with `git worktree add` has a .git FILE, and
+# taking that for "no checkout" re-initialises it.
+if [ ! -e "$zed_dir/.git" ]; then
     echo "Cloning zed at $zed_rev into $zed_dir ..."
     git init -q "$zed_dir"
     git -C "$zed_dir" remote add origin https://github.com/zed-industries/zed.git
@@ -114,3 +123,8 @@ apply_patch "$patch_lazy" "lazy-path-targets" \
 # sentinel: its marker comment present means the fitted targets are already in.
 apply_patch "$patch_fit" "path-targets-fit-the-paths" \
     'grep -rqF "td-path-targets-fit" crates/gpui_wgpu/src'
+# 0008-glass-rim edits the tube branch of crt_pass.wgsl, which 0001 creates and
+# 0003 rewrites, so it applies after them.
+# sentinel: its marker comment present means the rim is already in.
+apply_patch "$patch_rim" "glass-rim" \
+    'grep -rqF "td-glass-rim" crates/gpui_wgpu/src'

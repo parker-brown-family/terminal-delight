@@ -1,0 +1,57 @@
+diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
+--- a/crates/gpui_wgpu/src/crt_pass.wgsl
++++ b/crates/gpui_wgpu/src/crt_pass.wgsl
+@@ -106,13 +106,38 @@
+             let r2 = dot(c, c);
+             let f = 1.0 + k1 * r2 + k2 * r2 * r2;
+             let l2 = vec2<f32>(0.5, 0.5) + c * f;
+-            let edge_distance = min(min(l2.x, 1.0 - l2.x), min(l2.y, 1.0 - l2.y));
+             let edge_width = max(max(fwidth(l2.x), fwidth(l2.y)) * 1.5, 1.0 / min(r.z, r.w));
+-            let inb = smoothstep(-edge_width, edge_width, edge_distance);
++            // ---- td-glass-rim: the glass sits IN a bezel ----
++            // The visible glass is a rounded rectangle in SOURCE space, so the
++            // warp carries its corners round with everything else and the bend
++            // and the rounding agree. Measured in physical px of the tube:
++            // `sd` is the signed distance to that edge, negative on the glass.
++            let sz = r.zw;
++            let short_side = min(sz.x, sz.y);
++            let corner = clamp(short_side * 0.055, 10.0, 72.0);
++            let qq = abs(l2 * sz - sz * 0.5) - sz * 0.5 + vec2<f32>(corner, corner);
++            let sd = min(max(qq.x, qq.y), 0.0) + length(max(qq, vec2<f32>(0.0))) - corner;
++            let aa = edge_width * short_side;
++            let inb = 1.0 - smoothstep(-aa, aa, sd);
++            // The bezel's lip throws a soft shadow onto the glass: deepest at the
++            // edge, a little heavier under the top lip than above the bottom one,
++            // and doubled where two lips meet, which is what makes a corner read
++            // as a recess rather than as a cut.
++            let lip_w = clamp(short_side * 0.045, 8.0, 48.0);
++            let rim = 1.0 - smoothstep(0.0, lip_w, max(-sd, 0.0));
++            let from_top = mix(1.10, 0.85, clamp(l2.y, 0.0, 1.0));
++            let ax = min(l2.x, 1.0 - l2.x) * sz.x;
++            let ay = min(l2.y, 1.0 - l2.y) * sz.y;
++            let cornerness = (1.0 - smoothstep(0.0, lip_w * 3.0, ax))
++                * (1.0 - smoothstep(0.0, lip_w * 3.0, ay));
++            let shade = 1.0 - clamp(0.85 * rim * sqrt(rim) * from_top + 0.30 * cornerness, 0.0, 0.94);
++            // Just outside the glass, the bezel's own edge catches the room light,
++            // brighter on the lower lip that faces up toward it.
++            let lip_d = (sd - aa * 1.5) / max(aa * 1.2, 1.0);
++            let lip = exp(-lip_d * lip_d) * mix(0.03, 0.09, clamp(l2.y, 0.0, 1.0)) * step(0.0, sd);
+             let g = (r.xy + clamp(l2, vec2<f32>(0.0), vec2<f32>(1.0)) * r.zw) / dims;
+             let col = textureSampleLevel(screen_tex, screen_samp, g, 0.0);
+             let falloff = mix(0.86, 1.0, smoothstep(0.5, 0.12, r2));
+-            let edge_blend = smoothstep(0.0, edge_width * 2.5, edge_distance);
+             let glare_strength = crt.glare[i].x;
+             let glare_offset = (local - vec2<f32>(0.18, 0.10)) / vec2<f32>(0.34, 0.18);
+             let glare_hotspot = exp(-dot(glare_offset, glare_offset) * 2.2);
+@@ -123,9 +148,8 @@
+             let glare_color = vec3<f32>(0.72, 1.0, 0.78);
+             // sub-terminal phosphor runs +35% hotter than the raw sample so the
+             // warped tube doesn't read dim against flat chrome / flat panes.
+-            let tube = mix(vec3<f32>(0.0), col.rgb * falloff * 1.35, edge_blend)
+-                + glare_color * glare_amount;
+-            return vec4<f32>(tube * inb, 1.0);
++            let tube = col.rgb * falloff * 1.35 * shade + glare_color * glare_amount;
++            return vec4<f32>(tube * inb + vec3<f32>(lip), 1.0);
+         }
+     }
+ 
