@@ -20,9 +20,15 @@ plus single runs that crash, hang, or break a named case's expectation.
 Commands:
 
     run.py corpus  --out corpus.json [--cases N] [--seed-base S]
-    run.py run     --out DIR [--shard I/N] [--cases N] [--seed-base S]
+    run.py run     --out DIR [--shard I/N] [--cases N] [--seed-base S] [--no-record]
     run.py control --out DIR
     run.py replay  CASE.json --a rio:whole --b alacritty:whole
+
+Shard 1 also runs real programs (record.py) and replays what they printed,
+read by read, as `rec-1/...` cases; each recording is compared whole against
+its real read boundaries as well as against seeded cuts. Every run writes
+coverage.json and a summary section saying what it could not check
+(unknowns.py, catalogue.json).
 
 Binaries come from TD_LAB_BIN_RIO / TD_LAB_BIN_ALACRITTY if set (CI builds
 them once and hands them to every shard), and are built with cargo
@@ -45,6 +51,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import unknowns  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "app"
@@ -193,10 +202,15 @@ def check_limits(case: dict) -> None:
         raise SetupError(f"{case['name']}: over the operation or byte limit")
 
 
-def select(cases: int, seed_base: int, shard: tuple[int, int]) -> list[dict]:
-    """This shard's cases: the named ones on shard 1, and every Nth seed."""
+RECORDED_PREFIX = "rec-"
+
+
+def select(cases: int, seed_base: int, shard: tuple[int, int],
+           recorded: list[dict] | None = None) -> list[dict]:
+    """This shard's cases: the named and recorded ones on shard 1, and every
+    Nth seed."""
     index, count = shard
-    chosen = named_cases() if index == 1 else []
+    chosen = named_cases() + list(recorded or []) if index == 1 else []
     chosen += [generate(seed_base + i) for i in range(cases) if i % count == index - 1]
     for case in chosen:
         check_limits(case)
@@ -682,6 +696,12 @@ def find_differences(cases: list[dict], cores: list[str]) -> tuple[list[Finding]
             counts["observations"] += sum(len(r.get("observations", [])) for r in results[spec].values())
     if counts["observations"] == 0:
         raise SetupError("no observation was recorded; a lab that measured nothing has not passed")
+    recorded = [case for case in cases if case["name"].startswith(RECORDED_PREFIX)]
+    joined_results: dict[str, dict] = {}
+    if recorded:
+        for core in cores:
+            joined_results[core] = execute(Spec(core, "joined"), recorded)
+            counts["runs"] += len(recorded)
 
     findings: list[Finding] = []
     by_name = {case["name"]: case for case in cases}
@@ -694,13 +714,16 @@ def find_differences(cases: list[dict], cores: list[str]) -> tuple[list[Finding]
                 findings.append(Finding(kind, case, Spec(core), None, f"single:{failure['kind']}",
                                         json.dumps(failure)))
                 continue
-            for s in CHUNK_SEEDS:
-                cut = Spec(core, f"seed:{s}")
-                sig = signature(whole, results[cut][name])
+            # A recording's writes are the reads a real terminal saw; joined
+            # into one, they are the same bytes with no boundary at all.
+            cuts = [Spec(core, "joined")] if name in joined_results.get(core, {}) else []
+            for cut in cuts + [Spec(core, f"seed:{s}") for s in CHUNK_SEEDS]:
+                result = joined_results[core][name] if cut.chunks == "joined" else results[cut][name]
+                sig = signature(whole, result)
                 if sig:
                     findings.append(Finding("chunk", case, Spec(core), cut, sig,
                                             str(first_difference(whole.get("observations", []),
-                                                                 results[cut][name].get("observations", [])))))
+                                                                 result.get("observations", [])))))
                     break
         if len(cores) == 2:
             a, b = Spec(cores[0]), Spec(cores[1])
@@ -746,7 +769,8 @@ def replay_command(finding: Finding, path: Path) -> str:
     return shlex.join(parts)
 
 
-def summarize(out: Path, title: str, counts: dict, findings: list[Finding], extra: list[str]) -> None:
+def summarize(out: Path, title: str, counts: dict, findings: list[Finding], extra: list[str],
+              tail: list[str] | None = None) -> None:
     unclassified = [f for f in findings if not f.classified]
     lines = [f"# {title}", "",
              f"- cases: {counts['cases']}, case runs: {counts['runs']}"
@@ -771,6 +795,8 @@ def summarize(out: Path, title: str, counts: dict, findings: list[Finding], extr
             lines.append(f"| {f.kind} | `{f.case['name']}` | {f.a.label()}{' vs ' + f.b.label() if f.b else ''} "
                          f"| {f.signature} | {len(f.case['ops'])} → {len(m['ops'])} | "
                          f"`failures/{f.fingerprint()}/` |")
+        lines.append("")
+    lines += tail or []
     (out / "summary.md").write_text("\n".join(lines) + "\n")
     (out / "summary.json").write_text(json.dumps({
         "counts": counts,
@@ -787,12 +813,27 @@ def command_run(args) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
-    cases = select(args.cases, args.seed_base, args.shard)
+    phases: dict[str, float] = {}
+    mark = [started]
+
+    def lap(name: str) -> None:
+        now = time.monotonic()
+        phases[name] = now - mark[0]
+        mark[0] = now
+
+    recorded, recordings = [], []
+    if args.shard[0] == 1 and args.record:
+        recorded, recordings = record_programs()
+        (out / "recordings.json").write_text(json.dumps(recordings, indent=1))
+    lap("record")
+    cases = select(args.cases, args.seed_base, args.shard, recorded)
+    cover = unknowns.coverage(sources(cases))
+    (out / "coverage.json").write_text(json.dumps(cover, indent=1))
     findings, counts = find_differences(cases, list(CORES))
-    phases = {"replay": time.monotonic() - started}
+    lap("replay")
     known = known_differences()
     classify_all(findings, known)
-    phases["classify"] = time.monotonic() - started - phases["replay"]
+    lap("classify")
     # Every unexplained finding is minimized, while the budget lasts: that is
     # the reproducer someone will read. A known one keeps its original case.
     used = [0]
@@ -815,16 +856,53 @@ def command_run(args) -> int:
                 finding.notes.append("not minimized: the run's minimizing budget was spent")
         if not finding.classified and not write_finding(finding, out / "failures", used):
             unwritten += 1
-    phases["minimize"] = time.monotonic() - started - phases["replay"] - phases["classify"]
+    lap("minimize")
     counts["seconds"] = {k: round(v, 1) for k, v in phases.items()}
     extra = [f"- shard {args.shard[0]}/{args.shard[1]}, seed base {args.seed_base}, "
              f"corpus {CORPUS_VERSION}, {time.monotonic() - started:.1f}s "
-             f"(replay {phases['replay']:.0f}s, classify {phases['classify']:.0f}s, minimize {phases['minimize']:.0f}s)"]
+             f"(record {phases['record']:.0f}s, replay {phases['replay']:.0f}s, classify {phases['classify']:.0f}s, minimize {phases['minimize']:.0f}s)"]
     if unwritten:
         extra.append(f"- {unwritten} finding(s) not written: the {ARTIFACT_CAP // 1048576} MB artifact cap was reached")
-    summarize(out, "Terminal Lab — correctness run", counts, findings, extra)
+    if args.shard[0] == 1:
+        extra += recording_lines(recordings, args.record)
+    summarize(out, "Terminal Lab — correctness run", counts, findings, extra, unknowns.summary_lines(cover))
     print((out / "summary.md").read_text())
     return 1 if any(not f.classified for f in findings) else 0
+
+
+def sources(cases: list[dict]) -> dict[str, list[bytes]]:
+    """Each case's bytes, by where the case came from."""
+    out: dict[str, list[bytes]] = {"generated": [], "named": [], "recorded": []}
+    for case in cases:
+        name = case["name"]
+        kind = "recorded" if name.startswith(RECORDED_PREFIX) else \
+            "generated" if name.startswith(CORPUS_VERSION + "/") else "named"
+        out[kind].append(all_bytes(case))
+    return out
+
+
+def record_programs() -> tuple[list[dict], list[dict]]:
+    """Real program output, through record.py's leak gate. A recorder that
+    cannot run at all is reported, never mistaken for having nothing to say."""
+    try:
+        import record
+        return record.record_all()
+    except Exception as error:  # noqa: BLE001 — reported in the summary, not swallowed
+        return [], [{"program": "*", "recorded": False,
+                     "reason": f"not recorded: the recorder failed ({type(error).__name__}: {error})"}]
+
+
+def recording_lines(recordings: list[dict], asked: bool) -> list[str]:
+    if not asked:
+        return ["- recorded programs: none, recording was switched off (--no-record)"]
+    done = [r for r in recordings if r.get("recorded")]
+    lines = [f"- recorded programs: {len(done)} of {len(recordings)} recordings made, "
+             f"{sum(r['bytes'] for r in done)} bytes"]
+    for r in recordings:
+        if not r.get("recorded"):
+            size = "x".join(map(str, r.get("size", []))) or "every size"
+            lines.append(f"  - {r['program']} {size}: {r['reason']}")
+    return lines
 
 
 def command_control(args) -> int:
@@ -939,6 +1017,8 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--shard", type=shard, default=(1, 1))
             p.add_argument("--minimize-budget", type=float, default=300,
                            help="seconds this run may spend minimizing")
+            p.add_argument("--no-record", dest="record", action="store_false",
+                           help="skip real program recordings on shard 1")
     p = sub.add_parser("replay")
     p.add_argument("case")
     p.add_argument("--a", required=True)

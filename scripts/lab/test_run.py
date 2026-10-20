@@ -7,6 +7,7 @@ lab does when the harness misbehaves.
 
 import json
 import os
+import shlex
 import stat
 import sys
 import tempfile
@@ -333,13 +334,16 @@ class ExitCode(unittest.TestCase):
         run.explain = lambda *a: None
         try:
             with tempfile.TemporaryDirectory() as out:
-                args = run.argparse.Namespace(out=out, cases=1, seed_base=0, shard=(1, 1), minimize_budget=60)
+                args = run.argparse.Namespace(out=out, cases=1, seed_base=0, shard=(1, 1), minimize_budget=60,
+                                              record=False)
                 with open(os.devnull, "w") as quiet:
                     saved_stdout, sys.stdout = sys.stdout, quiet
                     try:
-                        return run.command_run(args)
+                        code = run.command_run(args)
                     finally:
                         sys.stdout = saved_stdout
+                self.written = {p.name: p.read_text() for p in Path(out).iterdir() if p.is_file()}
+                return code
         finally:
             (run.find_differences, run.known_differences, run.select, run.minimize, run.explain) = saved
 
@@ -350,6 +354,51 @@ class ExitCode(unittest.TestCase):
 
     def test_a_run_with_nothing_unexplained_passes(self):
         self.assertEqual(self.run_with(None, []), 0)
+
+    def test_every_run_says_what_it_could_not_check(self):
+        self.run_with(None, [])
+        self.assertIn("## What this run could not check", self.written["summary.md"])
+        cover = json.loads(self.written["coverage.json"])
+        self.assertEqual(set(cover["states"]), set(run.unknowns.STATES))
+
+    def test_switching_recording_off_is_said_not_silent(self):
+        self.run_with(None, [])
+        self.assertIn("recording was switched off", self.written["summary.md"])
+
+
+class Recorded(unittest.TestCase):
+    def test_recorded_cases_ride_on_shard_one_only(self):
+        recorded = [{"name": "rec-1/x-2x1", "size": [2, 1], "ops": [{"write": "a"}]}]
+        self.assertIn(recorded[0], run.select(3, 0, (1, 2), recorded))
+        self.assertNotIn(recorded[0], run.select(3, 0, (2, 2), recorded))
+
+    def test_cases_are_counted_by_where_they_came_from(self):
+        cases = [{"name": "rec-1/x", "ops": [{"write": "a"}]}, {"name": f"{run.CORPUS_VERSION}/4", "ops": []},
+                 {"name": "printable-text", "ops": []}]
+        self.assertEqual({k: len(v) for k, v in run.sources(cases).items()},
+                         {"generated": 1, "named": 1, "recorded": 1})
+
+    def test_a_recording_is_compared_against_its_own_read_boundaries(self):
+        # A stand-in core that draws something else when a recording's writes
+        # are joined, and the same thing however a plain case is cut.
+        code = ("import json, os\n"
+                "cases = json.load(open(os.environ['TD_LAB_IN']))['cases']\n"
+                "joined = os.environ['TD_LAB_CHUNKS'] == 'joined'\n"
+                f"base = {observation()!r}\n"
+                "with open(os.environ['TD_LAB_OUT'], 'w') as out:\n"
+                f"    out.write({HEADER!r} + '\\n')\n"
+                "    for c in cases:\n"
+                "        text = 'joined' if joined and c['name'].startswith('rec-') else 'hi'\n"
+                "        o = dict(base, screen=[{'text': text, 'runs': []}, {'text': '', 'runs': []}])\n"
+                "        out.write(json.dumps({'case': c['name'], 'observations': [o]}) + '\\n')\n")
+        body = "exec python3 -c " + shlex.quote(code)
+        cases = [{"name": "rec-1/x-10x2", "size": [10, 2], "ops": [{"write": "a"}, {"write": "b"}]},
+                 {"name": "plain", "size": [10, 2], "ops": [{"write": "a"}]}]
+        with StandIn(body):
+            findings, counts = run.find_differences(cases, ["rio"])
+        self.assertEqual([(f.kind, f.case["name"], f.b.chunks) for f in findings],
+                         [("chunk", "rec-1/x-10x2", "joined")])
+        self.assertEqual(counts["runs"], 2 * 3 + 1)
 
 
 if __name__ == "__main__":
