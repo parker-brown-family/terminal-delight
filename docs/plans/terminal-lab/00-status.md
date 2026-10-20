@@ -38,3 +38,20 @@ The concrete plan is now accepted, with the shipped-build comparison requested f
 reports/2026-10-17-shipped-performance.html answers the follow-up. Four matched pairs show 49.666% lower median window CPU under 30 hidden status streams (14.9949% to 7.5475% of one core); window plus unchanged host falls about 42.3%. Five pairs were attempted, with pair 4 excluded because old/new windows landed at different sizes/monitors; all excluded data retained. Raw intervals, binary hashes, geometry, layouts, analysis and cleanup proof are under reports/2026-10-17-shipped-performance-evidence/.
 
 Live window PID 240255 runs td-5b495a1-direct-human-turns, verified to contain all five relevant shipped changes. Live host PID 3678 is the older td-2d5b879-video-clips-and-codex-files; it intentionally remained running. Neither live process was restarted. The isolated benchmark host and all test windows were removed.
+
+## Correctness lane and GitHub pilot, 19 October
+
+Parker said go on the recommendation to take slices 3 → 4 → 5 first, since the correctness lane is what runs on GitHub's free minutes and the performance lane needs a real compositor. Built on branch lab/correctness-tracer, one PR.
+
+- [x] Slice 3, correctness tracer — `app/src/vt/lab.rs` (cfg(test)) replays cases through TD's `Term` boundary and records explicit observations; `scripts/lab/run.py` compares, classifies, minimizes and replays. Two planted faults (erase-line ignored; ESC lost at a read boundary) are detected, shrunk (500 → 11 bytes; 774 → 22) and replayed on every run.
+- [x] Slice 4, bounded corpus — corpus `gen-1`, splitmix64 seeds shared by Rust and Python, limits checked before parsing, chunk invariance at two seeded cut plans per core. Cross-core differences are classified by counterfactual (`scripts/lab/known.json`: remove the cause, the cores must agree), reduced to the causes they need, and never dropped.
+- [x] Slice 5, GitHub pilot — `.github/workflows/td-lab.yml`, workflow_dispatch only; build job id `rust` restores ci.yml's cache; three shards; reproducers capped at 10 MB, 7 days. ci.yml cancels superseded pull-request runs only.
+- [ ] Weekly schedule — written in and commented out; the measured run below meets the plan's condition. Parker's call.
+
+**Measured manual run, 20 October 00:21 UTC** (run 39347146038, pushed from the branch through a temporary trigger since removed): success in 7 min 6 s wall. Build job 5:51 including a full cache hit (`v0-rust-rust-Linux-x64-…`, 2.1 GB, `full match: true`); shards 0:55, 1:08, 1:11. 6,011 cases, 36,066 replays, 3,424 findings (3,409 cross-core, 15 alacritty cut-dependent), 0 unexplained; both controls caught. A cold build is 21.5 min locally, so the cache is what keeps the budget.
+
+**Findings** (evidence in known.json): rio-vt does not home the cursor when origin mode changes; narrowing reflow leaves extra blank history rows in rio-vt (undecided which is right); clear-screen with an attribute set adds a history row in rio-vt; rio-vt drops a zero-width mark with no base, and the tab marker when a tab lands on the last column; the cores differ on half-erased wide characters; alacritty's vte 0.15.0 drops the character after a split UTF-8 sequence (alacritty/vte#159, fixed on main, unreleased; pinned by a test). rio-vt never depended on where reads ended: 0 of 1,722 cases locally, 0 of 6,011 on GitHub.
+
+Least confident: the wide-character entry explains by deleting every wide character, which can hide a new wide-character bug; split it per operation next. Observations exclude events, synchronized updates and pictures.
+
+Decision page: ~/Work/reports/2026-10-19-terminal-lab-correctness.html (private, outside this public repository).
