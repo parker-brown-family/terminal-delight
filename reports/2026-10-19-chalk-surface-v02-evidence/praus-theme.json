@@ -1,0 +1,26 @@
+{
+  "theme": {
+    "color": "default",
+    "follow_omarchy": true,
+    "id": "deco",
+    "grade": {
+      "background": 0.26549479365348816,
+      "bench_size": 0.761145830154419,
+      "brightness": 0.12723958492279053,
+      "colour": 0.7034896016120911,
+      "contrast": 0.7108593583106995,
+      "crawl_angle": 12.0,
+      "crawl_depth": 2.5,
+      "crt": false,
+      "gamma": 0.9231770634651184,
+      "glare": 0.2988802194595337,
+      "phosphor": 1.9773958921432495,
+      "scale": 1.149999976158142,
+      "text": 0.9138281345367432,
+      "text_size": 1.0749062299728394,
+      "warp": 0.0
+    }
+  },
+  "skin": "chalk",
+  "win": null
+}

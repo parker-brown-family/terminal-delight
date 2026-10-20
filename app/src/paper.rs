@@ -8,7 +8,7 @@ use gpui::{
     Pixels, RenderImage, Styled, Window,
 };
 
-const TILE: u32 = 192;
+const TILE: u32 = 512;
 static GRAIN: OnceLock<Arc<RenderImage>> = OnceLock::new();
 
 fn hash(mut n: u32) -> u32 {
@@ -26,35 +26,20 @@ fn texture() -> Arc<RenderImage> {
                 let n = hash(y * TILE + x);
                 let pigment = hash((y / 8) * 24 + x / 8) % 5;
                 let c = if n & 1 == 0 { 0 } else { 255 };
-                image::Rgba([c, c, c, (n % 13 + pigment) as u8])
+                image::Rgba([c, c, c, (n % 5 + pigment / 2) as u8])
             });
             Arc::new(RenderImage::new(vec![image::Frame::new(pixels)]))
         })
         .clone()
 }
 
-/// One atlas image, reused across every surface. A content mask clips the final
-/// tile instead of resizing it: grain has the same physical size in every panel.
+/// One shared atlas image per region. Sampling a continuous sheet avoids the
+/// visible tile joins that fractional display scaling exposed on pale stock.
 pub fn paint_grain(bounds: Bounds<Pixels>, window: &mut Window) {
     let image = texture();
     window.with_content_mask(Some(ContentMask { bounds }), |window| {
-        let w = f32::from(bounds.size.width);
-        let h = f32::from(bounds.size.height);
-        for y in 0..(h / TILE as f32).ceil() as u32 {
-            for x in 0..(w / TILE as f32).ceil() as u32 {
-                let tile = Bounds::new(
-                    bounds.origin + point(px((x * TILE) as f32), px((y * TILE) as f32)),
-                    size(px(TILE as f32), px(TILE as f32)),
-                );
-                if let Err(e) =
-                    window.paint_image(tile, Default::default(), image.clone(), 0, false)
-                {
-                    // Do not turn an unavailable atlas entry into a substitute
-                    // texture or a panic; the paper's base colour still draws.
-                    eprintln!("terminal-delight: paper grain unavailable: {e}");
-                    return;
-                }
-            }
+        if let Err(e) = window.paint_image(bounds, Default::default(), image, 0, false) {
+            eprintln!("terminal-delight: paper grain unavailable: {e}");
         }
     });
 }
@@ -108,6 +93,81 @@ fn polygon(bounds: Bounds<Pixels>, points: &[(f32, f32)], ink: Hsla, window: &mu
     }
 }
 
+/// A hand-rubbed pigment stroke. Stable flecks break the edge without animation.
+fn stroke(bounds: Bounds<Pixels>, ink: Hsla, window: &mut Window) {
+    let w = f32::from(bounds.size.width);
+    let h = f32::from(bounds.size.height);
+    let y = (h - 6.).max(0.);
+    let points = [
+        (3., y + 1.4),
+        (w * 0.29, y),
+        (w - 4., y + 0.8),
+        (w - 2., y + 3.4),
+        (w * 0.64, y + 4.6),
+        (2., y + 3.8),
+    ];
+    polygon(bounds, &points, ink.alpha(0.55), window);
+    for i in 0..14 {
+        let x = 3. + (w - 7.).max(0.) * i as f32 / 14.;
+        let d = (hash(i) % 100) as f32 / 100.;
+        window.paint_quad(fill(
+            Bounds::new(
+                bounds.origin + point(px(x), px(y + d * 4.)),
+                size(px(1.7), px(0.6)),
+            ),
+            ink.alpha(0.75),
+        ));
+    }
+}
+
+pub fn selection(ink: Hsla) -> Div {
+    div().absolute().inset_0().child(
+        canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| stroke(bounds, ink, window),
+        )
+        .size_full(),
+    )
+}
+
+/// A chalk score on stock, with a movable torn-paper thumb. Input and bounds
+/// stay with the existing gauge; this child only paints its material.
+pub fn gauge(frac: f32, face: Hsla, ink: Hsla, accent: Hsla) -> Div {
+    div().absolute().inset_0().child(
+        canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                let w = f32::from(bounds.size.width);
+                let h = f32::from(bounds.size.height);
+                let mid = h * 0.5;
+                window.paint_quad(fill(
+                    Bounds::new(
+                        bounds.origin + point(px(0.), px(mid - 1.)),
+                        size(px(w), px(2.)),
+                    ),
+                    ink.alpha(0.2),
+                ));
+                let lit = Bounds::new(
+                    bounds.origin + point(px(0.), px(mid - 4.)),
+                    size(px(w * frac.clamp(0., 1.)), px(9.)),
+                );
+                if w * frac > 6. {
+                    stroke(lit, accent, window);
+                }
+                let x = (w * frac - 5.).clamp(0., (w - 10.).max(0.));
+                let knob = Bounds::new(
+                    bounds.origin + point(px(x), px(mid - 6.)),
+                    size(px(10.), px(12.)),
+                );
+                polygon(knob, &outline(10., 12.), ink, window);
+                let inner = Bounds::new(knob.origin + point(px(1.), px(1.)), size(px(8.), px(10.)));
+                polygon(inner, &outline(8., 10.), face, window);
+            },
+        )
+        .size_full(),
+    )
+}
+
 /// Full backing. Add this before the control's label, so neither the grain nor
 /// the paper fill is painted over text. The accent is a small lower-edge stamp.
 pub fn backing(face: Hsla, accent: Hsla, active: bool) -> Div {
@@ -131,13 +191,21 @@ pub fn backing(face: Hsla, accent: Hsla, active: bool) -> Div {
                 );
                 paint_grain(inner, window);
                 if active {
-                    window.paint_quad(fill(
-                        Bounds::new(
-                            bounds.origin + point(px(5.), px((h - 4.).max(0.))),
-                            size(px((w * 0.24).clamp(3., 18.)), px(1.8)),
-                        ),
-                        accent,
-                    ));
+                    let top = (h * 0.5).max(h - 19.);
+                    polygon(
+                        bounds,
+                        &[
+                            (3., top + 3.),
+                            (w * 0.4, top),
+                            (w - 3., top + 1.),
+                            (w - 2., h - 4.),
+                            (w * 0.6, h - 2.),
+                            (2., h - 3.),
+                        ],
+                        accent.alpha(0.28),
+                        window,
+                    );
+                    stroke(bounds, accent, window);
                 }
             },
         )
@@ -165,13 +233,7 @@ pub fn rim(face: Hsla, accent: Hsla, active: bool) -> Div {
                     window.paint_path(path, face);
                 }
                 if active {
-                    window.paint_quad(fill(
-                        Bounds::new(
-                            bounds.origin + point(px(5.), px((h - 3.).max(0.))),
-                            size(px((w * 0.2).clamp(3., 18.)), px(2.)),
-                        ),
-                        accent,
-                    ));
+                    stroke(bounds, accent, window);
                 }
             },
         )
