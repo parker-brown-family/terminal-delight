@@ -413,6 +413,12 @@ the changes you may notice in the first hour.
 
 ### Changed
 
+- **OPS has a name in every language.** Its caption was the three Latin
+  letters "ops" in all nine languages; it is now the word for "command" that
+  its own help line already used in each (mando, Kommando, commande, штаб, 指挥,
+  司令, 지휘, कमांड). A new CI job, Translation suggestions, flags on-screen
+  English that a pull request adds without translating; it never fails a
+  build. (#1062)
 - **The terminal emulator core is rio-vt, the core inside the Rio terminal.**
   Measured before choosing it: an 8 MB text stream parses in 82 ms against
   alacritty_terminal's 140 ms, and a pane holding 10,000 lines of history takes
