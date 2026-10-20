@@ -14,6 +14,8 @@ The renderer reuses one cached grain image. Paper edges are deterministic and ha
 - [x] Draw stable paper controls and cached pigment grain; add sticky-note details.
 - [x] Verify all skins, both terminal cores, native controls, restart persistence and rendering cost.
 - [x] Deliver a page with native captures.
-- [ ] Install the verified build.
+- [x] Install the verified build for the next launch.
+
+The live window remains on the previous build after two placement-guard rollbacks. All 39 terminal process identities and the existing session host were retained. The GUI reload gap is tracked in [the guarded replacement follow-up](https://github.com/parker-brown-family/terminal-delight/issues/1019).
 
 **Turned out to be: 6/10.** Palette cross-checks caught small-print contrast and status-colour collisions. Native tests measured the rendering cost before delivery.
