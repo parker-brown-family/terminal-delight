@@ -31,8 +31,14 @@ A **minor release every four weeks**, on Mondays:
 | Release | Candidate | Stable, at the earliest |
 |---|---|---|
 | 0.4.0 | 2026-10-20 | 2026-10-27 |
-| 0.5.0 | 2026-11-16 | 2026-11-23 |
+| 0.5.0 | 2026-11-13 | 2026-11-20 |
 | 0.6.0 | 2026-12-14 | 2026-12-21 |
+
+0.5.0 targets Friday, November 20 at Parker’s request on 2026-10-20. Its
+candidate target moves to Friday, November 13 to preserve the seven-day hold.
+This is an exception to the usual Monday schedule; the hold and checklist still
+determine whether stable ships. Development and local experiments take place on
+`dev/0.5.0`, focused on [agent-to-agent communication hardening](docs/plans/release-0.5.0/00-status.md).
 
 0.4.0 is the first release cut this way. It goes out as soon as this process
 lands, which is why its dates fall on a Tuesday.
