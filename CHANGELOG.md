@@ -533,6 +533,17 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
+- **Tabs no longer come back out of their projects after the window restarts.**
+  One answer from the session host that took longer than five seconds marked
+  the host as gone for the rest of the window's life, and the only thing that
+  checked was saving. The window kept working but stopped writing its layout,
+  so tabs opened after that were missing from the file and the next window
+  brought them back bare, with no name and no project. A slow answer no longer
+  counts; only a closed connection does. And whatever stops saves in future,
+  the window now checks every half minute that the saved layout matches what
+  it shows. It saves again quietly the first time they differ, and if they
+  still differ it says "Layout not saving" across the top of the window and
+  in a desktop notification. (#1017, #1024)
 - **The agent wall says NO READING for a session it has not measured, instead
   of calling it empty and healthy.** A session whose newest record carried no
   context figure was drawn 0% full, 100% relevant and RUN, with thousands of
