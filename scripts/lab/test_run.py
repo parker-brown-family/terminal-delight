@@ -261,6 +261,8 @@ class Known(unittest.TestCase):
                     {"id": "x", "reason": "r"},
                     {"id": "x", "reason": "r", "neutralize": {"strip": "("}},
                     {"id": "x", "reason": "r", "neutralize": {"bogus": 1}},
+                    {"id": "x", "reason": "r", "neutralize": {"when": "a"}},
+                    {"id": "x", "reason": "r", "neutralize": {"strip": "a", "when": "("}},
                     {"id": "x", "reason": "r", "kind": "chunk", "neutralize": {"strip": "a"}}]:
             self.write_known([bad])
             with self.assertRaises(run.SetupError, msg=bad):
@@ -273,6 +275,13 @@ class Known(unittest.TestCase):
         case = {"name": "c", "size": [4, 2], "ops": [{"write": "a\x1b[?6hb"}, {"resize": [2, 2]}, "checkpoint"]}
         self.assertEqual(run.neutralize(case, [self.ORIGIN])["ops"], [{"write": "ab"}, {"resize": [2, 2]}, "checkpoint"])
         self.assertEqual(run.neutralize(case, [self.REFLOW])["ops"], [{"write": "a\x1b[?6hb"}, "checkpoint"])
+
+    def test_a_when_pattern_confines_a_cause_to_its_circumstances(self):
+        erase_near_wide = {"id": "w", "reason": "r", "neutralize": {"strip": "\\x1b\\[K", "when": "\\xe5"}}
+        wide = {"name": "c", "size": [4, 1], "ops": [{"write": "好\x1b[K"}]}
+        narrow = {"name": "c", "size": [4, 1], "ops": [{"write": "ab\x1b[K"}]}
+        self.assertEqual(run.neutralize(wide, [erase_near_wide])["ops"], [{"write": "好"}])
+        self.assertEqual(run.neutralize(narrow, [erase_near_wide])["ops"], narrow["ops"])
 
     def test_a_cause_explains_a_finding_only_if_removing_it_makes_the_cores_agree(self):
         run.evaluate = fake_cores("\x1b[?6h", "MYSTERY")

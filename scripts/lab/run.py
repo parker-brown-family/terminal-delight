@@ -554,13 +554,15 @@ def known_differences() -> list[dict]:
                 (entry.get("kind") == "chunk" and entry.get("core") not in CORES):
             raise SetupError(f"known.json entry {entry['id']!r}: kind is cores, or chunk with a core")
         rule = entry["neutralize"]
-        if set(rule) - {"strip", "drop_resize"} or not rule:
-            raise SetupError(f"known.json entry {entry['id']!r}: neutralize takes strip and/or drop_resize")
-        if "strip" in rule:
-            try:
-                re.compile(rule["strip"].encode())
-            except re.error as error:
-                raise SetupError(f"known.json entry {entry['id']!r}: bad strip pattern: {error}") from None
+        if set(rule) - {"strip", "drop_resize", "when"} or not set(rule) - {"when"}:
+            raise SetupError(f"known.json entry {entry['id']!r}: neutralize takes strip and/or drop_resize, "
+                             "and optionally when")
+        for key in ("strip", "when"):
+            if key in rule:
+                try:
+                    re.compile(rule[key].encode())
+                except re.error as error:
+                    raise SetupError(f"known.json entry {entry['id']!r}: bad {key} pattern: {error}") from None
     return data["differences"]
 
 
@@ -569,10 +571,15 @@ def all_bytes(case: dict) -> bytes:
 
 
 def neutralize(case: dict, entries: list[dict]) -> dict:
-    """The case with each entry's cause taken out."""
+    """The case with each entry's cause taken out. An entry with a `when`
+    pattern applies only to a case whose bytes match it, so a cause can be
+    narrowed to its circumstances (an erase, but only near a wide character)
+    instead of taking out every erase from every case."""
     ops = list(case["ops"])
     for entry in entries:
         rule = entry["neutralize"]
+        if "when" in rule and not re.search(rule["when"].encode(), all_bytes(dict(case, ops=ops))):
+            continue
         if rule.get("drop_resize"):
             ops = [op for op in ops if not (isinstance(op, dict) and "resize" in op)]
         if "strip" in rule:
