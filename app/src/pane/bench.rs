@@ -2985,10 +2985,7 @@ impl TerminalView {
             if let Some(path) = self.clipboard_image_path() {
                 if self.mode.is_agent() {
                     let text = crate::workbench::paths_as_words(&[path.into()]);
-                    self.bench_keystroke(
-                        [b"\x1b[200~", text.as_bytes(), b"\x1b[201~"].concat(),
-                        cx,
-                    );
+                    self.bench_keystroke(super::paste_bytes(&text, true), cx);
                     if let Some(line) = self.wb_compose.as_mut() {
                         line.note_paste();
                     }
