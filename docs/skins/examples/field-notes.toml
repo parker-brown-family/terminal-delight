@@ -1,0 +1,53 @@
+# A file-only second look: fine stock, quiet lift and instrument lettering.
+name = "field notes"
+icon = "▤"
+
+[font]
+family = "Share Tech Mono"
+heading = "Oxanium"
+data = "Share Tech Mono"
+scale = 1.0
+min_px = 11.0
+line_height = 1.2
+
+[shape]
+material = "paper"
+tube = "glass"
+corner = "square"
+boundary = "hairline"
+emphasis = "rail"
+divider = "line"
+caps = "upper"
+shine = "flat"
+gauge = "pips"
+title = "plain"
+focus = "plain"
+
+[metric]
+grain = 0.35
+roughness = 0.20
+lift = 0.35
+marker_alpha = 0.14
+pad_x = 8.0
+pad_y = 5.0
+row_h = 20.0
+label_size = 11.0
+chip_px = 7.0
+chip_py = 2.0
+glow = 0.0
+glow_a = 0.0
+
+[note]
+decoration = "plain"
+stock = false
+
+[ink]
+panel = { from = "surface" }
+panel_raised = { from = "surface" }
+btn_face = { from = "surface", toward = "light", t = 0.03 }
+rule = { from = "text", a = 0.12 }
+rule_strong = { from = "text", a = 0.22 }
+edge_rest = { from = "text", a = 0.26 }
+ink_dim = { from = "text", a = 0.86 }
+ink_on_mark = { from = "text" }
+select = { from = "complement" }
