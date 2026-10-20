@@ -1552,6 +1552,14 @@ fn shell_quote(s: &str) -> String {
 ///
 /// The fallback rides inside the same `sh` because whether the D-Bus call failed
 /// is only knowable after it returns, and the UI thread will not wait for it.
+///
+/// The wait for that answer is capped at [`REVEAL_REPLY_TIMEOUT_MS`]. D-Bus's
+/// own default is 25 seconds, and a manager can own the name and never answer:
+/// Strata 0.21.0 does, so with it running every reveal sat for 25 seconds
+/// before the fallback opened the folder (measured 2026-10-19). The cap is
+/// generous enough for a manager that is being cold-started by activation, and
+/// one that answers late gets the folder opened as well, a second window rather
+/// than half a minute of nothing.
 fn reveal_script(path: &str, use_uwsm: bool) -> String {
     let parent = std::path::Path::new(path)
         .parent()
@@ -1564,13 +1572,18 @@ fn reveal_script(path: &str, use_uwsm: bool) -> String {
         "xdg-open"
     };
     format!(
-        "dbus-send --session --print-reply --dest=org.freedesktop.FileManager1 \
+        "dbus-send --session --print-reply --reply-timeout={REVEAL_REPLY_TIMEOUT_MS} \
+         --dest=org.freedesktop.FileManager1 \
          /org/freedesktop/FileManager1 org.freedesktop.FileManager1.ShowItems \
          array:string:{} string:'' >/dev/null 2>&1 || {opener} {} >/dev/null 2>&1",
         shell_quote(&path_to_file_uri(path)),
         shell_quote(&parent),
     )
 }
+
+/// How long a reveal waits for the file manager to answer before opening the
+/// folder itself. See [`reveal_script`].
+const REVEAL_REPLY_TIMEOUT_MS: u32 = 3000;
 
 /// Show `path` in the system file manager with the item itself selected, rather
 /// than opening it — the "where does this actually live?" answer to a path a
@@ -13818,6 +13831,9 @@ mod tests {
         let plain = reveal_script("/home/parker/kf-aero/letter.pdf", false);
         assert!(plain.contains("org.freedesktop.FileManager1.ShowItems"));
         assert!(plain.contains("array:string:'file:///home/parker/kf-aero/letter.pdf'"));
+        // a manager that owns the name and never answers costs seconds, not
+        // D-Bus's default 25
+        assert!(plain.contains("--reply-timeout=3000 "));
         // the fallback opens the CONTAINING folder, not the file
         assert!(plain.ends_with("|| xdg-open '/home/parker/kf-aero' >/dev/null 2>&1"));
         assert!(!plain.contains("uwsm-app"));
