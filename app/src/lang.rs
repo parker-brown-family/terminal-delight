@@ -2853,8 +2853,6 @@ mod tests {
         "chrome.pal_hdr_theme",
         "chrome.pal_skin_console",
         "chrome.pal_skin_deco",
-        // OPS is the skin's name, not a word to translate.
-        "chrome.pal_skin_ops",
         "chrome.pal_thm_deco",
         "chrome.plg_hdr",
         "chrome.rail_btn_no",
