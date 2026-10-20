@@ -1028,6 +1028,7 @@ fn image(
             .child(text(line.into()))
             .into_any_element()
     };
+    let (t, fill) = (&crate::lang::current().strings().parts, crate::lang::fill);
     match image_ref(doc.dir.as_deref(), src) {
         ImageRef::Local(path) => match images.and_then(|m| m.get(&path)) {
             Some(Ok(pixels)) => {
@@ -1040,14 +1041,20 @@ fn image(
                     .object_fit(ObjectFit::Contain)
                     .into_any_element()
             }
-            Some(Err(why)) => placeholder(format!("image · {name} — {why}")),
-            None if images.is_some() => placeholder(format!("image · {name} — decoding…")),
-            None => placeholder(format!("image · {name}")),
+            Some(Err(why)) => placeholder(fill(
+                t.doc_md_image_failed,
+                &[("name", &name), ("why", why)],
+            )),
+            None if images.is_some() => {
+                placeholder(fill(t.doc_md_image_decoding, &[("name", &name)]))
+            }
+            None => placeholder(fill(t.doc_md_image, &[("name", &name)])),
         },
-        ImageRef::Remote { host } => {
-            placeholder(format!("image · {name} — on {host}, not fetched"))
-        }
-        ImageRef::Unresolved => placeholder(format!("image · {name}")),
+        ImageRef::Remote { host } => placeholder(fill(
+            t.doc_md_image_remote,
+            &[("name", &name), ("host", &host)],
+        )),
+        ImageRef::Unresolved => placeholder(fill(t.doc_md_image, &[("name", &name)])),
     }
 }
 
@@ -1424,7 +1431,7 @@ impl MarkdownDoc {
                 .into_any_element()
         };
         let doc = match &self.doc {
-            None => return note("reading…".into()),
+            None => return note(crate::lang::current().strings().parts.doc_reading.into()),
             Some(Err(why)) => return note(why.clone()),
             Some(Ok(doc)) => doc.clone(),
         };

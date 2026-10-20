@@ -106,7 +106,10 @@ pub fn notify_args(title: &str, body: &str) -> Vec<String> {
         "-t".into(),
         "12000".into(),
         "-A".into(),
-        "default=Jump to pane".into(),
+        format!(
+            "default={}",
+            crate::lang::current().strings().parts.notify_action_jump
+        ),
         "--".into(),
         title.into(),
         body.into(),
@@ -124,10 +127,11 @@ pub fn notify_title(tab: &str, pane: &str) -> String {
 /// over, it's yours), ❌ it hit a wall (error banner at ring time), ✅ a clean
 /// finish. The glyph leads so the toast is scannable from across the room.
 pub fn flavor_title(base: &str, needs_input: bool, blocked: bool) -> String {
+    let t = &crate::lang::current().strings().parts;
     if needs_input {
-        format!("❓ {base} — your move")
+        crate::lang::fill(t.notify_title_your_move, &[("base", base)])
     } else if blocked {
-        format!("❌ {base} — blocked")
+        crate::lang::fill(t.notify_title_blocked, &[("base", base)])
     } else {
         format!("✅ {base}")
     }

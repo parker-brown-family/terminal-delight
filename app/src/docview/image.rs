@@ -224,19 +224,30 @@ impl ImageDoc {
         // pixels it produces are referenced by this view and nothing else.
         cx.remove_asset::<ImgResourceLoader>(&resource);
         let load = cx.spawn(async move |this, cx| {
+            // Said in the square instead of the picture, in the reader's
+            // language as it was when the image was opened.
+            let t = &crate::lang::current().strings().parts;
             let result = match decode.await {
                 Ok(image) => {
                     let size = image.size(0);
                     let (w, h) = (size.width.0.max(0) as u32, size.height.0.max(0) as u32);
                     if too_large(w, h) {
-                        Err(format!(
-                            "This image is {w} × {h} pixels. The largest side the GPU can hold here is {MAX_SIDE}, so ctrl+click the path to open it with the desktop."
+                        Err(crate::lang::fill(
+                            t.doc_image_too_large,
+                            &[
+                                ("w", &w.to_string()),
+                                ("h", &h.to_string()),
+                                ("max", &MAX_SIDE.to_string()),
+                            ],
                         ))
                     } else {
                         Ok(image)
                     }
                 }
-                Err(e) => Err(format!("Could not read this image: {e}")),
+                Err(e) => Err(crate::lang::fill(
+                    t.doc_image_unreadable,
+                    &[("error", &e.to_string())],
+                )),
             };
             this.update(cx, |view, cx| {
                 if let Some(doc) = view.backend.downcast_mut::<ImageDoc>() {
@@ -388,7 +399,7 @@ impl ImageDoc {
                 .into_any_element()
         };
         let image = match &self.loaded {
-            None => return note("decoding…".into()),
+            None => return note(crate::lang::current().strings().parts.doc_decoding.into()),
             Some(Err(why)) => return note(why.clone()),
             Some(Ok(image)) => image.clone(),
         };

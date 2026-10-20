@@ -2813,11 +2813,13 @@ pub enum Shelf {
 }
 
 impl Shelf {
-    /// The pill's text.
+    /// The pill's text, in the reader's language. Drawn and never stored or
+    /// matched, so it reads the language pack directly.
     pub fn label(self) -> &'static str {
+        let t = &crate::lang::current().strings().parts;
         match self {
-            Shelf::Favourites => "FAVOURITES",
-            Shelf::Palettes => "OMARCHY THEMES",
+            Shelf::Favourites => t.theme_shelf_favourites,
+            Shelf::Palettes => t.theme_shelf_omarchy,
         }
     }
 }

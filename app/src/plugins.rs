@@ -154,19 +154,22 @@ pub fn discover(home: &Path) -> Vec<PluginManifest> {
     out
 }
 
-/// The bundled context-delight plugin definition.
+/// The bundled context-delight plugin definition. Its chip and description
+/// are drawn in the plugin list, so they come from the language pack —
+/// rebuilt on every [`discover`], so a language switch shows on the next one.
 fn builtin_context_delight(command: String) -> PluginManifest {
+    let p = crate::lang::current().strings().parts;
     PluginManifest {
         name: "context-delight".into(),
         version: "0.1.0".into(),
-        description: "Harvest an agent session into a portable context package.".into(),
+        description: p.plugins_context_desc.into(),
         command,
         args: vec![],
         env: vec![],
         scope: "agent".into(),
         actions: vec![PluginAction {
             tool: "write_package".into(),
-            label: "\u{2b07} context".into(),
+            label: p.plugins_context_label.into(),
             surfaces: vec!["agent".into(), "graveyard".into()],
         }],
     }
@@ -175,17 +178,18 @@ fn builtin_context_delight(command: String) -> PluginManifest {
 /// The bundled leanctx-savings plugin definition (plugin #2): surfaces lean-ctx's
 /// precomputed token-savings rollup on the agent wall (global) and per agent.
 fn builtin_leanctx_savings(command: String) -> PluginManifest {
+    let p = crate::lang::current().strings().parts;
     PluginManifest {
         name: "leanctx-savings".into(),
         version: "0.1.0".into(),
-        description: "Token savings from lean-ctx context compression.".into(),
+        description: p.plugins_savings_desc.into(),
         command,
         args: vec![],
         env: vec![],
         scope: "global".into(),
         actions: vec![PluginAction {
             tool: "savings".into(),
-            label: "</> savings".into(),
+            label: p.plugins_savings_label.into(),
             surfaces: vec!["global".into(), "agent".into()],
         }],
     }
@@ -305,20 +309,31 @@ impl McpProcess {
     }
 
     /// Issue a request and wait (with a deadline) for the matching response.
+    ///
+    /// The errors are only ever drawn (the harvest and savings status lines),
+    /// so TD's own words are in the reader's language; the OS error inside
+    /// stays as the OS gave it.
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let p = crate::lang::current().strings().parts;
+        let timed_out = || {
+            crate::lang::fill(
+                p.plugins_err_timeout,
+                &[("secs", &RPC_TIMEOUT.as_secs().to_string())],
+            )
+        };
         let id = self.next_id;
         self.next_id += 1;
         let line = build_request(id, method, &params);
         self.stdin
             .write_all(line.as_bytes())
             .and_then(|_| self.stdin.flush())
-            .map_err(|e| format!("write to plugin failed: {e}"))?;
+            .map_err(|e| crate::lang::fill(p.plugins_err_write, &[("e", &e.to_string())]))?;
 
         let deadline = std::time::Instant::now() + RPC_TIMEOUT;
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
-                return Err(format!("plugin timed out after {}s", RPC_TIMEOUT.as_secs()));
+                return Err(timed_out());
             }
             match self.rx.recv_timeout(remaining) {
                 Ok(l) => {
@@ -327,12 +342,8 @@ impl McpProcess {
                     }
                     // not our id (a notification or another response) — keep reading
                 }
-                Err(RecvTimeoutError::Timeout) => {
-                    return Err(format!("plugin timed out after {}s", RPC_TIMEOUT.as_secs()))
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    return Err("plugin closed its output".into())
-                }
+                Err(RecvTimeoutError::Timeout) => return Err(timed_out()),
+                Err(RecvTimeoutError::Disconnected) => return Err(p.plugins_err_closed.into()),
             }
         }
     }
@@ -378,8 +389,13 @@ pub fn run_action(
     tool: &str,
     arguments: Value,
 ) -> Result<String, String> {
-    let mut proc = McpProcess::spawn(&manifest.command, &manifest.args, &manifest.env)
-        .map_err(|e| format!("could not launch {}: {e}", manifest.command))?;
+    let mut proc =
+        McpProcess::spawn(&manifest.command, &manifest.args, &manifest.env).map_err(|e| {
+            crate::lang::fill(
+                crate::lang::current().strings().parts.plugins_err_launch,
+                &[("command", &manifest.command), ("e", &e.to_string())],
+            )
+        })?;
     proc.initialize()?;
     proc.call_tool(tool, arguments)
 }
@@ -433,7 +449,10 @@ fn match_response(line: &str, id: i64) -> Option<Result<Value, String>> {
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("error");
-        return Some(Err(format!("plugin error {code}: {msg}")));
+        return Some(Err(crate::lang::fill(
+            crate::lang::current().strings().parts.plugins_err_rpc,
+            &[("code", &code.to_string()), ("msg", msg)],
+        )));
     }
     Some(Ok(v.get("result").cloned().unwrap_or(Value::Null)))
 }
@@ -497,6 +516,8 @@ mod tests {
             .unwrap()
             .unwrap_err();
         assert!(err.contains("boom"));
+        // the template keeps the code and the plugin's own words in place
+        assert_eq!(err, "plugin error -32000: boom");
     }
 
     #[test]

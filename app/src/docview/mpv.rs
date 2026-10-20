@@ -152,15 +152,18 @@ pub enum Missing {
 }
 
 impl Missing {
-    /// Why, in a sentence, and nothing about what happened instead.
+    /// Why, in a sentence, and nothing about what happened instead. English,
+    /// for the log; the square draws [`Missing::reason_in`].
     pub fn reason(&self) -> String {
+        self.reason_in(crate::lang::Lang::En)
+    }
+
+    /// [`Missing::reason`] in `l`'s words.
+    pub fn reason_in(&self, l: crate::lang::Lang) -> String {
+        let t = &l.strings().parts;
         match self {
-            Missing::NotFound => {
-                "No libmpv found (install mpv to play video and sound in TD).".into()
-            }
-            Missing::TooOld(name) => {
-                format!("The libmpv found has no {name}; it is older than TD needs.")
-            }
+            Missing::NotFound => t.video_no_libmpv.into(),
+            Missing::TooOld(name) => crate::lang::fill(t.video_libmpv_old, &[("function", name)]),
         }
     }
 
@@ -170,11 +173,13 @@ impl Missing {
         format!("{} Opened with the desktop.", self.reason())
     }
 
-    /// The reason in a few words, for the chip on the row that was clicked.
+    /// The reason in a few words, for the chip on the row that was clicked,
+    /// in the reader's language: it is only ever drawn.
     pub fn short_reason(&self) -> String {
+        let t = &crate::lang::current().strings().parts;
         match self {
-            Missing::NotFound => "no libmpv".into(),
-            Missing::TooOld(_) => "libmpv too old".into(),
+            Missing::NotFound => t.video_short_no_libmpv.into(),
+            Missing::TooOld(_) => t.video_short_libmpv_old.into(),
         }
     }
 }
@@ -250,7 +255,8 @@ impl Lib {
         // SAFETY: mpv_error_string returns a static string for any code.
         let s = unsafe { (self.error_string)(code) };
         if s.is_null() {
-            return format!("error {code}");
+            let t = &crate::lang::current().strings().parts;
+            return crate::lang::fill(t.video_error_code, &[("code", &code.to_string())]);
         }
         unsafe { CStr::from_ptr(s) }.to_string_lossy().into_owned()
     }
@@ -414,9 +420,13 @@ impl Player {
         picture: Picture,
         poke: Poke,
     ) -> Result<Player, String> {
-        let lib = lib().map_err(|why| why.reason())?;
+        // Drawn in the square where the video would be, so in the reader's
+        // language, as it was when the video was opened.
+        let l = crate::lang::current();
+        let t = &l.strings().parts;
+        let lib = lib().map_err(|why| why.reason_in(l))?;
         let path = CString::new(path.as_os_str().as_encoded_bytes())
-            .map_err(|_| "The path has a NUL byte in it.".to_string())?;
+            .map_err(|_| t.video_nul_path.to_string())?;
         let (control_tx, control_rx) = mpsc::channel();
         let (render_tx, render_rx) = mpsc::channel();
         let shared = Arc::new(Mutex::new(Shared::default()));
@@ -440,7 +450,7 @@ impl Player {
                     poke,
                 )
             })
-            .map_err(|e| format!("Could not start a thread to play the video: {e}"))?;
+            .map_err(|e| crate::lang::fill(t.video_thread_play, &[("error", &e.to_string())]))?;
         Ok(Player {
             control: control_tx,
             render: render_tx,
@@ -562,12 +572,15 @@ fn control(
     shared: Arc<Mutex<Shared>>,
     poke: Poke,
 ) {
+    // What goes wrong is said in the square, in the reader's language.
+    let t = &crate::lang::current().strings().parts;
+    let fill = crate::lang::fill;
     // SAFETY: every call below is on the handle this thread created and
     // destroys, with C strings that outlive the call.
     unsafe {
         let mpv = (lib.create)();
         if mpv.is_null() {
-            return fail(&shared, &poke, "mpv could not start.".into());
+            return fail(&shared, &poke, t.video_start.into());
         }
         for (name, value) in OPTIONS {
             (lib.set_option_string)(mpv, name.as_ptr(), value.as_ptr());
@@ -594,7 +607,7 @@ fn control(
             return fail(
                 &shared,
                 &poke,
-                format!("mpv could not start: {}.", lib.error(r)),
+                fill(t.video_start_why, &[("why", &lib.error(r))]),
             );
         }
         // Kept until the player is destroyed: libmpv holds the pointer.
@@ -620,7 +633,7 @@ fn control(
             return fail(
                 &shared,
                 &poke,
-                format!("mpv cannot draw into TD here: {}.", lib.error(r)),
+                fill(t.video_cannot_draw, &[("why", &lib.error(r))]),
             );
         }
         let update: Box<Sender<RenderMsg>> = Box::new(ch.render_tx.clone());
@@ -647,7 +660,7 @@ fn control(
                 return fail(
                     &shared,
                     &poke,
-                    format!("Could not start a thread to draw the video: {e}"),
+                    fill(t.video_thread_draw, &[("error", &e.to_string())]),
                 );
             }
         };
@@ -661,7 +674,7 @@ fn control(
             fail(
                 &shared,
                 &poke,
-                format!("mpv would not open the file: {}.", lib.error(r)),
+                fill(t.video_open_file, &[("why", &lib.error(r))]),
             );
         }
 
@@ -709,10 +722,8 @@ fn control(
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner())
                                 .status
-                                .error = Some(format!(
-                                "mpv could not play this file: {}.",
-                                lib.error(end.error)
-                            ));
+                                .error =
+                                Some(fill(t.video_play_file, &[("why", &lib.error(end.error))]));
                             changed = true;
                         } else if played_out(end.reason) {
                             shared

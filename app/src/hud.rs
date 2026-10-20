@@ -55,6 +55,9 @@ impl AgentState {
         }
     }
 
+    /// The state's name. English always: it is part of an element id
+    /// (`mcps-working` in main.rs) and is what agents read; [`Self::label_in`]
+    /// is the same word for a person.
     pub fn label(self) -> &'static str {
         match self {
             AgentState::Working => "working",
@@ -63,6 +66,19 @@ impl AgentState {
             AgentState::Finished => "done",
             AgentState::Idle => "idle",
             AgentState::Unknown => "unknown",
+        }
+    }
+
+    /// [`Self::label`] as a person reads it, in `l`.
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        let t = &l.strings().parts;
+        match self {
+            AgentState::Working => t.hud_state_working,
+            AgentState::Blocked => t.hud_state_blocked,
+            AgentState::Error => t.hud_state_error,
+            AgentState::Finished => t.hud_state_done,
+            AgentState::Idle => t.hud_state_idle,
+            AgentState::Unknown => t.hud_state_unknown,
         }
     }
 
@@ -475,8 +491,26 @@ pub fn fmt_tokens(n: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
+
+    /// The state's name stays English for the element id and agents; the
+    /// person's word comes from the language pack and is that same English
+    /// word in English.
+    #[test]
+    fn a_state_label_stays_english_and_translates_for_a_person() {
+        use crate::lang::Lang;
+        for st in [
+            AgentState::Working,
+            AgentState::Blocked,
+            AgentState::Error,
+            AgentState::Finished,
+            AgentState::Idle,
+            AgentState::Unknown,
+        ] {
+            assert_eq!(st.label_in(Lang::En), st.label());
+        }
+        assert_eq!(AgentState::Finished.label(), "done");
+    }
 
     fn rows(s: &[&str]) -> Vec<String> {
         s.iter().map(|x| x.to_string()).collect()

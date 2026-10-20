@@ -693,7 +693,11 @@ impl TerminalView {
                 // A file that is no longer there says so, here, rather than
                 // handing the desktop a path it will fail on out of sight.
                 if local.is_some_and(|p| !p.exists()) {
-                    self.say("file gone".to_string(), None, cx);
+                    self.say(
+                        crate::lang::current().strings().parts.pane_doc_file_gone.to_string(),
+                        None,
+                        cx,
+                    );
                     return;
                 }
                 open_with_system(&link.target);

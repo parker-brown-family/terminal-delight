@@ -471,7 +471,7 @@ fn codex_typed(p: &Value) -> Option<String> {
         if !text.is_empty() {
             text.push('\n');
         }
-        text.push_str("[image]");
+        text.push_str(image_word());
     }
     (!text.trim().is_empty()).then_some(text)
 }
@@ -566,9 +566,16 @@ fn typed(content: &Value) -> Option<String> {
         if !text.is_empty() {
             text.push('\n');
         }
-        text.push_str("[image]");
+        text.push_str(image_word());
     }
     (!text.trim().is_empty()).then_some(text)
+}
+
+/// What a picture reads as inside a message: `[image]`, in the reader's
+/// language at the moment the record was read. The reader rebuilds the
+/// conversation each time it opens, so a language switch shows on the next.
+fn image_word() -> &'static str {
+    crate::lang::current().strings().parts.transcript_image
 }
 
 /// The text inside the first `<tag>…</tag>` in `s`, trimmed.
@@ -621,18 +628,14 @@ fn tool_out(name: &str, text: &str, pictures: usize, error: bool) -> ToolOut {
         .or_else(|| lines.iter().map(|l| l.trim()).find(|l| !l.is_empty()))
         .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
         .unwrap_or_default();
+    // Worded when the record is read, like `[image]` (see [`image_word`]).
+    let l = crate::lang::current();
     let summary = if error {
         first
     } else if name == "Read" && !lines.is_empty() {
-        match lines.len() {
-            1 => "1 line".to_string(),
-            n => format!("{n} lines"),
-        }
+        l.count(&l.strings().parts.transcript_read_lines, lines.len())
     } else if first.is_empty() && pictures > 0 {
-        match pictures {
-            1 => "an image".to_string(),
-            n => format!("{n} images"),
-        }
+        l.count(&l.strings().parts.transcript_images, pictures)
     } else {
         first
     };
@@ -894,7 +897,14 @@ pub fn draw(conv: &Conversation, ink: &Ink, words: &Words, open: &HashSet<usize>
                         );
                     }
                     if r.cut > 0 {
-                        let more = format!("      … {} more lines", r.cut);
+                        // The indent is layout, outside the translated words.
+                        let more = format!(
+                            "      {}",
+                            crate::lang::fill(
+                                crate::lang::current().strings().parts.transcript_more_lines,
+                                &[("n", &r.cut.to_string())],
+                            )
+                        );
                         push(
                             &mut out,
                             Line::new(ink).push(&more, Role::Dim).done(),
@@ -907,7 +917,10 @@ pub fn draw(conv: &Conversation, ink: &Ink, words: &Words, open: &HashSet<usize>
                 push(
                     &mut out,
                     Line::new(ink)
-                        .push("───  the conversation was compacted here  ───", Role::Dim)
+                        .push(
+                            crate::lang::current().strings().parts.transcript_compacted,
+                            Role::Dim,
+                        )
                         .done(),
                     None,
                 );
@@ -1053,10 +1066,11 @@ fn block_lines(block: &Block, ink: &Ink, lead: &str, out: &mut Vec<DocLine>) {
             }
         }
         Block::Image { alt, .. } => {
+            let p = crate::lang::current().strings().parts;
             let s = if alt.is_empty() {
-                "[image]".to_string()
+                p.transcript_image.to_string()
             } else {
-                format!("[image: {alt}]")
+                crate::lang::fill(p.transcript_image_alt, &[("alt", alt)])
             };
             out.push(led(ink, lead).push(&s, Role::Dim).done());
         }
