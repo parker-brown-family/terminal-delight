@@ -24,4 +24,4 @@ Requires Chromium and Node with native WebSocket. The isolated browser profile a
 node reports/2026-10-19-chalk-surface-v02-evidence/report-qa.mjs /home/parker/Work/terminal-delight/reports/2026-10-19-chalk-surface-second-pass.html
 ```
 
-The narrative measurement is retained as a diagnostic, not a passing visual test. It classified the page as an argument. Its prose-only reader check does not evaluate the screenshots; the review is intended for Parker, who supplied the first-pass feedback.
+The narrative measurement is retained as a diagnostic, not a passing visual test. After revising the transitions from the palette correction through the rendering gaps to the next review, it classified the page as a journey. Its prose-only reader check does not evaluate the screenshots; the review is intended for Parker, who supplied the first-pass feedback.

@@ -53,4 +53,6 @@ Start each pass from the reader’s screenshots. Map every observation to a surf
 
 14. Installed the verified binary as `td-chalk-surface-c8e4715` under the shared deployment lock. That suffix is a binary hash, not a commit id. The launcher points to it for the next launch; the current GUI and session host were left running. Reopen the GUI, then choose Skin → Chalk. Source hashes were compared again immediately before installation.
 
+15. The review page’s first prose-only narrative measurement classified its sections as a catalogue. Revised the joins to follow the actual dependency: palette boundary, surrounding controls, terminal warp, then the next review. The retained final measurement classifies it as a journey; it remains a diagnostic for this visual review, not a substitute for the native captures.
+
 **Turned out to be: 6/10.** The shared material was straightforward; independent renderers and optical text sizing required the native feedback loop. Source tests alone would not have caught the visual failures above. The next pass starts from annotations and the same surface checklist.
