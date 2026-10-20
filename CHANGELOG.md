@@ -21,8 +21,9 @@ the changes you may notice in the first hour.
   run by hand. (#921)
 - **The Field design is now Tactical.** A window or pane saved on Field opens
   on Tactical, keeping any palette you picked and its dials. Field and
-  Tactical differed only in how much glow and bezel they drew, so four designs
-  remain: Hacker, Tactical, Quiet and Deco. (#1029)
+  Tactical differed only in how much glow and bezel they drew. Tactical now
+  also wears the new OPS skin, with a quieter glow and bezel than before; pick
+  another skin from the SKIN row to keep the old trim. (#1029)
 - **Some keys do something different.** Ctrl+Alt+R now renames the highlighted
   left-bar row; Alt+V still makes a side-by-side split. Shift+click on a file
   path reveals it in the file manager, and Ctrl+click opens it. On the
@@ -114,6 +115,20 @@ the changes you may notice in the first hour.
 
 ### Added
 
+- **Tactical has a skin of its own, OPS.** Picking the Tactical design brings
+  it; it can also be picked under any design from the SKIN row. Names are set
+  in Oxanium, interface text in Chakra Petch and numbers in Share Tech Mono
+  (all bundled, SIL OFL). Panels have cut corners, the notice and the focused
+  pane's title sit between chevrons, the focused pane carries a hatched strip,
+  the selected row is a solid bar with an arrow tip, and allowances are rows
+  of pips you can count, hollow where there is no reading. Tactical's own
+  glow and bezel are toned down to suit it. The new skin keys (`corner =
+  "cut"`, `emphasis = "bar"`, `gauge`, `title`, `focus`, `material = "grid"`,
+  and `[font] heading` and `data`) work in any skin.
+- **A new design, Intrusive.** The CRT turned all the way up: scan lines over
+  the text and phosphor glow bleeding off every letter, in each letter's own
+  colour. It asks for no skin, so it mixes with OPS, Chalk or any other.
+
 - **Alt+click on a file path opens it inside Terminal Delight.** Pictures (PNG,
   JPEG, WebP, GIF, BMP, SVG), Markdown, HTML pages, PDFs, video and sound open
   in a floating square over the pane, next to the line that printed them, and
@@ -122,6 +137,18 @@ the changes you may notice in the first hour.
   desktop with `↗ desktop`. A long document shows how far through it you are,
   with a column of blocks down its right edge and a percentage. (#721, #723,
   #749, #761, #812, #884)
+- **🐞 reports a bug without taking anything from your terminals.** The new
+  glyph in the bottom bar (and in the narrow window's … menu) writes a report on
+  your machine and opens it for you to read, then, only if you click again,
+  hands that one file to claude or codex to draft an issue, or opens GitHub's
+  new-issue page for you to fill in yourself. A report holds Terminal Delight's
+  builds, your system's versions, counts of tabs and panes, crash records and
+  its own error lines with paths, links and quoted values blanked out; never
+  scrollback, typed input, titles, directories, commands or a screenshot. The
+  window and the session host now keep logs in
+  `~/.local/state/terminal-delight/logs/`, where before both wrote into
+  nothing, and a crash on any thread leaves a record in `crashes/`, marked by
+  an orange dot on the 🐞. (#1042)
 - **Ctrl+Alt+click opens a document in a new pane beside the one you clicked.**
   The new pane shows the document over a shell that keeps running underneath,
   and Alt+K switches between them. On the document, 0 fits, 1 is actual size, +
@@ -677,6 +704,8 @@ the changes you may notice in the first hour.
 - **The Gamba design and its slot-machine overlay.** A pane saved on it opens on
   the custom theme; pick another design in the painter's Style area. Bells and
   attention badges are unaffected. (#992)
+- **The painter's ◎ theme button under SKIN.** Pick the skin you want instead;
+  a fresh window still starts on the skin its theme names. (#1051)
 - **The Field design.** It is folded into Tactical, and a pane saved on it
   opens on Tactical. See Upgrading from 0.3.0. (#1029)
 - **The painter's COLOUR SETS shelf and colour wheel.** The Omarchy themes

@@ -129,7 +129,7 @@ pub fn blocks(r: Reading, n: usize) -> Vec<Block> {
 
 /// The rail and its percentage, over a view `view_h` tall. Nothing for a
 /// document that fits, or a view too short to hold a rail.
-pub fn rail(r: Reading, view_h: f32, th: &Theme) -> Option<AnyElement> {
+pub fn rail(r: Reading, view_h: f32, th: &Theme, sk: &crate::skin::Skin) -> Option<AnyElement> {
     let track = view_h - 2.0 * END;
     if r.fits() || track < FEWEST as f32 * (BLOCK + GAP) {
         return None;
@@ -144,7 +144,7 @@ pub fn rail(r: Reading, view_h: f32, th: &Theme) -> Option<AnyElement> {
         let block = div()
             .flex_1()
             .min_h(px(1.))
-            .rounded(px(1.5))
+            .rounded(sk.rad_raw(1.5))
             .bg(fill)
             .border_1()
             .border_color(rim);
@@ -186,11 +186,11 @@ pub fn rail(r: Reading, view_h: f32, th: &Theme) -> Option<AnyElement> {
         .right(px(GUTTER))
         .px(px(6.))
         .py(px(1.))
-        .rounded(px(4.))
+        .rounded(sk.rad_raw(4.))
         .bg(th.bg.alpha(0.85))
         .border_1()
         .border_color(lit.alpha(0.4))
-        .text_size(px(11.))
+        .text_size(sk.text_px(11.))
         .text_color(lit)
         .child(format!("{}%", r.percent()));
     Some(

@@ -494,7 +494,13 @@ impl ImageDoc {
 // no scroll to save, no fragment to land on, no file to follow and no notes,
 // so those are the trait's defaults.
 impl Backend for ImageDoc {
-    fn element(&mut self, view: &Drawn, window: &mut Window, th: &Theme) -> AnyElement {
+    fn element(
+        &mut self,
+        view: &Drawn,
+        window: &mut Window,
+        th: &Theme,
+        _sk: &crate::skin::Skin,
+    ) -> AnyElement {
         ImageDoc::element(self, view.path, view.frame, window, th)
     }
 

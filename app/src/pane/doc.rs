@@ -335,6 +335,7 @@ impl TerminalView {
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
         use crate::docopen::FloatHit;
+        let sk = crate::skin::for_theme(cx, th, th.grade.scale);
         let s = crate::lang::current().strings();
         let (w, h) = self.screen_size().unwrap_or((0.0, 0.0));
         let r = crate::docopen::clamp_float(float.rect, w, h);
@@ -417,9 +418,10 @@ impl TerminalView {
             .bg(th.bg)
             .border_2()
             .border_color(th.accent)
-            .rounded(px(6.))
+            .rounded(sk.rad_raw(6.))
             .shadow(crate::float_shadows(th.accent, th.grade.phosphor))
             .overflow_hidden()
+            .map(|d| sk.chrome(sk.finish(d)))
             .child(strip)
             .child(
                 div()
@@ -738,6 +740,77 @@ impl TerminalView {
             Err(why) => format!("desktop {why}"),
             Ok(()) if showing(self, cx) => format!("ok float pane {pane}"),
             Ok(()) => "err the square over your pane holds notes not yet saved, so it stays — they have to be saved or dropped first".into(),
+        }
+    }
+
+    /// A press in the FOCUS reader, with a modifier held, on character `col` of
+    /// a `line` of the text the reader shows of this pane. The grid's click
+    /// table decides it, as it does a press on the screen: Alt on a document
+    /// floats it over this pane (a second Alt on the one showing splits it),
+    /// Ctrl+Alt opens it beside, Shift reveals a file, and Shift or Ctrl on
+    /// anything else hands it to the desktop. A path is read against this
+    /// pane's folder, as a path on its screen is.
+    ///
+    /// The reader had no link of its own: an Alt+click there started a
+    /// selection, so a path that opened from the screen did nothing from the
+    /// reader drawn over it.
+    pub(crate) fn reader_click(
+        &mut self,
+        line: &str,
+        col: usize,
+        mods: crate::docopen::Mods,
+        cx: &mut Context<Self>,
+    ) -> ReaderClick {
+        use crate::docopen::ClickIntent;
+        let cwd = self.runtime().cwd;
+        let link = line_link(line, col, cwd.as_deref(), |p| {
+            std::path::Path::new(p).exists()
+        });
+        let revealable = link.as_deref().and_then(reveal_target);
+        let doc = mods
+            .alt
+            .then(|| link.as_deref().and_then(|l| self.document_of(l)))
+            .flatten();
+        let intent = crate::docopen::click_intent(
+            mods,
+            doc.is_some(),
+            link.is_some(),
+            revealable.is_some(),
+            false,
+        );
+        match (intent, doc) {
+            (ClickIntent::OpenHere, Some(target)) => {
+                let floating = self.float_path(cx);
+                if crate::docopen::promotes(floating.as_deref(), &target.path) {
+                    self.promote_float(cx);
+                    ReaderClick::Opened
+                } else {
+                    match self.open_float(target, None, cx) {
+                        Ok(()) => ReaderClick::Opened,
+                        // HTML with no engine, already on its way to the desktop.
+                        Err(_) => ReaderClick::Handed,
+                    }
+                }
+            }
+            (ClickIntent::OpenBeside, Some(target)) => {
+                self.request_beside(target, None, crate::docopen::Asker::Click, None, cx);
+                ReaderClick::Opened
+            }
+            (ClickIntent::Reveal, _) => match revealable {
+                Some(item) => {
+                    reveal_with_system(&item);
+                    ReaderClick::Handed
+                }
+                None => ReaderClick::Pass,
+            },
+            (ClickIntent::OpenWithDesktop, _) => match link {
+                Some(target) => {
+                    open_with_system(&target);
+                    ReaderClick::Handed
+                }
+                None => ReaderClick::Pass,
+            },
+            _ => ReaderClick::Pass,
         }
     }
 

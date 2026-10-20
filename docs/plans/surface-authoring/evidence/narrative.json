@@ -1,0 +1,405 @@
+{
+  "file": "reports/2026-10-20-surface-authoring.html",
+  "subject": "Completing TD skin architecture so agents can author custom surfaces from a file",
+  "reader": "Parker knows the Chalk iterations and wants a source-checked inventory, candid hindsight and a concrete plan for reusable surface authoring",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.35
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.91
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "argument",
+      "probabilities": {
+        "journey": 0.34,
+        "catalogue": 0,
+        "argument": 0.66,
+        "report": 0,
+        "none_of_the_above": 0
+      },
+      "confidence": 0.57
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Custom surfaces",
+      "text": "Chalk is the paper surface you just reviewed. TD\u2019s skin system draws the frames, menus and controls over your chosen palette. That system has reusable parts, but each renderer still has to opt into them. I recommend completing that shared boundary and proving a second look from a file before shipping the authoring skill. \n source checked architecture proposed Difficulty 6/10 \u00b7 one plan",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.91,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.24,
+            "2": 0.5,
+            "3": 0.22
+          },
+          "confidence": 0.46
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.49
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.73
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0.04,
+            "complication": 0.1,
+            "turn": 0.07,
+            "consequence": 0,
+            "resolution": 0.79,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.76
+        }
+      },
+      "latency_ms": 827.1841950481758,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "Subscriptions showed us the gap",
+      "text": "The palette tray looked right while Subscriptions kept its old surface. Its modal had a separate drawing path. We fixed that path, but another material would still have to find it. TD already reads a skin file, derives colours from the active palette and reloads edits live. Its shared paper painter is reusable too. What remains incomplete is the route from those shared parts to every native surface. \n 01 \u00b7 One pane contains several drawing owners \n\n \u2460 Window cabinet Theme / Style / Rules \n \u2461 Left bar \nTERMINAL DELIGHT \nFlower chalk \nAllowance rails \n\u2462 Pane header TERM \u00b7 BENCH \u00b7 DOC \n \u2463 Terminal content \n\u276f cargo check\n\u2713 changes ready Grid font and measured geometry \n \u2464 Document square \nTD owns frame + controls \nThe page owns its content \n \u2465 Subscription usage \nSeparate shell, choices and meters \n\n\u2466 Workbench cards, composer and menus have another renderer. Notes and media controls add more native parts. \n\nA skin needs named routes into each native owner. A successful palette-tray capture cannot certify the document square or Subscriptions. drawn from code This is an anatomy diagram, not a native screenshot. \n\nThe sibling inventory identifies 46 top-level rows. I would keep that map and strengthen its evidence: colour, corners, material and type need separate coverage fields. A skin radius alone does not mean the whole surface follows the skin. \n\n The inventory needs these corrections. \n under_the_tree finds a drag target; it draws nothing. The handover chip uses skin inks and corners but builds its own face. FOCUS must preserve measured text, while its surrounding frame and controls can still follow the skin. Agent vitals are drawn by the wall\u2019s bar_row closure. Read all 46 rows and the amendments \u2192 \n\nDocument content needs its own boundary. An HTML page, PDF or film keeps its typography or pixels. TD\u2019s title strip, note editor, reading-progress rail and media controls are native UI and belong in the catalogue. Those boundaries decide what the shared skin layer must own.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 2.05,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.14,
+            "2": 0.64,
+            "3": 0.21
+          },
+          "confidence": 0.63
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.55
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.74,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.31,
+            "1": 0.65,
+            "2": 0.04,
+            "3": 0
+          },
+          "confidence": 0.65
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.78
+        },
+        "role": {
+          "type": "choice",
+          "choice": "complication",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.87,
+            "turn": 0.06,
+            "consequence": 0.04,
+            "resolution": 0.02,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.85
+        }
+      },
+      "latency_ms": 355.5737700080499,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "The original architecture already named the right boundary",
+      "text": "The approved chrome-skin plan said that application code should ask for semantic elements and let the skin choose their appearance. Chalk added shared primitives, but its adoption spread material decisions back into callers. \n 02 \u00b7 Current routes \n\nThere are 70 .is_paper() calls outside skin.rs , across the workspace, pane and paint modules. These are call sites, not 70 distinct surfaces. They explain why another material still needs application changes. source count \n 03 \u00b7 Complete the visual contract \n\nCallers ask for a region, choice, action, caption or meter. One shared implementation chooses the material and lays down its background before text. Existing helpers can delegate during migration. proposed \n 04 \u00b7 Add the authoring path \n\nThe same catalogue feeds the human inventory, native fixtures and skill. A missing proof stays unverified. Source checks catch stale owners and new material branches; native review checks what those routes actually draw. proposed \n\nThe boxes stay in the same places across these diagrams. Blue marks existing structure; orange marks current bypasses; amber marks additions to approve. The shared parts also need to preserve what each control means.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.75,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.26,
+            "2": 0.62,
+            "3": 0.08
+          },
+          "confidence": 0.58
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.26
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.88,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.21,
+            "1": 0.71,
+            "2": 0.08,
+            "3": 0
+          },
+          "confidence": 0.71
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.56
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.02,
+            "turn": 0.32,
+            "consequence": 0,
+            "resolution": 0.66,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.6
+        }
+      },
+      "latency_ms": 336.9396390626207,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "Give purpose, material and type separate controls",
+      "text": "Your \u201cjust the highlighter\u201d correction exposed another distinction: a selected choice and a raised action are different objects. A material should not turn both into the same filled tile. \n 05 \u00b7 Shared parts keep the distinction \n\n CHOICE \u00b7 selected \n ansi \nOne mark through the caption \n ACTION \u00b7 available \nrefresh \nRaised stock with its own edge \n METER \u00b7 unknown \nunavailable \u25a7 \nAbsence keeps its own presentation \nThese parts are drawn from Chalk\u2019s reviewed behaviour. The proposed API makes their purpose explicit so each new look preserves it. This illustration is not a captured app view. \n\nType also needs to leave the material predicate. Today, choosing Paper applies Caveat\u2019s 1.45 optical correction even if a custom skin chooses another font. I would reuse TD\u2019s existing type ramp and add an authored family/optical/leading policy. Code and measured terminal text keep their own roles. \n\n Keep \nPalette-role recipes; custom-file hot reload; last valid file after a parse error; saved skin selection; cached grain; deterministic edges; unknown readings; the existing UI and reading gauges. \n Change \nMove material dispatch into the shared vocabulary. Make marker, grain, edge and lift variations data where the renderer already supports them. Replace the font correction tied to Paper. Give sticky decoration and note-colour overrides an explicit policy. \nWith these roles explicit, a custom skin file can choose a treatment once for each kind of control.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.77,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.25,
+            "2": 0.66,
+            "3": 0.07
+          },
+          "confidence": 0.64
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.33
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.02,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.17,
+            "1": 0.65,
+            "2": 0.17,
+            "3": 0.01
+          },
+          "confidence": 0.64
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.21
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.07,
+            "turn": 0.52,
+            "consequence": 0.01,
+            "resolution": 0.39,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.44
+        }
+      },
+      "latency_ms": 326.1614089133218,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "A custom look should finish as a file",
+      "text": "The public td-skin skill would turn a reference into a custom skin file, validate it with TD\u2019s resolver, and open an isolated native gallery. It would use the installed version\u2019s catalogue. It would not carry a hand-copied inventory or depend on Parker\u2019s paths, monitor names or private sessions. \n 06 \u00b7 The proposed authoring loop \n- Describe the look Reference, material, type and which traits follow the palette \n- Write one skin Compose supported recipes and strategies; preserve missing values \n- Inspect native TD Dark / pale, narrow, scaled, flat / warped, active and unknown states \n- Review and apply Commentable page, versioned proof and a restorable local skin file \nThe success test is a visibly different second look with no application Rust edits. A genuinely new rendering strategy becomes one shared engine extension. The skill must state that limit. proposed workflow \n\nThe skill belongs in the public agent-skills package. TD owns the versioned catalogue and native fixture runner. Agents can use MCP or the CLI. A user with an installed TD should be able to use supported skin strategies without building TD. \n What I would do differently with hindsight \nI would begin with the catalogue and the real inherited palette and display grade. I would model material and type independently, and distinguish choices from action buttons before drawing them. The first native strip would use the actual font and text-bearing boxes, so we judge centring rather than a neat HTML substitute. \nI would also make the native capture recipe portable as soon as it works. Every claimed surface would need a named scene and a receipt before I called coverage complete. Whole-suite tests proved useful behaviour, but they could not reveal that a separate modal still had its old background. \nThe original skin architecture anticipated the caller-branch problem. I would finish that adoption before promoting another material as a generally reusable authoring system.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.74,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.26,
+            "2": 0.6799999999999999,
+            "3": 0.04
+          },
+          "confidence": 0.66
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.27
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.01,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.07,
+            "1": 0.85,
+            "2": 0.08,
+            "3": 0
+          },
+          "confidence": 0.85
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.22
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0.04,
+            "consequence": 0.04,
+            "resolution": 0.91,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.89
+        }
+      },
+      "latency_ms": 353.02509495522827,
+      "failure": null
+    },
+    {
+      "index": 6,
+      "heading": "Prove the boundary before packaging the skill",
+      "text": "The first slice would run through Subscriptions again: dialog, choice, action, caption and meter. Change a custom material/type setting and show the native result without editing that renderer. Then migrate the remaining catalogue families through the same vocabulary. \n\n- Tracer. Shared parts, a Subscriptions catalogue entry and dark/pale native evidence. The custom file visibly changes the same real UI. \n- Material and type. Parameterise existing variations, remove material-dependent font correction and preserve shipped skin/config behaviour. \n- Complete adoption. Cover pane menus, workbench, reader frames, document controls and the remaining inventory families. Preserve content, semantic colours and input geometry. \n- Publish the skill. Author a second look from a clean environment using only a file. Verify reload, persistence, restoration and the full native gallery. \n\nEach slice ends in a running native result. The proposed checks combine dispatch/config tests, a ratchet on direct material decisions and native state captures. The ratchet cannot discover every inline renderer; changed-renderer review remains part of the work. Performance is unmeasured in this audit, so the implementation will compare the same fixture before and after. \n\n Complete the existing skin vocabulary \nKeep the resolver and palette separation. Centralise material/type decisions behind semantic parts, with compatible defaults and no caller-specific Paper checks. \n Make catalogue and native proof part of authoring \nOne versioned source for owners, coverage facets, content boundaries and scenes. A missing or stale receipt reads as unverified. \n Ship the skill after a second file-only look works \nThe deliverable is a reusable authoring path. The second look tests it before we ask other agents to trust it. \n\nThe three recommendations form one combined implementation plan. A concur on each approves them as recommended; notes can amend them. \n\n Implementation plan \u00b7 Inventory audit and sources \u00b7 Source receipt \nCode: release-candidate main (0dcdb741). Inventory: tactical workshop (96316efd). This turn changes no application code or installed skin. Diagrams labelled proposed are unbuilt. \n\n . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.83,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.21,
+            "2": 0.69,
+            "3": 0.08
+          },
+          "confidence": 0.67
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.47
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.68,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.36,
+            "1": 0.61,
+            "2": 0.03,
+            "3": 0
+          },
+          "confidence": 0.61
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.56
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0,
+            "consequence": 0,
+            "resolution": 1,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 1
+        }
+      },
+      "latency_ms": 348.7865929491818,
+      "failure": null
+    }
+  ]
+}

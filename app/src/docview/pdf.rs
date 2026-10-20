@@ -723,7 +723,13 @@ impl Backend for PdfDoc {
     /// The pages in view: each page's outline first, then the tiles of an
     /// older size or reading still covering it, then this one's, and the page
     /// counter over all of them.
-    fn element(&mut self, view: &Drawn, _window: &mut Window, th: &Theme) -> AnyElement {
+    fn element(
+        &mut self,
+        view: &Drawn,
+        _window: &mut Window,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> AnyElement {
         if let Err(why) = &self.tools {
             return Self::note(why.reason_in(crate::lang::current()), th);
         }
@@ -806,17 +812,17 @@ impl Backend for PdfDoc {
             }
         }
         let counter = page_at(col, self.top + vh / 2.0).map(|p| {
-            div()
+            sk.chrome(sk.sheet())
                 .absolute()
                 .right(px(GUTTER))
                 .bottom(px(8.))
                 .px(px(7.))
                 .py(px(2.))
-                .rounded(px(4.))
+                .rounded(sk.radius())
                 .bg(th.bg.alpha(0.85))
                 .border_1()
                 .border_color(th.accent.alpha(0.4))
-                .text_size(px(11.))
+                .text_size(sk.text_px(11.))
                 .text_color(th.accent)
                 .child(format!("{} / {}", p + 1, col.pages.len()))
                 .into_any_element()
