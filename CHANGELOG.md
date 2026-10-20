@@ -115,6 +115,11 @@ the changes you may notice in the first hour.
 
 ### Added
 
+- **A skin is a file you can write.** A skin's materials, type, glass and
+  notes now come from one TOML file that TD validates and reloads, so a new look
+  is a file edit instead of a code change. `docs/skins/examples/field-notes.toml`
+  restyles the same controls as Chalk. The window can print its catalogue of 65
+  surfaces, a template and a validator for the file. (#1035)
 - **Tactical has a skin of its own, OPS.** Picking the Tactical design brings
   it; it can also be picked under any design from the SKIN row. Names are set
   in Oxanium, interface text in Chakra Petch and numbers in Share Tech Mono
@@ -572,6 +577,11 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
+- **Pasting a screenshot into Claude or Codex works again.** The agents could
+  not reach the desktop clipboard from the session host, so Codex timed out on
+  X11 and Claude found no image. TD now saves the picture and pastes its path,
+  which both agents attach as `[Image #1]`; Ctrl+V, Ctrl+Shift+V, Shift+Insert
+  and workbench paste all do it. (#1060)
 - **Tabs no longer come back out of their projects after the window restarts.**
   One answer from the session host that took longer than five seconds marked
   the host as gone for the rest of the window's life, and the only thing that
