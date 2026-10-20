@@ -13,8 +13,9 @@ Field was folded into Tactical the same evening, in [pull request 1029](https://
 ## Where it stands
 
 - [x] Workshop 1: type and interface specimens — `reports/2026-10-19-tactical-workshop.html`
-- [ ] Parker's notes on the workshop
-- [ ] One combined plan page (the score buys one), from those notes
+- [x] Parker's notes on the workshop (19 October): direction F Squared ops; skin renamed OPS; Intrusive becomes a design; gauges are double rows
+- [x] One combined plan page — `01-plan.md`
+- [ ] Plan approved
 - [ ] Native build, photographed on every surface in `docs/spec/skin-surface-inventory.md`
 - [ ] Merge, install, review
 
