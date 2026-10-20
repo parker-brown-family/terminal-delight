@@ -417,9 +417,10 @@ impl VideoDoc {
             Some(false) => "❚❚",
             None => "…",
         };
+        let t = &crate::lang::current().strings().parts;
         let sound = match self.status.muted {
-            Some(true) => "muted",
-            Some(false) => "sound",
+            Some(true) => t.video_muted,
+            Some(false) => t.video_sound,
             None => "…",
         };
         let (l, r) = bar.line();
@@ -495,8 +496,9 @@ impl VideoDoc {
         if let Some(why) = &self.status.error {
             return note(why.clone());
         }
+        let t = &crate::lang::current().strings().parts;
         let Some((size, scale)) = view.frame else {
-            return note("opening…".into());
+            return note(t.doc_opening.into());
         };
         self.ink_in(th);
         self.ask_size(size, scale);
@@ -527,8 +529,8 @@ impl VideoDoc {
                     .object_fit(ObjectFit::Fill)
                     .into_any_element()
             }
-            (_, None) if self.status.loaded => note("This file has sound but no picture.".into()),
-            _ => note("opening…".into()),
+            (_, None) if self.status.loaded => note(t.video_no_picture.into()),
+            _ => note(t.doc_opening.into()),
         };
         div()
             .size_full()

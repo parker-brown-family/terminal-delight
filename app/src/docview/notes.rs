@@ -1214,27 +1214,36 @@ impl Refusal {
         }
     }
 
-    /// The refusal as one plain sentence, for the person who pressed save.
+    /// The refusal as one plain sentence, in English: what the control
+    /// socket answers (`notes_command`) and what the tests pin. The bar and
+    /// the note box say it in the reader's language through [`Self::say`].
     pub fn sentence(&self) -> String {
+        self.say(crate::lang::Lang::En)
+    }
+
+    /// The refusal as one plain sentence, for the person who pressed save,
+    /// in `l`. The reason inside [`Refusal::Unreadable`] stays as it was
+    /// written, in English, because the same words reach the control socket.
+    pub fn say(&self, l: crate::lang::Lang) -> String {
+        use crate::lang::fill;
+        let t = &l.strings().parts;
         match self {
-            Refusal::NoIsland => {
-                "This page has no notes island, so there is nowhere in the file to save a note.".into()
-            }
-            Refusal::IslandAfterScript => "This brief's notes island comes after its notes script, so a browser could never show a note saved there.".into(),
-            Refusal::NoScript => "No notes script runs on this page, so a note saved here would be one no browser shows.".into(),
-            Refusal::Unreadable(why) => format!("The notes already in this file cannot be read ({why}), and TD will not overwrite what it cannot read."),
-            Refusal::UnknownFormat(f) => format!("This brief's notes are in format {f}, which is newer than this TD; it will not write a format it does not know."),
-            Refusal::BuildInput(name) => format!("{name} is a build input (its name starts with _), and TD never writes one."),
-            Refusal::AnchorGone(nid) => format!("The passage [{nid}] is no longer in this brief, so a note on it would be one no browser shows; its text is still in the note box to copy."),
-            Refusal::ConcursUnsupported(_) => "This brief's notes script is older than CONCUR stamps, so a stamp saved here would never show.".into(),
-            Refusal::UnterminatedMirror => "The READER NOTES comment in this file never closes, and TD will not guess where it ends.".into(),
-            Refusal::TornIsland => "This brief's notes island never closes its script tag, and TD will not guess where it ends.".into(),
-            Refusal::Overlap => "The places this brief keeps its notes overlap, and TD will not guess which bytes belong to which.".into(),
-            Refusal::Symlink => "This brief is a symbolic link; TD saves only into a file itself.".into(),
-            Refusal::HardLinked => "This brief has another name on disk, and a save would split the two apart.".into(),
-            Refusal::NotAFile => "This is not a regular file, so TD will not save into it.".into(),
-            Refusal::ReadOnly => "This brief is marked read-only on disk, so TD will not save into it.".into(),
-            Refusal::BadRevision(rev) => format!("The revision {rev} is not a time TD can write."),
+            Refusal::NoIsland => t.notes_refusal_no_island.into(),
+            Refusal::IslandAfterScript => t.notes_refusal_island_after_script.into(),
+            Refusal::NoScript => t.notes_refusal_no_script.into(),
+            Refusal::Unreadable(why) => fill(t.notes_refusal_unreadable, &[("why", why)]),
+            Refusal::UnknownFormat(f) => fill(t.notes_refusal_unknown_format, &[("format", f)]),
+            Refusal::BuildInput(name) => fill(t.notes_refusal_build_input, &[("name", name)]),
+            Refusal::AnchorGone(nid) => fill(t.notes_refusal_anchor_gone, &[("nid", nid)]),
+            Refusal::ConcursUnsupported(_) => t.notes_refusal_concurs_unsupported.into(),
+            Refusal::UnterminatedMirror => t.notes_refusal_unterminated_mirror.into(),
+            Refusal::TornIsland => t.notes_refusal_torn_island.into(),
+            Refusal::Overlap => t.notes_refusal_overlap.into(),
+            Refusal::Symlink => t.notes_refusal_symlink.into(),
+            Refusal::HardLinked => t.notes_refusal_hard_linked.into(),
+            Refusal::NotAFile => t.notes_refusal_not_a_file.into(),
+            Refusal::ReadOnly => t.notes_refusal_read_only.into(),
+            Refusal::BadRevision(rev) => fill(t.notes_refusal_bad_revision, &[("rev", rev)]),
         }
     }
 }
@@ -1538,31 +1547,34 @@ fn last_mirror(bytes: &[u8], after: usize) -> Result<Option<Range<usize>>, Refus
 /// splices equals the original, and the islands in the result read back as
 /// the maps meant to be written.
 pub fn verify(before: &[u8], plan: &WritePlan) -> Result<(), String> {
+    // Said only in the bar, inside "TD's check of its own write failed".
+    use crate::lang::fill;
+    let t = &crate::lang::current().strings().parts;
     let (mut o, mut n) = (0usize, 0usize);
     for s in &plan.splices {
         let len = s.range.start - o;
         if before.get(o..s.range.start) != plan.out.get(n..n + len) {
-            return Err(format!("bytes moved before the {}", s.what));
+            return Err(fill(t.notes_verify_moved_before, &[("region", s.what)]));
         }
         n += len + s.bytes.len();
         o = s.range.end;
     }
     if before.get(o..) != plan.out.get(n..) {
-        return Err("bytes moved after the last region written".into());
+        return Err(t.notes_verify_moved_after.into());
     }
     let back = read(&plan.out);
     let notes = match back.notes {
         Some(Ok(notes)) => notes,
-        _ => return Err("the notes island does not read back".into()),
+        _ => return Err(t.notes_verify_notes_no_readback.into()),
     };
     if stringify(&Json::Obj(notes.0)) != stringify(&Json::Obj(plan.notes.0.clone())) {
-        return Err("the notes island does not read back as the notes written".into());
+        return Err(t.notes_verify_notes_mismatch.into());
     }
     if let Some(want) = &plan.concurs {
         match back.concurs {
             Ok(c)
                 if stringify(&Json::Obj(c.0.clone())) == stringify(&Json::Obj(want.0.clone())) => {}
-            _ => return Err("the concurs island does not read back as the concurs written".into()),
+            _ => return Err(t.notes_verify_concurs_mismatch.into()),
         }
     }
     Ok(())
@@ -1574,32 +1586,32 @@ pub fn verify(before: &[u8], plan: &WritePlan) -> Result<(), String> {
 /// anchor that disagrees is named. An anchor the page did not say anything
 /// about is a disagreement too: unknown is not "no".
 pub fn confirm(plan: &WritePlan, shown: &[super::engine::Anchor]) -> Result<(), String> {
+    // Said only in the bar, inside "the file reopened fresh does not show it".
+    let t = &crate::lang::current().strings().parts;
+    let say = |template: &str, nid: &str| crate::lang::fill(template, &[("nid", nid)]);
     for a in shown {
         let want = !plan.notes.on(&a.nid).is_empty();
         match a.has_note {
             Some(got) if got == want => {}
             Some(got) => {
-                return Err(format!(
-                    "[{}] {} a note",
-                    a.nid,
-                    if got { "shows" } else { "does not show" }
-                ))
+                let says = if got {
+                    t.notes_confirm_shows_note
+                } else {
+                    t.notes_confirm_missing_note
+                };
+                return Err(say(says, &a.nid));
             }
-            None => {
-                return Err(format!(
-                    "the page did not say whether [{}] has a note",
-                    a.nid
-                ))
-            }
+            None => return Err(say(t.notes_confirm_unknown, &a.nid)),
         }
         if let (Some(concurs), Some(_)) = (&plan.concurs, a.concur_zone) {
             let want = concurs.has(&a.nid);
             if a.has_concur != Some(want) {
-                return Err(format!(
-                    "[{}] {} its stamp",
-                    a.nid,
-                    if want { "does not show" } else { "still shows" }
-                ));
+                let says = if want {
+                    t.notes_confirm_missing_stamp
+                } else {
+                    t.notes_confirm_still_stamp
+                };
+                return Err(say(says, &a.nid));
             }
         }
     }
@@ -1702,12 +1714,28 @@ pub enum WriteError {
 }
 
 impl WriteError {
+    /// The failure in words, for the bar, in the reader's language: a save
+    /// is pressed in the viewer, and only the bar says how it ended.
     pub fn sentence(&self) -> String {
+        self.say(crate::lang::current())
+    }
+
+    /// The failure in words, in `l`. An `Io` reason keeps the system's own
+    /// error text, which is not TD's to translate.
+    pub fn say(&self, l: crate::lang::Lang) -> String {
+        use crate::lang::fill;
+        let t = &l.strings().parts;
         match self {
-            WriteError::Refused(r) => r.sentence(),
-            WriteError::Changed => "The brief changed on disk while it was being saved, so nothing was written; your notes are still here to save again.".into(),
-            WriteError::Io { why, backup: Some(b) } => format!("Could not save ({why}); the file is as it was, and a copy of it is at {}.", b.display()),
-            WriteError::Io { why, backup: None } => format!("Could not save ({why}); the file is as it was."),
+            WriteError::Refused(r) => r.say(l),
+            WriteError::Changed => t.notes_write_changed.into(),
+            WriteError::Io {
+                why,
+                backup: Some(b),
+            } => fill(
+                t.notes_write_io_backup,
+                &[("why", why), ("path", &b.display().to_string())],
+            ),
+            WriteError::Io { why, backup: None } => fill(t.notes_write_io, &[("why", why)]),
         }
     }
 }
@@ -1767,7 +1795,14 @@ pub fn commit_with(
     if now != read {
         return Err(WriteError::Changed);
     }
-    let backup = back_up(path, read, backups).map_err(|e| io(format!("the backup: {e}"), None))?;
+    let parts = &crate::lang::current().strings().parts;
+    let backup = back_up(path, read, backups).map_err(|e| {
+        let e = e.to_string();
+        io(
+            crate::lang::fill(parts.notes_write_backup_failed, &[("error", &e)]),
+            None,
+        )
+    })?;
     let dir = path.parent().unwrap_or(std::path::Path::new("."));
     let name = path
         .file_name()
@@ -1812,10 +1847,7 @@ pub fn commit_with(
     }
     let on_disk = std::fs::read(path).map_err(|e| io(e.to_string(), Some(&backup)))?;
     if on_disk != plan.out {
-        return Err(io(
-            "what is on disk is not what was written".into(),
-            Some(&backup),
-        ));
+        return Err(io(parts.notes_write_mismatch.into(), Some(&backup)));
     }
     let after = std::fs::metadata(path).map_err(|e| io(e.to_string(), Some(&backup)))?;
     let mtime = after
@@ -3161,6 +3193,30 @@ mod tests {
             },
         ] {
             assert!(e.sentence().ends_with('.'), "{}", e.sentence());
+        }
+    }
+
+    /// A refusal has two voices: the English the control socket answers and
+    /// the tests pin, whatever the reader's language, and the bar's, in it.
+    /// Every language keeps what was filled in, so a translation cannot drop
+    /// the passage or the file a refusal names.
+    #[test]
+    fn a_refusal_answers_the_socket_in_english_and_the_bar_in_the_readers_language() {
+        use crate::lang::Lang;
+        let gone = Refusal::AnchorGone("fig-1".into());
+        assert_eq!(gone.sentence(), gone.say(Lang::En));
+        assert!(gone
+            .sentence()
+            .starts_with("The passage [fig-1] is no longer"));
+        for l in Lang::ALL {
+            assert!(gone.say(l).contains("[fig-1]"), "{l:?}");
+            let input = Refusal::BuildInput("_x.html".into()).say(l);
+            assert!(input.contains("_x.html"), "{l:?}: {input}");
+            let io = WriteError::Io {
+                why: "disk full".into(),
+                backup: Some("/s/b".into()),
+            };
+            assert!(io.say(l).contains("disk full") && io.say(l).contains("/s/b"));
         }
     }
 

@@ -61,7 +61,7 @@ use super::engine::{
     PageEngine, PageId, PageLayout, PageRequest, PageVideo, RectCss, Unavailable, TILE_DEV,
 };
 use super::notes::{self, NotesRead};
-use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer, Pasting, Said};
+use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer, Pasting, Said, Words};
 use super::progress::Reading;
 use super::snapshot::EXTRACT_VERSION;
 use super::{resolve_link, DocumentView, FileStamp, FollowLink, LinkTarget};
@@ -247,25 +247,28 @@ pub fn video_at(videos: &[PageVideo], map: &PageToView, at: Point<Pixels>) -> Op
 
 /// Pure. Why a video under a view-local point that names no file cannot be
 /// opened, in words for the bar: a press there would otherwise do nothing
-/// at all, which reads as a press that never landed. `None` when no such
-/// video is under the point.
-pub fn unplayable_at(videos: &[PageVideo], map: &PageToView, at: Point<Pixels>) -> Option<String> {
+/// at all, which reads as a press that never landed, in the reader's
+/// language. `None` when no such video is under the point.
+pub fn unplayable_at(
+    videos: &[PageVideo],
+    map: &PageToView,
+    at: Point<Pixels>,
+    l: crate::lang::Lang,
+) -> Option<String> {
     let v = videos.iter().find(|v| {
         v.src.is_none()
             && v.rect
                 .and_then(|rc| place(rc, map))
                 .is_some_and(|b| b.contains(&at))
     })?;
-    let (what, carried) = if v.sound {
-        ("this sound", "this sound")
-    } else {
-        ("this video", "this video's film")
-    };
-    Some(match &v.unkept {
-        Some(why) => format!("{carried} could not be kept as a file to play: {why}"),
-        None => format!(
-            "{what} is played by the page's own script, so there is no file to open it from"
-        ),
+    // Whole sentences, one per kind: "this sound" and "this video's film"
+    // do not decline alike in every language.
+    let t = &l.strings().parts;
+    Some(match (&v.unkept, v.sound) {
+        (Some(why), true) => crate::lang::fill(t.doc_page_sound_unkept, &[("why", why)]),
+        (Some(why), false) => crate::lang::fill(t.doc_page_video_unkept, &[("why", why)]),
+        (None, true) => t.doc_page_sound_scripted.into(),
+        (None, false) => t.doc_page_video_scripted.into(),
     })
 }
 
@@ -616,17 +619,25 @@ impl PageDoc {
         true
     }
 
-    fn fail(&mut self, why: String, desktop: bool, cx: &mut Context<DocumentView>) {
+    /// `why` is what the square says, in the reader's language; `english`
+    /// the same in English, for the log and the pane that hands the file on.
+    fn fail(
+        &mut self,
+        why: String,
+        english: String,
+        desktop: bool,
+        cx: &mut Context<DocumentView>,
+    ) {
         if debug() {
-            eprintln!("[doc] page failed {}: {why}", self.path.display());
+            eprintln!("[doc] page failed {}: {english}", self.path.display());
         }
-        self.status = Status::Failed(why.clone());
+        self.status = Status::Failed(why);
         self.work = None;
         // Once, however the view is resized afterwards: a file handed to the
         // desktop on every resize would open a browser window each time.
         if desktop && !self.handed_over {
             self.handed_over = true;
-            cx.emit(super::CannotShow { reason: why });
+            cx.emit(super::CannotShow { reason: english });
         }
         cx.notify();
     }
@@ -651,8 +662,8 @@ impl PageDoc {
             Err(u) => {
                 // The reason alone: whether the file then goes to the desktop
                 // is the pane's call, and it says so in its own words.
-                let why = u.reason();
-                self.fail(why, true, cx);
+                let why = u.reason_in(crate::lang::current());
+                self.fail(why, u.reason(), true, cx);
                 return;
             }
         };
@@ -675,7 +686,7 @@ impl PageDoc {
                 .background_spawn({
                     let (path, root) = (path.clone(), root.clone());
                     async move {
-                        let bytes = std::fs::read(&path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+                        let bytes = std::fs::read(&path).map_err(|e| (path.display().to_string(), e.to_string()))?;
                         let hash = layout_hash(&bytes);
                         let read = notes::read(&bytes);
                         let key = cache::key(&path, hash, g, name, EXTRACT_VERSION);
@@ -686,16 +697,18 @@ impl PageDoc {
                             }
                             Some((c.layout, pngs))
                         });
-                        Ok::<_, String>((hash, read, key, cached))
+                        Ok::<_, (String, String)>((hash, read, key, cached))
                     }
                 })
                 .await;
             let (mut hash, mut read, key, cached) = match found {
                 Ok(f) => f,
-                Err(why) => {
+                Err((at, e)) => {
+                    let t = &crate::lang::current().strings().parts;
+                    let why = crate::lang::fill(t.doc_md_unreadable, &[("path", &at), ("error", &e)]);
                     this.update(cx, |view, cx| {
                         if let Some(p) = page_of(view) {
-                            p.fail(why, false, cx);
+                            p.fail(why, format!("Could not read {at}: {e}"), false, cx);
                         }
                     })
                     .ok();
@@ -771,7 +784,7 @@ impl PageDoc {
                     this.update(cx, |view, cx| {
                         if let Some(p) = page_of(view) {
                             let desktop = Self::engine_broken(&e);
-                            p.fail(e.to_string(), desktop, cx);
+                            p.fail(e.say(crate::lang::current()), e.to_string(), desktop, cx);
                         }
                     })
                     .ok();
@@ -829,7 +842,7 @@ impl PageDoc {
                             Ok(_) | Err(EngineError::Stale) => false,
                             Err(e) => {
                                 let desktop = Self::engine_broken(&e);
-                                p.fail(e.to_string(), desktop, cx);
+                                p.fail(e.say(crate::lang::current()), e.to_string(), desktop, cx);
                                 false
                             }
                         }
@@ -1288,7 +1301,8 @@ impl PageDoc {
         let (Some(layer), Some(r)) = (self.notes.as_mut(), self.current.as_ref()) else {
             return;
         };
-        if let Err(why) = layer.can_save() {
+        if layer.can_save_in(crate::lang::Lang::En).is_err() {
+            let why = Words::said(|l| layer.can_save_in(l).err().unwrap_or_default());
             layer.say(Said::Refused(why));
             cx.notify();
             return;
@@ -1296,7 +1310,7 @@ impl PageDoc {
         let engine = match &self.engine {
             Ok(e) => e.clone(),
             Err(u) => {
-                layer.say(Said::Refused(u.reason()));
+                layer.say(Said::Refused(Words::said(|l| u.reason_in(l))));
                 cx.notify();
                 return;
             }
@@ -1369,14 +1383,22 @@ impl PageDoc {
                 .await;
             this.update(cx, |view, cx| {
                 let Some(p) = page_of(view) else { return };
-                let backup = written.backup.display();
+                let backup = written.backup.display().to_string();
                 let verdict = match &back {
                     Ok(layout) => notes::confirm(&plan, &layout.anchors).map_err(|why| {
-                        format!("saved into {file}, but the file reopened fresh does not show it ({why}); the file from before is at {backup}")
+                        Words::said(|l| {
+                            crate::lang::fill(
+                                l.strings().parts.notes_saved_unconfirmed,
+                                &[("file", &file), ("why", &why), ("backup", &backup)],
+                            )
+                        })
                     }),
-                    Err(e) => Err(format!(
-                        "saved into {file}, but it could not be reopened to check ({e}); the file from before is at {backup}"
-                    )),
+                    Err(e) => Err(Words::said(|l| {
+                        crate::lang::fill(
+                            l.strings().parts.notes_saved_unchecked,
+                            &[("file", &file), ("error", &e.say(l)), ("backup", &backup)],
+                        )
+                    })),
                 };
                 if let Some(l) = p.notes.as_mut() {
                     match verdict {
@@ -1695,8 +1717,10 @@ impl PageDoc {
             // A stamp put down, or peeled off; saved with the notes.
             Some(MarkHit::Concur(nid)) => {
                 if let Some(layer) = self.notes.as_mut() {
+                    // English at its source, so the bar and the report
+                    // carry the same sentence.
                     if let Err(why) = layer.toggle_concur(&nid, SystemTime::now()) {
-                        layer.say(Said::Refused(why));
+                        layer.say(Said::Refused(Words::as_is(why)));
                     }
                 }
                 cx.notify();
@@ -1726,14 +1750,19 @@ impl PageDoc {
             Some(PageHit::Closer) => Pressed::Nothing,
             // Nothing under the press but a video that names no file: say
             // so in the bar, where a refused save says why.
-            None => match (unplayable_at(videos, &map, at), self.notes.as_mut()) {
-                (Some(why), Some(layer)) => {
-                    layer.say(Said::Refused(why));
-                    cx.notify();
-                    Pressed::Took
+            None => {
+                let why = unplayable_at(videos, &map, at, crate::lang::Lang::En).map(|_| {
+                    Words::said(|l| unplayable_at(videos, &map, at, l).unwrap_or_default())
+                });
+                match (why, self.notes.as_mut()) {
+                    (Some(why), Some(layer)) => {
+                        layer.say(Said::Refused(why));
+                        cx.notify();
+                        Pressed::Took
+                    }
+                    _ => Pressed::Nothing,
                 }
-                _ => Pressed::Nothing,
-            },
+            }
         }
     }
 
@@ -1978,7 +2007,7 @@ impl PageDoc {
                             .and_then(|p| p.dialog.as_mut())
                             .filter(|d| d.id == wanted)
                         {
-                            d.failed = Some(e.to_string());
+                            d.failed = Some(e.say(crate::lang::current()));
                         }
                         cx.notify();
                     })
@@ -2152,10 +2181,11 @@ impl PageDoc {
             layer.clear_zones();
             layers.extend(layer.draw_marks(&self.page_marks(), th));
         }
+        let t = &crate::lang::current().strings().parts;
         match &self.status {
             Status::Failed(why) => layers.push(note(why.clone())),
             Status::Waiting | Status::Drawing if layers.is_empty() => {
-                layers.push(note("drawing the page…".into()))
+                layers.push(note(t.doc_drawing_page.into()))
             }
             _ => {}
         }
@@ -2168,9 +2198,10 @@ impl PageDoc {
                     .into_any_element(),
             );
             match (&d.image, self.dialog_frame(), &d.failed) {
-                (_, _, Some(why)) => {
-                    layers.push(note(format!("This dialog could not be drawn: {why}")))
-                }
+                (_, _, Some(why)) => layers.push(note(crate::lang::fill(
+                    t.doc_dialog_failed,
+                    &[("why", why)],
+                ))),
                 (Some(image), Some((frame, _)), None) => layers.push(
                     img(ImageSource::Render(image.clone()))
                         .absolute()
@@ -2181,7 +2212,7 @@ impl PageDoc {
                         .object_fit(ObjectFit::Fill)
                         .into_any_element(),
                 ),
-                _ => layers.push(note("opening…".into())),
+                _ => layers.push(note(t.doc_opening.into())),
             }
             if let Some(layer) = &self.notes {
                 layers.extend(layer.draw_marks(&self.dialog_marks(), th));
@@ -2210,18 +2241,25 @@ fn write_notes(
     label: &str,
     concurs: bool,
     rendered: super::engine::LayoutHash,
-) -> Result<(notes::WritePlan, notes::Written), String> {
+) -> Result<(notes::WritePlan, notes::Written), Words> {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let fill = crate::lang::fill;
     let bytes = std::fs::read(path).map_err(|e| {
-        format!("Could not read {name} to save into it ({e}); nothing was written.")
+        let error = e.to_string();
+        Words::said(|l| {
+            fill(
+                l.strings().parts.notes_save_read_failed,
+                &[("name", &name), ("error", &error)],
+            )
+        })
     })?;
     if layout_hash(&bytes) != rendered {
-        return Err(format!(
-            "{name} changed on disk since it was drawn, so nothing was written; it is being drawn again, and your notes wait here to save once it is."
-        ));
+        return Err(Words::said(|l| {
+            fill(l.strings().parts.notes_save_changed, &[("name", &name)])
+        }));
     }
     let pairs: Vec<(&str, &str)> = anchors
         .iter()
@@ -2239,12 +2277,12 @@ fn write_notes(
             path,
         },
     )
-    .map_err(|r| r.sentence())?;
+    .map_err(|r| Words::said(|l| r.say(l)))?;
     notes::verify(&bytes, &plan).map_err(|why| {
-        format!("TD's check of its own write failed ({why}), so nothing was written.")
+        Words::said(|l| fill(l.strings().parts.notes_save_check_failed, &[("why", &why)]))
     })?;
-    let written =
-        notes::commit(path, &bytes, &plan, &notes::backups_for(path)).map_err(|e| e.sentence())?;
+    let written = notes::commit(path, &bytes, &plan, &notes::backups_for(path))
+        .map_err(|e| Words::as_is(e.sentence()))?;
     Ok((plan, written))
 }
 
@@ -2753,6 +2791,7 @@ mod tests {
     /// one film, 1,100 CSS px wide, a third of the way down.
     #[test]
     fn a_press_on_a_videos_box_finds_the_file_it_plays() {
+        use crate::lang::Lang::En;
         let film = "file:///r/campaigns/out/welcome-pass-one.mp4";
         let videos = vec![
             PageVideo {
@@ -2806,15 +2845,15 @@ mod tests {
             "a video that names no file opens nothing"
         );
         // ...but it is under the press, and says why it opens nothing.
-        let said = unplayable_at(&videos, &lower, at(100., 400.)).expect("the fed one");
+        let said = unplayable_at(&videos, &lower, at(100., 400.), En).expect("the fed one");
         assert!(said.contains("the page's own script"), "{said}");
         assert_eq!(
-            unplayable_at(&videos, &map, at(300., 350.)),
+            unplayable_at(&videos, &map, at(300., 350.), En),
             None,
             "the film"
         );
         assert_eq!(
-            unplayable_at(&videos, &lower, at(590., 400.)),
+            unplayable_at(&videos, &lower, at(590., 400.), En),
             None,
             "beside it"
         );
@@ -2822,7 +2861,7 @@ mod tests {
             unkept: Some("\"text/plain\" is not a video or sound TD plays".into()),
             ..videos[1].clone()
         }];
-        let said = unplayable_at(&refused, &lower, at(100., 400.)).expect("the unkept one");
+        let said = unplayable_at(&refused, &lower, at(100., 400.), En).expect("the unkept one");
         assert!(
             said.contains("could not be kept") && said.contains("text/plain"),
             "{said}"
@@ -2832,7 +2871,7 @@ mod tests {
             sound: true,
             ..videos[1].clone()
         }];
-        let said = unplayable_at(&fed, &lower, at(100., 400.)).expect("the fed sound");
+        let said = unplayable_at(&fed, &lower, at(100., 400.), En).expect("the fed sound");
         assert!(said.starts_with("this sound "), "{said}");
     }
 }

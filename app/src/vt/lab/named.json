@@ -1,0 +1,143 @@
+{
+  "format_version": 1,
+  "corpus_version": "named-1",
+  "note": "Hand-written cases for the Terminal Lab (src/vt/lab.rs, scripts/lab/run.py). Each one is replayed through both cores, whole and in chunks. A tab keeps a literal tab in the first cell it covers, so a copy gives the tab back; both cores do this. An `expect` op is a checkpoint that also states what the screen must hold there; rows are text with trailing blanks trimmed, and the cursor is [line, column]. Bytes go in `write` as JSON text; `write_hex` carries bytes that are not text.",
+  "cases": [
+    {
+      "name": "printable-text",
+      "size": [40, 6],
+      "ops": [
+        {"write": "hello world"},
+        {"expect": {"rows": [[0, "hello world"]], "cursor": [0, 11]}},
+        {"write": "\r\nsecond line\ttab"},
+        {"expect": {"rows": [[1, "second line\t    tab"]], "cursor": [1, 19]}}
+      ]
+    },
+    {
+      "name": "colour-and-erase",
+      "size": [30, 6],
+      "ops": [
+        {"write": "\u001b[31mred\u001b[0m plain \u001b[1;4mbold\u001b[0m"},
+        "checkpoint",
+        {"write": "\r\nabcdefgh\u001b[4D\u001b[K"},
+        {"expect": {"rows": [[1, "abcd"]], "cursor": [1, 4]}},
+        {"write": "\r\nwxyz\u001b[2D\u001b[1K"},
+        {"expect": {"rows": [[2, "   z"]]}},
+        {"write": "\u001b[38;5;202m256\u001b[48;2;10;20;30mtrue\u001b[m\u001b[2K"},
+        {"expect": {"rows": [[2, ""]]}},
+        {"write": "\u001b[H\u001b[2J"},
+        {"expect": {"rows": [[0, ""], [1, ""]], "cursor": [0, 0]}}
+      ]
+    },
+    {
+      "name": "cursor-movement",
+      "size": [20, 8],
+      "ops": [
+        {"write": "\u001b[5;10HX"},
+        {"expect": {"rows": [[4, "         X"]], "cursor": [4, 10]}},
+        {"write": "\u001b[2AY\u001b[3DZ"},
+        {"expect": {"rows": [[2, "        Z Y"]], "cursor": [2, 9]}},
+        {"write": "\u001b[HQ\u001b[99;99HE"},
+        {"expect": {"rows": [[0, "Q"], [7, "                   E"]]}},
+        {"write": "\u001b7\u001b[3;3Hs\u001b8r"},
+        "checkpoint"
+      ]
+    },
+    {
+      "name": "alternate-screen",
+      "size": [20, 5],
+      "ops": [
+        {"write": "main screen"},
+        {"write": "\u001b[?1049h\u001b[Halt"},
+        {"expect": {"rows": [[0, "alt"]], "modes": {"ALT_SCREEN": true}}},
+        {"write": "\u001b[?1049l"},
+        {"expect": {"rows": [[0, "main screen"]], "cursor": [0, 11], "modes": {"ALT_SCREEN": false}}}
+      ]
+    },
+    {
+      "name": "wide-characters",
+      "size": [10, 4],
+      "ops": [
+        {"write": "你好ab"},
+        {"expect": {"rows": [[0, "你好ab"]], "cursor": [0, 6]}},
+        {"write": "\r\né café"},
+        "checkpoint",
+        {"write": "\r\n123456789你"},
+        "checkpoint"
+      ]
+    },
+    {
+      "name": "line-wrap",
+      "size": [10, 4],
+      "ops": [
+        {"write": "0123456789abcdef"},
+        {"expect": {"rows": [[0, "0123456789"], [1, "abcdef"]], "cursor": [1, 6]}},
+        {"write": "\u001b[?7lXXXXXXXXXXXXXXXX\u001b[?7h"},
+        {"expect": {"modes": {"LINE_WRAP": true}}}
+      ]
+    },
+    {
+      "name": "scroll-region",
+      "size": [12, 6],
+      "ops": [
+        {"write": "a\r\nb\r\nc\r\nd\r\ne\r\nf"},
+        {"write": "\u001b[2;5r\u001b[2H\u001b[L"},
+        {"expect": {"rows": [[0, "a"], [1, ""], [2, "b"], [5, "f"]]}},
+        {"write": "\u001b[3H\u001b[2M"},
+        "checkpoint",
+        {"write": "\u001b[r\u001b[6H\r\nscrolled"},
+        "checkpoint"
+      ]
+    },
+    {
+      "name": "history",
+      "size": [16, 4],
+      "ops": [
+        {"write": "l0\r\nl1\r\nl2\r\nl3\r\nl4\r\nl5\r\nl6"},
+        {"expect": {"rows": [[-3, "l0"], [0, "l3"], [3, "l6"]], "history": 3}},
+        {"write": "\u001b[3J"},
+        "checkpoint"
+      ]
+    },
+    {
+      "name": "bounded-resize",
+      "size": [20, 5],
+      "ops": [
+        {"write": "one two three four five six seven\r\nshort\r\nx"},
+        "checkpoint",
+        {"resize": [10, 3]},
+        "checkpoint",
+        {"resize": [30, 8]},
+        "checkpoint",
+        {"resize": [1, 1]},
+        "checkpoint"
+      ]
+    },
+    {
+      "name": "insert-delete-characters",
+      "size": [16, 3],
+      "ops": [
+        {"write": "abcdef\u001b[3G\u001b[2@"},
+        {"expect": {"rows": [[0, "ab  cdef"]], "cursor": [0, 2]}},
+        {"write": "\u001b[3P"},
+        {"expect": {"rows": [[0, "abdef"]]}},
+        {"write": "\u001b[2X"},
+        {"expect": {"rows": [[0, "ab  f"]]}},
+        {"write": "\u001b[4hZ\u001b[4l"},
+        {"expect": {"rows": [[0, "abZ  f"]]}}
+      ]
+    },
+    {
+      "name": "malformed-escapes",
+      "size": [20, 4],
+      "ops": [
+        {"write_hex": "1b5b3b3b3b3b6d41"},
+        {"write_hex": "1b5d303b746974"},
+        {"write_hex": "1b5c42"},
+        {"write_hex": "ff fe 43 c3 28 44"},
+        {"write_hex": "1b5b3939393939393939393939393b393939393939393948 45"},
+        "checkpoint"
+      ]
+    }
+  ]
+}
