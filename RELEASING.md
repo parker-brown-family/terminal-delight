@@ -4,6 +4,40 @@ Terminal Delight ships as one file, `terminal-delight-x86_64.AppImage`, attached
 to a GitHub release. This page is how a release gets from `main` to the people
 downloading it, and when.
 
+## Current release context
+
+0.4.0 is wrapping. The next development release is **0.5.0: agent-to-agent
+communication hardening**, on `dev/0.5.0`. Read the [release plan](docs/plans/release-0.5.0/00-status.md)
+and the live [milestone](https://github.com/parker-brown-family/terminal-delight/milestone/2)
+before assigning new work. The plan records the November 20 target, candidate
+hold and qualification requirements.
+
+A PR’s **milestone** records its intended release. Its **base branch** records
+where it will merge. **Area labels** describe the work; `area:agent-comms`
+identifies communication work without duplicating the release number. Missing
+release metadata means **unassigned**, not automatically included or excluded.
+Review, tests, integration and the tagged candidate determine the shipped contents.
+
+## PR surveys
+
+Declare release intent when work is opened, then survey the landscape weekly
+during development and again before each candidate. These checks complement each
+other: declarations guide the work; surveys catch omissions and changing readiness.
+
+1. Read the release plan and all open PRs, including work without milestones.
+2. Compare the milestone, actual base branch, scope, dependencies and evidence.
+   Identify unassigned work and mismatches; do not infer release membership from
+   a title, label, draft state or green checks alone.
+3. Record **include**, **defer** or **needs a scope decision**, with a reason.
+   Check with the owning agent before retargeting its work.
+4. Review merged changes on the integration branch since the previous release
+   or candidate. A scan of open PRs alone misses code already integrated.
+5. Reconcile the milestone and release notes with the candidate’s exact commit,
+   validation and hold evidence. A planned item that did not land is still planned.
+
+The survey is a release-management routine, not a background job installed by
+this document. Run it when managing the release; do not assume a timer ran it.
+
 ## Two channels
 
 | Channel | Tag | What it is | Who gets it |

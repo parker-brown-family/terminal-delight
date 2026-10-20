@@ -49,3 +49,9 @@ The implementation has small successful Claude native and public-MCP demonstrati
 The branch starts from the current `origin/main` baseline, before the final 0.4.0 release snapshot is settled. Bring the final 0.4.0 changes forward through a reviewed integration before cutting the 0.5.0 candidate. Keep one feature PR for the management implementation and target it here.
 
 The branch identifies local development. Package version changes stay with candidate preparation, as required by the release policy; a development branch is not a release tag. Publishing still follows [RELEASING.md](../../../RELEASING.md): only a tested snapshot integrated through `main` or `release/*`, with green checks and the matching candidate/stable tag, is published. No current 0.4.0 release tag, asset or default installation is changed by this setup.
+
+## How Agents Carry Release Context
+
+Project instructions point incoming agents to RELEASING.md and the live milestone. The PR template asks for intended release, actual merge target and release fit. GitHub milestones carry release intent; area labels classify the work. No milestone means unassigned.
+
+Survey all open PRs weekly and before the candidate, and compare already-merged changes as well. Record inclusion, deferral or a needed scope decision rather than absorbing unrelated work. This is a documented operating routine; no scheduled survey job has been installed.
