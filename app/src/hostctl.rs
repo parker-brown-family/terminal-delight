@@ -374,14 +374,32 @@ pub struct HostLink {
     /// opened at a given path keeps talking to that host even if the ambient
     /// runtime directory changes underneath it.
     socket: PathBuf,
-    /// Set the moment any exchange fails.
+    /// Set the moment an exchange finds the connection gone (`host_is_gone`).
     ///
     /// A window whose host has gone must stop writing the session file. It no
     /// longer knows what the session contains — its panes are replicas of
     /// terminals that no longer exist — and the layout it would write is a
     /// picture of a corpse. Keeping yesterday's file is better: it at least
     /// describes work that once ran.
+    ///
+    /// Never set by a slow answer or a refused request. The flag is never
+    /// cleared and the save path is its one reader, so setting it for a host
+    /// that is merely busy stops every save for the rest of the window's life
+    /// while its panes go on working. Tabs opened after that are missing from
+    /// the file, and the next window adopts them bare, out of their projects.
     lost: AtomicBool,
+}
+
+/// Does this error mean the host is gone, rather than slow or saying no?
+///
+/// A timeout's late answer is stepped over by shape on the next exchange
+/// (`Conn::expect`), so a busy host costs one failed call and nothing more.
+fn host_is_gone(err: &std::io::Error) -> bool {
+    use std::io::ErrorKind::*;
+    matches!(
+        err.kind(),
+        UnexpectedEof | BrokenPipe | ConnectionReset | ConnectionAborted | NotConnected
+    )
 }
 
 impl HostLink {
@@ -446,7 +464,7 @@ impl HostLink {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let result = conn.send(&request).and_then(|()| conn.expect(want));
-        if result.is_err() {
+        if result.as_ref().is_err_and(host_is_gone) {
             self.lost.store(true, Ordering::SeqCst);
         }
         result
@@ -527,7 +545,11 @@ impl HostLink {
             .conn
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if conn.send(&Request::Resize { pane, geom }).is_err() {
+        if conn
+            .send(&Request::Resize { pane, geom })
+            .as_ref()
+            .is_err_and(host_is_gone)
+        {
             self.lost.store(true, Ordering::SeqCst);
         }
     }
@@ -1045,6 +1067,50 @@ mod talking {
         assert!(!link.lost(), "not lost until something actually fails");
         assert!(link.list_panes().is_err(), "the host is gone");
         assert!(link.lost(), "and the window knows it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_slow_answer_is_not_a_lost_host() {
+        // A host that takes longer than the exchange budget to answer is busy,
+        // not gone. Marking it lost stops every save for the rest of the
+        // window's life while the panes keep working, so tabs opened after the
+        // stall never reach the file. On 2026-10-19 that dropped six tabs out of
+        // their projects at the next window swap.
+        let dir = tmp("slow");
+        let path = dir.join("session-slow.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind");
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut writer = stream;
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("hello");
+            let _ = writer.write_all(
+                b"{\"reply\":\"hello\",\"proto\":1,\"session\":\"slow\",\"panes\":0,\"attended\":false}\n",
+            );
+            line.clear();
+            reader.read_line(&mut line).expect("first list");
+            std::thread::sleep(Duration::from_millis(400));
+            let _ = writer.write_all(b"{\"reply\":\"panes\",\"panes\":[]}\n");
+            line.clear();
+            reader.read_line(&mut line).expect("second list");
+            let _ = writer.write_all(b"{\"reply\":\"panes\",\"panes\":[]}\n");
+        });
+        let link = HostLink::attach_at(&path).expect("attach");
+        // The real budget is five seconds; the test waits a tenth of one.
+        let _ = link
+            .conn
+            .lock()
+            .expect("conn")
+            .reader
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_millis(100)));
+        assert!(link.list_panes().is_err(), "the first answer came too late");
+        assert!(!link.lost(), "a timeout wrote the host off");
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(link.list_panes().is_ok(), "the host was there all along");
+        assert!(!link.lost(), "and the window still knows it");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
