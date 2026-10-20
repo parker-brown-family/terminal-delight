@@ -50,9 +50,9 @@
 +| Document reading progress | docview/progress.rs:132 `rail` | bypass | native indicator |
 +| Video transport / PDF status | docview/video.rs:433, docview/pdf.rs:810 | bypass | native controls; hosted media unchanged |
  | CSD resize edges | csd.rs | n/a | — |
- 
+
  ## Not yet confirmed
- 
+
 -The font on tooltips. The document square body font. Where the vitals bars are drawn. The inside of `render_bay`, `render_bar_slot` and `under_the_tree` (judged from usage counts only). Whether `hacker.toml`'s `curvature` key is read (it is not in `FileEffects`).
 +Native tooltip family inheritance remains unverified. Document bodies dispatch through their backends; do not treat the body as inherited management text. Vitals are drawn by the wall's `bar_row` closure (main.rs:29765). Bay/slot and the non-painting drag helper are classified above. The legacy hacker.toml `curvature` key has no FileEffects field; author against Grade::warp instead.
 +
