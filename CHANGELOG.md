@@ -115,6 +115,11 @@ the changes you may notice in the first hour.
 
 ### Added
 
+- **A skin is a file you can write.** A skin's materials, type, glass and
+  notes now come from one TOML file that TD validates and reloads, so a new look
+  is a file edit instead of a code change. `docs/skins/examples/field-notes.toml`
+  restyles the same controls as Chalk. The window can print its catalogue of 65
+  surfaces, a template and a validator for the file. (#1035)
 - **Tactical has a skin of its own, OPS.** Picking the Tactical design brings
   it; it can also be picked under any design from the SKIN row. Names are set
   in Oxanium, interface text in Chakra Petch and numbers in Share Tech Mono
@@ -408,12 +413,20 @@ the changes you may notice in the first hour.
 
 ### Changed
 
-- Agent launchers, defaults and workbench dials read model choices and reasoning
-  levels from the installed Codex or Claude executable. Model labels retain
-  reported families and versions, including Sol, Astra, Luna and Terra; unknown
-  names stay intact. Agent default passes no model or effort override. Discovery
-  failures offer retry rather than guessed models, and unavailable saved choices
-  stay visible until changed.
+- **Model menus name the models your agents actually offer.** The launcher,
+  the saved launch defaults and the workbench's live model dial read their
+  choices and reasoning levels from the installed Codex or Claude, and cards and
+  dials keep the reported family and version: SOL 6.1, ASTRA 6, LUNA 6,
+  TERRA 5.6, OPUS 5.5. A name TD does not know is shown whole. *Agent default*
+  passes no model or effort override. If an agent cannot be asked, the menu
+  says so and offers retry rather than guessing, and a saved choice the agent no
+  longer lists stays visible until you change it. (#1067)
+- **OPS has a name in every language.** Its caption was the three Latin
+  letters "ops" in all nine languages; it is now the word for "command" that
+  its own help line already used in each (mando, Kommando, commande, штаб, 指挥,
+  司令, 지휘, कमांड). A new CI job, Translation suggestions, flags on-screen
+  English that a pull request adds without translating; it never fails a
+  build. (#1062)
 - **The terminal emulator core is rio-vt, the core inside the Rio terminal.**
   Measured before choosing it: an 8 MB text stream parses in 82 ms against
   alacritty_terminal's 140 ms, and a pane holding 10,000 lines of history takes
@@ -578,6 +591,15 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
+- **Launching Codex no longer picks a retired model.** The launcher's Codex
+  menu offered `gpt-5-codex` and `gpt-5` and passed one with `--model`, which a
+  current Codex account rejects with HTTP 400. Codex now starts on the model in
+  its own configuration unless you pick one it lists. (#1044)
+- **Pasting a screenshot into Claude or Codex works again.** The agents could
+  not reach the desktop clipboard from the session host, so Codex timed out on
+  X11 and Claude found no image. TD now saves the picture and pastes its path,
+  which both agents attach as `[Image #1]`; Ctrl+V, Ctrl+Shift+V, Shift+Insert
+  and workbench paste all do it. (#1060)
 - **Turning origin mode on moves the cursor home again.** A program that sets
   origin mode (DECOM) expects the cursor at the top of its scrolling region,
   where xterm, tmux and the old core put it. The rio-vt core left it where it
@@ -589,7 +611,6 @@ the changes you may notice in the first hour.
   Terminal Delight already held the first form back properly; with the second,
   text that arrived together with the request was drawn at once, so the frame
   could appear torn. Found by the Terminal Lab. (#1046)
-
 - **Tabs no longer come back out of their projects after the window restarts.**
   One answer from the session host that took longer than five seconds marked
   the host as gone for the rest of the window's life, and the only thing that
