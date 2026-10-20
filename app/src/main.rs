@@ -17764,6 +17764,48 @@ impl Workspace {
         Some((vr.doc_line, vr.doc_col0 + col_in.min(vr.cols)))
     }
 
+    /// A modified press on a link in the FOCUS reader — the Alt+R reader, and
+    /// the chat history Ctrl+↑↓ draws over the pane — answered by the pane it
+    /// reads, which owns the square, the split and the folder a path is read
+    /// against ([`pane::TerminalView::reader_click`]). A document that opens
+    /// in TD closes the reader, which would otherwise lie over it. Answers
+    /// whether the press was taken; a press on no link is still a selection.
+    fn focus_link_click(&mut self, ev: &MouseDownEvent, cx: &mut Context<Self>) -> bool {
+        let m = ev.modifiers;
+        if !(m.alt || m.shift || m.control) {
+            return false;
+        }
+        let Some((line, col)) = self.focus_cell_at(ev.position) else {
+            return false;
+        };
+        let Some(text) = self
+            .focus_map
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|map| map.doc.lines.get(line).map(|l| l.text.clone()))
+        else {
+            return false;
+        };
+        let Some(pane) = self.focus_read.as_ref().and_then(|w| w.upgrade()) else {
+            return false;
+        };
+        let mods = crate::docopen::Mods {
+            alt: m.alt,
+            control: m.control,
+            shift: m.shift,
+            platform: m.platform,
+        };
+        match pane.update(cx, |v, cx| v.reader_click(&text, col, mods, cx)) {
+            pane::ReaderClick::Opened => {
+                self.close_focus_read(cx);
+                true
+            }
+            pane::ReaderClick::Handed => true,
+            pane::ReaderClick::Pass => false,
+        }
+    }
+
     /// Assemble the reader's current selection into copyable text — one logical
     /// line per SOURCE row (the visual wrap is cosmetic, so a wrapped paragraph
     /// copies back as the single line it really is). Trailing blanks are trimmed.
@@ -33429,6 +33471,10 @@ impl Render for Workspace {
                                 MouseButton::Left,
                                 cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
                                     cx.stop_propagation(); // don't let the panel/scrim close
+                                    if ws.focus_link_click(ev, cx) {
+                                        cx.notify();
+                                        return;
+                                    }
                                     match ws.focus_cell_at(ev.position) {
                                         Some(cell) => {
                                             ws.focus_sel = Some((cell, cell));
