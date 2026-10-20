@@ -15,9 +15,9 @@ Field was folded into Tactical the same evening, in [pull request 1029](https://
 - [x] Workshop 1: type and interface specimens — `reports/2026-10-19-tactical-workshop.html`
 - [x] Parker's notes on the workshop (19 October): direction F Squared ops; skin renamed OPS; Intrusive becomes a design; gauges are double rows
 - [x] One combined plan page — `01-plan.md`
-- [ ] Plan approved
-- [ ] Native build, photographed on every surface in `docs/spec/skin-surface-inventory.md`
-- [ ] Merge, install, review
+- [x] Plan approved — "Go. Make it award winning!" (20 October)
+- [x] Native build, photographed in 13 scenes: `reports/2026-10-20-ops-skin-review.html` on pull request 1040
+- [ ] Parker's notes on the review, then merge and install (pull request 1040)
 
 ## Proposed in workshop 1 (not approved)
 
@@ -33,3 +33,5 @@ The page's embedded fonts were subset with fontTools from google/fonts and the D
 ## New skin vocabulary the marks need
 
 Bracket tabs (`emphasis = bracket`), tracked caps (`caps = tracked`), glow metrics and the `[font] family` exist already. New: `corner = cut` (issue 407), a `pips` gauge shape, a chevron title shape, a hatched focus edge, a `grid` material, and a second `[font]` family for numbers. See figure 10 of the workshop.
+
+**Turned out to be: 6/10.** The skin vocabulary was straightforward. The native photographs caught five things the tests could not: the chevrons stacked as a column, the pane frames stayed rounded, the glow read as bold type, the subscription panel still drew rails, and the selection broke the house colour rule.
