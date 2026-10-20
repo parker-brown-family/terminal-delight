@@ -2081,10 +2081,14 @@ impl TerminalView {
         // move aside and nothing to type back. `dial_bytes` beside an empty
         // line is just the command. The hold below still matters — it keeps
         // SEND out of the harness's own confirmation picker.
-        let bytes = crate::workbench::dial_bytes(
-            &format!("{} {value}", which.command()),
-            &crate::workbench::Line::new(),
-        );
+        // The configured row is not a word `/model` takes; the bare command
+        // opens the harness's own picker, and the person chooses there.
+        let typed = if value == crate::launcher::CONFIGURED {
+            which.command().to_string()
+        } else {
+            format!("{} {value}", which.command())
+        };
+        let bytes = crate::workbench::dial_bytes(&typed, &crate::workbench::Line::new());
         self.bench_deliver(bytes, cx);
         self.wb_dial_sent = Some(crate::workbench::DialSent {
             which,

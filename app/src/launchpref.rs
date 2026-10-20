@@ -36,7 +36,7 @@ use std::path::{Path, PathBuf};
 pub struct Prefs {
     /// Which agent program a new session starts. `None` = nobody has chosen.
     pub harness: Option<String>,
-    /// The model id the panel opens on — `opus`, `gpt-5-codex`. `None` = the
+    /// The model id the panel opens on — `opus`, `configured`. `None` = the
     /// first row of whichever harness is selected, which is what ships.
     pub model: Option<String>,
     /// The effort word the panel opens on. `None` = the harness's own
@@ -133,13 +133,13 @@ mod tests {
             &path,
             &Prefs {
                 harness: Some("codex".into()),
-                model: Some("gpt-5".into()),
+                model: Some("configured".into()),
                 effort: Some("high".into()),
             },
         );
         let back = load_from(&path);
         assert_eq!(back.harness(), Some(Harness::Codex));
-        assert_eq!(back.model_ix(Harness::Codex), Some(1));
+        assert_eq!(back.model_ix(Harness::Codex), Some(0));
         assert_eq!(back.effort(Harness::Codex), Some(Effort::High));
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn a_model_from_the_other_harness_reads_as_unset_here() {
         let p = Prefs {
-            model: Some("gpt-5-codex".into()),
+            model: Some("configured".into()),
             ..Prefs::default()
         };
         assert_eq!(p.model_ix(Harness::Codex), Some(0));
