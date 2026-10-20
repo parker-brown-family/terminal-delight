@@ -15,6 +15,10 @@
 #   test fails before anyone has to notice by eye.
 
 name = "default"
+### Optional UI font, independent of the terminal grid's theme font:
+# [font]
+# family = "Caveat"
+### In [shape], material = "paper" adds deckled controls and cached grain.
 icon = "▢"
 
 # ── ink ──────────────────────────────────────────────────────────────────────

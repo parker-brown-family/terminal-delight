@@ -386,6 +386,8 @@ pub struct Chrome {
     pub pal_skin_deco: &'static str,
     /// Caption under a chrome-skin button;
     pub pal_skin_console: &'static str,
+    /// Caption under the chalk skin button (paper and chalk strokes).
+    pub pal_skin_chalk: &'static str,
     /// Caption under a chrome-skin button;
     pub pal_skin_custom: &'static str,
     /// Hover help on a SKIN (control styling) button.
@@ -394,6 +396,8 @@ pub struct Chrome {
     pub pal_help_skin_deco: &'static str,
     /// Hover help on a SKIN (control styling) button.
     pub pal_help_skin_console: &'static str,
+    /// Hover help on the chalk SKIN button.
+    pub pal_help_skin_chalk: &'static str,
     /// Hover help on a SKIN (control styling) button.
     pub pal_help_skin_custom: &'static str,
     /// Caption under the extra skin button shown when a skin is pinned: go back to letting the theme choose the skin.
@@ -590,6 +594,24 @@ pub struct Chrome {
     pub bar_m_recover_tab: &'static str,
     /// Left-bar trash menu row: bring back a closed pane (one split of a tab) named {label}.
     pub bar_m_recover_pane: &'static str,
+    /// Header of the pace card in the usage tray.
+    pub use_pace_hdr: &'static str,
+    /// Pace line when spending matches the time elapsed in the week.
+    pub use_pace_even: &'static str,
+    /// Pace line: percentage points spent ahead of the week.
+    pub use_pace_over: Plural,
+    /// Pace line: percentage points left unspent against the week.
+    pub use_pace_banked: Plural,
+    /// Toggle opening the usage history blocks.
+    pub use_history_toggle: &'static str,
+    /// Pace verdict chip: spending matches the week.
+    pub use_verdict_on_pace: &'static str,
+    /// Pace verdict chip: spending below the week, margin saved.
+    pub use_verdict_banked: &'static str,
+    /// Pace verdict chip: spending ahead of the week (over pace).
+    pub use_verdict_behind: &'static str,
+    /// Pace verdict chip: spending far ahead of the week.
+    pub use_verdict_way_over: &'static str,
 }
 
 pub const EN: Chrome = Chrome {
@@ -783,10 +805,12 @@ pub const EN: Chrome = Chrome {
     pal_skin_default: "default",
     pal_skin_deco: "deco",
     pal_skin_console: "console",
+    pal_skin_chalk: "chalk",
     pal_skin_custom: "custom",
     pal_help_skin_default: "Rounded controls and filled selections.",
     pal_help_skin_deco: "Square edges, double rules, spaced capitals, lit edge.",
     pal_help_skin_console: "Minimal outlines, open spacing, active leading rail.",
+    pal_help_skin_chalk: "Paper and chalk strokes in the current theme colours.",
     pal_help_skin_custom: "Custom control styling.",
     pal_skin_follow_theme: "theme",
     pal_help_skin_follow_theme: "Let the theme choose the trim.",
@@ -885,6 +909,15 @@ pub const EN: Chrome = Chrome {
     bar_m_recover_group: "Recover group “{label}”",
     bar_m_recover_tab: "Recover tab “{label}”",
     bar_m_recover_pane: "Recover pane “{label}”",
+    use_pace_hdr: "TOKEN USAGE PACE",
+    use_pace_even: "even with the week's clock",
+    use_pace_over: Plural { one: "{n} point over pace", few: "{n} points over pace", many: "{n} points over pace", other: "{n} points over pace" },
+    use_pace_banked: Plural { one: "{n} point banked", few: "{n} points banked", many: "{n} points banked", other: "{n} points banked" },
+    use_history_toggle: "today, the week, by model",
+    use_verdict_on_pace: "ON PACE",
+    use_verdict_banked: "BANKED",
+    use_verdict_behind: "BEHIND",
+    use_verdict_way_over: "WAY OVER",
 };
 
 pub const ES: Chrome = Chrome {
@@ -1078,10 +1111,12 @@ pub const ES: Chrome = Chrome {
     pal_skin_default: "predet.",
     pal_skin_deco: "deco",
     pal_skin_console: "consola",
+    pal_skin_chalk: "tiza",
     pal_skin_custom: "pers.",
     pal_help_skin_default: "Controles redondeados y selecciones con relleno.",
     pal_help_skin_deco: "Bordes cuadrados, líneas dobles, mayúsculas espaciadas y borde iluminado.",
     pal_help_skin_console: "Contornos mínimos, espaciado amplio, indicador lateral activo.",
+    pal_help_skin_chalk: "Papel y trazos de tiza con los colores del tema actual.",
     pal_help_skin_custom: "Estilo personalizado de los controles.",
     pal_skin_follow_theme: "tema",
     pal_help_skin_follow_theme: "Dejar que el tema elija el marco.",
@@ -1180,6 +1215,15 @@ pub const ES: Chrome = Chrome {
     bar_m_recover_group: "Recuperar grupo “{label}”",
     bar_m_recover_tab: "Recuperar pestaña “{label}”",
     bar_m_recover_pane: "Recuperar panel “{label}”",
+    use_pace_hdr: "RITMO DE USO DE TOKENS",
+    use_pace_even: "al ritmo de la semana",
+    use_pace_over: Plural { one: "{n} punto por encima del ritmo", few: "{n} puntos por encima del ritmo", many: "{n} puntos por encima del ritmo", other: "{n} puntos por encima del ritmo" },
+    use_pace_banked: Plural { one: "{n} punto de margen", few: "{n} puntos de margen", many: "{n} puntos de margen", other: "{n} puntos de margen" },
+    use_history_toggle: "hoy, la semana, por modelo",
+    use_verdict_on_pace: "EN RITMO",
+    use_verdict_banked: "CON MARGEN",
+    use_verdict_behind: "POR ENCIMA",
+    use_verdict_way_over: "MUY POR ENCIMA",
 };
 
 pub const DE: Chrome = Chrome {
@@ -1373,10 +1417,12 @@ pub const DE: Chrome = Chrome {
     pal_skin_default: "Standard",
     pal_skin_deco: "deco",
     pal_skin_console: "Konsole",
+    pal_skin_chalk: "Kreide",
     pal_skin_custom: "eigener",
     pal_help_skin_default: "Abgerundete Bedienelemente und gefüllte Auswahlmarkierungen.",
     pal_help_skin_deco: "Eckige Kanten, Doppellinien, gesperrte Versalien, leuchtender Rand.",
     pal_help_skin_console: "Dezente Konturen, großzügige Abstände, aktive Leiste am Anfang.",
+    pal_help_skin_chalk: "Papier und Kreidestriche in den Farben des aktuellen Themes.",
     pal_help_skin_custom: "Eigenes Design der Bedienelemente.",
     pal_skin_follow_theme: "Theme",
     pal_help_skin_follow_theme: "Das Theme wählt den Rahmen.",
@@ -1475,6 +1521,15 @@ pub const DE: Chrome = Chrome {
     bar_m_recover_group: "Gruppe “{label}” wiederherstellen",
     bar_m_recover_tab: "Tab “{label}” wiederherstellen",
     bar_m_recover_pane: "Bereich “{label}” wiederherstellen",
+    use_pace_hdr: "TEMPO DES TOKEN-VERBRAUCHS",
+    use_pace_even: "im Takt mit der Woche",
+    use_pace_over: Plural { one: "{n} Punkt über dem Tempo", few: "{n} Punkte über dem Tempo", many: "{n} Punkte über dem Tempo", other: "{n} Punkte über dem Tempo" },
+    use_pace_banked: Plural { one: "{n} Punkt Vorsprung", few: "{n} Punkte Vorsprung", many: "{n} Punkte Vorsprung", other: "{n} Punkte Vorsprung" },
+    use_history_toggle: "heute, die Woche, nach Modell",
+    use_verdict_on_pace: "IM PLAN",
+    use_verdict_banked: "VORSPRUNG",
+    use_verdict_behind: "DRÜBER",
+    use_verdict_way_over: "WEIT DRÜBER",
 };
 
 pub const FR: Chrome = Chrome {
@@ -1668,10 +1723,12 @@ pub const FR: Chrome = Chrome {
     pal_skin_default: "défaut",
     pal_skin_deco: "déco",
     pal_skin_console: "console",
+    pal_skin_chalk: "craie",
     pal_skin_custom: "perso",
     pal_help_skin_default: "Commandes arrondies et sélections remplies.",
     pal_help_skin_deco: "Bords carrés, doubles filets, capitales espacées, bord éclairé.",
     pal_help_skin_console: "Contours minimes, espacement aéré, repère latéral actif.",
+    pal_help_skin_chalk: "Papier et traits de craie aux couleurs du thème actuel.",
     pal_help_skin_custom: "Style personnalisé des commandes.",
     pal_skin_follow_theme: "thème",
     pal_help_skin_follow_theme: "Laisser le thème choisir l’encadrement.",
@@ -1770,6 +1827,15 @@ pub const FR: Chrome = Chrome {
     bar_m_recover_group: "Restaurer le groupe “{label}”",
     bar_m_recover_tab: "Restaurer l’onglet “{label}”",
     bar_m_recover_pane: "Restaurer le volet “{label}”",
+    use_pace_hdr: "RYTHME DE CONSOMMATION DES TOKENS",
+    use_pace_even: "au rythme de la semaine",
+    use_pace_over: Plural { one: "{n} point au-dessus du rythme", few: "{n} points au-dessus du rythme", many: "{n} points au-dessus du rythme", other: "{n} points au-dessus du rythme" },
+    use_pace_banked: Plural { one: "{n} point d’avance", few: "{n} points d’avance", many: "{n} points d’avance", other: "{n} points d’avance" },
+    use_history_toggle: "aujourd’hui, la semaine, par modèle",
+    use_verdict_on_pace: "DANS LE RYTHME",
+    use_verdict_banked: "EN AVANCE",
+    use_verdict_behind: "AU-DESSUS",
+    use_verdict_way_over: "TRÈS AU-DESSUS",
 };
 
 pub const RU: Chrome = Chrome {
@@ -1963,10 +2029,12 @@ pub const RU: Chrome = Chrome {
     pal_skin_default: "стандарт",
     pal_skin_deco: "деко",
     pal_skin_console: "консоль",
+    pal_skin_chalk: "мел",
     pal_skin_custom: "свой",
     pal_help_skin_default: "Скруглённые элементы управления и заливка выделений.",
     pal_help_skin_deco: "Прямые углы, двойные линии, разреженные прописные буквы, светящийся край.",
     pal_help_skin_console: "Минимальные контуры, свободные интервалы, активная полоса с ведущего края.",
+    pal_help_skin_chalk: "Бумага и меловые штрихи в цветах текущей темы.",
     pal_help_skin_custom: "Свой стиль элементов управления.",
     pal_skin_follow_theme: "тема",
     pal_help_skin_follow_theme: "Тема выбирает окантовку.",
@@ -2065,6 +2133,15 @@ pub const RU: Chrome = Chrome {
     bar_m_recover_group: "Восстановить группу “{label}”",
     bar_m_recover_tab: "Восстановить вкладку “{label}”",
     bar_m_recover_pane: "Восстановить панель “{label}”",
+    use_pace_hdr: "ТЕМП РАСХОДА ТОКЕНОВ",
+    use_pace_even: "вровень с ходом недели",
+    use_pace_over: Plural { one: "{n} пункт сверх темпа", few: "{n} пункта сверх темпа", many: "{n} пунктов сверх темпа", other: "{n} пункта сверх темпа" },
+    use_pace_banked: Plural { one: "{n} пункт в запасе", few: "{n} пункта в запасе", many: "{n} пунктов в запасе", other: "{n} пункта в запасе" },
+    use_history_toggle: "сегодня, неделя, по моделям",
+    use_verdict_on_pace: "В ТЕМПЕ",
+    use_verdict_banked: "С ЗАПАСОМ",
+    use_verdict_behind: "С ПЕРЕБОРОМ",
+    use_verdict_way_over: "СИЛЬНО СВЕРХ",
 };
 
 pub const ZH: Chrome = Chrome {
@@ -2258,10 +2335,12 @@ pub const ZH: Chrome = Chrome {
     pal_skin_default: "默认",
     pal_skin_deco: "装饰",
     pal_skin_console: "控制台",
+    pal_skin_chalk: "粉笔",
     pal_skin_custom: "自定义",
     pal_help_skin_default: "圆角控件，选中项带填充色。",
     pal_help_skin_deco: "直角边缘、双线、加宽字距的大写字母和亮边。",
     pal_help_skin_console: "精简轮廓、宽松间距，用前侧标线指示当前项。",
+    pal_help_skin_chalk: "纸面与粉笔笔触，使用当前主题的颜色。",
     pal_help_skin_custom: "自定义控件样式。",
     pal_skin_follow_theme: "主题",
     pal_help_skin_follow_theme: "由主题选择边框样式。",
@@ -2360,6 +2439,15 @@ pub const ZH: Chrome = Chrome {
     bar_m_recover_group: "恢复组“{label}”",
     bar_m_recover_tab: "恢复标签页“{label}”",
     bar_m_recover_pane: "恢复窗格“{label}”",
+    use_pace_hdr: "token 用量节奏",
+    use_pace_even: "与本周进度持平",
+    use_pace_over: Plural { one: "超出节奏 {n} 个百分点", few: "超出节奏 {n} 个百分点", many: "超出节奏 {n} 个百分点", other: "超出节奏 {n} 个百分点" },
+    use_pace_banked: Plural { one: "节省 {n} 个百分点", few: "节省 {n} 个百分点", many: "节省 {n} 个百分点", other: "节省 {n} 个百分点" },
+    use_history_toggle: "今天、本周、按模型",
+    use_verdict_on_pace: "节奏正常",
+    use_verdict_banked: "有余量",
+    use_verdict_behind: "超出节奏",
+    use_verdict_way_over: "严重超出",
 };
 
 pub const JA: Chrome = Chrome {
@@ -2553,10 +2641,12 @@ pub const JA: Chrome = Chrome {
     pal_skin_default: "既定",
     pal_skin_deco: "デコ",
     pal_skin_console: "コンソール",
+    pal_skin_chalk: "チョーク",
     pal_skin_custom: "カスタム",
     pal_help_skin_default: "角丸のコントロールと、塗りつぶしで示す選択状態。",
     pal_help_skin_deco: "角張った輪郭、二重線、字間を広げた大文字、光る縁。",
     pal_help_skin_console: "控えめな輪郭線、広い余白、アクティブ項目の先頭側に強調線。",
+    pal_help_skin_chalk: "現在のテーマの色で描く、紙とチョークの筆致。",
     pal_help_skin_custom: "コントロールの外観をカスタマイズ。",
     pal_skin_follow_theme: "テーマ",
     pal_help_skin_follow_theme: "枠やコントロールの装飾をテーマに任せます。",
@@ -2655,6 +2745,15 @@ pub const JA: Chrome = Chrome {
     bar_m_recover_group: "グループ“{label}”を復元",
     bar_m_recover_tab: "タブ“{label}”を復元",
     bar_m_recover_pane: "ペイン“{label}”を復元",
+    use_pace_hdr: "トークン消費ペース",
+    use_pace_even: "週の経過と同じペース",
+    use_pace_over: Plural { one: "ペースより {n} ポイント超過", few: "ペースより {n} ポイント超過", many: "ペースより {n} ポイント超過", other: "ペースより {n} ポイント超過" },
+    use_pace_banked: Plural { one: "{n} ポイントの余裕", few: "{n} ポイントの余裕", many: "{n} ポイントの余裕", other: "{n} ポイントの余裕" },
+    use_history_toggle: "今日・今週・モデル別",
+    use_verdict_on_pace: "ペース通り",
+    use_verdict_banked: "余裕あり",
+    use_verdict_behind: "ペース超過",
+    use_verdict_way_over: "大幅超過",
 };
 
 pub const KO: Chrome = Chrome {
@@ -2848,10 +2947,12 @@ pub const KO: Chrome = Chrome {
     pal_skin_default: "기본값",
     pal_skin_deco: "데코",
     pal_skin_console: "콘솔",
+    pal_skin_chalk: "분필",
     pal_skin_custom: "커스텀",
     pal_help_skin_default: "모서리가 둥근 컨트롤과 배경을 채운 선택 표시.",
     pal_help_skin_deco: "각진 모서리, 이중선, 자간을 넓힌 대문자, 빛나는 가장자리.",
     pal_help_skin_console: "간결한 윤곽선, 넉넉한 간격, 활성 항목 앞쪽의 강조선.",
+    pal_help_skin_chalk: "현재 테마 색상으로 그린 종이와 분필 획.",
     pal_help_skin_custom: "사용자 지정 컨트롤 스타일.",
     pal_skin_follow_theme: "테마",
     pal_help_skin_follow_theme: "테두리와 컨트롤 스타일을 테마에 맡깁니다.",
@@ -2950,6 +3051,15 @@ pub const KO: Chrome = Chrome {
     bar_m_recover_group: "그룹 “{label}” 복구",
     bar_m_recover_tab: "탭 “{label}” 복구",
     bar_m_recover_pane: "패널 “{label}” 복구",
+    use_pace_hdr: "토큰 사용 속도",
+    use_pace_even: "주간 진행과 같은 속도",
+    use_pace_over: Plural { one: "속도보다 {n}포인트 초과", few: "속도보다 {n}포인트 초과", many: "속도보다 {n}포인트 초과", other: "속도보다 {n}포인트 초과" },
+    use_pace_banked: Plural { one: "{n}포인트 여유", few: "{n}포인트 여유", many: "{n}포인트 여유", other: "{n}포인트 여유" },
+    use_history_toggle: "오늘, 이번 주, 모델별",
+    use_verdict_on_pace: "정상 속도",
+    use_verdict_banked: "여유 있음",
+    use_verdict_behind: "속도 초과",
+    use_verdict_way_over: "크게 초과",
 };
 
 pub const HI: Chrome = Chrome {
@@ -3143,10 +3253,12 @@ pub const HI: Chrome = Chrome {
     pal_skin_default: "डिफ़ॉल्ट",
     pal_skin_deco: "डेको",
     pal_skin_console: "कंसोल",
+    pal_skin_chalk: "चॉक",
     pal_skin_custom: "कस्टम",
     pal_help_skin_default: "गोल किनारों वाले कंट्रोल और रंग से भरे चयन।",
     pal_help_skin_deco: "चौकोर किनारे, दोहरी रेखाएँ, खुले अंतर वाले बड़े अक्षर, चमकता किनारा।",
     pal_help_skin_console: "कम आउटलाइन, खुला अंतर, सक्रिय आइटम के आगे संकेत पट्टी।",
+    pal_help_skin_chalk: "मौजूदा थीम के रंगों में काग़ज़ और चॉक की रेखाएँ।",
     pal_help_skin_custom: "कंट्रोल की कस्टम शैली।",
     pal_skin_follow_theme: "थीम",
     pal_help_skin_follow_theme: "थीम को बॉर्डर चुनने दें।",
@@ -3245,4 +3357,13 @@ pub const HI: Chrome = Chrome {
     bar_m_recover_group: "समूह “{label}” वापस लाएँ",
     bar_m_recover_tab: "टैब “{label}” वापस लाएँ",
     bar_m_recover_pane: "पैनल “{label}” वापस लाएँ",
+    use_pace_hdr: "टोकन उपयोग की रफ़्तार",
+    use_pace_even: "हफ़्ते की घड़ी के बराबर",
+    use_pace_over: Plural { one: "रफ़्तार से {n} अंक ऊपर", few: "रफ़्तार से {n} अंक ऊपर", many: "रफ़्तार से {n} अंक ऊपर", other: "रफ़्तार से {n} अंक ऊपर" },
+    use_pace_banked: Plural { one: "{n} अंक की बचत", few: "{n} अंक की बचत", many: "{n} अंक की बचत", other: "{n} अंक की बचत" },
+    use_history_toggle: "आज, यह हफ़्ता, मॉडल के हिसाब से",
+    use_verdict_on_pace: "रफ़्तार ठीक",
+    use_verdict_banked: "बचत में",
+    use_verdict_behind: "रफ़्तार से ऊपर",
+    use_verdict_way_over: "बहुत ऊपर",
 };

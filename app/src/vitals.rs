@@ -97,16 +97,30 @@ pub enum Tone {
     Good,
 }
 
-/// The minimum a bar ever draws, so an empty stat still reads as a bar rather
-/// than as a missing one.
+/// The minimum a MEASURED bar ever draws, so a small reading still reads as a
+/// bar rather than as a missing one. An unmeasured bar does not use it — see
+/// [`Bar::fill`].
 pub const MIN_FILL: f32 = 0.07;
+
+/// What a stat with no measurement behind it captions itself.
+///
+/// An em dash, not `0%` and not `n/a`: it is the one glyph in the card that
+/// cannot be mistaken for a quantity.
+pub const UNKNOWN: &str = "—";
 
 /// One stat, ready to draw.
 #[derive(Debug, Clone)]
 pub struct Bar {
     pub label: &'static str,
-    /// 0..1 — how far the fill runs.
-    pub fill: f32,
+    /// 0..1 — how far the fill runs, or `None` when the stat was not measured.
+    ///
+    /// `MIN_FILL` below exists so a genuinely tiny reading still draws as a
+    /// bar. It is the wrong answer for an absent one: an unmeasured stat
+    /// floored to 7% looks like a session with an almost empty context, which
+    /// is the single most reassuring thing this card can imply. Absence gets
+    /// its own rendering, and the only way to guarantee that is to make the
+    /// renderer unable to ask for a length that does not exist.
+    pub fill: Option<f32>,
     pub tone: Tone,
     /// 0..1 — how saturated the far end of the gradient is. 0 is pure white.
     ///
@@ -119,9 +133,16 @@ pub struct Bar {
 }
 
 impl Bar {
-    /// What the fill actually draws, floored so the bar is always visible.
-    pub fn drawn(&self) -> f32 {
-        self.fill.clamp(MIN_FILL, 1.0)
+    /// What the fill actually draws, floored so a measured bar is always
+    /// visible. `None` when there is no reading to draw a length for — the
+    /// caller renders the empty state rather than a length of zero.
+    pub fn drawn(&self) -> Option<f32> {
+        self.fill.map(|f| f.clamp(MIN_FILL, 1.0))
+    }
+
+    /// Was this stat measured at all?
+    pub fn unknown(&self) -> bool {
+        self.fill.is_none()
     }
 
     /// The bar's heading in `l`, for the card. [`Self::label`] stays English
@@ -200,6 +221,12 @@ pub enum Call {
     Compact,
     HandOff,
     Stop,
+    /// The transcript carried no context reading, so there is no call to make.
+    ///
+    /// A sixth variant rather than a default to RUN. RUN is a statement that
+    /// the agent is fine, and it was being made about sessions nobody had
+    /// measured — which is the most expensive place to be quietly reassuring.
+    Unknown,
 }
 
 impl Call {
@@ -210,6 +237,7 @@ impl Call {
             Call::Compact => "COMPACT",
             Call::HandOff => "HAND OFF",
             Call::Stop => "STOP",
+            Call::Unknown => "NO READING",
         }
     }
 
@@ -223,6 +251,7 @@ impl Call {
             Call::Compact => p.vitals_call_compact,
             Call::HandOff => p.vitals_call_hand_off,
             Call::Stop => p.vitals_call_stop,
+            Call::Unknown => p.vitals_call_unknown,
         }
     }
 
@@ -250,10 +279,12 @@ pub struct Vitals {
     pub model: Option<String>,
     /// `HIGH`, `MAX` — verbatim from the transcript, never invented.
     pub effort: Option<String>,
-    pub tokens: u64,
+    /// The current context, or `None` when nothing measured it. See
+    /// [`WindowStat::tokens`].
+    pub tokens: Option<u64>,
     pub limit: u64,
     pub turns_left: Option<u64>,
-    pub ballast: u64,
+    pub ballast: Option<u64>,
     /// Size and mtime of the transcript this was computed from — the cache key.
     pub stamp: (u64, u64),
 }
@@ -584,11 +615,27 @@ fn parse_transcript(body: &str) -> Transcript {
             continue;
         };
         let ts = parse_ts(v.get("timestamp").and_then(Value::as_str));
-        if let Some(n) = ts {
-            t.started = Some(t.started.map_or(n, |s: i64| s.min(n)));
-            t.ended = Some(t.ended.map_or(n, |e: i64| e.max(n)));
-        }
         let kind = v.get("type").and_then(Value::as_str).unwrap_or("");
+
+        // A `<synthetic>` assistant record is not the session doing anything.
+        // Claude Code writes them for interrupts, API failures and session
+        // bridging, and the bridge one is stamped when the BRIDGE happened —
+        // which can be days after the last real turn. Counting its timestamp
+        // put a session whose work ended on the 6th at 307.9 hours old and
+        // pegged FATIGUE's age component at its maximum. It contributes no
+        // time, the same way it contributes no turn below.
+        let synthetic = kind == "assistant"
+            && v.get("message")
+                .and_then(|m| m.get("model"))
+                .and_then(Value::as_str)
+                == Some("<synthetic>");
+
+        if let Some(n) = ts {
+            if !synthetic {
+                t.started = Some(t.started.map_or(n, |s: i64| s.min(n)));
+                t.ended = Some(t.ended.map_or(n, |e: i64| e.max(n)));
+            }
+        }
 
         if kind == "cost-state" {
             if let Some(m) = v.get("modelUsage").and_then(Value::as_object) {
@@ -633,14 +680,38 @@ fn parse_transcript(body: &str) -> Transcript {
             }
             if let Some(u) = msg.get("usage") {
                 let g = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
-                t.turns.push(Turn {
-                    ts: ts.unwrap_or(0),
-                    ctx: g("input_tokens")
-                        + g("cache_creation_input_tokens")
-                        + g("cache_read_input_tokens"),
-                    created: g("cache_creation_input_tokens"),
-                    out: g("output_tokens"),
-                });
+                let ctx = g("input_tokens")
+                    + g("cache_creation_input_tokens")
+                    + g("cache_read_input_tokens");
+                // A turn that re-sent nothing did not happen. Every real model
+                // call re-sends the whole conversation, so a context of zero is
+                // not a small prompt — it is a record with no measurement in
+                // it, and `<synthetic>` is the only thing that writes one.
+                //
+                // Counted as a turn it is the newest one, so WINDOW reads it as
+                // the current context: a session holding 165,815 tokens
+                // reported 0% full and `~2144 turns of headroom`.
+                //
+                // 59 of 705 live transcripts carry one; 7 carry it last. The
+                // other 52 hold it mid-transcript, where the damage is small
+                // and worth stating precisely rather than dramatically: the
+                // drop to zero is filtered out as a compaction and the jump
+                // back is a single outlier, which is exactly what a median
+                // absorbs. Replayed over those 52, three changed their growth
+                // figure and two their headroom, all by under 15%, and all in
+                // the optimistic direction.
+                //
+                // It bites when the tail is SHORT. The median only protects a
+                // full twelve-turn tail; beside two real deltas it moves to
+                // half the jump, which is the case the test pins.
+                if ctx > 0 {
+                    t.turns.push(Turn {
+                        ts: ts.unwrap_or(0),
+                        ctx,
+                        created: g("cache_creation_input_tokens"),
+                        out: g("output_tokens"),
+                    });
+                }
             }
             let turn_index = t.turns.len().saturating_sub(1);
             if let Some(content) = msg.get("content").and_then(Value::as_array) {
@@ -808,9 +879,17 @@ fn median(v: &mut [f64]) -> f64 {
 }
 
 struct WindowStat {
-    tokens: u64,
+    /// The current context, or `None` when no turn in this transcript carried a
+    /// usable measurement.
+    ///
+    /// Not `u64` with a zero default. Zero is a reading — it says the window is
+    /// empty and there are tens of thousands of turns of headroom — and
+    /// "nobody has measured this" is a different fact that the wall has to be
+    /// able to draw. The whole of this module's absence handling hangs off this
+    /// one field staying an `Option` all the way to the renderer.
+    tokens: Option<u64>,
     limit: u64,
-    fill: f64,
+    fill: Option<f64>,
     growth: u64,
     turns_left: Option<u64>,
 }
@@ -818,7 +897,7 @@ struct WindowStat {
 fn window_stat(t: &Transcript) -> WindowStat {
     let peak = t.turns.iter().map(|x| x.ctx).max().unwrap_or(0);
     let limit = context_limit(&t.cost_models, t.model.as_deref(), peak);
-    let tokens = t.turns.last().map(|x| x.ctx).unwrap_or(0);
+    let tokens = t.turns.last().map(|x| x.ctx);
 
     // Growth over the recent tail only. An early-session average is meaningless:
     // the first turns load a system prompt and a working set, which never
@@ -833,17 +912,19 @@ fn window_stat(t: &Transcript) -> WindowStat {
         .collect();
     let growth = median(&mut deltas).round() as u64;
 
+    // Headroom needs both halves: a rate AND a place to start from. Without a
+    // current reading there is no answer, and the old arithmetic happily
+    // divided the whole ceiling by the rate and promised 2,144 turns.
     let ceiling = (limit as f64 * AUTOCOMPACT_FLOOR) as u64;
-    let turns_left = (growth > 0).then(|| ceiling.saturating_sub(tokens) / growth);
+    let turns_left = match (tokens, growth > 0) {
+        (Some(tk), true) => Some(ceiling.saturating_sub(tk) / growth),
+        _ => None,
+    };
 
     WindowStat {
         tokens,
         limit,
-        fill: if limit > 0 {
-            tokens as f64 / limit as f64
-        } else {
-            0.0
-        },
+        fill: tokens.and_then(|tk| (limit > 0).then(|| tk as f64 / limit as f64)),
         growth,
         turns_left,
     }
@@ -1016,8 +1097,16 @@ fn fatigue_stat(t: &Transcript, limit: u64) -> FatigueStat {
 }
 
 struct RelevanceStat {
-    score: f64,
-    ballast: u64,
+    /// The share of the resident window still serving the task, or `None` when
+    /// there was nothing resident to take a share OF.
+    ///
+    /// An empty numerator over an empty denominator used to come out as 1.0 —
+    /// a full green bar reading 100%, which is the most reassuring thing this
+    /// card can say and was being said about a window nobody had looked at.
+    score: Option<f64>,
+    /// `None` for the same reason: ballast is a share of a window, and both
+    /// halves have to be known before it is a number.
+    ballast: Option<u64>,
     /// live, stale, superseded, errored, summary, resident-call-count — carried
     /// so an oracle disagreement is localised to a bucket rather than guessed at.
     buckets: [f64; 6],
@@ -1080,6 +1169,17 @@ fn relevance_stat(t: &Transcript, win: &WindowStat) -> RelevanceStat {
     // window is its tail. Summing every result a 621-turn session ever loaded gave
     // 1.6M tokens of "context" inside a 456k window — a denominator over
     // everything that was ever true rather than over what is loaded now.
+    // With no window reading there is no tail to walk back over, so the loop
+    // below would stop at the first result and score the session on it. That is
+    // how one 36-token result came to stand for a 100% relevant window.
+    let Some(win_tokens) = win.tokens else {
+        return RelevanceStat {
+            score: None,
+            ballast: None,
+            buckets: [0.0; 6],
+        };
+    };
+
     let mut resident: Vec<usize> = Vec::new();
     let mut acc = summary;
     for i in (0..t.calls.len()).rev() {
@@ -1091,7 +1191,7 @@ fn relevance_stat(t: &Transcript, win: &WindowStat) -> RelevanceStat {
         };
         resident.push(i);
         acc += t.results[ri].tokens;
-        if acc >= win.tokens {
+        if acc >= win_tokens {
             break;
         }
     }
@@ -1127,12 +1227,14 @@ fn relevance_stat(t: &Transcript, win: &WindowStat) -> RelevanceStat {
         }
     }
 
-    let useful = live + STALE_CREDIT * stale;
-    let score = if total > 0.0 { useful / total } else { 1.0 };
+    // Nothing resident is not "all of it is relevant". It is a window with no
+    // tool results in it yet, which is the ordinary state of a session three
+    // turns old and says nothing either way about what it is carrying.
+    let score = (total > 0.0).then(|| (live + STALE_CREDIT * stale) / total);
     RelevanceStat {
-        score: score.clamp(0.0, 1.0),
+        score: score.map(|s| s.clamp(0.0, 1.0)),
         // Tokens the window carries that a fresh agent on this task would not.
-        ballast: ((1.0 - score) * win.tokens as f64).round() as u64,
+        ballast: score.map(|s| ((1.0 - s.clamp(0.0, 1.0)) * win_tokens as f64).round() as u64),
         buckets: [live, stale, sup, err, summary as f64, resident.len() as f64],
     }
 }
@@ -1140,10 +1242,11 @@ fn relevance_stat(t: &Transcript, win: &WindowStat) -> RelevanceStat {
 // ─── the call ──────────────────────────────────────────────────────────────
 
 fn verdict(win: &WindowStat, fat: &FatigueStat, rel: &RelevanceStat) -> (Call, String) {
-    let fill = win.fill;
-    let r = rel.score;
     let pc = |x: f64| format!("{}%", (x * 100.0).round());
 
+    // Fatigue first, and before the window is required: it stands on compactions,
+    // error rate and churn, all of which survive a transcript with no readable
+    // context.
     if fat.score >= 0.70 {
         return (
             Call::Stop,
@@ -1153,54 +1256,80 @@ fn verdict(win: &WindowStat, fat: &FatigueStat, rel: &RelevanceStat) -> (Call, S
             ),
         );
     }
-    // The whole point of the pair: these two look identical on a token counter
-    // and need opposite treatment.
-    if fill >= 0.85 && r >= 0.65 {
+
+    // Every branch below divides by the window. Without one there is no call to
+    // make, and the honest answer is to say so — the alternative, which is what
+    // this did, is to substitute zero and reach RUN with two thousand turns of
+    // imaginary headroom.
+    let Some(fill) = win.fill else {
         return (
-            Call::HandOff,
-            format!(
+            Call::Unknown,
+            "no turn in this transcript carries a context reading — nothing measured to judge."
+                .into(),
+        );
+    };
+
+    // The relevance-dependent rungs. They are skipped whole when the window
+    // holds no tool results yet, rather than run against a stand-in.
+    if let (Some(r), Some(ballast)) = (rel.score, rel.ballast) {
+        // The whole point of the pair: these two look identical on a token counter
+        // and need opposite treatment.
+        if fill >= 0.85 && r >= 0.65 {
+            return (
+                Call::HandOff,
+                format!(
                 "{} full and {} of it load-bearing — compaction throws away detail still in use.",
                 pc(fill),
                 pc(r)
             ),
-        );
-    }
-    if fill >= 0.85 {
+            );
+        }
+        if fill >= 0.85 {
+            return (
+                Call::Compact,
+                format!(
+                    "{} full, {} of it ballast. Compaction is cheap here.",
+                    pc(fill),
+                    fmt_tokens(ballast)
+                ),
+            );
+        }
+        if fill >= 0.60 && r < 0.45 {
+            return (
+                Call::Compact,
+                format!(
+                    "only {} still serves the task — {} re-read every turn for nothing.",
+                    pc(r),
+                    fmt_tokens(ballast)
+                ),
+            );
+        }
+        // Ballast in absolute tokens, scaled to the window. A 1M context at 55% reads
+        // comfortable and can still carry a quarter-million tokens paid for on every
+        // turn; the ratio hides that, the count does not. A flat threshold judged a
+        // 1M window by a 200k yardstick and fired on nearly every long session.
+        let floor = (120_000f64).max(win.limit as f64 * 0.25) as u64;
+        if ballast >= floor {
+            return (
+                Call::Compact,
+                format!(
+                    "{} of ballast re-read every turn — {} relevant at {} full.",
+                    fmt_tokens(ballast),
+                    pc(r),
+                    pc(fill)
+                ),
+            );
+        }
+    } else if fill >= 0.85 {
+        // A full window is worth saying even with nothing to say about what is
+        // in it. Which of COMPACT and HAND OFF it wants is exactly the question
+        // relevance answers, so this stops at WATCH rather than guessing.
         return (
-            Call::Compact,
-            format!(
-                "{} full, {} of it ballast. Compaction is cheap here.",
-                pc(fill),
-                fmt_tokens(rel.ballast)
-            ),
+            Call::Watch,
+            format!("{} full, and nothing resident to judge it by.", pc(fill)),
         );
     }
-    if fill >= 0.60 && r < 0.45 {
-        return (
-            Call::Compact,
-            format!(
-                "only {} still serves the task — {} re-read every turn for nothing.",
-                pc(r),
-                fmt_tokens(rel.ballast)
-            ),
-        );
-    }
-    // Ballast in absolute tokens, scaled to the window. A 1M context at 55% reads
-    // comfortable and can still carry a quarter-million tokens paid for on every
-    // turn; the ratio hides that, the count does not. A flat threshold judged a
-    // 1M window by a 200k yardstick and fired on nearly every long session.
-    let floor = (120_000f64).max(win.limit as f64 * 0.25) as u64;
-    if rel.ballast >= floor {
-        return (
-            Call::Compact,
-            format!(
-                "{} of ballast re-read every turn — {} relevant at {} full.",
-                fmt_tokens(rel.ballast),
-                pc(r),
-                pc(fill)
-            ),
-        );
-    }
+
     if win.turns_left.is_some_and(|n| n <= 10) {
         return (
             Call::Watch,
@@ -1225,20 +1354,28 @@ fn verdict(win: &WindowStat, fat: &FatigueStat, rel: &RelevanceStat) -> (Call, S
         .turns_left
         .map(|n| format!("~{n} turns of headroom"))
         .unwrap_or_else(|| "room to spare".into());
-    if r < 0.50 {
-        return (
+    match rel.score {
+        Some(r) if r < 0.50 => (
             Call::Run,
             format!(
                 "{} full with {room}. Only {} relevant, but there is room to carry it.",
                 pc(fill),
                 pc(r)
             ),
-        );
+        ),
+        Some(r) => (
+            Call::Run,
+            format!("{} full, {} relevant, {room}.", pc(fill), pc(r)),
+        ),
+        // Said plainly rather than dressed as a relevance of 100%.
+        None => (
+            Call::Run,
+            format!(
+                "{} full with {room}. Nothing resident to judge relevance on yet.",
+                pc(fill)
+            ),
+        ),
     }
-    (
-        Call::Run,
-        format!("{} full, {} relevant, {room}.", pc(fill), pc(r)),
-    )
 }
 
 /// `1.2M`, `59.0k`, `412`. Re-exported from [`crate::hud`] rather than
@@ -1262,19 +1399,27 @@ pub fn from_body(body: &str, stamp: (u64, u64)) -> Option<Vitals> {
     let rel = relevance_stat(&t, &win);
     let (call, why) = verdict(&win, &fat, &rel);
 
+    // An unmeasured bar carries no charge and no tone: colour is a reading, and
+    // there is nothing to read. It draws grey and captions itself `—`.
+    let pct = |x: f64| format!("{}%", (x * 100.0).round());
+
     Some(Vitals {
         window: Bar {
             label: "CTX WINDOW",
-            fill: win.fill as f32,
+            fill: win.fill.map(|f| f as f32),
             tone: Tone::Bad,
             // Neutral through the comfortable range: a half-full window is fine,
             // and a bar that reddens at 40% is crying wolf.
-            charge: smoothstep(WINDOW_CALM, WINDOW_ALARM, win.fill as f32),
-            caption: format!("{}%", (win.fill * 100.0).round()),
+            charge: win
+                .fill
+                .map_or(0.0, |f| smoothstep(WINDOW_CALM, WINDOW_ALARM, f as f32)),
+            caption: win.fill.map_or_else(|| UNKNOWN.to_string(), pct),
         },
         fatigue: Bar {
             label: "FATIGUE",
-            fill: fat.score as f32,
+            // Always measured: every part of it counts events that are in the
+            // transcript whether or not any turn reported its usage.
+            fill: Some(fat.score as f32),
             tone: Tone::Bad,
             // Calm through the band a working session actually lives in, then
             // reddening as STOP comes into view. Fill still tells the truth —
@@ -1285,14 +1430,14 @@ pub fn from_body(body: &str, stamp: (u64, u64)) -> Option<Vitals> {
         },
         relevance: Bar {
             label: "RELEVANCE",
-            fill: rel.score as f32,
+            fill: rel.score.map(|s| s as f32),
             // Diverging, not ramping: a window that has gone mostly ballast is
             // the loudest thing this card can say, and as a "high is good" stat
             // it draws SHORT — so without red it read as "nothing here" rather
             // than "act on this".
-            tone: relevance_tone(rel.score as f32).0,
-            charge: relevance_tone(rel.score as f32).1,
-            caption: format!("{}%", (rel.score * 100.0).round()),
+            tone: rel.score.map_or(Tone::Good, |s| relevance_tone(s as f32).0),
+            charge: rel.score.map_or(0.0, |s| relevance_tone(s as f32).1),
+            caption: rel.score.map_or_else(|| UNKNOWN.to_string(), pct),
         },
         call,
         why,
@@ -1905,19 +2050,25 @@ pub fn run_cli(args: &[String]) -> i32 {
                 continue;
             }
         }
+        // An unmeasured stat serialises as JSON `null`, never as 0. A consumer
+        // that cannot tell an empty window from an unread one inherits this
+        // module's old bug across the wire, and the oracle diff that compares
+        // these rows against the JS twin would agree with it.
+        let num = |x: Option<f64>| x.map_or_else(|| "null".into(), |v| format!("{v:.4}"));
+        let int = |x: Option<u64>| x.map_or_else(|| "null".into(), |v| v.to_string());
         match read(path) {
             Some(v) => rows.push(format!(
-                r#"{{"session":"{}","window":{:.4},"fatigue":{:.4},"relevance":{:.4},"call":"{}","why":"{}","tokens":{},"limit":{},"turnsLeft":{},"ballast":{},"model":{},"effort":{}}}"#,
+                r#"{{"session":"{}","window":{},"fatigue":{},"relevance":{},"call":"{}","why":"{}","tokens":{},"limit":{},"turnsLeft":{},"ballast":{},"model":{},"effort":{}}}"#,
                 path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
-                v.window.fill,
-                v.fatigue.fill,
-                v.relevance.fill,
+                num(v.window.fill.map(|f| f as f64)),
+                num(v.fatigue.fill.map(|f| f as f64)),
+                num(v.relevance.fill.map(|f| f as f64)),
                 v.call.label(),
                 v.why.replace('"', "'"),
-                v.tokens,
+                int(v.tokens),
                 v.limit,
-                v.turns_left.map(|n| n.to_string()).unwrap_or_else(|| "null".into()),
-                v.ballast,
+                int(v.turns_left),
+                int(v.ballast),
                 v.model.as_deref().map(|m| format!("\"{m}\"")).unwrap_or_else(|| "null".into()),
                 v.effort.as_deref().map(|e| format!("\"{e}\"")).unwrap_or_else(|| "null".into()),
             )),
@@ -2000,6 +2151,26 @@ mod tests {
             ));
             self
         }
+        /// A `<synthetic>` assistant record: all-zero usage, no content.
+        ///
+        /// Copied field-for-field from the shape Claude Code actually writes —
+        /// `scripts/td-agent-vitals.mjs` reads the same rows, and a fixture
+        /// invented to be convenient would have agreed with the bug.
+        ///
+        /// `days_later` stamps it away from the rest of the session, which is
+        /// what the session-bridge record does and what aged one transcript to
+        /// 307.9 hours.
+        fn synthetic(&mut self, days_later: i64) -> &mut Self {
+            self.clock += 30;
+            let day = 2 + days_later;
+            let d = self.clock;
+            let (h, m, s) = ((d / 3600) % 24, (d / 60) % 60, d % 60);
+            let ts = format!("2026-09-{day:02}T{h:02}:{m:02}:{s:02}.000Z");
+            self.rows.push(format!(
+                r#"{{"type":"assistant","timestamp":"{ts}","message":{{"model":"<synthetic>","usage":{{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}},"content":[]}}}}"#
+            ));
+            self
+        }
         fn compaction(&mut self, post: u64, dropped: u64) -> &mut Self {
             let ts = self.ts();
             self.rows.push(format!(
@@ -2039,15 +2210,33 @@ mod tests {
     // ── the bar's own maths ────────────────────────────────────────────────
 
     #[test]
-    fn a_bar_always_draws_even_at_zero() {
+    fn a_measured_bar_always_draws_even_at_zero() {
         let b = Bar {
             label: "X",
-            fill: 0.0,
+            fill: Some(0.0),
             tone: Tone::Bad,
             charge: 0.0,
             caption: String::new(),
         };
-        assert_eq!(b.drawn(), MIN_FILL);
+        assert_eq!(b.drawn(), Some(MIN_FILL));
+        assert!(!b.unknown());
+    }
+
+    #[test]
+    fn an_unmeasured_bar_refuses_to_offer_a_length() {
+        // The floor exists so a small reading stays visible. Applied to an
+        // absent one it draws a 7% bar, which reads as a nearly empty context —
+        // the most reassuring thing this card can imply, said about a stat
+        // nobody measured. `None` makes the renderer handle it on purpose.
+        let b = Bar {
+            label: "X",
+            fill: None,
+            tone: Tone::Bad,
+            charge: 0.0,
+            caption: UNKNOWN.to_string(),
+        };
+        assert_eq!(b.drawn(), None);
+        assert!(b.unknown());
     }
 
     #[test]
@@ -2205,13 +2394,187 @@ mod tests {
 
     // ── window ─────────────────────────────────────────────────────────────
 
+    // ── the synthetic turn, and what an absent reading must say ────────────
+
+    #[test]
+    fn a_trailing_synthetic_record_is_not_the_current_context() {
+        // The shape of session 092de24b as it sat on the wall: 165,815 tokens
+        // of real context, then a session-bridge record stamped thirteen days
+        // later. Counted as a turn it is the NEWEST one, so WINDOW read it as
+        // the live context and reported 0% full.
+        let mut b = Build::new();
+        b.prompt()
+            .assistant(120_000, 1_000, 100, &[("c0", "Read", "a.rs")])
+            .results(&[("c0", 4_000, false)])
+            .assistant(165_815, 389, 996, &[])
+            .synthetic(13);
+        let vit = v(&b.body());
+
+        assert_eq!(
+            vit.tokens,
+            Some(165_815),
+            "the last REAL turn is the window"
+        );
+        assert_eq!(vit.window.caption, "83%");
+        assert_ne!(vit.call, Call::Unknown, "there is a reading here");
+        // The headroom promise that made the bug so loud: 92% of 1M minus zero,
+        // divided by the growth rate, was 2,144 turns.
+        assert!(
+            vit.turns_left.is_none_or(|n| n < 100),
+            "turns_left was {:?} on an 83%-full window",
+            vit.turns_left
+        );
+    }
+
+    #[test]
+    fn a_transcript_of_nothing_but_a_synthetic_record_measures_nothing() {
+        // Two live transcripts are in exactly this state, and the old code read
+        // them as 0% full, 100% relevant, RUN.
+        //
+        // The answer is the one `from_body` already gives an unmeasurable
+        // transcript: no vitals, so the card draws no bars rather than three
+        // confident ones. That policy was already here and was right; the
+        // synthetic record was slipping past it by looking like a turn.
+        let mut b = Build::new();
+        b.prompt().synthetic(0);
+        assert!(from_body(&b.body(), (0, 0)).is_none());
+    }
+
+    #[test]
+    fn window_stat_reports_an_absent_reading_rather_than_zero() {
+        // `from_body` guards this case today, 200 lines away from the maths.
+        // The type is where the guarantee belongs: the old `unwrap_or(0)` here
+        // is what turned "nobody measured" into "the window is empty", and a
+        // guard in a different function is one refactor from not applying.
+        let t = parse_transcript(&{
+            let mut b = Build::new();
+            b.prompt().synthetic(0);
+            b.body()
+        });
+        let win = window_stat(&t);
+        assert_eq!(win.tokens, None);
+        assert_eq!(win.fill, None);
+        assert_eq!(win.turns_left, None, "no headroom without a starting point");
+
+        let rel = relevance_stat(&t, &win);
+        assert_eq!(rel.score, None, "an empty ratio is not a full one");
+        assert_eq!(rel.ballast, None);
+    }
+
+    #[test]
+    fn a_synthetic_record_beside_a_short_tail_does_not_become_the_growth_rate() {
+        // The mid-transcript case, built at the size where it actually hurts.
+        //
+        // A full twelve-turn tail survives one of these: the median is what
+        // absorbs an outlier, and replaying the 52 live transcripts that carry
+        // a mid-transcript synthetic moved three growth figures and two
+        // headroom estimates, none by more than 15%. So the honest test is not
+        // "does anything change" — at twelve turns nothing does, and a test
+        // built that way passes whether or not the fix is present.
+        //
+        // With two real deltas beside it the median lands halfway up the jump
+        // back, and the growth rate the headroom divides by is off by fifty
+        // times.
+        let straight = {
+            let mut b = Build::new();
+            b.prompt();
+            for i in 0..3 {
+                b.assistant(100_000 + i * 1_000, 1_000, 100, &[]);
+            }
+            v(&b.body())
+        };
+        let interrupted = {
+            let mut b = Build::new();
+            b.prompt();
+            for i in 0..2 {
+                b.assistant(100_000 + i * 1_000, 1_000, 100, &[]);
+            }
+            b.synthetic(0);
+            b.assistant(102_000, 1_000, 100, &[]);
+            v(&b.body())
+        };
+        assert_eq!(
+            straight.turns_left, interrupted.turns_left,
+            "an interrupt changed the headroom estimate"
+        );
+        // And pin the arithmetic, so a regression reads as a wrong number
+        // rather than just an unequal one: 92% of the 200k limit is 184,000,
+        // the window holds 102,000, and growth is 1,000/turn.
+        assert_eq!(straight.turns_left, Some(82));
+    }
+
+    #[test]
+    fn a_session_bridge_thirteen_days_later_does_not_age_the_session() {
+        // FATIGUE's age component is hours/8, so a record stamped thirteen days
+        // after the work would peg it at its maximum on a session that had done
+        // nothing in between.
+        //
+        // Worth saying what this does NOT fix, because the pane that prompted
+        // it still reads 307.9 hours: `isMeta` user and system rows carry the
+        // same late timestamp, and that session had genuinely been open from
+        // the 6th to the 10th, so its age component pegs either way. This rules
+        // out one cause and is measured to change no reading on the current
+        // fleet. It is here because a synthetic record is not session activity,
+        // not because it moved a number.
+        let same_day = {
+            let mut b = Build::new();
+            b.prompt();
+            for _ in 0..8 {
+                b.assistant(50_000, 1_000, 100, &[]);
+            }
+            v(&b.body())
+        };
+        let bridged = {
+            let mut b = Build::new();
+            b.prompt();
+            for _ in 0..8 {
+                b.assistant(50_000, 1_000, 100, &[]);
+            }
+            b.synthetic(13);
+            v(&b.body())
+        };
+        assert_eq!(
+            same_day.fatigue.caption, bridged.fatigue.caption,
+            "the bridge record aged the session"
+        );
+    }
+
+    #[test]
+    fn an_absent_window_is_not_a_call_to_run() {
+        let (call, why) = at_opt(None, None, 0.1, 200_000);
+        assert_eq!(call, Call::Unknown);
+        assert_eq!(call.label(), "NO READING");
+        assert!(!call.needs_you(), "a missing reading is not a decision");
+        assert!(!why.contains("headroom"), "why promised headroom: {why}");
+    }
+
+    #[test]
+    fn fatigue_still_decides_stop_without_a_window() {
+        // Fatigue stands on compactions, error rate and churn, none of which
+        // need a usage block. A tired session with an unreadable window is
+        // still a tired session, and STOP is still the right call.
+        let (call, _) = at_opt(None, None, 0.80, 200_000);
+        assert_eq!(call, Call::Stop);
+    }
+
+    #[test]
+    fn a_full_window_with_nothing_resident_stops_short_of_guessing() {
+        // Which of COMPACT and HAND OFF a full window wants is exactly what
+        // relevance answers. With no relevance the ladder says WATCH rather
+        // than picking one, and never claims a share it did not measure.
+        let (call, why) = at_opt(Some(0.90), None, 0.1, 200_000);
+        assert_eq!(call, Call::Watch);
+        assert!(!why.contains("ballast"), "claimed a ballast figure: {why}");
+        assert!(!why.contains('—'), "printed an em dash as a number: {why}");
+    }
+
     #[test]
     fn window_is_the_sum_of_the_last_turns_three_input_figures() {
         let mut b = Build::new();
         b.assistant(40_000, 1_000, 100, &[])
             .assistant(60_000, 2_000, 100, &[]);
         let vit = v(&b.body());
-        assert_eq!(vit.tokens, 60_000);
+        assert_eq!(vit.tokens, Some(60_000));
         assert_eq!(vit.limit, 200_000);
         assert_eq!(vit.window.caption, "30%");
     }
@@ -2361,14 +2724,20 @@ mod tests {
     fn a_session_reading_a_set_of_files_once_each_scores_high() {
         let files: Vec<String> = (0..20).map(|i| format!("app/src/f{i}.rs")).collect();
         let refs: Vec<&str> = files.iter().map(String::as_str).collect();
-        assert!(v(&session(20, &refs, 4000)).relevance.fill > 0.70);
+        assert!(v(&session(20, &refs, 4000)).relevance.fill.unwrap() > 0.70);
     }
 
     #[test]
     fn the_same_file_fetched_twenty_times_is_nineteen_dead_copies() {
         // Not a defect in the measure — the window really is carrying nineteen
         // superseded copies, and that is what low relevance means.
-        assert!(v(&session(20, &["app/src/main.rs"], 4000)).relevance.fill < 0.40);
+        assert!(
+            v(&session(20, &["app/src/main.rs"], 4000))
+                .relevance
+                .fill
+                .unwrap()
+                < 0.40
+        );
     }
 
     #[test]
@@ -2376,11 +2745,10 @@ mod tests {
         // Summing every result a long session fetched put 1.6M tokens of
         // "context" inside a 456k window.
         let vit = v(&session(400, &["a.rs", "b.rs", "c.rs"], 8000));
+        let (ballast, tokens) = (vit.ballast.unwrap(), vit.tokens.unwrap());
         assert!(
-            vit.ballast <= vit.tokens,
-            "ballast {} exceeds window {}",
-            vit.ballast,
-            vit.tokens
+            ballast <= tokens,
+            "ballast {ballast} exceeds window {tokens}"
         );
     }
 
@@ -2413,7 +2781,11 @@ mod tests {
     #[test]
     fn a_clean_short_session_is_not_tired() {
         let vit = v(&session(12, &["a.rs", "b.rs", "c.rs", "d.rs"], 4000));
-        assert!(vit.fatigue.fill < 0.35, "scored {}", vit.fatigue.fill);
+        assert!(
+            vit.fatigue.fill.unwrap() < 0.35,
+            "scored {:?}",
+            vit.fatigue.fill
+        );
     }
 
     #[test]
@@ -2430,7 +2802,7 @@ mod tests {
         }
         b.assistant(ctx, 0, 50, &[]);
         let scarred = v(&b.body());
-        assert!(scarred.fatigue.fill > clean.fatigue.fill);
+        assert!(scarred.fatigue.fill.unwrap() > clean.fatigue.fill.unwrap());
     }
 
     #[test]
@@ -2438,7 +2810,7 @@ mod tests {
         // The third time, not the second. Counting a repeat pinned every working
         // session at 100 and measured nothing.
         let vit = v(&session(4, &["a.rs", "b.rs"], 4000));
-        assert!(vit.fatigue.fill < 0.2);
+        assert!(vit.fatigue.fill.unwrap() < 0.2);
     }
 
     #[test]
@@ -2463,12 +2835,18 @@ mod tests {
     // ── the call ───────────────────────────────────────────────────────────
 
     fn at(fill: f64, rel: f64, fatigue: f64, limit: u64) -> (Call, String) {
+        at_opt(Some(fill), Some(rel), fatigue, limit)
+    }
+
+    /// The same ladder, with either measurement allowed to be absent.
+    fn at_opt(fill: Option<f64>, rel: Option<f64>, fatigue: f64, limit: u64) -> (Call, String) {
+        let tokens = fill.map(|f| (f * limit as f64) as u64);
         let win = WindowStat {
-            tokens: (fill * limit as f64) as u64,
+            tokens,
             limit,
             fill,
             growth: 500,
-            turns_left: Some(200),
+            turns_left: fill.map(|_| 200),
         };
         let fat = FatigueStat {
             score: fatigue,
@@ -2477,7 +2855,9 @@ mod tests {
         };
         let r = RelevanceStat {
             score: rel,
-            ballast: ((1.0 - rel) * win.tokens as f64) as u64,
+            ballast: rel
+                .zip(tokens)
+                .map(|(rv, tk)| ((1.0 - rv) * tk as f64) as u64),
             buckets: [0.; 6],
         };
         verdict(&win, &fat, &r)
@@ -2764,13 +3144,14 @@ mod tests {
             Call::Compact,
             Call::HandOff,
             Call::Stop,
+            Call::Unknown,
         ] {
             assert_eq!(c.label_in(Lang::En), c.label());
         }
         for label in ["CTX WINDOW", "FATIGUE", "RELEVANCE", "X"] {
             let b = Bar {
                 label,
-                fill: 0.5,
+                fill: Some(0.5),
                 tone: Tone::Bad,
                 charge: 0.0,
                 caption: String::new(),

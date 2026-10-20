@@ -55,7 +55,7 @@
 <p>Closing a tab sends it to the bay at the foot of the left bar, still running, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings it back. Closing the <em>last</em> tab asks first, then ends its shells and quits. A session host with no window attached and nothing printed for twelve hours saves and stops.</p>
 
 <h3>On the desktop</h3>
-<p>From a source checkout, <code>scripts/install-desktop.sh</code> adds a launcher and icon, and on Omarchy or Hyprland <code>scripts/install-send-hotkey.sh</code> binds <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> to pull the terminal you're in, and the agent running in it, into Terminal Delight.</p>
+<p>From a source checkout, <code>scripts/install-desktop.sh</code> adds a launcher and icon, and on Omarchy <code>scripts/install-keys-hotkey.sh</code> binds <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> to a searchable list of every Terminal Delight key.</p>
 
 <h3>As Omarchy's terminal</h3>
 <p>Omarchy opens every terminal through <code>xdg-terminal-exec</code>: <kbd>Super</kbd>+<kbd>Return</kbd>, its TUI launchers and the Local AI plugin's agents. Terminal Delight answers it the way foot does: <code>--app-id=</code>, <code>--title=</code>, <code>--working-directory=</code> and <code>-e</code> open a quick window that runs the program and closes when it ends, and never touches a session. <code>terminal-delight default-terminal on</code> makes it the one Omarchy picks, after <code>scripts/install-desktop.sh</code>. <code>off</code> puts back exactly what was there before, and leaves the list alone if somebody has changed it since. <code>status</code> says which terminal is the default. A pane opened by the Local AI plugin wears a <code>LOCAL MODEL</code> mark.</p>

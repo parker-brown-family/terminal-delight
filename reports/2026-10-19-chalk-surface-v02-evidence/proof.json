@@ -1,0 +1,142 @@
+{
+  "binary_sha256": "c8e4715ae7eb4f5ae6683f8ea38f31f236523d08e010cffb1d3f0112fbeb2858",
+  "source_files": {
+    "app/skins/chalk.toml": "804364afa88ffb04b9319eebfdc3730af0cf0170cc9a49d75e9558ff8e8c83d7",
+    "app/skins/paper.toml": null,
+    "app/src/ctl.rs": "657fcf6940b24593413e7e8ba7c7295922f8e80a9192776472b7e243e6d44b6e",
+    "app/src/main.rs": "d6f54f35a26c54bf9015d626db3125e89c2a99faa4bec66a0c88e66907a57a69",
+    "app/src/paint.rs": "b5fd922a6d0c49c5492deb373a99d26232564ff0919428e878929c1c7a2fe9ae",
+    "app/src/pane.rs": "1c1e5acaaa6449b691cc9d624facc3402afea4bbd77ed48c964888a5c43a2eef",
+    "app/src/paper.rs": "0fde0ebd6750d8d5708f61c09c6b6c3cc60400831604191dba8528f40420100a",
+    "app/src/skin.rs": "8660eb690c7d8e40bbb4b4d259b2e27543ade320ee85123b9f639ed52160cdec",
+    "app/src/theme.rs": "de123e7063f691bace7c2c77e12a13d3edfe2664dc64d36f0cec2ec690f622e3",
+    "app/themes/chalk-flower.toml": null,
+    "app/themes/chalk-night.toml": null
+  },
+  "tests": {
+    "rio": {
+      "passed": 2494,
+      "ignored": 9,
+      "failed": 0
+    },
+    "alacritty": {
+      "passed": 2447,
+      "ignored": 9,
+      "failed": 0
+    }
+  },
+  "captures": {
+    "praus": {
+      "file": "praus.webp",
+      "native_png_sha256": "e49f598cb4b4937b1e6aae7486d86554ec4f97fbb263472456bbfc4f77f3c8e5",
+      "lossless_webp_sha256": "1275d1bc850a6d0c46f05170b6e6715dad700aea7f0799e8bad893f9b746aeee",
+      "pixel_difference_ae": "0 (0)",
+      "size": [
+        2522,
+        1520
+      ]
+    },
+    "light": {
+      "file": "light.webp",
+      "native_png_sha256": "d57e3d78ecf8197f498c6705369ae0e6f46052d6059625551de78ff662d08cd9",
+      "lossless_webp_sha256": "b003fd0dac8404b615ba44029a7fb33bf9f3f10ea2f50ec32a2aafbd88f66145",
+      "pixel_difference_ae": "0 (0)",
+      "size": [
+        2522,
+        1520
+      ]
+    },
+    "warp": {
+      "file": "warp.webp",
+      "native_png_sha256": "028ca7c15a849a747972b76c7fa401b43268a07723ae07e79a0e159ae69dd78f",
+      "lossless_webp_sha256": "28b5e8032a04957a4b2868abc452a9e2a5e382565ca89d1d8091125c40202d9d",
+      "pixel_difference_ae": "0 (0)",
+      "size": [
+        2522,
+        1520
+      ]
+    },
+    "palette": {
+      "file": "palette.webp",
+      "native_png_sha256": "390f62fe9097e7d26be884c0fc8d7853e86241a0be17f387fff76152b0658b49",
+      "lossless_webp_sha256": "ae4487bd6cfce78a832c7274b1a8d70ed3ea78e2bacd85469d959a9edc5629bb",
+      "pixel_difference_ae": "0 (0)",
+      "size": [
+        2522,
+        1520
+      ]
+    },
+    "light-palette": {
+      "file": "light-palette.webp",
+      "native_png_sha256": "7184a10827cdfcf13047d34cead0836ac79a88f08765aee7542cceca398dc0b9",
+      "lossless_webp_sha256": "aac646d2f2547b19235a92eea68b86a7f0e9a970b9189f1e3716f41ea7309e33",
+      "pixel_difference_ae": "0 (0)",
+      "size": [
+        2522,
+        1520
+      ]
+    },
+    "gauges": {
+      "file": "gauges.webp",
+      "native_png_sha256": "d33f9f1c15b41e5d2dc79d1021556951302ad87d8117aeed1237e7871c87a94f",
+      "lossless_webp_sha256": "efd458a1a96de5506f5dc4a07b347581a1419714d4f5897cddd99e10c3b811a6",
+      "pixel_difference_ae": "0 (0)",
+      "size": [
+        2522,
+        1520
+      ]
+    },
+    "praus-gauges": {
+      "file": "praus-gauges.webp",
+      "native_png_sha256": "ba0dbc8a8ae51500bf14f7e742f5af1f768fda21270d3118f128d9bdab6c78ae",
+      "lossless_webp_sha256": "8f48301d5efcae2b7f53cfa1de0b861517a1e2361043a8393a914bf99c06f939",
+      "pixel_difference_ae": "0 (0)",
+      "size": [
+        2522,
+        1520
+      ]
+    },
+    "queue": {
+      "file": "queue.webp",
+      "native_png_sha256": "857edc33343be20520f0066f2f5b41b65e645728c284cf87de3a6729038780e4",
+      "lossless_webp_sha256": "d5befa356834b7402091dca6eee45729ed4b37bba0906a99e3b030b4f07022ec",
+      "pixel_difference_ae": "0 (0)",
+      "size": [
+        2522,
+        1520
+      ]
+    },
+    "paint": {
+      "file": "paint.webp",
+      "native_png_sha256": "a8d115eba74f0977c87c11ba7f571214b660fad09a95625639922b202fc4b005",
+      "lossless_webp_sha256": "ed47c79fb76f03928be42b0197d47a04abe581eca08a79a6bf8825b5124c5133",
+      "pixel_difference_ae": "0 (0)",
+      "size": [
+        2522,
+        1520
+      ]
+    },
+    "default": {
+      "file": "default.webp",
+      "native_png_sha256": "0b08df00c6683ee514cfc1128a4352757022bc2ebdcbf2b22558543890edbb0e",
+      "lossless_webp_sha256": "50455ed25dd01c33cb08b6b299dd6a5ffcc1738c4baf5c5e09aa4bda839c3e57",
+      "pixel_difference_ae": "0 (0)",
+      "size": [
+        2522,
+        1520
+      ]
+    }
+  },
+  "display": {
+    "physical_px": [
+      2522,
+      1520
+    ],
+    "logical_px": [
+      1576,
+      950
+    ],
+    "scale": 1.6
+  },
+  "notes": "Synthetic terminal output and attention-queue cases. Praus uses the current Omarchy palette and saved display grade; Flexoki Light uses a neutral grade. WebP storage is lossless and compared pixel-for-pixel with the native PNGs."
+}

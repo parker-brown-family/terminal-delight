@@ -92,6 +92,10 @@ chmod +x terminal-delight-x86_64.AppImage
 ```
 
 It's a single self-contained file and **MIT-licensed** (see [License](#license)).
+Each release lists the file's SHA-256 beside it. Release candidates, which preview
+the next stable release, are on the [releases page](https://github.com/parker-brown-family/terminal-delight/releases)
+marked *Pre-release*. The schedule and what each release is checked for are in
+[RELEASING.md](RELEASING.md).
 Graphics drivers (Vulkan/OpenGL, Wayland/X11) are used from your system, like any
 native app. The optional agent-finished **bell** plays through your system
 `ffplay` (install `ffmpeg` to hear it) and stays silent if it's absent; the
@@ -128,54 +132,65 @@ bash scripts/release-smoke.sh     # fmt + clippy + tests + deny + AppImage check
 First launch seeds `~/.config/terminal-delight/theme.toml` (hacker). Change any value —
 colors, the 16 ANSI slots, `scanline_opacity`, `vignette`, `glow`, font — and the running
 app picks it up in ~300ms. Four themes ship in [`app/themes/`](app/themes/):
-**hacker** (phosphor green) · **tactical-overdrive** (cyan) · **field-command** (olive) ·
-**quiet-command** (light, effects off). Copy one over your config file to switch.
+**hacker** (phosphor green) · **tactical-overdrive** (cyan) · **quiet-command** (light,
+effects off) · **deco** (quiet brass). Copy one over your config file to switch.
 
 ![The four built-in themes side by side](assets/showcase-themes.png)
 
-## Omarchy / Hyprland integration — send a tile to Terminal Delight
+## Omarchy / Hyprland integration — every key on SUPER+ALT+T
 
-`scripts/install-send-hotkey.sh` installs `td-send` and binds **SUPER+ALT+T**:
-focus any terminal tile (foot, Alacritty, kitty, Ghostty, `org.omarchy.*`) and
-the session migrates into a Terminal Delight pane — idle shells re-open at
-their cwd, `claude`/`codex` agents resume by session id, tmux attaches
-re-attach. Anything else in the foreground (vim, htop…) is refused and nothing
-is closed. With no adoptable TD window running, a fresh one is seeded to
-receive the session. `td-send --dry-run` prints the plan without touching
-anything, and `--uninstall` on the installer reverts the binding.
+`scripts/install-keys-hotkey.sh` installs `td-keybindings` and binds
+**SUPER+ALT+T**: every Terminal Delight key, in Omarchy's own searchable key
+menu, beside SUPER+K for Omarchy's keys and SUPER+CTRL+K for Herdr's. The list
+is the docs site's [Keys page](docsite/pages/keys.html), copied beside the
+script so the sheet works without a checkout; run the installer again after the
+page changes. `td-keybindings --print` writes the same list to stdout, and
+`--uninstall` on the installer reverts the binding.
+
+SUPER+ALT+T used to be td-send's. That hotkey is retired, and the installer
+takes the seat back from it, but `scripts/td-send` still runs by hand: focus a
+terminal tile (foot, Alacritty, kitty, Ghostty, `org.omarchy.*`) and the
+session migrates into a Terminal Delight pane — idle shells re-open at their
+cwd, `claude`/`codex` agents resume by session id, tmux attaches re-attach.
+Anything else in the foreground (vim, htop…) is refused and nothing is closed.
+`td-send --dry-run` prints the plan without touching anything.
 
 Runtime dependencies (checked by the scripts, which fail with a message):
 
 - **Hyprland** (`hyprctl`) — window addressing and close dispatches; both the
   ≥0.56 Lua dispatcher and the legacy string form are spoken
 - **jq** — JSON plumbing in `td-send` and the hook/installer scripts
+- **Omarchy** — `td-keybindings` draws through `omarchy-menu-select`, and the
+  hotkey installer writes Omarchy's `o.bind(…)` helper into
+  `~/.config/hypr/bindings.lua`
 - `omarchy-notification-send` — optional; notifications are skipped without it
-- the hotkey installer writes Omarchy's `o.bind(…)` helper into
-  `~/.config/hypr/bindings.lua`; on plain (non-Omarchy) Hyprland, bind it
-  yourself: `bind = SUPER ALT, T, exec, td-send`
 - `plugins/td-send` (the `td-send-mcp` MCP server that exposes
   `pull_workspace` / `send_window` to agents) needs `python3`, stdlib only
 
 The Rust side (the `ctl adopt` verb and `terminal-delight probe`) adds no new
 crate dependencies.
 
-### The rest of it lives in two sibling repos
+### The rest of it lives in a sibling repo
 
 The terminal is the app. The look it wears, and the desktop that wears it back,
-are separate projects on purpose — you can take one without the others.
+are separate projects on purpose — you can take one without the other.
 
 | Repo | What it is |
 |---|---|
 | [**terminal-delight**](https://github.com/parker-brown-family/terminal-delight) | the terminal itself — GPU-native, Rust, tiling panes, per-pane grading |
 | [**omarchy-terminal-delight-theme**](https://github.com/parker-brown-family/omarchy-terminal-delight-theme) | the desktop half — the Omarchy theme, the variant set, the compositor curve, and `td-tint` |
-| [**omarchy-td-palette**](https://github.com/parker-brown-family/omarchy-td-palette) | *Terminal Paint* — the 🎨 bar widget that raises the picker over every terminal tile on the workspace |
 
 The seam between them is `td-tint`, which ships with the theme: it writes a
 variant's OSC palette down another terminal's tty and puts the matching
 gradient on its window border. That is how foot, Alacritty, kitty and Ghostty
-get the same one-click identity Terminal Delight panes have — and why the
-palette widget can paint a whole workspace without any of those terminals
-knowing this project exists.
+get the same one-click identity Terminal Delight panes have, without any of
+those terminals knowing this project exists.
+
+The paint overlay needs no plugin. Terminal Delight does not bind a desktop
+key for it; on Omarchy, bind Super+Alt+P to
+`terminal-delight ctl paint toggle`, which raises the overlay in every
+Terminal Delight window on the active workspace and folds them all on the
+next press.
 
 ## Architecture
 
@@ -239,3 +254,11 @@ PRIMARY-selection copy).
 **Next** — Flatpak alongside the AppImage · broader Linux matrix (AMD/Intel ·
 Wayland · fractional scaling) · 20-pane stress + rigorous latency rig vs Alacritty ·
 a theme gallery. See [docs/PLAN.md](docs/PLAN.md) for the gated plan.
+
+**Experimental** — Terminal Delight on the phone: a gateway on the laptop and an
+Android app that opens on an agent's workbench, with the terminal one tap behind
+it. It is lab work, part of no release, built and sideloaded by hand, and it
+needs developer mode or Tailscale on the phone. The goal is Omarchy mobile. If
+you want to try it or help, it lives on the
+[`feat/mobile-hello`](https://github.com/parker-brown-family/terminal-delight/tree/feat/mobile-hello/mobile)
+branch, and its README starts with what it needs and what it is not.

@@ -39,10 +39,23 @@ fail=0
 
 for f in $(ls -S "$HOME"/.claude/projects/*/*.jsonl 2>/dev/null | head -"$N"); do
   id=$(basename "$f" .jsonl)
+  # `null` is a value here and has to survive the comparison. An unmeasured bar
+  # multiplied by 100 is a jq error, which empties the variable and makes the
+  # loop below skip the transcript — so the one case where the two sides could
+  # disagree about ABSENCE would have been the one case never checked.
   rs=$("$BIN" agent-vitals "$f" 2>/dev/null |
-    jq -c '.[0] | {w:(.window*100|round), f:(.fatigue*100|round), r:(.relevance*100|round), c:.call, t:.tokens, l:.limit}')
+    jq -c '.[0] | def s: if . == null then null else (.*100|round) end;
+           {w:(.window|s), f:(.fatigue|s), r:(.relevance|s), c:.call, t:.tokens, l:.limit}')
+  # The unrounded fields, not `.bars.*`. Those are already rounded to one
+  # decimal for display, and rounding them again here is a SECOND rounding:
+  # a true 58.4635 becomes 58.5 becomes 59, while the Rust side rounds the
+  # same number once and gets 58. That reported two transcripts as diverging
+  # when both implementations were right, and a check that cries wolf is one
+  # nobody runs.
   js=$(node scripts/td-agent-vitals.mjs "$f" --json 2>/dev/null |
-    jq -c '.[0] | {w:(.bars.window|round), f:(.bars.fatigue|round), r:(.bars.relevance|round), c:.call, t:.window.tokens, l:.window.limit}')
+    jq -c '.[0] | def s: if . == null then null else round end;
+           {w:(.window.fill|if . == null then null else (.*100|round) end),
+            f:(.fatigue.score|s), r:(.relevance.score|s), c:.call, t:.window.tokens, l:.window.limit}')
 
   if [ -z "$rs" ] || [ -z "$js" ]; then
     continue # a transcript with no assistant turn yet is not a disagreement

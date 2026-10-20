@@ -325,6 +325,11 @@ fn frame_ask(since: Duration, pending: bool) -> FrameAsk {
 /// was read at. See `TerminalView::live_rows`.
 type LiveRowsMemo = ((u64, usize, usize), std::rc::Rc<Vec<String>>);
 
+/// A status-line parse and the live-screen copy it was read from. The copy is
+/// its key: [`TerminalView::live_rows`] hands out the same one until the
+/// screen changes. See `TerminalView::agent_status`.
+type StatusMemo = (std::rc::Rc<Vec<String>>, crate::hud::AgentStatus);
+
 /// The pane header's shadows: the bright inner edge that makes it read as
 /// solid, and, on a tube, its bloom.
 ///
@@ -2804,6 +2809,11 @@ pub struct TerminalView {
     /// The last live-screen copy and the content generation and size it was
     /// read at. See [`Self::live_rows`].
     live_rows_memo: std::cell::RefCell<Option<LiveRowsMemo>>,
+    /// The last status-line parse and the live-screen copy it was parsed from.
+    /// See [`Self::agent_status`].
+    status_memo: std::cell::RefCell<Option<StatusMemo>>,
+    #[cfg(test)]
+    status_parses: std::cell::Cell<usize>,
     styled_memo: std::cell::RefCell<Option<styling::Memo>>,
     grid_paint: gpui::Entity<grid_paint::GridPaint>,
     /// When this pane last asked for a frame, and whether one is already
@@ -5028,6 +5038,9 @@ impl TerminalView {
             offscreen_dirty: false,
             offscreen_flushed: Instant::now(),
             live_rows_memo: std::cell::RefCell::new(None),
+            status_memo: std::cell::RefCell::new(None),
+            #[cfg(test)]
+            status_parses: std::cell::Cell::new(0),
             styled_memo: std::cell::RefCell::new(None),
             grid_paint: cx.new(|_| grid_paint::GridPaint::default()),
             last_frame_ask: Instant::now(),
@@ -5301,11 +5314,29 @@ impl TerminalView {
     /// Parse this pane's live status line into an [`crate::hud::AgentStatus`] for
     /// the agent-wall HUD. Non-agent panes read Idle; an otherwise-idle agent with
     /// an unacknowledged finish bell is promoted to `Finished`.
+    ///
+    /// Parsed once per screen change and shared after (#1005). The sidebar's
+    /// agent counter asks for every agent pane on every frame, and each parse
+    /// lowercases and searches the whole screen: on Parker's window, with about
+    /// thirty agent panes, string scanning was 11% of the main thread, nearly
+    /// all of it on screens that had not changed. The bell is applied after the
+    /// memo, because it changes without the screen changing.
     pub fn agent_status(&self) -> crate::hud::AgentStatus {
         if !self.mode.is_agent() {
             return crate::hud::AgentStatus::default();
         }
-        let mut st = crate::hud::parse_status_line(&self.live_rows());
+        let rows = self.live_rows();
+        let cached = match self.status_memo.borrow().as_ref() {
+            Some((seen, st)) if std::rc::Rc::ptr_eq(seen, &rows) => Some(st.clone()),
+            _ => None,
+        };
+        let mut st = cached.unwrap_or_else(|| {
+            #[cfg(test)]
+            self.status_parses.set(self.status_parses.get() + 1);
+            let st = crate::hud::parse_status_line(&rows);
+            *self.status_memo.borrow_mut() = Some((rows, st.clone()));
+            st
+        });
         st.state = crate::hud::with_bell(st.state, self.bell);
         st
     }
@@ -10350,6 +10381,7 @@ impl Render for TerminalView {
                     crate::paint::card(&th, &card_sk, 1.0, sel)
                         .child(crate::paint::card_head(
                             &th,
+                            &card_sk,
                             1.0,
                             sel,
                             pt.pane_paint_card_title,
@@ -10376,8 +10408,10 @@ impl Render for TerminalView {
                                     // card hanging above the wall, so it is named
                                     // here rather than only on the card nobody has
                                     // looked up at yet.
-                                    div().text_size(px(9.)).text_color(th.faint).child(
-                                        crate::paint::legend(
+                                    div()
+                                        .text_size(card_sk.text_px(9.))
+                                        .text_color(th.faint)
+                                        .child(crate::paint::legend(
                                             cx,
                                             &[
                                                 pt.pane_paint_legend_select,
@@ -10385,8 +10419,7 @@ impl Render for TerminalView {
                                             ],
                                             pt.pane_paint_legend_desktop,
                                             &worn,
-                                        ),
-                                    ),
+                                        )),
                                 ),
                         ),
                 )
@@ -10586,7 +10619,8 @@ impl Render for TerminalView {
             .map(|b| f32::from(b.size.width))
             .unwrap_or(f32::MAX);
         // Reserve the launch button before deciding which optional controls fit.
-        let controls_w = pane_w - 64. * scale;
+        let optical = if sk.is_paper() { 1.45 } else { 1. };
+        let controls_w = (pane_w - 64. * scale) / optical;
         let show_human = SHOW_HUMAN_NAV_GLYPH && controls_w >= 470.; // 1st: 👤 ▲▼ nav
         let show_eq = controls_w >= 410.; //    2nd: EQ / display
         let show_theme = controls_w >= 360.; //  3rd: 🎨 theme
@@ -10637,7 +10671,7 @@ impl Render for TerminalView {
                 .border_color(acc.alpha(0.55))
                 .rounded(px(8.))
                 .occlude()
-                .text_size(px(13.))
+                .text_size(sk.text_px(13.))
                 .font_family(ff)
                 .shadow_md();
             // 👤 ▲▼ message-nav keeps its live steppers inline so you can step
@@ -10789,7 +10823,7 @@ impl Render for TerminalView {
             let half = |face: crate::workbench::Face, cx: &mut Context<Self>| {
                 let lit = face_now == face;
                 sk.slider_half(lit, sk.ink.select)
-                    .text_size(px((hicon * 0.42).max(8.5)))
+                    .text_size(sk.text_px((hicon * 0.42).max(8.5)))
                     .child(face.chip())
                     .on_mouse_down(
                         MouseButton::Left,
@@ -10836,7 +10870,7 @@ impl Render for TerminalView {
                     };
                     d.child(
                         div()
-                            .text_size(px((hicon * 0.40).max(8.)))
+                            .text_size(sk.text_px((hicon * 0.40).max(8.)))
                             .text_color(th.accent)
                             .child(why),
                     )
@@ -10950,7 +10984,7 @@ impl Render for TerminalView {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .text_size(px((logo_box * 0.42).max(7.)))
+                                .text_size(sk.text_px((logo_box * 0.42).max(7.)))
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                 .text_color(ring)
                                 .child(mark),
@@ -10984,7 +11018,7 @@ impl Render for TerminalView {
                     })
                     .child(
                         div()
-                            .text_size(px(13. * scale))
+                            .text_size(sk.text_px(13. * scale))
                             .when_some(chrome_glyph_font('\u{ff0b}', &th), |d, family| {
                                 d.font_family(family)
                             })
@@ -10992,7 +11026,7 @@ impl Render for TerminalView {
                     )
                     .child(
                         div()
-                            .text_size(px(9.5 * scale))
+                            .text_size(sk.text_px(9.5 * scale))
                             .child(crate::lang::current().strings().parts.pane_logo_placeholder),
                     )
                     .into_any_element()
@@ -11000,12 +11034,16 @@ impl Render for TerminalView {
         };
 
         let mut header = div()
+            .relative()
+            .children(sk.grain())
+            .font_family(sk.font_family.clone())
             .group(hdr_grp.clone())
             .h(px(header_h))
             .flex()
             .flex_row()
             .items_center()
             .justify_between()
+            .gap(px(if sk.is_paper() { 8. * scale } else { 0. }))
             .px(hpad)
             // Lit or flat is the skin's call, not this call site's — see
             // `Shine`. Both stops are this PANE's, so a retinted pane keeps its
@@ -11015,7 +11053,7 @@ impl Render for TerminalView {
             .border_color(sk.ink.edge_strong)
             .text_color(bar_fg)
             // the title / status / grid-label text scales with the bar
-            .text_size(px(th.font_size * scale))
+            .text_size(sk.text_px(th.font_size * scale))
             .child(if let Some(buf) = self.renaming.clone() {
                 // inline rename box: ↵ commits, esc reverts, and a click
                 // anywhere outside the box commits too (see `commit_rename`) —
@@ -11081,7 +11119,7 @@ impl Render for TerminalView {
                             .border_1()
                             .border_color(th.accent.alpha(0.6))
                             .text_color(th.accent)
-                            .text_size(px(9.5 * scale))
+                            .text_size(sk.text_px(9.5 * scale))
                             .child(mark)
                     }))
                     .child(format!("▸ {} · {label}", self.mode.label_i18n()))
@@ -11126,9 +11164,9 @@ impl Render for TerminalView {
                             .id("launch-agent")
                             .debug_selector(|| "launch-agent".into())
                             .cursor_pointer()
-                            .text_size(px((hicon * 0.42).max(8.5)))
+                            .text_size(sk.text_px((hicon * 0.42).max(8.5)))
                             .whitespace_nowrap()
-                            .child(if pane_w >= 470. {
+                            .child(if pane_w / optical >= 470. {
                                 crate::lang::current()
                                     .strings()
                                     .parts
@@ -11186,7 +11224,7 @@ impl Render for TerminalView {
                                 // the bust matches the consistent 2× glyph set
                                 .child(
                                     div()
-                                        .text_size(px(hicon))
+                                        .text_size(sk.text_px(hicon))
                                         .line_height(px(hicon))
                                         .mr(px(1.))
                                         .child("👤"),
@@ -11207,7 +11245,7 @@ impl Render for TerminalView {
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 // the FOCUS lens reads +50% over the other 2× glyphs
-                                .text_size(px(hicon * 1.5))
+                                .text_size(sk.text_px(hicon * 1.5))
                                 .line_height(px(hicon * 1.5))
                                 .child("👓")
                                 .on_mouse_down(
@@ -11228,7 +11266,7 @@ impl Render for TerminalView {
                                 .border_1()
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
-                                .text_size(px(hicon))
+                                .text_size(sk.text_px(hicon))
                                 .line_height(px(hicon))
                                 .child("🎨")
                                 .on_mouse_down(
@@ -11271,7 +11309,7 @@ impl Render for TerminalView {
                                 .border_1()
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
-                                .text_size(px(hicon))
+                                .text_size(sk.text_px(hicon))
                                 .line_height(px(hicon))
                                 .child("⋯")
                                 .on_mouse_down(
@@ -11299,7 +11337,7 @@ impl Render for TerminalView {
                             .border_1()
                             .border_color(bar_fg.alpha(0.75))
                             .text_color(bar_fg)
-                            .text_size(px(9.5 * scale))
+                            .text_size(sk.text_px(9.5 * scale))
                             .child(crate::lang::current().strings().parts.pane_off_limits_badge)
                     }))
                     .child(status)
@@ -11323,7 +11361,7 @@ impl Render for TerminalView {
                             // the ratio is kept as a ratio rather than as an
                             // offset that would have grown to half again as
                             // dominant once the glyphs halved.
-                            .text_size(px(hicon * 1.36))
+                            .text_size(sk.text_px(hicon * 1.36))
                             .line_height(px(hicon * 1.36))
                             .hover(|s| s.bg(bar_fg.alpha(0.18)))
                             .child("×")
@@ -11386,7 +11424,7 @@ impl Render for TerminalView {
                         .border_color(acc.alpha(0.75))
                         .rounded(px(4.))
                         .text_color(acc)
-                        .text_size(px(11.))
+                        .text_size(sk.text_px(11.))
                         .child(chip_label(
                             &hint.does,
                             copied,
@@ -11435,7 +11473,7 @@ impl Render for TerminalView {
                                 .border_color(acc.alpha(0.75))
                                 .rounded(px(4.))
                                 .text_color(acc)
-                                .text_size(px(11.))
+                                .text_size(sk.text_px(11.))
                                 .whitespace_nowrap()
                                 .child(crate::lang::current().strings().chip_open_here),
                         ),
@@ -11466,7 +11504,7 @@ impl Render for TerminalView {
                         .border_color(acc.alpha(0.75))
                         .rounded(px(4.))
                         .text_color(acc)
-                        .text_size(px(11.))
+                        .text_size(sk.text_px(11.))
                         .whitespace_nowrap()
                         .overflow_hidden()
                         .text_ellipsis()
@@ -11479,8 +11517,14 @@ impl Render for TerminalView {
         // same rectangle or the cancellation is against the wrong curve.
         // Nothing on the bench face — see [`Self::note_layout`].
         let note_el = self.note.clone().filter(|_| on_terminal).map(|note| {
+            let paper_stock = sk.is_paper();
             let store = self.content_bounds.clone();
-            let pal = crate::sticky::paper_for(&th);
+            let mut pal = crate::sticky::paper_for(&th);
+            if paper_stock && th.note_paper == crate::theme::NotePaper::Contrast {
+                pal.base = crate::mix(sk.ink.btn_face, th.accent, 0.07);
+                pal.ink = th.text;
+                pal.pin = th.ansi[1];
+            }
             let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
             // The pane's own curvature, and zero while a modal has flattened the
             // whole screen — the note un-bends with everything else that frame
@@ -11499,7 +11543,15 @@ impl Render for TerminalView {
                         };
                         if let Some(mut lay) = crate::sticky::layout(content, note.tilt()) {
                             lay.pre_warp(content, k1, k2);
-                            crate::sticky::paint(&note, &lay, &pal, peeling, window, cx);
+                            crate::sticky::paint(
+                                &note,
+                                &lay,
+                                &pal,
+                                peeling,
+                                paper_stock,
+                                window,
+                                cx,
+                            );
                         }
                     },
                 )
@@ -11592,7 +11644,7 @@ impl Render for TerminalView {
             .relative()
             .flex()
             .flex_col()
-            .font_family(th.font_family.clone())
+            .font_family(sk.font_family.clone())
             // Terminal grid renders at its native size — the scrubber no longer
             // touches it (it sizes the menu bar instead; see the header below).
             .text_size(px(th.font_size))
@@ -11692,6 +11744,14 @@ impl Render for TerminalView {
                     // output stopped being watched is not an agent that stopped.
                     // A document the same way: it fills the screen in the
                     // grid's place, and the shell under it keeps running.
+                    .when(sk.is_paper(), |d| {
+                        d.bg(graded(
+                            crate::mix(th.bg, th.surface, 0.18),
+                            &th.grade,
+                            Channel::Bg,
+                        ))
+                        .children(sk.grain())
+                    })
                     .children(pictures_under)
                     .child(if on_bench {
                         bench_el
@@ -11763,7 +11823,9 @@ impl Render for TerminalView {
                 el.child(crt::glass(&glass_th, &self.fx))
             })
             // raised bezel frame sits above the glass, framing the whole pane
-            .when(th.bezel > 0.001, |el| el.child(crt::bezel(&th)))
+            .when(th.bezel > 0.001 && !sk.is_paper(), |el| {
+                el.child(crt::bezel(&th))
+            })
             .children(ctx_menu_el)
             .children(overflow_el)
             // the paint overlay is the topmost surface — painted last, above
