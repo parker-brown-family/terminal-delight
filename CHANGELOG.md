@@ -22,7 +22,7 @@ the changes you may notice in the first hour.
 - **The Field design is now Tactical.** A window or pane saved on Field opens
   on Tactical, keeping any palette you picked and its dials. Field and
   Tactical differed only in how much glow and bezel they drew, so four designs
-  remain: Hacker, Tactical, Quiet and Deco.
+  remain: Hacker, Tactical, Quiet and Deco. (#1029)
 - **Some keys do something different.** Ctrl+Alt+R now renames the highlighted
   left-bar row; Alt+V still makes a side-by-side split. Shift+click on a file
   path reveals it in the file manager, and Ctrl+click opens it. On the
@@ -659,7 +659,7 @@ the changes you may notice in the first hour.
   the custom theme; pick another design in the painter's Style area. Bells and
   attention badges are unaffected. (#992)
 - **The Field design.** It is folded into Tactical, and a pane saved on it
-  opens on Tactical. See Upgrading from 0.3.0.
+  opens on Tactical. See Upgrading from 0.3.0. (#1029)
 - **The painter's COLOUR SETS shelf and colour wheel.** The Omarchy themes
   replace the colour sets; colours already chosen with either are still applied.
   (#972, #992)
