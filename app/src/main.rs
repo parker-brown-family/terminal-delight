@@ -75,6 +75,7 @@ mod paint;
 mod palette;
 mod pane;
 mod paneident;
+mod paper;
 mod picturewire;
 mod plugins;
 mod ptyscan;
@@ -15582,7 +15583,7 @@ impl Workspace {
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
-            .font_family(th.font_family.clone())
+            .font_family(skin::for_theme(cx, th, 1.0).font_family)
             .child(header)
             .child(div().pb_1().flex().flex_col().child(list))
             .child(
@@ -16123,7 +16124,7 @@ impl Workspace {
             .bg(darken(th.surface, 0.35))
             .border_2()
             .border_color(th.accent.alpha(0.85))
-            .font_family(th.font_family.clone())
+            .font_family(skin::for_theme(cx, th, 1.0).font_family)
             .map(|mut d| {
                 // CJK/Devanagari fallback so 中文 / 日本語 / 한국어 / हिन्दी render as real
                 // glyphs in the list (separate overlay from the help panel).
@@ -16419,7 +16420,7 @@ impl Workspace {
             .flex_col()
             .gap_2()
             .p_3()
-            .font_family(th.font_family.clone())
+            .font_family(skin::for_theme(cx, th, 1.0).font_family)
             .child(
                 div()
                     .flex()
@@ -16874,7 +16875,7 @@ impl Workspace {
             .bg(darken(th.surface, 0.35))
             .border_1()
             .border_color(th.accent.alpha(0.6))
-            .font_family(th.font_family.clone())
+            .font_family(skin::for_theme(cx, th, 1.0).font_family)
             .shadow(vec![BoxShadow {
                 color: hsla(0., 0., 0., 0.7),
                 offset: point(px(0.), px(10.)),
@@ -20644,6 +20645,9 @@ impl Workspace {
     /// slider `s`. The caller adds the glyph child (an emoji via `.child("…")`
     /// or `pane::eq_icon`) and `on_mouse_down`.
     fn hicon_s(sk: &skin::Skin, active: bool, s: f32) -> gpui::Div {
+        if sk.is_paper() {
+            return sk.paper_control(div().px(px(4. * s)).border_1().cursor_pointer(), active);
+        }
         div()
             .px(px(4. * s))
             .rounded(sk.radius())
@@ -25681,7 +25685,13 @@ fn palette_rule(label: &str, on: bool, th: &theme::Theme) -> gpui::Div {
 
 /// Theme-icon button for the breakout menu: glyph over a tiny caption naming the
 /// slot, so two themes that share a glyph stay tellable apart.
-fn theme_icon_btn(th: &theme::Theme, icon: &str, label: &str, active: bool) -> gpui::Div {
+fn theme_icon_btn(
+    th: &theme::Theme,
+    sk: &skin::Skin,
+    icon: &str,
+    label: &str,
+    active: bool,
+) -> gpui::Div {
     let inner = div()
         .flex()
         .flex_col()
@@ -25690,7 +25700,7 @@ fn theme_icon_btn(th: &theme::Theme, icon: &str, label: &str, active: bool) -> g
         .child(div().text_size(px(14.)).child(icon.to_string()))
         .child(
             div()
-                .text_size(px(8.))
+                .text_size(px(if sk.is_paper() { 11. } else { 8. }))
                 .text_color(th.text.alpha(if active { 0.85 } else { 0.6 }))
                 .child(label.to_string()),
         );
@@ -25703,7 +25713,9 @@ fn theme_icon_btn(th: &theme::Theme, icon: &str, label: &str, active: bool) -> g
         .rounded_md()
         .border_1()
         .cursor_pointer();
-    if active {
+    if sk.is_paper() {
+        sk.paper_control(b, active).child(inner)
+    } else if active {
         b.bg(linear_gradient(
             135.,
             linear_color_stop(th.accent.alpha(0.45), 0.),
@@ -27667,10 +27679,12 @@ impl Render for Workspace {
                     "field" => "Matte screen, faint scanlines, low glow.",
                     "tactical" => "Bright glow, raised bezel, slight flicker.",
                     "deco" => "Minimal CRT texture; may request matching trim.",
+                    "chalk light" => "Light gesso paper, pigment frame and handwritten paper controls.",
+                    "chalk dark" => "Slate paper, chalk ink and handwritten paper controls.",
                     "hacker" => "Green phosphor, scanlines, glow, tracking, flicker, jiggle.",
                     _ => "Edit the live theme file.",
                 };
-                let btn = palette_help(theme_icon_btn(&th, &icon, tlbl, active)
+                let btn = palette_help(theme_icon_btn(&th, &sk, &icon, tlbl, active)
                     .id(SharedString::from(format!("theme-btn-{id}"))), help, None,
                     tip_path, help_delay, help_owner.clone());
                 theme_row = theme_row.child(btn.on_mouse_down(
@@ -27709,7 +27723,7 @@ impl Render for Workspace {
                 let lit = id == skin_now;
                 let click_id = id.clone();
                 skin_row = skin_row.child(
-                    theme_icon_btn(&th, &icon, &id, lit)
+                    theme_icon_btn(&th, &sk, &icon, &id, lit)
                         .id(SharedString::from(format!("skin-btn-{id}")))
                         .map(|b| palette_help(b, match id.as_str() {
                             "default" => "Rounded controls and filled selections.",
@@ -27735,7 +27749,7 @@ impl Render for Workspace {
             // is how a panel teaches people to stop reading it.
             if skin_pinned {
                 skin_row = skin_row.child(
-                    theme_icon_btn(&th, "\u{25ce}", "theme", false)
+                    theme_icon_btn(&th, &sk, "\u{25ce}", "theme", false)
                         .id("skin-btn-follow").map(|b| palette_help(b, "Let the theme choose the trim.", None, None, help_delay, help_owner.clone()))
                         .on_mouse_down(
                             MouseButton::Left,
@@ -30984,7 +30998,7 @@ impl Render for Workspace {
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.45))
                 .text_color(th.text)
-                .font_family(th.font_family.clone())
+                .font_family(skin::for_theme(cx, &th, 1.0).font_family)
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
@@ -31097,7 +31111,7 @@ impl Render for Workspace {
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.45))
                 .text_color(th.text)
-                .font_family(th.font_family.clone())
+                .font_family(skin::for_theme(cx, &th, 1.0).font_family)
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .flex()
                 .flex_col()
@@ -31484,7 +31498,7 @@ impl Render for Workspace {
                 .border_color(th.accent.alpha(0.85))
                 .bg(darken(th.surface, 0.45))
                 .text_color(th.text)
-                .font_family(th.font_family.clone())
+                .font_family(skin::for_theme(cx, &th, 1.0).font_family)
                 .map(|mut d| {
                     // CJK/Devanagari fallback so a translated UI (中文 menus) renders
                     // real glyphs instead of tofu — only fires on a missing glyph.
@@ -32714,11 +32728,17 @@ impl Render for Workspace {
 
         let root = div()
             .size_full()
-            .bg(darken(bezel, 0.5))
+            .relative()
+            .bg(if sk.is_paper() {
+                th.surface
+            } else {
+                darken(bezel, 0.5)
+            })
+            .children(sk.grain())
             .px(px(5.))
             .pt(px(5. + jiggle.max(0.)))
             .pb(px(5. + (-jiggle).max(0.)))
-            .font_family(th.font_family.clone())
+            .font_family(skin::for_theme(cx, &th, 1.0).font_family)
             .track_focus(&self.focus_handle)
             // Esc closes whatever popup floats above the workspace — caught in the
             // CAPTURE phase so it fires even while a terminal pane holds focus

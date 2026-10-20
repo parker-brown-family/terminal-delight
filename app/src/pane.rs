@@ -10967,6 +10967,9 @@ impl Render for TerminalView {
         };
 
         let mut header = div()
+            .relative()
+            .children(sk.grain())
+            .font_family(sk.font_family.clone())
             .group(hdr_grp.clone())
             .h(px(header_h))
             .flex()
@@ -11439,8 +11442,14 @@ impl Render for TerminalView {
         // same rectangle or the cancellation is against the wrong curve.
         // Nothing on the bench face — see [`Self::note_layout`].
         let note_el = self.note.clone().filter(|_| on_terminal).map(|note| {
+            let paper_stock = sk.is_paper();
             let store = self.content_bounds.clone();
-            let pal = crate::sticky::paper_for(&th);
+            let mut pal = crate::sticky::paper_for(&th);
+            if paper_stock && th.note_paper == crate::theme::NotePaper::Contrast {
+                pal.base = crate::mix(sk.ink.btn_face, th.accent, 0.07);
+                pal.ink = th.text;
+                pal.pin = th.ansi[1];
+            }
             let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
             // The pane's own curvature, and zero while a modal has flattened the
             // whole screen — the note un-bends with everything else that frame
@@ -11459,7 +11468,15 @@ impl Render for TerminalView {
                         };
                         if let Some(mut lay) = crate::sticky::layout(content, note.tilt()) {
                             lay.pre_warp(content, k1, k2);
-                            crate::sticky::paint(&note, &lay, &pal, peeling, window, cx);
+                            crate::sticky::paint(
+                                &note,
+                                &lay,
+                                &pal,
+                                peeling,
+                                paper_stock,
+                                window,
+                                cx,
+                            );
                         }
                     },
                 )
@@ -11552,7 +11569,7 @@ impl Render for TerminalView {
             .relative()
             .flex()
             .flex_col()
-            .font_family(th.font_family.clone())
+            .font_family(sk.font_family.clone())
             // Terminal grid renders at its native size — the scrubber no longer
             // touches it (it sizes the menu bar instead; see the header below).
             .text_size(px(th.font_size))

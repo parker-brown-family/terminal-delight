@@ -27,6 +27,8 @@ pub const DEFAULT_THEME_TOML: &str = include_str!("../themes/hacker.toml");
 /// (id, embedded toml) for every built-in. The user file at
 /// ~/.config/terminal-delight/theme.toml stays hot-reloaded as id "custom".
 pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
+    ("chalk-flower", include_str!("../themes/chalk-flower.toml")),
+    ("chalk-night", include_str!("../themes/chalk-night.toml")),
     (
         "quiet-command",
         include_str!("../themes/quiet-command.toml"),
@@ -1743,6 +1745,11 @@ pub fn all_themes(cx: &App) -> Vec<(String, String, String)> {
 /// Short picker caption for a theme id: the segment before the first '-'
 /// ("tactical-overdrive" → "tactical"), which is unique across the built-ins.
 fn short_label(id: &str) -> String {
+    match id {
+        "chalk-flower" => return "chalk light".into(),
+        "chalk-night" => return "chalk dark".into(),
+        _ => {}
+    }
     id.split('-').next().unwrap_or(id).to_string()
 }
 
@@ -3090,6 +3097,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn chalk_styles_request_paper_and_keep_distinct_readable_modes() {
+        let light = parse(builtin_toml("chalk-flower").unwrap()).unwrap();
+        let dark = parse(builtin_toml("chalk-night").unwrap()).unwrap();
+        for th in [&light, &dark] {
+            assert_eq!(th.skin.as_deref(), Some("paper"));
+            assert_eq!(th.font_family, "JetBrains Mono");
+            assert_eq!(
+                (th.scanline_opacity, th.tracking, th.flicker, th.jiggle),
+                (0., 0., 0., 0.)
+            );
+        }
+        assert!(light.bg.l > light.text.l);
+        assert!(dark.bg.l < dark.text.l);
+        assert_ne!(short_label(&light.name), short_label(&dark.name));
+    }
+
+    #[test]
     fn embedded_themes_parse_with_distinct_ids_and_icons() {
         let mut icons = vec![];
         for (id, src) in BUILTIN_THEMES {
@@ -3097,7 +3121,7 @@ mod tests {
             assert_eq!(&th.name, id, "theme file name must match registry id");
             icons.push(th.icon);
         }
-        assert_eq!(BUILTIN_THEMES.len(), 5);
+        assert_eq!(BUILTIN_THEMES.len(), 7);
         // The tray is glyph-only, so two themes sharing an icon are two themes
         // nobody can tell apart. This test has always collected the icons; it now
         // also reads them, which is what its name has always claimed.

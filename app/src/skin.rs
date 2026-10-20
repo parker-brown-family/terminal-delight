@@ -64,6 +64,7 @@ pub const DEFAULT_SKIN_TOML: &str = include_str!("../skins/default.toml");
 
 /// (id, embedded toml) for every built-in skin, mirroring `theme::BUILTIN_THEMES`.
 const BUILTIN_SKINS: &[(&str, &str)] = &[
+    ("paper", include_str!("../skins/paper.toml")),
     ("default", DEFAULT_SKIN_TOML),
     ("deco", include_str!("../skins/deco.toml")),
     ("console", include_str!("../skins/console.toml")),
@@ -561,8 +562,17 @@ pub enum Shine {
     Flat,
 }
 
+/// The substrate of chrome, independent of palette and terminal effects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Material {
+    #[default]
+    Plain,
+    Paper,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Shapes {
+    pub material: Material,
     pub corner: Corner,
     pub boundary: Boundary,
     pub emphasis: Emphasis,
@@ -573,6 +583,7 @@ pub struct Shapes {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ShapeSpecs {
+    pub material: Option<Material>,
     pub corner: Option<Corner>,
     pub boundary: Option<Boundary>,
     pub emphasis: Option<Emphasis>,
@@ -584,6 +595,7 @@ pub struct ShapeSpecs {
 impl ShapeSpecs {
     fn bake(&self) -> Shapes {
         Shapes {
+            material: self.material.unwrap_or_default(),
             corner: self.corner.unwrap_or_default(),
             boundary: self.boundary.unwrap_or_default(),
             emphasis: self.emphasis.unwrap_or_default(),
@@ -603,6 +615,7 @@ impl ShapeSpecs {
 /// serves every pane whatever theme each pane is wearing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkinSpec {
+    pub font_family: Option<String>,
     pub name: String,
     pub icon: String,
     pub ink: InkSpecs,
@@ -617,6 +630,7 @@ pub struct SkinSpec {
 impl Default for SkinSpec {
     fn default() -> Self {
         Self {
+            font_family: None,
             name: "default".into(),
             icon: "▢".into(),
             ink: InkSpecs::default(),
@@ -632,6 +646,8 @@ impl Default for SkinSpec {
 /// per region per frame, never per element.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Skin {
+    /// UI only. Grid shaping continues to use Theme::font_family.
+    pub font_family: String,
     pub name: String,
     pub icon: String,
     pub ink: Inks,
@@ -660,6 +676,10 @@ pub struct Skin {
 impl SkinSpec {
     pub fn bake(&self, th: &Theme, scale: f32) -> Skin {
         Skin {
+            font_family: self
+                .font_family
+                .clone()
+                .unwrap_or_else(|| th.font_family.clone()),
             name: self.name.clone(),
             icon: self.icon.clone(),
             ink: self.ink.bake(th),
@@ -673,6 +693,28 @@ impl SkinSpec {
 }
 
 impl Skin {
+    pub fn is_paper(&self) -> bool {
+        self.shape.material == Material::Paper
+    }
+
+    /// Optional material layer, added before a region's own content.
+    pub fn grain(&self) -> Option<Div> {
+        self.is_paper().then(crate::paper::grain)
+    }
+
+    /// A paper control's backing is laid down before its caller adds text.
+    pub fn paper_control(&self, d: Div, active: bool) -> Div {
+        d.relative()
+            .bg(hsla(0., 0., 0., 0.))
+            .border_color(hsla(0., 0., 0., 0.))
+            .font_family(self.font_family.clone())
+            .text_color(self.ink.ink)
+            .child(crate::paper::backing(
+                self.ink.btn_face,
+                self.ink.select,
+                active,
+            ))
+    }
     /// This skin, wearing a pane's text-size gauge.
     ///
     /// A copy rather than a mutation: one bake per pane per frame feeds both
@@ -842,6 +884,13 @@ impl Skin {
     /// pixel-identical to today, and today's tab is underlined whatever the rest
     /// of the chrome does with its selected things.
     pub fn tab<E: Styled + ParentElement>(&self, d: E, active: bool, tint: Hsla) -> E {
+        if self.is_paper() {
+            return b_all(d.relative(), self.m.border)
+                .bg(self.ink.btn_face)
+                .border_color(hsla(0., 0., 0., 0.))
+                .text_color(self.ink.ink)
+                .child(crate::paper::rim(self.ink.edge_rest, tint, active));
+        }
         let clear = hsla(0., 0., 0., 0.);
         let lit = |on: bool| if on { tint } else { clear };
         match self.shape.emphasis {
@@ -933,6 +982,7 @@ impl Skin {
             .rounded(self.radius_lg())
             .px(self.px(self.m.pad_x))
             .py(self.px(self.m.pad_y));
+        let d = d.children(self.grain());
         // The inner line of a double/inset boundary is an absolutely positioned
         // ring rather than a second border, because one div carries one border.
         // It is added FIRST so a caller's own children paint over it.
@@ -979,7 +1029,13 @@ impl Skin {
 
     /// A horizontal band across a region — a header, a footer, a toolbar.
     pub fn bar(&self) -> Div {
-        div()
+        let d = div();
+        let d = if self.is_paper() {
+            d.relative().children(self.grain())
+        } else {
+            d
+        };
+        d.font_family(self.font_family.clone())
             .flex()
             .flex_row()
             .items_center()
@@ -1047,8 +1103,13 @@ impl Skin {
     /// to be hovered — and the hover lift is part of what this control IS.
     pub fn icon_btn(&self, id: &'static str) -> Stateful<Div> {
         let hover = self.ink.hover;
-        div()
-            .id(id)
+        let d = div();
+        let d = if self.is_paper() {
+            self.paper_control(d, false)
+        } else {
+            d
+        };
+        d.id(id)
             .flex()
             .items_center()
             .justify_center()
@@ -1069,6 +1130,9 @@ impl Skin {
             .rounded(self.radius())
             .text_size(self.px(self.m.label_size))
             .whitespace_nowrap();
+        if self.is_paper() {
+            return b_all(self.paper_control(base, active), self.m.border);
+        }
         // The ring reserves its border in every state, so an unlit chip under a
         // glow skin is the same size as a lit one.
         //
@@ -1148,6 +1212,9 @@ impl Skin {
             .rounded(self.rad_raw((self.m.radius - self.m.border).max(0.)))
             .whitespace_nowrap()
             .cursor_pointer();
+        if self.is_paper() {
+            return self.paper_control(d, lit);
+        }
         if !lit {
             return d.text_color(self.ink.ink_dim);
         }
@@ -1208,6 +1275,16 @@ impl Skin {
     /// No inset shadow: an inset reads as a bevel, and a bevel claims the thing
     /// is raised, which is the opposite of what a glow says.
     pub fn ring<E: Styled>(&self, d: E, lit: bool, tint: Hsla, rest: Rest) -> E {
+        if self.is_paper() {
+            return b_all(d, self.m.border)
+                .bg(self.ink.btn_face)
+                .border_color(if lit {
+                    tint.alpha(0.7)
+                } else {
+                    self.ink.edge_rest
+                })
+                .text_color(self.ink.ink);
+        }
         let clear = hsla(0., 0., 0., 0.);
         if !lit {
             // The border is drawn at every state and merely goes transparent,
@@ -1261,6 +1338,20 @@ impl Skin {
     /// strategy is worth having: it marks without tinting, so a row whose task
     /// already carries a colour is not asked to wear two.
     pub fn active_row<E: Styled + ParentElement>(&self, d: E, active: bool) -> E {
+        if self.is_paper() {
+            return b_all(d.relative(), self.m.border)
+                .bg(if active {
+                    self.ink.btn_face
+                } else {
+                    hsla(0., 0., 0., 0.)
+                })
+                .border_color(hsla(0., 0., 0., 0.))
+                .child(crate::paper::rim(
+                    self.ink.edge_rest.alpha(if active { 0.6 } else { 0.0 }),
+                    self.ink.select,
+                    active,
+                ));
+        }
         // The ring carries it. An earlier pass added `row_active` underneath on
         // the theory that a ring alone finds a row without reading it against
         // twenty neighbours — but the fill is exactly what made the result look
@@ -1313,6 +1404,9 @@ impl Skin {
             .border_1()
             .text_size(px(11. * s))
             .cursor_pointer();
+        if self.is_paper() {
+            return self.paper_control(base, active);
+        }
         match self.shape.shine {
             Shine::Gradient => {
                 let glint = gpui::BoxShadow {
@@ -1375,6 +1469,9 @@ impl Skin {
             .px(self.px(self.m.chip_px))
             .rounded(self.radius())
             .cursor_pointer();
+        if self.is_paper() {
+            return b_all(self.paper_control(base, active), self.m.border);
+        }
         if active {
             b_all(base.bg(self.ink.mark), self.m.border)
                 .text_color(self.ink.ink_on_mark)
@@ -1400,6 +1497,7 @@ impl Skin {
     /// an owned `String` and should not be made to allocate twice.
     pub fn label(&self) -> Div {
         div()
+            .font_family(self.font_family.clone())
             .text_size(self.px(self.m.label_size))
             .text_color(self.ink.ink_faint)
             .whitespace_nowrap()
@@ -1432,6 +1530,7 @@ struct FileRecipe {
 
 #[derive(Deserialize)]
 struct FileShape {
+    material: Option<String>,
     corner: Option<String>,
     boundary: Option<String>,
     emphasis: Option<String>,
@@ -1442,6 +1541,7 @@ struct FileShape {
 
 #[derive(Deserialize)]
 struct SkinFile {
+    font: Option<FileFont>,
     name: Option<String>,
     icon: Option<String>,
     #[serde(default)]
@@ -1449,6 +1549,11 @@ struct SkinFile {
     #[serde(default)]
     metric: BTreeMap<String, f32>,
     shape: Option<FileShape>,
+}
+
+#[derive(Deserialize)]
+struct FileFont {
+    family: Option<String>,
 }
 
 fn enum_of<T>(
@@ -1511,6 +1616,10 @@ fn no_such(kind: &str, key: &str, keys: &[&'static str]) -> String {
 pub fn parse(source: &str) -> Result<SkinSpec, String> {
     let f: SkinFile = toml::from_str(source).map_err(|e| e.to_string())?;
     let mut spec = SkinSpec {
+        font_family: f
+            .font
+            .and_then(|font| font.family)
+            .filter(|name| !name.trim().is_empty()),
         name: f.name.unwrap_or_else(|| "unnamed".into()),
         icon: f.icon.unwrap_or_else(|| "▢".into()),
         ..SkinSpec::default()
@@ -1575,6 +1684,12 @@ pub fn parse(source: &str) -> Result<SkinSpec, String> {
 
     if let Some(sh) = &f.shape {
         let u = &mut spec.unknown;
+        spec.shape.material = enum_of(
+            sh.material.as_ref(),
+            &[("plain", Material::Plain), ("paper", Material::Paper)],
+            "shape.material",
+            u,
+        );
         spec.shape.corner = enum_of(
             sh.corner.as_ref(),
             &[("round", Corner::Round), ("square", Corner::Square)],
@@ -2090,6 +2205,8 @@ impl Skin {
                 c.a
             )
         };
+        let ui_font = serde_json::to_string(&self.font_family).expect("a font name serializes");
+        let material = format!("{:?}", self.shape.material);
         let inks = INK_KEYS
             .iter()
             .map(|k| ink(k, self.ink.by_key(k).expect("every key resolves")))
@@ -2123,7 +2240,7 @@ impl Skin {
             .collect::<Vec<_>>()
             .join(",\n");
         format!(
-            "{{\n  \"skin\": \"{}\",\n  \"theme\": \"{theme_id}\",\n  \"scale\": {},\n  \"text_size\": {},\n  \"shape\": {{\n    \"corner\": \"{:?}\",\n    \"boundary\": \"{:?}\",\n    \"emphasis\": \"{:?}\",\n    \"divider\": \"{:?}\",\n    \"caps\": \"{:?}\",\n    \"shine\": \"{:?}\"\n  }},\n  \"ink\": {{\n{inks}\n  }},\n  \"metric\": {{\n{metrics}\n  }},\n  \"type\": {{\n{ty}\n  }}\n}}",
+            "{{\n  \"skin\": \"{}\",\n  \"theme\": \"{theme_id}\",\n  \"ui_font\": {ui_font},\n  \"material\": \"{material}\",\n  \"scale\": {},\n  \"text_size\": {},\n  \"shape\": {{\n    \"corner\": \"{:?}\",\n    \"boundary\": \"{:?}\",\n    \"emphasis\": \"{:?}\",\n    \"divider\": \"{:?}\",\n    \"caps\": \"{:?}\",\n    \"shine\": \"{:?}\"\n  }},\n  \"ink\": {{\n{inks}\n  }},\n  \"metric\": {{\n{metrics}\n  }},\n  \"type\": {{\n{ty}\n  }}\n}}",
             self.name,
             self.scale,
             self.ty.k(),
@@ -2146,6 +2263,34 @@ fn report_unknown(path: &std::path::Path, spec: &SkinSpec) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paper_ui_handwriting_does_not_change_the_terminal_font() {
+        let spec = parse(include_str!("../skins/paper.toml")).unwrap();
+        assert!(spec.unknown.is_empty(), "{:?}", spec.unknown);
+        for id in ["chalk-flower", "chalk-night", "hacker"] {
+            let th = theme::parse(theme::builtin_toml(id).unwrap()).unwrap();
+            let terminal_font = th.font_family.clone();
+            let sk = spec.bake(&th, 1.0);
+            assert!(sk.is_paper());
+            assert_eq!(sk.font_family, "Caveat");
+            assert_eq!(th.font_family, terminal_font);
+            assert_ne!(sk.font_family, th.font_family);
+        }
+        let default = SkinSpec::default();
+        assert!(default.font_family.is_none());
+        assert!(default.shape.material.is_none());
+        let th = palette();
+        assert_eq!(default.bake(&th, 1.).font_family, th.font_family);
+        assert!(!default.bake(&th, 1.).is_paper());
+    }
+
+    #[test]
+    fn a_misspelled_material_is_reported() {
+        let spec = parse("[shape]\nmaterial = 'papre'\n").unwrap();
+        assert!(spec.unknown.iter().any(|k| k.contains("papre")));
+        assert!(spec.shape.material.is_none());
+    }
 
     fn palette() -> Theme {
         theme::parse(theme::DEFAULT_THEME_TOML).expect("the embedded theme parses")
