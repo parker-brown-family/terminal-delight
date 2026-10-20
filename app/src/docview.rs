@@ -1247,13 +1247,14 @@ impl Render for DocumentView {
         self.painted_at.set(None);
         self.links.borrow_mut().clear();
         let (backend, view) = self.backend_and_view();
-        let body = backend.element(&view, window, &th);
+        let sk = crate::skin::for_theme(cx, &th, th.grade.scale);
+        let body = backend.element(&view, window, &th, &sk);
         // Asked after the body, which settles this frame's scroll first.
         let rail = self
             .backend
             .reading()
             .zip(self.view_h())
-            .and_then(|(r, view_h)| progress::rail(r, view_h, &th));
+            .and_then(|(r, view_h)| progress::rail(r, view_h, &th, &sk));
         // Measured, not listened to: a canvas records the box this view was
         // given and the scale it paints at, and asks for one more frame when
         // either changed, so a zoom placed against a stale size corrects

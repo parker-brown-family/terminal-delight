@@ -2798,7 +2798,7 @@ impl TerminalView {
             .flex_col()
             .gap(px(2.))
             .pt(px(2.))
-            .font_family(th.font_family.clone())
+            .font_family(sk.font_family.clone())
             .text_size(px(sk.pt(Step::Fine)))
             .child(div().text_color(sk.ink.ink_faint).child(where_to))
             .children(previews.into_iter().map(|(chip, what)| {
@@ -2852,7 +2852,7 @@ impl TerminalView {
                         crate::benchdraw::verb_button(
                             sk.chip(primary)
                                 .cursor_pointer()
-                                .font_family(th.font_family.clone())
+                                .font_family(sk.font_family.clone())
                                 .child(text),
                             primary,
                             sk,
@@ -4484,7 +4484,7 @@ impl TerminalView {
                                 div()
                                     .text_size(px(sk.pt(Step::Small)))
                                     .text_color(sk.ink.ink_faint)
-                                    .font_family(th.font_family.clone())
+                                    .font_family(sk.font_family.clone())
                                     .child(empty_sentence(shelf_now)),
                             )
                         },

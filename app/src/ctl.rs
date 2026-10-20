@@ -92,6 +92,7 @@ pub(crate) enum Req {
     /// Choose the chrome skin for this window: a builtin id, `custom` for the
     /// user's own file, or `theme` to follow whatever the theme asks for.
     Skin(String),
+    SkinSnapshot(mpsc::Sender<String>),
     /// Turn every pane in this window to a face. See [`Cmd::Bench`].
     Bench(BenchFace),
     /// Press an answer on the focused pane's bench. See [`Cmd::BenchChoose`].
@@ -349,6 +350,7 @@ enum Cmd {
     Tabs(Vec<TabOp>),
     Skin(String),
     SkinStatus,
+    SkinSnapshot,
     /// Turn a pane (or every pane) to one of its two faces.
     ///
     /// The scriptable half of the TERM / BENCH toggle. It exists because a
@@ -474,7 +476,7 @@ pub fn socket_path(pid: u32) -> PathBuf {
 /// Everything the grammar accepts, in one place — the usage string and the
 /// unknown-command error both quote it, so they can't drift from the match.
 const USAGE: &str = "ping | whoami | paint on|off|toggle|status | \
-     skin <name>|theme|status | \
+     skin <name>|theme|status|snapshot | \
      bench on|off|toggle|choose <n>|submit|say <text>|type <text> | \
      doc here <absolute path> | doc beside <absolute path> | doc close | \
      doc scroll <pixels> | doc notes | doc note add <nid> <text> | \
@@ -635,6 +637,7 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
             .map(Cmd::DocScroll)
             .ok_or_else(|| format!("doc scroll: {px:?} is not a number of pixels")),
         ["skin", "status"] => Ok(Cmd::SkinStatus),
+        ["skin", "snapshot"] => Ok(Cmd::SkinSnapshot),
         // Any other single word is a skin id — `theme` and `custom` included,
         // which is why they are not special-cased here. The window is what knows
         // which ids exist, so validation happens there and comes back as text.
@@ -864,6 +867,14 @@ fn handle_conn(
             .lock()
             .map(|m| m.line())
             .unwrap_or_else(|_| "unknown".into()),
+        Ok(Cmd::SkinSnapshot) => {
+            let (rtx, rrx) = mpsc::channel();
+            if tx.send(Req::SkinSnapshot(rtx)).is_ok() {
+                bench_outcome(rrx)
+            } else {
+                "err ui gone".into()
+            }
+        }
         Ok(Cmd::Skin(name)) => {
             let known = skin_mirror
                 .lock()
@@ -1130,6 +1141,9 @@ pub fn start(cx: &mut Context<Workspace>) {
                     }
                     Req::DocNotes(reply) => {
                         let _ = reply.send(ws.doc_notes(cx));
+                    }
+                    Req::SkinSnapshot(reply) => {
+                        let _ = reply.send(crate::skin::snapshot(cx));
                     }
                     Req::DocNote(cmd, reply) => {
                         let _ = reply.send(ws.doc_note(cmd, cx));
@@ -2532,6 +2546,7 @@ mod tests {
         // that includes `theme` and `custom` — the window owns the list, so this
         // grammar deliberately knows nothing about which names are valid.
         assert!(matches!(parse_line("skin status"), Ok(Cmd::SkinStatus)));
+        assert!(matches!(parse_line("skin snapshot"), Ok(Cmd::SkinSnapshot)));
         for name in ["deco", "console", "theme", "custom", "nonsense"] {
             assert!(
                 matches!(parse_line(&format!("skin {name}")), Ok(Cmd::Skin(ref g)) if g == name),

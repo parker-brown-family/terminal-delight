@@ -593,7 +593,7 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
     let lit = e.lit;
     div()
         .relative()
-        .w(px(if sk.is_paper() { 106. } else { TILE_W }))
+        .w(px(sk.fit(TILE_W, 106.)))
         .flex()
         .flex_col()
         .items_center()
@@ -607,13 +607,7 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
         } else {
             surf.alpha(0.92)
         })
-        .map(|d| {
-            if sk.is_paper() {
-                sk.paper_control(d, false)
-            } else {
-                d
-            }
-        })
+        .map(|d| sk.action(d, false))
         .cursor_pointer()
         .hover(move |s| s.bg(acc.alpha(0.20)))
         .when(e.star, |d| {
@@ -632,22 +626,20 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
         // stagger and the grid reads as scrunched.
         .child(
             div()
-                .h(px(if sk.is_paper() { 28. } else { 21. }))
+                .h(px(sk.fit(21., 28.)))
                 .flex()
                 .items_center()
                 .child(face_el(&e.face, th, sk)),
         )
         .child(
             div()
-                .h(px(if sk.is_paper() { 42. } else { 21. }))
+                .h(px(sk.fit(21., 42.)))
                 .flex()
                 .flex_col()
                 .items_center()
                 .justify_center()
-                .when(sk.is_paper(), |d| {
-                    d.relative()
-                        .children(lit.then(|| crate::paper::selection(sk.ink.select)))
-                })
+                .relative()
+                .children(sk.marker(lit))
                 .child(
                     // The name, with its chord worn loud — bigger, heavier,
                     // underlined, and inked in the TILE'S OWN colour, so the key
@@ -672,13 +664,11 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
                         .child(
                             div()
                                 .text_size(sk.text_px(8.))
-                                .text_color(if sk.is_paper() {
-                                    sk.ink.ink_dim
-                                } else if lit {
+                                .text_color(sk.caption_ink(if lit {
                                     txt.alpha(0.9)
                                 } else {
                                     faint
-                                })
+                                }))
                                 .child(e.rest.clone()),
                         ),
                 )
@@ -689,13 +679,7 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
                     d.child(
                         div()
                             .text_size(sk.text_px(8.))
-                            .text_color(if sk.is_paper() {
-                                sk.ink.ink_dim
-                            } else if lit {
-                                txt.alpha(0.9)
-                            } else {
-                                faint
-                            })
+                            .text_color(sk.caption_ink(if lit { txt.alpha(0.9) } else { faint }))
                             .child(e.second.clone()),
                     )
                 }),

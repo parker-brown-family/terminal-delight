@@ -11,6 +11,26 @@ use gpui::{
 const TILE: u32 = 512;
 static GRAIN: OnceLock<Arc<RenderImage>> = OnceLock::new();
 
+/// Resolved material controls. The atlas remains shared across all settings.
+#[derive(Clone, Copy)]
+pub struct Stock {
+    pub grain: f32,
+    pub roughness: f32,
+    pub lift: f32,
+    pub marker_alpha: f32,
+}
+
+impl Default for Stock {
+    fn default() -> Self {
+        Self {
+            grain: 1.,
+            roughness: 1.,
+            lift: 1.,
+            marker_alpha: 0.22,
+        }
+    }
+}
+
 fn hash(mut n: u32) -> u32 {
     n ^= n >> 16;
     n = n.wrapping_mul(0x7feb_352d);
@@ -59,9 +79,18 @@ pub fn grain() -> Div {
     )
 }
 
+pub fn grain_with(stock: Stock) -> Div {
+    grain().opacity(stock.grain.clamp(0., 1.))
+}
+
 /// Four edges with bounded detail, always inside the rectangular hit target.
 /// Dimensions supply the seed, so rebuilding a view never makes a fibre crawl.
-pub fn outline(w: f32, h: f32) -> Vec<(f32, f32)> {
+#[cfg(test)]
+fn outline(w: f32, h: f32) -> Vec<(f32, f32)> {
+    outline_with(w, h, 1.)
+}
+
+fn outline_with(w: f32, h: f32, roughness: f32) -> Vec<(f32, f32)> {
     let mut points = Vec::with_capacity(100);
     let inset = 1.6_f32.min(w / 5.).min(h / 5.);
     let seed = w.to_bits() ^ h.to_bits().rotate_left(13);
@@ -71,7 +100,7 @@ pub fn outline(w: f32, h: f32) -> Vec<(f32, f32)> {
         for i in 0..steps {
             let t = i as f32 / steps as f32;
             let jitter = (hash(seed ^ (edge * 73 + i)) % 1024) as f32 / 1024. - 0.5;
-            let d = inset + jitter * inset * 0.9;
+            let d = inset + jitter * inset * 0.9 * roughness.clamp(0., 1.);
             points.push(match edge {
                 0 => (inset + t * (w - 2. * inset), d),
                 1 => (w - d, inset + t * (h - 2. * inset)),
@@ -100,7 +129,7 @@ fn polygon(bounds: Bounds<Pixels>, points: &[(f32, f32)], ink: Hsla, window: &mu
 
 /// One translucent highlighter stroke through the writing.
 /// The overhang is visual only; hit targets and text layout remain unchanged.
-fn stroke(bounds: Bounds<Pixels>, ink: Hsla, window: &mut Window) {
+fn stroke_with(bounds: Bounds<Pixels>, ink: Hsla, stock: Stock, window: &mut Window) {
     let w = f32::from(bounds.size.width);
     let h = f32::from(bounds.size.height);
     let mid = h * 0.5;
@@ -115,14 +144,15 @@ fn stroke(bounds: Bounds<Pixels>, ink: Hsla, window: &mut Window) {
             (w * 0.64, mid + half + 0.8),
             (-3., mid + half - 0.6),
         ],
-        ink.alpha(0.22),
+        ink.alpha(stock.marker_alpha.clamp(0., 1.)),
         window,
     );
 }
 
 /// Soft contact shadow plus a compressed cotton edge, never a luminous frame.
-pub fn shadows() -> Vec<BoxShadow> {
-    vec![
+pub fn shadows_with(stock: Stock) -> Vec<BoxShadow> {
+    let lift = stock.lift.clamp(0., 2.);
+    let mut shadows = vec![
         BoxShadow {
             color: gpui::black().alpha(0.34),
             offset: point(px(2.), px(5.)),
@@ -137,11 +167,14 @@ pub fn shadows() -> Vec<BoxShadow> {
             spread_radius: px(0.),
             inset: false,
         },
-    ]
-}
-
-fn cast_shadow(bounds: Bounds<Pixels>, window: &mut Window) {
-    window.paint_drop_shadows(bounds, Default::default(), &shadows());
+    ];
+    for shadow in &mut shadows {
+        shadow.offset.x *= lift;
+        shadow.offset.y *= lift;
+        shadow.blur_radius *= lift;
+        shadow.color.a *= lift.min(1.);
+    }
+    shadows
 }
 
 fn edge_path(
@@ -189,11 +222,11 @@ fn cotton_edge(bounds: Bounds<Pixels>, points: &[(f32, f32)], window: &mut Windo
     edge_path(bounds, &left, gpui::white().alpha(0.14), 1.1, window);
 }
 
-pub fn selection(ink: Hsla) -> Div {
+pub fn selection_with(ink: Hsla, stock: Stock) -> Div {
     div().absolute().inset_0().child(
         canvas(
             |_, _, _| {},
-            move |bounds, _, window, _| stroke(bounds, ink, window),
+            move |bounds, _, window, _| stroke_with(bounds, ink, stock, window),
         )
         .size_full(),
     )
@@ -201,7 +234,7 @@ pub fn selection(ink: Hsla) -> Div {
 
 /// A chalk score on stock, with a movable torn-paper thumb. Input and bounds
 /// stay with the existing gauge; this child only paints its material.
-pub fn gauge(frac: f32, face: Hsla, ink: Hsla, accent: Hsla) -> Div {
+pub fn gauge(frac: f32, face: Hsla, ink: Hsla, accent: Hsla, stock: Stock) -> Div {
     div().absolute().inset_0().child(
         canvas(
             |_, _, _| {},
@@ -221,16 +254,16 @@ pub fn gauge(frac: f32, face: Hsla, ink: Hsla, accent: Hsla) -> Div {
                     size(px(w * frac.clamp(0., 1.)), px(9.)),
                 );
                 if w * frac > 6. {
-                    stroke(lit, accent, window);
+                    stroke_with(lit, accent, stock, window);
                 }
                 let x = (w * frac - 5.).clamp(0., (w - 10.).max(0.));
                 let knob = Bounds::new(
                     bounds.origin + point(px(x), px(mid - 6.)),
                     size(px(10.), px(12.)),
                 );
-                polygon(knob, &outline(10., 12.), ink, window);
+                polygon(knob, &outline_with(10., 12., stock.roughness), ink, window);
                 let inner = Bounds::new(knob.origin + point(px(1.), px(1.)), size(px(8.), px(10.)));
-                polygon(inner, &outline(8., 10.), face, window);
+                polygon(inner, &outline_with(8., 10., stock.roughness), face, window);
             },
         )
         .size_full(),
@@ -239,47 +272,55 @@ pub fn gauge(frac: f32, face: Hsla, ink: Hsla, accent: Hsla) -> Div {
 
 /// Full backing. Add this before the control's label, so neither the grain nor
 /// the paper fill is painted over text. The marker crosses the control centre.
-pub fn backing(face: Hsla, accent: Hsla, active: bool) -> Div {
-    div().absolute().inset_0().child(
-        canvas(
-            |_, _, _| {},
-            move |bounds, _, window, _| {
-                let w = f32::from(bounds.size.width);
-                let h = f32::from(bounds.size.height);
-                let pts = outline(w, h);
-                cast_shadow(bounds, window);
-                let edge: Vec<_> = pts.iter().map(|(x, y)| (*x + 0.6, *y + 2.4)).collect();
-                polygon(bounds, &edge, crate::darken(face, 0.65), window);
-                let mut face = face;
-                if bounds.contains(&window.mouse_position()) {
-                    face.l = (face.l + 0.025).min(1.0);
-                }
-                polygon(bounds, &pts, face, window);
-                let inner = Bounds::new(
-                    bounds.origin + point(px(3.), px(3.)),
-                    size(px((w - 6.).max(0.)), px((h - 6.).max(0.))),
-                );
-                paint_grain(inner, window);
-                cotton_edge(bounds, &pts, window);
-                if active {
-                    stroke(bounds, accent, window);
-                }
-            },
+pub fn backing_with(face: Hsla, accent: Hsla, active: bool, stock: Stock) -> Div {
+    div()
+        .absolute()
+        .inset_0()
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    let w = f32::from(bounds.size.width);
+                    let h = f32::from(bounds.size.height);
+                    let pts = outline_with(w, h, stock.roughness);
+                    window.paint_drop_shadows(bounds, Default::default(), &shadows_with(stock));
+                    let edge: Vec<_> = pts
+                        .iter()
+                        .map(|(x, y)| (*x + 0.6 * stock.lift, *y + 2.4 * stock.lift))
+                        .collect();
+                    polygon(bounds, &edge, crate::darken(face, 0.65), window);
+                    let mut face = face;
+                    if bounds.contains(&window.mouse_position()) {
+                        face.l = (face.l + 0.025).min(1.0);
+                    }
+                    polygon(bounds, &pts, face, window);
+                    cotton_edge(bounds, &pts, window);
+                    if active {
+                        stroke_with(bounds, accent, stock, window);
+                    }
+                },
+            )
+            .size_full(),
         )
-        .size_full(),
-    )
+        .child(
+            grain_with(stock)
+                .top(px(3.))
+                .bottom(px(3.))
+                .left(px(3.))
+                .right(px(3.)),
+        )
 }
 
 /// Edge-only treatment for containers whose labels have already been added by
 /// their caller. It never paints inside the label's area.
-pub fn rim(face: Hsla, accent: Hsla, active: bool) -> Div {
+pub fn rim_with(face: Hsla, accent: Hsla, active: bool, stock: Stock) -> Div {
     div().absolute().inset_0().child(
         canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
                 let w = f32::from(bounds.size.width);
                 let h = f32::from(bounds.size.height);
-                let pts = outline(w, h);
+                let pts = outline_with(w, h, stock.roughness);
                 cotton_edge(bounds, &pts, window);
                 let mut path = PathBuilder::stroke(px(0.8));
                 path.move_to(bounds.origin + point(px(pts[0].0), px(pts[0].1)));
@@ -291,7 +332,7 @@ pub fn rim(face: Hsla, accent: Hsla, active: bool) -> Div {
                     window.paint_path(path, face);
                 }
                 if active {
-                    stroke(bounds, accent, window);
+                    stroke_with(bounds, accent, stock, window);
                 }
             },
         )

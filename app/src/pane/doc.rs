@@ -335,6 +335,7 @@ impl TerminalView {
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
         use crate::docopen::FloatHit;
+        let sk = crate::skin::for_theme(cx, th, th.grade.scale);
         let s = crate::lang::current().strings();
         let (w, h) = self.screen_size().unwrap_or((0.0, 0.0));
         let r = crate::docopen::clamp_float(float.rect, w, h);
@@ -417,9 +418,10 @@ impl TerminalView {
             .bg(th.bg)
             .border_2()
             .border_color(th.accent)
-            .rounded(px(6.))
+            .rounded(sk.rad_raw(6.))
             .shadow(crate::float_shadows(th.accent, th.grade.phosphor))
             .overflow_hidden()
+            .map(|d| sk.chrome(sk.finish(d)))
             .child(strip)
             .child(
                 div()
