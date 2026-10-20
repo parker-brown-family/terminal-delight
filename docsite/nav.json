@@ -210,6 +210,11 @@
       "title": "Version",
       "href": "https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.3.0",
       "note": "v0.3.0"
+    },
+    {
+      "title": "Preview",
+      "href": "https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.4.0-rc.2",
+      "note": "v0.4.0-rc.2"
     }
   ]
 }
