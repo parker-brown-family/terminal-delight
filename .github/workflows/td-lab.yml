@@ -7,9 +7,12 @@ name: Terminal Lab
 # Parker approved: four jobs at most, fifteen minutes each including setup,
 # failure artifacts capped at 10 MB per shard and kept seven days.
 #
-# Manual first. The weekly schedule below stays commented out until a real
-# manual run has finished inside the budget with both planted-fault controls
-# caught; that run is linked from docs/plans/terminal-lab/00-status.md.
+# Weekly, Monday 06:17 UTC, and by hand. The schedule was switched on once a
+# manual run had finished inside the budget with both planted-fault controls
+# caught (run 39347146038, 7:06 wall clock; docs/plans/terminal-lab/00-status.md).
+# A scheduled run starts from a fresh seed base each week (the week number
+# times 100,000), so every week explores 6,000 cases no run has tried; the
+# summary records the seed base, which is all a rerun needs.
 
 on:
   workflow_dispatch:
@@ -20,8 +23,8 @@ on:
       seed_base:
         description: First seed (a seed names one case within a corpus version)
         default: "0"
-  # schedule:
-  #   - cron: "17 6 * * 1"
+  schedule:
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
@@ -135,11 +138,22 @@ jobs:
         run: python3 scripts/lab/run.py control --out lab-out/controls
 
       - name: Replay and compare
+        env:
+          CASES: ${{ inputs.cases || '6000' }}
+          SEED_BASE: ${{ inputs.seed_base }}
         run: |
+          if [ -z "$SEED_BASE" ]; then
+            if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+              week=$(( $(date -u +%s) / 604800 ))
+              SEED_BASE=$(( week * 100000 ))
+            else
+              SEED_BASE=0
+            fi
+          fi
           python3 scripts/lab/run.py run --out lab-out/run \
             --shard ${{ matrix.shard }}/3 \
-            --cases "${{ inputs.cases || '6000' }}" \
-            --seed-base "${{ inputs.seed_base || '0' }}" \
+            --cases "$CASES" \
+            --seed-base "$SEED_BASE" \
             --minimize-budget 420
 
       # Summaries always; reproducers only exist when something failed. The
