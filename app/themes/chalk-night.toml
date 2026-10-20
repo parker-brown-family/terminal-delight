@@ -1,0 +1,35 @@
+# The same paper geometry on slate, with coloured chalk for syntax.
+name = "chalk-night"
+icon = "❀"
+skin = "paper"
+
+[colors]
+bg = "#242a27"
+surface = "#333b36"
+text = "#f0ece2"
+accent = "#ffa8d0"
+faint = "#79746f"
+cursor = "#ffa8d0"
+human = "#95c8cc"
+ansi = [
+ "#242a27", "#e3949b", "#a0c7a3", "#ddc88a",
+ "#9bb9d7", "#d0a6d0", "#95c8cc", "#ded8cf",
+ "#9b9299", "#f1a18b", "#b3d7b2", "#ead698",
+ "#adc9e6", "#e2b8dd", "#b2dce0", "#f0ece2",
+]
+
+[effects]
+scanline_opacity = 0.0
+vignette = 0.0
+glow = 0.0
+bloom = 0.0
+tracking = 0.0
+flicker = 0.0
+jiggle = 0.0
+screen_glare = 0.0
+bezel = 0.0
+
+[font]
+family = "JetBrains Mono"
+size = 14.0
+cell_height = 21.0

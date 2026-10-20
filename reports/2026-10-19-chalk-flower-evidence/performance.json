@@ -1,0 +1,66 @@
+[
+  {
+    "busy_20hz": false,
+    "skin": "default",
+    "duration_s": 5.0,
+    "cpu_s": 0.13,
+    "cpu_percent_one_core": 2.6,
+    "pss_kib": 100869
+  },
+  {
+    "busy_20hz": false,
+    "skin": "paper",
+    "duration_s": 5.0,
+    "cpu_s": 0.13,
+    "cpu_percent_one_core": 2.6,
+    "pss_kib": 101103
+  },
+  {
+    "busy_20hz": false,
+    "skin": "default",
+    "duration_s": 5.001,
+    "cpu_s": 0.11,
+    "cpu_percent_one_core": 2.2,
+    "pss_kib": 102432
+  },
+  {
+    "busy_20hz": false,
+    "skin": "paper",
+    "duration_s": 5.0,
+    "cpu_s": 0.15,
+    "cpu_percent_one_core": 3.0,
+    "pss_kib": 96836
+  },
+  {
+    "busy_20hz": true,
+    "skin": "default",
+    "duration_s": 5.001,
+    "cpu_s": 0.85,
+    "cpu_percent_one_core": 17.0,
+    "pss_kib": 103619
+  },
+  {
+    "busy_20hz": true,
+    "skin": "paper",
+    "duration_s": 5.0,
+    "cpu_s": 1.01,
+    "cpu_percent_one_core": 20.2,
+    "pss_kib": 103001
+  },
+  {
+    "busy_20hz": true,
+    "skin": "default",
+    "duration_s": 5.0,
+    "cpu_s": 0.77,
+    "cpu_percent_one_core": 15.4,
+    "pss_kib": 75028
+  },
+  {
+    "busy_20hz": true,
+    "skin": "paper",
+    "duration_s": 5.0,
+    "cpu_s": 1.02,
+    "cpu_percent_one_core": 20.4,
+    "pss_kib": 75243
+  }
+]
