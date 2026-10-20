@@ -62,11 +62,17 @@ pub enum Missing {
 }
 
 impl Missing {
-    /// Why, in a sentence, and nothing about what happened instead.
+    /// Why, in a sentence, and nothing about what happened instead. English,
+    /// for the log; the square draws [`Missing::reason_in`].
     pub fn reason(&self) -> String {
+        self.reason_in(crate::lang::Lang::En)
+    }
+
+    /// [`Missing::reason`] in `l`'s words.
+    pub fn reason_in(&self, l: crate::lang::Lang) -> String {
         match self {
             Missing::NotFound(tool) => {
-                format!("No {tool} on PATH (install poppler to read PDFs in TD).")
+                crate::lang::fill(l.strings().parts.pdf_no_tool, &[("tool", tool)])
             }
         }
     }
@@ -77,9 +83,14 @@ impl Missing {
         format!("{} Opened with the desktop.", self.reason())
     }
 
-    /// The reason in a few words, for the chip on the row that was clicked.
+    /// The reason in a few words, for the chip on the row that was clicked,
+    /// in the reader's language: it is only ever drawn.
     pub fn short_reason(&self) -> String {
-        "no poppler".into()
+        crate::lang::current()
+            .strings()
+            .parts
+            .pdf_short_no_poppler
+            .into()
     }
 }
 
@@ -168,17 +179,22 @@ pub enum Refused {
 }
 
 impl Refused {
-    /// Said in the square, where the document would be.
+    /// The sentence the square says, in English, for the log; the square
+    /// draws [`Refused::sentence_in`].
     pub fn sentence(&self) -> String {
+        self.sentence_in(crate::lang::Lang::En)
+    }
+
+    /// Said in the square, where the document would be, in `l`'s words.
+    /// What poppler said is carried as it came: it is poppler's English, and
+    /// TD's own diagnoses share its slot.
+    pub fn sentence_in(&self, l: crate::lang::Lang) -> String {
+        let t = &l.strings().parts;
         match self {
-            Refused::Locked => "This PDF is locked with a password. Ctrl+click its path \
-                                to open it on the desktop, which can ask for it."
-                .into(),
-            Refused::Broken(why) => format!("poppler could not read this PDF: {why}"),
-            Refused::TooSlow => "poppler was still drawing this after twenty seconds, \
-                                 and was stopped."
-                .into(),
-            Refused::Tool(why) => format!("poppler could not be run: {why}"),
+            Refused::Locked => t.pdf_locked.into(),
+            Refused::Broken(why) => crate::lang::fill(t.pdf_broken, &[("why", why)]),
+            Refused::TooSlow => t.pdf_too_slow.into(),
+            Refused::Tool(why) => crate::lang::fill(t.pdf_tool_failed, &[("why", why)]),
         }
     }
 }

@@ -60,10 +60,13 @@ APP = ROOT / "app"
 NAMED = APP / "src" / "vt" / "lab" / "named.json"
 KNOWN = Path(__file__).resolve().parent / "known.json"
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 # Bumped whenever the generator would turn a seed into different bytes: a
-# seed names a case only within one corpus version.
-CORPUS_VERSION = "gen-1"
+# seed names a case only within one corpus version. gen-2 (2026-10-20) adds
+# synchronized updates (DEC 2026, and the legacy DCS pair) and shell prompt
+# marks (OSC 133) to the tokens, and makes a quarter of cases style-free, so
+# a reflow difference that has nothing to do with styled blank cells can show.
+CORPUS_VERSION = "gen-2"
 CORES = {"rio": [], "alacritty": ["--features", "core-alacritty"]}
 # Two cut plans per core and case; with whole writes, three runs per core.
 CHUNK_SEEDS = (11, 23)
@@ -112,9 +115,10 @@ SGR = ["0", "1", "2", "3", "4", "7", "9", "22", "24", "27", "31", "32", "44", "9
        "38;5;202", "48;5;17", "38;2;10;200;30", "4:3", "58;5;9", ""]
 
 
-def token(rng: SplitMix, columns: int, rows: int) -> str:
+def token(rng: SplitMix, columns: int, rows: int, styled: bool = True) -> str:
     """One piece of plausible terminal output. The weights lean on text,
-    because escapes acting on an empty screen prove little."""
+    because escapes acting on an empty screen prove little. An unstyled case
+    writes a word where a styled one would set a style."""
     n = lambda top: str(1 + rng.below(top))  # noqa: E731
     roll = rng.below(100)
     if roll < 30:
@@ -126,7 +130,8 @@ def token(rng: SplitMix, columns: int, rows: int) -> str:
     if roll < 47:
         return rng.pick(["\r\n", "\n", "\r", "\t", "\b"])
     if roll < 55:
-        return f"\x1b[{rng.pick(SGR)}m"
+        sgr = rng.pick(SGR)
+        return f"\x1b[{sgr}m" if styled else rng.pick(WORDS)
     choices = [
         lambda: f"\x1b[{n(rows + 2)};{n(columns + 2)}H",
         lambda: f"\x1b[{n(4)}{rng.pick('ABCD')}",
@@ -145,6 +150,19 @@ def token(rng: SplitMix, columns: int, rows: int) -> str:
         lambda: f"\x1b[?25{rng.pick('hl')}",
         lambda: f"\x1b[{n(3)} q",
         lambda: f"\x1b[{n(5)}b",
+        # gen-2: synchronized updates, closed twice as often as opened so a
+        # case is rarely frozen to its end: the plain pair, and opened
+        # together with another mode.
+        lambda: rng.pick(["\x1b[?2026h", "\x1b[?2026l", "\x1b[?2026l", "\x1b[?25;2026h"]),
+        # gen-2: the legacy DCS pair older terminfo entries advertise, kept
+        # rare (about one case in five) because only rio-vt implements it, so
+        # every case that holds it is a cross-core finding explained by
+        # removing it, and that explanation must not cover half the corpus.
+        lambda: rng.pick(["\x1bP=1s\x1b\\", "\x1bP=2s\x1b\\"] + [""] * 14),
+        # gen-2: shell prompt marks, BEL- and ST-terminated, with and without
+        # parameters, as bash, zsh and fish integrations write them.
+        lambda: rng.pick(["\x1b]133;A\x07", "\x1b]133;B\x07", "\x1b]133;C\x07", "\x1b]133;D;0\x07",
+                          "\x1b]133;A;aid=7\x1b\\", "\x1b]133;P;k=i\x07"]),
     ]
     return rng.pick(choices)()
 
@@ -156,6 +174,10 @@ SIZES_ROWS = [1, 2, 3, 5, 10, 24]
 def generate(seed: int) -> dict:
     """The case a seed names in this corpus version."""
     rng = SplitMix(seed)
+    # A quarter of cases never set a text style (gen-2). In gen-1, 98% of the
+    # cases that resized also set one, so a reflow difference with nothing to
+    # do with styled blank cells was hidden behind narrowing-reflow.
+    styled = rng.below(4) != 0
     columns, rows = rng.pick(SIZES_COLUMNS), rng.pick(SIZES_ROWS)
     size = [columns, rows]
     ops: list = []
@@ -167,9 +189,14 @@ def generate(seed: int) -> dict:
         elif roll < 16:
             ops.append("checkpoint")
         else:
-            text = "".join(token(rng, columns, rows) for _ in range(1 + rng.below(8)))
+            text = "".join(token(rng, columns, rows, styled) for _ in range(1 + rng.below(8)))
             ops.append({"write": text})
     return {"name": f"{CORPUS_VERSION}/{seed}", "seed": seed, "size": size, "ops": ops}
+
+
+def is_style_free(case: dict) -> bool:
+    """Whether a case sets no text style at all (no SGR but a bare reset)."""
+    return not re.search(rb"\x1b\[[0-9;:]*[1-9][0-9;:]*m", all_bytes(case))
 
 
 def named_cases() -> list[dict]:
@@ -339,7 +366,7 @@ def execute(spec: Spec, cases: list[dict], timeout_ms: int = 5000) -> dict[str, 
 
 # --- comparing -------------------------------------------------------------------
 
-FIELDS = ("size", "cursor", "modes", "history_size", "screen", "history")
+FIELDS = ("size", "cursor", "modes", "history_size", "sync_open", "events", "screen", "history")
 
 
 def first_difference(a: list[dict], b: list[dict]) -> tuple[int, str] | None:
@@ -863,11 +890,26 @@ def command_run(args) -> int:
              f"(record {phases['record']:.0f}s, replay {phases['replay']:.0f}s, classify {phases['classify']:.0f}s, minimize {phases['minimize']:.0f}s)"]
     if unwritten:
         extra.append(f"- {unwritten} finding(s) not written: the {ARTIFACT_CAP // 1048576} MB artifact cap was reached")
+    extra += reflow_lines(cases, findings)
     if args.shard[0] == 1:
         extra += recording_lines(recordings, args.record)
     summarize(out, "Terminal Lab — correctness run", counts, findings, extra, unknowns.summary_lines(cover))
     print((out / "summary.md").read_text())
     return 1 if any(not f.classified for f in findings) else 0
+
+
+def reflow_lines(cases: list[dict], findings: list[Finding]) -> list[str]:
+    """Resizing without any text style: the cases where a reflow difference
+    cannot be rio-vt keeping styled blank cells (narrowing-reflow), so any
+    cross-core finding there is worth reading on its own."""
+    def resizes(case: dict) -> bool:
+        return any(isinstance(op, dict) and "resize" in op for op in case["ops"])
+    free = [c for c in cases if c["name"].startswith(f"{CORPUS_VERSION}/") and resizes(c) and is_style_free(c)]
+    names = {c["name"] for c in free}
+    hit = [f for f in findings if f.kind == "cores" and f.case["name"] in names]
+    unexplained = [f for f in hit if not f.classified]
+    return [f"- style-free cases that resize: {len(free)}; cross-core findings among them: {len(hit)} "
+            f"({len(unexplained)} unexplained)"]
 
 
 def sources(cases: list[dict]) -> dict[str, list[bytes]]:

@@ -449,7 +449,7 @@ impl PdfDoc {
             // only a first reading has nothing better to show than why.
             Err(why) => {
                 if !matches!(self.pages, Pages::Ready(_)) {
-                    self.pages = Pages::Failed(why.sentence());
+                    self.pages = Pages::Failed(why.sentence_in(crate::lang::current()));
                 }
                 if std::env::var_os("TD_DOCDEBUG").is_some() {
                     eprintln!("[doc] {}: {}", self.path.display(), why.sentence());
@@ -691,7 +691,8 @@ impl PdfDoc {
                 );
             }
             Err(why) => {
-                self.broken.insert(key.region.page, why.sentence());
+                self.broken
+                    .insert(key.region.page, why.sentence_in(crate::lang::current()));
             }
         }
         self.pump(cx);
@@ -722,17 +723,24 @@ impl Backend for PdfDoc {
     /// The pages in view: each page's outline first, then the tiles of an
     /// older size or reading still covering it, then this one's, and the page
     /// counter over all of them.
-    fn element(&mut self, view: &Drawn, _window: &mut Window, th: &Theme) -> AnyElement {
+    fn element(
+        &mut self,
+        view: &Drawn,
+        _window: &mut Window,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> AnyElement {
         if let Err(why) = &self.tools {
-            return Self::note(why.reason(), th);
+            return Self::note(why.reason_in(crate::lang::current()), th);
         }
+        let t = &crate::lang::current().strings().parts;
         match &self.pages {
-            Pages::Reading => return Self::note("opening…".into(), th),
+            Pages::Reading => return Self::note(t.doc_opening.into(), th),
             Pages::Failed(why) => return Self::note(why.clone(), th),
             Pages::Ready(_) => {}
         }
         let Some((size, sf)) = view.frame else {
-            return Self::note("opening…".into(), th);
+            return Self::note(t.doc_opening.into(), th);
         };
         if self.frame != view.frame {
             self.frame = view.frame;
@@ -740,7 +748,7 @@ impl Backend for PdfDoc {
         }
         self.lay_out();
         let Some((col, ..)) = &self.laid else {
-            return Self::note("opening…".into(), th);
+            return Self::note(t.doc_opening.into(), th);
         };
         let (vw, vh) = (f32::from(size.width), f32::from(size.height));
         let cx = column_x(col.width, vw, self.left);
@@ -774,7 +782,10 @@ impl Backend for PdfDoc {
                     .p(px(14.))
                     .text_size(px(12.))
                     .text_color(th.text.alpha(0.75))
-                    .child(format!("Page {}: {why}", page + 1));
+                    .child(crate::lang::fill(
+                        t.pdf_page_broken,
+                        &[("page", &(page + 1).to_string()), ("why", why)],
+                    ));
             }
             outlines.push(outline.into_any_element());
         }
@@ -801,17 +812,17 @@ impl Backend for PdfDoc {
             }
         }
         let counter = page_at(col, self.top + vh / 2.0).map(|p| {
-            div()
+            sk.chrome(sk.sheet())
                 .absolute()
                 .right(px(GUTTER))
                 .bottom(px(8.))
                 .px(px(7.))
                 .py(px(2.))
-                .rounded(px(4.))
+                .rounded(sk.radius())
                 .bg(th.bg.alpha(0.85))
                 .border_1()
                 .border_color(th.accent.alpha(0.4))
-                .text_size(px(11.))
+                .text_size(sk.text_px(11.))
                 .text_color(th.accent)
                 .child(format!("{} / {}", p + 1, col.pages.len()))
                 .into_any_element()

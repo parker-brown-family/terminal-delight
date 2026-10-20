@@ -116,8 +116,8 @@ impl PaneMode {
         }
     }
 
-    /// Localised header label for the active UI language. SHELL and REMOTE
-    /// translate; CLAUDE / CODEX stay (proper nouns) and `Other` keeps the live
+    /// Localised header label for the active UI language. SHELL, REMOTE and
+    /// LOCAL translate; CLAUDE / CODEX stay (proper nouns) and `Other` keeps the live
     /// program name. The plain `label()` stays English for MCP/data callers.
     pub fn label_i18n(&self) -> std::borrow::Cow<'static, str> {
         use std::borrow::Cow;
@@ -128,7 +128,7 @@ impl PaneMode {
             PaneMode::Claude => Cow::Borrowed("CLAUDE"),
             PaneMode::Codex => Cow::Borrowed("CODEX"),
             PaneMode::Other(name) if name == crate::launcher::LOCAL_AGENT_MODE => {
-                Cow::Borrowed("LOCAL")
+                Cow::Borrowed(st.parts.pane_mode_local)
             }
             PaneMode::Other(name) => Cow::Owned(name.clone()),
             // Untranslated for the same reason CLAUDE and CODEX are: it is a
@@ -283,6 +283,10 @@ struct Said {
 /// How long a [`Said`] chip stays up.
 const SAID_FOR: Duration = Duration::from_secs(8);
 
+/// A pane's title before its shell sets one. Kept English in [`Pane::title`]
+/// because agents read it in the census; [`Pane::shown_title`] translates it.
+pub const DEFAULT_TITLE: &str = "shell";
+
 /// How often a pane in a tab that is not being shown asks for a frame for
 /// what changed on its screen (#964). Parker: panes not on screen only need to
 /// refresh every few seconds, and showing one draws it at once, which nobody
@@ -325,6 +329,27 @@ type LiveRowsMemo = ((u64, usize, usize), std::rc::Rc<Vec<String>>);
 /// its key: [`TerminalView::live_rows`] hands out the same one until the
 /// screen changes. See `TerminalView::agent_status`.
 type StatusMemo = (std::rc::Rc<Vec<String>>, crate::hud::AgentStatus);
+
+/// The frame round a bent tube's glass, for [`crate::warp::register_tube`]: a
+/// plastic in the pane's own chrome hue, desaturated and at a fixed lightness so
+/// it reads as a moulding beside the glass and not as another screen colour, at
+/// a low strength. The CRT pass shades it as a slope lit from above, so it shows
+/// most on the lower lip and round the inside of each corner, and it fades out
+/// before the tube's straight boundary. Paper skins get none.
+pub(crate) fn tube_bezel(th: &Theme, paper: bool) -> [f32; 2] {
+    if paper {
+        return crate::warp::NO_BEZEL;
+    }
+    let chrome = graded(th.surface, &th.grade, Channel::Bg);
+    let moulding: gpui::Rgba = gpui::hsla(chrome.h, chrome.s.min(0.22), 0.30, 1.0).into();
+    let byte = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u32;
+    let rgb = (byte(moulding.r) << 16) | (byte(moulding.g) << 8) | byte(moulding.b);
+    crate::warp::bezel(rgb, TUBE_BEZEL_STRENGTH)
+}
+
+/// How much of [`tube_bezel`]'s moulding shows. Kept low on purpose: the frame
+/// should be noticed in the corners, not looked at.
+const TUBE_BEZEL_STRENGTH: f32 = 0.4;
 
 /// The pane header's shadows: the bright inner edge that makes it read as
 /// solid, and, on a tube, its bloom.
@@ -897,6 +922,65 @@ fn wrapped_link_from(
     None
 }
 
+/// The rules a table's cells are drawn between: Claude Code draws a Markdown
+/// table with box rules, light or heavy.
+fn is_cell_border(c: char) -> bool {
+    matches!(c, '│' | '┃')
+}
+
+/// Every reading of a link broken inside a table cell, the most-joined first.
+///
+/// Claude Code wraps a cell's text at the cell's own width, so a path in a
+/// cell is broken at the space before the `│`, never at the grid's edge, and
+/// carries on in the same cell of the row below — where [`continuation_start`]
+/// finds a rule, not the rest of the path. Parker's links table of 2026-10-20
+/// opened as `…2026-10-19-g`, which is no file, and so did nothing.
+///
+/// The clicked cell is read as a grid of its own: every row of the table that
+/// has the same two rules at the same columns, with the space of padding on
+/// each side taken off, so text that fills the cell reaches that grid's edge
+/// exactly as text that fills the screen reaches the screen's. Empty off a
+/// table, on a rule or in the padding.
+fn table_cell_readings(rows: &[Vec<char>], vrow: usize, vcol: usize) -> Vec<LinkSpan> {
+    let Some(row) = rows.get(vrow).filter(|r| vcol < r.len()) else {
+        return Vec::new();
+    };
+    let (Some(left), Some(right)) = (
+        row[..vcol].iter().rposition(|c| is_cell_border(*c)),
+        row[vcol..]
+            .iter()
+            .position(|c| is_cell_border(*c))
+            .map(|r| vcol + r),
+    ) else {
+        return Vec::new();
+    };
+    let inside = |r: &Vec<char>| {
+        r.get(left).copied().is_some_and(is_cell_border)
+            && r.get(right).copied().is_some_and(is_cell_border)
+    };
+    let mut top = vrow;
+    while top > 0 && inside(&rows[top - 1]) {
+        top -= 1;
+    }
+    let mut bottom = vrow;
+    while bottom + 1 < rows.len() && inside(&rows[bottom + 1]) {
+        bottom += 1;
+    }
+    let (a, b) = (left + 2, right - 1);
+    if vcol < a || vcol >= b {
+        return Vec::new();
+    }
+    let cells: Vec<Vec<char>> = (top..=bottom).map(|r| rows[r][a..b].to_vec()).collect();
+    wrapped_link_candidates(&cells, &vec![false; cells.len()], vrow - top, vcol - a)
+        .into_iter()
+        .map(|s| LinkSpan {
+            first: s.first + top,
+            last: s.last + top,
+            ..s
+        })
+        .collect()
+}
+
 /// Every reading of the link under a click on grid row `vrow`, column `vcol`,
 /// the most-joined first. Pure: testable without a live grid.
 ///
@@ -946,9 +1030,14 @@ fn wrapped_link_candidates(
         (r, to) = (r + 1, b);
     }
     let middle = text(vrow, start, end);
-    let mut out: Vec<LinkSpan> = delimited_wrapped_link(rows, vrow, vcol)
-        .into_iter()
-        .collect();
+    // A table cell's own reading first: it is the only one that can see past
+    // the rule a cell's text was broken at.
+    let mut out: Vec<LinkSpan> = table_cell_readings(rows, vrow, vcol);
+    if let Some(d) = delimited_wrapped_link(rows, vrow, vcol) {
+        if out.iter().all(|c| c.link != d.link) {
+            out.push(d);
+        }
+    }
     for up in (0..=ups.len()).rev() {
         for down in (0..=downs.len()).rev() {
             let mut tok: String = ups[..up].iter().rev().map(String::as_str).collect();
@@ -1082,6 +1171,37 @@ fn hyperlink_rows(row: usize, rows: usize, holds: impl Fn(usize) -> bool) -> (us
         last += 1;
     }
     (first, last)
+}
+
+/// The link under character `col` of one line of text the FOCUS reader shows,
+/// chosen as [`pick_link`] chooses one on the grid. The reader's text is the
+/// conversation, one whole line per entry and wrapped only as it is drawn, so
+/// there is no row below to carry a link on into.
+fn line_link(
+    line: &str,
+    col: usize,
+    cwd: Option<&str>,
+    exists: impl Fn(&str) -> bool,
+) -> Option<String> {
+    let row: Vec<char> = line.chars().collect();
+    pick_link(
+        &wrapped_link_candidates(&[row], &[false], 0, col),
+        cwd,
+        exists,
+    )
+    .map(|(target, _, _)| target)
+}
+
+/// What a modified press in the FOCUS reader did with the link under it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReaderClick {
+    /// It opened in TD, over this pane or beside it, so the reader has to get
+    /// out of the way for it to be seen.
+    Opened,
+    /// It went to the desktop, which shows it elsewhere; the reader stays.
+    Handed,
+    /// Nothing under it to open: the press is the reader's, a selection.
+    Pass,
 }
 
 /// Paint the rest of a link the width broke in the colour of its first half.
@@ -1552,6 +1672,14 @@ fn shell_quote(s: &str) -> String {
 ///
 /// The fallback rides inside the same `sh` because whether the D-Bus call failed
 /// is only knowable after it returns, and the UI thread will not wait for it.
+///
+/// The wait for that answer is capped at [`REVEAL_REPLY_TIMEOUT_MS`]. D-Bus's
+/// own default is 25 seconds, and a manager can own the name and never answer:
+/// Strata 0.21.0 does, so with it running every reveal sat for 25 seconds
+/// before the fallback opened the folder (measured 2026-10-19). The cap is
+/// generous enough for a manager that is being cold-started by activation, and
+/// one that answers late gets the folder opened as well, a second window rather
+/// than half a minute of nothing.
 fn reveal_script(path: &str, use_uwsm: bool) -> String {
     let parent = std::path::Path::new(path)
         .parent()
@@ -1564,13 +1692,18 @@ fn reveal_script(path: &str, use_uwsm: bool) -> String {
         "xdg-open"
     };
     format!(
-        "dbus-send --session --print-reply --dest=org.freedesktop.FileManager1 \
+        "dbus-send --session --print-reply --reply-timeout={REVEAL_REPLY_TIMEOUT_MS} \
+         --dest=org.freedesktop.FileManager1 \
          /org/freedesktop/FileManager1 org.freedesktop.FileManager1.ShowItems \
          array:string:{} string:'' >/dev/null 2>&1 || {opener} {} >/dev/null 2>&1",
         shell_quote(&path_to_file_uri(path)),
         shell_quote(&parent),
     )
 }
+
+/// How long a reveal waits for the file manager to answer before opening the
+/// folder itself. See [`reveal_script`].
+const REVEAL_REPLY_TIMEOUT_MS: u32 = 3000;
 
 /// Show `path` in the system file manager with the item itself selected, rather
 /// than opening it — the "where does this actually live?" answer to a path a
@@ -4055,7 +4188,7 @@ impl TerminalView {
             cell_h: self.cell_h,
             cols: self.grid.cols,
             rows: self.grid.rows,
-            title: self.name.clone().unwrap_or_else(|| self.title.clone()),
+            title: self.name.clone().unwrap_or_else(|| self.shown_title()),
             crawl: th.crawl,
             k1,
             k2,
@@ -4974,7 +5107,7 @@ impl TerminalView {
             superseded: false,
             off_limits: false,
             staged: restore.clone(),
-            title: "shell".into(),
+            title: DEFAULT_TITLE.into(),
             name: None,
             logo,
             launch_mark: restore.mark,
@@ -6145,9 +6278,14 @@ impl TerminalView {
         &mut self,
         map: &str,
         cx: &mut Context<Self>,
-    ) -> Result<NotesLanded, String> {
+    ) -> Result<NotesLanded, crate::docview::notes_ui::Words> {
+        // Every refusal here is drawn in the notes bar in the reader's
+        // language, and carried in English by the notes report.
+        use crate::docview::notes_ui::Words;
         if !self.mode.is_agent() {
-            return Err("the pane beside this brief is not running an agent now".into());
+            return Err(Words::said(|l| {
+                l.strings().parts.pane_notes_err_no_agent.into()
+            }));
         }
         match self.bench.face() {
             crate::workbench::Face::Terminal => {}
@@ -6156,10 +6294,9 @@ impl TerminalView {
                 return Ok(NotesLanded::Composer(map.chars().count()));
             }
             crate::workbench::Face::Document => {
-                return Err(
-                    "the agent's pane is showing a document, so nobody would see the notes land — turn it to its prompt or its bench first"
-                        .into(),
-                );
+                return Err(Words::said(|l| {
+                    l.strings().parts.pane_notes_err_doc_face.into()
+                }));
             }
         }
         let bracketed = self
@@ -6168,10 +6305,8 @@ impl TerminalView {
             .lock()
             .mode()
             .contains(TermMode::BRACKETED_PASTE);
-        let bytes = notes_paste(map, bracketed).ok_or_else(|| {
-            "the agent's prompt is not taking a paste right now, and typed without one every line of the map would press Enter — ⎘ copy map instead"
-                .to_string()
-        })?;
+        let bytes = notes_paste(map, bracketed)
+            .ok_or_else(|| Words::said(|l| l.strings().parts.pane_notes_err_no_paste.into()))?;
         self.session.notifier.notify(bytes);
         Ok(NotesLanded::Prompt(map.chars().count()))
     }
@@ -6603,6 +6738,22 @@ impl TerminalView {
         cx.emit(StickyChanged);
         cx.notify();
         true
+    }
+
+    /// The OSC title as a person reads it. Until the shell names itself the
+    /// title is the placeholder [`DEFAULT_TITLE`], which stays English in
+    /// `title` (agents read it from the census as "nobody has named this")
+    /// and is drawn in the reader's language here.
+    pub fn shown_title(&self) -> String {
+        if self.title == DEFAULT_TITLE {
+            crate::lang::current()
+                .strings()
+                .parts
+                .pane_title_default_shell
+                .to_string()
+        } else {
+            self.title.clone()
+        }
     }
 
     /// This pane's note for the state file.
@@ -7326,6 +7477,15 @@ impl TerminalView {
                     return Handled::Declined;
                 }
             }
+        }
+        // Read images in the GUI, not in the agent process: a session host
+        // can outlive the desktop environment it inherited at startup.
+        if !k.alt
+            && crate::workbench::is_paste_chord(k.key, k.control, k.shift)
+            && self.clipboard_holds_an_image()
+        {
+            self.paste_clipboard(cx);
+            return Handled::Declined;
         }
         if let Some(bytes) = keystroke_bytes(ks) {
             self.send(bytes, cx);
@@ -8145,6 +8305,14 @@ impl TerminalView {
     /// reason a file dropped on a document is not typed into it.
     fn paste_clipboard(&self, cx: &mut Context<Self>) {
         if self.bench.face() == crate::workbench::Face::Document {
+            return;
+        }
+        if self.clipboard_holds_an_image() {
+            if let Some(path) = self.clipboard_image_path() {
+                self.paste_text(&crate::workbench::paths_as_words(&[path.into()]));
+            } else {
+                eprintln!("terminal-delight: could not read the clipboard image");
+            }
             return;
         }
         if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
@@ -10039,6 +10207,7 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.resolved_theme(cx);
+        let menu_skin = crate::skin::for_theme(cx, &th, th.grade.scale);
         // The floating square re-records where its controls are as it paints.
         self.float_zones.borrow_mut().clear();
         // right-click context menu (Copy / Paste / Open link), anchored at the cursor
@@ -10054,7 +10223,7 @@ impl Render for TerminalView {
                 th.surface,
                 th.text,
                 th.faint,
-                th.font_family.clone(),
+                menu_skin.font_family.clone(),
             );
             let row = |label: &str, lit: bool| {
                 div()
@@ -10089,11 +10258,12 @@ impl Render for TerminalView {
                 .bg(surf)
                 .border_1()
                 .border_color(acc.alpha(0.55))
-                .rounded(px(8.))
+                .rounded(menu_skin.rad_raw(8.))
                 .occlude()
-                .text_size(px(13.))
+                .text_size(menu_skin.text_px(13.))
                 .font_family(ff)
-                .shadow_md();
+                .shadow_md()
+                .map(|d| menu_skin.finish(d));
             if let Some(l) = link {
                 // The rows come from `docopen::link_menu`, so a row is offered
                 // only where it does something: Open here on a document TD can
@@ -10223,9 +10393,12 @@ impl Render for TerminalView {
                 .child(
                     row(
                         if self.off_limits {
-                            "Let agents see this pane"
+                            crate::lang::current()
+                                .strings()
+                                .parts
+                                .pane_ctx_let_agents_see
                         } else {
-                            "Off-limits to agents"
+                            crate::lang::current().strings().parts.pane_ctx_off_limits
                         },
                         true,
                     )
@@ -10297,7 +10470,13 @@ impl Render for TerminalView {
             // again"), then the shelf on show. Built by [`crate::paint`], which
             // is also what the cabinet's card draws from: one tile shape, one
             // shelf order, two surfaces that cannot disagree about either.
-            for e in crate::paint::entries(cx, shelf, &worn, "ESKTOP") {
+            // DESKTOP in the reader's language; the chord stays `D`, so a
+            // word that does not start with it sits whole under the key.
+            let pt = &crate::lang::current().strings().parts;
+            let (lead, lead_second) = crate::paint::split_lead(pt.paint_tile_desktop);
+            let mut entries = crate::paint::entries(cx, shelf, &worn, &lead);
+            entries[0].second = lead_second;
+            for e in entries {
                 let pick = e.pick.clone();
                 grid = grid.child(crate::paint::tile(&e, &th, &card_sk).on_mouse_down(
                     MouseButton::Left,
@@ -10353,7 +10532,7 @@ impl Render for TerminalView {
                             &card_sk,
                             1.0,
                             sel,
-                            "PAINT THIS PANE",
+                            pt.pane_paint_card_title,
                             &worn,
                         ))
                         .child(
@@ -10382,8 +10561,11 @@ impl Render for TerminalView {
                                         .text_color(th.faint)
                                         .child(crate::paint::legend(
                                             cx,
-                                            &["↔ select", "↑ outer"],
-                                            "d desktop",
+                                            &[
+                                                pt.pane_paint_legend_select,
+                                                pt.pane_paint_legend_outer,
+                                            ],
+                                            pt.pane_paint_legend_desktop,
                                             &worn,
                                         )),
                                 ),
@@ -10559,11 +10741,11 @@ impl Render for TerminalView {
         let ps = crate::lang::current().strings();
         let status = if self.needs_input {
             // waiting on the HUMAN outranks "done": the turn isn't over, it's
-            // yours. (English literal for now — the prompt phrases it detects
-            // are English-only anyway; i18n rides along when they do.)
-            "❓ your turn".to_string()
+            // yours. The phrases that detect it stay English (they read the
+            // agent's own TUI); the chip is drawn in the reader's language.
+            ps.parts.pane_status_your_turn.to_string()
         } else if self.bell_blocked() {
-            "✘ blocked".to_string()
+            ps.parts.pane_status_blocked.to_string()
         } else if self.bell {
             format!("✔ {}", ps.ph_done)
         } else if self.exited {
@@ -10585,7 +10767,7 @@ impl Render for TerminalView {
             .map(|b| f32::from(b.size.width))
             .unwrap_or(f32::MAX);
         // Reserve the launch button before deciding which optional controls fit.
-        let optical = if sk.is_paper() { 1.45 } else { 1. };
+        let optical = sk.type_scale;
         let controls_w = (pane_w - 64. * scale) / optical;
         let show_human = SHOW_HUMAN_NAV_GLYPH && controls_w >= 470.; // 1st: 👤 ▲▼ nav
         let show_eq = controls_w >= 410.; //    2nd: EQ / display
@@ -10606,7 +10788,7 @@ impl Render for TerminalView {
         // The ⋯ overflow menu lists exactly the controls hidden at this width, in
         // the same order they collapse. Mirrors the right-click menu's look.
         let overflow_el = self.hdr_overflow.map(|pos| {
-            let (acc, surf, txt, human, ff) = (
+            let (acc, surf, txt, human, _ff) = (
                 th.accent,
                 th.surface,
                 th.text,
@@ -10635,11 +10817,12 @@ impl Render for TerminalView {
                 .bg(surf)
                 .border_1()
                 .border_color(acc.alpha(0.55))
-                .rounded(px(8.))
+                .rounded(sk.rad_raw(8.))
                 .occlude()
                 .text_size(sk.text_px(13.))
-                .font_family(ff)
-                .shadow_md();
+                .font_family(sk.font_family.clone())
+                .shadow_md()
+                .map(|d| sk.finish(d));
             // 👤 ▲▼ message-nav keeps its live steppers inline so you can step
             // repeatedly; this row does not dismiss the menu.
             if SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent() {
@@ -10670,7 +10853,12 @@ impl Render for TerminalView {
                         .px(px(12.))
                         .py(px(6.))
                         .child(div().w(px(22.)).child("👤"))
-                        .child("Your messages")
+                        .child(
+                            crate::lang::current()
+                                .strings()
+                                .parts
+                                .pane_overflow_your_messages,
+                        )
                         .child(div().flex_1())
                         .child(step("▲", false, cx))
                         .child(step("▼", true, cx)),
@@ -10689,37 +10877,55 @@ impl Render for TerminalView {
                 ));
             }
             if !show_eq {
-                menu = menu.child(item("📊", "Display").on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        v.hdr_overflow = None;
-                        cx.emit(OpenDisplayMenu { at: pos });
-                        cx.notify();
-                    }),
-                ));
+                menu = menu.child(
+                    item(
+                        "📊",
+                        crate::lang::current().strings().parts.pane_overflow_display,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.hdr_overflow = None;
+                            cx.emit(OpenDisplayMenu { at: pos });
+                            cx.notify();
+                        }),
+                    ),
+                );
             }
             if !show_theme {
-                menu = menu.child(item("🎨", "Theme").on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        v.hdr_overflow = None;
-                        cx.emit(OpenThemeMenu { at: pos });
-                        cx.notify();
-                    }),
-                ));
+                menu = menu.child(
+                    item(
+                        "🎨",
+                        crate::lang::current().strings().parts.pane_overflow_theme,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.hdr_overflow = None;
+                            cx.emit(OpenThemeMenu { at: pos });
+                            cx.notify();
+                        }),
+                    ),
+                );
             }
             if SHOW_FOCUS_GLYPH && !show_focus {
-                menu = menu.child(item("👓", "Focus — read this pane").on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        v.hdr_overflow = None;
-                        cx.emit(OpenFocusRead);
-                        cx.notify();
-                    }),
-                ));
+                menu = menu.child(
+                    item(
+                        "👓",
+                        crate::lang::current().strings().parts.pane_overflow_focus,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.hdr_overflow = None;
+                            cx.emit(OpenFocusRead);
+                            cx.notify();
+                        }),
+                    ),
+                );
             }
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
@@ -10800,13 +11006,16 @@ impl Render for TerminalView {
                 // agent has gone otherwise watches their words appear in the
                 // mirror and has no way to know they went nowhere.
                 .when(queued > 0, |d| {
+                    let l = crate::lang::current();
+                    let t = &l.strings().parts;
+                    let n = queued.to_string();
                     let why = if self.mode.is_agent() {
-                        format!(
-                            "{queued} answer{} waiting",
-                            if queued == 1 { "" } else { "s" }
+                        crate::lang::fill(
+                            &l.count(&t.pane_queued_answers, queued),
+                            &[("queued", &n)],
                         )
                     } else {
-                        format!("{queued} held · no agent in this pane")
+                        crate::lang::fill(t.pane_queued_held_no_agent, &[("queued", &n)])
                     };
                     d.child(
                         div()
@@ -10839,6 +11048,20 @@ impl Render for TerminalView {
         // The sticky note and the crawl are the terminal's alone: not on the
         // bench (Parker's rule, see `note_layout`), and not on a document.
         let on_terminal = face_now == crate::workbench::Face::Terminal;
+        // The glass seated in its bezel (`crt::rim`), for a screen the CRT pass
+        // leaves flat. The pass's own flatness test, mirrored: a tube it bends
+        // or crawls is rounded and shaded in the shader, and must not get both.
+        let rim_strength = if !sk.glass() {
+            0.0
+        } else {
+            crate::workbench::vignette_on(face_now, th.vignette)
+        };
+        let tube_bezel = tube_bezel(&th, !sk.glass());
+        let seat_flat_rim = rim_strength > 0.001 && {
+            let (k1, k2) = self.warp_k;
+            let bent = k1.abs() >= 0.0005 || k2.abs() >= 0.0005 || (th.crawl && on_terminal);
+            !bent || crate::warp::is_suppressed()
+        };
         let pane_h = self
             .content_bounds
             .lock()
@@ -10964,7 +11187,11 @@ impl Render for TerminalView {
                             })
                             .child("\u{ff0b}"),
                     )
-                    .child(div().text_size(sk.text_px(9.5 * scale)).child("logo"))
+                    .child(
+                        div()
+                            .text_size(sk.text_px(9.5 * scale))
+                            .child(crate::lang::current().strings().parts.pane_logo_placeholder),
+                    )
                     .into_any_element()
             }
         };
@@ -10972,6 +11199,7 @@ impl Render for TerminalView {
         let mut header = div()
             .relative()
             .children(sk.grain())
+            .children(sk.focus_hatch(focused_now))
             .font_family(sk.font_family.clone())
             .group(hdr_grp.clone())
             .h(px(header_h))
@@ -10979,7 +11207,7 @@ impl Render for TerminalView {
             .flex_row()
             .items_center()
             .justify_between()
-            .gap(px(if sk.is_paper() { 8. * scale } else { 0. }))
+            .gap(px(sk.fit(0., 8. * scale)))
             .px(hpad)
             // Lit or flat is the skin's call, not this call site's — see
             // `Shine`. Both stops are this PANE's, so a retinted pane keeps its
@@ -11029,7 +11257,7 @@ impl Render for TerminalView {
                     .name
                     .clone()
                     .or(shown)
-                    .unwrap_or_else(|| self.title.clone());
+                    .unwrap_or_else(|| self.shown_title());
                 div()
                     .flex_1()
                     // min-width:0 lets the title actually shrink (a nowrap flex
@@ -11043,6 +11271,9 @@ impl Render for TerminalView {
                     .items_center()
                     .gap_2()
                     .cursor_pointer()
+                    // A pane's title is what its program said — a command, a
+                    // host, a path — so it is set as data, not as a name.
+                    .map(|d| sk.data(d))
                     .child(logo_el)
                     // The launch mark rides before the label rather than after
                     // it: the title clips on a narrow pane, and the mark is the
@@ -11058,7 +11289,15 @@ impl Render for TerminalView {
                             .text_size(sk.text_px(9.5 * scale))
                             .child(mark)
                     }))
-                    .child(format!("▸ {} · {label}", self.mode.label_i18n()))
+                    // Under a chevron title the focused pane's » replaces the
+                    // ▸: one lead mark, not two. Unfocused panes keep the ▸, so
+                    // the chevron says which pane has the keyboard.
+                    .children(focused_now.then(|| sk.chevron("»")).flatten())
+                    .child(if focused_now && sk.chevron("»").is_some() {
+                        format!("{} · {label}", self.mode.label_i18n())
+                    } else {
+                        format!("▸ {} · {label}", self.mode.label_i18n())
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|view, ev: &MouseDownEvent, window, cx| {
@@ -11103,7 +11342,10 @@ impl Render for TerminalView {
                             .text_size(sk.text_px((hicon * 0.42).max(8.5)))
                             .whitespace_nowrap()
                             .child(if pane_w / optical >= 470. {
-                                "⌁ AGENT"
+                                crate::lang::current()
+                                    .strings()
+                                    .parts
+                                    .pane_launch_agent_chip
                             } else {
                                 "⌁"
                             })
@@ -11271,7 +11513,7 @@ impl Render for TerminalView {
                             .border_color(bar_fg.alpha(0.75))
                             .text_color(bar_fg)
                             .text_size(sk.text_px(9.5 * scale))
-                            .child("OFF-LIMITS")
+                            .child(crate::lang::current().strings().parts.pane_off_limits_badge)
                     }))
                     .child(status)
                     .child(
@@ -11450,14 +11692,9 @@ impl Render for TerminalView {
         // same rectangle or the cancellation is against the wrong curve.
         // Nothing on the bench face — see [`Self::note_layout`].
         let note_el = self.note.clone().filter(|_| on_terminal).map(|note| {
-            let paper_stock = sk.is_paper();
+            let paper_stock = sk.note_decoration == crate::skin::NoteDecoration::Flower;
             let store = self.content_bounds.clone();
-            let mut pal = crate::sticky::paper_for(&th);
-            if paper_stock && th.note_paper == crate::theme::NotePaper::Contrast {
-                pal.base = crate::mix(sk.ink.btn_face, th.accent, 0.07);
-                pal.ink = th.text;
-                pal.pin = th.ansi[1];
-            }
+            let pal = sk.note_palette(&th);
             let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
             // The pane's own curvature, and zero while a modal has flattened the
             // whole screen — the note un-bends with everything else that frame
@@ -11648,6 +11885,7 @@ impl Render for TerminalView {
                                         k1,
                                         k2,
                                         crawl,
+                                        tube_bezel,
                                     );
                                     let changed = {
                                         let mut slot = store.lock().unwrap();
@@ -11677,13 +11915,11 @@ impl Render for TerminalView {
                     // output stopped being watched is not an agent that stopped.
                     // A document the same way: it fills the screen in the
                     // grid's place, and the shell under it keeps running.
-                    .when(sk.is_paper(), |d| {
-                        d.bg(graded(
-                            crate::mix(th.bg, th.surface, 0.18),
-                            &th.grade,
-                            Channel::Bg,
-                        ))
-                        .children(sk.grain())
+                    .map(|d| {
+                        sk.terminal_stock(
+                            d,
+                            graded(crate::mix(th.bg, th.surface, 0.18), &th.grade, Channel::Bg),
+                        )
                     })
                     .children(pictures_under)
                     .child(if on_bench {
@@ -11699,6 +11935,7 @@ impl Render for TerminalView {
                                 cell_h: self.cell_h,
                                 pad: (grid_pad_x, grid_pad_y),
                                 crawl: th.crawl,
+                                bleed: (th.letter_glow > 0.001).then_some(0.35 * th.letter_glow),
                             },
                             cx,
                         );
@@ -11729,6 +11966,15 @@ impl Render for TerminalView {
                     .children(float_cursor)
                     // Over the square: a link in it can be what prompted it.
                     .children(said_el)
+                    // The glass meets its bezel in rounded, shadowed corners.
+                    // Over everything ON the glass, since the lip's shadow falls
+                    // on whatever is there; under the ignition, which is light.
+                    .when(seat_flat_rim, |el| {
+                        el.child(crt::rim(
+                            rim_strength,
+                            graded(th.bg, &th.grade, Channel::Bg),
+                        ))
+                    })
                     // The tube fires. Last child of the SCREEN, so it paints
                     // over the grid but stays inside the registered warp tube —
                     // the curvature and scanlines in the effect are the shader
@@ -11756,7 +12002,7 @@ impl Render for TerminalView {
                 el.child(crt::glass(&glass_th, &self.fx))
             })
             // raised bezel frame sits above the glass, framing the whole pane
-            .when(th.bezel > 0.001 && !sk.is_paper(), |el| {
+            .when(th.bezel > 0.001 && sk.glass(), |el| {
                 el.child(crt::bezel(&th))
             })
             .children(ctx_menu_el)
@@ -13818,6 +14064,9 @@ mod tests {
         let plain = reveal_script("/home/parker/kf-aero/letter.pdf", false);
         assert!(plain.contains("org.freedesktop.FileManager1.ShowItems"));
         assert!(plain.contains("array:string:'file:///home/parker/kf-aero/letter.pdf'"));
+        // a manager that owns the name and never answers costs seconds, not
+        // D-Bus's default 25
+        assert!(plain.contains("--reply-timeout=3000 "));
         // the fallback opens the CONTAINING folder, not the file
         assert!(plain.ends_with("|| xdg-open '/home/parker/kf-aero' >/dev/null 2>&1"));
         assert!(!plain.contains("uwsm-app"));
@@ -14023,6 +14272,88 @@ mod tests {
             "the label is not the link"
         );
         assert_eq!(opens(&rows, &wraps, 2, 5), None);
+    }
+
+    /// Parker's links table of 2026-10-20, as Claude Code drew it: the link
+    /// column wrapped at its own width, the path broken at the space before
+    /// the rule and carried on in the same cell of the row below.
+    fn claude_table_rows(link: &str, cell: usize) -> Vec<Vec<char>> {
+        let row = |a: &str, b: &str| format!("  │ {a:<12} │ {b:<cell$} │");
+        let rule = |l: char, m: char, r: char| {
+            format!("  {l}{}{m}{}{r}", "─".repeat(14), "─".repeat(cell + 2))
+        };
+        let (head, tail) = link.split_at(cell);
+        let lines = [
+            rule('┌', '┬', '┐'),
+            row("What", "Link"),
+            rule('├', '┼', '┤'),
+            row("Before-and-a", head),
+            row("fter page", tail),
+            row("(this turn)", ""),
+            rule('├', '┼', '┤'),
+            row("Pull request", "https://github.com/a/b/pull/1"),
+            rule('└', '┴', '┘'),
+        ];
+        let cols = lines.iter().map(|l| l.chars().count()).max().unwrap();
+        let borrowed: Vec<&str> = lines.iter().map(String::as_str).collect();
+        padded_grid(cols, &borrowed)
+    }
+
+    #[test]
+    fn a_link_broken_inside_a_table_cell_opens_whole_from_either_half() {
+        let link =
+            "file:///home/parker/Work/td-glass-rim/td/reports/2026-10-19-glass-in-a-bezel.html";
+        let rows = claude_table_rows(link, 48);
+        let at = |r: usize, needle: &str| {
+            let s: String = rows[r].iter().collect();
+            s[..s.find(needle).unwrap()].chars().count()
+        };
+        let whole = Some((link.to_string(), 3, 4));
+        assert_eq!(
+            opens(&rows, &[false; 9], 3, at(3, "file:") + 2),
+            whole,
+            "first half"
+        );
+        assert_eq!(
+            opens(&rows, &[false; 9], 4, at(4, "glass-in") + 3),
+            whole,
+            "second half"
+        );
+        assert_eq!(
+            opens(&rows, &[false; 9], 7, at(7, "https:") + 4),
+            Some(("https://github.com/a/b/pull/1".into(), 7, 7)),
+            "a link that fits its cell is itself"
+        );
+        assert_eq!(opens(&rows, &[false; 9], 3, at(3, "Before") + 2), None);
+        assert_eq!(
+            opens(&rows, &[false; 9], 3, at(3, "│ file")),
+            None,
+            "the rule"
+        );
+        // A rule row is no cell, which is what ends a block of them: the PR's
+        // cell is never read as carrying on from the path's.
+        for r in [0, 2, 6, 8] {
+            assert!(table_cell_readings(&rows, r, 20).is_empty(), "rule row {r}");
+        }
+    }
+
+    #[test]
+    fn a_line_of_the_reader_opens_the_link_under_its_column() {
+        let line = "Shader patch file:///home/parker/x/0008-glass-rim.patch, then more";
+        let col = line.find("glass").unwrap();
+        assert_eq!(
+            line_link(line, col, None, |_| true),
+            Some("file:///home/parker/x/0008-glass-rim.patch".into())
+        );
+        assert_eq!(line_link(line, 2, None, |_| true), None, "a word");
+        assert_eq!(line_link(line, 200, None, |_| true), None, "past the end");
+        // A path is read against the pane's folder and must name something.
+        let rel = "see reports/brief.html";
+        assert_eq!(
+            line_link(rel, 6, Some("/w"), |p| p == "/w/reports/brief.html"),
+            Some("/w/reports/brief.html".into())
+        );
+        assert_eq!(line_link(rel, 6, Some("/w"), |_| false), None);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 {
-  "format_version": 1,
+  "format_version": 2,
   "corpus_version": "named-1",
   "note": "Hand-written cases for the Terminal Lab (src/vt/lab.rs, scripts/lab/run.py). Each one is replayed through both cores, whole and in chunks. A tab keeps a literal tab in the first cell it covers, so a copy gives the tab back; both cores do this. An `expect` op is a checkpoint that also states what the screen must hold there; rows are text with trailing blanks trimmed, and the cursor is [line, column]. Bytes go in `write` as JSON text; `write_hex` carries bytes that are not text.",
   "cases": [
@@ -149,6 +149,33 @@
         {"expect": {"rows": [[1, "X"]], "cursor": [1, 0]}},
         {"write": "\u001b[3;1H\u001b[?6hY"},
         {"expect": {"rows": [[1, "Y"]], "cursor": [1, 1]}}
+      ]
+    },
+    {
+      "name": "synchronized-update",
+      "size": [20, 3],
+      "ops": [
+        {"write": "before"},
+        {"expect": {"rows": [[0, "before"]], "sync_open": false}},
+        {"write": "\u001b[?2026h\r\u001b[Kframe"},
+        {"expect": {"rows": [[0, "before"]], "cursor": [0, 6], "sync_open": true}},
+        {"write": " more"},
+        {"expect": {"rows": [[0, "before"]], "sync_open": true}},
+        {"write": "\u001b[?2026l"},
+        {"expect": {"rows": [[0, "frame more"]], "cursor": [0, 10], "sync_open": false}},
+        {"write": "\u001b[?25;2026h\r\nnext"},
+        {"expect": {"rows": [[0, "frame more"], [1, ""]], "sync_open": true}},
+        {"write": "\u001b[?2026l"},
+        {"expect": {"rows": [[1, "next"]], "sync_open": false}}
+      ]
+    },
+    {
+      "name": "prompt-marks",
+      "size": [20, 4],
+      "ops": [
+        {"write": "\u001b]133;A\u0007$ \u001b]133;B\u0007ls\r\n\u001b]133;C\u0007file\r\n"},
+        {"write": "\u001b]133;D;0\u0007\u001b]133;A;aid=7\u001b\\$ \u001b]133;B\u001b\\"},
+        {"expect": {"rows": [[0, "$ ls"], [1, "file"], [2, "$"]], "cursor": [2, 2]}}
       ]
     }
   ]

@@ -67,6 +67,11 @@ pub enum Harness {
     Local,
 }
 
+/// The model id that names no model: the harness picks from its own
+/// configuration. A launch with it passes no `--model`, and the live dial sends
+/// a bare `/model`, which opens the harness's own picker.
+pub const CONFIGURED: &str = "configured";
+
 impl Harness {
     pub const ALL: [Harness; 3] = [Harness::Claude, Harness::Codex, Harness::Local];
 
@@ -83,6 +88,16 @@ impl Harness {
             Harness::Claude => "claude",
             Harness::Codex => "codex",
             Harness::Local => "local",
+        }
+    }
+
+    /// The chip's word in `l`. [`Self::label`] is also the stored word
+    /// ([`Self::from_label`]), so it stays English; only `local` is an
+    /// ordinary word — `claude` and `codex` are product names.
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        match self {
+            Harness::Local => l.strings().parts.launcher_harness_local,
+            _ => self.label(),
         }
     }
 
@@ -120,16 +135,12 @@ impl Harness {
                 id: "local-config",
                 label: "local-agent.toml",
             }],
-            Harness::Codex => &[
-                Model {
-                    id: "gpt-5-codex",
-                    label: "gpt-5-codex",
-                },
-                Model {
-                    id: "gpt-5",
-                    label: "gpt-5",
-                },
-            ],
+            // Codex owns its account-specific model catalogue and configuration.
+            // A pinned model here can be retired while the CLI remains current.
+            Harness::Codex => &[Model {
+                id: CONFIGURED,
+                label: "Codex default",
+            }],
         }
     }
 
@@ -244,8 +255,22 @@ impl Effort {
         }
     }
 
+    #[cfg(test)]
     pub fn label(self) -> &'static str {
         self.id()
+    }
+
+    /// The chip's word in `l`, for display only. [`Self::label`] stays the
+    /// flag value, because the journal and the command line read it.
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        let p = l.strings().parts;
+        match self {
+            Effort::Low => p.launcher_effort_low,
+            Effort::Medium => p.launcher_effort_medium,
+            Effort::High => p.launcher_effort_high,
+            Effort::XHigh => p.launcher_effort_xhigh,
+            Effort::Max => p.launcher_effort_max,
+        }
     }
 }
 
@@ -414,11 +439,22 @@ pub enum Reach {
 impl Reach {
     pub const ALL: [Reach; 3] = [Reach::Repo, Reach::Machine, Reach::Anywhere];
 
+    #[cfg(test)]
     pub fn label(self) -> &'static str {
         match self {
             Reach::Repo => "this repo",
             Reach::Machine => "this machine",
             Reach::Anywhere => "anywhere",
+        }
+    }
+
+    /// The dial's words in `l`; [`Self::label`] is the English.
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        let p = l.strings().parts;
+        match self {
+            Reach::Repo => p.launcher_reach_repo,
+            Reach::Machine => p.launcher_reach_machine,
+            Reach::Anywhere => p.launcher_reach_anywhere,
         }
     }
 
@@ -551,8 +587,10 @@ impl Recipe {
                 }
             }
             Harness::Codex => {
-                parts.push("--model".into());
-                parts.push(self.model.to_string());
+                if self.model != CONFIGURED {
+                    parts.push("--model".into());
+                    parts.push(self.model.to_string());
+                }
                 parts.extend(self.reach.flags(self.harness));
                 parts.push("-c".into());
                 parts.push(format!("model_reasoning_effort={}", self.effort.id()));
@@ -591,10 +629,14 @@ impl Recipe {
 
     /// Prepare the actual kit and packet before starting any supported agent.
     pub fn prepare_briefing(&self, dir: &Path, kit_root: &Path) -> Result<PathBuf, String> {
+        // These errors are only ever drawn in the launcher, so they are said
+        // in the reader's language; the OS error inside stays as the OS gave it.
+        let p = crate::lang::current().strings().parts;
         let skill = crate::briefkit::write(kit_root)
-            .map_err(|e| format!("Could not prepare the decision-brief kit: {e}"))?;
+            .map_err(|e| crate::lang::fill(p.launcher_err_kit, &[("e", &e.to_string())]))?;
         let text = self.briefing(&format!("{}/$TD_PANE_ID", dir.display()), Some(&skill));
-        write_briefing(dir, &text).map_err(|e| format!("Could not prepare the TD briefing: {e}"))
+        write_briefing(dir, &text)
+            .map_err(|e| crate::lang::fill(p.launcher_err_briefing, &[("e", &e.to_string())]))
     }
 
     /// The same validated command is used by the launch and its preview.
@@ -604,15 +646,46 @@ impl Recipe {
         adapter: Option<&LocalAdapter>,
     ) -> Result<String, String> {
         if self.harness != Harness::Local {
-            return Ok(self.command_line(briefing));
+            return Ok(with_desktop_environment(
+                &self.command_line(briefing),
+                |key| std::env::var(key).ok(),
+            ));
         }
+        let p = crate::lang::current().strings().parts;
         if self.reach != Reach::Anywhere {
-            return Err("local-agent.toml owns the local runner's permission flags".into());
+            return Err(p.launcher_err_local_reach.into());
         }
-        let path = briefing.ok_or("The local runner needs a TD briefing file")?;
-        adapter
-            .ok_or("Configure the local runner in local-agent.toml")?
-            .command_line(path, self.opener.as_deref())
+        let path = briefing.ok_or(p.launcher_err_local_briefing)?;
+        let line = adapter
+            .ok_or(p.launcher_err_local_configure)?
+            .command_line(path, self.opener.as_deref())?;
+        Ok(with_desktop_environment(&line, |key| {
+            std::env::var(key).ok()
+        }))
+    }
+}
+
+/// A persistent host can predate the desktop login. Carry the launching
+/// window's display connection to the agent, including into an existing shell.
+/// Missing values remain absent; never invent a display or forward unrelated env.
+fn with_desktop_environment(line: &str, read: impl Fn(&str) -> Option<String>) -> String {
+    let assignments: Vec<_> = [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "XAUTHORITY",
+    ]
+    .into_iter()
+    .filter_map(|key| {
+        read(key)
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("{key}={}", shell_quote(&value)))
+    })
+    .collect();
+    if assignments.is_empty() {
+        line.to_string()
+    } else {
+        format!("env {} {line}", assignments.join(" "))
     }
 }
 
@@ -664,32 +737,37 @@ impl LocalAdapter {
         Ok(adapter)
     }
 
+    /// Every refusal here lands in the launcher's preview line, so it is
+    /// worded in the reader's language. `{briefing}`, `{context}` and
+    /// `{prompt}` inside them are the config's own tokens, which
+    /// [`crate::lang::fill`] leaves alone because nothing fills those names.
     fn validate(&self) -> Result<(), String> {
+        let p = crate::lang::current().strings().parts;
         let Some(binary) = self.command.first() else {
-            return Err("command must contain the runner executable".into());
+            return Err(p.launcher_err_cmd_executable.into());
         };
         if binary.trim().is_empty()
             || matches!(binary.as_str(), "{briefing}" | "{context}" | "{prompt}")
         {
-            return Err("command must start with a runner executable".into());
+            return Err(p.launcher_err_cmd_start.into());
         }
         if self.command.iter().any(|arg| arg.contains('\0')) {
-            return Err("command arguments cannot contain NUL".into());
+            return Err(p.launcher_err_cmd_nul.into());
         }
         if !self
             .command
             .iter()
             .any(|arg| matches!(arg.as_str(), "{briefing}" | "{context}"))
         {
-            return Err(
-                "command needs a whole argument {briefing} or {context} to receive TD instructions"
-                    .into(),
-            );
+            return Err(p.launcher_err_cmd_briefing_arg.into());
         }
         for arg in &self.command {
             for token in ["{briefing}", "{context}", "{prompt}"] {
                 if arg.contains(token) && arg != token {
-                    return Err(format!("{token} must occupy a whole command argument"));
+                    return Err(crate::lang::fill(
+                        p.launcher_err_token_whole,
+                        &[("token", token)],
+                    ));
                 }
             }
         }
@@ -704,7 +782,11 @@ impl LocalAdapter {
                 .iter()
                 .any(|a| a == "{prompt}" || a == "{context}")
         {
-            return Err("command needs {prompt} or {context} to receive the user's task".into());
+            return Err(crate::lang::current()
+                .strings()
+                .parts
+                .launcher_err_cmd_prompt
+                .into());
         }
         let args: Vec<String> = self
             .command
@@ -898,11 +980,7 @@ mod tests {
         let last = String::from_utf8(argv.last().unwrap().to_vec()).unwrap();
         assert!(last.starts_with(&body));
         assert!(last.ends_with(r.opener.as_deref().unwrap()));
-        assert_eq!(
-            argv.len(),
-            6,
-            "codex + model pair + effort pair + one prompt"
-        );
+        assert_eq!(argv.len(), 4, "codex + effort pair + one prompt");
         assert!(
             !line.contains("developer_instructions"),
             "existing rules stay configured"
@@ -1014,11 +1092,31 @@ mod tests {
     #[test]
     fn a_codex_line_sets_its_own_reasoning_effort() {
         let line = recipe(Harness::Codex, Effort::High).command_line(None);
+        assert!(
+            !line.contains("--model"),
+            "Codex must use its configured model: {line}"
+        );
         assert!(line.contains("-c model_reasoning_effort=high"), "{line}");
         assert!(
             !line.contains("append-system-prompt"),
             "codex has no such flag and must not be handed one: {line}"
         );
+    }
+
+    #[test]
+    fn desktop_connection_reaches_an_agent_without_shell_expansion() {
+        let value = "/tmp/desktop's $(exit 19) `exit 20`";
+        let line = with_desktop_environment("sh -c 'printf %s \"$XAUTHORITY\"'", |key| {
+            (key == "XAUTHORITY").then(|| value.to_string())
+        });
+        let output = std::process::Command::new("sh")
+            .args(["-c", &line])
+            .env_remove("XAUTHORITY")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), value);
+        assert_eq!(with_desktop_environment("codex", |_| None), "codex");
     }
 
     #[test]
@@ -1329,5 +1427,31 @@ mod tests {
         }
         assert_eq!(scan(std::slice::from_ref(&base), 10).len(), 10);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn display_words_leave_the_stored_words_english() {
+        use crate::lang::Lang;
+        // The chip may be translated; the journal, the flag and from_label
+        // keep reading the English word.
+        for h in Harness::ALL {
+            assert_eq!(h.label_in(Lang::En), h.label());
+            assert_eq!(Harness::from_label(h.label()), Some(h));
+        }
+        for e in Effort::ALL {
+            assert_eq!(e.label_in(Lang::En), e.id());
+            assert_eq!(e.label(), e.id());
+        }
+        for r in Reach::ALL {
+            assert_eq!(r.label_in(Lang::En), r.label());
+        }
+        // The config's own tokens survive the template untouched.
+        let a = LocalAdapter {
+            command: vec!["runner".into(), "{context}".into(), "x{prompt}".into()],
+        };
+        assert_eq!(
+            a.validate().unwrap_err(),
+            "{prompt} must occupy a whole command argument"
+        );
     }
 }

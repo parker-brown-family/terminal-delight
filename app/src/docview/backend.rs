@@ -93,7 +93,13 @@ pub trait Backend {
     // ── what every backend has to say ───────────────────────────────────────
 
     /// The document as drawn this frame, inside the view's own box.
-    fn element(&mut self, view: &Drawn, window: &mut Window, th: &Theme) -> AnyElement;
+    fn element(
+        &mut self,
+        view: &Drawn,
+        window: &mut Window,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> AnyElement;
 
     /// Give back everything this backend holds on the GPU, and stop the work
     /// still running for it. Runs once, from the view's release hook, when no

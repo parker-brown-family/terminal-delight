@@ -60,6 +60,7 @@ use super::notes::{
     PictureLines, Refusal, FORMAT,
 };
 use super::page::{place, PageToView};
+use crate::lang::fill;
 use crate::theme::Theme;
 use crate::EditBuffer;
 
@@ -282,22 +283,87 @@ pub enum MarkHit {
     Concur(String),
 }
 
+/// Words the notes bar says, held twice: as the reader reads them on the bar,
+/// and in English for the report the control socket hands to CLIs and
+/// agents. Both are made when the words are said, because what they say (a
+/// file that failed, an error the disk gave) cannot be asked again later.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Words {
+    shown: String,
+    english: String,
+}
+
+impl Words {
+    /// What `say` says in the reader's language, and again in English.
+    pub fn said(say: impl Fn(crate::lang::Lang) -> String) -> Words {
+        Words::said_in(crate::lang::current(), say)
+    }
+
+    /// [`Self::said`] for a reader of `shown`: the tests' way in, since the
+    /// window's language is one process-wide value they must not move.
+    fn said_in(shown: crate::lang::Lang, say: impl Fn(crate::lang::Lang) -> String) -> Words {
+        Words {
+            shown: say(shown),
+            english: say(crate::lang::Lang::En),
+        }
+    }
+
+    /// Words that read the same in every language: an error the system gave,
+    /// or a sentence that stays English at its source.
+    pub fn as_is(words: impl Into<String>) -> Words {
+        let english = words.into();
+        Words {
+            shown: english.clone(),
+            english,
+        }
+    }
+
+    /// These words inside a sentence of their own, said in each language with
+    /// the inner words in that same language.
+    pub fn within(&self, say: impl Fn(crate::lang::Lang, &str) -> String) -> Words {
+        Words {
+            shown: say(crate::lang::current(), &self.shown),
+            english: say(crate::lang::Lang::En, &self.english),
+        }
+    }
+
+    /// As the bar draws them.
+    pub fn shown(&self) -> &str {
+        &self.shown
+    }
+
+    /// As the report carries them.
+    pub fn english(&self) -> &str {
+        &self.english
+    }
+}
+
 /// What the bar last said, and in which voice.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Said {
     /// Something happened as asked.
-    Done(String),
+    Done(Words),
     /// Something is under way.
-    Working(String),
+    Working(Words),
     /// Something was refused or failed: nothing was written.
-    Refused(String),
+    Refused(Words),
 }
 
 impl Said {
-    pub fn text(&self) -> &str {
+    fn words(&self) -> &Words {
         match self {
-            Said::Done(s) | Said::Working(s) | Said::Refused(s) => s,
+            Said::Done(w) | Said::Working(w) | Said::Refused(w) => w,
         }
+    }
+
+    /// What the bar draws: the reader's language.
+    pub fn text(&self) -> &str {
+        self.words().shown()
+    }
+
+    /// What the report carries: English, because a CLI or an agent reads it.
+    pub fn english(&self) -> &str {
+        self.words().english()
     }
 }
 
@@ -330,7 +396,7 @@ pub enum Pictures {
         list: DocImages,
     },
     /// The list cannot be read. Said in the box; nothing is written over it.
-    Unreadable(String),
+    Unreadable(Words),
 }
 
 /// A picture pasted into a note box, for the view to keep: its bytes or files
@@ -660,7 +726,7 @@ impl NotesLayer {
 
     /// The document's list of pictures, read from `folder`, or why it cannot
     /// be. From now on a picture pasted here is numbered against it.
-    pub fn pictures_read(&mut self, folder: std::path::PathBuf, read: Result<DocImages, String>) {
+    pub fn pictures_read(&mut self, folder: std::path::PathBuf, read: Result<DocImages, Words>) {
         self.pictures = match read {
             Ok(list) => Pictures::Kept { folder, list },
             Err(why) => Pictures::Unreadable(why),
@@ -698,7 +764,7 @@ impl NotesLayer {
 
     /// What a picture paste came to, once the view has kept it: the list as
     /// it is now, and which number the picture has, or why it was not kept.
-    pub fn attached(&mut self, kept: Result<(DocImages, Vec<Attached>), String>) {
+    pub fn attached(&mut self, kept: Result<(DocImages, Vec<Attached>), Words>) {
         match kept {
             Ok((list, attached)) => {
                 if let Pictures::Kept { list: have, .. } = &mut self.pictures {
@@ -714,15 +780,23 @@ impl NotesLayer {
                         })
                         .collect()
                 };
-                let mut said = Vec::new();
                 let (new, old) = (named(false), named(true));
-                if !new.is_empty() {
-                    said.push(format!("attached as {}", new.join(", ")));
-                }
-                if !old.is_empty() {
-                    said.push(format!("already attached as {}", old.join(", ")));
-                }
-                self.said = (!said.is_empty()).then(|| Said::Done(said.join(" · ")));
+                let labels = |l: &[String]| l.join(", ");
+                let words = Words::said(|l| {
+                    let t = &l.strings().parts;
+                    let mut said = Vec::new();
+                    if !new.is_empty() {
+                        said.push(fill(t.notes_attached_as, &[("labels", &labels(&new))]));
+                    }
+                    if !old.is_empty() {
+                        said.push(fill(
+                            t.notes_already_attached_as,
+                            &[("labels", &labels(&old))],
+                        ));
+                    }
+                    said.join(" · ")
+                });
+                self.said = (!new.is_empty() || !old.is_empty()).then_some(Said::Done(words));
             }
             Err(why) => self.said = Some(Said::Refused(why)),
         }
@@ -730,7 +804,7 @@ impl NotesLayer {
 
     /// A picture's delete, once the view has carried it out: the list as it
     /// is now, or why the picture is still there.
-    pub fn unattached(&mut self, kept: Result<DocImages, String>) {
+    pub fn unattached(&mut self, kept: Result<DocImages, Words>) {
         match kept {
             Ok(list) => {
                 if let Pictures::Kept { list: have, .. } = &mut self.pictures {
@@ -844,15 +918,20 @@ impl NotesLayer {
     }
 
     /// Why this page takes no notes, in words, or `None` when it shows them.
+    /// English: the report's field; the bar says [`Self::read_only_in`].
     pub fn read_only(&self) -> Option<String> {
+        self.read_only_in(crate::lang::Lang::En)
+    }
+
+    /// [`Self::read_only`] in `l`. An unreadable island's reason stays in
+    /// the English it was written in (see [`Refusal::say`]).
+    pub fn read_only_in(&self, l: crate::lang::Lang) -> Option<String> {
+        let t = &l.strings().parts;
         match &self.base {
-            Shown::NoIsland => Some("read-only · this page has no notes island".into()),
-            Shown::AfterScript => Some(
-                "read-only · its notes island sits after the notes script, where no browser reads it"
-                    .into(),
-            ),
-            Shown::NoScript => Some("read-only · no notes script ran on this page".into()),
-            Shown::Unreadable(why) => Some(format!("read-only · {why}")),
+            Shown::NoIsland => Some(t.notes_ro_no_island.into()),
+            Shown::AfterScript => Some(t.notes_ro_after_script.into()),
+            Shown::NoScript => Some(t.notes_ro_no_script.into()),
+            Shown::Unreadable(why) => Some(fill(t.notes_ro_why, &[("why", why)])),
             Shown::Notes { .. } => None,
         }
     }
@@ -861,30 +940,39 @@ impl NotesLayer {
         &self.label
     }
 
-    /// Why no note can be added or taken away here, in words, or `Ok`.
+    /// Why no note can be added or taken away here, in words, or `Ok`. In
+    /// English, because the control socket answers with it.
     pub fn can_edit(&self) -> Result<(), String> {
+        self.can_edit_in(crate::lang::Lang::En)
+    }
+
+    /// [`Self::can_edit`], in `l`.
+    pub fn can_edit_in(&self, l: crate::lang::Lang) -> Result<(), String> {
         if let Err(r) = &self.writable {
-            return Err(r.sentence());
+            return Err(r.say(l));
         }
         if self.gone {
-            return Err("The file is no longer on disk, so there is nothing to save into.".into());
+            return Err(l.strings().parts.notes_file_gone_sentence.into());
         }
         Ok(())
     }
 
-    /// Why a save cannot be made now, in words, or `Ok` when it can.
+    /// Why a save cannot be made now, in words, or `Ok` when it can. In
+    /// English, because the control socket answers with it; a save pressed
+    /// in the bar is refused in [`Self::can_save_in`]'s words.
     pub fn can_save(&self) -> Result<(), String> {
-        if let Err(r) = &self.writable {
-            return Err(r.sentence());
-        }
-        if self.gone {
-            return Err("The file is no longer on disk, so there is nothing to save into.".into());
-        }
+        self.can_save_in(crate::lang::Lang::En)
+    }
+
+    /// [`Self::can_save`], in `l`.
+    pub fn can_save_in(&self, l: crate::lang::Lang) -> Result<(), String> {
+        let t = &l.strings().parts;
+        self.can_edit_in(l)?;
         if self.saving {
-            return Err("A save is already running.".into());
+            return Err(t.notes_save_running.into());
         }
         if self.pending.is_empty() {
-            return Err("Nothing to save: every note here is already in the file.".into());
+            return Err(t.notes_nothing_to_save.into());
         }
         Ok(())
     }
@@ -963,15 +1051,30 @@ impl NotesLayer {
     /// it has nobody to send to. A page that shows no notes has no map to
     /// send, and draws none either. With edits waiting that a press would
     /// save, the words say it saves too.
+    ///
+    /// In English, as the report's `send_to`; the bar draws
+    /// [`Self::send_button_in`].
     pub fn send_button(&self, anchors: &[Anchor], beside: Option<&str>) -> Option<(String, bool)> {
+        self.send_button_in(anchors, beside, crate::lang::Lang::En)
+    }
+
+    /// [`Self::send_button`]'s words in `l`: one whole sentence for each
+    /// verb, so a language puts the name where its grammar wants it.
+    pub fn send_button_in(
+        &self,
+        anchors: &[Anchor],
+        beside: Option<&str>,
+        l: crate::lang::Lang,
+    ) -> Option<(String, bool)> {
         let who = beside?;
         self.notes()?;
-        let verb = if self.saves_on_send() {
-            "save & send"
+        let t = &l.strings().parts;
+        let words = if self.saves_on_send() {
+            t.notes_send_button_save_send
         } else {
-            "send"
+            t.notes_send_button_send
         };
-        Some((format!("↪ {verb} to {who}"), self.mappable(anchors)))
+        Some((fill(words, &[("who", who)]), self.mappable(anchors)))
     }
 
     /// A press on ↪ now would save: there are edits waiting, and a save
@@ -1157,11 +1260,15 @@ impl NotesLayer {
         }
         self.close_warned = true;
         let n = self.pending.len();
-        self.said = Some(Said::Refused(if self.in_store() {
-            format!("{n} not kept · close again to leave without them")
-        } else {
-            format!("{n} unsaved · save them into the file, or close again to leave without them")
-        }));
+        let in_store = self.in_store();
+        self.said = Some(Said::Refused(Words::said(|l| {
+            let t = &l.strings().parts;
+            if in_store {
+                l.count(&t.notes_close_not_kept_n, n)
+            } else {
+                l.count(&t.notes_close_unsaved_n, n)
+            }
+        })));
         true
     }
 
@@ -1226,12 +1333,16 @@ impl NotesLayer {
                 let offered = words.chars().count();
                 let took = b.draft.insert_capped(&words, MAX_NOTE_CHARS);
                 if took < offered {
-                    self.said = Some(Said::Refused(format!(
-                        "pasted {} of {} characters · a note holds {}",
-                        grouped(took),
-                        grouped(offered),
-                        grouped(MAX_NOTE_CHARS)
-                    )));
+                    self.said = Some(Said::Refused(Words::said(|l| {
+                        fill(
+                            l.strings().parts.notes_paste_truncated,
+                            &[
+                                ("took", &grouped(took)),
+                                ("offered", &grouped(offered)),
+                                ("max", &grouped(MAX_NOTE_CHARS)),
+                            ],
+                        )
+                    })));
                 }
                 Pasting::Took
             }
@@ -1244,20 +1355,21 @@ impl NotesLayer {
                         picture,
                         ts: utc_minute(now),
                     };
-                    self.said = Some(Said::Working("attaching the picture…".into()));
+                    self.said = Some(Said::Working(Words::said(|l| {
+                        l.strings().parts.notes_attaching.into()
+                    })));
                     Pasting::Attach(attaching)
                 }
                 Pictures::Unread => {
-                    self.said = Some(Said::Refused(
-                        "this document's pictures are still being read · paste again in a moment"
-                            .into(),
-                    ));
+                    self.said = Some(Said::Refused(Words::said(|l| {
+                        l.strings().parts.notes_pictures_unread.into()
+                    })));
                     Pasting::Took
                 }
                 Pictures::Unreadable(why) => {
-                    self.said = Some(Said::Refused(format!(
-                        "no picture can be attached here: {why}"
-                    )));
+                    self.said = Some(Said::Refused(why.within(|l, why| {
+                        fill(l.strings().parts.notes_picture_refused, &[("why", why)])
+                    })));
                     Pasting::Took
                 }
             },
@@ -1365,7 +1477,10 @@ impl NotesLayer {
         self.saving = true;
         // A note kept as it is written says nothing while it is kept.
         if !self.in_store() {
-            self.said = Some(Said::Working(format!("saving into {}…", self.label)));
+            let file = &self.label;
+            self.said = Some(Said::Working(Words::said(|l| {
+                fill(l.strings().parts.notes_saving_into, &[("file", file)])
+            })));
         }
         self.pending.clone()
     }
@@ -1423,25 +1538,30 @@ impl NotesLayer {
             (None, _) => ConcurMap::default(),
         };
         self.base = Shown::Notes { notes, concurs };
-        self.said = Some(Said::Working(format!(
-            "saved into {file} · reading it back…"
-        )));
+        self.said = Some(Said::Working(Words::said(|l| {
+            fill(
+                l.strings().parts.notes_saved_reading_back,
+                &[("file", file)],
+            )
+        })));
         self.refresh();
     }
 
     /// The written file, reopened fresh, shows what was written.
     pub fn confirmed(&mut self, file: &str) {
-        self.said = Some(Said::Done(format!("saved into {file} ✓")));
+        self.said = Some(Said::Done(Words::said(|l| {
+            fill(l.strings().parts.notes_saved_ok, &[("file", file)])
+        })));
     }
 
     /// The written file, reopened fresh, does not show what was written; it
     /// stays written, and the bar says where the copy from before is.
-    pub fn unconfirmed(&mut self, why: String) {
+    pub fn unconfirmed(&mut self, why: Words) {
         self.said = Some(Said::Refused(why));
     }
 
     /// The save did not happen: nothing was written, the edits wait.
-    pub fn refused(&mut self, why: String) {
+    pub fn refused(&mut self, why: Words) {
         self.saving = false;
         self.said = Some(Said::Refused(why));
     }
@@ -1516,11 +1636,16 @@ impl NotesLayer {
         let Some(map) = self.map(anchors) else { return };
         cx.write_to_clipboard(ClipboardItem::new_string(map.clone()));
         cx.write_to_primary(ClipboardItem::new_string(map.clone()));
-        self.said = Some(Said::Done(format!(
-            "map copied · {} characters ≈ {} tokens",
-            map.chars().count(),
-            map.len().div_ceil(4)
-        )));
+        let (chars, tokens) = (
+            map.chars().count().to_string(),
+            map.len().div_ceil(4).to_string(),
+        );
+        self.said = Some(Said::Done(Words::said(|l| {
+            fill(
+                l.strings().parts.notes_map_copied,
+                &[("chars", &chars), ("tokens", &tokens)],
+            )
+        })));
     }
 
     /// What the bar says, for the control socket and the tests.
@@ -1545,8 +1670,10 @@ impl NotesLayer {
             "unsaved": self.unsaved(),
             "saving": self.saving,
             "gone": self.gone,
-            "said": self.said.as_ref().map(|s| s.text().to_string()),
-            "sent": self.sent.as_ref().map(|s| s.text().to_string()),
+            // What the bar says, in English whatever language the bar is
+            // drawn in: a CLI or an agent reads this, and compares it.
+            "said": self.said.as_ref().map(|s| s.english().to_string()),
+            "sent": self.sent.as_ref().map(|s| s.english().to_string()),
             "map": self.map(anchors),
             "open": self.note_box.as_ref().map(|b| b.nid.clone()),
             // The words being written in the open note box, which is where a
@@ -1664,7 +1791,14 @@ impl NotesLayer {
                         .items_center()
                         .justify_center()
                         .child(div().text_size(px(side * 0.38)).child("?"))
-                        .child(div().text_size(px((side * 0.085).max(7.0))).child("CONCUR"))
+                        .child(
+                            div().text_size(px((side * 0.085).max(7.0))).child(
+                                crate::lang::current()
+                                    .strings()
+                                    .parts
+                                    .notes_concur_stamp_empty,
+                            ),
+                        )
                         .into_any_element()
                 }
                 Mark::Stamp { at, degrees, .. } => svg()
@@ -1682,12 +1816,19 @@ impl NotesLayer {
     }
 
     /// A bar button: a word in a thin border, lit when it can be pressed.
-    fn button(&self, label: &str, zone: Zone, live: bool, th: &Theme) -> gpui::Div {
-        div()
+    fn button(
+        &self,
+        label: &str,
+        zone: Zone,
+        live: bool,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> gpui::Div {
+        sk.action(div(), false)
             .relative()
             .px(px(7.))
             .py(px(1.))
-            .rounded(px(4.))
+            .rounded(sk.radius())
             .border_1()
             .border_color(th.accent.alpha(if live { 1.0 } else { 0.3 }))
             .text_color(th.accent.alpha(if live { 1.0 } else { 0.4 }))
@@ -1705,10 +1846,19 @@ impl NotesLayer {
 
     /// The bar, bottom-right and fixed in the view. `beside` names the agent
     /// pane ↪ would send to; see [`Self::send_button`].
-    pub fn draw_bar(&self, anchors: &[Anchor], th: &Theme, beside: Option<&str>) -> AnyElement {
-        let text = th.font_size * 0.85;
+    pub fn draw_bar(
+        &self,
+        anchors: &[Anchor],
+        th: &Theme,
+        beside: Option<&str>,
+        sk: &crate::skin::Skin,
+    ) -> AnyElement {
+        let text = f32::from(sk.text_px(th.font_size * 0.85));
         let (notes, concurs) = self.counts(anchors);
-        let mut row = div()
+        let l = crate::lang::current();
+        let t = &l.strings().parts;
+        let mut row = sk
+            .chrome(sk.sheet())
             .relative()
             .flex()
             .flex_row()
@@ -1717,16 +1867,16 @@ impl NotesLayer {
             .gap(px(8.))
             .px(px(10.))
             .py(px(5.))
-            .rounded(px(6.))
+            .rounded(sk.rad_raw(6.))
             .bg(th.surface.alpha(0.96))
             .border_1()
             .border_color(th.accent.alpha(0.45))
             .shadow(crate::float_shadows(th.accent, th.grade.phosphor))
-            .font_family(SharedString::from(th.font_family.clone()))
+            .font_family(SharedString::from(sk.font_family.clone()))
             .text_size(px(text))
             .text_color(th.text.alpha(0.8))
             .child(self.record(Zone::Bar));
-        match self.read_only() {
+        match self.read_only_in(l) {
             Some(why) => row = row.child(div().child(why)),
             None => {
                 row = row.child(
@@ -1734,18 +1884,21 @@ impl NotesLayer {
                         .flex()
                         .gap(px(4.))
                         .child(div().text_color(th.accent).child(notes.to_string()))
-                        .child(if notes == 1 { "note" } else { "notes" }),
+                        .child(l.count(&t.notes_count, notes)),
                 );
                 if let Some(c) = concurs {
-                    row = row.child(format!(
-                        "· {c} {}",
-                        if c == 1 { "concur" } else { "concurs" }
-                    ));
+                    let said = l.count(&t.notes_concur_count, c);
+                    row = row.child(fill(&said, &[("c", &c.to_string())]));
                 }
-                row =
-                    row.child(self.button("⎘ copy map", Zone::CopyMap, self.mappable(anchors), th));
-                if let Some((label, live)) = self.send_button(anchors, beside) {
-                    row = row.child(self.button(&label, Zone::Send, live, th));
+                row = row.child(self.button(
+                    t.notes_copy_map,
+                    Zone::CopyMap,
+                    self.mappable(anchors),
+                    th,
+                    sk,
+                ));
+                if let Some((label, live)) = self.send_button_in(anchors, beside, l) {
+                    row = row.child(self.button(&label, Zone::Send, live, th, sk));
                 }
                 let gone: usize = self
                     .orphans(anchors)
@@ -1753,8 +1906,8 @@ impl NotesLayer {
                     .map(|(nid, _)| self.count_on(nid))
                     .sum();
                 if gone > 0 {
-                    let label = format!("{gone} on words no longer here");
-                    row = row.child(self.button(&label, Zone::Gone, true, th));
+                    let label = l.count(&t.notes_orphans_button_n, gone);
+                    row = row.child(self.button(&label, Zone::Gone, true, th, sk));
                 }
                 match &self.writable {
                     // Kept as written: nothing to save, and nothing to say
@@ -1762,21 +1915,22 @@ impl NotesLayer {
                     Ok(()) if self.in_store() => {}
                     Ok(()) if !self.gone => {
                         row = row.child(self.button(
-                            "💾 save into file",
+                            t.notes_save_into_file,
                             Zone::Save,
                             self.can_save().is_ok(),
                             th,
+                            sk,
                         ));
                         if !self.pending.is_empty() {
                             row = row.child(
                                 div()
                                     .text_color(th.accent)
-                                    .child(format!("{} unsaved", self.pending.len())),
+                                    .child(l.count(&t.notes_unsaved_count_n, self.pending.len())),
                             );
                         }
                     }
-                    Ok(()) => row = row.child("the file is gone · saving is off"),
-                    Err(r) => row = row.child(format!("read-only · {}", r.sentence())),
+                    Ok(()) => row = row.child(t.notes_file_gone_bar),
+                    Err(r) => row = row.child(fill(t.notes_ro_why, &[("why", &r.say(l))])),
                 }
             }
         }
@@ -1839,11 +1993,18 @@ impl NotesLayer {
     /// never where it is kept: *"a one-way pass of a screenshot"*, with the
     /// path masked. A picture whose file is gone says so in its row; a list
     /// that cannot be read says why. `None` when there is nothing to list.
-    fn draw_pictures(&self, nid: &str, deletable: bool, th: &Theme) -> Option<gpui::Div> {
+    fn draw_pictures(
+        &self,
+        nid: &str,
+        deletable: bool,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> Option<gpui::Div> {
         let body = th.font_size;
+        let t = &crate::lang::current().strings().parts;
         let pictures = self.pictures_on(nid);
         let unreadable = match &self.pictures {
-            Pictures::Unreadable(why) => Some(why.as_str()),
+            Pictures::Unreadable(why) => Some(why.shown()),
             _ => None,
         };
         if pictures.is_empty() && unreadable.is_none() {
@@ -1859,14 +2020,14 @@ impl NotesLayer {
             col = col.child(
                 div()
                     .text_color(th.text.alpha(0.6))
-                    .child(format!("Pictures cannot be listed here: {why}")),
+                    .child(fill(t.notes_pictures_unlisted, &[("why", why)])),
             );
         }
         for (i, img) in pictures.iter().enumerate() {
             let when = if img.here {
                 img.ts.clone()
             } else {
-                format!("{} · not on this machine", img.ts)
+                fill(t.notes_picture_not_here, &[("timestamp", &img.ts)])
             };
             let mut row = div()
                 .flex()
@@ -1875,7 +2036,7 @@ impl NotesLayer {
                 .gap(px(8.))
                 .child(
                     div()
-                        .font_family(SharedString::from(th.font_family.clone()))
+                        .font_family(SharedString::from(sk.font_family.clone()))
                         .child(img.label()),
                 )
                 .child(
@@ -1891,7 +2052,7 @@ impl NotesLayer {
                         .relative()
                         .text_size(px(body * 0.72))
                         .text_color(th.text.alpha(0.6))
-                        .child("delete")
+                        .child(t.notes_delete)
                         .child(self.record(Zone::DeletePicture(i))),
                 );
             }
@@ -1904,7 +2065,12 @@ impl NotesLayer {
     /// its id, its notes oldest first (each with its delete), its pictures,
     /// the draft, and Add note, Close and the hint, as the brief's own dialog
     /// lays them out.
-    pub fn draw_box(&self, view: gpui::Size<Pixels>, th: &Theme) -> Option<AnyElement> {
+    pub fn draw_box(
+        &self,
+        view: gpui::Size<Pixels>,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> Option<AnyElement> {
         let b = self.note_box.as_ref()?;
         let editable = self.has_caret();
         let deletable = self.can_delete();
@@ -1912,13 +2078,11 @@ impl NotesLayer {
         let (vw, vh) = (f32::from(view.width), f32::from(view.height));
         let w = (vw * 0.76).clamp(220.0_f32.min(vw), 620.0);
         let body = th.font_size;
+        let l = crate::lang::current();
+        let t = &l.strings().parts;
         let mut list = div().flex().flex_col().gap(px(8.));
         if notes.is_empty() {
-            list = list.child(
-                div()
-                    .text_color(th.text.alpha(0.6))
-                    .child("No notes on this yet."),
-            );
+            list = list.child(div().text_color(th.text.alpha(0.6)).child(t.notes_empty));
         }
         for (i, n) in notes.iter().enumerate() {
             let mut head = div()
@@ -1933,7 +2097,7 @@ impl NotesLayer {
                     div()
                         .relative()
                         .text_color(th.text.alpha(0.6))
-                        .child("delete")
+                        .child(t.notes_delete)
                         .child(self.record(Zone::Delete(i))),
                 );
             }
@@ -1967,13 +2131,13 @@ impl NotesLayer {
         };
         let mut actions = div().flex().flex_row().items_center().gap(px(8.));
         if editable {
-            actions = actions.child(pill("Add note", Zone::AddNote, true));
+            actions = actions.child(pill(t.notes_add_note, Zone::AddNote, true));
         }
-        actions = actions.child(pill("Close", Zone::CloseBox, false));
+        actions = actions.child(pill(t.notes_close, Zone::CloseBox, false));
         if editable {
             let hint = match self.pictures {
-                Pictures::Kept { .. } => "ctrl+enter to add · paste a picture to attach it",
-                _ => "ctrl+enter to add",
+                Pictures::Kept { .. } => t.notes_hint_add_paste,
+                _ => t.notes_hint_add,
             };
             actions = actions.child(
                 div()
@@ -1994,7 +2158,7 @@ impl NotesLayer {
             .px(px(12.))
             .py(px(10.))
             .child(list.min_h(px(0.)).overflow_hidden());
-        if let Some(pictures) = self.draw_pictures(&b.nid, deletable, th) {
+        if let Some(pictures) = self.draw_pictures(&b.nid, deletable, th, sk) {
             content = content.child(pictures);
         }
         if editable {
@@ -2016,18 +2180,19 @@ impl NotesLayer {
                 div()
                     .text_size(px(body * 0.8))
                     .text_color(th.text.alpha(0.6))
-                    .child(why.sentence()),
+                    .child(why.say(l)),
             );
         } else if b.gone {
             content = content.child(
                 div()
                     .text_size(px(body * 0.8))
                     .text_color(th.text.alpha(0.6))
-                    .child("These were written on words no longer in the file."),
+                    .child(t.notes_orphans_header),
             );
         }
         content = content.child(actions.flex_none());
-        let panel = div()
+        let panel = sk
+            .chrome(sk.panel())
             .absolute()
             .left(px(((vw - w) / 2.0).max(0.0)))
             .top(px((vh * 0.1).min(110.0)))
@@ -2039,7 +2204,7 @@ impl NotesLayer {
             .bg(th.surface)
             .border_2()
             .border_color(th.accent)
-            .rounded(px(10.))
+            .rounded(sk.radius_lg())
             .shadow(crate::float_shadows(th.accent, th.grade.phosphor))
             .text_size(px(body))
             .text_color(th.text)
@@ -2058,7 +2223,7 @@ impl NotesLayer {
                         div()
                             .text_size(px(body * 0.75))
                             .text_color(th.faint)
-                            .font_family(SharedString::from(th.font_family.clone()))
+                            .font_family(SharedString::from(sk.font_family.clone()))
                             .child(format!("#{}", b.nid)),
                     ),
             )
@@ -2498,7 +2663,7 @@ mod tests {
             "unread is not none"
         );
 
-        l.pictures_read("/state/pictures/b".into(), Err("broken list".into()));
+        l.pictures_read("/state/pictures/b".into(), Err(Words::as_is("broken list")));
         assert_eq!(l.paste(Pasted::Picture(png()), now), Pasting::Took);
         assert!(l
             .said
@@ -2744,7 +2909,7 @@ mod tests {
             "second".into(),
             "2026-09-24 11:01".into(),
         );
-        l.refused("the disk said no".into());
+        l.refused(Words::as_is("the disk said no"));
         assert_eq!(l.unsaved(), 2, "a refusal keeps every edit");
         let edits = l.begin_save();
         let mut written = NoteMap::default();
@@ -2836,6 +3001,70 @@ mod tests {
         assert_eq!(read_only.send_button(&anchors, Some("agent")), None);
     }
 
+    /// What the report and the control socket carry is the English; the bar
+    /// draws the same thing through the `_in` twin, in the reader's language.
+    /// English through the twin is the report, word for word, and every
+    /// language keeps the name of the pane ↪ sends to.
+    #[test]
+    fn the_report_words_stay_english_and_the_bar_draws_them_in_the_readers_language() {
+        use crate::lang::Lang;
+        let anchors = vec![anchor("a", Some(rect_css(0.0, 0.0, 700.0, 200.0)), false)];
+        let l = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
+        assert_eq!(
+            l.send_button(&anchors, Some("CLAUDE")),
+            l.send_button_in(&anchors, Some("CLAUDE"), Lang::En)
+        );
+        assert_eq!(l.can_save(), l.can_save_in(Lang::En));
+        assert_eq!(
+            l.can_save().unwrap_err(),
+            "Nothing to save: every note here is already in the file."
+        );
+        let read_only = NotesLayer::new(
+            notes::read(b"<html><body><p>just a page</p></body></html>"),
+            None,
+            ConcurSupport::Unknown,
+            0,
+            Path::new("/r/page.html"),
+        );
+        assert_eq!(read_only.read_only(), read_only.read_only_in(Lang::En));
+        assert_eq!(read_only.can_edit(), read_only.can_edit_in(Lang::En));
+        for lang in Lang::ALL {
+            let (label, _) = l.send_button_in(&anchors, Some("CLAUDE"), lang).unwrap();
+            assert!(label.contains("CLAUDE"), "{lang:?}: {label}");
+            assert!(read_only.read_only_in(lang).is_some(), "{lang:?}");
+        }
+    }
+
+    /// The bar says its words in the reader's language, and the report the
+    /// control socket hands to CLIs and agents carries the same words in
+    /// English — for what the bar said and for what the last ↪ said. A
+    /// report that read the bar's text instead says `de`/`ja` here and fails.
+    #[test]
+    fn the_report_says_in_english_what_the_bar_says_in_the_readers_language() {
+        use crate::lang::Lang;
+        let mut l = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
+        let unsaved = |lang: Lang| lang.count(&lang.strings().parts.notes_close_unsaved_n, 2);
+        l.say(Said::Refused(Words::said_in(Lang::De, |lang| {
+            format!("{} · {}", lang.code(), unsaved(lang))
+        })));
+        l.say_sent(Said::Done(Words::said_in(Lang::Ja, |lang| {
+            format!("{} sent", lang.code())
+        })));
+        assert_eq!(
+            l.said.as_ref().map(Said::text),
+            Some(format!("de · {}", unsaved(Lang::De)).as_str()),
+            "the bar draws the reader's language"
+        );
+        assert_eq!(l.sent.as_ref().map(Said::text), Some("ja sent"));
+        let report = l.report(&[]);
+        assert_eq!(report["said"], format!("en · {}", unsaved(Lang::En)));
+        assert_eq!(report["sent"], "en sent");
+        // Words from outside the table (an OS error) sit inside a sentence
+        // in each language, English in the report.
+        let why = Words::as_is("disk full").within(|lang, why| format!("{}: {why}", lang.code()));
+        assert_eq!(why.english(), "en: disk full");
+    }
+
     /// ↪ sends what the bar shows, unsaved notes included, and saves them
     /// as it goes; the button says so while there is something to save.
     ///
@@ -2891,7 +3120,7 @@ mod tests {
         );
         l.set_gone(false);
         let _ = l.begin_save();
-        l.say_sent(Said::Done("in the agent's prompt, not sent".into()));
+        l.say_sent(Said::Done(Words::as_is("in the agent's prompt, not sent")));
         l.confirmed("brief.html");
         let bar = l.report(&anchors);
         assert_eq!(bar["sent"], "in the agent's prompt, not sent");

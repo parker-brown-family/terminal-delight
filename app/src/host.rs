@@ -1885,6 +1885,10 @@ pub fn run_cli(args: &[String]) -> i32 {
         eprintln!("usage: terminal-delight serve --session <key>");
         return 2;
     };
+    // A host started by anything other than a window (which hands it the log
+    // file itself) would otherwise write into /dev/null.
+    crate::diag::route_stderr(&crate::diag::Role::Host(key.clone()));
+    crate::diag::install_crash_record(crate::diag::Role::Host(key.clone()));
 
     let path = host_socket_path(&key);
     if let Some(dir) = path.parent() {

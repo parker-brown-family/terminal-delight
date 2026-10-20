@@ -293,6 +293,11 @@ fn shipped() -> Vec<Palette> {
         .collect()
 }
 
+/// Bundled palette source for headless skin authoring, using the same colour conversion.
+pub(crate) fn bundled_toml(id: &str) -> Option<String> {
+    shipped().into_iter().find(|p| p.id == id).map(|p| p.toml)
+}
+
 /// The ids of every palette TD carries — what a machine with no Omarchy is
 /// offered.
 #[cfg(test)]

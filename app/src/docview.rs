@@ -530,27 +530,45 @@ pub(crate) fn attach_picture<B: Backend + 'static>(
 /// The writing half of [`attach_picture`], on whatever thread runs it.
 fn keep_picture(
     a: &notes_ui::Attaching,
-) -> Result<(doc_images::DocImages, Vec<doc_images::Attached>), String> {
+) -> Result<(doc_images::DocImages, Vec<doc_images::Attached>), notes_ui::Words> {
+    use notes_ui::Words;
     match &a.picture {
         notes_ui::PastedPicture::Bytes { bytes, ext } => {
             doc_images::attach(&a.folder, &a.doc, &a.nid, bytes, ext, &a.ts)
                 .map(|(list, one)| (list, vec![one]))
         }
         notes_ui::PastedPicture::Files(paths) => {
+            // Said in the bar, after the paste: the reader's language, and
+            // English in the report.
             let mut kept = None;
             let mut each = Vec::new();
             for path in paths {
-                let bytes = std::fs::read(path)
-                    .map_err(|e| format!("{} could not be read: {e}", path.display()))?;
-                let ext = notes_ui::picture_ext(path)
-                    .ok_or_else(|| format!("{} is not a picture", path.display()))?;
+                let shown = path.display().to_string();
+                let bytes = std::fs::read(path).map_err(|e| {
+                    let error = e.to_string();
+                    Words::said(|l| {
+                        crate::lang::fill(
+                            l.strings().parts.notes_paste_file_unreadable,
+                            &[("path", &shown), ("error", &error)],
+                        )
+                    })
+                })?;
+                let ext = notes_ui::picture_ext(path).ok_or_else(|| {
+                    Words::said(|l| {
+                        crate::lang::fill(
+                            l.strings().parts.notes_paste_not_picture,
+                            &[("path", &shown)],
+                        )
+                    })
+                })?;
                 let (list, one) =
                     doc_images::attach(&a.folder, &a.doc, &a.nid, &bytes, &ext, &a.ts)?;
                 each.push(one);
                 kept = Some(list);
             }
-            kept.map(|list| (list, each))
-                .ok_or_else(|| "no picture was on the clipboard".to_string())
+            kept.map(|list| (list, each)).ok_or_else(|| {
+                Words::said(|l| l.strings().parts.notes_paste_no_picture.to_string())
+            })
         }
     }
 }
@@ -1229,13 +1247,14 @@ impl Render for DocumentView {
         self.painted_at.set(None);
         self.links.borrow_mut().clear();
         let (backend, view) = self.backend_and_view();
-        let body = backend.element(&view, window, &th);
+        let sk = crate::skin::for_theme(cx, &th, th.grade.scale);
+        let body = backend.element(&view, window, &th, &sk);
         // Asked after the body, which settles this frame's scroll first.
         let rail = self
             .backend
             .reading()
             .zip(self.view_h())
-            .and_then(|(r, view_h)| progress::rail(r, view_h, &th));
+            .and_then(|(r, view_h)| progress::rail(r, view_h, &th, &sk));
         // Measured, not listened to: a canvas records the box this view was
         // given and the scale it paints at, and asks for one more frame when
         // either changed, so a zoom placed against a stale size corrects

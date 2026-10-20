@@ -32,6 +32,7 @@ pub enum Kind {
 impl Kind {
     /// The word in the row's left column, in the left bar's own vocabulary —
     /// "group" is what every menu calls the middle layer.
+    #[cfg(test)]
     pub fn label(self) -> &'static str {
         match self {
             Kind::Project => "PROJECT",
@@ -39,6 +40,18 @@ impl Kind {
             Kind::Tab => "TAB",
             Kind::Pane => "PANE",
             Kind::Note => "NOTE",
+        }
+    }
+
+    /// [`Self::label`] in `l`, for the row a person reads.
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        let t = &l.strings().parts;
+        match self {
+            Kind::Project => t.lookup_kind_project,
+            Kind::Group => t.lookup_kind_group,
+            Kind::Tab => t.lookup_kind_tab,
+            Kind::Pane => t.lookup_kind_pane,
+            Kind::Note => t.lookup_kind_note,
         }
     }
 }
@@ -145,8 +158,29 @@ pub fn place(ancestors: &[&str], detail: &str) -> String {
 }
 
 /// `n` of a thing, in words: `1 tab`, `3 tabs`.
+#[cfg(test)]
 pub fn count(n: usize, thing: &str) -> String {
     format!("{n} {thing}{}", if n == 1 { "" } else { "s" })
+}
+
+/// The things [`count_in`] counts — the three nouns the lookup's rows say.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Noun {
+    Tab,
+    Pane,
+    Name,
+}
+
+/// [`count`] in `l`, with the plural that language uses for `n` — English's
+/// trailing `s` is one rule among several, so each noun is a whole phrase.
+pub fn count_in(l: crate::lang::Lang, n: usize, noun: Noun) -> String {
+    let t = &l.strings().parts;
+    let p = match noun {
+        Noun::Tab => &t.lookup_count_tab,
+        Noun::Pane => &t.lookup_count_pane,
+        Noun::Name => &t.lookup_count_name,
+    };
+    l.count(p, n)
 }
 
 #[cfg(test)]
@@ -288,5 +322,26 @@ mod tests {
         assert_eq!(count(0, "tab"), "0 tabs");
         assert_eq!(count(1, "tab"), "1 tab");
         assert_eq!(count(4, "pane"), "4 panes");
+    }
+
+    /// The translated count says exactly what the English one does in English,
+    /// and the kind column likewise.
+    #[test]
+    fn a_count_in_a_language_matches_the_english_in_english() {
+        use crate::lang::Lang;
+        for n in [0, 1, 2, 5] {
+            assert_eq!(count_in(Lang::En, n, Noun::Tab), count(n, "tab"));
+            assert_eq!(count_in(Lang::En, n, Noun::Pane), count(n, "pane"));
+            assert_eq!(count_in(Lang::En, n, Noun::Name), count(n, "name"));
+        }
+        for k in [
+            Kind::Project,
+            Kind::Group,
+            Kind::Tab,
+            Kind::Pane,
+            Kind::Note,
+        ] {
+            assert_eq!(k.label_in(Lang::En), k.label());
+        }
     }
 }

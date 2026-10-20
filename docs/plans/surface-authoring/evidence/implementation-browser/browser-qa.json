@@ -1,0 +1,44 @@
+{
+  "passed": true,
+  "desktop": {
+    "width": 1085,
+    "viewport": 1100,
+    "figures": 4,
+    "notable": 119,
+    "rows": 65,
+    "annotatableRows": 65,
+    "images": [
+      {
+        "loaded": true,
+        "inline": true
+      },
+      {
+        "loaded": true,
+        "inline": true
+      },
+      {
+        "loaded": true,
+        "inline": true
+      },
+      {
+        "loaded": true,
+        "inline": true
+      },
+      {
+        "loaded": true,
+        "inline": true
+      },
+      {
+        "loaded": true,
+        "inline": true
+      }
+    ]
+  },
+  "mobile": {
+    "width": 390,
+    "viewport": 390
+  },
+  "notes": "add/export/save/clear passed",
+  "errors": [],
+  "external_requests": []
+}

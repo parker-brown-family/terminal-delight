@@ -1,0 +1,535 @@
+{
+  "file": "reports/2026-10-20-custom-skins-built.html",
+  "subject": "Terminal Delight supports repeatable custom skin authoring through one settings file, native evidence and a portable skill",
+  "reader": "Parker requested and approved this architecture. He knows Terminal Delight, Chalk, OPS and the sibling inventory and wants results and scoped proof without reading Rust.",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.34
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.81
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "journey",
+      "probabilities": {
+        "journey": 0.59,
+        "catalogue": 0.01,
+        "argument": 0.25,
+        "report": 0.14,
+        "none_of_the_above": 0.01
+      },
+      "confidence": 0.49
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Your next TD surface starts with one file.",
+      "text": "An agent can now create a personal Terminal Delight skin by editing one settings file. These native captures use one build and two files: Chalk keeps its handwriting and cotton stock; Field Notes uses instrument lettering, quieter grain and a glass terminal. The sibling\u2019s OPS work remains part of that same system. \nImplementation review \u00b7 20 October 2026 \u00b7 about four minutes, with the full inventory folded below. Native screenshots are embedded; comments save into this file.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.78,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.25,
+            "2": 0.59,
+            "3": 0.12
+          },
+          "confidence": 0.55
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.26
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.45
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.11,
+            "complication": 0,
+            "turn": 0.82,
+            "consequence": 0.04,
+            "resolution": 0.01,
+            "aside": 0.02,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.79
+        }
+      },
+      "latency_ms": 307.4668049812317,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "A second look changes the file.",
+      "text": "Both skins use the same real Subscriptions controls. Optical fitting now belongs to the font settings, so selecting paper no longer forces Caveat\u2019s enlargement onto a monospace UI. 01 \u00b7 One binary, two native skins \n\nChalk \u00b7 Hacker \u00b7 1280 \u00d7 880 \n\nField Notes \u00b7 Hacker \u00b7 1280 \u00d7 880 \n The second look requires no application Rust edit. These are native captures, with the same fixture, palette and geometry. The example file is committed separately from the engine changes. Click a picture to inspect it at full width. Images are downsampled for this page; receipts retain the original capture hashes.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.91,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.19,
+            "2": 0.67,
+            "3": 0.13
+          },
+          "confidence": 0.66
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.38
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.83,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.34,
+            "1": 0.51,
+            "2": 0.14,
+            "3": 0.01
+          },
+          "confidence": 0.5
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.16
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0.02,
+            "turn": 0.68,
+            "consequence": 0.23,
+            "resolution": 0.01,
+            "aside": 0.05,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.63
+        }
+      },
+      "latency_ms": 333.73672398738563,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "The decisions now meet in the skin.",
+      "text": "Application code names a choice, action, caption, meter or frame and keeps its input handlers. Material painting stays behind that shared interface. Font scale, leading and minimum size are independent settings. Notes and terminal glass/stock have explicit policies. \n 02 \u00b7 The authoring path, built up \n\nStep 1 \u00b7 Resolve one file \n\n Your TOML Palette recipes \u00b7 type \u00b7 material \n Resolved Skin Existing registry and resolver \n Native controls Not added in this step \n Material renderer Not added in this step \n Catalogue + proof Not added in this step \n td-skin skill Not added in this step \n\nStep 2 \u00b7 Adopt the shared controls \n\n Your TOML Palette recipes \u00b7 type \u00b7 material \n Resolved Skin Existing registry and resolver \n Native controls Handlers and semantic data stay here \n Material renderer Stock \u00b7 grid \u00b7 plain \n Catalogue + proof Not added in this step \n td-skin skill Not added in this step \n\nStep 3 \u00b7 Export contract and evidence \n\n Your TOML Palette recipes \u00b7 type \u00b7 material \n Resolved Skin Existing registry and resolver \n Native controls Handlers and semantic data stay here \n Material renderer Stock \u00b7 grid \u00b7 plain \n Catalogue + proof Owners \u00b7 fixtures \u00b7 scoped receipts \n td-skin skill Export \u00b7 author \u00b7 inspect \u00b7 restore \n The skill reads the running binary\u2019s contract. The diagrams describe the implemented code: the file reader and live settings registry resolve the file; shared helpers dispatch painting; the binary exports the catalogue and matching capture runner. Grey boxes show what each earlier step has not added. \n\nThe existing shape strategies remain finite: a file can combine supported effects. A new silhouette or rendering effect still needs one engine contribution. Terminal cells, authored document bodies, media and semantic state colours retain their own owners.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 2.12,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0,
+            "1": 0.11,
+            "2": 0.66,
+            "3": 0.23
+          },
+          "confidence": 0.66
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.3
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.97,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.12,
+            "1": 0.8,
+            "2": 0.08,
+            "3": 0
+          },
+          "confidence": 0.8
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.4
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0.55,
+            "consequence": 0.39,
+            "resolution": 0.03,
+            "aside": 0.02,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.48
+        }
+      },
+      "latency_ms": 326.4825929654762,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "The native review caught what tests missed.",
+      "text": "The first Subscriptions capture failed: the agent wall behind it kept registering its smaller backdrop mask, clipping the wider panel\u2019s edges. The foreground panel now owns that mask. A later capture also caught a paper action backing hiding the bug-report labels; material layers are now added before their content. The failed receipts remain separate from corrected captures. \n 03 \u00b7 Palette, gauges and content boundaries \n\nChalk \u00b7 pale palette \u00b7 palette choices \n\nChalk \u00b7 native gauges and stock \n\nField Notes \u00b7 document frame and reading rail \n\nChalk \u00b7 warped terminal and sticky note \n Native furniture follows the skin while the content keeps its own renderer. These captures cover the displayed fixtures only. Their receipts name build, skin, palette, geometry, grade and reviewed states. \n Open the capture and state record \nMissing interaction states remain unverified. Static captures do not certify hover, drag, keyboard navigation or every disabled path. \n | \n | Capture | Context | Visual review \n | chalk-bench | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | pass: captured static state\nUI type and frame, response content visible \n | chalk-bug | hacker \u00b7 [900, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | pass: captured static state\naction glyphs and labels visible, disabled action explanation, raised stock \n | chalk-confirm | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | chalk-find | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | chalk-gauges | hacker \u00b7 [1100, 850] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | pass: captured static state\ngauge tracks and stock thumbs, reset action, flower sticky \n | chalk-language | hacker \u00b7 [900, 850] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 de | pass: captured static state\nGerman selected, native-script language labels \n | chalk-narrow | hacker \u00b7 [800, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.15, 'text_scale': 1.2} \u00b7 en | pass: captured static state\n800px window, UI scale 1.15, text scale 1.2, Subscriptions label fit \n | chalk-notifications | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | chalk-rail | hacker \u00b7 [1000, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | chalk-tray-pale | hacker \u00b7 [1100, 900] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | pass: captured static state\npale stock and depth, centred labels, single selected-label stroke, switches \n | chalk-usage | hacker \u00b7 [1280, 880] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | pass: captured static state\nselected and inactive choices, unset launch settings, semantic limit colours, restored file and selection \n | chalk-usage-zero | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | pass: captured static state\nmeasured 0%, empty measured rail \n | chalk-wall | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | chalk-workspace-warp | tactical-overdrive \u00b7 [1200, 850] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | pass: captured static state\nrecorded operator grade and palette, curved terminal, flat UI furniture, flower sticky \n | field-bench | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | pass: captured static state\nUI type and frame, response content visible \n | field-document | quiet-command \u00b7 [1200, 850] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | pass: captured static state\ndocument header and notes controls, reading rail, authored text and code retain content font \n | field-focus | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | field-help | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | field-launcher | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | field-logo | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | field-lookup | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | field-paint | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | field-plugins | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | field-recover | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | field-size | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | field-tab | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | partial: frame and content presence inspected; detailed text and interactions unverified\nframe and content presence at montage resolution \n | field-tray-dark | hacker \u00b7 [1100, 900] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | pass: captured static state\ndark stock, monospace UI without handwriting correction, switches \n | field-usage | hacker \u00b7 [1280, 880] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | pass: captured static state\nselected and inactive choices, unset launch settings, pip gauges, restored file and selection \n | field-usage-unknown | hacker \u00b7 [1200, 800] \u00b7 {'warp': 0.0, 'ui_scale': 1.0, 'text_scale': 1.0} \u00b7 en | pass: captured static state\nlimits unavailable, unavailable reading distinct from measured zero",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.71,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.3,
+            "2": 0.6,
+            "3": 0.07
+          },
+          "confidence": 0.57
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.21
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.33,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.62,
+            "2": 0.34,
+            "3": 0.01
+          },
+          "confidence": 0.61
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.75
+        },
+        "role": {
+          "type": "choice",
+          "choice": "complication",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.52,
+            "turn": 0.08,
+            "consequence": 0.17,
+            "resolution": 0.01,
+            "aside": 0.22,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.44
+        }
+      },
+      "latency_ms": 985.3783370926976,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "The inventory records both routing and missing proof.",
+      "text": "The sibling\u2019s 46 surface families were a useful starting map. The audit separated controls from content, corrected owners and added child surfaces. Main also gained a bug-report panel during this work; it now uses the same frame, action and type policy. \n 65 entries and 26 registered fixtures come from one JSON source. Each entry names material, boundary, emphasis, type and colour policy separately. Owner and fixture checks catch stale references. A registered fixture is an available scene, not a passing visual verdict. Open all 65 surface entries and their policies \n | \n | Surface / owner | Facet routing | Content and state policy | Fixture \n | Root ground behind the cabinet app/src/main.rs::impl Render for Workspace | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | Window cabinet / outer frame app/src/main.rs::impl Render for Workspace | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | Top band app/src/main.rs::impl Render for Workspace | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | Top-band tabs and strip chips app/src/main.rs::fn tab_button | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | Agent-state counter, top right app/src/main.rs::fn render_agent_counter | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | Menu-bar SIZE button and track app/src/main.rs::impl Render for Workspace | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | Bottom band app/src/main.rs::impl Render for Workspace | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | Left bar tree app/src/main.rs::fn render_left_bar | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | Left-bar bay and slot rails app/src/main.rs::fn render_bay | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | Left-bar tray menu app/src/main.rs::fn render_bar_menu | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | unavailable Source routing; see scoped scene evidence \n | Pane frame and focus ring app/src/main.rs::fn render_node | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | Pane header app/src/pane.rs::impl Render for TerminalView | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | TERM / BENCH / DOC slider app/src/pane.rs::impl Render for TerminalView | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | bench Source routing; see scoped scene evidence \n | Handover chip app/src/pane/handed.rs::fn handover_chip | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | Pane right-click and \u22ef menus app/src/pane.rs::impl Render for TerminalView | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | unavailable Source routing; see scoped scene evidence \n | Terminal tube stock app/src/pane.rs::impl Render for TerminalView | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | Terminal grid app/src/pane/grid_paint.rs::impl Render for GridPaint | material: content\nboundary: content\nemphasis: content\ntypography: content\ncolour: content | Measured terminal grid and CRT effect pixels belong to Design/Grade; the UI skin must not reshape terminal cells. | workspace Source routing; see scoped scene evidence \n | CRT glass app/src/crt.rs::pub fn glass | material: content\nboundary: content\nemphasis: content\ntypography: content\ncolour: content | Measured terminal grid and CRT effect pixels belong to Design/Grade; the UI skin must not reshape terminal cells. | workspace Source routing; see scoped scene evidence \n | Raised CRT bezel app/src/crt.rs::pub fn bezel | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | workspace Source routing; see scoped scene evidence \n | Attention spine pill app/src/main.rs::fn render_spine_pill | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | rail Source routing; see scoped scene evidence \n | Attention queue app/src/main.rs::fn rail_panel | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | rail Source routing; see scoped scene evidence \n | Window palette tray (THEME / STYLE / RULES) app/src/main.rs::impl Render for Workspace | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | tray Source routing; see scoped scene evidence \n | GAUGES / DISPLAY tray app/src/main.rs::impl Render for Workspace | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | gauges Source routing; see scoped scene evidence \n | Switches and sliders app/src/skin/parts.rs::fn slider_switch | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | gauges Source routing; see scoped scene evidence \n | Paint cards (Super+Alt+P) app/src/paint.rs::pub fn tile | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | paint Source routing; see scoped scene evidence \n | Sticky note app/src/sticky.rs::pub fn paint | material: independent\nboundary: independent\nemphasis: independent\ntypography: independent\ncolour: independent | Sticky note text keeps its own handwriting; skin note policy selects decoration and optional Contrast stock override. | workspace Source routing; see scoped scene evidence \n | Subscriptions / usage panel app/src/main.rs::fn render_usage_body | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | usage Source routing; see scoped scene evidence \n | FOCUS reader (Alt+R) app/src/main.rs::fn reader_panel | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | focus Source routing; see scoped scene evidence \n | Document square app/src/pane/doc.rs::fn square_el | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | document Source routing; see scoped scene evidence \n | Document face and notes bar app/src/docview/notes_ui.rs::pub fn draw_bar | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | document Source routing; see scoped scene evidence \n | Bench cards app/src/benchdraw.rs::pub fn title_card | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | bench Source routing; see scoped scene evidence \n | Agent wall and agent cards app/src/main.rs::impl Render for Workspace | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | wall Source routing; see scoped scene evidence \n | Dead-agent recover manifest app/src/main.rs::impl Render for Workspace | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | recover Source routing; see scoped scene evidence \n | Confirm-close and delete-branch dialogs app/src/main.rs::fn danger_panel | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | confirm Source routing; see scoped scene evidence \n | Help modal app/src/main.rs::impl Render for Workspace | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | help Source routing; see scoped scene evidence \n | SIZE and \u2026 popovers app/src/main.rs::impl Render for Workspace | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | size Source routing; see scoped scene evidence \n | Tab config pane, group menu app/src/main.rs::impl Render for Workspace | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | tab Source routing; see scoped scene evidence \n | Tooltips app/src/main.rs::fn over_the_glass_tip | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | unavailable Source routing; see scoped scene evidence \n | Marquee toast app/src/main.rs::fn marquee_banner | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | unavailable Source routing; see scoped scene evidence \n | Find (Ctrl+F) app/src/main.rs::fn render_find | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | find Source routing; see scoped scene evidence \n | Lookup (Alt+L) app/src/main.rs::fn render_lookup | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | lookup Source routing; see scoped scene evidence \n | Plugins, notifications, logo picker app/src/main.rs::fn render_plugins_overlay | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | plugins Source routing; see scoped scene evidence \n | Language picker app/src/main.rs::fn render_lang_picker | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | language Source routing; see scoped scene evidence \n | Agent launcher app/src/main.rs::fn render_agent_launcher | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | launcher Source routing; see scoped scene evidence \n | Git coordination overlay app/src/coordination_view.rs::fn render_coordination | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: mixed | TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review. | unavailable Source routing; see scoped scene evidence \n | CSD resize edges app/src/csd.rs::pub fn decorate | material: not_applicable\nboundary: not_applicable\nemphasis: not_applicable\ntypography: not_applicable\ncolour: not_applicable | Invisible resize hit geometry belongs to window input, not the visual skin. | unavailable Source routing; see scoped scene evidence \n | Left-bar allowance rails app/src/main.rs::fn render_bar_slot | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: semantic | Preserve allowance measurement colours and unknown readings; skin owns track and typography. | workspace Source routing; see scoped scene evidence \n | Launch defaults and unset choice app/src/main.rs::fn render_launch_defaults | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | Chosen, inherited and unset states remain distinct. | usage-choices Source routing; see scoped scene evidence \n | Subscriptions provider choices app/src/main.rs::fn render_usage_body | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | Provider identity and pressure dots keep semantic ink; selection uses choice treatment. | usage Source routing; see scoped scene evidence \n | Subscriptions limit meters app/src/skin.rs::pub fn meter | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | Reading is optional; absent is distinct from measured zero. | usage Source routing; see scoped scene evidence \n | Subscriptions pace rail and flame app/src/main.rs::fn render_usage_body | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | Pace bands and flame retain their semantic colours; skin owns track material. | usage Source routing; see scoped scene evidence \n | Subscriptions refresh action app/src/main.rs::fn render_usage_body | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | Action treatment is distinct from a selected choice. | usage Source routing; see scoped scene evidence \n | Agent-wall vitals app/src/main.rs::impl Render for Workspace | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: semantic | Track follows skin; charge bands, values and unavailable readings retain data semantics. | wall Source routing; see scoped scene evidence \n | FOCUS frame and controls app/src/main.rs::fn reader_panel | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | Skin owns shell and controls; snapshot type and cell geometry remain content. | focus Source routing; see scoped scene evidence \n | Authored document and media content app/src/docview.rs::impl Render for DocumentView | material: content\nboundary: content\nemphasis: content\ntypography: content\ncolour: content | HTML, Markdown, PDF, images and video own their content typography and pixels. | document Source routing; see scoped scene evidence \n | Native notes controls and draft actions app/src/docview/notes_ui.rs::pub fn draw_bar | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | TD controls follow skin; document text and annotations keep their content anchors. | document Source routing; see scoped scene evidence \n | Reading progress rail app/src/docview/progress.rs::pub fn rail | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | Progress position and unknown length remain data; skin owns track shape. | document Source routing; see scoped scene evidence \n | Video transport controls app/src/docview/video.rs::fn bar_el | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | Skin owns controls, not movie pixels or playback time. | document Source routing; see scoped scene evidence \n | PDF status and page controls app/src/docview/pdf.rs::impl Backend for PdfDoc | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | Skin owns native status UI, not the PDF page. | document Source routing; see scoped scene evidence \n | Workbench content-kind cards app/src/benchdraw.rs::pub fn title_card | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | Each TDSP kind uses shared chrome; authored diagrams and semantic ink retain policy. | bench Source routing; see scoped scene evidence \n | Workbench composer and menus app/src/pane/bench.rs::fn bench_el | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | Composer input and answer routing remain unchanged. | bench Source routing; see scoped scene evidence \n | Workbench overview rail app/src/benchdraw.rs::pub fn rail_row | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | Kind and state retain semantic colour, selection follows skin. | bench Source routing; see scoped scene evidence \n | Agent-wall actions and preview app/src/main.rs::impl Render for Workspace | material: mixed\nboundary: mixed\nemphasis: mixed\ntypography: mixed\ncolour: semantic | Buttons follow skin; miniature terminal uses the measured grid renderer. | wall Source routing; see scoped scene evidence \n | Pane popover shell app/src/pane.rs::impl Render for TerminalView | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | UI family is independent of the terminal grid font; event routing remains pane-local. | unavailable Source routing; see scoped scene evidence \n | Bug report panel and actions app/src/main.rs::render_bug_overlay | material: skin\nboundary: skin\nemphasis: mixed\ntypography: skin\ncolour: semantic | Skin frame, action stock and optical UI type; enabled/disabled diagnostics and report state retain their meaning. Opening the fixture never prepares or sends a report. | bug Source routing; see scoped scene evidence",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 2.25,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.1,
+            "2": 0.52,
+            "3": 0.37
+          },
+          "confidence": 0.51
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.25
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.31,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.08,
+            "1": 0.55,
+            "2": 0.35,
+            "3": 0.02
+          },
+          "confidence": 0.53
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.9
+        },
+        "role": {
+          "type": "choice",
+          "choice": "aside",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0.19,
+            "turn": 0.04,
+            "consequence": 0.28,
+            "resolution": 0,
+            "aside": 0.48,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.39
+        }
+      },
+      "latency_ms": 342.98651793505996,
+      "failure": null
+    },
+    {
+      "index": 6,
+      "heading": "A saved edit is checked against the live UI.",
+      "text": "04 \u00b7 Reload, rejection and restoration \n- Valid edit The live registry adopts a distinct test skin. \n- Invalid edit The watcher reports the syntax error and retains the last valid tokens. \n- Exact restore The original bytes and resolved tokens return. \n- Private restart An explicit default selection survives; custom is then restored. \n The proof restarts only the isolated preview. The receipt records the observed selections. Custom file changes in a normal TD window need no restart. \nterminal-delight skin --catalogue\nterminal-delight skin --template chalk\nterminal-delight skin --check --skin personal-skin.toml --theme hacker\nterminal-delight skin --atlas-script\nterminal-delight ctl skin snapshot \nFor a particular live window, add its explicit --pid . Preserve its previous file bytes or absence and its explicit/theme-following selection before applying a new look.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.47,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.05,
+            "1": 0.45,
+            "2": 0.48,
+            "3": 0.02
+          },
+          "confidence": 0.43
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.27
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.13,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.1,
+            "1": 0.68,
+            "2": 0.21,
+            "3": 0.01
+          },
+          "confidence": 0.67
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.19
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.01,
+            "turn": 0.18,
+            "consequence": 0.58,
+            "resolution": 0.17,
+            "aside": 0.06,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.51
+        }
+      },
+      "latency_ms": 338.2256730692461,
+      "failure": null
+    },
+    {
+      "index": 7,
+      "heading": "What is established, and what remains open.",
+      "text": "The integrated default suite passed 2,570 tests and the fallback suite passed 2,523, each with ten ignored. After the final boundary changes, all 36 skin tests and 24 allowance tests passed; both CI Clippy variants passed. The final action-order correction passed Clippy and a release build, and its corrected native capture shows all three labels. The earlier engine commit also passed the complete GitHub CI job. \n | \n | Matched private fixture | Idle CPU time | Resident memory at end \n | chalk-usage | 0.190 s / 10.0 s | 191.5 MiB \n | field-usage | 0.200 s / 10.0 s | 186.6 MiB \nPerformance method: one warmed idle sample per skin, same binary and scene, from Linux process counters. It excludes child hosts and compositor cost. It does not establish a regression bound or zero overhead. The grain atlas remains shared and the material adds no animation timer. \nThe 29 captures cover 25 distinct registered scenes. Hover, drag and full keyboard interaction remain unverified, and seven catalogue entries have no dedicated fixture. Each receipt names the static states actually inspected; the remaining inventory facets keep their source-routing status. The existing test-only Clippy warnings are tracked in the linked follow-up.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.95,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.12,
+            "2": 0.77,
+            "3": 0.1
+          },
+          "confidence": 0.76
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.55
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.44,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.05,
+            "1": 0.48,
+            "2": 0.45,
+            "3": 0.02
+          },
+          "confidence": 0.46
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.59
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.07,
+            "turn": 0,
+            "consequence": 0.62,
+            "resolution": 0.02,
+            "aside": 0.29,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.56
+        }
+      },
+      "latency_ms": 227.72347193676978,
+      "failure": null
+    },
+    {
+      "index": 8,
+      "heading": "The next surface starts with the exported contract.",
+      "text": "The portable td-skin skill guides reference \u2192 TOML \u2192 native review \u2192 apply and restore. It carries no copied inventory and no Parker-specific monitor, path or credential requirement. The capture runner supplies a visible private-window fallback for another compositor. \nPublished and merged as the portable td-skin skill . Local discovery links point to its clean tracked worktree; agent-parity passes for every configured host. \nWith hindsight, the inventory, real font measurements and choice/action distinction should have come before the first material rollout. The first broad native review should have happened before calling the surface complete. Those checks now travel with the authoring path. \n Authoring guide \u00b7 Field Notes TOML \u00b7 Implementation review \u00b7 Approved plan and original concurs \nSource-backed architecture and native captures. Unknown or missing evidence remains unavailable. Use any element\u2019s note control to continue the feedback loop. . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.79,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.25,
+            "2": 0.66,
+            "3": 0.07
+          },
+          "confidence": 0.64
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.48
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.32,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.64,
+            "2": 0.28,
+            "3": 0.04
+          },
+          "confidence": 0.6
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.55
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0.03,
+            "turn": 0.14,
+            "consequence": 0.18,
+            "resolution": 0.38,
+            "aside": 0.25,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.28
+        }
+      },
+      "latency_ms": 240.8580130431801,
+      "failure": null
+    }
+  ]
+}

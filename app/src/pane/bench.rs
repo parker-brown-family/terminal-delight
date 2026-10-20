@@ -1817,10 +1817,11 @@ impl TerminalView {
         // RESUME takes the primary face, the one the launch wears. It is the
         // only control on this strip that offers rather than takes, and a
         // paused pane should look like it is waiting to be let go.
+        let t = &crate::lang::current().strings().parts;
         if let Some(control) = crate::workbench::turn_control(state, agent_now) {
             let (label, hit) = match control {
-                TurnControl::Pause => ("PAUSE TURN", Hit::PauseTurn),
-                TurnControl::Resume => ("RESUME TURN", Hit::ResumeTurn),
+                TurnControl::Pause => (t.pane_bench_pause_turn, Hit::PauseTurn),
+                TurnControl::Resume => (t.pane_bench_resume_turn, Hit::ResumeTurn),
             };
             out.push(
                 crate::benchdraw::strip_button(label, "", control == TurnControl::Resume, sk, th)
@@ -1856,8 +1857,8 @@ impl TerminalView {
             // No glyph: the stop square rendered as a colour emoji, which put
             // the loudest thing on the strip beside the one control nobody
             // should press by accident. The words say what it does.
-            StripVerb::End => ("END SESSION", "", Hit::EndAgent, false),
-            StripVerb::Launch => ("LAUNCH AGENT", "\u{2301}", Hit::Launch, true),
+            StripVerb::End => (t.pane_bench_end_session, "", Hit::EndAgent, false),
+            StripVerb::Launch => (t.pane_bench_launch_agent, "\u{2301}", Hit::Launch, true),
         };
         out.push(
             crate::benchdraw::strip_button(label, glyph, primary, sk, th)
@@ -2080,10 +2081,14 @@ impl TerminalView {
         // move aside and nothing to type back. `dial_bytes` beside an empty
         // line is just the command. The hold below still matters — it keeps
         // SEND out of the harness's own confirmation picker.
-        let bytes = crate::workbench::dial_bytes(
-            &format!("{} {value}", which.command()),
-            &crate::workbench::Line::new(),
-        );
+        // The configured row is not a word `/model` takes; the bare command
+        // opens the harness's own picker, and the person chooses there.
+        let typed = if value == crate::launcher::CONFIGURED {
+            which.command().to_string()
+        } else {
+            format!("{} {value}", which.command())
+        };
+        let bytes = crate::workbench::dial_bytes(&typed, &crate::workbench::Line::new());
         self.bench_deliver(bytes, cx);
         self.wb_dial_sent = Some(crate::workbench::DialSent {
             which,
@@ -2557,9 +2562,12 @@ impl TerminalView {
         // last, and the bench says whichever word the picker is showing —
         // promising "Submit" and delivering "Next" is a small lie that costs
         // a person one wasted press and all of their trust in the button.
+        // Which of the two is decided by the round's state alone; the word is
+        // only how it is drawn, in the reader's language.
+        let t = &crate::lang::current().strings().parts;
         let submit_word = match &q.round {
-            Some(r) if !r.submitting && r.answered() + 1 < r.total() => "NEXT",
-            _ => "SUBMIT",
+            Some(r) if !r.submitting && r.answered() + 1 < r.total() => t.pane_bench_next,
+            _ => t.pane_bench_submit,
         };
         let answered = q.answer != crate::surface::Answered::Waiting;
         // Asked once, before the borrow of `self` the chips take, and read
@@ -2794,7 +2802,7 @@ impl TerminalView {
             .flex_col()
             .gap(px(2.))
             .pt(px(2.))
-            .font_family(th.font_family.clone())
+            .font_family(sk.font_family.clone())
             .text_size(px(sk.pt(Step::Fine)))
             .child(div().text_color(sk.ink.ink_faint).child(where_to))
             .children(previews.into_iter().map(|(chip, what)| {
@@ -2848,7 +2856,7 @@ impl TerminalView {
                         crate::benchdraw::verb_button(
                             sk.chip(primary)
                                 .cursor_pointer()
-                                .font_family(th.font_family.clone())
+                                .font_family(sk.font_family.clone())
                                 .child(text),
                             primary,
                             sk,
@@ -2973,35 +2981,27 @@ impl TerminalView {
         // image when no text type is offered at all, so a browser copy — which
         // offers `text/html` next to `image/png` — pastes markup.
         if self.clipboard_holds_an_image() {
-            // On an AGENT pane the agent does this better than we can. Claude
-            // Code binds ctrl+v to its own image paste, reads the clipboard
-            // with `wl-paste --type image/png`, and puts `[Image #1]` in the
-            // prompt — a chip it can then delete with one backspace. Typing a
-            // path instead produced a hundred-character filename in the middle
-            // of a sentence; Parker, on seeing both: *"the terminal shows
-            // `[Image #n]` --- We want the terminal short style"*.
-            //
-            // So on an agent pane the chord goes straight down the PTY and the
-            // agent shows its own short form. We only save a file where there
-            // is nobody on the far end to do it — a shell has no idea what an
-            // image is, and there a path is the only thing that can be typed.
-            if self.mode.is_agent() {
-                self.bench_keystroke(vec![0x16], cx);
-                // The composer cannot show the agent's `[Image #7]` — it does
-                // not know the number and inventing one would desynchronise
-                // the mirror. It shows that an image went, which is the part
-                // it does know. See [`crate::workbench::Line::note_paste`].
-                if let Some(line) = self.wb_compose.as_mut() {
-                    line.note_paste();
-                }
-                self.composer_follows();
-                cx.notify();
-                return;
-            }
+            // The window owns desktop access. A persistent host may have been
+            // launched without DISPLAY/WAYLAND_DISPLAY, so forwarding Ctrl+V
+            // asks an agent with no clipboard connection to fetch the picture.
+            // Both Claude and Codex recognise a bracketed image path as an
+            // attachment and supply their own compact image chip.
             if let Some(path) = self.clipboard_image_path() {
-                self.bench_typed(path, cx);
-                return;
+                if self.mode.is_agent() {
+                    let text = crate::workbench::paths_as_words(&[path.into()]);
+                    self.bench_keystroke(super::paste_bytes(&text, true), cx);
+                    if let Some(line) = self.wb_compose.as_mut() {
+                        line.note_paste();
+                    }
+                    self.composer_follows();
+                    cx.notify();
+                } else {
+                    self.bench_typed(path, cx);
+                }
+            } else {
+                eprintln!("terminal-delight: could not read the clipboard image");
             }
+            return;
         }
         let Some(item) = cx.read_from_clipboard() else {
             return;
@@ -4480,8 +4480,8 @@ impl TerminalView {
                                 div()
                                     .text_size(px(sk.pt(Step::Small)))
                                     .text_color(sk.ink.ink_faint)
-                                    .font_family(th.font_family.clone())
-                                    .child(format!("No {}", shelf_now.empty_word())),
+                                    .font_family(sk.font_family.clone())
+                                    .child(empty_sentence(shelf_now)),
                             )
                         },
                     )
@@ -4739,6 +4739,20 @@ impl TerminalView {
                 self.wb_regions.clone(),
             ))
             .into_any_element()
+    }
+}
+
+/// What an empty shelf says, as one whole sentence in the reader's language.
+/// It was `No ` glued onto a per-shelf tail ("artifacts yet"), which no
+/// other language can be built from.
+fn empty_sentence(shelf: crate::surface::Shelf) -> &'static str {
+    use crate::surface::Shelf;
+    let t = &crate::lang::current().strings().parts;
+    match shelf {
+        Shelf::Artifacts => t.surface_shelf_empty_artifacts,
+        Shelf::Decisions => t.surface_shelf_empty_decisions,
+        Shelf::Overview => t.surface_shelf_empty_overview,
+        Shelf::Comments => t.surface_shelf_empty_comments,
     }
 }
 

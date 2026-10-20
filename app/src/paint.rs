@@ -174,6 +174,20 @@ pub struct Entry {
     pub star: bool,
 }
 
+/// The `⟲` tile's whole word, `word`, split for [`entries`] as `(rest,
+/// second)`. The chord is `D` in every language, because the key on the
+/// keyboard does not translate. When the word starts with that letter it reads
+/// as one word with its initial worn loud (D + ESKTOP), as it always has; when
+/// it does not, the key stands alone on the first line and the whole word sits
+/// under it, rather than a `D` glued onto a word it is not the start of.
+pub fn split_lead(word: &str) -> (String, String) {
+    let mut chars = word.chars();
+    match chars.next() {
+        Some(c) if c.eq_ignore_ascii_case(&'D') => (chars.as_str().to_string(), String::new()),
+        _ => (String::new(), word.to_string()),
+    }
+}
+
 /// Every tile on `shelf`, in shelf order, with the `⟲` tile leading.
 ///
 /// `lead` is the rest of that first tile's word after its `D`: the wall says
@@ -351,26 +365,30 @@ pub fn arrow(target: theme::Target, key: &str) -> Arrow {
 /// and no shortlist is not promised shelves it hasn't got — and `⇧f` is offered
 /// only when there is something to star, since naming a key that would do
 /// nothing is exactly what this line promises never to do.
+///
+/// Each item leads with its key cap (`z`, `f`, `⇧f`, `↵ esc`), and the
+/// translations keep it: the key is the same key in every language.
 pub fn legend(cx: &App, walk: &[&str], lead_verb: &str, worn: &Wearing) -> String {
+    let t = &crate::lang::current().strings().parts;
     let mut parts: Vec<&str> = walk.to_vec();
-    parts.push("letter paints");
+    parts.push(t.paint_legend_letter_paints);
     let shelves = theme::shelves(cx);
     if shelves.len() > 1 {
-        parts.push("z shelf");
+        parts.push(t.paint_legend_z_shelf);
     }
     if shelves.contains(&Shelf::Favourites) {
-        parts.push("f favourites");
+        parts.push(t.paint_legend_f_favourites);
     }
     let worn_fav = worn.fav();
     if let Some(w) = &worn_fav {
         parts.push(if fav::contains(cx, w) {
-            "⇧f unstar"
+            t.paint_legend_unstar
         } else {
-            "⇧f star"
+            t.paint_legend_star
         });
     }
     parts.push(lead_verb);
-    parts.push("↵ esc done");
+    parts.push(t.paint_legend_done);
     parts.join(" · ")
 }
 
@@ -386,9 +404,17 @@ pub fn legend(cx: &App, walk: &[&str], lead_verb: &str, worn: &Wearing) -> Strin
 /// The header says what is WORN, not what could be picked, so a named colour
 /// set still answers with its name although no shelf offers the sets now: a
 /// pane still wearing `wood` is wearing wood, not something custom.
+///
+/// DEFAULT and CUSTOM are words, and translate; a look's own name does not.
 pub fn worn_label(w: &Wearing) -> String {
+    worn_label_in(w, crate::lang::current())
+}
+
+/// [`worn_label`] in a given language.
+fn worn_label_in(w: &Wearing, l: crate::lang::Lang) -> String {
+    let t = &l.strings().parts;
     if w.unpainted {
-        return "DEFAULT".into();
+        return t.paint_worn_default.into();
     }
     if let Some(id) = &w.palette {
         return id.to_uppercase();
@@ -399,7 +425,7 @@ pub fn worn_label(w: &Wearing) -> String {
         .and_then(|d| Dynamic::NAMED.iter().find(|n| n.same_kind(d)))
     {
         Some(d) => d.label().to_uppercase(),
-        None => "CUSTOM".into(),
+        None => t.paint_worn_custom.into(),
     }
 }
 
@@ -433,14 +459,19 @@ pub fn card(th: &Theme, sk: &Skin, scale: f32, aimed: bool) -> Div {
         .map(|d| sk.finish(d))
         .text_color(th.text)
         .font_family(sk.font_family.clone())
-        .shadow(crate::float_shadows(
-            if aimed {
-                th.accent
-            } else {
-                th.accent.alpha(0.35)
-            },
-            th.grade.phosphor,
-        ))
+        // Stock and cut plates own their contact shadow; the plain skin keeps
+        // the legacy phosphor treatment.
+        .map(|d| {
+            sk.floating_shadow(
+                d,
+                if aimed {
+                    th.accent
+                } else {
+                    th.accent.alpha(0.35)
+                },
+                th.grade.phosphor,
+            )
+        })
 }
 
 /// A card's header: what is being painted on the left, what it has on now on
@@ -563,7 +594,7 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
     let lit = e.lit;
     div()
         .relative()
-        .w(px(if sk.is_paper() { 106. } else { TILE_W }))
+        .w(px(sk.fit(TILE_W, 106.)))
         .flex()
         .flex_col()
         .items_center()
@@ -577,13 +608,7 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
         } else {
             surf.alpha(0.92)
         })
-        .map(|d| {
-            if sk.is_paper() {
-                sk.paper_control(d, false)
-            } else {
-                d
-            }
-        })
+        .map(|d| sk.action(d, false))
         .cursor_pointer()
         .hover(move |s| s.bg(acc.alpha(0.20)))
         .when(e.star, |d| {
@@ -602,22 +627,20 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
         // stagger and the grid reads as scrunched.
         .child(
             div()
-                .h(px(if sk.is_paper() { 28. } else { 21. }))
+                .h(px(sk.fit(21., 28.)))
                 .flex()
                 .items_center()
                 .child(face_el(&e.face, th, sk)),
         )
         .child(
             div()
-                .h(px(if sk.is_paper() { 42. } else { 21. }))
+                .h(px(sk.fit(21., 42.)))
                 .flex()
                 .flex_col()
                 .items_center()
                 .justify_center()
-                .when(sk.is_paper(), |d| {
-                    d.relative()
-                        .children(lit.then(|| crate::paper::selection(sk.ink.select)))
-                })
+                .relative()
+                .children(sk.marker(lit))
                 .child(
                     // The name, with its chord worn loud — bigger, heavier,
                     // underlined, and inked in the TILE'S OWN colour, so the key
@@ -642,13 +665,11 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
                         .child(
                             div()
                                 .text_size(sk.text_px(8.))
-                                .text_color(if sk.is_paper() {
-                                    sk.ink.ink_dim
-                                } else if lit {
+                                .text_color(sk.caption_ink(if lit {
                                     txt.alpha(0.9)
                                 } else {
                                     faint
-                                })
+                                }))
                                 .child(e.rest.clone()),
                         ),
                 )
@@ -659,13 +680,7 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
                     d.child(
                         div()
                             .text_size(sk.text_px(8.))
-                            .text_color(if sk.is_paper() {
-                                sk.ink.ink_dim
-                            } else if lit {
-                                txt.alpha(0.9)
-                            } else {
-                                faint
-                            })
+                            .text_color(sk.caption_ink(if lit { txt.alpha(0.9) } else { faint }))
                             .child(e.second.clone()),
                     )
                 }),
@@ -836,6 +851,39 @@ mod tests {
             "CUSTOM",
             "a seeded tint with no set name is not the house default"
         );
+    }
+
+    /// DEFAULT and CUSTOM are drawn in the reader's language and stay exactly
+    /// the English words in English; a named look keeps its own name in every
+    /// language.
+    #[test]
+    fn the_header_value_translates_its_words_not_its_names() {
+        use crate::lang::Lang;
+        let unpainted = Wearing {
+            unpainted: true,
+            ..Default::default()
+        };
+        for l in Lang::ALL {
+            assert_eq!(
+                worn_label_in(&unpainted, l),
+                l.strings().parts.paint_worn_default
+            );
+        }
+        assert_eq!(worn_label_in(&unpainted, Lang::En), "DEFAULT");
+        let d = Dynamic::NAMED[0].clone();
+        assert_eq!(
+            worn_label_in(&set(d.clone()), Lang::Ru),
+            d.label().to_uppercase()
+        );
+    }
+
+    /// The `⟲` tile keeps its `D` chord whatever the word: a word that starts
+    /// with D reads as one word, any other sits whole under the key.
+    #[test]
+    fn the_lead_tile_keeps_its_d_in_every_language() {
+        assert_eq!(split_lead("DESKTOP"), ("ESKTOP".into(), String::new()));
+        assert_eq!(split_lead("BUREAU"), (String::new(), "BUREAU".to_string()));
+        assert_eq!(split_lead(""), (String::new(), String::new()));
     }
 
     /// A window that has not said how big it is gets the narrow card, never a

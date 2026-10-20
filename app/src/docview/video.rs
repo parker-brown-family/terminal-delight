@@ -395,7 +395,7 @@ impl VideoDoc {
         }
     }
 
-    fn bar_el(&self, width: f32, th: &Theme) -> AnyElement {
+    fn bar_el(&self, width: f32, th: &Theme, sk: &crate::skin::Skin) -> AnyElement {
         let bar = bar_layout(width);
         let acc = th.accent;
         let slot = |(l, r): (f32, f32), label: String| {
@@ -417,9 +417,10 @@ impl VideoDoc {
             Some(false) => "❚❚",
             None => "…",
         };
+        let t = &crate::lang::current().strings().parts;
         let sound = match self.status.muted {
-            Some(true) => "muted",
-            Some(false) => "sound",
+            Some(true) => t.video_muted,
+            Some(false) => t.video_sound,
             None => "…",
         };
         let (l, r) = bar.line();
@@ -430,7 +431,7 @@ impl VideoDoc {
             .top(px(mid - 1.0))
             .w(px((r - l).max(0.0)))
             .h(px(2.0))
-            .rounded(px(1.0))
+            .rounded(sk.rad_raw(1.))
             .bg(acc.alpha(0.25));
         if let Some(f) = progress(&self.status) {
             let at = (r - l).max(0.0) * f as f32;
@@ -442,7 +443,7 @@ impl VideoDoc {
                         .top_0()
                         .h(px(2.0))
                         .w(px(at))
-                        .rounded(px(1.0))
+                        .rounded(sk.rad_raw(1.))
                         .bg(acc),
                 )
                 .child(
@@ -451,11 +452,12 @@ impl VideoDoc {
                         .left(px(at - 4.0))
                         .top(px(-3.0))
                         .size(px(8.0))
-                        .rounded(px(4.0))
+                        .rounded(sk.radius_pill())
                         .bg(acc),
                 );
         }
-        let mut el = div()
+        let mut el = sk
+            .chrome(sk.sheet())
             .absolute()
             .left_0()
             .bottom_0()
@@ -463,7 +465,7 @@ impl VideoDoc {
             .h(px(BAR_H))
             .border_t_1()
             .border_color(acc.alpha(0.4))
-            .text_size(px(11.))
+            .text_size(sk.text_px(11.))
             .text_color(acc)
             .child(slot(bar.play, play.into()))
             .child(track)
@@ -481,7 +483,7 @@ impl VideoDoc {
         el.into_any_element()
     }
 
-    pub fn element(&mut self, view: &Drawn, th: &Theme) -> AnyElement {
+    pub fn element(&mut self, view: &Drawn, th: &Theme, sk: &crate::skin::Skin) -> AnyElement {
         let note = |s: String| {
             div()
                 .p(px(14.))
@@ -495,8 +497,9 @@ impl VideoDoc {
         if let Some(why) = &self.status.error {
             return note(why.clone());
         }
+        let t = &crate::lang::current().strings().parts;
         let Some((size, scale)) = view.frame else {
-            return note("opening…".into());
+            return note(t.doc_opening.into());
         };
         self.ink_in(th);
         self.ask_size(size, scale);
@@ -527,8 +530,8 @@ impl VideoDoc {
                     .object_fit(ObjectFit::Fill)
                     .into_any_element()
             }
-            (_, None) if self.status.loaded => note("This file has sound but no picture.".into()),
-            _ => note("opening…".into()),
+            (_, None) if self.status.loaded => note(t.video_no_picture.into()),
+            _ => note(t.doc_opening.into()),
         };
         div()
             .size_full()
@@ -542,7 +545,7 @@ impl VideoDoc {
                     .h(px(area.1))
                     .child(picture),
             )
-            .child(self.bar_el(w, th))
+            .child(self.bar_el(w, th, sk))
             .into_any_element()
     }
 
@@ -568,8 +571,14 @@ impl VideoDoc {
 // file to follow — a file that changes under a playing video is mpv's to
 // notice — and no notes, so those are the trait's defaults.
 impl Backend for VideoDoc {
-    fn element(&mut self, view: &Drawn, _window: &mut Window, th: &Theme) -> AnyElement {
-        VideoDoc::element(self, view, th)
+    fn element(
+        &mut self,
+        view: &Drawn,
+        _window: &mut Window,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> AnyElement {
+        VideoDoc::element(self, view, th, sk)
     }
 
     fn give_back(&mut self, path: &Path, cx: &mut App) {

@@ -220,7 +220,13 @@ impl MarkdownDoc {
 impl Backend for MarkdownDoc {
     /// The column, and over it the notes: each block's rule and 💬, the bar,
     /// and the note box above everything.
-    fn element(&mut self, view: &Drawn, window: &mut Window, th: &Theme) -> AnyElement {
+    fn element(
+        &mut self,
+        view: &Drawn,
+        window: &mut Window,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> AnyElement {
         let size = view.frame.map(|(size, _)| size);
         self.view = size;
         // Where the LAST paint put each block, read before the column is
@@ -239,8 +245,8 @@ impl Backend for MarkdownDoc {
         let marks = layer.marks(&anchors, &self.note_map(size), self.pointer);
         let mut layers = vec![column];
         layers.extend(layer.draw_marks(&marks, th));
-        layers.push(layer.draw_bar(&anchors, th, self.beside.as_deref()));
-        layers.extend(layer.draw_box(size, th));
+        layers.push(layer.draw_bar(&anchors, th, self.beside.as_deref(), sk));
+        layers.extend(layer.draw_box(size, th, sk));
         div()
             .absolute()
             .inset_0()
@@ -580,13 +586,19 @@ impl Backend for MarkdownDoc {
 fn embedded<E: std::fmt::Display>(
     decoded: Result<Arc<RenderImage>, E>,
 ) -> Result<Arc<RenderImage>, String> {
-    let image = decoded.map_err(|e| format!("could not be read: {e}"))?;
+    let t = &crate::lang::current().strings().parts;
+    let image = decoded
+        .map_err(|e| crate::lang::fill(t.doc_md_embed_unreadable, &[("error", &e.to_string())]))?;
     let size = image.size(0);
     let (w, h) = (size.width.0.max(0) as u32, size.height.0.max(0) as u32);
     if image::too_large(w, h) {
-        return Err(format!(
-            "{w} × {h} pixels, past the {} the GPU can hold here",
-            image::MAX_SIDE
+        return Err(crate::lang::fill(
+            t.doc_md_embed_too_large,
+            &[
+                ("w", &w.to_string()),
+                ("h", &h.to_string()),
+                ("max", &image::MAX_SIDE.to_string()),
+            ],
         ));
     }
     Ok(image)
@@ -604,7 +616,15 @@ fn read_markdown(md: &mut MarkdownDoc, path: &Path, cx: &mut Context<DocumentVie
         let stamp = FileStamp::of(&path);
         let parsed = std::fs::read(&path)
             .map(|bytes| markdown::parse(&String::from_utf8_lossy(&bytes), path.parent()))
-            .map_err(|e| format!("Could not read {}: {e}", path.display()));
+            .map_err(|e| {
+                crate::lang::fill(
+                    crate::lang::current().strings().parts.doc_md_unreadable,
+                    &[
+                        ("path", &path.display().to_string()),
+                        ("error", &e.to_string()),
+                    ],
+                )
+            });
         let kept = md_notes::read(&md_notes::store_in(&root, &path));
         (stamp, parsed, kept)
     });

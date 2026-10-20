@@ -933,6 +933,28 @@ mod tests {
         assert!(!path.exists(), "and deleted after");
     }
 
+    /// The older way to open a synchronized update, the string `ESC P = 1 s`,
+    /// holds the frame back just as `ESC [ ? 2026 h` does, even when the
+    /// frame's first text shares the opener's read (issue 1046).
+    #[test]
+    fn the_older_opener_holds_back_text_that_shares_its_read() {
+        use crate::vt::{Column, Line, Point};
+        let first = |term: &Term| term.cell(Point::new(Line(0), Column(0))).c;
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(b"\x1bP=1s\x1b\\hello");
+        assert_ne!(
+            first(&term),
+            'h',
+            "drawn before the update closed: a torn frame"
+        );
+        assert!(
+            term.sync_bytes_count() > 0,
+            "the update holds the text back"
+        );
+        term.advance(b"\x1bP=2s\x1b\\");
+        assert_eq!(first(&term), 'h', "drawn when the update closed");
+    }
+
     /// rio-vt's own rule for which temporary file it may delete is that the
     /// path contains the marker somewhere, so a path through a marked
     /// directory reaches any file the terminal can delete. TD's guard hands

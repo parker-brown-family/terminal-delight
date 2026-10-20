@@ -1,0 +1,53 @@
+# Cotton paper furniture; recipes follow the current palette in both modes.
+name = "chalk"
+icon = "✿"
+
+[font]
+family = "Caveat"
+scale = 1.45
+min_px = 16.0
+line_height = 1.15
+
+[shape]
+material = "paper"
+tube = "stock"
+corner = "square"
+boundary = "hairline"
+emphasis = "rail"
+divider = "line"
+caps = "off"
+shine = "flat"
+
+[note]
+decoration = "flower"
+stock = true
+
+[metric]
+gap = 6.0
+pad_x = 9.0
+pad_y = 6.0
+chip_px = 8.0
+chip_py = 3.0
+row_h = 23.0
+label_size = 16.0
+glow = 0.0
+glow_a = 0.0
+
+[ink]
+panel = { from = "surface" }
+panel_raised = { from = "surface" }
+panel_sunken = { from = "bg", toward = "surface", t = 0.12 }
+btn_face = { from = "surface", toward = "light", t = 0.12 }
+rule = { from = "text", a = 0.12 }
+rule_strong = { from = "text", a = 0.22 }
+edge = { from = "text", a = 0.25 }
+edge_strong = { from = "text", a = 0.22 }
+edge_rest = { from = "text", a = 0.24 }
+ink_dim = { from = "text", a = 0.82 }
+ink_faint = { from = "text", a = 0.76 }
+ink_off = { from = "text", a = 0.70 }
+ink_on_mark = { from = "text" }
+hover = { from = "accent", a = 0.10 }
+mark_wash = { from = "accent", a = 0.06 }
+row_active = { from = "bg", a = 0.90 }
+select = { from = "complement", toward = "human", t = 0.40 }

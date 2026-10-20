@@ -33,24 +33,82 @@ pub enum Status {
     Expected,
 }
 
+/// Why a finding is presented as it is, as a key rather than as English, so
+/// the overlay can say it in the reader's language. [`Presentation::reason`]
+/// is this said in English, and that is what agents read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Why {
+    New,
+    SingleSession,
+    SeenConflict,
+    SeenUnchanged,
+    Changed,
+    /// Expected until this instant (ms since the epoch).
+    Expected(u64),
+    Expired,
+    Revoked,
+    ScopeExceeded,
+    Unverifiable,
+    Reconfirm,
+}
+
+impl Why {
+    pub fn say(self, l: crate::lang::Lang) -> String {
+        let t = l.strings().gc;
+        match self {
+            Why::New => t.reason_new,
+            Why::SingleSession => t.reason_single_session,
+            Why::SeenConflict => t.reason_seen_conflict,
+            Why::SeenUnchanged => t.reason_seen_unchanged,
+            Why::Changed => t.reason_changed,
+            Why::Expected(at) => {
+                return crate::lang::fill(t.reason_expected, &[("time", &expiry_label(at))]);
+            }
+            Why::Expired => t.reason_expired,
+            Why::Revoked => t.reason_revoked,
+            Why::ScopeExceeded => t.reason_scope_exceeded,
+            Why::Unverifiable => t.reason_unverifiable,
+            Why::Reconfirm => t.reason_reconfirm,
+        }
+        .to_string()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Presentation {
     pub status: Status,
     pub reason: String,
     pub expectation: Option<Expectation>,
     pub expectation_state: Option<String>,
+    /// [`Presentation::reason`] as a key. Absent on a presentation read back
+    /// from anywhere but [`Memory::present`]; the English then stands.
+    #[serde(skip)]
+    pub why: Option<Why>,
 }
 impl Default for Presentation {
     fn default() -> Self {
-        Self {
-            status: Status::New,
-            reason: "New observation; no acknowledgement recorded.".into(),
-            expectation: None,
-            expectation_state: None,
-        }
+        Self::because(Status::New, Why::New)
     }
 }
 impl Presentation {
+    fn because(status: Status, why: Why) -> Self {
+        Self {
+            status,
+            reason: why.say(crate::lang::Lang::En),
+            expectation: None,
+            expectation_state: None,
+            why: Some(why),
+        }
+    }
+    fn set(&mut self, why: Why) {
+        self.reason = why.say(crate::lang::Lang::En);
+        self.why = Some(why);
+    }
+    /// The reason in the reader's language, or the English when no key came
+    /// with it.
+    pub fn reason_in(&self, l: crate::lang::Lang) -> String {
+        self.why.map_or_else(|| self.reason.clone(), |w| w.say(l))
+    }
     pub fn novel(&self) -> bool {
         matches!(self.status, Status::New | Status::Changed)
     }
@@ -177,8 +235,7 @@ impl Memory {
         let mut result = Presentation::default();
         if f.single_session {
             result.status = Status::Known;
-            result.reason =
-                "Multiple views of one known session; no competing writers established.".into();
+            result.set(Why::SingleSession);
         }
         let Some(r) = self
             .document
@@ -194,16 +251,14 @@ impl Memory {
             && r.episode == f.episode
         {
             result.status = Status::Known;
-            result.reason = if f.kind.conflict() {
-                "Seen; the conflict remains unresolved."
+            result.set(if f.kind.conflict() {
+                Why::SeenConflict
             } else {
-                "Seen; no material change observed."
-            }
-            .into();
+                Why::SeenUnchanged
+            });
         } else if r.acknowledged {
             result.status = Status::Changed;
-            result.reason =
-                "The observed condition or comparison scope changed since acknowledgement.".into();
+            result.set(Why::Changed);
         }
         if let Some(e) = &r.expectation {
             let state = if e.revoked_at_ms.is_some() {
@@ -223,23 +278,20 @@ impl Memory {
             result.expectation_state = Some(state.into());
             if state == "applicable" && f.kind.sharing() {
                 result.status = Status::Expected;
-                result.reason=format!("Declared expected by the local operator until {}. Sharing only; conflicts remain separate.", expiry_label(e.expires_at_ms));
+                result.set(Why::Expected(e.expires_at_ms));
             } else {
                 // Expiry/revocation can be acknowledged once; it is not a new
                 // event on every subsequent scan.
                 if !r.acknowledged {
                     result.status = Status::Changed;
                 }
-                result.reason = match state {
-                    "expired" => "The sharing expectation expired.",
-                    "revoked" => "The sharing expectation was revoked.",
-                    "scope_exceeded" => "The sharing arrangement exceeds the declared scope.",
-                    "unverifiable" => {
-                        "Expected sharing cannot currently be verified; observations are missing."
-                    }
-                    _ => "Expectation needs reconfirmation after restart or scope change.",
-                }
-                .into();
+                result.set(match state {
+                    "expired" => Why::Expired,
+                    "revoked" => Why::Revoked,
+                    "scope_exceeded" => Why::ScopeExceeded,
+                    "unverifiable" => Why::Unverifiable,
+                    _ => Why::Reconfirm,
+                });
             }
         }
         result

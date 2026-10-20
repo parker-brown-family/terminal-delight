@@ -57,6 +57,8 @@ use gpui::{
 use serde::Deserialize;
 
 use crate::theme::{self, Theme};
+mod catalogue;
+pub(crate) mod parts;
 
 /// Today's chrome, stated as tokens. Must stay pixel-faithful to what main.rs
 /// draws — `default_skin_reproduces_todays_chrome` is the gate.
@@ -68,6 +70,7 @@ const BUILTIN_SKINS: &[(&str, &str)] = &[
     ("default", DEFAULT_SKIN_TOML),
     ("deco", include_str!("../skins/deco.toml")),
     ("console", include_str!("../skins/console.toml")),
+    ("ops", include_str!("../skins/ops.toml")),
 ];
 
 // ---------------------------------------------------------------------------
@@ -90,6 +93,8 @@ pub enum Role {
     /// Pure white — the ground of every "lift on hover" tint in the chrome.
     White,
     Black,
+    /// The lighter of this palette's foreground and background, for stock.
+    Light,
     /// One of the sixteen ANSI slots, so state inks (ok/warn/danger) track the
     /// palette's own idea of green/yellow/red instead of being invented here.
     Ansi(u8),
@@ -108,6 +113,7 @@ impl Role {
             "cursor" => Role::Cursor,
             "white" => Role::White,
             "black" => Role::Black,
+            "light" => Role::Light,
             other => {
                 let n: u8 = other.strip_prefix("ansi")?.parse().ok()?;
                 if n > 15 {
@@ -133,6 +139,13 @@ impl Role {
             Role::Cursor => th.cursor,
             Role::White => hsla(0., 0., 1., 1.),
             Role::Black => hsla(0., 0., 0., 1.),
+            Role::Light => {
+                if th.bg.l < th.text.l {
+                    th.text
+                } else {
+                    th.bg
+                }
+            }
             Role::Ansi(n) => th.ansi[(n as usize).min(15)],
         }
     }
@@ -449,6 +462,12 @@ metric_tokens! {
     // the level of the model and effort buttons but like +10% more phosphor"*.
     glow        => "glow",        5.25,  "how far the phosphor ring blooms past its border";
     glow_a      => "glow_a",      0.11,  "how hot the bloom is, 0..1 — NOT a length";
+    // Read only under `corner = "cut"`; every other corner strategy ignores it.
+    cut         => "cut",         7.0,   "how far a cut corner reaches along each edge";
+    grain       => "grain",       1.0,   "material grain strength, 0..1";
+    roughness   => "roughness",   1.0,   "paper edge irregularity, 0..1";
+    lift        => "lift",        1.0,   "paper contact shadow and stock depth, 0..2";
+    marker_alpha => "marker_alpha", 0.22, "highlighter opacity, 0..1";
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +492,12 @@ pub enum Corner {
     /// Deco, and every "serious instrument" look: no radius anywhere. Emphasis
     /// has to come from the boundary instead, which is the whole point.
     Square,
+    /// The chamfer issue #407 parked: square, with the top-left and
+    /// bottom-right corners cut off by the `cut` metric. gpui has no property
+    /// for it, so a region that wears it is drawn as a plate
+    /// ([`crate::deck::plate`]) by [`Skin::panel`] and [`Skin::finish`];
+    /// everything that only asks for a radius gets square.
+    Cut,
 }
 
 /// How the edge of a region is drawn.
@@ -521,6 +546,20 @@ pub enum Emphasis {
     /// why this belongs in the DEFAULT skin and not only in deco: the retro look
     /// is the one it was always going to suit best.
     Glow,
+    /// A solid bar the selected thing sits on — Fallout 4's Pip-Boy. A row's
+    /// bar ends in an arrow tip ([`crate::deck::bar_tip`]) and its text turns
+    /// to [`Inks::ink_on_mark`] ([`Skin::lit_label`]); a chip is a solid fill;
+    /// a tab is cradled by the bracket that rises around Pip-Boy's active tab.
+    /// The loudest marking in the vocabulary, so it suits a skin that keeps
+    /// everything else quiet.
+    ///
+    /// The SLAB is the accent (`mark`), and that is not the collision the
+    /// selection rule guards against: the rule exists because a ring or an
+    /// edge in the accent vanishes into accent furniture, and a filled slab
+    /// with dark text on it is a different shape from any hairline. The EDGE
+    /// devices this strategy still draws — the tab's cradle, a slider's lit
+    /// half — keep `select`, which stays apart from the accent.
+    Bar,
 }
 
 /// The personality of a horizontal divider.
@@ -562,46 +601,119 @@ pub enum Shine {
     Flat,
 }
 
+/// How a measured share is drawn — an allowance, a budget, a level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Gauge {
+    /// A continuous rail filled to the share — what every skin drew before OPS.
+    #[default]
+    Rail,
+    /// A row of separate slanted pips, lit up to the share (XCOM's health bar).
+    /// Counting replaces estimating: "nine of twelve" is read, "about
+    /// three-quarters" is guessed. An unknown share draws hollow pips, never
+    /// dark ones (see [`crate::deck::Pip`]).
+    Pips,
+}
+
+/// How a NAME that heads something is framed — the notice on the top band,
+/// the focused pane's title.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Title {
+    #[default]
+    Plain,
+    /// Between chevrons, `» like this «` — XCOM 2's ability name. The chevrons
+    /// take the `warn` ink, the palette's signal colour, so the frame is lit
+    /// and the name stays the body colour.
+    Chevron,
+}
+
+/// What marks the pane that has the keyboard, beyond its lit frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Focus {
+    #[default]
+    Plain,
+    /// A hatched strip along the top edge of the focused pane's header — the
+    /// dotted rails beside XCOM's ability name. Drawn above the header's
+    /// content line, never under its text.
+    Hatch,
+}
+
 /// The substrate of chrome, independent of palette and terminal effects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Material {
     #[default]
     Plain,
     Paper,
+    /// A faint square grid in the accent, washed under a region's content —
+    /// the KELOWNA OPS page's 44px grid at the deck's scale. Under the text,
+    /// never over it.
+    Grid,
+}
+
+/// Terminal glass is a content policy, independent of the chrome substrate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Tube {
+    #[default]
+    Glass,
+    Stock,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum NoteDecoration {
+    #[default]
+    Plain,
+    Flower,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Shapes {
     pub material: Material,
+    pub tube: Tube,
     pub corner: Corner,
     pub boundary: Boundary,
     pub emphasis: Emphasis,
     pub divider: Divider,
     pub caps: Caps,
     pub shine: Shine,
+    pub gauge: Gauge,
+    pub title: Title,
+    pub focus: Focus,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ShapeSpecs {
     pub material: Option<Material>,
+    pub tube: Option<Tube>,
     pub corner: Option<Corner>,
     pub boundary: Option<Boundary>,
     pub emphasis: Option<Emphasis>,
     pub divider: Option<Divider>,
     pub caps: Option<Caps>,
     pub shine: Option<Shine>,
+    pub gauge: Option<Gauge>,
+    pub title: Option<Title>,
+    pub focus: Option<Focus>,
 }
 
 impl ShapeSpecs {
     fn bake(&self) -> Shapes {
         Shapes {
             material: self.material.unwrap_or_default(),
+            tube: self
+                .tube
+                .unwrap_or(if self.material == Some(Material::Paper) {
+                    Tube::Stock
+                } else {
+                    Tube::Glass
+                }),
             corner: self.corner.unwrap_or_default(),
             boundary: self.boundary.unwrap_or_default(),
             emphasis: self.emphasis.unwrap_or_default(),
             divider: self.divider.unwrap_or_default(),
             caps: self.caps.unwrap_or_default(),
             shine: self.shine.unwrap_or_default(),
+            gauge: self.gauge.unwrap_or_default(),
+            title: self.title.unwrap_or_default(),
+            focus: self.focus.unwrap_or_default(),
         }
     }
 }
@@ -616,6 +728,16 @@ impl ShapeSpecs {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkinSpec {
     pub font_family: Option<String>,
+    pub font_scale: Option<f32>,
+    pub font_min_px: Option<f32>,
+    pub font_line_height: Option<f32>,
+    pub note_decoration: Option<NoteDecoration>,
+    pub note_stock: Option<bool>,
+    /// `[font] heading` — names: a project, a pane, a panel's title. Absent
+    /// means the same face as `family`, which is every skin before OPS.
+    pub font_heading: Option<String>,
+    /// `[font] data` — numbers: a percentage, a counter, a zoom level.
+    pub font_data: Option<String>,
     pub name: String,
     pub icon: String,
     pub ink: InkSpecs,
@@ -631,6 +753,13 @@ impl Default for SkinSpec {
     fn default() -> Self {
         Self {
             font_family: None,
+            font_scale: None,
+            font_min_px: None,
+            font_line_height: None,
+            note_decoration: None,
+            note_stock: None,
+            font_heading: None,
+            font_data: None,
             name: "default".into(),
             icon: "▢".into(),
             ink: InkSpecs::default(),
@@ -648,6 +777,16 @@ impl Default for SkinSpec {
 pub struct Skin {
     /// UI only. Grid shaping continues to use Theme::font_family.
     pub font_family: String,
+    pub type_scale: f32,
+    pub type_min_px: f32,
+    pub line_height: f32,
+    pub note_decoration: NoteDecoration,
+    pub note_stock: bool,
+    /// The face for names, resolved: the file's `heading`, else `font_family`.
+    /// Ask through [`Skin::heading`], which also sets its weight.
+    pub heading_family: String,
+    /// The face for numbers, resolved: the file's `data`, else `font_family`.
+    pub data_family: String,
     pub name: String,
     pub icon: String,
     pub ink: Inks,
@@ -678,17 +817,47 @@ impl SkinSpec {
         let mut ink = self.ink.bake(th);
         if self.shape.bake().material == Material::Paper {
             let light = if th.bg.l < th.text.l { th.text } else { th.bg };
-            ink.btn_face = crate::mix(th.surface, light, 0.12);
+            if self.ink.btn_face.is_none() {
+                ink.btn_face = crate::mix(th.surface, light, 0.12);
+            }
             // Pigment on pale stock needs a darker value than chalk on slate.
-            if th.bg.l > th.text.l {
+            if th.bg.l > th.text.l && !matches!(self.ink.select, Some(InkSpec::Pinned(_))) {
                 ink.select.l = ink.select.l.min(0.36);
             }
         }
+        let font_family = self
+            .font_family
+            .clone()
+            .unwrap_or_else(|| th.font_family.clone());
         Skin {
-            font_family: self
-                .font_family
+            note_decoration: self.note_decoration.unwrap_or(
+                if self.shape.material == Some(Material::Paper) {
+                    NoteDecoration::Flower
+                } else {
+                    NoteDecoration::Plain
+                },
+            ),
+            note_stock: self
+                .note_stock
+                .unwrap_or(self.shape.material == Some(Material::Paper)),
+            // Legacy Caveat files keep their optical fit. Material never selects
+            // a font policy: a mono face on paper retains mono measurements.
+            type_scale: self
+                .font_scale
+                .unwrap_or(if font_family == "Caveat" { 1.45 } else { 1. }),
+            type_min_px: self
+                .font_min_px
+                .unwrap_or(if font_family == "Caveat" { 16. } else { 0. }),
+            line_height: self.font_line_height.unwrap_or(1.15),
+            heading_family: self
+                .font_heading
                 .clone()
-                .unwrap_or_else(|| th.font_family.clone()),
+                .unwrap_or_else(|| font_family.clone()),
+            data_family: self
+                .font_data
+                .clone()
+                .unwrap_or_else(|| font_family.clone()),
+            font_family,
             name: self.name.clone(),
             icon: self.icon.clone(),
             ink,
@@ -702,19 +871,302 @@ impl SkinSpec {
 }
 
 impl Skin {
-    /// Caveat's small body is sized optically, independently of terminal cells.
-    pub fn text_px(&self, size: f32) -> Pixels {
-        px(if self.is_paper() {
-            (size * 1.45).max(16. * self.scale)
+    pub fn glass(&self) -> bool {
+        self.shape.tube == Tube::Glass
+    }
+
+    pub fn terminal_stock<E: Styled + ParentElement>(&self, d: E, face: Hsla) -> E {
+        if self.glass() {
+            d
         } else {
-            size
-        })
+            d.bg(face).children(self.grain())
+        }
+    }
+
+    pub fn note_palette(&self, th: &Theme) -> crate::sticky::Paper {
+        let mut paper = crate::sticky::paper_for(th);
+        if self.note_stock && th.note_paper == crate::theme::NotePaper::Contrast {
+            paper.base = crate::mix(self.ink.btn_face, th.accent, 0.07);
+            paper.ink = th.text;
+            paper.pin = th.ansi[1];
+        }
+        paper
+    }
+
+    pub fn reading_header(&self, d: Div) -> Div {
+        if self.type_scale > 1. {
+            d.flex_col().items_start().gap(self.px(4.))
+        } else {
+            d
+        }
+    }
+    fn stock(&self) -> crate::paper::Stock {
+        crate::paper::Stock {
+            grain: self.m.grain,
+            roughness: self.m.roughness,
+            lift: self.m.lift,
+            marker_alpha: self.m.marker_alpha,
+        }
+    }
+
+    /// Restore the UI type policy on a region that otherwise inherits content type.
+    pub fn chrome<E: Styled>(&self, d: E) -> E {
+        d.font_family(self.font_family.clone())
+            .line_height(gpui::relative(self.line_height))
+    }
+
+    /// Fit compact chrome to the optical type policy; these are the two
+    /// established geometry endpoints, independent of the substrate.
+    pub fn fit(&self, normal: f32, large_type: f32) -> f32 {
+        normal + (large_type - normal) * ((self.type_scale - 1.) / 0.45).clamp(0., 2.)
+    }
+
+    pub fn caption(&self, text: &str, size: f32, selected: bool) -> Div {
+        if self.is_paper() {
+            self.paper_caption(text, size, selected)
+        } else {
+            div()
+                .text_size(self.text_px(size))
+                .whitespace_nowrap()
+                .child(text.to_owned())
+        }
+    }
+
+    pub fn marker(&self, selected: bool) -> Option<Div> {
+        (selected && self.is_paper())
+            .then(|| crate::paper::selection_with(self.ink.select, self.stock()))
+    }
+
+    pub fn caption_ink(&self, legacy: Hsla) -> Hsla {
+        if self.is_paper() {
+            self.ink.ink_dim
+        } else {
+            legacy
+        }
+    }
+
+    pub fn region_face(&self, legacy: Hsla) -> Hsla {
+        if self.is_paper() {
+            self.ink.panel
+        } else {
+            legacy
+        }
+    }
+
+    /// Edge only, safe after a caller has added its text or hosted content.
+    fn stock_rim(&self, edge: Hsla, accent: Hsla, active: bool) -> Div {
+        crate::paper::rim_with(edge, accent, active, self.stock())
+    }
+
+    pub fn rim(&self, edge: Hsla, accent: Hsla, active: bool) -> Option<Div> {
+        self.is_paper()
+            .then(|| crate::paper::rim_with(edge, accent, active, self.stock()))
+    }
+
+    pub fn frame<E: Styled>(&self, d: E) -> E {
+        if self.is_paper() {
+            d.rounded(px(0.))
+                .border_color(gpui::transparent_black())
+                .shadow(crate::paper::shadows_with(self.stock()))
+        } else {
+            d
+        }
+    }
+
+    /// A slider's decoration; the caller retains its measured hit target,
+    /// handlers and value mapping. Both strategies share those exact bounds.
+    pub fn scrubber(&self, fraction: f32) -> Div {
+        let fraction = fraction.clamp(0., 1.);
+        if self.is_paper() {
+            return crate::paper::gauge(
+                fraction,
+                self.ink.btn_face,
+                self.ink.ink_dim,
+                self.ink.select,
+                self.stock(),
+            );
+        }
+        div()
+            .absolute()
+            .inset_0()
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(gpui::relative(0.5))
+                    .h(px(3.))
+                    .rounded(self.radius_pill())
+                    .bg(self.ink.mark.alpha(0.18)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(gpui::relative(0.5))
+                    .h(px(3.))
+                    .w(gpui::relative(fraction))
+                    .rounded(self.radius_pill())
+                    .bg(self.ink.select),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(gpui::relative(fraction))
+                    .top(gpui::relative(0.5))
+                    .ml(px(-5.))
+                    .mt(px(-4.))
+                    .size(px(10.))
+                    .rounded(self.radius_pill())
+                    .bg(self.ink.mark),
+            )
+    }
+
+    /// Apply a choice's material without altering its input geometry or semantic ink.
+    pub fn choice<E: Styled + ParentElement>(&self, d: E, active: bool) -> E {
+        if self.is_paper() {
+            self.paper_option(d, active)
+        } else {
+            self.tab(d.relative().rounded(self.radius()), active, self.ink.select)
+                .font_family(self.font_family.clone())
+                .text_color(if active {
+                    self.lit_label()
+                } else {
+                    self.ink.ink_dim
+                })
+        }
+    }
+
+    /// An action has a raised backing; a choice is writing on the parent region.
+    /// Apply this before adding content: ParentElement appends visual children.
+    pub fn action<E: Styled + ParentElement>(&self, d: E, active: bool) -> E {
+        if self.is_paper() {
+            self.paper_control(d, active)
+        } else {
+            d.relative().rounded(self.radius()).children(self.grain())
+        }
+    }
+
+    /// A semantic meter track/fill keeps its caller's data colour.
+    pub fn meter_part(&self, d: Div) -> Div {
+        d.relative()
+            .rounded(self.radius_pill())
+            .children(self.grain())
+    }
+
+    /// An allowance may use discrete marks; the owner still chooses its count and semantic inks.
+    pub fn discrete_meter(
+        &self,
+        reading: Option<f32>,
+        count: usize,
+        ink: Hsla,
+        track: Hsla,
+        unknown: Hsla,
+    ) -> Option<Div> {
+        (self.shape.gauge == Gauge::Pips)
+            .then(|| crate::deck::pips(crate::deck::pips_for(reading, count), ink, track, unknown))
+    }
+
+    /// A floating plain frame keeps its phosphor shadow; stock and cut frames own their depth.
+    pub fn floating_shadow<E: Styled>(&self, d: E, ink: Hsla, phosphor: f32) -> E {
+        if self.is_paper() || self.is_cut() {
+            d
+        } else {
+            d.shadow(crate::float_shadows(ink, phosphor))
+        }
+    }
+
+    /// A bounded reading. Absence draws hollow pips or an explicitly unknown rail.
+    pub fn meter(
+        &self,
+        reading: Option<f32>,
+        ink: Hsla,
+        track: Hsla,
+        unknown: Hsla,
+        height: f32,
+    ) -> Div {
+        let reading = reading.filter(|v| v.is_finite()).map(|v| v.clamp(0., 1.));
+        if let Some(pips) = self.discrete_meter(reading, 24, ink, track, unknown) {
+            return div().relative().w_full().h(px(height * 1.8)).child(pips);
+        }
+        let track = self.meter_part(div().w_full().h(px(height)).bg(track));
+        match reading {
+            Some(f) => track.overflow_hidden().child(
+                self.meter_part(
+                    div()
+                        .h_full()
+                        .w(gpui::relative(if f > 0. { f.max(0.02) } else { 0. }))
+                        .bg(ink),
+                ),
+            ),
+            None => track
+                .border_1()
+                .border_color(unknown)
+                .text_color(unknown)
+                .child("—"),
+        }
+    }
+
+    /// Set a NAME in the skin's heading face: a project, a pane title, a
+    /// panel's title, the notice on the top band.
+    ///
+    /// A no-op unless the skin names a heading face of its own, so every skin
+    /// written before `[font] heading` existed keeps drawing exactly what it
+    /// drew. A separate heading face is set bold: it is there to be the loud
+    /// voice beside the interface text, and a regular cut of a display face
+    /// reads as a typo for the body face.
+    pub fn heading<E: Styled>(&self, d: E) -> E {
+        if self.heading_family == self.font_family {
+            return d;
+        }
+        d.font_family(self.heading_family.clone())
+            .font_weight(gpui::FontWeight::BOLD)
+    }
+
+    /// A name one rung quieter than a heading — an initiative under its
+    /// project, a section inside a panel: the heading face, semibold. A no-op
+    /// under a skin with no heading face of its own.
+    pub fn subheading<E: Styled>(&self, d: E) -> E {
+        if self.heading_family == self.font_family {
+            return d;
+        }
+        d.font_family(self.heading_family.clone())
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+    }
+
+    /// A name's letters, as the heading face sets them: capitals, when the skin
+    /// has a heading face of its own, and the string untouched otherwise. Kept
+    /// apart from [`Skin::caps`], which is the LABEL strategy and already has
+    /// its own answer in deco and console.
+    pub fn heading_text(&self, text: &str) -> String {
+        if self.heading_family == self.font_family {
+            text.to_string()
+        } else {
+            text.to_uppercase()
+        }
+    }
+
+    /// Set a NUMBER in the skin's data face: a percentage, a count, a zoom.
+    /// A no-op unless the skin names a data face of its own.
+    pub fn data<E: Styled>(&self, d: E) -> E {
+        if self.data_family == self.font_family {
+            return d;
+        }
+        d.font_family(self.data_family.clone())
+    }
+
+    /// Optical chrome type, independent of material and measured terminal cells.
+    pub fn text_px(&self, size: f32) -> Pixels {
+        px((size * self.type_scale).max(self.type_min_px * self.scale))
     }
 
     /// An unpadded sheet: callers retain their geometry and interaction.
     pub fn sheet(&self) -> Div {
         if self.is_paper() {
             div().relative().bg(self.ink.panel).children(self.grain())
+        } else if self.has_material() {
+            // The wash only: a band keeps the ground it already had.
+            div().relative().children(self.grain())
         } else {
             div()
         }
@@ -722,63 +1174,137 @@ impl Skin {
 
     /// Finish a region before its content is added, replacing legacy chrome.
     pub fn finish<E: Styled + ParentElement>(&self, d: E) -> E {
+        self.finish_edged(d, self.ink.edge_strong)
+    }
+
+    /// [`Skin::finish`], for a region whose edge colour is a MEANING rather
+    /// than furniture — the red rim of a destructive confirm. A cut plate draws
+    /// its edge in `edge`; every other strategy behaves exactly as `finish`.
+    pub fn finish_edged<E: Styled + ParentElement>(&self, d: E, edge: Hsla) -> E {
+        let d = self.chrome(d);
+        if self.is_cut() {
+            // A floating region: the caller's fill, border and rectangular
+            // shadow give way to one cut plate with a hard shadow of the same
+            // shape. The border keeps its width, transparent, so the caller's
+            // geometry does not move.
+            return d
+                .bg(hsla(0., 0., 0., 0.))
+                .border_color(hsla(0., 0., 0., 0.))
+                .shadow(Vec::new())
+                .child(crate::deck::plate(
+                    self.ink.panel_raised,
+                    edge,
+                    self.m.cut,
+                    true,
+                ))
+                .children(self.grain());
+        }
         if self.is_paper() {
             d.bg(self.ink.panel)
                 .border_color(hsla(0., 0., 0., 0.))
                 .rounded(self.radius())
-                .shadow(crate::paper::shadows())
+                .shadow(crate::paper::shadows_with(self.stock()))
                 .children(self.grain())
-                .child(crate::paper::rim(
-                    self.ink.edge_rest,
-                    self.ink.select,
-                    false,
-                ))
+                .child(self.stock_rim(edge, self.ink.select, false))
         } else {
             d
         }
     }
-    pub fn is_paper(&self) -> bool {
+    fn is_paper(&self) -> bool {
         self.shape.material == Material::Paper
     }
 
-    /// Optional material layer, added before a region's own content.
+    /// Whether regions are drawn as cut plates rather than as styled quads.
+    /// Paper wins where both are asked for: a sheet of cotton is not machined.
+    fn is_cut(&self) -> bool {
+        self.shape.corner == Corner::Cut && !self.is_paper()
+    }
+
+    /// Optional material layer, added before a region's own content: paper's
+    /// grain, or the grid wash. Absolutely positioned, so its parent must be
+    /// `relative()` — every caller already is, because paper needed the same.
     pub fn grain(&self) -> Option<Div> {
-        self.is_paper().then(crate::paper::grain)
+        match self.shape.material {
+            Material::Paper => Some(crate::paper::grain_with(self.stock())),
+            Material::Grid => Some(crate::deck::grid(
+                self.ink.mark.alpha(0.045),
+                22. * self.scale,
+            )),
+            Material::Plain => None,
+        }
+    }
+
+    /// Whether this skin lays a material under its regions at all.
+    fn has_material(&self) -> bool {
+        self.shape.material != Material::Plain
+    }
+
+    /// The chevron either side of a heading name, under `title = "chevron"`:
+    /// `»` before and `«` after, in the palette's signal ink and the data face.
+    /// `None` under every other title strategy, so a caller writes
+    /// `.children(sk.chevron("»")).child(name).children(sk.chevron("«"))` and
+    /// draws exactly the name everywhere else.
+    pub fn chevron(&self, glyph: &'static str) -> Option<Div> {
+        (self.shape.title == Title::Chevron).then(|| {
+            div()
+                .flex_none()
+                .mx(self.px(3.))
+                .font_family(self.data_family.clone())
+                .text_color(self.ink.warn)
+                .child(glyph)
+        })
+    }
+
+    /// The hatched strip that marks the focused pane, under `focus = "hatch"`.
+    /// Absolutely positioned along its parent's top edge, inset from the
+    /// corners; `None` for an unfocused pane and under every other strategy.
+    pub fn focus_hatch(&self, focused: bool) -> Option<Div> {
+        (focused && self.shape.focus == Focus::Hatch).then(|| {
+            div()
+                .absolute()
+                .top_0()
+                .left(self.px(28.))
+                .right(self.px(28.))
+                .h(self.px(3.))
+                .child(crate::deck::hatch(self.ink.mark.alpha(0.70)))
+        })
     }
 
     /// A paper control's backing is laid down before its caller adds text.
-    pub fn paper_control(&self, d: Div, active: bool) -> Div {
-        self.paper_option(d, false).child(crate::paper::backing(
-            self.ink.btn_face,
-            self.ink.select,
-            active,
-        ))
+    fn paper_control<E: Styled + ParentElement>(&self, d: E, active: bool) -> E {
+        self.paper_option(d, false)
+            .child(crate::paper::backing_with(
+                self.ink.btn_face,
+                self.ink.select,
+                active,
+                self.stock(),
+            ))
     }
 
     /// Choices are writing on the sheet, marked once rather than laid over a
     /// second filled tile. Action buttons retain their raised cotton backing.
-    pub fn paper_option(&self, d: Div, active: bool) -> Div {
+    fn paper_option<E: Styled + ParentElement>(&self, d: E, active: bool) -> E {
         d.relative()
             .bg(hsla(0., 0., 0., 0.))
             .border_color(hsla(0., 0., 0., 0.))
             .font_family(self.font_family.clone())
             .text_size(self.text_px(11. * self.scale))
-            .line_height(gpui::relative(1.15))
+            .line_height(gpui::relative(self.line_height))
             .text_color(self.ink.ink)
-            .children(active.then(|| crate::paper::selection(self.ink.select)))
+            .children(active.then(|| crate::paper::selection_with(self.ink.select, self.stock())))
     }
     /// A caption owns its marker: icons above it must not move the mark away
     /// from the handwriting. A relative line height prevents inherited leading
     /// from overflowing compact two-line controls.
-    pub fn paper_caption(&self, text: &str, size: f32, active: bool) -> Div {
+    fn paper_caption(&self, text: &str, size: f32, active: bool) -> Div {
         div()
             .relative()
             .flex_none()
             .text_size(self.text_px(size))
-            .line_height(gpui::relative(1.15))
+            .line_height(gpui::relative(self.line_height))
             .whitespace_nowrap()
             .text_color(self.ink.ink)
-            .children(active.then(|| crate::paper::selection(self.ink.select)))
+            .children(active.then(|| crate::paper::selection_with(self.ink.select, self.stock())))
             .child(text.to_string())
     }
     /// This skin, wearing a pane's text-size gauge.
@@ -799,7 +1325,7 @@ impl Skin {
     /// `sk.rad(…)` and never multiplies by a factor itself — the same bargain
     /// `scale` already struck with every corner in the chrome.
     pub fn pt(&self, step: crate::workbench::Step) -> f32 {
-        self.ty.pt(step)
+        f32::from(self.text_px(self.ty.pt(step)))
     }
 
     /// A box that holds text, scaled the same way the text in it is.
@@ -807,7 +1333,7 @@ impl Skin {
     /// Type that grows inside a column that does not is how an exact fit starts
     /// wrapping down a row, and a screenshot is the only thing that catches it.
     pub fn tpx(&self, base: f32) -> f32 {
-        self.ty.px(base)
+        self.ty.px(base) * self.type_scale
     }
 }
 
@@ -911,7 +1437,7 @@ impl Skin {
     pub fn radius_pill(&self) -> Pixels {
         match self.shape.corner {
             Corner::Round => px(9999.),
-            Corner::Square => px(0.),
+            Corner::Square | Corner::Cut => px(0.),
         }
     }
 
@@ -922,7 +1448,7 @@ impl Skin {
     pub fn rad(&self, v: f32) -> Pixels {
         match self.shape.corner {
             Corner::Round => self.px(v),
-            Corner::Square => px(0.),
+            Corner::Square | Corner::Cut => px(0.),
         }
     }
 
@@ -930,7 +1456,7 @@ impl Skin {
     pub fn rad_raw(&self, v: f32) -> Pixels {
         match self.shape.corner {
             Corner::Round => px(v),
-            Corner::Square => px(0.),
+            Corner::Square | Corner::Cut => px(0.),
         }
     }
 
@@ -955,7 +1481,7 @@ impl Skin {
                 .bg(self.ink.btn_face)
                 .border_color(hsla(0., 0., 0., 0.))
                 .text_color(self.ink.ink)
-                .child(crate::paper::rim(self.ink.edge_rest, tint, active));
+                .child(self.stock_rim(self.ink.edge_rest, tint, active));
         }
         let clear = hsla(0., 0., 0., 0.);
         let lit = |on: bool| if on { tint } else { clear };
@@ -986,6 +1512,16 @@ impl Skin {
                 let d = b_b(d, self.m.rail).border_color(clear);
                 if active {
                     self.brackets(d, tint)
+                } else {
+                    d
+                }
+            }
+            // The strip's rule stays reserved and transparent, so marking a
+            // tab moves nothing; the cradle hangs from the tab's own box.
+            Emphasis::Bar => {
+                let d = b_b(d.relative(), self.m.rail).border_color(clear);
+                if active {
+                    self.cradle(d.text_color(self.ink.ink_lit), tint)
                 } else {
                     d
                 }
@@ -1048,15 +1584,28 @@ impl Skin {
             .rounded(self.radius_lg())
             .px(self.px(self.m.pad_x))
             .py(self.px(self.m.pad_y));
+        if self.is_cut() {
+            // The plate goes in FIRST and the material over it, so every child
+            // the caller adds paints over both. The border is reserved,
+            // transparent, at the width a hairline skin would draw, so swapping
+            // skins moves nothing.
+            let edge = match self.shape.boundary {
+                Boundary::None => hsla(0., 0., 0., 0.),
+                _ => self.ink.rule_strong,
+            };
+            return b_all(d.bg(hsla(0., 0., 0., 0.)), self.m.border)
+                .border_color(hsla(0., 0., 0., 0.))
+                .child(crate::deck::plate(self.ink.panel, edge, self.m.cut, false))
+                .children(self.grain());
+        }
         let d = d.children(self.grain());
         if self.is_paper() {
-            return b_all(d.shadow(crate::paper::shadows()), self.m.border)
-                .border_color(hsla(0., 0., 0., 0.))
-                .child(crate::paper::rim(
-                    self.ink.rule_strong,
-                    self.ink.select,
-                    false,
-                ));
+            return b_all(
+                d.shadow(crate::paper::shadows_with(self.stock())),
+                self.m.border,
+            )
+            .border_color(hsla(0., 0., 0., 0.))
+            .child(self.stock_rim(self.ink.rule_strong, self.ink.select, false));
         }
         // The inner line of a double/inset boundary is an absolutely positioned
         // ring rather than a second border, because one div carries one border.
@@ -1105,7 +1654,7 @@ impl Skin {
     /// A horizontal band across a region — a header, a footer, a toolbar.
     pub fn bar(&self) -> Div {
         let d = div();
-        let d = if self.is_paper() {
+        let d = if self.has_material() {
             d.relative().children(self.grain())
         } else {
             d
@@ -1232,7 +1781,15 @@ impl Skin {
             };
         }
         if !active {
-            return base.text_color(self.ink.ink_off);
+            // A bar skin's unlit chip is still a control you can press, so it
+            // reads at the dimmed body weight rather than at `ink_off`, the
+            // colour of a label that is not in effect.
+            let rest = if self.shape.emphasis == Emphasis::Bar {
+                self.ink.ink_dim
+            } else {
+                self.ink.ink_off
+            };
+            return base.text_color(rest);
         }
         match self.shape.emphasis {
             Emphasis::Fill => base.bg(self.ink.mark_wash).text_color(self.ink.mark),
@@ -1243,6 +1800,7 @@ impl Skin {
                 b_l(base.text_color(self.ink.mark), self.m.rail).border_color(self.ink.mark)
             }
             Emphasis::Bracket => self.brackets(base.text_color(self.ink.mark), self.ink.mark),
+            Emphasis::Bar => base.bg(self.ink.mark).text_color(self.ink.ink_on_mark),
             Emphasis::Glow => unreachable!("handled above, before the inactive early-return"),
         }
     }
@@ -1359,7 +1917,7 @@ impl Skin {
                 .border_color(hsla(0., 0., 0., 0.))
                 .text_color(self.ink.ink);
             return if lit {
-                d.child(crate::paper::selection(tint))
+                d.child(crate::paper::selection_with(tint, self.stock()))
             } else {
                 d
             };
@@ -1405,6 +1963,37 @@ impl Skin {
             .child(b_b(b_r(tick().right_0().bottom_0(), w), w).border_color(tint))
     }
 
+    /// The Pip-Boy cradle under an active tab: a rule along the bottom and two
+    /// short arms rising at its ends. One continuous shape, which is why it
+    /// survives at tab size where four separate corner ticks did not.
+    pub fn cradle<E: Styled + ParentElement>(&self, d: E, tint: Hsla) -> E {
+        let w = self.m.hairline.max(1.5);
+        let arm = self.px(self.m.bracket);
+        d.child(
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .h(arm)
+                .border_l(px(w))
+                .border_r(px(w))
+                .border_b(px(w))
+                .border_color(tint),
+        )
+    }
+
+    /// The colour of the label on the thing you are standing on. Under a bar
+    /// emphasis the label sits ON the selection colour and goes dark; under
+    /// every other strategy it is [`Inks::ink_lit`].
+    pub fn lit_label(&self) -> Hsla {
+        if self.shape.emphasis == Emphasis::Bar && !self.is_paper() {
+            self.ink.ink_on_mark
+        } else {
+            self.ink.ink_lit
+        }
+    }
+
     /// Mark a ROW as the one you are standing on.
     ///
     /// Rows are not chips, and the difference is not decoration: a row is the
@@ -1422,7 +2011,7 @@ impl Skin {
                 .bg(hsla(0., 0., 0., 0.))
                 .border_color(hsla(0., 0., 0., 0.));
             return if active {
-                d.child(crate::paper::selection(self.ink.select))
+                d.child(crate::paper::selection_with(self.ink.select, self.stock()))
             } else {
                 d
             };
@@ -1455,6 +2044,12 @@ impl Skin {
             Emphasis::Rail => b_l(d, self.m.rail).border_color(self.ink.mark),
             Emphasis::Underline => b_b(d, self.m.border).border_color(self.ink.mark),
             Emphasis::Bracket => self.brackets(d, self.ink.mark),
+            // FIRST child, so the row's own content paints over the bar. The
+            // row keeps its padding; the bar fills its box and points right.
+            Emphasis::Bar => d.relative().child(crate::deck::bar_tip(
+                self.ink.mark,
+                self.ink.mark.alpha(0.22),
+            )),
             Emphasis::Glow => unreachable!("handled above, before the inactive early-return"),
         }
     }
@@ -1601,17 +2196,25 @@ struct FileRecipe {
     max_l: Option<f32>,
     toward: Option<String>,
     t: Option<f32>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Deserialize)]
 struct FileShape {
     material: Option<String>,
+    tube: Option<String>,
     corner: Option<String>,
     boundary: Option<String>,
     emphasis: Option<String>,
     divider: Option<String>,
     caps: Option<String>,
     shine: Option<String>,
+    gauge: Option<String>,
+    title: Option<String>,
+    focus: Option<String>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Deserialize)]
@@ -1624,11 +2227,29 @@ struct SkinFile {
     #[serde(default)]
     metric: BTreeMap<String, f32>,
     shape: Option<FileShape>,
+    note: Option<FileNote>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Deserialize)]
+struct FileNote {
+    decoration: Option<String>,
+    stock: Option<bool>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Deserialize)]
 struct FileFont {
     family: Option<String>,
+    heading: Option<String>,
+    data: Option<String>,
+    scale: Option<f32>,
+    min_px: Option<f32>,
+    line_height: Option<f32>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 fn enum_of<T>(
@@ -1690,17 +2311,98 @@ fn no_such(kind: &str, key: &str, keys: &[&'static str]) -> String {
 /// typo shows up as a reported name instead of a look that silently did nothing.
 pub fn parse(source: &str) -> Result<SkinSpec, String> {
     let f: SkinFile = toml::from_str(source).map_err(|e| e.to_string())?;
+    let mut unknown = f
+        .unknown
+        .keys()
+        .map(|k| format!("{k} (unknown section or key)"))
+        .collect::<Vec<_>>();
+    if let Some(font) = &f.font {
+        unknown.extend(
+            font.unknown
+                .keys()
+                .map(|k| format!("font.{k} (unknown key)")),
+        );
+    }
+    if let Some(shape) = &f.shape {
+        unknown.extend(
+            shape
+                .unknown
+                .keys()
+                .map(|k| format!("shape.{k} (unknown key)")),
+        );
+    }
+    if let Some(note) = &f.note {
+        unknown.extend(
+            note.unknown
+                .keys()
+                .map(|k| format!("note.{k} (unknown key)")),
+        );
+    }
+    let named = |v: Option<String>| v.filter(|name| !name.trim().is_empty());
+    let (family, heading, data, scale, min_px, line_height) = match f.font {
+        Some(font) => (
+            named(font.family),
+            named(font.heading),
+            named(font.data),
+            font.scale,
+            font.min_px,
+            font.line_height,
+        ),
+        None => (None, None, None, None, None, None),
+    };
+    for (key, value, lo, hi) in [
+        ("scale", scale, 0.5, 3.),
+        ("min_px", min_px, 0., 32.),
+        ("line_height", line_height, 0.8, 2.),
+    ] {
+        if value.is_some_and(|v| !v.is_finite() || v < lo || v > hi) {
+            return Err(format!(
+                "font.{key} must be finite and between {lo} and {hi}"
+            ));
+        }
+    }
     let mut spec = SkinSpec {
-        font_family: f
-            .font
-            .and_then(|font| font.family)
-            .filter(|name| !name.trim().is_empty()),
+        font_family: family,
+        font_heading: heading,
+        font_data: data,
+        font_scale: scale,
+        font_min_px: min_px,
+        font_line_height: line_height,
         name: f.name.unwrap_or_else(|| "unnamed".into()),
         icon: f.icon.unwrap_or_else(|| "▢".into()),
+        unknown,
         ..SkinSpec::default()
     };
 
+    if let Some(note) = f.note {
+        spec.note_stock = note.stock;
+        spec.note_decoration = enum_of(
+            note.decoration.as_ref(),
+            &[
+                ("plain", NoteDecoration::Plain),
+                ("flower", NoteDecoration::Flower),
+            ],
+            "note.decoration",
+            &mut spec.unknown,
+        );
+    }
+
     for (key, value) in &f.ink {
+        if let FileInk::Recipe(recipe) = value {
+            if [recipe.l, recipe.s, recipe.a, recipe.max_l, recipe.t]
+                .into_iter()
+                .flatten()
+                .any(|v| !v.is_finite())
+            {
+                return Err(format!("ink.{key} recipe values must be finite"));
+            }
+            spec.unknown.extend(
+                recipe
+                    .unknown
+                    .keys()
+                    .map(|k| format!("ink.{key}.{k} (unknown key)")),
+            );
+        }
         let parsed = match value {
             FileInk::Hex(h) => match theme::parse_hex(h) {
                 Some(c) => Some(InkSpec::Pinned(c)),
@@ -1752,6 +2454,17 @@ pub fn parse(source: &str) -> Result<SkinSpec, String> {
     }
 
     for (key, value) in &f.metric {
+        if !value.is_finite() {
+            return Err(format!("metric.{key} must be finite"));
+        }
+        let max = match key.as_str() {
+            "grain" | "roughness" | "marker_alpha" => Some(1.),
+            "lift" => Some(2.),
+            _ => None,
+        };
+        if max.is_some_and(|max| *value < 0. || *value > max) {
+            return Err(format!("metric.{key} is outside its material range"));
+        }
         if !spec.metric.set(key, *value) {
             spec.unknown.push(no_such("metric", key, METRIC_KEYS));
         }
@@ -1759,15 +2472,29 @@ pub fn parse(source: &str) -> Result<SkinSpec, String> {
 
     if let Some(sh) = &f.shape {
         let u = &mut spec.unknown;
+        spec.shape.tube = enum_of(
+            sh.tube.as_ref(),
+            &[("glass", Tube::Glass), ("stock", Tube::Stock)],
+            "shape.tube",
+            u,
+        );
         spec.shape.material = enum_of(
             sh.material.as_ref(),
-            &[("plain", Material::Plain), ("paper", Material::Paper)],
+            &[
+                ("plain", Material::Plain),
+                ("paper", Material::Paper),
+                ("grid", Material::Grid),
+            ],
             "shape.material",
             u,
         );
         spec.shape.corner = enum_of(
             sh.corner.as_ref(),
-            &[("round", Corner::Round), ("square", Corner::Square)],
+            &[
+                ("round", Corner::Round),
+                ("square", Corner::Square),
+                ("cut", Corner::Cut),
+            ],
             "shape.corner",
             u,
         );
@@ -1788,6 +2515,7 @@ pub fn parse(source: &str) -> Result<SkinSpec, String> {
                 ("fill", Emphasis::Fill),
                 ("underline", Emphasis::Underline),
                 ("bracket", Emphasis::Bracket),
+                ("bar", Emphasis::Bar),
                 ("rail", Emphasis::Rail),
                 ("glow", Emphasis::Glow),
             ],
@@ -1818,6 +2546,24 @@ pub fn parse(source: &str) -> Result<SkinSpec, String> {
             sh.shine.as_ref(),
             &[("gradient", Shine::Gradient), ("flat", Shine::Flat)],
             "shape.shine",
+            u,
+        );
+        spec.shape.gauge = enum_of(
+            sh.gauge.as_ref(),
+            &[("rail", Gauge::Rail), ("pips", Gauge::Pips)],
+            "shape.gauge",
+            u,
+        );
+        spec.shape.title = enum_of(
+            sh.title.as_ref(),
+            &[("plain", Title::Plain), ("chevron", Title::Chevron)],
+            "shape.title",
+            u,
+        );
+        spec.shape.focus = enum_of(
+            sh.focus.as_ref(),
+            &[("plain", Focus::Plain), ("hatch", Focus::Hatch)],
+            "shape.focus",
             u,
         );
     }
@@ -1989,6 +2735,21 @@ pub fn for_theme(cx: &App, th: &Theme, scale: f32) -> Skin {
     spec(cx).bake(th, scale)
 }
 
+/// On-demand read-back of the live registry, not a second parse of the file.
+/// This lets an author distinguish a saved edit from an applied edit.
+pub(crate) fn snapshot(cx: &App) -> String {
+    let th = theme::theme(cx);
+    let choice = theme::outer_choice(cx);
+    let sk = for_theme(cx, &th, th.grade.scale);
+    let mut value: serde_json::Value =
+        serde_json::from_str(&sk.to_json(&choice.id)).expect("resolved skin");
+    value["active_skin"] = serde_json::json!(active_id(cx));
+    value["scope"] = serde_json::json!("outer");
+    value["palette"] = serde_json::json!(choice.palette);
+    value["custom_path"] = serde_json::json!(skin_path());
+    value.to_string()
+}
+
 /// Load the skin, start the hot-reload watcher. No first-run seed: an absent
 /// `skin.toml` means "use the theme's skin", which is the right answer for
 /// everyone who has never heard of this file.
@@ -2124,9 +2885,14 @@ fn source_of(arg: &str, builtin: impl Fn(&str) -> Option<&'static str>) -> Resul
 }
 
 const SKIN_USAGE: &str = "usage: terminal-delight skin [--list] [--skin <id|path>] \
-     [--theme <id|path>] [--scale <n>] [--text-size <n>]\n\
+     [--theme <id|path>] [--palette <id|path>] [--scale <n>] [--text-size <n>]\n\
 \n\
   --list        the skins this build carries, and every way one gets chosen\n\
+  --catalogue   versioned native surface inventory, as JSON\n\
+  --catalogue-md  the same inventory as a human table\n\
+  --atlas-script  print this build's isolated native preview runner\n\
+  --template <id>  print a bundled skin file to start a custom look\n\
+  --check       refuse unknown tokens and invalid authoring values\n\
   (default)     resolve a skin against a palette and print every token, as JSON\n\
 \n\
   --scale       the MENU-BAR dial (0.7..1.6, neutral 1.0) — sizes chrome\n\
@@ -2137,7 +2903,8 @@ const SKIN_USAGE: &str = "usage: terminal-delight skin [--list] [--skin <id|path
 To restyle a RUNNING window — no restart, no file editing:\n\
   terminal-delight ctl skin <name>     switch it now\n\
   terminal-delight ctl skin theme      go back to following the theme\n\
-  terminal-delight ctl skin status     what is active, and what is available";
+  terminal-delight ctl skin status     what is active, and what is available\n\
+  terminal-delight ctl skin snapshot   resolved live UI tokens, as JSON";
 
 /// `--list`. Answers "what skins are there, and how do I pick one" in one screen,
 /// because that is the first question anybody asks a theming system and the
@@ -2207,8 +2974,36 @@ fn word(v: Option<String>) -> String {
 /// `terminal-delight skin` — the headless resolver. Exists so a skin can be read
 /// back: every token, as the running app would compute it, without a window.
 pub fn run_cli(args: &[String]) -> i32 {
+    if args.len() == 1 {
+        match args[0].as_str() {
+            "--catalogue" => {
+                println!("{}", catalogue::SOURCE);
+                return 0;
+            }
+            "--catalogue-md" => {
+                print!("{}", catalogue::markdown());
+                return 0;
+            }
+            "--atlas-script" => {
+                print!("{}", include_str!("../../scripts/skin-atlas.py"));
+                return 0;
+            }
+            _ => {}
+        }
+    }
+    if args.len() == 2 && args[0] == "--template" {
+        return match builtin_toml(&args[1]) {
+            Some(source) => {
+                print!("{source}");
+                0
+            }
+            None => usage_err("--template wants a bundled skin id"),
+        };
+    }
+    let mut strict = false;
     let mut skin_arg = "default".to_string();
     let mut theme_arg = "hacker".to_string();
+    let mut palette_arg = None;
     let mut scale = 1.0f32;
     // Neutral, not zero: an unspecified gauge means "the ramp as authored",
     // and a bench resolved at 0pt would print a table of zeroes that looks
@@ -2217,6 +3012,7 @@ pub fn run_cli(args: &[String]) -> i32 {
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--check" => strict = true,
             "--skin" => match it.next() {
                 Some(v) => skin_arg = v.clone(),
                 None => return usage_err("--skin wants a value"),
@@ -2224,6 +3020,10 @@ pub fn run_cli(args: &[String]) -> i32 {
             "--theme" => match it.next() {
                 Some(v) => theme_arg = v.clone(),
                 None => return usage_err("--theme wants a value"),
+            },
+            "--palette" => match it.next() {
+                Some(v) => palette_arg = Some(v.clone()),
+                None => return usage_err("--palette wants a bundled id or TD palette path"),
             },
             "--scale" => match it.next().and_then(|v| v.parse().ok()) {
                 Some(v) => scale = v,
@@ -2246,13 +3046,28 @@ pub fn run_cli(args: &[String]) -> i32 {
         }
     }
 
-    let th = match source_of(&theme_arg, theme::builtin_toml).and_then(|s| theme::parse(&s)) {
+    if !scale.is_finite() || scale <= 0. || !text_size.is_finite() || text_size <= 0. {
+        return usage_err("scale and text-size must be finite and positive");
+    }
+    let mut th = match source_of(&theme_arg, theme::builtin_toml).and_then(|s| theme::parse(&s)) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("terminal-delight skin: theme {e}");
             return 1;
         }
     };
+    if let Some(arg) = &palette_arg {
+        let source = crate::palette::bundled_toml(arg)
+            .map(Ok)
+            .unwrap_or_else(|| fs::read_to_string(arg).map_err(|e| e.to_string()));
+        th = match source.and_then(|s| theme::overlay_palette(&th, &s)) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("terminal-delight skin: palette {arg}: {e}");
+                return 1;
+            }
+        };
+    }
     let spec = match source_of(&skin_arg, builtin_toml).and_then(|s| parse(&s)) {
         Ok(s) => s,
         Err(e) => {
@@ -2265,9 +3080,18 @@ pub fn run_cli(args: &[String]) -> i32 {
     for u in &spec.unknown {
         eprintln!("terminal-delight skin: unknown {u}");
     }
+    if strict && !spec.unknown.is_empty() {
+        return 1;
+    }
 
     let sk = spec.bake(&th, scale).with_type(text_size);
-    println!("{}", sk.to_json(&theme_arg));
+    let mut output: serde_json::Value =
+        serde_json::from_str(&sk.to_json(&theme_arg)).expect("resolved skin");
+    output["palette"] = serde_json::json!(palette_arg);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&output).expect("resolved skin")
+    );
     0
 }
 
@@ -2277,64 +3101,46 @@ fn usage_err(msg: &str) -> i32 {
 }
 
 impl Skin {
-    /// Every resolved token, as JSON. Hand-rolled rather than derived because a
-    /// colour has to come out as BOTH a hex string and its alpha — a reader that
-    /// only sees `#c2a34f` cannot tell a rule from a wash, and those are the two
-    /// most common things to get wrong in a skin file.
+    /// Read back the same resolved values the native renderers use. Strings
+    /// are serialized too: an author's quoted name must remain valid JSON.
     fn to_json(&self, theme_id: &str) -> String {
-        let ink = |name: &str, c: Hsla| {
-            format!(
-                "    \"{name}\": {{ \"hex\": \"{}\", \"a\": {:.3} }}",
-                crate::hsla_to_hex(c),
-                c.a
-            )
-        };
-        let ui_font = serde_json::to_string(&self.font_family).expect("a font name serializes");
-        let material = format!("{:?}", self.shape.material);
-        let inks = INK_KEYS
+        let inks: serde_json::Map<String, serde_json::Value> = INK_KEYS
             .iter()
-            .map(|k| ink(k, self.ink.by_key(k).expect("every key resolves")))
-            .collect::<Vec<_>>()
-            .join(",\n");
-        let metrics = METRIC_KEYS
-            .iter()
-            .map(|k| {
-                format!(
-                    "    \"{k}\": {}",
-                    self.m.by_key(k).expect("every key resolves")
+            .map(|key| {
+                let c = self.ink.by_key(key).expect("registered ink");
+                (
+                    key.to_string(),
+                    serde_json::json!({"hex": crate::hsla_to_hex(c), "a": c.a}),
                 )
             })
-            .collect::<Vec<_>>()
-            .join(",\n");
-        // The TYPE ramp, resolved. Every rung at this skin's gauge, beside the
-        // base it came from — because the whole question a reader brings to
-        // this is "why is that label that size", and one number cannot answer
-        // it. Two can: the rung the renderer asked for, and what the dial did
-        // to it.
-        let ty = crate::workbench::Step::ALL
+            .collect();
+        let metrics: serde_json::Map<String, serde_json::Value> = METRIC_KEYS
             .iter()
-            .map(|s| {
-                format!(
-                    "    \"{}\": {{ \"base\": {:.2}, \"pt\": {:.2} }}",
-                    format!("{s:?}").to_lowercase(),
-                    s.base(),
-                    self.pt(*s)
+            .map(|key| {
+                (
+                    key.to_string(),
+                    serde_json::json!(self.m.by_key(key).expect("registered metric")),
                 )
             })
-            .collect::<Vec<_>>()
-            .join(",\n");
-        format!(
-            "{{\n  \"skin\": \"{}\",\n  \"theme\": \"{theme_id}\",\n  \"ui_font\": {ui_font},\n  \"material\": \"{material}\",\n  \"scale\": {},\n  \"text_size\": {},\n  \"shape\": {{\n    \"corner\": \"{:?}\",\n    \"boundary\": \"{:?}\",\n    \"emphasis\": \"{:?}\",\n    \"divider\": \"{:?}\",\n    \"caps\": \"{:?}\",\n    \"shine\": \"{:?}\"\n  }},\n  \"ink\": {{\n{inks}\n  }},\n  \"metric\": {{\n{metrics}\n  }},\n  \"type\": {{\n{ty}\n  }}\n}}",
-            self.name,
-            self.scale,
-            self.ty.k(),
-            self.shape.corner,
-            self.shape.boundary,
-            self.shape.emphasis,
-            self.shape.divider,
-            self.shape.caps,
-            self.shape.shine,
-        )
+            .collect();
+        let ty: serde_json::Map<String, serde_json::Value> = crate::workbench::Step::ALL
+            .iter()
+            .map(|step| {
+                (
+                    format!("{step:?}").to_lowercase(),
+                    serde_json::json!({"base": step.base(), "pt": self.pt(*step)}),
+                )
+            })
+            .collect();
+        serde_json::to_string_pretty(&serde_json::json!({
+            "skin": self.name, "theme": theme_id, "ui_font": self.font_family,
+            "heading_font": self.heading_family, "data_font": self.data_family,
+            "optical": { "scale": self.type_scale, "min_px": self.type_min_px, "line_height": self.line_height },
+            "note": { "decoration": format!("{:?}", self.note_decoration), "stock": self.note_stock },
+            "material": format!("{:?}", self.shape.material), "scale": self.scale, "text_size": self.ty.k(),
+            "shape": { "corner": format!("{:?}", self.shape.corner), "boundary": format!("{:?}", self.shape.boundary), "emphasis": format!("{:?}", self.shape.emphasis), "divider": format!("{:?}", self.shape.divider), "caps": format!("{:?}", self.shape.caps), "shine": format!("{:?}", self.shape.shine), "gauge": format!("{:?}", self.shape.gauge), "title": format!("{:?}", self.shape.title), "focus": format!("{:?}", self.shape.focus), "tube": format!("{:?}", self.shape.tube) },
+            "ink": inks, "metric": metrics, "type": ty
+        })).expect("resolved skin JSON")
     }
 }
 
@@ -2347,6 +3153,102 @@ fn report_unknown(path: &std::path::Path, spec: &SkinSpec) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optical_type_is_independent_of_the_substrate() {
+        let th = palette();
+        let font =
+            "[font]\nfamily = 'Share Tech Mono'\nscale = 1.2\nmin_px = 0\nline_height = 1.3\n";
+        let plain = parse(&format!("{font}[shape]\nmaterial = 'plain'\n"))
+            .unwrap()
+            .bake(&th, 1.);
+        let paper = parse(&format!("{font}[shape]\nmaterial = 'paper'\n"))
+            .unwrap()
+            .bake(&th, 1.);
+        assert_eq!(plain.text_px(10.), paper.text_px(10.));
+        assert_eq!(
+            plain.pt(crate::workbench::Step::Body),
+            paper.pt(crate::workbench::Step::Body)
+        );
+        assert_eq!(paper.type_min_px, 0.);
+        assert_eq!(paper.line_height, 1.3);
+        let mono = parse("[font]\nfamily = 'Share Tech Mono'\n[shape]\nmaterial = 'paper'")
+            .unwrap()
+            .bake(&th, 1.);
+        assert_eq!(mono.text_px(10.), px(10.));
+    }
+
+    #[test]
+    fn nested_typos_and_non_finite_authoring_values_are_reported() {
+        let spec = parse("[font]\nscsale = 1.5\n[shape]\nmatreial = 'paper'\n[note]\ndecroation = 'flower'\n[ink]\npanel = { from = 'bg', typo = 1 }\n[typo]\nx = 1").unwrap();
+        for key in [
+            "font.scsale",
+            "shape.matreial",
+            "note.decroation",
+            "ink.panel.typo",
+            "typo",
+        ] {
+            assert!(spec.unknown.iter().any(|v| v.contains(key)), "lost {key}");
+        }
+        for bad in [
+            "[font]\nscale = nan",
+            "[font]\nmin_px = -1",
+            "[metric]\ngrain = inf",
+            "[metric]\nlift = -0.1",
+            "[metric]\nmarker_alpha = 1.1",
+        ] {
+            assert!(parse(bad).is_err(), "accepted {bad}");
+        }
+    }
+
+    #[test]
+    fn readback_preserves_quoted_names_and_separate_policies() {
+        let sk = parse("name = 'My \"studio\"'\n[font]\nscale = 1.2\n[shape]\nmaterial = 'grid'\ntube = 'stock'\n[note]\ndecoration = 'flower'\nstock = false").unwrap().bake(&palette(), 1.);
+        let v: serde_json::Value = serde_json::from_str(&sk.to_json("palette\"file")).unwrap();
+        assert_eq!(v["skin"], "My \"studio\"");
+        assert_eq!(v["theme"], "palette\"file");
+        assert_eq!(v["shape"]["tube"], "Stock");
+        assert_eq!(v["note"]["stock"], false);
+        assert!(v["type"]["body"]["base"].is_number());
+        assert!(!sk.glass());
+    }
+
+    #[test]
+    fn material_rendering_stays_inside_the_skin_boundary() {
+        fn visit(path: &std::path::Path) {
+            for entry in std::fs::read_dir(path).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    visit(&path);
+                    continue;
+                }
+                if path.extension().is_none_or(|ext| ext != "rs") {
+                    continue;
+                }
+                if path
+                    .file_name()
+                    .is_some_and(|n| n == "skin.rs" || n == "paper.rs")
+                    || path.components().any(|c| c.as_os_str() == "skin")
+                {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                assert!(
+                    !source.contains(".is_paper("),
+                    "material branch escaped to {}",
+                    path.display()
+                );
+                for backend in ["crate::paper::", "crate::deck::"] {
+                    assert!(
+                        !source.contains(backend),
+                        "material backend {backend} escaped to {}",
+                        path.display()
+                    );
+                }
+            }
+        }
+        visit(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
+    }
 
     #[test]
     fn chalk_follows_palette_and_keeps_terminal_font_owned_by_the_theme() {
@@ -2554,6 +3456,69 @@ mod tests {
             .unwrap()
             .bake(&th, 1.0);
         assert!(sk.m.rail > deco.m.rail);
+    }
+
+    /// Only a skin that NAMES a heading or data face changes the chrome's type,
+    /// so every skin written before those keys draws exactly what it drew —
+    /// the helpers are no-ops, not a default of their own.
+    #[test]
+    fn only_a_skin_that_names_its_faces_changes_the_type() {
+        let th = palette();
+        for (id, src) in BUILTIN_SKINS {
+            let sk = parse(src).unwrap().bake(&th, 1.0);
+            if *id == "ops" {
+                assert_eq!(sk.heading_family, "Oxanium");
+                assert_eq!(sk.data_family, "Share Tech Mono");
+                assert_eq!(sk.font_family, "Chakra Petch");
+                assert_eq!(sk.heading_text("Jev"), "JEV");
+            } else {
+                assert_eq!(
+                    sk.heading_family, sk.font_family,
+                    "{id} grew a heading face"
+                );
+                assert_eq!(sk.data_family, sk.font_family, "{id} grew a data face");
+                assert_eq!(sk.heading_text("Jev"), "Jev", "{id} recased a name");
+            }
+        }
+    }
+
+    /// OPS is the one skin wearing every new device, and a cut corner never
+    /// becomes a radius anywhere — `cut` is square plus a drawn plate.
+    #[test]
+    fn ops_wears_the_deck_and_a_cut_corner_has_no_radius() {
+        let th = palette();
+        let src = BUILTIN_SKINS.iter().find(|(i, _)| *i == "ops").unwrap().1;
+        let spec = parse(src).unwrap();
+        assert!(
+            spec.unknown.is_empty(),
+            "ops.toml has typos: {:?}",
+            spec.unknown
+        );
+        let sk = spec.bake(&th, 1.0);
+        assert_eq!(sk.shape.corner, Corner::Cut);
+        assert_eq!(sk.shape.emphasis, Emphasis::Bar);
+        assert_eq!(sk.shape.gauge, Gauge::Pips);
+        assert_eq!(sk.shape.title, Title::Chevron);
+        assert_eq!(sk.shape.focus, Focus::Hatch);
+        assert_eq!(sk.shape.material, Material::Grid);
+        assert!(sk.is_cut() && !sk.is_paper());
+        assert_eq!(sk.radius(), px(0.));
+        assert_eq!(sk.radius_pill(), px(0.));
+        assert_eq!(sk.rad(6.), px(0.));
+        assert!(sk.m.cut > 0.);
+        // On the bar the label sits ON the selection and goes dark; elsewhere
+        // it is the lit body colour.
+        assert_eq!(sk.lit_label(), sk.ink.ink_on_mark);
+        let deco = parse(include_str!("../skins/deco.toml"))
+            .unwrap()
+            .bake(&th, 1.0);
+        assert_eq!(deco.lit_label(), deco.ink.ink_lit);
+        assert!(deco.chevron("»").is_none() && deco.focus_hatch(true).is_none());
+        assert!(sk.chevron("»").is_some() && sk.focus_hatch(true).is_some());
+        assert!(
+            sk.focus_hatch(false).is_none(),
+            "an unfocused pane is hatched"
+        );
     }
 
     /// Every builtin is a distinct LOOK, not a restyle of the same one.
@@ -2919,7 +3884,21 @@ mod tests {
             .unwrap()
             .bake(&th, 1.0)
             .to_json("deco");
-        for key in ["corner", "boundary", "emphasis", "divider", "caps", "shine"] {
+        for key in [
+            "corner",
+            "boundary",
+            "emphasis",
+            "divider",
+            "caps",
+            "shine",
+            "gauge",
+            "title",
+            "focus",
+            "material",
+            "ui_font",
+            "heading_font",
+            "data_font",
+        ] {
             assert!(
                 json.contains(&format!("\"{key}\"")),
                 "the probe omits {key}"

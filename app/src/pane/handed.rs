@@ -272,11 +272,12 @@ impl TerminalView {
                 fact: handover::file_fact(h, h.path().map(|p| modified_ms(&p)).unwrap_or(None)),
             })
             .collect();
-        let page = handover::history_markdown(
+        let page = handover::history_markdown_in(
             &self.handover_pane_name(),
             &rows,
             date(now),
             date(now.saturating_sub(86_400_000)),
+            crate::lang::current(),
         );
         if let Err(e) = handover::write_if_changed(&path, &page) {
             eprintln!("terminal-delight: {}: {e}", path.display());
@@ -310,7 +311,11 @@ impl TerminalView {
     fn open_handover(&mut self, h: &Handover, cx: &mut Context<Self>) {
         match h.path() {
             Some(path) if !path.exists() => {
-                self.say(format!("{} · file gone", h.label), None, cx);
+                let gone = crate::lang::fill(
+                    crate::lang::current().strings().parts.pane_handed_file_gone,
+                    &[("label", &h.label)],
+                );
+                self.say(gone, None, cx);
                 return;
             }
             Some(path) => match crate::docopen::drawable_document(&path) {
@@ -464,7 +469,8 @@ impl TerminalView {
                 .bg(face)
                 .overflow_hidden()
                 .whitespace_nowrap()
-                .text_size(text)
+                .text_size(sk.text_px(f32::from(text)))
+                .map(|d| sk.choice(d, fresh))
                 .child(label)
                 .child(caret)
                 .into_any_element(),

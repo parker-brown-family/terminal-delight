@@ -403,15 +403,56 @@ pub enum EngineError {
 
 impl std::fmt::Display for EngineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.say(crate::lang::Lang::En))
+    }
+}
+
+impl EngineError {
+    /// The error in `l`'s words, for the square. `Display` is the English
+    /// one the log keeps. What a variant carries — Chromium's own words, a
+    /// step, a protocol reply — stays as it came; only the frame around it
+    /// and a [`EngineError::Timeout`]'s step are the reader's language.
+    pub fn say(&self, l: crate::lang::Lang) -> String {
+        let t = &l.strings().parts;
+        let fill = crate::lang::fill;
         match self {
-            EngineError::Launch(why) => write!(f, "Chromium would not start: {why}"),
-            EngineError::Timeout(what) => write!(f, "Chromium took too long to {what}"),
-            EngineError::FileChanged => write!(f, "the file changed while it was being drawn"),
-            EngineError::Stale => write!(f, "the page was laid out again meanwhile"),
-            EngineError::Closed => write!(f, "the page is no longer open"),
-            EngineError::Page(why) => write!(f, "the page could not be drawn: {why}"),
-            EngineError::Protocol(why) => write!(f, "Chromium answered unexpectedly: {why}"),
+            EngineError::Launch(why) => fill(t.doc_engine_launch, &[("why", why)]),
+            EngineError::Timeout(what) => fill(t.doc_engine_timeout, &[("step", step_in(what, l))]),
+            EngineError::FileChanged => t.doc_engine_file_changed.into(),
+            EngineError::Stale => t.doc_engine_stale.into(),
+            EngineError::Closed => t.doc_engine_closed.into(),
+            EngineError::Page(why) => fill(t.doc_engine_page, &[("why", why)]),
+            EngineError::Protocol(why) => fill(t.doc_engine_protocol, &[("why", why)]),
         }
+    }
+}
+
+/// A step the snapshot engine names in English (a bare infinitive, as
+/// [`EngineError::Timeout`] carries it) in `l`'s words. A step this table does
+/// not know is said as it came.
+pub fn step_in(step: &'static str, l: crate::lang::Lang) -> &'static str {
+    let t = &l.strings().parts;
+    match step {
+        "size the page" => t.doc_step_size_page,
+        "make a browser context" => t.doc_step_browser_context,
+        "open a page" => t.doc_step_open_page,
+        "attach to the page" => t.doc_step_attach,
+        "enable the page" => t.doc_step_enable_page,
+        "enable the network domain" => t.doc_step_enable_network,
+        "block the network" => t.doc_step_block_network,
+        "ask for reduced motion" => t.doc_step_reduced_motion,
+        "hook the page's errors" => t.doc_step_hook_errors,
+        "load the file" => t.doc_step_load_file,
+        "load the page" => t.doc_step_load_page,
+        "wait for fonts" => t.doc_step_wait_fonts,
+        "install the probe" => t.doc_step_install_probe,
+        "read the page" => t.doc_step_read_page,
+        "capture a tile" => t.doc_step_capture_tile,
+        "open the dialog" => t.doc_step_open_dialog,
+        "measure the dialog" => t.doc_step_measure_dialog,
+        "capture the dialog" => t.doc_step_capture_dialog,
+        "close the dialog" => t.doc_step_close_dialog,
+        other => other,
     }
 }
 
@@ -443,48 +484,71 @@ impl Unavailable {
     /// Why, and nothing about what happened instead: what a document pane
     /// says when nobody asked for the file just now, as when a saved pane
     /// comes back after a restart, and no desktop was asked to open it.
+    /// English, for the log and a `ctl doc` caller; the square draws
+    /// [`Unavailable::reason_in`].
     pub fn reason(&self) -> String {
+        self.reason_in(crate::lang::Lang::En)
+    }
+
+    /// [`Unavailable::reason`] in `l`'s words, for the square. The setting
+    /// names (`engine = "off"`, `documents.toml`) stay as they are written.
+    pub fn reason_in(&self, l: crate::lang::Lang) -> String {
+        let t = &l.strings().parts;
+        let fill = crate::lang::fill;
         match self {
-            Unavailable::Off => {
-                "HTML is set to open with the desktop (engine = \"off\" in documents.toml).".into()
+            Unavailable::Off => t.doc_unavailable_off.into(),
+            Unavailable::UnknownEngine(name) => {
+                fill(t.doc_unavailable_unknown_engine, &[("name", name)])
             }
-            Unavailable::UnknownEngine(name) => format!(
-                "documents.toml asks for an HTML engine called \"{name}\", and the only one TD has is \"snapshot\"."
-            ),
-            Unavailable::Prefs(why) => format!("documents.toml could not be read ({why})."),
+            Unavailable::Prefs(why) => fill(t.doc_unavailable_prefs, &[("why", why)]),
             Unavailable::NoBrowser {
                 searched,
                 configured: true,
-            } => format!(
-                "No Chromium at {} (the chromium setting in documents.toml).",
-                searched
-                    .first()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default()
+            } => fill(
+                t.doc_unavailable_no_browser_configured,
+                &[(
+                    "path",
+                    &searched
+                        .first()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default(),
+                )],
             ),
-            Unavailable::NoBrowser { searched, .. } => format!(
-                "No Chromium found (looked for {} on PATH).",
-                searched
-                    .iter()
-                    .map(|p| p.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
+            Unavailable::NoBrowser { searched, .. } => fill(
+                t.doc_unavailable_no_browser,
+                &[(
+                    "names",
+                    &searched
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                )],
             ),
         }
     }
 
     /// The reason in a few words, for the chip in the pane that was clicked.
     /// Whole sentences go to the log and to a `ctl doc` caller; a pane can be
-    /// narrower than any of them.
+    /// narrower than any of them. Only ever drawn, so it is in the reader's
+    /// language.
     pub fn short_reason(&self) -> String {
+        self.short_reason_in(crate::lang::current())
+    }
+
+    /// [`Unavailable::short_reason`] in `l`'s words.
+    pub fn short_reason_in(&self, l: crate::lang::Lang) -> String {
+        let t = &l.strings().parts;
         match self {
-            Unavailable::Off => "HTML engine off in documents.toml".into(),
-            Unavailable::UnknownEngine(name) => format!("no HTML engine called \"{name}\""),
-            Unavailable::Prefs(_) => "documents.toml could not be read".into(),
+            Unavailable::Off => t.doc_unavailable_short_off.into(),
+            Unavailable::UnknownEngine(name) => {
+                crate::lang::fill(t.doc_unavailable_short_unknown_engine, &[("name", name)])
+            }
+            Unavailable::Prefs(_) => t.doc_unavailable_short_prefs.into(),
             Unavailable::NoBrowser {
                 configured: true, ..
-            } => "no Chromium where documents.toml says".into(),
-            Unavailable::NoBrowser { .. } => "no Chromium found".into(),
+            } => t.doc_unavailable_short_no_browser_configured.into(),
+            Unavailable::NoBrowser { .. } => t.doc_unavailable_short_no_browser.into(),
         }
     }
 }
@@ -635,6 +699,58 @@ mod tests {
                 short.chars().count() <= 40,
                 "{short} is too long for a chip"
             );
+        }
+    }
+
+    /// The log and a `ctl doc` caller keep English whatever the reader
+    /// reads: `Display`, `reason` and `sentence` are the English forms of
+    /// what the square says in the reader's language.
+    #[test]
+    fn the_english_forms_are_what_the_square_says_in_english() {
+        let en = crate::lang::Lang::En;
+        let errors = [
+            EngineError::Launch("no display".into()),
+            EngineError::Timeout("load the page"),
+            EngineError::FileChanged,
+            EngineError::Stale,
+            EngineError::Closed,
+            EngineError::Page("boom".into()),
+            EngineError::Protocol("open a page: eh".into()),
+        ];
+        for e in errors {
+            assert_eq!(e.say(en), e.to_string());
+        }
+        assert_eq!(
+            EngineError::Timeout("load the page").to_string(),
+            "Chromium took too long to load the page"
+        );
+        let why = Unavailable::UnknownEngine("servo".into());
+        assert_eq!(why.reason_in(en), why.reason());
+        assert_eq!(why.short_reason_in(en), "no HTML engine called \"servo\"");
+        // Every step the engine names has its own words, so a timeout never
+        // says an English step inside another language's sentence.
+        for step in [
+            "size the page",
+            "make a browser context",
+            "open a page",
+            "attach to the page",
+            "enable the page",
+            "enable the network domain",
+            "block the network",
+            "ask for reduced motion",
+            "hook the page's errors",
+            "load the file",
+            "load the page",
+            "wait for fonts",
+            "install the probe",
+            "read the page",
+            "capture a tile",
+            "open the dialog",
+            "measure the dialog",
+            "capture the dialog",
+            "close the dialog",
+        ] {
+            assert_eq!(step_in(step, en), step);
         }
     }
 

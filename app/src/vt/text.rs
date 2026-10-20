@@ -19,7 +19,9 @@
 //! **A synchronized update starts where the program starts it.** rio-vt holds
 //! an update's bytes back only from its next read, so a read that opened one
 //! drew the first part of the frame at once, torn. The rest of such a read is
-//! handed to the core as a read of its own.
+//! handed to the core as a read of its own. That goes for both ways of opening
+//! one: `ESC [ ? 2026 h`, and the older string `ESC P = 1 s ESC \`, which
+//! rio-vt honours too.
 //!
 //! **Setting origin mode homes the cursor.** Setting DECOM moves the cursor to
 //! the top of the scrolling region; rio-vt 0.5.28 leaves it where it was, so a
@@ -78,7 +80,16 @@ pub(super) struct TextGuard {
     /// long to hold, so it has partly gone to the core already and is passed
     /// as it is.
     oversized: bool,
+    /// Inside a DCS string whose body so far could still be `=1s`, the older
+    /// way to open a synchronized update: the body read so far.
+    dcs: Option<Vec<u8>>,
+    /// That string has just ended at an `ESC`, so the read ends after the `\`
+    /// that completes its terminator.
+    sync_at_terminator: bool,
 }
+
+/// The body of the DCS string that opens a synchronized update.
+const OPEN_SYNC: &[u8] = b"=1s";
 
 /// What to do with a control sequence once it is whole.
 struct Verdict {
@@ -178,12 +189,21 @@ impl TextGuard {
                 }
                 State::Escape => {
                     i += 1;
+                    if std::mem::take(&mut self.sync_at_terminator) && byte == b'\\' {
+                        self.after_escape(byte);
+                        emit(core, &bytes[pass..i]);
+                        pass = i;
+                        continue;
+                    }
                     match byte {
                         b'[' => {
                             self.state = State::Csi;
                             self.oversized = false;
                         }
-                        b']' | b'P' | b'X' | b'^' | b'_' => self.state = State::Str,
+                        b']' | b'P' | b'X' | b'^' | b'_' => {
+                            self.state = State::Str;
+                            self.dcs = (byte == b'P').then(Vec::new);
+                        }
                         0x20..=0x2f => self.state = State::Intermediate,
                         ESC => start = i - 1,
                         CAN | SUB => self.state = State::Ground,
@@ -246,17 +266,40 @@ impl TextGuard {
                     }
                 }
                 State::Str => {
-                    // Nothing in a string is changed; only its end matters.
-                    match super::kitty::string_end(&bytes[i..]) {
+                    // Nothing in a string is changed; only its end matters,
+                    // and whether it opens a synchronized update.
+                    let end = super::kitty::string_end(&bytes[i..]);
+                    if let Some(body) = &mut self.dcs {
+                        body.extend_from_slice(&bytes[i..i + end.unwrap_or(bytes.len() - i)]);
+                        if !OPEN_SYNC.starts_with(body) {
+                            self.dcs = None;
+                        }
+                    }
+                    match end {
                         Some(at) => {
                             i += at;
-                            if bytes[i] == ESC {
-                                start = i;
-                                self.state = State::Escape;
-                            } else {
-                                self.state = State::Ground;
+                            let opens_sync = self.dcs.take().as_deref() == Some(OPEN_SYNC);
+                            match bytes[i] {
+                                ESC => {
+                                    start = i;
+                                    self.state = State::Escape;
+                                    self.sync_at_terminator = opens_sync;
+                                    i += 1;
+                                }
+                                // A cancelled string opens nothing.
+                                CAN | SUB => {
+                                    self.state = State::Ground;
+                                    i += 1;
+                                }
+                                _ => {
+                                    self.state = State::Ground;
+                                    i += 1;
+                                    if opens_sync {
+                                        emit(core, &bytes[pass..i]);
+                                        pass = i;
+                                    }
+                                }
                             }
-                            i += 1;
                         }
                         None => i = bytes.len(),
                     }
@@ -604,6 +647,43 @@ mod tests {
             out,
             vec![b"before\x1b[?2026h".to_vec(), b"frame\x1b[?2026l".to_vec()]
         );
+    }
+
+    #[test]
+    fn the_older_string_that_opens_an_update_begins_a_read_of_its_own_too() {
+        let out = pieces(b"before\x1bP=1s\x1b\\frame\x1bP=2s\x1b\\", &[]);
+        assert_eq!(
+            out,
+            vec![
+                b"before\x1bP=1s\x1b\\".to_vec(),
+                b"frame\x1bP=2s\x1b\\".to_vec()
+            ]
+        );
+    }
+
+    #[test]
+    fn the_older_opener_splits_the_read_wherever_the_chunks_cut_it() {
+        let stream = b"before\x1bP=1s\x1b\\frame";
+        for cut in 1..stream.len() {
+            let out = pieces(stream, &[cut]);
+            let after = out.iter().position(|p| p.ends_with(b"\x1b\\"));
+            assert!(
+                after.is_some_and(|at| out[at + 1..].concat() == b"frame"),
+                "cut at {cut}: {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_strings_and_a_cancelled_opener_split_nothing() {
+        for stream in [
+            &b"a\x1bP=2s\x1b\\b"[..],
+            b"a\x1bP=1sx\x1b\\b",
+            b"a\x1b]0;=1s\x1b\\b",
+            b"a\x1bP=1s\x18b",
+        ] {
+            assert_eq!(pieces(stream, &[]), vec![stream.to_vec()], "{stream:?}");
+        }
     }
 
     #[test]
