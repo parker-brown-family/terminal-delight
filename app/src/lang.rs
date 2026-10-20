@@ -2832,7 +2832,8 @@ mod tests {
 
     /// Fields whose translation may equal the English: cognates (CRT, DESIGN,
     /// Plugins), Git words developers keep (HEAD, staged, Checkout), and
-    /// templates that are only placeholders and symbols.
+    /// terms the interface names (CONCUR, ELI5), and templates that are only
+    /// placeholders and symbols.
     const SAME_AS_ENGLISH: &[&str] = &[
         "chrome.bar_m_recover_left",
         "chrome.dead_meta_kb",
@@ -2891,6 +2892,43 @@ mod tests {
         "lang.t_syntax",
         "lang.t_theme",
         "lang.thm_hacker",
+        "parts.attention_age_hours",
+        "parts.attention_age_minutes",
+        "parts.attention_age_seconds",
+        "parts.attention_source_prompt",
+        "parts.bench_face_chip_doc",
+        "parts.bench_face_chip_term",
+        "parts.benchdraw_artifact_type",
+        "parts.benchdraw_live_to_agent",
+        "parts.benchdraw_questions",
+        "parts.doc_md_image",
+        "parts.doc_md_image_failed",
+        "parts.handover_date_format",
+        "parts.handover_day_heading",
+        "parts.hud_state_error",
+        "parts.launcher_harness_local",
+        "parts.lookup_kind_note",
+        "parts.lookup_kind_tab",
+        "parts.notes_concur_stamp_empty",
+        "parts.paint_tile_desktop",
+        "parts.pane_launch_agent_chip",
+        "parts.pane_logo_placeholder",
+        "parts.pane_mode_local",
+        "parts.pane_overflow_theme",
+        "parts.pane_title_default_shell",
+        "parts.surface_action_source",
+        "parts.surface_format_audio",
+        "parts.surface_format_img",
+        "parts.surface_format_video",
+        "parts.surface_kind_architecture",
+        "parts.surface_kind_markdown",
+        "parts.surface_kind_question",
+        "parts.surface_register_eli5",
+        "parts.surface_stamp",
+        "parts.surface_title_note",
+        "parts.transcript_image",
+        "parts.video_error_code",
+        "parts.vitals_bar_fatigue",
     ];
 
     /// Every `name: "literal",` line of each `pub const XX` table in `src`,
@@ -2934,6 +2972,7 @@ mod tests {
             ("lang", include_str!("lang.rs")),
             ("coord", include_str!("lang/coord.rs")),
             ("chrome", include_str!("lang/chrome.rs")),
+            ("parts", include_str!("lang/parts.rs")),
         ];
         let mut found = Vec::new();
         for (table, src) in sources {
