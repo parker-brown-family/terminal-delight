@@ -572,6 +572,11 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
+- **Turning origin mode on moves the cursor home again.** A program that sets
+  origin mode (DECOM) expects the cursor at the top of its scrolling region,
+  where xterm, tmux and the old core put it. The rio-vt core left it where it
+  was, so the program's next text landed in the wrong place. Found by the
+  Terminal Lab. (#1034)
 - **A screen redraw opened the older way is no longer drawn half-finished.**
   Programs can ask the terminal to hold a redraw back until it is complete,
   either with `ESC [ ? 2026 h` or with an older string, `ESC P = 1 s ESC \`.

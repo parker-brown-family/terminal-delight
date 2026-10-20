@@ -828,6 +828,25 @@ mod tests {
     }
 
     #[test]
+    fn setting_origin_mode_homes_the_cursor_and_resetting_it_does_not() {
+        use crate::vt::Backend;
+        let mut core =
+            super::Core::new(TermSize::new(10, 5, 8, 16), Arc::new(Heard::default()), 100);
+        let at = |core: &super::Core| {
+            let point = core.cursor().point;
+            (point.line.0, point.column.0)
+        };
+        // Set: the top of the scrolling region, rows 2 to 4.
+        core.advance(b"abc\x1b[2;4r\x1b[3;5H\x1b[?6h");
+        assert_eq!(at(&core), (1, 0));
+        // Reset: left where it is, as alacritty_terminal 0.26 leaves it, though
+        // xterm and tmux home it. A session host's snapshot places the cursor
+        // and then resets the mode (`vt/text.rs` says why that wins).
+        core.advance(b"\x1b[2;5H\x1b[?6l");
+        assert_eq!(at(&core), (2, 4));
+    }
+
+    #[test]
     fn grapheme_clustering_is_neither_offered_nor_taken() {
         use crate::vt::Backend;
         let (replies, _) = replies_to(b"\x1b[?2027h\x1b[?2027$p");

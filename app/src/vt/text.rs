@@ -23,6 +23,11 @@
 //! one: `ESC [ ? 2026 h`, and the older string `ESC P = 1 s ESC \`, which
 //! rio-vt honours too.
 //!
+//! **Setting origin mode homes the cursor.** Setting DECOM moves the cursor to
+//! the top of the scrolling region; rio-vt 0.5.28 leaves it where it was, so a
+//! cursor position follows the sequence (the Terminal Lab found it,
+//! `scripts/lab/`). Resetting it is left alone, for the reason at the code.
+//!
 //! Everything else passes through as it came, in as few pieces as it came in.
 //! Only an escape sequence or a character cut off by the end of a chunk is held
 //! back, until the chunk that completes it: a few bytes that mean nothing yet.
@@ -395,13 +400,28 @@ impl TextGuard {
             return Verdict::PASS;
         };
         let kept: Vec<u16> = modes.iter().copied().filter(|&mode| mode != 2027).collect();
-        let instead = (kept.len() != modes.len()).then(|| {
-            if kept.is_empty() {
-                return Vec::new();
+        // Setting origin mode (DECOM, 6) homes the cursor to the top of the
+        // scrolling region (DEC STD 070; xterm, tmux and alacritty all do).
+        // rio-vt 0.5.28 only sets the mode, so the next text lands wherever the
+        // cursor happened to be. A cursor position with no parameters is that
+        // home, so it follows the sequence.
+        //
+        // Resetting it should home the cursor too, and xterm and tmux do, but
+        // neither core does, and a session host's snapshot depends on that:
+        // it places the cursor and then writes `?6l` (`gridwire.rs`, modes
+        // last). Homing there would put every attached pane's cursor in the
+        // corner for as long as a host built before this runs.
+        let homes = last == b'h' && kept.contains(&6);
+        let instead = (kept.len() != modes.len() || homes).then(|| {
+            let mut again = Vec::new();
+            if !kept.is_empty() {
+                let kept: Vec<String> = kept.iter().map(u16::to_string).collect();
+                again = format!("\x1b[?{}", kept.join(";")).into_bytes();
+                again.push(last);
             }
-            let kept: Vec<String> = kept.iter().map(u16::to_string).collect();
-            let mut again = format!("\x1b[?{}", kept.join(";")).into_bytes();
-            again.push(last);
+            if homes {
+                again.extend_from_slice(b"\x1b[H");
+            }
             again
         });
         Verdict {
@@ -580,6 +600,19 @@ mod tests {
     fn grapheme_clustering_is_never_turned_on() {
         assert_eq!(guarded(b"a\x1b[?2027hb"), b"ab".to_vec());
         assert_eq!(guarded(b"\x1b[?2027;1004h"), b"\x1b[?1004h".to_vec());
+    }
+
+    #[test]
+    fn setting_origin_mode_is_followed_by_the_way_home() {
+        assert_eq!(guarded(b"a\x1b[?6hb"), b"a\x1b[?6h\x1b[Hb".to_vec());
+        assert_eq!(
+            guarded(b"\x1b[?2027;6;1004h"),
+            b"\x1b[?6;1004h\x1b[H".to_vec()
+        );
+        // Resetting it goes through as it is: a host's snapshot ends that way.
+        assert_eq!(guarded(b"\x1b[5;5H\x1b[?6l"), b"\x1b[5;5H\x1b[?6l".to_vec());
+        // Other private modes, and a mode merely numbered like it, go through.
+        assert_eq!(guarded(b"\x1b[?60h\x1b[6h"), b"\x1b[?60h\x1b[6h".to_vec());
     }
 
     #[test]
