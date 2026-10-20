@@ -64,7 +64,7 @@ pub const DEFAULT_SKIN_TOML: &str = include_str!("../skins/default.toml");
 
 /// (id, embedded toml) for every built-in skin, mirroring `theme::BUILTIN_THEMES`.
 const BUILTIN_SKINS: &[(&str, &str)] = &[
-    ("paper", include_str!("../skins/paper.toml")),
+    ("chalk", include_str!("../skins/chalk.toml")),
     ("default", DEFAULT_SKIN_TOML),
     ("deco", include_str!("../skins/deco.toml")),
     ("console", include_str!("../skins/console.toml")),
@@ -675,6 +675,15 @@ pub struct Skin {
 
 impl SkinSpec {
     pub fn bake(&self, th: &Theme, scale: f32) -> Skin {
+        let mut ink = self.ink.bake(th);
+        if self.shape.bake().material == Material::Paper {
+            let light = if th.bg.l < th.text.l { th.text } else { th.bg };
+            ink.btn_face = crate::mix(th.surface, light, 0.12);
+            // Pigment on pale stock needs a darker value than chalk on slate.
+            if th.bg.l > th.text.l {
+                ink.select.l = ink.select.l.min(0.36);
+            }
+        }
         Skin {
             font_family: self
                 .font_family
@@ -682,7 +691,7 @@ impl SkinSpec {
                 .unwrap_or_else(|| th.font_family.clone()),
             name: self.name.clone(),
             icon: self.icon.clone(),
-            ink: self.ink.bake(th),
+            ink,
             m: self.metric.bake(),
             shape: self.shape.bake(),
             scale,
@@ -693,6 +702,41 @@ impl SkinSpec {
 }
 
 impl Skin {
+    /// Caveat's small body is sized optically, independently of terminal cells.
+    pub fn text_px(&self, size: f32) -> Pixels {
+        px(if self.is_paper() {
+            (size * 1.45).max(16. * self.scale)
+        } else {
+            size
+        })
+    }
+
+    /// An unpadded sheet: callers retain their geometry and interaction.
+    pub fn sheet(&self) -> Div {
+        if self.is_paper() {
+            div().relative().bg(self.ink.panel).children(self.grain())
+        } else {
+            div()
+        }
+    }
+
+    /// Finish a region before its content is added, replacing legacy chrome.
+    pub fn finish<E: Styled + ParentElement>(&self, d: E) -> E {
+        if self.is_paper() {
+            d.bg(self.ink.panel)
+                .border_color(hsla(0., 0., 0., 0.))
+                .rounded(self.radius())
+                .shadow(Vec::new())
+                .children(self.grain())
+                .child(crate::paper::rim(
+                    self.ink.edge_rest,
+                    self.ink.select,
+                    false,
+                ))
+        } else {
+            d
+        }
+    }
     pub fn is_paper(&self) -> bool {
         self.shape.material == Material::Paper
     }
@@ -708,6 +752,7 @@ impl Skin {
             .bg(hsla(0., 0., 0., 0.))
             .border_color(hsla(0., 0., 0., 0.))
             .font_family(self.font_family.clone())
+            .text_size(self.text_px(11. * self.scale))
             .text_color(self.ink.ink)
             .child(crate::paper::backing(
                 self.ink.btn_face,
@@ -983,6 +1028,15 @@ impl Skin {
             .px(self.px(self.m.pad_x))
             .py(self.px(self.m.pad_y));
         let d = d.children(self.grain());
+        if self.is_paper() {
+            return b_all(d, self.m.border)
+                .border_color(hsla(0., 0., 0., 0.))
+                .child(crate::paper::rim(
+                    self.ink.rule_strong,
+                    self.ink.select,
+                    false,
+                ));
+        }
         // The inner line of a double/inset boundary is an absolutely positioned
         // ring rather than a second border, because one div carries one border.
         // It is added FIRST so a caller's own children paint over it.
@@ -1185,6 +1239,9 @@ impl Skin {
     /// tab at rest wears — so the toggle reads as a member of the chrome's
     /// family rather than as a shape of its own. Feed it [`Skin::slider_half`].
     pub fn slider(&self) -> Div {
+        if self.is_paper() {
+            return self.sheet().flex().flex_row().items_center().p(px(2.));
+        }
         b_all(
             div()
                 .flex()
@@ -1274,16 +1331,17 @@ impl Skin {
     ///
     /// No inset shadow: an inset reads as a bevel, and a bevel claims the thing
     /// is raised, which is the opposite of what a glow says.
-    pub fn ring<E: Styled>(&self, d: E, lit: bool, tint: Hsla, rest: Rest) -> E {
+    pub fn ring<E: Styled + ParentElement>(&self, d: E, lit: bool, tint: Hsla, rest: Rest) -> E {
         if self.is_paper() {
-            return b_all(d, self.m.border)
-                .bg(self.ink.btn_face)
-                .border_color(if lit {
-                    tint.alpha(0.7)
-                } else {
-                    self.ink.edge_rest
-                })
+            let d = b_all(d.relative(), self.m.border)
+                .bg(hsla(0., 0., 0., 0.))
+                .border_color(hsla(0., 0., 0., 0.))
                 .text_color(self.ink.ink);
+            return if lit {
+                d.child(crate::paper::selection(tint))
+            } else {
+                d
+            };
         }
         let clear = hsla(0., 0., 0., 0.);
         if !lit {
@@ -1339,18 +1397,14 @@ impl Skin {
     /// already carries a colour is not asked to wear two.
     pub fn active_row<E: Styled + ParentElement>(&self, d: E, active: bool) -> E {
         if self.is_paper() {
-            return b_all(d.relative(), self.m.border)
-                .bg(if active {
-                    self.ink.btn_face
-                } else {
-                    hsla(0., 0., 0., 0.)
-                })
-                .border_color(hsla(0., 0., 0., 0.))
-                .child(crate::paper::rim(
-                    self.ink.edge_rest.alpha(if active { 0.6 } else { 0.0 }),
-                    self.ink.select,
-                    active,
-                ));
+            let d = b_all(d.relative(), self.m.border)
+                .bg(hsla(0., 0., 0., 0.))
+                .border_color(hsla(0., 0., 0., 0.));
+            return if active {
+                d.child(crate::paper::selection(self.ink.select))
+            } else {
+                d
+            };
         }
         // The ring carries it. An earlier pass added `row_active` underneath on
         // the theory that a ring alone finds a row without reading it against
@@ -1803,7 +1857,7 @@ pub fn spec(cx: &App) -> Arc<SkinSpec> {
     let by_id = |id: &str| {
         reg.builtins
             .iter()
-            .find(|(k, _)| k == id)
+            .find(|(k, _)| k == canonical_id(id))
             .map(|(_, s)| s.clone())
     };
     if reg.active_id != FOLLOW_THEME {
@@ -1864,7 +1918,7 @@ pub fn is_pinned(cx: &App) -> bool {
 pub fn active_id(cx: &App) -> String {
     let reg = cx.global::<SkinRegistry>();
     if reg.active_id != FOLLOW_THEME {
-        return reg.active_id.clone();
+        return canonical_id(&reg.active_id).to_string();
     }
     theme::theme(cx)
         .skin
@@ -1880,6 +1934,7 @@ pub fn active_id(cx: &App) -> String {
 /// confusing thing a theming system can do, and the whole layer is built around
 /// refusing to do it.
 pub fn select(cx: &mut App, id: &str) -> Result<String, String> {
+    let id = canonical_id(id);
     let known: Vec<String> = all_skins(cx).into_iter().map(|(k, _, _)| k).collect();
     if id != FOLLOW_THEME && !known.iter().any(|k| k == id) {
         return Err(format!(
@@ -2023,10 +2078,18 @@ pub(crate) fn init_embedded(cx: &mut App) {
 // ---------------------------------------------------------------------------
 
 /// The embedded TOML of one builtin skin, by id.
+fn canonical_id(id: &str) -> &str {
+    if id == "paper" {
+        "chalk"
+    } else {
+        id
+    }
+}
+
 pub fn builtin_toml(id: &str) -> Option<&'static str> {
     BUILTIN_SKINS
         .iter()
-        .find(|(k, _)| *k == id)
+        .find(|(k, _)| *k == canonical_id(id))
         .map(|(_, src)| *src)
 }
 
@@ -2265,10 +2328,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn chalk_follows_palette_and_keeps_terminal_font_owned_by_the_theme() {
+        let chalk = parse(builtin_toml("chalk").unwrap()).unwrap();
+        assert_eq!(builtin_toml("paper"), builtin_toml("chalk"));
+        for id in theme::builtin_ids() {
+            let th = theme::parse(theme::builtin_toml(id).unwrap()).unwrap();
+            let before = (th.bg, th.text, th.accent, th.font_family.clone(), th.warp);
+            let sk = chalk.bake(&th, 1.);
+            assert_eq!(sk.ink.panel, th.surface);
+            assert_eq!(sk.ink.mark, th.accent);
+            assert!(f32::from(sk.text_px(9.)) >= 16.);
+            assert_eq!(
+                before,
+                (th.bg, th.text, th.accent, th.font_family.clone(), th.warp)
+            );
+            assert_eq!(SkinSpec::default().bake(&th, 1.).text_px(9.), px(9.));
+        }
+    }
+
+    #[test]
+    fn finishing_stock_keeps_a_floating_panels_position() {
+        let sk = parse(builtin_toml("chalk").unwrap())
+            .unwrap()
+            .bake(&palette(), 1.);
+        let mut panel = sk.finish(div().absolute().top(px(20.)));
+        assert_eq!(panel.style().position, Some(gpui::Position::Absolute));
+    }
+
+    #[test]
+    fn a_plain_skin_does_not_add_stock_to_the_old_transparent_bands() {
+        let mut band = SkinSpec::default().bake(&palette(), 1.).sheet();
+        assert!(band.style().background.is_none());
+    }
+
+    #[test]
+    fn chalk_gauge_pigment_remains_visible_on_pale_stock() {
+        let mut th = palette();
+        th.bg = gpui::white();
+        th.surface = gpui::rgb(0xe7e2d8).into();
+        th.text = gpui::black();
+        let sk = parse(builtin_toml("chalk").unwrap()).unwrap().bake(&th, 1.);
+        assert!(contrast(sk.ink.select, sk.ink.btn_face) >= 3.);
+    }
+
+    #[test]
     fn paper_ui_handwriting_does_not_change_the_terminal_font() {
-        let spec = parse(include_str!("../skins/paper.toml")).unwrap();
+        let spec = parse(include_str!("../skins/chalk.toml")).unwrap();
         assert!(spec.unknown.is_empty(), "{:?}", spec.unknown);
-        for id in ["chalk-flower", "chalk-night", "hacker"] {
+        for id in ["quiet-command", "field-command", "hacker"] {
             let th = theme::parse(theme::builtin_toml(id).unwrap()).unwrap();
             let terminal_font = th.font_family.clone();
             let sk = spec.bake(&th, 1.0);

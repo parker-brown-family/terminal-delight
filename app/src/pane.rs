@@ -10350,6 +10350,7 @@ impl Render for TerminalView {
                     crate::paint::card(&th, &card_sk, 1.0, sel)
                         .child(crate::paint::card_head(
                             &th,
+                            &card_sk,
                             1.0,
                             sel,
                             "PAINT THIS PANE",
@@ -10376,14 +10377,15 @@ impl Render for TerminalView {
                                     // card hanging above the wall, so it is named
                                     // here rather than only on the card nobody has
                                     // looked up at yet.
-                                    div().text_size(px(9.)).text_color(th.faint).child(
-                                        crate::paint::legend(
+                                    div()
+                                        .text_size(card_sk.text_px(9.))
+                                        .text_color(th.faint)
+                                        .child(crate::paint::legend(
                                             cx,
                                             &["↔ select", "↑ outer"],
                                             "d desktop",
                                             &worn,
-                                        ),
-                                    ),
+                                        )),
                                 ),
                         ),
                 )
@@ -10583,7 +10585,8 @@ impl Render for TerminalView {
             .map(|b| f32::from(b.size.width))
             .unwrap_or(f32::MAX);
         // Reserve the launch button before deciding which optional controls fit.
-        let controls_w = pane_w - 64. * scale;
+        let optical = if sk.is_paper() { 1.45 } else { 1. };
+        let controls_w = (pane_w - 64. * scale) / optical;
         let show_human = SHOW_HUMAN_NAV_GLYPH && controls_w >= 470.; // 1st: 👤 ▲▼ nav
         let show_eq = controls_w >= 410.; //    2nd: EQ / display
         let show_theme = controls_w >= 360.; //  3rd: 🎨 theme
@@ -10634,7 +10637,7 @@ impl Render for TerminalView {
                 .border_color(acc.alpha(0.55))
                 .rounded(px(8.))
                 .occlude()
-                .text_size(px(13.))
+                .text_size(sk.text_px(13.))
                 .font_family(ff)
                 .shadow_md();
             // 👤 ▲▼ message-nav keeps its live steppers inline so you can step
@@ -10763,7 +10766,7 @@ impl Render for TerminalView {
             let half = |face: crate::workbench::Face, cx: &mut Context<Self>| {
                 let lit = face_now == face;
                 sk.slider_half(lit, sk.ink.select)
-                    .text_size(px((hicon * 0.42).max(8.5)))
+                    .text_size(sk.text_px((hicon * 0.42).max(8.5)))
                     .child(face.chip())
                     .on_mouse_down(
                         MouseButton::Left,
@@ -10807,7 +10810,7 @@ impl Render for TerminalView {
                     };
                     d.child(
                         div()
-                            .text_size(px((hicon * 0.40).max(8.)))
+                            .text_size(sk.text_px((hicon * 0.40).max(8.)))
                             .text_color(th.accent)
                             .child(why),
                     )
@@ -10921,7 +10924,7 @@ impl Render for TerminalView {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .text_size(px((logo_box * 0.42).max(7.)))
+                                .text_size(sk.text_px((logo_box * 0.42).max(7.)))
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                 .text_color(ring)
                                 .child(mark),
@@ -10955,13 +10958,13 @@ impl Render for TerminalView {
                     })
                     .child(
                         div()
-                            .text_size(px(13. * scale))
+                            .text_size(sk.text_px(13. * scale))
                             .when_some(chrome_glyph_font('\u{ff0b}', &th), |d, family| {
                                 d.font_family(family)
                             })
                             .child("\u{ff0b}"),
                     )
-                    .child(div().text_size(px(9.5 * scale)).child("logo"))
+                    .child(div().text_size(sk.text_px(9.5 * scale)).child("logo"))
                     .into_any_element()
             }
         };
@@ -10976,6 +10979,7 @@ impl Render for TerminalView {
             .flex_row()
             .items_center()
             .justify_between()
+            .gap(px(if sk.is_paper() { 8. * scale } else { 0. }))
             .px(hpad)
             // Lit or flat is the skin's call, not this call site's — see
             // `Shine`. Both stops are this PANE's, so a retinted pane keeps its
@@ -10985,7 +10989,7 @@ impl Render for TerminalView {
             .border_color(sk.ink.edge_strong)
             .text_color(bar_fg)
             // the title / status / grid-label text scales with the bar
-            .text_size(px(th.font_size * scale))
+            .text_size(sk.text_px(th.font_size * scale))
             .child(if let Some(buf) = self.renaming.clone() {
                 // inline rename box: ↵ commits, esc reverts, and a click
                 // anywhere outside the box commits too (see `commit_rename`) —
@@ -11051,7 +11055,7 @@ impl Render for TerminalView {
                             .border_1()
                             .border_color(th.accent.alpha(0.6))
                             .text_color(th.accent)
-                            .text_size(px(9.5 * scale))
+                            .text_size(sk.text_px(9.5 * scale))
                             .child(mark)
                     }))
                     .child(format!("▸ {} · {label}", self.mode.label_i18n()))
@@ -11096,9 +11100,13 @@ impl Render for TerminalView {
                             .id("launch-agent")
                             .debug_selector(|| "launch-agent".into())
                             .cursor_pointer()
-                            .text_size(px((hicon * 0.42).max(8.5)))
+                            .text_size(sk.text_px((hicon * 0.42).max(8.5)))
                             .whitespace_nowrap()
-                            .child(if pane_w >= 470. { "⌁ AGENT" } else { "⌁" })
+                            .child(if pane_w / optical >= 470. {
+                                "⌁ AGENT"
+                            } else {
+                                "⌁"
+                            })
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
@@ -11149,7 +11157,7 @@ impl Render for TerminalView {
                                 // the bust matches the consistent 2× glyph set
                                 .child(
                                     div()
-                                        .text_size(px(hicon))
+                                        .text_size(sk.text_px(hicon))
                                         .line_height(px(hicon))
                                         .mr(px(1.))
                                         .child("👤"),
@@ -11170,7 +11178,7 @@ impl Render for TerminalView {
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 // the FOCUS lens reads +50% over the other 2× glyphs
-                                .text_size(px(hicon * 1.5))
+                                .text_size(sk.text_px(hicon * 1.5))
                                 .line_height(px(hicon * 1.5))
                                 .child("👓")
                                 .on_mouse_down(
@@ -11191,7 +11199,7 @@ impl Render for TerminalView {
                                 .border_1()
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
-                                .text_size(px(hicon))
+                                .text_size(sk.text_px(hicon))
                                 .line_height(px(hicon))
                                 .child("🎨")
                                 .on_mouse_down(
@@ -11234,7 +11242,7 @@ impl Render for TerminalView {
                                 .border_1()
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
-                                .text_size(px(hicon))
+                                .text_size(sk.text_px(hicon))
                                 .line_height(px(hicon))
                                 .child("⋯")
                                 .on_mouse_down(
@@ -11262,7 +11270,7 @@ impl Render for TerminalView {
                             .border_1()
                             .border_color(bar_fg.alpha(0.75))
                             .text_color(bar_fg)
-                            .text_size(px(9.5 * scale))
+                            .text_size(sk.text_px(9.5 * scale))
                             .child("OFF-LIMITS")
                     }))
                     .child(status)
@@ -11286,7 +11294,7 @@ impl Render for TerminalView {
                             // the ratio is kept as a ratio rather than as an
                             // offset that would have grown to half again as
                             // dominant once the glyphs halved.
-                            .text_size(px(hicon * 1.36))
+                            .text_size(sk.text_px(hicon * 1.36))
                             .line_height(px(hicon * 1.36))
                             .hover(|s| s.bg(bar_fg.alpha(0.18)))
                             .child("×")
@@ -11349,7 +11357,7 @@ impl Render for TerminalView {
                         .border_color(acc.alpha(0.75))
                         .rounded(px(4.))
                         .text_color(acc)
-                        .text_size(px(11.))
+                        .text_size(sk.text_px(11.))
                         .child(chip_label(
                             &hint.does,
                             copied,
@@ -11398,7 +11406,7 @@ impl Render for TerminalView {
                                 .border_color(acc.alpha(0.75))
                                 .rounded(px(4.))
                                 .text_color(acc)
-                                .text_size(px(11.))
+                                .text_size(sk.text_px(11.))
                                 .whitespace_nowrap()
                                 .child(crate::lang::current().strings().chip_open_here),
                         ),
@@ -11429,7 +11437,7 @@ impl Render for TerminalView {
                         .border_color(acc.alpha(0.75))
                         .rounded(px(4.))
                         .text_color(acc)
-                        .text_size(px(11.))
+                        .text_size(sk.text_px(11.))
                         .whitespace_nowrap()
                         .overflow_hidden()
                         .text_ellipsis()
@@ -11669,6 +11677,14 @@ impl Render for TerminalView {
                     // output stopped being watched is not an agent that stopped.
                     // A document the same way: it fills the screen in the
                     // grid's place, and the shell under it keeps running.
+                    .when(sk.is_paper(), |d| {
+                        d.bg(graded(
+                            crate::mix(th.bg, th.surface, 0.18),
+                            &th.grade,
+                            Channel::Bg,
+                        ))
+                        .children(sk.grain())
+                    })
                     .children(pictures_under)
                     .child(if on_bench {
                         bench_el
@@ -11740,7 +11756,9 @@ impl Render for TerminalView {
                 el.child(crt::glass(&glass_th, &self.fx))
             })
             // raised bezel frame sits above the glass, framing the whole pane
-            .when(th.bezel > 0.001, |el| el.child(crt::bezel(&th)))
+            .when(th.bezel > 0.001 && !sk.is_paper(), |el| {
+                el.child(crt::bezel(&th))
+            })
             .children(ctx_menu_el)
             .children(overflow_el)
             // the paint overlay is the topmost surface — painted last, above

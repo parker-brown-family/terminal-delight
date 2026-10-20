@@ -1,0 +1,340 @@
+{
+  "file": "reports/2026-10-19-chalk-surface-second-pass.html",
+  "subject": "Second native Chalk pass following the palette and surface feedback",
+  "reader": "Parker, who reviewed the first build and supplied screenshots of the missing surfaces",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.5
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.53
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "journey",
+      "probabilities": {
+        "journey": 0.37,
+        "catalogue": 0.06,
+        "argument": 0.24,
+        "report": 0.32,
+        "none_of_the_above": 0.01
+      },
+      "confidence": 0.21
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Chalk \u00b7 second native pass",
+      "text": "This build applies your Chalk feedback to Terminal Delight. Choose the colours through your usual theme, then choose Chalk under Skin for paper surfaces, larger handwriting and chalk selection strokes. There is one Chalk choice. The captures below show the running native app. \n Native captures Both terminal cores pass Install \u00b7 next launch",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 2.01,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.21,
+            "2": 0.51,
+            "3": 0.26
+          },
+          "confidence": 0.49
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.25
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.43
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0.09,
+            "complication": 0.01,
+            "turn": 0.18,
+            "consequence": 0.03,
+            "resolution": 0.66,
+            "aside": 0.02,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.6
+        }
+      },
+      "latency_ms": 357.2952209506184,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "Follow the chosen palette",
+      "text": "The first build gave Chalk its own colours. Your review corrected that boundary: Chalk is the surface, and the active theme supplies the colours. These two native windows select the same Chalk skin, first with your Praus palette and saved display settings, then with Flexoki Light. Once that boundary is in place, the remaining work is to carry the material through every control. 01 \u00b7 Praus \u00b7 your current theme \nPraus keeps its charcoal, sage and linen; the cabinet, pane rims and controls now wear the paper material. 02 \u00b7 Flexoki Light \u00b7 the same Chalk skin \nSwitching the palette produces pale stock without choosing another Chalk design. The terminal keeps its monospace font.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.52,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.06,
+            "1": 0.41,
+            "2": 0.48,
+            "3": 0.05
+          },
+          "confidence": 0.42
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.18
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.96,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.13,
+            "1": 0.79,
+            "2": 0.07,
+            "3": 0.01
+          },
+          "confidence": 0.78
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.4
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0.05,
+            "turn": 0.6,
+            "consequence": 0.26,
+            "resolution": 0.04,
+            "aside": 0.04,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.53
+        }
+      },
+      "latency_ms": 341.613600961864,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "Complete the surrounding controls",
+      "text": "Changing the colour boundary did not cover the gaps in your screenshots. The menus, gauges, attention spine and outer frame each had rendering paths that bypassed the paper. They now use the shared stock and larger handwriting. These close-ups show the result; click one to inspect its full native window. 03 \u00b7 Palette and rules \nThe menu has one Chalk choice, larger handwriting, paper switches and a broad chalk swipe under selected captions. The same treatment reaches program-colour and syntax controls. 04 \u00b7 Gauges on pale stock \nTracks and thumbs use paper and chalk. Percentage readouts stay on one line; darker pigment keeps the marks visible on the light palette. 05 \u00b7 Attention queue and spine \nThe queue and its answer buttons share the stock. Larger text has room for the key hints, and a long queue scrolls inside the window. The cases in this capture are fictional. 06 \u00b7 Paint cards \nThe paint cards also use Chalk. Wider tiles fit palette names, and their selection swipe matches the other controls.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.62,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.36,
+            "2": 0.55,
+            "3": 0.05
+          },
+          "confidence": 0.51
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.13
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.77,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.24,
+            "1": 0.75,
+            "2": 0.01,
+            "3": 0
+          },
+          "confidence": 0.75
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.08
+        },
+        "role": {
+          "type": "choice",
+          "choice": "complication",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.41,
+            "turn": 0.14,
+            "consequence": 0.25,
+            "resolution": 0.17,
+            "aside": 0.03,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.31
+        }
+      },
+      "latency_ms": 368.9937519375235,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "Carry the paper through the terminal",
+      "text": "With the surrounding controls covered, your last screenshot finding remains: the terminal itself had not changed. Its paper must sit inside the same region as the text for CRT warp to carry both. Stock now paints there before the text grid, while a paper rim replaces the old raised bezel. The terminal keeps its current font and programme colours. 07 \u00b7 Praus \u00b7 CRT warp enabled \nThe terminal stock bends with the terminal, while the header and cabinet remain their own surfaces. The sticky note retains its tape, fibres, flower and inverse warp.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.67,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.38,
+            "2": 0.45,
+            "3": 0.13
+          },
+          "confidence": 0.41
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.12
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.88,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.14,
+            "1": 0.85,
+            "2": 0.01,
+            "3": 0
+          },
+          "confidence": 0.85
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.06
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.14,
+            "turn": 0.7,
+            "consequence": 0.09,
+            "resolution": 0.06,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.65
+        }
+      },
+      "latency_ms": 328.55817989911884,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "Start the next pass from this review",
+      "text": "That completes the surfaces named in this review. The native checks also caught clipped panels, wrapped percentages, overflowing paint names and visible texture joins; each correction is recorded with your ten screenshots. Those failures establish what the next pass must photograph again. The two choices below are ready for your next annotations. \n\n Handwriting size \nCurrent choice: a 16 px optical floor before menu scaling, with wider tiles and earlier header overflow. \n Chalk selection \nCurrent choice: an irregular pigment swipe behind the caption, with a dry chalk edge. \n\nAnnotate a capture or either choice with what should change next. The next pass can start from those anchors and the saved record. \n\n | \n | Your review | This pass \n | \u201cCHALK --- is the surface\u201d | One Chalk skin follows the active palette; the old Paper selection remains compatible. \n | \u201cthe font is awkwardly small\u201d | Optical sizing for handwriting; room reserved in tiles, readouts and pane headers. \n | \u201cneeds to be the chalk stroke\u201d | A textured swipe replaces the short selection bar. \n | \u201ctheem surface was INCOMPLETE\u201d | Cabinet, bands, pane rims, menus, spine/queue, gauges and paint cards now share stock. \n | \u201cThe terminals themselves are unchanged\u201d | Stock paints under the terminal grid inside its warp region. \n | \u201cTRACK THE STEPS ... AND THE FEEDBACK\u201d | Versioned screenshots, step log, source hashes, native recipe and validation receipts. Verification, source and repeatable capture \nAll scenes used a 1576 \u00d7 950 logical window on the 1.6\u00d7 display. The PNGs are 2522 \u00d7 1520 pixels. WebP storage is lossless; decoded pixels were compared with the native PNGs. Terminal output and queue cases are staged examples. \n\n | Rio core | 2,494 passed; 9 ignored \n | Alacritty core | 2,447 passed; 9 ignored \n | Strict Clippy, formatting and release | Passed \n | Material selection and restart | Chosen through ctl, saved as Chalk, restored without a skin file \n | Skin switching | Chalk \u2192 Default \u2192 Chalk in the same native window 08 \u00b7 The existing Default skin \nDefault keeps its existing typography and chrome. This is the same Flexoki Light scene after changing only the skin. \nThe launcher is installed for the next GUI launch. The current window stays on its existing build; reopen TD and choose Skin \u2192 Chalk . The previous GUI-placement follow-up remains recorded. \nThe renderer lives in paper.rs ; the material and typography live in skin.rs . The complete feedback and steps are in feedback and step record . Images, logs, source hashes and capture.sh are in reports/2026-10-19-chalk-surface-v02-evidence/ . Both the review images and the step record are retained for the next pass. \n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.77,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.26,
+            "2": 0.64,
+            "3": 0.08
+          },
+          "confidence": 0.62
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.38
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.72,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.3,
+            "1": 0.68,
+            "2": 0.02,
+            "3": 0
+          },
+          "confidence": 0.68
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.57
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0.02,
+            "turn": 0.01,
+            "consequence": 0.05,
+            "resolution": 0.79,
+            "aside": 0.12,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.76
+        }
+      },
+      "latency_ms": 363.5812079301104,
+      "failure": null
+    }
+  ]
+}

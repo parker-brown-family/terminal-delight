@@ -27,8 +27,6 @@ pub const DEFAULT_THEME_TOML: &str = include_str!("../themes/hacker.toml");
 /// (id, embedded toml) for every built-in. The user file at
 /// ~/.config/terminal-delight/theme.toml stays hot-reloaded as id "custom".
 pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
-    ("chalk-flower", include_str!("../themes/chalk-flower.toml")),
-    ("chalk-night", include_str!("../themes/chalk-night.toml")),
     (
         "quiet-command",
         include_str!("../themes/quiet-command.toml"),
@@ -1131,10 +1129,22 @@ impl Grade {
     }
 }
 
+// The first Chalk preview incorrectly registered materials as colour designs.
+// Keep saved palette/grade fields while retiring those two picker entries.
+fn read_design_id<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let id = String::deserialize(d)?;
+    Ok(if matches!(id.as_str(), "chalk-flower" | "chalk-night") {
+        "hacker".into()
+    } else {
+        id
+    })
+}
+
 /// One scope's appearance pick: a theme id plus an optional seed-colour
 /// override ("#rrggbb"). Panes carry `Option<ThemeChoice>`; None = follow outer.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThemeChoice {
+    #[serde(deserialize_with = "read_design_id")]
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<String>,
@@ -1745,11 +1755,6 @@ pub fn all_themes(cx: &App) -> Vec<(String, String, String)> {
 /// Short picker caption for a theme id: the segment before the first '-'
 /// ("tactical-overdrive" → "tactical"), which is unique across the built-ins.
 fn short_label(id: &str) -> String {
-    match id {
-        "chalk-flower" => return "chalk light".into(),
-        "chalk-night" => return "chalk dark".into(),
-        _ => {}
-    }
     id.split('-').next().unwrap_or(id).to_string()
 }
 
@@ -3097,20 +3102,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn chalk_styles_request_paper_and_keep_distinct_readable_modes() {
-        let light = parse(builtin_toml("chalk-flower").unwrap()).unwrap();
-        let dark = parse(builtin_toml("chalk-night").unwrap()).unwrap();
-        for th in [&light, &dark] {
-            assert_eq!(th.skin.as_deref(), Some("paper"));
-            assert_eq!(th.font_family, "JetBrains Mono");
-            assert_eq!(
-                (th.scanline_opacity, th.tracking, th.flicker, th.jiggle),
-                (0., 0., 0., 0.)
-            );
+    fn chalk_material_is_not_offered_as_a_colour_design() {
+        assert!(!builtin_ids().iter().any(|id| id.starts_with("chalk")));
+        for id in ["chalk-flower", "chalk-night"] {
+            let mut saved = serde_json::to_value(ThemeChoice::default()).unwrap();
+            saved["id"] = id.into();
+            let restored: ThemeChoice = serde_json::from_value(saved).unwrap();
+            assert_eq!(restored.id, "hacker");
         }
-        assert!(light.bg.l > light.text.l);
-        assert!(dark.bg.l < dark.text.l);
-        assert_ne!(short_label(&light.name), short_label(&dark.name));
     }
 
     #[test]
@@ -3121,7 +3120,7 @@ mod tests {
             assert_eq!(&th.name, id, "theme file name must match registry id");
             icons.push(th.icon);
         }
-        assert_eq!(BUILTIN_THEMES.len(), 7);
+        assert_eq!(BUILTIN_THEMES.len(), 5);
         // The tray is glyph-only, so two themes sharing an icon are two themes
         // nobody can tell apart. This test has always collected the icons; it now
         // also reads them, which is what its name has always claimed.

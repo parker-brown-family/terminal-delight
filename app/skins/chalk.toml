@@ -1,5 +1,5 @@
 # Cotton paper furniture; recipes follow the current palette in both modes.
-name = "paper"
+name = "chalk"
 icon = "✿"
 
 [font]
@@ -21,7 +21,7 @@ pad_y = 6.0
 chip_px = 8.0
 chip_py = 3.0
 row_h = 23.0
-label_size = 13.0
+label_size = 16.0
 glow = 0.0
 glow_a = 0.0
 
