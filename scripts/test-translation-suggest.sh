@@ -4,6 +4,9 @@
 # translated their own strings must be left alone. Needs full history.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
+# Read the script's local output. Under Actions it would print annotations onto
+# this pull request for old history, and its all-clear goes to the job summary.
+unset GITHUB_ACTIONS GITHUB_STEP_SUMMARY
 S=scripts/translation-suggest.py
 fail=0
 
