@@ -8,6 +8,28 @@ pub(super) struct Snapshot {
     pub cell_h: f32,
     pub pad: (f32, f32),
     pub crawl: bool,
+    /// The alpha of the phosphor bleed under every letter, or `None` for a
+    /// clean grid — which is every design but Intrusive. See [`bleed_runs`].
+    pub bleed: Option<f32>,
+}
+
+/// The bleed offsets: one pixel out in each of the four directions. Four
+/// copies, not eight: the diagonals add cost and read as bold, not as glow.
+const BLEED: [(f32, f32); 4] = [(-1., 0.), (1., 0.), (0., -1.), (0., 1.)];
+
+/// A line's runs, recoloured for the bleed underneath it: each run in its OWN
+/// colour at `alpha`, so green text bleeds green and a red error bleeds red,
+/// with no background, underline or strike — those would print four times.
+pub(super) fn bleed_runs(runs: &[TextRun], alpha: f32) -> Vec<TextRun> {
+    runs.iter()
+        .map(|r| TextRun {
+            color: r.color.alpha(r.color.a * alpha),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+            ..r.clone()
+        })
+        .collect()
 }
 
 #[derive(Default)]
@@ -64,6 +86,23 @@ impl Render for GridPaint {
                 let line = div().h(px(s.cell_h)).whitespace_nowrap();
                 if text.is_empty() {
                     line
+                } else if let Some(alpha) = s.bleed {
+                    // The copies first, absolutely placed, so the real line
+                    // paints last and sharp over its own glow.
+                    let glow = bleed_runs(&runs, alpha);
+                    BLEED
+                        .iter()
+                        .fold(line.relative(), |l, (dx, dy)| {
+                            l.child(
+                                div()
+                                    .absolute()
+                                    .left(px(*dx))
+                                    .top(px(*dy))
+                                    .whitespace_nowrap()
+                                    .child(StyledText::new(text.clone()).with_runs(glow.clone())),
+                            )
+                        })
+                        .child(StyledText::new(text).with_runs(runs))
                 } else {
                     line.child(StyledText::new(text).with_runs(runs))
                 }
@@ -76,6 +115,27 @@ mod tests {
     use super::*;
     use crate::pane::harness::Pane;
     use gpui::TestAppContext;
+
+    /// The bleed is each run's own colour, fainter, with nothing that would
+    /// print four times: no background, no underline, no strike.
+    #[test]
+    fn a_bleed_copy_keeps_its_colour_and_drops_its_ground() {
+        let red = gpui::hsla(0., 0.8, 0.5, 1.);
+        let run = TextRun {
+            len: 3,
+            font: gpui::font("JetBrains Mono"),
+            color: red,
+            background_color: Some(gpui::black()),
+            underline: Some(Default::default()),
+            strikethrough: Some(Default::default()),
+        };
+        let glow = super::bleed_runs(&[run], 0.3);
+        assert_eq!(glow[0].len, 3);
+        assert_eq!((glow[0].color.h, glow[0].color.s, glow[0].color.l), (red.h, red.s, red.l));
+        assert!((glow[0].color.a - 0.3).abs() < 1e-6);
+        assert!(glow[0].background_color.is_none());
+        assert!(glow[0].underline.is_none() && glow[0].strikethrough.is_none());
+    }
 
     fn count(pane: &mut Pane) -> usize {
         pane.view

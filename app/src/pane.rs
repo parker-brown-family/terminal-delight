@@ -10972,6 +10972,7 @@ impl Render for TerminalView {
         let mut header = div()
             .relative()
             .children(sk.grain())
+            .children(sk.focus_hatch(focused_now))
             .font_family(sk.font_family.clone())
             .group(hdr_grp.clone())
             .h(px(header_h))
@@ -11043,6 +11044,9 @@ impl Render for TerminalView {
                     .items_center()
                     .gap_2()
                     .cursor_pointer()
+                    // A pane's title is what its program said — a command, a
+                    // host, a path — so it is set as data, not as a name.
+                    .map(|d| sk.data(d))
                     .child(logo_el)
                     // The launch mark rides before the label rather than after
                     // it: the title clips on a narrow pane, and the mark is the
@@ -11058,7 +11062,15 @@ impl Render for TerminalView {
                             .text_size(sk.text_px(9.5 * scale))
                             .child(mark)
                     }))
-                    .child(format!("▸ {} · {label}", self.mode.label_i18n()))
+                    // Under a chevron title the focused pane's » replaces the
+                    // ▸: one lead mark, not two. Unfocused panes keep the ▸, so
+                    // the chevron says which pane has the keyboard.
+                    .children(focused_now.then(|| sk.chevron("»")).flatten())
+                    .child(if focused_now && sk.chevron("»").is_some() {
+                        format!("{} · {label}", self.mode.label_i18n())
+                    } else {
+                        format!("▸ {} · {label}", self.mode.label_i18n())
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|view, ev: &MouseDownEvent, window, cx| {
@@ -11699,6 +11711,7 @@ impl Render for TerminalView {
                                 cell_h: self.cell_h,
                                 pad: (grid_pad_x, grid_pad_y),
                                 crawl: th.crawl,
+                                bleed: (th.letter_glow > 0.001).then_some(0.30 * th.letter_glow),
                             },
                             cx,
                         );
