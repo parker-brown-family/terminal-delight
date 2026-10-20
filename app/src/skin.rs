@@ -2901,7 +2901,10 @@ mod tests {
                 assert_eq!(sk.font_family, "Chakra Petch");
                 assert_eq!(sk.heading_text("Jev"), "JEV");
             } else {
-                assert_eq!(sk.heading_family, sk.font_family, "{id} grew a heading face");
+                assert_eq!(
+                    sk.heading_family, sk.font_family,
+                    "{id} grew a heading face"
+                );
                 assert_eq!(sk.data_family, sk.font_family, "{id} grew a data face");
                 assert_eq!(sk.heading_text("Jev"), "Jev", "{id} recased a name");
             }
@@ -2915,7 +2918,11 @@ mod tests {
         let th = palette();
         let src = BUILTIN_SKINS.iter().find(|(i, _)| *i == "ops").unwrap().1;
         let spec = parse(src).unwrap();
-        assert!(spec.unknown.is_empty(), "ops.toml has typos: {:?}", spec.unknown);
+        assert!(
+            spec.unknown.is_empty(),
+            "ops.toml has typos: {:?}",
+            spec.unknown
+        );
         let sk = spec.bake(&th, 1.0);
         assert_eq!(sk.shape.corner, Corner::Cut);
         assert_eq!(sk.shape.emphasis, Emphasis::Bar);
@@ -2931,11 +2938,16 @@ mod tests {
         // On the bar the label sits ON the selection and goes dark; elsewhere
         // it is the lit body colour.
         assert_eq!(sk.lit_label(), sk.ink.ink_on_mark);
-        let deco = parse(include_str!("../skins/deco.toml")).unwrap().bake(&th, 1.0);
+        let deco = parse(include_str!("../skins/deco.toml"))
+            .unwrap()
+            .bake(&th, 1.0);
         assert_eq!(deco.lit_label(), deco.ink.ink_lit);
         assert!(deco.chevron("»").is_none() && deco.focus_hatch(true).is_none());
         assert!(sk.chevron("»").is_some() && sk.focus_hatch(true).is_some());
-        assert!(sk.focus_hatch(false).is_none(), "an unfocused pane is hatched");
+        assert!(
+            sk.focus_hatch(false).is_none(),
+            "an unfocused pane is hatched"
+        );
     }
 
     /// Every builtin is a distinct LOOK, not a restyle of the same one.

@@ -1455,7 +1455,8 @@ fn slider_switch(on: bool, th: &theme::Theme, sk: &skin::Skin) -> gpui::Div {
         .w(px(TRACK_W))
         .h(px(TRACK_H))
         .flex_none()
-        .rounded_full()
+        // A pill under a round skin, a slot under a square or cut one.
+        .rounded(sk.radius_pill())
         .border_1()
         .border_color(if on { th.accent } else { th.text.alpha(0.25) })
         .bg(if on {
@@ -1473,7 +1474,7 @@ fn slider_switch(on: bool, th: &theme::Theme, sk: &skin::Skin) -> gpui::Div {
             div()
                 .w(px(KNOB))
                 .h(px(KNOB))
-                .rounded_full()
+                .rounded(sk.radius_pill())
                 .bg(if on { th.accent } else { th.text.alpha(0.45) })
                 .when(on, |d| {
                     d.shadow(
@@ -9548,8 +9549,25 @@ impl Workspace {
         // slot reads the same gauge and a second set of thresholds beside this
         // one is how two surfaces start disagreeing about what 87% looks like.
         let track = th.text.alpha(0.10);
+        let pips = sk.shape.gauge == skin::Gauge::Pips;
+        let pip_dark = track;
+        let pip_none = th.faint.alpha(0.70);
         let meter = |frac: f32, col: gpui::Hsla, h: f32| {
             let f = frac.clamp(0., 1.);
+            if pips {
+                // Counted, not estimated: twenty-four pips across the panel,
+                // taller than the rail they replace so each one reads.
+                return div()
+                    .relative()
+                    .w_full()
+                    .h(px(h * 1.8))
+                    .child(crate::deck::pips(
+                        crate::deck::pips_for(Some(f), 24),
+                        col,
+                        pip_dark,
+                        pip_none,
+                    ));
+            }
             div()
                 .relative()
                 .w_full()
@@ -9591,7 +9609,7 @@ impl Workspace {
                     .gap_1p5()
                     .px_2()
                     .py_0p5()
-                    .rounded_full()
+                    .rounded(sk.radius_pill())
                     .border_1()
                     .border_color(if on { acc.alpha(0.85) } else { txt.alpha(0.16) })
                     .bg(if on { acc.alpha(0.16) } else { txt.alpha(0.04) })
@@ -25532,6 +25550,11 @@ impl Workspace {
         let chip = sk
             .bezel(false, s)
             .flex_none()
+            // A row, so a chevron title's » and « sit either side of the name
+            // rather than stacking above and below it.
+            .flex()
+            .flex_row()
+            .items_center()
             .text_size(sk.text_px(pt * 0.8))
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .map(|d| sk.heading(d))
@@ -26693,6 +26716,11 @@ fn render_node(
                 .when(!is_focused, |d| d.m(px(6.)))
                 .overflow_hidden()
                 .rounded_md()
+                // A skin that rounds nothing squares the pane too: a cut or a
+                // square deck with rounded panes inside it reads as two looks.
+                .when(sk.shape.corner != skin::Corner::Round, |d| {
+                    d.rounded(px(0.))
+                })
                 .border_1()
                 .border_color(if is_focused { acc } else { th.faint })
                 // highlighted pane gets a 2x-thick accent border (drawn inside the
@@ -26765,6 +26793,9 @@ fn render_node(
                             .absolute()
                             .inset_0()
                             .rounded_md()
+                            .when(sk.shape.corner != skin::Corner::Round, |d| {
+                                d.rounded(px(0.))
+                            })
                             .bg(hsla(0., 0., 0., 0.22)),
                     )
                 })

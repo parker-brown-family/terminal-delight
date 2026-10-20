@@ -11711,7 +11711,7 @@ impl Render for TerminalView {
                                 cell_h: self.cell_h,
                                 pad: (grid_pad_x, grid_pad_y),
                                 crawl: th.crawl,
-                                bleed: (th.letter_glow > 0.001).then_some(0.30 * th.letter_glow),
+                                bleed: (th.letter_glow > 0.001).then_some(0.35 * th.letter_glow),
                             },
                             cx,
                         );

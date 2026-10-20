@@ -3172,7 +3172,11 @@ mod tests {
                 assert_eq!(th.letter_glow, 0.0, "{id} glows its letters");
             }
         }
-        let src = BUILTIN_THEMES.iter().find(|(i, _)| *i == "intrusive").unwrap().1;
+        let src = BUILTIN_THEMES
+            .iter()
+            .find(|(i, _)| *i == "intrusive")
+            .unwrap()
+            .1;
         let mut th = parse(src).unwrap();
         flatten_tube(&mut th);
         assert_eq!(th.letter_glow, 0.0, "a flat tube still bleeds");

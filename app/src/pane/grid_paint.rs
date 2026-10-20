@@ -13,9 +13,20 @@ pub(super) struct Snapshot {
     pub bleed: Option<f32>,
 }
 
-/// The bleed offsets: one pixel out in each of the four directions. Four
-/// copies, not eight: the diagonals add cost and read as bold, not as glow.
-const BLEED: [(f32, f32); 4] = [(-1., 0.), (1., 0.), (0., -1.), (0., 1.)];
+/// The bleed: two rings of copies, and the alpha each ring takes of the bleed's
+/// strength. One ring a pixel out reads as BOLD, not as glow — measured on the
+/// first native capture — so a fainter ring two pixels out softens the edge
+/// into light. Eight copies, painted only when the text changes.
+const BLEED: [(f32, f32, f32); 8] = [
+    (-2., 0., 0.45),
+    (2., 0., 0.45),
+    (0., -2., 0.45),
+    (0., 2., 0.45),
+    (-1., 0., 0.8),
+    (1., 0., 0.8),
+    (0., -1., 0.8),
+    (0., 1., 0.8),
+];
 
 /// A line's runs, recoloured for the bleed underneath it: each run in its OWN
 /// colour at `alpha`, so green text bleeds green and a red error bleeds red,
@@ -89,10 +100,12 @@ impl Render for GridPaint {
                 } else if let Some(alpha) = s.bleed {
                     // The copies first, absolutely placed, so the real line
                     // paints last and sharp over its own glow.
-                    let glow = bleed_runs(&runs, alpha);
+                    let outer = bleed_runs(&runs, alpha * BLEED[0].2);
+                    let inner = bleed_runs(&runs, alpha * BLEED[4].2);
                     BLEED
                         .iter()
-                        .fold(line.relative(), |l, (dx, dy)| {
+                        .fold(line.relative(), |l, (dx, dy, k)| {
+                            let glow = if *k < 0.6 { &outer } else { &inner };
                             l.child(
                                 div()
                                     .absolute()
@@ -131,7 +144,10 @@ mod tests {
         };
         let glow = super::bleed_runs(&[run], 0.3);
         assert_eq!(glow[0].len, 3);
-        assert_eq!((glow[0].color.h, glow[0].color.s, glow[0].color.l), (red.h, red.s, red.l));
+        assert_eq!(
+            (glow[0].color.h, glow[0].color.s, glow[0].color.l),
+            (red.h, red.s, red.l)
+        );
         assert!((glow[0].color.a - 0.3).abs() < 1e-6);
         assert!(glow[0].background_color.is_none());
         assert!(glow[0].underline.is_none() && glow[0].strikethrough.is_none());
