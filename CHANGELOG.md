@@ -137,6 +137,18 @@ the changes you may notice in the first hour.
   desktop with `↗ desktop`. A long document shows how far through it you are,
   with a column of blocks down its right edge and a percentage. (#721, #723,
   #749, #761, #812, #884)
+- **🐞 reports a bug without taking anything from your terminals.** The new
+  glyph in the bottom bar (and in the narrow window's … menu) writes a report on
+  your machine and opens it for you to read, then, only if you click again,
+  hands that one file to claude or codex to draft an issue, or opens GitHub's
+  new-issue page for you to fill in yourself. A report holds Terminal Delight's
+  builds, your system's versions, counts of tabs and panes, crash records and
+  its own error lines with paths, links and quoted values blanked out; never
+  scrollback, typed input, titles, directories, commands or a screenshot. The
+  window and the session host now keep logs in
+  `~/.local/state/terminal-delight/logs/`, where before both wrote into
+  nothing, and a crash on any thread leaves a record in `crashes/`, marked by
+  an orange dot on the 🐞. (#1042)
 - **Ctrl+Alt+click opens a document in a new pane beside the one you clicked.**
   The new pane shows the document over a shell that keeps running underneath,
   and Alt+K switches between them. On the document, 0 fits, 1 is actual size, +

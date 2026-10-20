@@ -727,8 +727,9 @@ mod tests {
 
     #[test]
     fn a_rust_slice_panic_loses_the_string_it_quoted() {
-        // The shape of Rust's own message for a bad string slice: the string
-        // it quotes may have come straight out of a terminal.
+        // The shape of an older Rust's message for a bad string slice, which
+        // quoted the whole string; 1.98 quotes only the character. Either may
+        // have come straight out of a terminal.
         let msg = "byte index 3 is not a char boundary; it is inside 'é' (bytes 2..4) of `my secret token`";
         let clean = scrub(msg);
         assert!(!clean.contains("secret"), "{clean}");
@@ -809,6 +810,76 @@ terminal-delight: the session host would not save: refused at /home/a/x
             report.contains("only after they say yes to that exact text"),
             "{report}"
         );
+    }
+
+    /// The hook itself, driven by a real panic. A panic hook is process-wide,
+    /// so it is installed in a child copy of this test binary, which runs only
+    /// this test with `TD_DIAG_PANIC_CHILD` set and its state directory in a
+    /// temporary folder; the parent reads what the child left behind.
+    #[test]
+    fn a_real_panic_on_a_thread_leaves_a_scrubbed_crash_record() {
+        const ME: &str = "diag::tests::a_real_panic_on_a_thread_leaves_a_scrubbed_crash_record";
+        if std::env::var_os("TD_DIAG_PANIC_CHILD").is_some() {
+            install_crash_record(Role::Window);
+            // Two real panics, each on its own thread. A bad string slice, whose
+            // message quotes the character it landed inside (Rust 1.98; older
+            // versions quoted the whole string); and a formatted message that
+            // quotes a value, the shape of an `expect` with a `format!`.
+            let slice = std::thread::Builder::new()
+                .name("drill".into())
+                .spawn(|| {
+                    let s = String::from("\u{2605}hunter2");
+                    let cut = std::hint::black_box(1);
+                    let _ = &s[..cut];
+                })
+                .expect("spawn");
+            assert!(slice.join().is_err(), "the slice drill did not panic");
+            let formatted = std::thread::Builder::new()
+                .name("drill".into())
+                .spawn(|| {
+                    let token = std::hint::black_box("hunter2");
+                    panic!("the token `{token}` was refused");
+                })
+                .expect("spawn");
+            assert!(
+                formatted.join().is_err(),
+                "the formatted drill did not panic"
+            );
+            std::process::exit(0);
+        }
+        let root = std::env::temp_dir().join(format!("td-diag-panic-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", ME, "--nocapture", "--test-threads=1"])
+            .env("TD_DIAG_PANIC_CHILD", "1")
+            .env("XDG_STATE_HOME", &root)
+            .output()
+            .expect("run the child");
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        let records: Vec<PathBuf> = fs::read_dir(root.join("terminal-delight/crashes"))
+            .map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect())
+            .unwrap_or_default();
+        let record: String = records
+            .iter()
+            .map(|p| fs::read_to_string(p).unwrap())
+            .collect();
+        let _ = fs::remove_dir_all(&root);
+
+        assert!(out.status.success(), "the child failed: {stderr}");
+        assert_eq!(records.len(), 2, "two panics, two records: {stderr}");
+        assert!(record.contains("thread: drill"), "{record}");
+        assert!(record.contains("at: src/diag.rs:"), "{record}");
+        assert!(record.contains("is not a char boundary"), "{record}");
+        assert!(record.contains("was refused"), "{record}");
+        assert!(stderr.contains("PANIC on thread drill"), "{stderr}");
+        for leak in ["hunter2", "\u{2605}"] {
+            assert!(
+                !record.contains(leak),
+                "the record quotes {leak:?}: {record}"
+            );
+            assert!(!stderr.contains(leak), "stderr quotes {leak:?}: {stderr}");
+        }
     }
 
     #[test]

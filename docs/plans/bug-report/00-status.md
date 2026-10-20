@@ -49,9 +49,10 @@ A report never carries a person's terminal input or output: no scrollback, rows,
   - the census counts kinds and never names a program;
   - the agent's run line is one single-quoted argument;
   - a whole report, built from fixture logs and a crash record that hold a password, a client's directory and a program's name, contains none of them, and does contain the agent's rules.
-- **Mutation, 2026-10-20:** with the scrub taken out of the report's line reader, two of the nine tests fail, including the whole-report test.
+- **A real panic through the installed hook** — `a_real_panic_on_a_thread_leaves_a_scrubbed_crash_record` runs a child copy of the test binary with its state directory in a temporary folder, panics twice on a named thread (a bad string slice and a formatted message quoting a token), and checks both records and stderr.
+- **Mutations, 2026-10-20:** with the scrub taken out of the report's line reader, two tests fail, including the whole-report test; with the hook keeping the raw panic message, the real-panic test fails on the quoted token. The first version of that test did NOT fail under the mutation: Rust 1.98 quotes only the character a bad slice landed inside, not the whole string, so the drill carried nothing secret. The drill was rewritten until the mutation failed it.
 - **Live check, 2026-10-19:** a real `serve` started with stderr on `/dev/null` showed stderr pointing at `logs/host-<key>.log`, and its startup error landed there.
-- **Not exercised:** a real panic going through the installed hook (installing a process-wide hook inside the shared test binary would catch every other test's panics), the panel drawn on screen, and the agent tab opening.
+- **Not exercised by a test:** the panel drawn on screen, and the agent tab opening. Those are tested by hand in the installed build.
 
 ## Least-confident decisions
 
