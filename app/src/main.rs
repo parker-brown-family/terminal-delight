@@ -16363,6 +16363,10 @@ impl Workspace {
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
+            // Finished BEFORE any content: under a cut skin `finish` adds an
+            // opaque plate as a child, and a plate added after the rows paints
+            // over them — the OPS bug panel drew as an empty frame.
+            .map(|d| sk.finish(d))
             .flex()
             .flex_col()
             .gap_2()
@@ -16488,7 +16492,7 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(sk.finish(panel)),
+                .child(panel),
         )
     }
 
