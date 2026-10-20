@@ -395,7 +395,9 @@ mod tests {
         // The shader reads the colour back as `u32(x)` and splits it into
         // bytes, so the f32 has to hold every 24-bit colour exactly. (It once
         // read `u32(x + 0.5)`, which this caught: white came back as 2^24.)
-        for rgb in [0x000000, 0x000001, 0x4d5a52, 0x7f7f80, 0x800001, 0xfffffe, 0xffffff] {
+        for rgb in [
+            0x000000, 0x000001, 0x4d5a52, 0x7f7f80, 0x800001, 0xfffffe, 0xffffff,
+        ] {
             let [packed, _] = bezel(rgb, 0.4);
             assert_eq!(packed as u32, rgb, "{rgb:06x}");
         }
