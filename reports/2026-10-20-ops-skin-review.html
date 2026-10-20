@@ -937,8 +937,21 @@ dialog#d-export { max-width: 780px; }
 
 <!-- Notes and concurs are baked in here by "save into file". Leave them empty and leave them in,
      with their data-format: it names the format notes.js writes, and other writers check it. -->
-<script type="application/json" id="report-notes" data-format="1">{}</script>
-<script type="application/json" id="report-concurs" data-format="1">{}</script>
+<script type="application/json" id="report-notes" data-format="1" data-rev="2026-10-20T07:10:20.336Z">{
+ "ask-1-merge-and-install": [
+  {
+   "text": "install immediately on local so I can test and make feedback from actualy using it",
+   "title": "1 · Merge and install",
+   "ts": "2026-10-20 07:09"
+  }
+ ]
+}</script>
+<script type="application/json" id="report-concurs" data-format="1" data-rev="2026-10-20T07:10:20.336Z">{
+ "ask-1-merge-and-install": "2026-10-20 07:09",
+ "ask-2-square-panes-and": "2026-10-20 07:10",
+ "ask-3-how-hot-intrusive": "2026-10-20 07:10",
+ "ask-4-the-surfaces-no": "2026-10-20 07:10"
+}</script>
 
 <script>
   /* Set before notes.js runs. Used for the storage key and the download filename. */
@@ -1576,4 +1589,19 @@ dialog#d-export { max-width: 780px; }
   else init();
 })();
 </script>
-</body></html>
+<!--
+READER NOTES —
+NOTES — 2026-10-20-ops-skin-review.html
+1 notes on 1 elements · 4 concurs.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[ask-1-merge-and-install] 1 · Merge and install  ✓ concur
+  · install immediately on local so I can test and make feedback from actualy using it
+
+[ask-2-square-panes-and] 2 · Square panes and switches under Deco and Console too  ✓ concur
+
+[ask-3-how-hot-intrusive] 3 · How hot Intrusive glows  ✓ concur
+
+[ask-4-the-surfaces-no] 4 · The surfaces no skin reaches  ✓ concur
+
+--></body></html>
