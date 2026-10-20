@@ -1,0 +1,188 @@
+{
+ "identity": "kitty",
+ "cmd": [
+  "/tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/rimg/target/release/rimg",
+  "test.png",
+  "/tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/cap/rimg-kitty.log"
+ ],
+ "bytes_out": 1436572,
+ "secs": 1.58,
+ "placeholder_cells_U10EEEE": 1215,
+ "apc_payload_bytes": 1426780,
+ "apc_a_T_count": 1,
+ "apc_keys": {
+  "q=2": 349,
+  "m=1": 348,
+  "i=*": 2,
+  "s=*": 2,
+  "v=*": 2,
+  "t=d": 2,
+  "a=q": 1,
+  "f=24": 1,
+  "a=T": 1,
+  "U=1": 1,
+  "f=32": 1,
+  "m=0": 1
+ },
+ "seq_counts": {
+  "CSI c": 1,
+  "CSI nt": 1,
+  "CSI nn": 1
+ },
+ "events": [
+  {
+   "t": 0.002,
+   "apc": "i=31,s=1,v=1,a=q,t=d,f=24",
+   "payload": 4
+  },
+  {
+   "t": 0.002,
+   "reply": "\u001b_Gi=31;OK\u001b\\"
+  },
+  {
+   "t": 0.002,
+   "q": "DA1"
+  },
+  {
+   "t": 0.002,
+   "reply": "\u001b[?62;c"
+  },
+  {
+   "t": 0.002,
+   "q": "16t"
+  },
+  {
+   "t": 0.002,
+   "reply": "\u001b[6;22;10t"
+  },
+  {
+   "t": 0.002,
+   "q": "DSR5"
+  },
+  {
+   "t": 0.002,
+   "reply": "\u001b[0n"
+  },
+  {
+   "t": 0.015,
+   "apc": "q=2,i=1144241087,a=T,U=1,f=32,t=d,s=640,v=418,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.016,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.017,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.018,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.019,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.021,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.022,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.023,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.024,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.025,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.026,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.027,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.028,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.029,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.03,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.031,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.032,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.033,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.034,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.035,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.036,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.038,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.039,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  },
+  {
+   "t": 0.04,
+   "apc": "q=2,m=1",
+   "payload": 4096
+  }
+ ],
+ "text": ""
+}

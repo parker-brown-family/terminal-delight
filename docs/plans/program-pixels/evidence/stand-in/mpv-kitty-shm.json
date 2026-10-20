@@ -1,0 +1,156 @@
+{
+ "identity": "td-kitty",
+ "cmd": [
+  "mpv",
+  "--really-quiet",
+  "--no-audio",
+  "--vo=kitty",
+  "--vo-kitty-use-shm=yes",
+  "av://lavfi:testsrc=duration=3:size=640x360:rate=30"
+ ],
+ "bytes_out": 7364,
+ "secs": 3.23,
+ "placeholder_cells_U10EEEE": 0,
+ "apc_payload_bytes": 2880,
+ "apc_a_T_count": 90,
+ "apc_keys": {
+  "a=T": 90,
+  "t=s": 90,
+  "f=24": 90,
+  "s=*": 90,
+  "v=*": 90,
+  "C=1": 90,
+  "q=2": 90,
+  "m=1": 90,
+  "a=d": 1
+ },
+ "seq_counts": {},
+ "events": [
+  {
+   "t": 0.169,
+   "apc": "a=d",
+   "payload": 0
+  },
+  {
+   "t": 0.198,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.231,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.264,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.298,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.331,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.364,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.398,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.431,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.464,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.498,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.531,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.564,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.598,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.631,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.664,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.698,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.731,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.764,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.798,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.831,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.864,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.898,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.931,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  },
+  {
+   "t": 0.964,
+   "apc": "a=T,t=s,f=24,s=1200,v=675,C=1,q=2,m=1",
+   "payload": 32
+  }
+ ],
+ "text": "?25h"
+}

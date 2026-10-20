@@ -1,0 +1,198 @@
+{
+ "identity": "td-kitty",
+ "cmd": [
+  "/tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/pkgs/chafa/usr/bin/chafa",
+  "-f",
+  "kitty",
+  "test.png"
+ ],
+ "bytes_out": 1445767,
+ "secs": 1.2,
+ "placeholder_cells_U10EEEE": 0,
+ "apc_payload_bytes": 1426776,
+ "apc_a_T_count": 1,
+ "apc_keys": {
+  "m=1": 2100,
+  "a=T": 1,
+  "f=32": 1,
+  "s=*": 1,
+  "v=*": 1,
+  "c=*": 1,
+  "r=*": 1,
+  "q=2": 1,
+  "m=0": 1
+ },
+ "seq_counts": {
+  "CSI nt": 3,
+  "OSC 10": 1,
+  "OSC 11": 1,
+  "CSI nc": 1
+ },
+ "events": [
+  {
+   "t": 0.028,
+   "q": "OSC 10 ?"
+  },
+  {
+   "t": 0.028,
+   "q": "OSC 11 ?"
+  },
+  {
+   "t": 0.029,
+   "q": "18t"
+  },
+  {
+   "t": 0.029,
+   "reply": "\u001b[8;40;120t"
+  },
+  {
+   "t": 0.029,
+   "q": "14t"
+  },
+  {
+   "t": 0.029,
+   "reply": "\u001b[4;880;1200t"
+  },
+  {
+   "t": 0.029,
+   "q": "16t"
+  },
+  {
+   "t": 0.029,
+   "reply": "\u001b[6;22;10t"
+  },
+  {
+   "t": 0.029,
+   "q": "DA1"
+  },
+  {
+   "t": 0.029,
+   "reply": "\u001b[?6c"
+  },
+  {
+   "t": 0.084,
+   "apc": "a=T,f=32,s=640,v=418,c=64,r=19,m=1,q=2",
+   "payload": 0
+  },
+  {
+   "t": 0.084,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.084,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.084,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.085,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.085,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.085,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.085,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.086,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.088,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.088,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.089,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.089,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.089,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.089,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.093,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.093,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.093,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.093,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.094,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.094,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.094,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.094,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.095,
+   "apc": "m=1",
+   "payload": 680
+  },
+  {
+   "t": 0.095,
+   "apc": "m=1",
+   "payload": 680
+  }
+ ]
+}
