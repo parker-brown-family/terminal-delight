@@ -130,16 +130,12 @@ impl Harness {
                 id: "local-config",
                 label: "local-agent.toml",
             }],
-            Harness::Codex => &[
-                Model {
-                    id: "gpt-5-codex",
-                    label: "gpt-5-codex",
-                },
-                Model {
-                    id: "gpt-5",
-                    label: "gpt-5",
-                },
-            ],
+            // Codex owns its account-specific model catalogue and configuration.
+            // A pinned model here can be retired while the CLI remains current.
+            Harness::Codex => &[Model {
+                id: "configured",
+                label: "Codex default",
+            }],
         }
     }
 
@@ -586,8 +582,10 @@ impl Recipe {
                 }
             }
             Harness::Codex => {
-                parts.push("--model".into());
-                parts.push(self.model.to_string());
+                if self.model != "configured" {
+                    parts.push("--model".into());
+                    parts.push(self.model.to_string());
+                }
                 parts.extend(self.reach.flags(self.harness));
                 parts.push("-c".into());
                 parts.push(format!("model_reasoning_effort={}", self.effort.id()));
@@ -643,16 +641,46 @@ impl Recipe {
         adapter: Option<&LocalAdapter>,
     ) -> Result<String, String> {
         if self.harness != Harness::Local {
-            return Ok(self.command_line(briefing));
+            return Ok(with_desktop_environment(
+                &self.command_line(briefing),
+                |key| std::env::var(key).ok(),
+            ));
         }
         let p = crate::lang::current().strings().parts;
         if self.reach != Reach::Anywhere {
             return Err(p.launcher_err_local_reach.into());
         }
         let path = briefing.ok_or(p.launcher_err_local_briefing)?;
-        adapter
+        let line = adapter
             .ok_or(p.launcher_err_local_configure)?
-            .command_line(path, self.opener.as_deref())
+            .command_line(path, self.opener.as_deref())?;
+        Ok(with_desktop_environment(&line, |key| {
+            std::env::var(key).ok()
+        }))
+    }
+}
+
+/// A persistent host can predate the desktop login. Carry the launching
+/// window's display connection to the agent, including into an existing shell.
+/// Missing values remain absent; never invent a display or forward unrelated env.
+fn with_desktop_environment(line: &str, read: impl Fn(&str) -> Option<String>) -> String {
+    let assignments: Vec<_> = [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "XAUTHORITY",
+    ]
+    .into_iter()
+    .filter_map(|key| {
+        read(key)
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("{key}={}", shell_quote(&value)))
+    })
+    .collect();
+    if assignments.is_empty() {
+        line.to_string()
+    } else {
+        format!("env {} {line}", assignments.join(" "))
     }
 }
 
@@ -947,11 +975,7 @@ mod tests {
         let last = String::from_utf8(argv.last().unwrap().to_vec()).unwrap();
         assert!(last.starts_with(&body));
         assert!(last.ends_with(r.opener.as_deref().unwrap()));
-        assert_eq!(
-            argv.len(),
-            6,
-            "codex + model pair + effort pair + one prompt"
-        );
+        assert_eq!(argv.len(), 4, "codex + effort pair + one prompt");
         assert!(
             !line.contains("developer_instructions"),
             "existing rules stay configured"
@@ -1063,11 +1087,31 @@ mod tests {
     #[test]
     fn a_codex_line_sets_its_own_reasoning_effort() {
         let line = recipe(Harness::Codex, Effort::High).command_line(None);
+        assert!(
+            !line.contains("--model"),
+            "Codex must use its configured model: {line}"
+        );
         assert!(line.contains("-c model_reasoning_effort=high"), "{line}");
         assert!(
             !line.contains("append-system-prompt"),
             "codex has no such flag and must not be handed one: {line}"
         );
+    }
+
+    #[test]
+    fn desktop_connection_reaches_an_agent_without_shell_expansion() {
+        let value = "/tmp/desktop's $(exit 19) `exit 20`";
+        let line = with_desktop_environment("sh -c 'printf %s \"$XAUTHORITY\"'", |key| {
+            (key == "XAUTHORITY").then(|| value.to_string())
+        });
+        let output = std::process::Command::new("sh")
+            .args(["-c", &line])
+            .env_remove("XAUTHORITY")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), value);
+        assert_eq!(with_desktop_environment("codex", |_| None), "codex");
     }
 
     #[test]
