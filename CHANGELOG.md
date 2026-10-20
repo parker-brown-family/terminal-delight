@@ -577,6 +577,12 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
+- **Launching Codex no longer picks a retired model.** The launcher's Codex
+  menu offered `gpt-5-codex` and `gpt-5` and passed one with `--model`, which a
+  current Codex account rejects with HTTP 400. Its one row is now *Codex
+  default*: no `--model`, so Codex uses the model in its own configuration.
+  Picking that row on the workbench's live dial opens Codex's own `/model`
+  picker. (#1044)
 - **Pasting a screenshot into Claude or Codex works again.** The agents could
   not reach the desktop clipboard from the session host, so Codex timed out on
   X11 and Claude found no image. TD now saves the picture and pastes its path,
