@@ -138,6 +138,72 @@
       "reason": "An incomplete UTF-8 sequence cut short by an escape. Followed by more text, both cores print one replacement character (U+FFFD); left at the end of the input, alacritty prints it at once and rio-vt has not printed it yet. tmux prints nothing at all for it. Found when the wide-character entry was split; seen only from the generator's invalid bytes, never from a real program yet.",
       "evidence": "minimized: size 4x2, write \"9m\" f0 1b, resize to 2x10 -> alacritty shows U+FFFD, rio-vt and tmux do not; f0 1b followed by \"x\" -> both cores show U+FFFD",
       "issue": null
+    },
+    {
+      "id": "legacy-dcs-sync-is-rio-only",
+      "neutralize": {
+        "strip": "\\x1bP=[12]s(?:\\x1b\\\\)?"
+      },
+      "wrong": "neither: alacritty_terminal has no legacy form",
+      "reason": "The legacy iTerm2 form of a synchronized update, DCS = 1 s ST to open and DCS = 2 s ST to close, which older terminfo Sync capabilities advertise. rio-vt 0.5.28 implements it as it implements CSI ? 2026 (and lets either form close an update the other opened); vte 0.15, under alacritty_terminal, ignores it, so alacritty draws what rio-vt holds back. rio-vt also opens the update as soon as DCS = 1 s is read, before the string terminator. alacritty is the referee and never ships, so this is not a defect in what TD runs.",
+      "evidence": "minimized: size 2x1, write \"\\x1bP=1s\" -> sync_open rio true, alacritty false; size 2x1, writes \"\\x1b[?2026h\", \"C\\x1bP=2s\\x1b\\\\\" -> rio closes the update and draws C, alacritty stays open",
+      "issue": null
+    },
+    {
+      "id": "legacy-dcs-sync-is-torn-in-one-read",
+      "kind": "chunk",
+      "core": "rio",
+      "neutralize": {
+        "strip": "\\x1bP=[12]s(?:\\x1b\\\\)?"
+      },
+      "wrong": "TD (vt/text.rs)",
+      "reason": "TD's text guard splits a read where a program opens a synchronized update, because rio-vt holds an update's bytes back only from its next read; but it does so only for CSI ? 2026 h, not for the legacy DCS = 1 s ST that rio-vt also honours. So text after DCS = 1 s ST in the same read is drawn at once, while the update is open: a torn frame, and a screen that depends on where reads end. The CSI form is not affected (named case synchronized-update). Rare in practice: modern tmux and programs send the CSI form, and TD's TERM advertises no Sync capability. The fix belongs in vt/text.rs: split after the DCS = 1 s string terminator too.",
+      "evidence": "size 20x1: write \"before\", write \"\\r\\x1bP=1s\\x1b\\\\frame\" -> rio-vt shows \"framee\" with sync_open true (the CSI form shows \"before\"); minimized by the lab: size 2x1, writes \"\\x1bP=1s\", \"\\x1b\\\\d\" joined vs whole -> screens differ",
+      "issue": null
+    },
+    {
+      "id": "sync-opened-in-a-mode-list-is-lost-at-a-close",
+      "kind": "chunk",
+      "core": "rio",
+      "neutralize": {
+        "strip": "\\x1b\\[\\?(?:[0-9]*;)+2026(?:;[0-9]*)*h|\\x1b\\[\\?2026(?:;[0-9]*)+h"
+      },
+      "wrong": "rio-vt and vte 0.15 (the same design)",
+      "reason": "While an update is open, both parsers buffer bytes and scan only for the exact ESC [ ? 2026 h and ESC [ ? 2026 l. When the update closes, the buffer is replayed through the ordinary parser; an update opened inside it by a mode list (ESC [ ? 25 ; 2026 h) sets its deadline during that replay, and the close then clears the deadline, so the new update is lost and its frame is drawn at once. Arriving in the next read, the same opener works. So the screen depends on where reads end, the same way in both cores. The plain opener is found by the scan and survives. Programs mostly send ESC [ ? 2026 h on its own, so this is rare; TD's text guard could cure it for rio-vt by splitting a read after a close as it splits before an open.",
+      "evidence": "size 10x1: writes \"a\\x1b[?2026h\", \"b\\x1b[?2026l\\x1b[?25;2026hc\" -> \"abc\" with no update open, in both cores; the opener in its own read -> \"ab\", update open; \"\\x1b[?2026h\" in place of the mode list -> \"ab\", update open",
+      "issue": null
+    },
+    {
+      "id": "sync-opened-in-a-mode-list-is-lost-at-a-close-on-alacritty",
+      "kind": "chunk",
+      "core": "alacritty",
+      "neutralize": {
+        "strip": "\\x1b\\[\\?(?:[0-9]*;)+2026(?:;[0-9]*)*h|\\x1b\\[\\?2026(?:;[0-9]*)+h"
+      },
+      "wrong": "rio-vt and vte 0.15 (the same design)",
+      "reason": "The same as sync-opened-in-a-mode-list-is-lost-at-a-close, in vte 0.15 under alacritty_terminal: a chunk entry names one core, so the shared cause is listed once per core.",
+      "evidence": "as sync-opened-in-a-mode-list-is-lost-at-a-close",
+      "issue": null
+    },
+    {
+      "id": "primary-device-attributes-differ",
+      "neutralize": {
+        "strip": "\\x1b\\[0?c"
+      },
+      "wrong": "neither: each core names its own terminal",
+      "reason": "Asked for primary device attributes (DA1), rio-vt answers as a VT220 with colour (CSI ? 62 ; 22 c) and alacritty as a VT102 (CSI ? 6 c). Both are valid answers; programs read them to pick features. Every other reply nvim asked for at start-up (mode reports, the background colour, status) matched exactly.",
+      "evidence": "recorded nvim 80x24: first checkpoint replies identical but for \"\\x1b[?62;22c\" against \"\\x1b[?6c\"",
+      "issue": null
+    },
+    {
+      "id": "alacritty-resets-an-unchanged-title",
+      "neutralize": {
+        "strip": "\\x1b\\[23(?:;[0-9]*)*t"
+      },
+      "wrong": "neither: TD ignores a title reset",
+      "reason": "Popping the title stack (CSI 23 t, sent by the rmcup of xterm-256color when a full-screen program exits): alacritty restores the title it saved, and when none had been set it sends a title reset every time; rio-vt saved an empty title and sends a title event only when the title actually changes. TD's pane acts on a title and ignores a reset, so nothing a person sees differs.",
+      "evidence": "recorded less, tput and whiptail: at the program's exit alacritty sends title-reset and rio-vt nothing; screens identical",
+      "issue": null
     }
   ]
 }
