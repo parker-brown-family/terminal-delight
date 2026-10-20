@@ -13,7 +13,7 @@
 <link rel="stylesheet" href="/assets/kiosk-chrome.css">
 <script src="/assets/kiosk-theme.js"></script>
 <script src="/assets/kiosk-chrome.js" data-kiosk="omarchy" data-rail="off" data-paint="none" data-float="off"></script>
-  <meta name="description" content="Terminal Delight on Omarchy: panes that wear the desktop's own colour schemes, a keyboard-first paint overlay over the whole workspace, per-agent status on the tab bar, and SUPER+ALT+T to pull any terminal tile — agents and all — into the wall." />
+  <meta name="description" content="Terminal Delight on Omarchy: panes that wear the desktop's own colour schemes, a keyboard-first paint overlay over the whole workspace, per-agent status on the tab bar, and SUPER+ALT+T to search every Terminal Delight key in Omarchy's own key menu." />
 
   <meta property="og:title" content="terminal-delight — the Omarchy kiosk" />
   <meta property="og:description" content="The desktop is agentic. So is the terminal. Wear the desktop's own themes — seven of Omarchy's and two of ours, wallpaper and all — paint the whole workspace from the keyboard, and watch every agent from the tab bar." />
@@ -1179,21 +1179,20 @@
         without it.
       </p>
 
-      <h3 style="margin-top:26px;font-size:15px">Bind SUPER+ALT+T and install <code>td-send</code></h3>
-<pre class="code">scripts/install-send-hotkey.sh</pre>
+      <h3 style="margin-top:26px;font-size:15px">Bind SUPER+ALT+T to a searchable list of every key</h3>
+<pre class="code">scripts/install-keys-hotkey.sh</pre>
 
       <h3 style="margin-top:22px;font-size:15px">Preview an adoption without touching anything</h3>
-<pre class="code">td-send --dry-run</pre>
+<pre class="code">scripts/td-send --dry-run</pre>
 
       <h3 style="margin-top:22px;font-size:15px">Raise the paint overlay over every pane</h3>
 <pre class="code">terminal-delight ctl paint on</pre>
 
       <p class="dim" style="font-size:13.5px;margin-top:20px">
-        Reverting is symmetric — <code>scripts/install-send-hotkey.sh
-        --uninstall</code> removes the binding. On plain, non-Omarchy Hyprland,
-        bind it by hand instead:
+        Reverting is symmetric — <code>scripts/install-keys-hotkey.sh
+        --uninstall</code> removes the binding, <code>td-keybindings</code>
+        and its copy of the Keys page.
       </p>
-<pre class="code">bind = SUPER ALT, T, exec, td-send</pre>
     </div>
   </section>
 
