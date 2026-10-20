@@ -3392,6 +3392,8 @@ pub struct TerminalView {
     wb_card_at: Option<crate::surface::SurfaceId>,
     /// Which of the strip's dials has its list open, if either.
     wb_dial: Option<crate::workbench::Dial>,
+    wb_dial_options: Vec<crate::model_catalog::DialChoice>,
+    wb_dial_scroll: gpui::ScrollHandle,
     /// A dial press that has typed its command and is waiting on the harness.
     ///
     /// See [`crate::workbench::DialSent`]. While this is `Some`, the bench
@@ -3431,7 +3433,7 @@ pub struct TerminalView {
     /// The effort level this pane's agent was told to use. `None` for the same
     /// reason as [`Self::wb_model`], and never the harness's default: a level
     /// nobody chose and a level someone chose are different facts.
-    wb_effort: Option<crate::launcher::Effort>,
+    wb_effort: Option<String>,
     /// Has an agent ever run in this pane?
     ///
     /// The third state a pane has always had and the code has never stored.
@@ -4512,6 +4514,7 @@ impl TerminalView {
             self.wb_running_model = None;
             self.wb_effort = None;
             self.wb_dial = None;
+            self.wb_dial_options.clear();
             // And the conversation with it. The next agent in this pane is a
             // different conversation, and the last thing said to the one that
             // left would be drawn over its first reply as if it had been the
@@ -5241,6 +5244,8 @@ impl TerminalView {
             wb_card_scroll: gpui::ScrollHandle::new(),
             wb_card_at: None,
             wb_dial: None,
+            wb_dial_options: Vec::new(),
+            wb_dial_scroll: gpui::ScrollHandle::new(),
             wb_dial_sent: None,
             wb_asked: Vec::new(),
             wb_model: None,

@@ -408,6 +408,12 @@ the changes you may notice in the first hour.
 
 ### Changed
 
+- Agent launchers, defaults and workbench dials read model choices and reasoning
+  levels from the installed Codex or Claude executable. Model labels retain
+  reported families and versions, including Sol, Astra, Luna and Terra; unknown
+  names stay intact. Agent default passes no model or effort override. Discovery
+  failures offer retry rather than guessed models, and unavailable saved choices
+  stay visible until changed.
 - **The terminal emulator core is rio-vt, the core inside the Rio terminal.**
   Measured before choosing it: an 8 MB text stream parses in 82 ms against
   alacritty_terminal's 140 ms, and a pane holding 10,000 lines of history takes

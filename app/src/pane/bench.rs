@@ -552,6 +552,8 @@ impl TerminalView {
             // decision hostage.
             Hit::Dial(which) => {
                 self.wb_dial = (self.wb_dial != Some(which)).then_some(which);
+                self.wb_dial_options = self.dial_choices(which);
+                self.wb_dial_scroll.set_offset(gpui::point(px(0.), px(0.)));
             }
             Hit::DialPick(which, at) => self.bench_dial_pick(which, at, cx),
             Hit::Composer => {
@@ -620,6 +622,18 @@ impl TerminalView {
             self.wb_card_at.is_some(),
             self.wb_mirror,
         ) {
+            crate::workbench::Wheel::Dial => {
+                let delta = ev.delta.pixel_delta(line_height);
+                let at = self.wb_dial_scroll.offset();
+                let max = self.wb_dial_scroll.max_offset();
+                let y = crate::workbench::wheel_offset(
+                    f32::from(at.y),
+                    f32::from(delta.y),
+                    f32::from(max.y),
+                );
+                self.wb_dial_scroll.set_offset(gpui::point(at.x, px(y)));
+                cx.notify();
+            }
             crate::workbench::Wheel::Composer => {
                 let delta = ev.delta.pixel_delta(line_height);
                 let at = self.wb_slots.scroll.offset();
@@ -1876,6 +1890,66 @@ impl TerminalView {
         }
     }
 
+    fn dial_catalog(&self) -> crate::model_catalog::Snapshot {
+        let runtime = self.runtime();
+        crate::model_catalog::snapshot(
+            self.dial_harness(),
+            std::path::Path::new(runtime.cwd.as_deref().unwrap_or(".")),
+            self.session.shell_pid,
+        )
+    }
+
+    fn dial_choices(&self, which: crate::workbench::Dial) -> Vec<crate::model_catalog::DialChoice> {
+        let catalog = self.dial_catalog();
+        if !catalog.ready {
+            return vec![crate::model_catalog::DialChoice {
+                value: None,
+                label: format!("{} · retry", catalog.status),
+            }];
+        }
+        let choices: Vec<_> = match which {
+            crate::workbench::Dial::Model => catalog
+                .models
+                .iter()
+                .filter(|model| model.id.is_some())
+                .map(|model| crate::model_catalog::DialChoice {
+                    value: model.id.clone(),
+                    label: model.label.clone(),
+                })
+                .collect(),
+            crate::workbench::Dial::Effort => {
+                let model = self
+                    .wb_model
+                    .as_deref()
+                    .or(self.wb_running_model.as_deref());
+                catalog
+                    .models
+                    .iter()
+                    .find(|row| model.is_some_and(|model| row.matches(model)))
+                    .and_then(|row| row.efforts.as_ref())
+                    .into_iter()
+                    .flatten()
+                    .map(|effort| crate::model_catalog::DialChoice {
+                        value: Some(effort.clone()),
+                        label: effort.clone(),
+                    })
+                    .collect()
+            }
+        };
+        if choices.is_empty() {
+            vec![crate::model_catalog::DialChoice {
+                value: None,
+                label: if catalog.ready {
+                    "No reported choices · retry".into()
+                } else {
+                    format!("{} · retry", catalog.status)
+                },
+            }]
+        } else {
+            choices
+        }
+    }
+
     /// What a dial is showing, and whether anybody actually SAID it.
     ///
     /// Three sources in order: what a press on this dial set, then what the
@@ -1911,10 +1985,18 @@ impl TerminalView {
                     .as_deref()
                     .and_then(crate::workbench::model_label);
                 // An alias drawn with its version: `opus` → `opus 5.5`.
-                let named = |m: String| crate::workbench::model_label(&m).unwrap_or(m);
+                let catalog = self.dial_catalog();
+                let named = |model: String| {
+                    catalog
+                        .model(Some(&model))
+                        .map(|row| row.label.clone())
+                        .unwrap_or_else(|| crate::workbench::model_label(&model).unwrap_or(model))
+                };
                 match (self.wb_model.clone(), running) {
-                    (Some(told), Some(ran)) if !crate::workbench::same_model(&told, &ran) => {
-                        (named(told), true)
+                    (Some(told), Some(ran))
+                        if !crate::workbench::same_model(&named(told.clone()), &ran) =>
+                    {
+                        (format!("{} requested · running {ran}", named(told)), true)
                     }
                     (_, Some(ran)) => (ran, true),
                     (Some(told), None) => (named(told), true),
@@ -1933,7 +2015,8 @@ impl TerminalView {
             }
             Dial::Effort => self
                 .wb_effort
-                .map(|e| (e.id().to_string(), true))
+                .clone()
+                .map(|effort| (effort, true))
                 .or_else(|| {
                     launched
                         .as_deref()
@@ -1945,20 +2028,12 @@ impl TerminalView {
                         })
                         .map(|e| (e, true))
                 })
-                // The level the harness runs at when nobody passes the flag —
-                // TD's own claim, made in `default_effort`, and drawn faint
-                // because nobody chose it here.
-                .unwrap_or_else(|| (harness.default_effort().id().to_string(), false)),
+                .unwrap_or_else(|| ("Agent default".to_string(), false)),
         }
     }
 
     /// The list an open dial drops, which row of it is lit, and whether that
     /// row was CHOSEN or merely read off the launch command.
-    ///
-    /// The values are the harness's own — [`crate::launcher::Harness::models`]
-    /// and [`crate::launcher::Harness::efforts`], already checked against
-    /// `claude --help` and already clamped per harness. A second copy of that
-    /// list here is how a menu goes stale and silently starts the wrong model.
     ///
     /// The lit row is whatever [`Self::dial_now`] says the BUTTON is showing.
     /// For effort that is a case-insensitive match, because the button
@@ -1968,47 +2043,27 @@ impl TerminalView {
     /// lights nothing — an agent started on a model this window does not offer
     /// is a fact, and inventing a nearest row for it would be a claim.
     ///
-    /// The row of the family the transcript says is running wears its version.
-    /// The others stay bare: what `sonnet` would resolve to is only known once
-    /// something answers on it, and a version written into the list by hand is
-    /// the stale menu the paragraph above warns about.
-    ///
     /// These are LABELS. What a pick sends is the row's id, in
     /// [`Self::bench_dial_pick`] — `opus 5.5` is not a word `/model` takes.
     fn dial_values(&self, which: crate::workbench::Dial) -> (Vec<String>, Option<usize>, bool) {
         use crate::workbench::Dial;
-        let harness = self.dial_harness();
         let (now, chosen) = self.dial_now(which);
-        match which {
-            Dial::Model => {
-                let running = self
-                    .wb_running_model
-                    .as_deref()
-                    .and_then(crate::workbench::model_label);
-                let models = harness.models();
-                let vals = models
-                    .iter()
-                    .map(|m| match &running {
-                        Some(ran) if crate::workbench::same_model(m.id, ran) => ran.clone(),
-                        _ => crate::workbench::model_label(m.id)
-                            .unwrap_or_else(|| m.label.to_string()),
-                    })
-                    .collect();
-                let at = models
-                    .iter()
-                    .position(|m| crate::workbench::same_model(m.id, &now));
-                (vals, at, chosen)
-            }
-            Dial::Effort => {
-                let vals: Vec<String> = harness
-                    .efforts()
-                    .iter()
-                    .map(|e| e.id().to_string())
-                    .collect();
-                let at = vals.iter().position(|v| v.eq_ignore_ascii_case(&now));
-                (vals, at, chosen)
-            }
-        }
+        let values = self
+            .wb_dial_options
+            .iter()
+            .map(|choice| choice.label.clone())
+            .collect();
+        let at = self.wb_dial_options.iter().position(|choice| {
+            choice.value.is_some()
+                && match which {
+                    Dial::Model => {
+                        choice.value == self.wb_model
+                            || crate::workbench::same_model(&choice.label, &now)
+                    }
+                    Dial::Effort => choice.label.eq_ignore_ascii_case(&now),
+                }
+        });
+        (values, at, chosen)
     }
 
     /// What the transcript says this pane's agent last answered on, from the
@@ -2052,12 +2107,19 @@ impl TerminalView {
         use crate::workbench::Dial;
         // The row's ID, never its label: the label can carry a version the
         // harness's `/model` does not take as a word.
-        let harness = self.dial_harness();
-        let value = match which {
-            Dial::Model => harness.models().get(at).map(|m| m.id.to_string()),
-            Dial::Effort => harness.efforts().get(at).map(|e| e.id().to_string()),
-        };
+        let value = self
+            .wb_dial_options
+            .get(at)
+            .and_then(|choice| choice.value.clone());
         let Some(value) = value else {
+            let runtime = self.runtime();
+            crate::model_catalog::retry(
+                self.dial_harness(),
+                std::path::Path::new(runtime.cwd.as_deref().unwrap_or(".")),
+                self.session.shell_pid,
+            );
+            self.wb_dial_options = self.dial_choices(which);
+            cx.notify();
             return;
         };
         // Recorded BEFORE the write, and recorded as what we asked for rather
@@ -2068,11 +2130,7 @@ impl TerminalView {
         match which {
             Dial::Model => self.wb_model = Some(value.clone()),
             Dial::Effort => {
-                let harness = match self.mode {
-                    crate::pane::PaneMode::Codex => crate::launcher::Harness::Codex,
-                    _ => crate::launcher::Harness::Claude,
-                };
-                self.wb_effort = harness.efforts().get(at).copied();
+                self.wb_effort = Some(value.clone());
             }
         }
         self.wb_dial = None;
@@ -2081,13 +2139,7 @@ impl TerminalView {
         // move aside and nothing to type back. `dial_bytes` beside an empty
         // line is just the command. The hold below still matters — it keeps
         // SEND out of the harness's own confirmation picker.
-        // The configured row is not a word `/model` takes; the bare command
-        // opens the harness's own picker, and the person chooses there.
-        let typed = if value == crate::launcher::CONFIGURED {
-            which.command().to_string()
-        } else {
-            format!("{} {value}", which.command())
-        };
+        let typed = format!("{} {value}", which.command());
         let bytes = crate::workbench::dial_bytes(&typed, &crate::workbench::Line::new());
         self.bench_deliver(bytes, cx);
         self.wb_dial_sent = Some(crate::workbench::DialSent {
@@ -2109,6 +2161,16 @@ impl TerminalView {
     /// writing, which is the part that cannot be tested without a terminal.
     pub(super) fn dial_watch(&mut self, rows: &[String], cx: &mut Context<Self>) {
         use crate::workbench::DialStep;
+        if let Some(which) = self.wb_dial {
+            if self
+                .wb_dial_options
+                .iter()
+                .all(|choice| choice.value.is_none())
+            {
+                self.wb_dial_options = self.dial_choices(which);
+                cx.notify();
+            }
+        }
         let Some(sent) = self.wb_dial_sent.clone() else {
             return;
         };
@@ -4534,7 +4596,19 @@ impl TerminalView {
                 Some((right, top)) => holder.right(px(right)).top(px(top)),
                 None => holder.top(px(46.)).right(px(rail_px + 18.)),
             };
-            holder.child(crate::benchdraw::dial_menu(rows, sk, th))
+            let available = self
+                .wb_bench_rect
+                .borrow()
+                .map(|rect| rect.h - 90.)
+                .unwrap_or(240.)
+                .clamp(40., 320.);
+            holder.child(
+                crate::benchdraw::dial_menu(rows, sk, th)
+                    .id("agent-model-options")
+                    .max_h(px(available))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.wb_dial_scroll),
+            )
         });
 
         div()

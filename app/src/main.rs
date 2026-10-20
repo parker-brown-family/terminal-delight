@@ -70,6 +70,7 @@ mod lookup;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
+mod model_catalog;
 mod notepaper;
 mod notifpref;
 mod notify;
@@ -3734,10 +3735,8 @@ struct AgentLauncher {
     order: Vec<usize>,
     selected: usize,
     harness: launcher::Harness,
-    /// Index into `harness.models()`; clamped whenever the harness changes,
-    /// because the two lists are different lengths.
-    model_ix: usize,
-    effort: launcher::Effort,
+    model_id: Option<String>,
+    effort: Option<String>,
     /// How far the launched agent may reach without asking. Defaults to the
     /// machine posture; see [`launcher::Reach`].
     reach: launcher::Reach,
@@ -3758,9 +3757,12 @@ impl AgentLauncher {
         self.selected = self.selected.min(self.order.len().saturating_sub(1));
     }
 
-    fn model(&self) -> &'static launcher::Model {
-        let models = self.harness.models();
-        &models[self.model_ix.min(models.len() - 1)]
+    fn catalog(&self) -> model_catalog::Snapshot {
+        self.harness.models(
+            self.project()
+                .map(|project| project.path.as_path())
+                .unwrap_or(std::path::Path::new(".")),
+        )
     }
 
     fn project(&self) -> Option<&launcher::Project> {
@@ -9346,10 +9348,7 @@ impl Workspace {
         // What the panel would open on right now. `unwrap_or` is the fallback
         // and it is deliberately not written anywhere durable.
         let harness = pref.harness().unwrap_or(launcher::Harness::Claude);
-        let model_at = pref.model_ix(harness).unwrap_or(0);
-        let effort_now = pref
-            .effort(harness)
-            .unwrap_or_else(|| harness.default_effort());
+        let catalog = harness.models(std::path::Path::new("."));
         let acc = th.accent;
         let txt = th.text;
         let ui = self.lang.strings().ui;
@@ -9441,16 +9440,57 @@ impl Workspace {
         }
 
         let mut model_chips = pills();
-        for (i, m) in harness.models().iter().enumerate() {
-            let id = m.id;
+        for model in &catalog.models {
+            let id = model.id.clone();
+            let selected = pref.model == id;
             model_chips = model_chips.child(
-                chip(m.label, i == model_at, pref.model_ix(harness) == Some(i)).on_mouse_down(
+                chip(&model.label, selected, selected && id.is_some()).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
-                        ws.launch_defaults.model = (ws.launch_defaults.model.as_deref()
-                            != Some(id))
-                        .then(|| id.to_string());
+                        ws.launch_defaults.model = id.clone();
+                        ws.launch_defaults.effort = None;
+                        launchpref::save(&ws.launch_defaults);
+                        cx.notify();
+                    }),
+                ),
+            );
+        }
+        if pref.model.is_some() && pref.model_ix(&catalog.models).is_none() {
+            model_chips = model_chips.child(chip(
+                &format!(
+                    "{} · unavailable",
+                    pref.model.as_deref().unwrap_or_default()
+                ),
+                true,
+                true,
+            ));
+        }
+
+        model_chips = model_chips.child(chip(&catalog.status, false, false).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |ws, _: &MouseDownEvent, _window, cx| {
+                model_catalog::retry(harness, std::path::Path::new("."), None);
+                ws.watch_model_catalogs(cx);
+                cx.notify();
+            }),
+        ));
+        let mut effort_chips = pills();
+        for effort in std::iter::once(None)
+            .chain(catalog.efforts(pref.model.as_deref()).into_iter().map(Some))
+        {
+            let selected = pref.effort == effort;
+            effort_chips = effort_chips.child(
+                chip(
+                    effort.as_deref().unwrap_or("Agent default"),
+                    selected,
+                    selected && effort.is_some(),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.launch_defaults.effort = effort.clone();
                         launchpref::save(&ws.launch_defaults);
                         cx.notify();
                     }),
@@ -9458,28 +9498,12 @@ impl Workspace {
             );
         }
 
-        let mut effort_chips = pills();
-        for e in harness.efforts() {
-            let e = *e;
-            let id = e.id();
-            effort_chips = effort_chips.child(
-                chip(
-                    e.label_in(self.lang),
-                    e == effort_now,
-                    pref.effort(harness) == Some(e),
-                )
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.launch_defaults.effort = (ws.launch_defaults.effort.as_deref()
-                            != Some(id))
-                        .then(|| id.to_string());
-                        launchpref::save(&ws.launch_defaults);
-                        cx.notify();
-                    }),
-                ),
-            );
+        if let Some(effort) = pref
+            .effort
+            .as_ref()
+            .filter(|effort| !catalog.efforts(pref.model.as_deref()).contains(effort))
+        {
+            effort_chips = effort_chips.child(chip(&format!("{effort} · unavailable"), true, true));
         }
 
         // ONE LINE UNTIL IT IS ASKED FOR. The title carries the whole of the
@@ -9520,6 +9544,9 @@ impl Workspace {
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
                             ws.launch_defaults_open = !ws.launch_defaults_open;
+                            if ws.launch_defaults_open {
+                                ws.watch_model_catalogs(cx);
+                            }
                             cx.notify();
                         }),
                     ),
@@ -9531,16 +9558,8 @@ impl Workspace {
                     pref.harness().is_some(),
                 ))
                 .when(harness != launcher::Harness::Local, |d| {
-                    d.child(row(
-                        ui.lcfg_model,
-                        model_chips,
-                        pref.model_ix(harness).is_some(),
-                    ))
-                    .child(row(
-                        ui.lcfg_effort,
-                        effort_chips,
-                        pref.effort(harness).is_some(),
-                    ))
+                    d.child(row(ui.lcfg_model, model_chips, pref.model.is_some()))
+                        .child(row(ui.lcfg_effort, effort_chips, pref.effort.is_some()))
                 })
                 .when(harness == launcher::Harness::Local, |d| {
                     d.child(div().text_size(sk.text_px(10.)).child(ui.lcfg_local_note))
@@ -14839,10 +14858,8 @@ impl Workspace {
             order: Vec::new(),
             selected: 0,
             harness,
-            model_ix: pref.model_ix(harness).unwrap_or(0),
-            effort: pref
-                .effort(harness)
-                .unwrap_or_else(|| harness.default_effort()),
+            model_id: pref.model.clone().filter(|id| id != "configured"),
+            effort: pref.effort.clone(),
             reach: launcher::Reach::Anywhere,
             from,
             error: None,
@@ -14859,11 +14876,32 @@ impl Workspace {
             }
         }
         self.agent_launcher = Some(lp);
+        self.watch_model_catalogs(cx);
         // Take the keyboard off the focused pane (whose `on_key` writes to the
         // PTY) so typing filters the panel instead of leaking into the shell —
         // exactly like `open_find` and the logo picker.
         window.focus(&self.focus_handle, cx);
         cx.notify();
+    }
+
+    fn watch_model_catalogs(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |workspace, cx| {
+            for _ in 0..120 {
+                cx.background_executor()
+                    .timer(Duration::from_millis(500))
+                    .await;
+                let open = workspace
+                    .update(cx, |workspace, cx| {
+                        cx.notify();
+                        workspace.agent_launcher.is_some() || workspace.launch_defaults_open
+                    })
+                    .unwrap_or(false);
+                if !open {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     /// Start the agent the panel describes.
@@ -14882,10 +14920,34 @@ impl Workspace {
             self.agent_launcher = Some(lp);
             return;
         };
+        let catalog = lp.catalog();
+        if lp.harness != launcher::Harness::Local
+            && lp.model_id.is_some()
+            && (!catalog.ready || catalog.model(lp.model_id.as_deref()).is_none())
+        {
+            lp.error = Some(format!("Selected model unavailable · {}", catalog.status));
+            self.agent_launcher = Some(lp);
+            cx.notify();
+            return;
+        }
+        if let Some(effort) = lp
+            .effort
+            .as_ref()
+            .filter(|_| lp.harness != launcher::Harness::Local)
+        {
+            if !catalog.efforts(lp.model_id.as_deref()).contains(effort) {
+                lp.error = Some(
+                    "Selected effort unavailable; choose Agent default or a reported effort".into(),
+                );
+                self.agent_launcher = Some(lp);
+                cx.notify();
+                return;
+            }
+        }
         let recipe = launcher::Recipe {
             harness: lp.harness,
-            model: lp.model().id,
-            effort: lp.effort,
+            model: lp.model_id.clone(),
+            effort: lp.effort.clone(),
             reach: lp.reach,
             cwd: project.path.clone(),
             opener: None,
@@ -14938,8 +15000,8 @@ impl Workspace {
                     "type": "launch",
                     "at_ms": surfacefeed::now_ms(),
                     "harness": recipe.harness.binary(),
-                    "model": (recipe.harness != launcher::Harness::Local).then_some(recipe.model),
-                    "effort": (recipe.harness != launcher::Harness::Local).then_some(recipe.effort.id()),
+                    "model": (recipe.harness != launcher::Harness::Local).then_some(recipe.model.clone()),
+                    "effort": (recipe.harness != launcher::Harness::Local).then_some(recipe.effort.clone()),
                     "reach": (recipe.harness != launcher::Harness::Local).then_some(recipe.reach.id()),
                     "cwd": project.path.to_string_lossy(),
                     "command": line,
@@ -16821,13 +16883,14 @@ impl Workspace {
             .map(|(_, _, w, h)| (w, h))
             .unwrap_or((1200., 800.));
         use launcher::{MAX_ROWS, ROW_H};
-        let panel_w = 520.;
+        let panel_w = (ww - 16.).clamp(280., 520.);
         // Sized by `launcher::panel_height`, which counts every fixed child
         // in — the formula that lived here counted one chip row and squeezed
         // the project list to nothing once there were four.
         let panel_h = launcher::panel_height(lp.order.len(), wh);
         let left = (ww * 0.5 - panel_w * 0.5).clamp(8., (ww - panel_w - 8.).max(8.));
         let top = (wh * 0.16).clamp(8., (wh - panel_h - 8.).max(8.));
+        let panel_h = (wh - top - 8.).max(panel_h);
         let sel = lp.selected.min(lp.order.len().saturating_sub(1));
 
         let ui = self.lang.strings().ui;
@@ -16916,8 +16979,8 @@ impl Workspace {
                                 cx.stop_propagation();
                                 if let Some(lp) = ws.agent_launcher.as_mut() {
                                     lp.harness = h;
-                                    lp.model_ix = lp.model_ix.min(h.models().len() - 1);
-                                    lp.effort = h.clamp_effort(lp.effort);
+                                    lp.model_id = None;
+                                    lp.effort = None;
                                     if h == launcher::Harness::Local {
                                         lp.reach = launcher::Reach::Anywhere;
                                     }
@@ -16927,52 +16990,118 @@ impl Workspace {
                             }),
                         )
                 }));
-        let model_row = div().flex().flex_row().gap_1().children(
-            lp.harness
-                .models()
-                .iter()
-                .enumerate()
-                .map(|(i, model)| {
-                    sk.chip(i == lp.model_ix.min(lp.harness.models().len() - 1))
-                        .cursor_pointer()
-                        .text_size(sk.text_px(11.))
-                        .child(model.label)
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                if let Some(lp) = ws.agent_launcher.as_mut() {
-                                    lp.model_ix = i;
-                                }
-                                cx.notify();
-                            }),
-                        )
-                })
-                .collect::<Vec<_>>(),
-        );
+        let catalog = lp.catalog();
+        let model_row = div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap_1()
+            .children(
+                catalog
+                    .models
+                    .iter()
+                    .map(|model| {
+                        let id = model.id.clone();
+                        sk.chip(id == lp.model_id)
+                            .cursor_pointer()
+                            .text_size(sk.text_px(11.))
+                            .child(model.label.clone())
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(lp) = ws.agent_launcher.as_mut() {
+                                        lp.model_id = id.clone();
+                                        lp.effort = None;
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .when(
+                lp.model_id.is_some() && catalog.model(lp.model_id.as_deref()).is_none(),
+                |row| {
+                    row.child(div().text_color(th.accent).child(format!(
+                        "{} · unavailable",
+                        lp.model_id.as_deref().unwrap_or_default()
+                    )))
+                },
+            )
+            .child(
+                div()
+                    .text_size(sk.text_px(9.))
+                    .text_color(if catalog.ready {
+                        th.text.alpha(0.65)
+                    } else {
+                        th.complement
+                    })
+                    .child(catalog.status.clone())
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _window, cx| {
+                            if let Some(lp) = &ws.agent_launcher {
+                                model_catalog::retry(
+                                    lp.harness,
+                                    lp.project()
+                                        .map(|project| project.path.as_path())
+                                        .unwrap_or(std::path::Path::new(".")),
+                                    None,
+                                );
+                            }
+                            ws.watch_model_catalogs(cx);
+                            cx.notify();
+                        }),
+                    ),
+            );
         // The harness's own levels, in the harness's own words: what the chip
         // says is what the flag will say.
-        let effort_row =
-            div()
-                .flex()
-                .flex_row()
-                .gap_1()
-                .children(lp.harness.efforts().iter().copied().map(|e| {
-                    sk.chip(e == lp.effort)
-                        .cursor_pointer()
-                        .text_size(sk.text_px(11.))
-                        .child(e.label_in(self.lang))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                if let Some(lp) = ws.agent_launcher.as_mut() {
-                                    lp.effort = e;
-                                }
-                                cx.notify();
-                            }),
-                        )
-                }));
+        let effort_row = div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap_1()
+            .children(
+                std::iter::once(None)
+                    .chain(
+                        catalog
+                            .efforts(lp.model_id.as_deref())
+                            .into_iter()
+                            .map(Some),
+                    )
+                    .map(|effort| {
+                        sk.chip(effort == lp.effort)
+                            .cursor_pointer()
+                            .text_size(sk.text_px(11.))
+                            .child(effort.clone().unwrap_or_else(|| "Agent default".into()))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(lp) = ws.agent_launcher.as_mut() {
+                                        lp.effort = effort.clone();
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                    }),
+            )
+            .when_some(
+                lp.effort
+                    .as_ref()
+                    .filter(|effort| !catalog.efforts(lp.model_id.as_deref()).contains(effort)),
+                |row, effort| {
+                    row.child(
+                        div()
+                            .text_color(th.accent)
+                            .child(format!("{effort} · unavailable")),
+                    )
+                },
+            );
 
         // How far it may reach without asking. `anywhere` is lit by default
         // and adds nothing; the other two add the harness's own flags, which
@@ -17005,8 +17134,8 @@ impl Workspace {
         let preview = {
             let recipe = launcher::Recipe {
                 harness: lp.harness,
-                model: lp.model().id,
-                effort: lp.effort,
+                model: lp.model_id.clone(),
+                effort: lp.effort.clone(),
                 reach: lp.reach,
                 cwd: lp
                     .project()
@@ -17036,11 +17165,13 @@ impl Workspace {
         );
 
         let panel = div()
+            .id("agent-launcher-panel")
             .absolute()
             .left(px(left))
             .top(px(top))
             .w(px(panel_w))
             .max_h(px(panel_h))
+            .overflow_y_scroll()
             .occlude()
             .bg(th.surface)
             .border_1()
@@ -17065,7 +17196,7 @@ impl Workspace {
                             .text_color(th.accent)
                             .child(ui.la_hdr),
                     )
-                    .child(head(ui.la_sub)),
+                    .child(head(ui.la_sub).flex_1().min_w(px(0.))),
             )
             .child(
                 // The filter, with its caret, so it reads as a field rather
@@ -19041,8 +19172,8 @@ impl Workspace {
                     // was valid for one harness can be past the end of the next
                     // — and the effort lists differ too, so the level is
                     // clamped to the nearest one this harness takes.
-                    lp.model_ix = lp.model_ix.min(lp.harness.models().len() - 1);
-                    lp.effort = lp.harness.clamp_effort(lp.effort);
+                    lp.model_id = None;
+                    lp.effort = None;
                     if lp.harness == launcher::Harness::Local {
                         lp.reach = launcher::Reach::Anywhere;
                     }
@@ -19052,21 +19183,37 @@ impl Workspace {
                     return;
                 }
                 "tab" => {
-                    lp.model_ix = (lp.model_ix + 1) % lp.harness.models().len();
+                    let models = lp.catalog().models;
+                    if let Some(at) = models.iter().position(|model| model.id == lp.model_id) {
+                        lp.model_id = models[(at + 1) % models.len()].id.clone();
+                    } else {
+                        lp.model_id = None;
+                    }
+                    lp.effort = None;
                     self.agent_launcher = Some(lp);
                     cx.notify();
                     return;
                 }
                 "left" | "right" => {
-                    let offered = lp.harness.efforts();
+                    let offered: Vec<_> = std::iter::once(None)
+                        .chain(
+                            lp.catalog()
+                                .efforts(lp.model_id.as_deref())
+                                .into_iter()
+                                .map(Some),
+                        )
+                        .collect();
                     if offered.is_empty() {
                         self.agent_launcher = Some(lp);
                         return;
                     }
-                    let at = offered.iter().position(|e| *e == lp.effort).unwrap_or(0) as i32;
+                    let at = offered
+                        .iter()
+                        .position(|effort| *effort == lp.effort)
+                        .unwrap_or(0) as i32;
                     let n = offered.len() as i32;
                     let step = if ks.key == "right" { 1 } else { n - 1 };
-                    lp.effort = offered[((at + step) % n) as usize];
+                    lp.effort = offered[((at + step) % n) as usize].clone();
                     self.agent_launcher = Some(lp);
                     cx.notify();
                     return;
@@ -27256,13 +27403,14 @@ impl Render for Workspace {
                             order: vec![0],
                             selected: 0,
                             harness: launcher::Harness::Claude,
-                            model_ix: 0,
-                            effort: launcher::Harness::Claude.default_effort(),
+                            model_id: None,
+                            effort: None,
                             reach: launcher::Reach::Anywhere,
                             from: Some(first.entity_id()),
                             error: None,
                             local_adapter: Err("Native fixture: local adapter unavailable".into()),
                         });
+                        self.watch_model_catalogs(cx);
                     }
                     "logo" => {
                         self.logo_picker = Some(LogoPicker {

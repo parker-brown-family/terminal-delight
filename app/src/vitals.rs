@@ -275,7 +275,6 @@ pub struct Vitals {
     pub call: Call,
     /// One line of evidence for the call, for the tooltip and the CLI.
     pub why: String,
-    /// `OPUS`, `FABLE`, `GPT` — name only, no version.
     pub model: Option<String>,
     /// `HIGH`, `MAX` — verbatim from the transcript, never invented.
     pub effort: Option<String>,
@@ -308,30 +307,8 @@ impl Vitals {
     }
 }
 
-/// Model family, no version — `claude-opus-5` and `claude-opus-4-8` are both
-/// OPUS, which is what was asked for and what fits the chip.
 pub fn model_name(raw: &str) -> Option<String> {
-    let id = raw.trim().to_ascii_lowercase();
-    if id.is_empty() || id == "<synthetic>" {
-        return None;
-    }
-    for (needle, name) in [
-        ("opus", "OPUS"),
-        ("fable", "FABLE"),
-        ("sonnet", "SONNET"),
-        ("haiku", "HAIKU"),
-        ("gpt", "GPT"),
-        ("codex", "CODEX"),
-        ("gemini", "GEMINI"),
-    ] {
-        if id.contains(needle) {
-            return Some(name.to_string());
-        }
-    }
-    // An unknown provider still deserves a name: take the leading alphabetic
-    // run, which is the family in every id shape seen so far.
-    let head: String = id.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
-    (!head.is_empty()).then(|| head.to_uppercase())
+    crate::model_catalog::compact_label(raw)
 }
 
 // ─── the turn model ────────────────────────────────────────────────────────
@@ -2370,18 +2347,18 @@ mod tests {
     // ── the provider chip ──────────────────────────────────────────────────
 
     #[test]
-    fn the_chip_is_family_and_effort_never_a_version() {
-        assert_eq!(model_name("claude-opus-5").as_deref(), Some("OPUS"));
-        assert_eq!(model_name("claude-opus-4-8").as_deref(), Some("OPUS"));
-        assert_eq!(model_name("claude-fable-5").as_deref(), Some("FABLE"));
-        assert_eq!(model_name("gpt-5.6-sol").as_deref(), Some("GPT"));
+    fn the_chip_preserves_the_reported_family_and_version() {
+        assert_eq!(model_name("claude-opus-5").as_deref(), Some("OPUS 5"));
+        assert_eq!(model_name("claude-opus-4-8").as_deref(), Some("OPUS 4.8"));
+        assert_eq!(model_name("claude-fable-5").as_deref(), Some("FABLE 5"));
+        assert_eq!(model_name("gpt-5.6-sol").as_deref(), Some("SOL 5.6"));
         assert_eq!(model_name("<synthetic>"), None);
     }
 
     #[test]
     fn the_chip_reads_opus_max() {
         let vit = v(&session(6, &["a.rs", "b.rs"], 4000));
-        assert_eq!(vit.chip().as_deref(), Some("OPUS \u{b7} MAX"));
+        assert_eq!(vit.chip().as_deref(), Some("OPUS 5 \u{b7} MAX"));
     }
 
     #[test]
