@@ -88,7 +88,7 @@ def main():
     if out.exists() and any(out.iterdir()):
         parser.error("out must be a new or empty directory; captures never overwrite a review")
     out.mkdir(parents=True, exist_ok=True)
-    for directory in ["config/terminal-delight/sessions", "cache", "state", "tmp"]:
+    for directory in ["config/terminal-delight/sessions", "cache", "state", "tmp", "home", "bin"]:
         (out / directory).mkdir(parents=True)
     shutil.copyfile(__file__, out / "runner.py")
     shutil.copyfile(skin, out / "skin.toml")
@@ -100,6 +100,13 @@ def main():
     session = "skin-atlas-" + uuid.uuid4().hex[:12]
     emitter = out / "emitter.py"
     emitter.write_text("import time\nprint('\\033[36mCustom surface native fixture\\033[0m\\n\\n✓ measured zero: 0%\\n◇ reading unavailable: —\\n\\n> review the native controls',flush=True)\nwhile True: time.sleep(30)\n")
+    fixture_shell = out / "fixture-shell"
+    fixture_shell.write_text("#!/bin/sh\nexec " + shlex.join([sys.executable, str(emitter)]) + "\n")
+    fixture_shell.chmod(0o700)
+    collector_canary = out / "collector-ran"
+    collector_stub = out / "bin/omarchy-agent-usage-update"
+    collector_stub.write_text("#!/bin/sh\nprintf blocked > " + shlex.quote(str(collector_canary)) + "\nexit 1\n")
+    collector_stub.chmod(0o700)
     val = json.dumps
     head = f'active = 0\nlang = {val(args.lang)}\nleft_bar = true\nleft_bar_w = 210.0\nskin = "custom"\nwin = [0.0, 0.0, {width}.0, {height}.0]\n\n[theme]\nid = {val(args.theme)}\ncolor = "default"\nfollow_omarchy = false\n'
     if args.palette:
@@ -115,7 +122,8 @@ def main():
     saved.write_text(head)
     desktop_keys = {"HOME", "USER", "LOGNAME", "PATH", "LANG", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "HYPRLAND_INSTANCE_SIGNATURE", "WGPU_BACKEND", "VK_ICD_FILENAMES", "LIBGL_ALWAYS_SOFTWARE"}
     env = {key: value for key, value in os.environ.items() if key in desktop_keys or key.startswith("LC_")}
-    env.update(TD_SESSION=session, XDG_CONFIG_HOME=str(out / "config"), XDG_CACHE_HOME=str(out / "cache"), XDG_STATE_HOME=str(out / "state"), TMPDIR=str(out / "tmp"), SHELL="/bin/bash")
+    env.update(TD_SESSION=session, TD_SKIN_ATLAS_HOME=str(out / "home"), TD_HOST_SHELL=str(fixture_shell), XDG_CONFIG_HOME=str(out / "config"), XDG_CACHE_HOME=str(out / "cache"), XDG_STATE_HOME=str(out / "state"), TMPDIR=str(out / "tmp"), SHELL=str(fixture_shell))
+    env["PATH"] = str(out / "bin") + os.pathsep + env.get("PATH", os.defpath)
     env.update(fixture["environment"])
     launch = out / "launch.sh"
     launch.write_text("#!/bin/sh\nexec env -i " + shlex.join([f"{key}={value}" for key, value in env.items()]) + " " + shlex.quote(str(binary)) + " > " + shlex.quote(str(out / "window.log")) + " 2>&1\n")
@@ -314,6 +322,9 @@ def main():
         if args.hold:
             print(f"Private window {pid}; press Enter to close. Output: {out}", flush=True)
             input()
+        receipt["isolation"] = {"fixture_root": str(out / "home"), "shell": "explicit fixture program; no login profile", "collector_canary_invoked": collector_canary.exists()}
+        if collector_canary.exists():
+            raise RuntimeError("atlas attempted account collection; the canary blocked it")
     finally:
         (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
         if pid:

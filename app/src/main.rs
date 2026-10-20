@@ -6268,7 +6268,9 @@ impl Workspace {
         // The collectors' cached JSON, off disk, before the first frame. Small
         // files that are already written; the numbers in them may be old, which
         // is what `slot::Reading::Stale` and the slot's dimming exist to say.
-        ws.adopt_usage_records(usage::read_all(&session::home_dir()));
+        if skin_atlas_home().is_none() {
+            ws.adopt_usage_records(usage::read_all(&session::home_dir()));
+        }
         if let Some(ctx) = ws.attach.clone() {
             // A host is holding the terminals: what is running beats what was
             // written down. Everything else in this function is untouched by
@@ -9276,7 +9278,7 @@ impl Workspace {
         }
         // Under a capture hook the records on screen are fictional; running a
         // collector would swap this machine's real plan in behind the camera.
-        if std::env::var("TD_USAGE_DEMO").is_ok() {
+        if skin_atlas_home().is_some() || std::env::var("TD_USAGE_DEMO").is_ok() {
             return;
         }
         let home = session::home_dir();
@@ -16009,7 +16011,7 @@ impl Workspace {
         if !self.plugins_menu {
             return None;
         }
-        let home = session::home_dir();
+        let home = skin_atlas_home().cloned().unwrap_or_else(session::home_dir);
         let found = plugins::discover(&home);
         let n = found.len();
         let ui = self.lang.strings().ui;
@@ -26956,6 +26958,14 @@ fn render_node(
             })
         }
     }
+}
+
+/// A private atlas root also disables account collectors. It never changes HOME.
+fn skin_atlas_home() -> Option<&'static PathBuf> {
+    static ATLAS_ROOT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    ATLAS_ROOT
+        .get_or_init(|| std::env::var_os("TD_SKIN_ATLAS_HOME").map(PathBuf::from))
+        .as_ref()
 }
 
 // Capture/demo hook: when TD_FOCUS_DEMO is set, the workspace auto-opens the
