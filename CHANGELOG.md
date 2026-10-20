@@ -595,6 +595,13 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
+- **The OPS skin no longer crashes the window.** A cut-cornered panel that was
+  laid out at no size for a frame, as one is while it opens or collapses, made
+  the window panic while drawing it. Clicking a tab in the left bar was one way
+  to hit it. (#1072)
+- **The 🐞 bug panel shows its rows under the OPS skin.** Its background was
+  drawn over its content, so the panel opened as an empty frame and a bug could
+  not be reported from it. (#1072)
 - **Omarchy's Super+C copies in a terminal pane, and Super+V pastes.** Omarchy
   sends its universal copy and paste to a window as Ctrl+Insert and Shift+Insert
   when it counts the window as a terminal, and as Ctrl+C and Ctrl+V when it does
