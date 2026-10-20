@@ -500,7 +500,7 @@ def main(argv: list[str] | None = None) -> int:
     cases, report = record_all(args.only)
     for line in report:
         print(json.dumps(line))
-    Path(args.out).write_text(json.dumps({"format_version": 1, "corpus_version": RECORDED_VERSION,
+    Path(args.out).write_text(json.dumps({"format_version": 2, "corpus_version": RECORDED_VERSION,
                                           "cases": cases}, ensure_ascii=False))
     return 0
 
