@@ -6,6 +6,14 @@ on:
     branches: [main]
     tags: ['v*']
 
+# A new push to a pull request cancels that pull request's older run, which
+# was checking a commit nobody will merge. Pushes to main and tags each get a
+# group of their own, so they are never cancelled: every main commit keeps its
+# cache save, and a tag always reaches the publish job.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # The Rust every job builds with, pinned, so a new stable release cannot turn
 # its new lints into a failure on lines a pull request never touched. That
 # happened on 2026-10-07: stable moved 1.98 -> 1.99 and every PR failed clippy
