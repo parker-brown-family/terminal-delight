@@ -30,20 +30,25 @@ into `lang.rs`), so no separate gate was taken.
 - [x] Batch 1 (git coordination, 216) translated by ChatGPT Pro, validated, committed
 - [x] Batch 2 (main.rs chrome, 305 incl. additions) + one glossary; 231 help-menu corrections
       applied, 16 refused (the translated brand and the localized FOCUS name are decisions)
-- [ ] Batch 3a (modules, 218 + the four lost help-menu headers) — answered in ChatGPT, not yet
-      collected (the Chrome extension disconnected)
-- [ ] Batches 3b (224) and 4 (document viewer, 157)
-- [ ] Shorten pass: 29 ids over their width budget (scratchpad `td-shorten-batch.json`)
+- [x] Batch 3a (modules, 218 + the four lost help-menu headers) collected from the tool outputs
+      of a reply whose final message stalled; parts table 214/595 translated
+- [ ] Batches 3b (224) and 4 (document viewer, 157), sent to two fresh Pro chats in parallel
+      with the glossary and the 510 earlier translations attached as memory
+- [ ] Shorten pass: rebuilt from `width.py` over the Rust tables once 3b and 4 land
+      (55 fields more than 25% over budget after 3a, 26 of them Japanese)
 - [x] Wiring: main.rs and every other module, merged; main.rs adopts the modules' display
       accessors; the notes control-socket report stays English (2498 tests pass)
-- [ ] The four stale help-menu fields re-translated; a test refuses English in a non-English
-      flat field outside a cognate allowlist
+- [x] The four stale help-menu fields re-translated; a test refuses English in a non-English
+      flat field outside a 57-entry cognate allowlist (parts joins it when its batches land)
 - [ ] Merge the three branches, regenerate all tables, full gates, one PR
 
 ## How the matrix moves
 
-Batches are JSON files attached to one ChatGPT Pro conversation (terminology stays consistent
-inside it). Replies are fenced json blocks headed `LANG: <code>`; a script in the page parses
+Batches are JSON files attached to a ChatGPT Pro conversation. Terminology stays consistent
+inside one conversation; a fresh one gets `td-glossary-and-memory.json` (the agreed glossary
+plus every earlier translation with its English) attached instead. A Pro reply can stall with
+its final message stuck "in progress" for hours; its tool outputs usually hold the blocks, and
+the conversation API (`/backend-api/conversation/<id>`) reads them when the page cannot. Replies are fenced json blocks headed `LANG: <code>`; a script in the page parses
 them and a real click on an injected button copies them to the system clipboard, from where
 `wl-paste` lands them in the scratchpad. `gen_rust.py` regenerates `app/src/lang/<table>.rs`
 and refuses a translation that loses a placeholder, a keycap or a plural form.
