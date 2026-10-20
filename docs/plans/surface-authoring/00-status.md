@@ -3,8 +3,9 @@
 **Difficulty: 6/10.** The existing skin/material seam can be strengthened, but the authoring contract has to prevent the omissions and font/layout surprises exposed by Chalk.
 
 - Inventory audit: complete against the tactical workshop's 46 rows and main 0dcdb741. Source corrections and an unapplied patch are retained in `evidence/`.
-- Combined architecture and slice plan: ready for review; awaiting one approval before implementation.
-- Implementation and skill: not started.
+- Combined architecture and slice plan: APPROVED 2026-10-20 through all three concurs and Parker's “Basically concur all”.
+- Implementation: in progress; integrate the sibling's OPS vocabulary before extending it.
+- Skill: follows the second file-only look and native proof.
 
 The inventory under review lives on `design/tactical-skin-workshop` at `docs/spec/skin-surface-inventory.md`, introduced by 96316efd. Preserve its ownership and coordinate corrections with that pane. Source work is isolated in this worktree; the shared primary checkout contains other work.
 
@@ -16,4 +17,13 @@ This was a source audit, not a new native certification of every surface. No app
 
 ## Next
 
-Review `plan.md` through the commentable HTML page. On approval, start with the Subscriptions tracer and prove a custom file changes the real native controls without editing their caller. Keep all four slices and the eventual skill in this task's single implementation review.
+Start with the Subscriptions tracer and prove a custom file changes the real native controls without editing their caller. Keep all four slices and the eventual skill in this task's single implementation review.
+
+## Slices
+
+- [ ] Subscriptions tracer and native dark/pale fixture.
+- [ ] Shared material/type policy, data and compatibility.
+- [ ] Catalogue coverage and native atlas.
+- [ ] Portable skill, second file-only look, reload/persistence/restore proof.
+
+The sibling's approved OPS implementation introduces cut corners, emphasis bars, pip gauges, heading/data type and grid/hatch/chevron devices. Reuse those additions. Do not overwrite its source work or restart from the audit snapshot.

@@ -763,8 +763,12 @@ dialog#d-export { max-width: 780px; }
 
 <!-- Notes and concurs are baked in here by "save into file". Leave them empty and leave them in,
      with their data-format: it names the format notes.js writes, and other writers check it. -->
-<script type="application/json" id="report-notes" data-format="1">{}</script>
-<script type="application/json" id="report-concurs" data-format="1">{}</script>
+<script type="application/json" id="report-notes" data-format="1" data-rev="2026-10-20T14:27:19.271Z">{}</script>
+<script type="application/json" id="report-concurs" data-format="1" data-rev="2026-10-20T14:27:19.271Z">{
+ "ask-complete-the-existing-skin": "2026-10-20 14:27",
+ "ask-make-catalogue-and-native": "2026-10-20 14:27",
+ "ask-ship-the-skill-after": "2026-10-20 14:27"
+}</script>
 
 <script>
   /* Set before notes.js runs. Used for the storage key and the download filename. */
@@ -1358,4 +1362,16 @@ dialog#d-export { max-width: 780px; }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
-</script><script>document.querySelectorAll("[data-dlg]").forEach(function(b){b.addEventListener("click",function(){document.getElementById(b.dataset.dlg).showModal()})});document.querySelector("#inventory-detail [data-close]").onclick=function(){document.getElementById("inventory-detail").close()}</script></body></html>
+</script><script>document.querySelectorAll("[data-dlg]").forEach(function(b){b.addEventListener("click",function(){document.getElementById(b.dataset.dlg).showModal()})});document.querySelector("#inventory-detail [data-close]").onclick=function(){document.getElementById("inventory-detail").close()}</script><!--
+READER NOTES —
+NOTES — 2026-10-20-surface-authoring.html
+0 notes on 0 elements · 3 concurs.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[ask-complete-the-existing-skin] Complete the existing skin vocabulary  ✓ concur
+
+[ask-make-catalogue-and-native] Make catalogue and native proof part of authoring  ✓ concur
+
+[ask-ship-the-skill-after] Ship the skill after a second file-only look works  ✓ concur
+
+--></body></html>
