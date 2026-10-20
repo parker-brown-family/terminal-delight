@@ -3040,6 +3040,72 @@ fn count_saved_leaves(n: &SavedNode) -> usize {
 /// session. A deliberate close (`allow_shrink`) is always fine; this only fires
 /// for an *unintended* collapse (a checkpoint or dead-agent reap writing a tree
 /// that mysteriously lost most of its panes). Pure, so it is unit-testable.
+/// Where a pane's tab sits in the left bar: its project, then its group.
+type Placement = (Option<u32>, Option<u32>);
+
+/// Every host pane a layout names, keyed by pane id, with where its tab sits.
+/// Leaves with no pane id (a window's own terminals) are not the host's to
+/// lose and are left out.
+fn placements_of(tabs: &[SavedTab]) -> std::collections::BTreeMap<u64, Placement> {
+    fn walk(node: &SavedNode, at: Placement, out: &mut std::collections::BTreeMap<u64, Placement>) {
+        match node {
+            SavedNode::Leaf { pane_id, .. } => {
+                if let Some(id) = pane_id {
+                    out.insert(*id, at);
+                }
+            }
+            SavedNode::Split { a, b, .. } => {
+                walk(a, at, out);
+                walk(b, at, out);
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    for tab in tabs {
+        walk(&tab.node, (tab.project, tab.group), &mut out);
+    }
+    out
+}
+
+/// The panes this window shows that the session file either does not name or
+/// files somewhere else. Each of them would come back wrong at the next window
+/// open: missing ones adopted bare at the end, moved ones in their old place.
+fn unsaved_panes(
+    live: &std::collections::BTreeMap<u64, Placement>,
+    disk: &std::collections::BTreeMap<u64, Placement>,
+) -> Vec<u64> {
+    live.iter()
+        .filter(|(id, at)| disk.get(id) != Some(at))
+        .map(|(id, _)| *id)
+        .collect()
+}
+
+/// What the save watch does on one tick.
+#[derive(Debug, PartialEq, Eq)]
+enum SaveWatch {
+    /// The file agrees with the window.
+    Fine,
+    /// The file has drifted: save again, quietly. One tick of drift is allowed
+    /// to be a save racing the read.
+    Resave,
+    /// Still drifted after a resave: save again AND tell the person, because
+    /// saving is not landing and the next window will open on a wrong layout.
+    Warn,
+    /// It had been warning and the file agrees again: say so.
+    Recovered,
+}
+
+/// Decide a tick from how many panes are unsaved and how many ticks in a row
+/// have been. Returns the action and the new count.
+fn save_watch_step(unsaved: usize, strikes: u32) -> (SaveWatch, u32) {
+    match (unsaved, strikes) {
+        (0, 0 | 1) => (SaveWatch::Fine, 0),
+        (0, _) => (SaveWatch::Recovered, 0),
+        (_, 0) => (SaveWatch::Resave, 1),
+        (_, n) => (SaveWatch::Warn, n + 1),
+    }
+}
+
 fn is_catastrophic_shrink(
     old_leaves: usize,
     old_tabs: usize,
@@ -5404,6 +5470,15 @@ const GUARD_PERIOD_SECS: u64 = 30;
 /// reads and believes.
 const MODE_SWEEP_SECS: u64 = 5;
 
+/// How often an attached window checks that the session file says what it is
+/// showing (see [`Workspace::watch_the_save`]).
+///
+/// The file is only read when the next window opens, so a save that stopped
+/// landing is invisible until then — and by then the tabs it never mentioned
+/// come back bare, out of their projects. Half a minute turns "hours later, at
+/// a swap" into "within a minute, while the person can still act on it".
+const SAVE_WATCH_SECS: u64 = 30;
+
 /// A pane's mode decides its phosphor, its header, and whether the attention
 /// queue is allowed to see it at all. It must never be repaired more slowly
 /// than a scrollback hash is checked — held at compile time rather than in a
@@ -6822,6 +6897,111 @@ impl Workspace {
         Self::watch_for_divergence(ctx.clone(), window, cx);
         self.listen_to_the_host(ctx.clone(), cx);
         Self::reconcile_modes(ctx.clone(), cx);
+        Self::watch_the_save(cx);
+    }
+
+    /// Check, on a clock, that the session file says what this window shows.
+    ///
+    /// **Why it exists.** Every way a save can fail to land — the window
+    /// deciding its host is lost, a host refusing the write, a handover, a bug
+    /// nobody has found yet — used to be silent, and the file is only read when
+    /// the next window opens. On 2026-10-19 a window stopped saving for two
+    /// hours while the host kept rewriting its stale copy with a fresh mtime;
+    /// at the next swap six live tabs came back bare, out of their projects.
+    /// This does not care why: it compares the layout the window would write
+    /// with the layout on disk, pane by pane, and when they disagree it saves
+    /// again, and if that does not take, it says so on the glass and the
+    /// desktop while the person can still put things right.
+    fn watch_the_save(cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let mut strikes = 0u32;
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(SAVE_WATCH_SECS))
+                    .await;
+                // Exactly what `save` would hand over, deduplication included,
+                // so the two sides are compared like with like.
+                let Ok(live) = this.update(cx, |ws: &mut Workspace, cx| {
+                    let mut state = ws.build_state(cx);
+                    dedupe_resumes(&mut state.tabs);
+                    placements_of(&state.tabs)
+                }) else {
+                    break;
+                };
+                // A file that will not parse names nothing, which is exactly
+                // what the next window would restore from it.
+                let disk = cx
+                    .background_executor()
+                    .spawn(async move {
+                        std::fs::read_to_string(instance::state_path())
+                            .ok()
+                            .and_then(|s| toml::from_str::<StateFile>(&s).ok())
+                            .map(|s| placements_of(&s.tabs))
+                            .unwrap_or_default()
+                    })
+                    .await;
+                let unsaved = unsaved_panes(&live, &disk);
+                let (step, next) = save_watch_step(unsaved.len(), strikes);
+                strikes = next;
+                let alive = this.update(cx, |ws: &mut Workspace, cx| {
+                    ws.act_on_save_watch(step, &unsaved, strikes, cx)
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn act_on_save_watch(
+        &mut self,
+        step: SaveWatch,
+        unsaved: &[u64],
+        strikes: u32,
+        cx: &mut Context<Self>,
+    ) {
+        let why = self.save_blocked();
+        match step {
+            SaveWatch::Fine => {}
+            SaveWatch::Resave => {
+                eprintln!(
+                    "terminal-delight: the session file is missing or misfiling panes {unsaved:?}; saving again"
+                );
+                self.save(cx);
+            }
+            SaveWatch::Warn => {
+                let reason = why.unwrap_or("saves are not reaching the session file");
+                eprintln!(
+                    "terminal-delight: LAYOUT NOT SAVED — {reason}. Panes {unsaved:?} would reopen in the wrong place"
+                );
+                self.save(cx);
+                let title = format!(
+                    "Layout not saving: {} tab{} would reopen out of place",
+                    unsaved.len(),
+                    if unsaved.len() == 1 { "" } else { "s" }
+                );
+                self.marquee_says = Some((title.clone(), Instant::now()));
+                cx.notify();
+                // The desktop hears it once per episode; the marquee repeats
+                // every tick until the file agrees, because it is still true.
+                if strikes == 2 && self.notif.system {
+                    let body = format!(
+                        "{reason}. Closing this window now would lose where those tabs are filed."
+                    );
+                    std::thread::spawn(move || {
+                        let _ = std::process::Command::new("notify-send")
+                            .args(notify::notify_args(&title, &body))
+                            .output();
+                    });
+                }
+            }
+            SaveWatch::Recovered => {
+                eprintln!("terminal-delight: the session file agrees with the window again");
+                self.marquee_says = Some(("Layout saving again".into(), Instant::now()));
+                cx.notify();
+            }
+        }
     }
 
     /// Ask the host what its panes are running, and keep asking.
@@ -7471,22 +7651,37 @@ impl Workspace {
         }
     }
 
-    fn save(&self, cx: &App) {
+    /// Why this window will not write its layout, if it will not. Every reason
+    /// `save` returns early for is here, so the save watch can name it.
+    fn save_blocked(&self) -> Option<&'static str> {
         // a scratch / torn-off window must never overwrite a workspace's layout
         if self.scratch {
-            return;
+            return Some("this is a scratch window");
         }
         // A window whose host has gone knows nothing about the session any
         // more: its panes are replicas of terminals that no longer exist, and
         // the layout it would write is a picture of a corpse. Yesterday's file
         // describes work that once ran, which is strictly more true.
         if self.attach.as_ref().is_some_and(|ctx| ctx.link.lost()) {
-            return;
+            return Some("this window has lost its session host");
         }
         // Quit-start has already handed this session back (`instance::release`),
         // so another window may already own it. Writing now would clobber the new
         // owner's state with our dying copy — see #189.
         if instance::released() {
+            return Some("this window has handed its session to another");
+        }
+        // The save watch's own rig: a window that never saves, to watch the
+        // watch catch it. Read once; nothing sets it but a person testing.
+        static FORCED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *FORCED.get_or_init(|| std::env::var("TD_SAVE_FORCE_SKIP").is_ok_and(|v| v == "1")) {
+            return Some("saving is switched off by TD_SAVE_FORCE_SKIP");
+        }
+        None
+    }
+
+    fn save(&self, cx: &App) {
+        if self.save_blocked().is_some() {
             return;
         }
         // A real (user-driven) save supersedes any reap staleness: the user has
@@ -40580,6 +40775,98 @@ mod tests {
             });
         }
         assert_eq!(seen_panes.len(), 2, "two real terminals survive");
+    }
+
+    /// Two tabs in the shape a session file really has: one in a project with
+    /// a split, one in a group, plus a leaf with no host pane.
+    const PLACED: &str = r#"
+active = 0
+
+[[tabs]]
+name = "minor fixes"
+project = 18
+
+[tabs.node.Split]
+dir = "Row"
+ratio = 0.5
+
+[tabs.node.Split.a.Leaf]
+cwd = "/x"
+pane_id = 16
+
+[tabs.node.Split.b.Leaf]
+cwd = "/x"
+pane_id = 46
+
+[[tabs]]
+group = 10
+
+[tabs.node.Leaf]
+cwd = "/y"
+pane_id = 141
+
+[[tabs]]
+
+[tabs.node.Leaf]
+cwd = "/z"
+"#;
+
+    #[test]
+    fn placements_name_every_host_pane_with_its_tabs_project_and_group() {
+        let state: StateFile = toml::from_str(PLACED).expect("a real session shape");
+        let placed = placements_of(&state.tabs);
+        assert_eq!(placed.get(&16), Some(&(Some(18), None)));
+        assert_eq!(
+            placed.get(&46),
+            Some(&(Some(18), None)),
+            "both halves of a split"
+        );
+        assert_eq!(placed.get(&141), Some(&(None, Some(10))));
+        assert_eq!(
+            placed.len(),
+            3,
+            "a leaf with no pane id is not the host's to lose"
+        );
+    }
+
+    #[test]
+    fn a_pane_the_file_does_not_name_or_files_elsewhere_is_unsaved() {
+        let disk: std::collections::BTreeMap<u64, Placement> =
+            [(16, (Some(18), None)), (141, (None, None))].into();
+        let mut live = disk.clone();
+        assert!(unsaved_panes(&live, &disk).is_empty(), "agreement is quiet");
+        // The 2026-10-19 shape: a tab opened after saves stopped landing.
+        live.insert(140, (Some(18), None));
+        // And one moved into a group whose move never reached the file.
+        live.insert(141, (None, Some(10)));
+        assert_eq!(unsaved_panes(&live, &disk), vec![140, 141]);
+        // A pane only the file names is the host's business, not a loss.
+        live.remove(&16);
+        assert_eq!(unsaved_panes(&live, &disk), vec![140, 141]);
+    }
+
+    #[test]
+    fn the_save_watch_resaves_quietly_then_warns_then_says_it_recovered() {
+        let mut strikes = 0;
+        let mut seen = vec![];
+        for unsaved in [0, 2, 2, 2, 0, 0] {
+            let (step, next) = save_watch_step(unsaved, strikes);
+            strikes = next;
+            seen.push(step);
+        }
+        use SaveWatch::*;
+        assert_eq!(seen, vec![Fine, Resave, Warn, Warn, Recovered, Fine]);
+        // Drift that one resave repairs never reaches the person.
+        let (first, n) = save_watch_step(3, 0);
+        assert_eq!((first, save_watch_step(0, n).0), (Resave, Fine));
+    }
+
+    #[test]
+    fn an_attached_window_starts_the_save_watch() {
+        assert!(
+            live_fn("fn build_attached(").contains("Self::watch_the_save(cx)"),
+            "without the watch, a save that stops landing is silent until the next window opens"
+        );
     }
 
     #[test]
