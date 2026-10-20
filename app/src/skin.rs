@@ -1038,6 +1038,7 @@ impl Skin {
     }
 
     /// An action has a raised backing; a choice is writing on the parent region.
+    /// Apply this before adding content: ParentElement appends visual children.
     pub fn action<E: Styled + ParentElement>(&self, d: E, active: bool) -> E {
         if self.is_paper() {
             self.paper_control(d, active)

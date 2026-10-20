@@ -16233,52 +16233,50 @@ impl Workspace {
         let agent = diag::chosen_agent();
 
         let row = |glyph: &str, name: String, blurb: String, live: bool, id: &'static str| {
-            sk.action(
-                div()
-                    .id(SharedString::from(id))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_3()
-                    .px_2()
-                    .py_2()
-                    .rounded(sk.radius())
-                    .border_1()
-                    .border_color(if live {
-                        th.accent.alpha(0.55)
-                    } else {
-                        th.text.alpha(0.12)
-                    })
-                    .when(live, |d| {
-                        d.cursor_pointer().hover(|s| s.bg(th.accent.alpha(0.15)))
-                    })
-                    .child(
-                        div()
-                            .text_size(sk.text_px(15.))
-                            .child(SharedString::from(glyph.to_string())),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_0p5()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .child(
-                                div()
-                                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                    .text_color(if live { th.text } else { th.text.alpha(0.45) })
-                                    .child(SharedString::from(name)),
-                            )
-                            .child(
-                                div()
-                                    .text_size(sk.text_px(8.5))
-                                    .text_color(th.text.alpha(if live { 0.6 } else { 0.35 }))
-                                    .child(SharedString::from(blurb)),
-                            ),
-                    ),
-                false,
-            )
+            div()
+                .id(SharedString::from(id))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_2()
+                .py_2()
+                .rounded(sk.radius())
+                .border_1()
+                .border_color(if live {
+                    th.accent.alpha(0.55)
+                } else {
+                    th.text.alpha(0.12)
+                })
+                .when(live, |d| {
+                    d.cursor_pointer().hover(|s| s.bg(th.accent.alpha(0.15)))
+                })
+                .map(|d| sk.action(d, false))
+                .child(
+                    div()
+                        .text_size(sk.text_px(15.))
+                        .child(SharedString::from(glyph.to_string())),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(if live { th.text } else { th.text.alpha(0.45) })
+                                .child(SharedString::from(name)),
+                        )
+                        .child(
+                            div()
+                                .text_size(sk.text_px(8.5))
+                                .text_color(th.text.alpha(if live { 0.6 } else { 0.35 }))
+                                .child(SharedString::from(blurb)),
+                        ),
+                )
         };
 
         let agent_name = agent.unwrap_or("claude");
