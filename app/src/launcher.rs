@@ -67,6 +67,11 @@ pub enum Harness {
     Local,
 }
 
+/// The model id that names no model: the harness picks from its own
+/// configuration. A launch with it passes no `--model`, and the live dial sends
+/// a bare `/model`, which opens the harness's own picker.
+pub const CONFIGURED: &str = "configured";
+
 impl Harness {
     pub const ALL: [Harness; 3] = [Harness::Claude, Harness::Codex, Harness::Local];
 
@@ -133,7 +138,7 @@ impl Harness {
             // Codex owns its account-specific model catalogue and configuration.
             // A pinned model here can be retired while the CLI remains current.
             Harness::Codex => &[Model {
-                id: "configured",
+                id: CONFIGURED,
                 label: "Codex default",
             }],
         }
@@ -582,7 +587,7 @@ impl Recipe {
                 }
             }
             Harness::Codex => {
-                if self.model != "configured" {
+                if self.model != CONFIGURED {
                     parts.push("--model".into());
                     parts.push(self.model.to_string());
                 }
