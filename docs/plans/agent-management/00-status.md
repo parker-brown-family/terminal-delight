@@ -28,11 +28,11 @@ Source lives in the isolated `/home/parker/Work/td-agent-management` checkout on
 
 The original native tracer produced and verified a 232-byte paragraph. A live public `agent_send` → recipient `agent_reply` → manager verification round trip produced and verified a 227-byte paragraph, with one attempt. Identical-key replay returned the same receipt; changed payload conflicted; unreachable forwarding left the local journal unchanged. The current capability path refuses unproven Codex identity/routing. See `conformance/README.md` for the scope of each experiment.
 
-The experimental session-1 window reused the existing host and all 30 active saved pane PIDs. Default installation, release tags and main were not changed. After the experimental window was replaced by a released window, the same 30 saved pane processes were verified again; the cause and replacement actor remain unproven. Release coordination identified this as an independently reviewed RC.2 feature; no RC.1 merge is intended.
+The experimental session-1 window reused the existing host and all 30 active saved pane PIDs. Default installation, release tags and main were not changed. After the experimental window was replaced by a released window, the same 30 saved pane processes were verified again; the cause and replacement actor remain unproven. Initial release coordination proposed a separate RC.2 review. Parker subsequently selected local experimental use and the next development branch; this feature now targets 0.5.0, outside the wrapping 0.4.0 release.
 
 ## Resume
 
-Final format, production Clippy, workspace tests for both terminal cores and the locked debug build passed. The implementation review page is complete. Prepare one draft RC.2 PR for review. Product, Architecture and Program Design remain approved. Do not redo them. Preserve the independent request/native-consumption/work-result/verification dimensions and the explicit Codex unsupported states. Existing workbench-channel approvals remain settled; management uses its approved native route for background delivery.
+Final format, production Clippy, workspace tests for both terminal cores and the locked debug build passed. The implementation review page is complete. Draft PR https://github.com/parker-brown-family/terminal-delight/pull/1069 is open for 0.5.0 development review. No next-development branch exists remotely yet; keep the feature isolated and retarget the PR when that branch is established. Product, Architecture and Program Design remain approved. Do not redo them. Preserve the independent request/native-consumption/work-result/verification dimensions and the explicit Codex unsupported states. Existing workbench-channel approvals remain settled; management uses its approved native route for background delivery.
 
 ## Product Approval
 
@@ -62,3 +62,9 @@ The review page has six figures. Chromium at 968px and a true 390px iframe viewp
 ## Implementation review verification
 
 The five-figure implementation page is self-contained. Chromium at 968px and 390px found no horizontal overflow; all figures and summary cards are annotatable, all modal references resolve, and no external assets are required. The narrative check classified it as an argument with heading continuity 0.77; it still rated a cold stranger’s opening comprehension low (0.19). Plain-language opening and captions were revised; the page remains an implementation review for the reader who approved the design, rather than a public introduction.
+
+## Release target — 2026-10-20
+
+Parker: “0.4.0 is getting wrapped up ... We will use it locally and it will go into the next dev branch.” Recommend 0.5.0: six new public management operations and durable delivery/result semantics form a new capability. Local builds remain experimental; broad Codex support is not implied. No release version, tag, default installation or 0.4.0 integration was changed by this decision.
+
+Remote CI stopped at formatting because `cargo fmt --all` traversed the patched external Zed path dependencies. The workflow now explicitly formats the two TD packages, preserving coverage of all owned workspace code. Production source is unchanged by that CI repair.

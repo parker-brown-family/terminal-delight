@@ -67,7 +67,9 @@ jobs:
           workspaces: app
 
       - name: Format
-        run: cargo fmt --all -- --check
+        # --all also traverses the patched external Zed path dependencies.
+        # Check both TD packages without imposing formatting on that checkout.
+        run: cargo fmt -p terminal-delight -p td-agent-management -- --check
 
       - name: Check
         run: cargo check --locked
