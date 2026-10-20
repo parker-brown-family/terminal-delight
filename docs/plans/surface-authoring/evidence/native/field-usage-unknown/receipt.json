@@ -1,0 +1,332 @@
+{
+  "schema": "td-skin-proof/1",
+  "scene": "usage-unknown",
+  "session": "skin-atlas-2120a772d0dc",
+  "binary_sha256": "7579cf94965627de3f57d31f5bd35c4ec1445a3d7f1b903dd8cfdb19a9ae952b",
+  "skin_sha256": "d409e73edc1283f6835c0b088940eda4ec163154e073e49703b773dc173aed91",
+  "catalogue_schema": "td-skin-catalogue/1",
+  "theme": "hacker",
+  "palette": "catppuccin-latte",
+  "geometry_requested": [
+    1200,
+    800
+  ],
+  "geometry_observed": [
+    1200,
+    800
+  ],
+  "grade": {
+    "warp": 0.0,
+    "ui_scale": 1.0,
+    "text_scale": 1.0
+  },
+  "lang": "en",
+  "capture": {
+    "file": "native.png",
+    "sha256": "ea8292ac340eb44146ed7f34515a68673e44d0e003ef51c605825c5722aad8d4"
+  },
+  "visual_verdict": "pass: captured static state",
+  "states_reviewed": [
+    "limits unavailable",
+    "unavailable reading distinct from measured zero"
+  ],
+  "runner_sha256": "6ed15ec99177254976fab0c5955863ceb878d8b2934e84bdaae8098a12ea287d",
+  "mcp_status": "enabled=on writes=on expose=all events=on",
+  "pane_config": {
+    "content": [
+      {
+        "type": "text",
+        "text": "1187609: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 95 \u00b7 crt off\nouter: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 95 \u00b7 crt off"
+      },
+      {
+        "type": "text",
+        "text": "\u2014 terminal-delight \u00b7 session skin-atlas-2120a772d0dc \u00b7 window 1187516 \u00b7 td-surface-authoring-isolated"
+      }
+    ],
+    "structuredContent": {
+      "configs": [
+        {
+          "target": 1187609,
+          "scope": "pane",
+          "tab": 0,
+          "title": "shell",
+          "mode": "SHELL",
+          "grade": {
+            "brightness": 50.0,
+            "contrast": 50.0,
+            "colour": 50.0,
+            "text": 50.0,
+            "background": 50.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 95.33332824707031,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 25.0
+          }
+        },
+        {
+          "target": "outer",
+          "scope": "outer",
+          "grade": {
+            "brightness": 50.0,
+            "contrast": 50.0,
+            "colour": 50.0,
+            "text": 50.0,
+            "background": 50.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 95.33332824707031,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 25.0
+          }
+        }
+      ],
+      "instance": {
+        "session": "skin-atlas-2120a772d0dc",
+        "window": 1187516,
+        "build": "td-surface-authoring-isolated"
+      }
+    }
+  },
+  "skin_status": "active=custom known=chalk,default,deco,console,ops,custom",
+  "live_skin": {
+    "skin": "field notes",
+    "theme": "hacker",
+    "ui_font": "Share Tech Mono",
+    "heading_font": "Oxanium",
+    "data_font": "Share Tech Mono",
+    "optical": {
+      "scale": 1.0,
+      "min_px": 11.0,
+      "line_height": 1.2000000476837158
+    },
+    "note": {
+      "decoration": "Plain",
+      "stock": false
+    },
+    "material": "Paper",
+    "scale": 1.0,
+    "text_size": 1.0,
+    "shape": {
+      "corner": "Square",
+      "boundary": "Hairline",
+      "emphasis": "Rail",
+      "divider": "Line",
+      "caps": "Upper",
+      "shine": "Flat",
+      "gauge": "Pips",
+      "title": "Plain",
+      "focus": "Plain",
+      "tube": "Glass"
+    },
+    "ink": {
+      "panel": {
+        "hex": "#dce0e8",
+        "a": 1.0
+      },
+      "panel_raised": {
+        "hex": "#dce0e8",
+        "a": 1.0
+      },
+      "panel_sunken": {
+        "hex": "#48546d",
+        "a": 1.0
+      },
+      "panel_glass": {
+        "hex": "#eff1f5",
+        "a": 0.699999988079071
+      },
+      "btn_face": {
+        "hex": "#dde1e8",
+        "a": 1.0
+      },
+      "rule": {
+        "hex": "#4c4f69",
+        "a": 0.119999997317791
+      },
+      "rule_strong": {
+        "hex": "#4c4f69",
+        "a": 0.2199999988079071
+      },
+      "edge": {
+        "hex": "#1e66f5",
+        "a": 0.3499999940395355
+      },
+      "edge_strong": {
+        "hex": "#1e66f5",
+        "a": 0.5
+      },
+      "focus": {
+        "hex": "#1e66f5",
+        "a": 1.0
+      },
+      "ink": {
+        "hex": "#4c4f69",
+        "a": 1.0
+      },
+      "ink_dim": {
+        "hex": "#4c4f69",
+        "a": 0.8600000143051147
+      },
+      "ink_off": {
+        "hex": "#acb0be",
+        "a": 1.0
+      },
+      "ink_faint": {
+        "hex": "#4c4f69",
+        "a": 0.6000000238418579
+      },
+      "ink_ghost": {
+        "hex": "#4c4f69",
+        "a": 0.20000000298023224
+      },
+      "ink_on_mark": {
+        "hex": "#4c4f69",
+        "a": 1.0
+      },
+      "ink_lit": {
+        "hex": "#4c4f69",
+        "a": 0.9200000166893004
+      },
+      "edge_rest": {
+        "hex": "#4c4f69",
+        "a": 0.25999999046325684
+      },
+      "face_rest": {
+        "hex": "#4c4f69",
+        "a": 0.05999999865889549
+      },
+      "mark": {
+        "hex": "#1e66f5",
+        "a": 1.0
+      },
+      "mark_soft": {
+        "hex": "#1e66f5",
+        "a": 0.8500000238418579
+      },
+      "mark_dim": {
+        "hex": "#1e66f5",
+        "a": 0.4000000059604645
+      },
+      "mark_wash": {
+        "hex": "#1e66f5",
+        "a": 0.14000000059604645
+      },
+      "select": {
+        "hex": "#b07808",
+        "a": 1.0
+      },
+      "row_active": {
+        "hex": "#efd195",
+        "a": 0.07999999821186066
+      },
+      "hover": {
+        "hex": "#ffffff",
+        "a": 0.119999997317791
+      },
+      "live": {
+        "hex": "#f5ad1e",
+        "a": 1.0
+      },
+      "ok": {
+        "hex": "#40a02b",
+        "a": 1.0
+      },
+      "warn": {
+        "hex": "#df8e1d",
+        "a": 1.0
+      },
+      "danger": {
+        "hex": "#d20f39",
+        "a": 1.0
+      }
+    },
+    "metric": {
+      "radius": 4.0,
+      "radius_lg": 10.0,
+      "hairline": 1.0,
+      "border": 1.0,
+      "rule_gap": 2.0,
+      "gap": 4.0,
+      "pad_x": 8.0,
+      "pad_y": 5.0,
+      "chip_px": 7.0,
+      "chip_py": 2.0,
+      "row_h": 20.0,
+      "label_size": 11.0,
+      "bracket": 5.0,
+      "rail": 2.0,
+      "glow": 0.0,
+      "glow_a": 0.0,
+      "cut": 7.0,
+      "grain": 0.3499999940395355,
+      "roughness": 0.20000000298023224,
+      "lift": 0.3499999940395355,
+      "marker_alpha": 0.14000000059604645
+    },
+    "type": {
+      "tag": {
+        "base": 9.0,
+        "pt": 11.0
+      },
+      "fine": {
+        "base": 9.5,
+        "pt": 11.0
+      },
+      "note": {
+        "base": 10.0,
+        "pt": 11.0
+      },
+      "small": {
+        "base": 11.0,
+        "pt": 11.0
+      },
+      "body": {
+        "base": 12.0,
+        "pt": 12.0
+      },
+      "lead": {
+        "base": 13.0,
+        "pt": 13.0
+      },
+      "head": {
+        "base": 15.0,
+        "pt": 15.0
+      },
+      "title": {
+        "base": 17.0,
+        "pt": 17.0
+      },
+      "display": {
+        "base": 20.0,
+        "pt": 20.0
+      }
+    },
+    "active_skin": "custom",
+    "scope": "outer",
+    "palette": "catppuccin-latte",
+    "custom_path": "/home/parker/.cache/td-surface-native/isolated/field-usage-unknown/config/terminal-delight/skin.toml"
+  },
+  "isolation": {
+    "fixture_root": "/home/parker/.cache/td-surface-native/isolated/field-usage-unknown/home",
+    "shell": "explicit fixture program; no login profile",
+    "collector_canary_invoked": false
+  },
+  "states_unverified": [
+    "hover transitions",
+    "pointer/keyboard activation",
+    "drag interactions",
+    "other content and disabled states"
+  ],
+  "source_commit_reviewed": "affd2be29889306c825663fb093d0b24f78f62f3"
+}

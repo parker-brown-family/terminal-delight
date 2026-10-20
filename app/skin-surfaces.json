@@ -1,0 +1,1351 @@
+{
+  "schema": "td-skin-catalogue/1",
+  "fixtures": [
+    {
+      "id": "workspace",
+      "environment": {},
+      "action": null
+    },
+    {
+      "id": "usage",
+      "environment": {
+        "TD_USAGE_DEMO": "1"
+      },
+      "action": null
+    },
+    {
+      "id": "usage-zero",
+      "environment": {
+        "TD_USAGE_DEMO": "zero"
+      },
+      "action": null
+    },
+    {
+      "id": "usage-unknown",
+      "environment": {
+        "TD_USAGE_DEMO": "unknown"
+      },
+      "action": null
+    },
+    {
+      "id": "tray",
+      "environment": {
+        "TD_TRAY_DEMO": "1"
+      },
+      "action": null
+    },
+    {
+      "id": "gauges",
+      "environment": {
+        "TD_OSD_DEMO": "1"
+      },
+      "action": null
+    },
+    {
+      "id": "rail",
+      "environment": {
+        "TD_SPINE_DEMO": "1"
+      },
+      "action": null
+    },
+    {
+      "id": "paint",
+      "environment": {},
+      "action": "paint"
+    },
+    {
+      "id": "focus",
+      "environment": {
+        "TD_FOCUS_DEMO": "1"
+      },
+      "action": null
+    },
+    {
+      "id": "wall",
+      "environment": {
+        "TD_WALL_DEMO": "1"
+      },
+      "action": null
+    },
+    {
+      "id": "confirm",
+      "environment": {
+        "TD_CONFIRM_DEMO": "1"
+      },
+      "action": null
+    },
+    {
+      "id": "recover",
+      "environment": {
+        "TD_GRAVEYARD_DEMO": "1"
+      },
+      "action": null
+    },
+    {
+      "id": "document",
+      "environment": {},
+      "action": "document"
+    },
+    {
+      "id": "bench",
+      "environment": {},
+      "action": "bench"
+    },
+    {
+      "id": "find",
+      "environment": {
+        "TD_SKIN_SCENE": "find"
+      },
+      "action": null
+    },
+    {
+      "id": "lookup",
+      "environment": {
+        "TD_SKIN_SCENE": "lookup"
+      },
+      "action": null
+    },
+    {
+      "id": "plugins",
+      "environment": {
+        "TD_SKIN_SCENE": "plugins"
+      },
+      "action": null
+    },
+    {
+      "id": "notifications",
+      "environment": {
+        "TD_SKIN_SCENE": "notifications"
+      },
+      "action": null
+    },
+    {
+      "id": "language",
+      "environment": {
+        "TD_SKIN_SCENE": "language"
+      },
+      "action": null
+    },
+    {
+      "id": "help",
+      "environment": {
+        "TD_SKIN_SCENE": "help"
+      },
+      "action": null
+    },
+    {
+      "id": "size",
+      "environment": {
+        "TD_SKIN_SCENE": "size"
+      },
+      "action": null
+    },
+    {
+      "id": "tab",
+      "environment": {
+        "TD_SKIN_SCENE": "tab"
+      },
+      "action": null
+    },
+    {
+      "id": "launcher",
+      "environment": {
+        "TD_SKIN_SCENE": "launcher"
+      },
+      "action": null
+    },
+    {
+      "id": "logo",
+      "environment": {
+        "TD_SKIN_SCENE": "logo"
+      },
+      "action": null
+    },
+    {
+      "id": "usage-choices",
+      "environment": {
+        "TD_USAGE_DEMO": "choices"
+      },
+      "action": null
+    },
+    {
+      "id": "bug",
+      "environment": {
+        "TD_SKIN_SCENE": "bug"
+      },
+      "action": null
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "root-ground-behind-the-cabinet",
+      "name": "Root ground behind the cabinet",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "window-cabinet-outer-frame",
+      "name": "Window cabinet / outer frame",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "top-band",
+      "name": "Top band",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "top-band-tabs-and-strip-chips",
+      "name": "Top-band tabs and strip chips",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn tab_button"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "agent-state-counter-top-right",
+      "name": "Agent-state counter, top right",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_agent_counter"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "menu-bar-size-button-and-track",
+      "name": "Menu-bar SIZE button and track",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "bottom-band",
+      "name": "Bottom band",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "left-bar-tree",
+      "name": "Left bar tree",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_left_bar"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "left-bar-bay-and-slot-rails",
+      "name": "Left-bar bay and slot rails",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_bay"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "left-bar-tray-menu",
+      "name": "Left-bar tray menu",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_bar_menu"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": null
+    },
+    {
+      "id": "pane-frame-and-focus-ring",
+      "name": "Pane frame and focus ring",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_node"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "pane-header",
+      "name": "Pane header",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/pane.rs",
+        "symbol": "impl Render for TerminalView"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "term-bench-doc-slider",
+      "name": "TERM / BENCH / DOC slider",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/pane.rs",
+        "symbol": "impl Render for TerminalView"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "bench"
+    },
+    {
+      "id": "handover-chip",
+      "name": "Handover chip",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/pane/handed.rs",
+        "symbol": "fn handover_chip"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "pane-right-click-and-menus",
+      "name": "Pane right-click and \u22ef menus",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/pane.rs",
+        "symbol": "impl Render for TerminalView"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": null
+    },
+    {
+      "id": "terminal-tube-stock",
+      "name": "Terminal tube stock",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/pane.rs",
+        "symbol": "impl Render for TerminalView"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "terminal-grid",
+      "name": "Terminal grid",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/pane/grid_paint.rs",
+        "symbol": "impl Render for GridPaint"
+      },
+      "facets": {
+        "material": "content",
+        "boundary": "content",
+        "emphasis": "content",
+        "typography": "content",
+        "colour": "content"
+      },
+      "policy": "Measured terminal grid and CRT effect pixels belong to Design/Grade; the UI skin must not reshape terminal cells.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "crt-glass",
+      "name": "CRT glass",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/crt.rs",
+        "symbol": "pub fn glass"
+      },
+      "facets": {
+        "material": "content",
+        "boundary": "content",
+        "emphasis": "content",
+        "typography": "content",
+        "colour": "content"
+      },
+      "policy": "Measured terminal grid and CRT effect pixels belong to Design/Grade; the UI skin must not reshape terminal cells.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "raised-crt-bezel",
+      "name": "Raised CRT bezel",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/crt.rs",
+        "symbol": "pub fn bezel"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "attention-spine-pill",
+      "name": "Attention spine pill",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_spine_pill"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "rail"
+    },
+    {
+      "id": "attention-queue",
+      "name": "Attention queue",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn rail_panel"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "rail"
+    },
+    {
+      "id": "window-palette-tray-theme-style-rules",
+      "name": "Window palette tray (THEME / STYLE / RULES)",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "tray"
+    },
+    {
+      "id": "gauges-display-tray",
+      "name": "GAUGES / DISPLAY tray",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "gauges"
+    },
+    {
+      "id": "switches-and-sliders",
+      "name": "Switches and sliders",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/skin/parts.rs",
+        "symbol": "fn slider_switch"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "gauges"
+    },
+    {
+      "id": "paint-cards-super-alt-p",
+      "name": "Paint cards (Super+Alt+P)",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/paint.rs",
+        "symbol": "pub fn tile"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "paint"
+    },
+    {
+      "id": "sticky-note",
+      "name": "Sticky note",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/sticky.rs",
+        "symbol": "pub fn paint"
+      },
+      "facets": {
+        "material": "independent",
+        "boundary": "independent",
+        "emphasis": "independent",
+        "typography": "independent",
+        "colour": "independent"
+      },
+      "policy": "Sticky note text keeps its own handwriting; skin note policy selects decoration and optional Contrast stock override.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "subscriptions-usage-panel",
+      "name": "Subscriptions / usage panel",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_usage_body"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "usage"
+    },
+    {
+      "id": "focus-reader-alt-r",
+      "name": "FOCUS reader (Alt+R)",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn reader_panel"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "focus"
+    },
+    {
+      "id": "document-square",
+      "name": "Document square",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/pane/doc.rs",
+        "symbol": "fn square_el"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "document"
+    },
+    {
+      "id": "document-face-and-notes-bar",
+      "name": "Document face and notes bar",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/docview/notes_ui.rs",
+        "symbol": "pub fn draw_bar"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "document"
+    },
+    {
+      "id": "bench-cards",
+      "name": "Bench cards",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/benchdraw.rs",
+        "symbol": "pub fn title_card"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "bench"
+    },
+    {
+      "id": "agent-wall-and-agent-cards",
+      "name": "Agent wall and agent cards",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "wall"
+    },
+    {
+      "id": "dead-agent-recover-manifest",
+      "name": "Dead-agent recover manifest",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "recover"
+    },
+    {
+      "id": "confirm-close-and-delete-branch-dialogs",
+      "name": "Confirm-close and delete-branch dialogs",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn danger_panel"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "confirm"
+    },
+    {
+      "id": "help-modal",
+      "name": "Help modal",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "help"
+    },
+    {
+      "id": "size-and-popovers",
+      "name": "SIZE and \u2026 popovers",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "size"
+    },
+    {
+      "id": "tab-config-pane-group-menu",
+      "name": "Tab config pane, group menu",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "tab"
+    },
+    {
+      "id": "tooltips",
+      "name": "Tooltips",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn over_the_glass_tip"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": null
+    },
+    {
+      "id": "marquee-toast",
+      "name": "Marquee toast",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn marquee_banner"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": null
+    },
+    {
+      "id": "find-ctrl-f",
+      "name": "Find (Ctrl+F)",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_find"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "find"
+    },
+    {
+      "id": "lookup-alt-l",
+      "name": "Lookup (Alt+L)",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_lookup"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "lookup"
+    },
+    {
+      "id": "plugins-notifications-logo-picker",
+      "name": "Plugins, notifications, logo picker",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_plugins_overlay"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "plugins"
+    },
+    {
+      "id": "language-picker",
+      "name": "Language picker",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_lang_picker"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "language"
+    },
+    {
+      "id": "agent-launcher",
+      "name": "Agent launcher",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_agent_launcher"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": "launcher"
+    },
+    {
+      "id": "git-coordination-overlay",
+      "name": "Git coordination overlay",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/coordination_view.rs",
+        "symbol": "fn render_coordination"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
+      "fixture": null
+    },
+    {
+      "id": "csd-resize-edges",
+      "name": "CSD resize edges",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/csd.rs",
+        "symbol": "pub fn decorate"
+      },
+      "facets": {
+        "material": "not_applicable",
+        "boundary": "not_applicable",
+        "emphasis": "not_applicable",
+        "typography": "not_applicable",
+        "colour": "not_applicable"
+      },
+      "policy": "Invisible resize hit geometry belongs to window input, not the visual skin.",
+      "fixture": null
+    },
+    {
+      "id": "allowance-rails",
+      "name": "Left-bar allowance rails",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_bar_slot"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "semantic"
+      },
+      "policy": "Preserve allowance measurement colours and unknown readings; skin owns track and typography.",
+      "fixture": "workspace"
+    },
+    {
+      "id": "launch-defaults",
+      "name": "Launch defaults and unset choice",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_launch_defaults"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Chosen, inherited and unset states remain distinct.",
+      "fixture": "usage-choices"
+    },
+    {
+      "id": "usage-provider-choices",
+      "name": "Subscriptions provider choices",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_usage_body"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Provider identity and pressure dots keep semantic ink; selection uses choice treatment.",
+      "fixture": "usage"
+    },
+    {
+      "id": "usage-limit-meters",
+      "name": "Subscriptions limit meters",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/skin.rs",
+        "symbol": "pub fn meter"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Reading is optional; absent is distinct from measured zero.",
+      "fixture": "usage"
+    },
+    {
+      "id": "usage-pace",
+      "name": "Subscriptions pace rail and flame",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_usage_body"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Pace bands and flame retain their semantic colours; skin owns track material.",
+      "fixture": "usage"
+    },
+    {
+      "id": "usage-refresh",
+      "name": "Subscriptions refresh action",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn render_usage_body"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Action treatment is distinct from a selected choice.",
+      "fixture": "usage"
+    },
+    {
+      "id": "agent-vitals",
+      "name": "Agent-wall vitals",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "semantic"
+      },
+      "policy": "Track follows skin; charge bands, values and unavailable readings retain data semantics.",
+      "fixture": "wall"
+    },
+    {
+      "id": "focus-shell",
+      "name": "FOCUS frame and controls",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "fn reader_panel"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Skin owns shell and controls; snapshot type and cell geometry remain content.",
+      "fixture": "focus"
+    },
+    {
+      "id": "document-content",
+      "name": "Authored document and media content",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/docview.rs",
+        "symbol": "impl Render for DocumentView"
+      },
+      "facets": {
+        "material": "content",
+        "boundary": "content",
+        "emphasis": "content",
+        "typography": "content",
+        "colour": "content"
+      },
+      "policy": "HTML, Markdown, PDF, images and video own their content typography and pixels.",
+      "fixture": "document"
+    },
+    {
+      "id": "document-notes",
+      "name": "Native notes controls and draft actions",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/docview/notes_ui.rs",
+        "symbol": "pub fn draw_bar"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "TD controls follow skin; document text and annotations keep their content anchors.",
+      "fixture": "document"
+    },
+    {
+      "id": "document-progress",
+      "name": "Reading progress rail",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/docview/progress.rs",
+        "symbol": "pub fn rail"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Progress position and unknown length remain data; skin owns track shape.",
+      "fixture": "document"
+    },
+    {
+      "id": "document-video-transport",
+      "name": "Video transport controls",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/docview/video.rs",
+        "symbol": "fn bar_el"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Skin owns controls, not movie pixels or playback time.",
+      "fixture": "document"
+    },
+    {
+      "id": "document-pdf-status",
+      "name": "PDF status and page controls",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/docview/pdf.rs",
+        "symbol": "impl Backend for PdfDoc"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Skin owns native status UI, not the PDF page.",
+      "fixture": "document"
+    },
+    {
+      "id": "bench-kinds",
+      "name": "Workbench content-kind cards",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/benchdraw.rs",
+        "symbol": "pub fn title_card"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Each TDSP kind uses shared chrome; authored diagrams and semantic ink retain policy.",
+      "fixture": "bench"
+    },
+    {
+      "id": "bench-composer",
+      "name": "Workbench composer and menus",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/pane/bench.rs",
+        "symbol": "fn bench_el"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Composer input and answer routing remain unchanged.",
+      "fixture": "bench"
+    },
+    {
+      "id": "bench-rail",
+      "name": "Workbench overview rail",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/benchdraw.rs",
+        "symbol": "pub fn rail_row"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Kind and state retain semantic colour, selection follows skin.",
+      "fixture": "bench"
+    },
+    {
+      "id": "agent-actions",
+      "name": "Agent-wall actions and preview",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "impl Render for Workspace"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "semantic"
+      },
+      "policy": "Buttons follow skin; miniature terminal uses the measured grid renderer.",
+      "fixture": "wall"
+    },
+    {
+      "id": "pane-context",
+      "name": "Pane popover shell",
+      "scope": "pane",
+      "owner": {
+        "file": "app/src/pane.rs",
+        "symbol": "impl Render for TerminalView"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "UI family is independent of the terminal grid font; event routing remains pane-local.",
+      "fixture": null
+    },
+    {
+      "id": "bug-report",
+      "name": "Bug report panel and actions",
+      "scope": "workspace",
+      "owner": {
+        "file": "app/src/main.rs",
+        "symbol": "render_bug_overlay"
+      },
+      "facets": {
+        "material": "skin",
+        "boundary": "skin",
+        "emphasis": "mixed",
+        "typography": "skin",
+        "colour": "semantic"
+      },
+      "policy": "Skin frame, action stock and optical UI type; enabled/disabled diagnostics and report state retain their meaning. Opening the fixture never prepares or sends a report.",
+      "fixture": "bug"
+    }
+  ]
+}

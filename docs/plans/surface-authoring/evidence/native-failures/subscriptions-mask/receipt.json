@@ -1,0 +1,36 @@
+{
+  "schema": "td-skin-proof/1",
+  "scene": "usage-choices",
+  "session": "skin-atlas-3064d66c2bc5",
+  "binary_sha256": "3027bfe050463ec467b7bf551b04592dcd4a5eee77e10fd0cea338dc029ed9ec",
+  "skin_sha256": "03d82b37035dd1850195a0a92d75c89267b469dfd8ceb13e7466b0e81ad85d5f",
+  "catalogue_schema": "td-skin-catalogue/1",
+  "theme": "hacker",
+  "palette": null,
+  "geometry_requested": [
+    1280,
+    880
+  ],
+  "geometry_observed": [
+    1280,
+    880
+  ],
+  "grade": {
+    "warp": 0.0,
+    "ui_scale": 1.0,
+    "text_scale": 1.0
+  },
+  "lang": "en",
+  "capture": {
+    "file": "native.png",
+    "sha256": "406836de51934bd26c5a40a114e4bc5585081181cea44fb3dd9b195c98f94366"
+  },
+  "visual_verdict": "failed",
+  "states_reviewed": [
+    "subscriptions foreground over agent wall"
+  ],
+  "runner_sha256": "bc02ebf8af7745883c50abec1057e896030042399d1a716f3791b2944043f327",
+  "mcp_status": "enabled=on writes=on expose=all events=on",
+  "skin_status": "active=custom known=chalk,default,deco,console,ops,custom",
+  "experiment_failure": "Agent wall mask clipped foreground Subscriptions"
+}

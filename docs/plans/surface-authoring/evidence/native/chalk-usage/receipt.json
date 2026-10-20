@@ -1,0 +1,349 @@
+{
+  "schema": "td-skin-proof/1",
+  "scene": "usage-choices",
+  "session": "skin-atlas-509ff6b6d4ab",
+  "binary_sha256": "7579cf94965627de3f57d31f5bd35c4ec1445a3d7f1b903dd8cfdb19a9ae952b",
+  "skin_sha256": "03d82b37035dd1850195a0a92d75c89267b469dfd8ceb13e7466b0e81ad85d5f",
+  "catalogue_schema": "td-skin-catalogue/1",
+  "theme": "hacker",
+  "palette": null,
+  "geometry_requested": [
+    1280,
+    880
+  ],
+  "geometry_observed": [
+    1280,
+    880
+  ],
+  "grade": {
+    "warp": 0.0,
+    "ui_scale": 1.0,
+    "text_scale": 1.0
+  },
+  "lang": "en",
+  "capture": {
+    "file": "native.png",
+    "sha256": "388b425a5ff7e529e4984afbf8f7c512551e622bde93ce5bf11052ba86079a14"
+  },
+  "visual_verdict": "pass: captured static state",
+  "states_reviewed": [
+    "selected and inactive choices",
+    "unset launch settings",
+    "semantic limit colours",
+    "restored file and selection"
+  ],
+  "runner_sha256": "6ed15ec99177254976fab0c5955863ceb878d8b2934e84bdaae8098a12ea287d",
+  "mcp_status": "enabled=on writes=on expose=all events=on",
+  "pane_config": {
+    "content": [
+      {
+        "type": "text",
+        "text": "1172995: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 95 \u00b7 crt off\nouter: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 95 \u00b7 crt off"
+      },
+      {
+        "type": "text",
+        "text": "\u2014 terminal-delight \u00b7 session skin-atlas-509ff6b6d4ab \u00b7 window 1172788 \u00b7 td-surface-authoring-isolated"
+      }
+    ],
+    "structuredContent": {
+      "configs": [
+        {
+          "target": 1172995,
+          "scope": "pane",
+          "tab": 0,
+          "title": "shell",
+          "mode": "SHELL",
+          "grade": {
+            "brightness": 50.0,
+            "contrast": 50.0,
+            "colour": 50.0,
+            "text": 50.0,
+            "background": 50.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 95.33332824707031,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 25.0
+          }
+        },
+        {
+          "target": "outer",
+          "scope": "outer",
+          "grade": {
+            "brightness": 50.0,
+            "contrast": 50.0,
+            "colour": 50.0,
+            "text": 50.0,
+            "background": 50.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 95.33332824707031,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 25.0
+          }
+        }
+      ],
+      "instance": {
+        "session": "skin-atlas-509ff6b6d4ab",
+        "window": 1172788,
+        "build": "td-surface-authoring-isolated"
+      }
+    }
+  },
+  "skin_status": "active=custom known=chalk,default,deco,console,ops,custom",
+  "live_skin": {
+    "skin": "chalk",
+    "theme": "hacker",
+    "ui_font": "Caveat",
+    "heading_font": "Caveat",
+    "data_font": "Caveat",
+    "optical": {
+      "scale": 1.4500000476837158,
+      "min_px": 16.0,
+      "line_height": 1.149999976158142
+    },
+    "note": {
+      "decoration": "Flower",
+      "stock": true
+    },
+    "material": "Paper",
+    "scale": 1.0,
+    "text_size": 1.0,
+    "shape": {
+      "corner": "Square",
+      "boundary": "Hairline",
+      "emphasis": "Rail",
+      "divider": "Line",
+      "caps": "Off",
+      "shine": "Flat",
+      "gauge": "Rail",
+      "title": "Plain",
+      "focus": "Plain",
+      "tube": "Stock"
+    },
+    "ink": {
+      "panel": {
+        "hex": "#071a10",
+        "a": 1.0
+      },
+      "panel_raised": {
+        "hex": "#071a10",
+        "a": 1.0
+      },
+      "panel_sunken": {
+        "hex": "#03110b",
+        "a": 1.0
+      },
+      "panel_glass": {
+        "hex": "#03100a",
+        "a": 0.699999988079071
+      },
+      "btn_face": {
+        "hex": "#0f3b23",
+        "a": 1.0
+      },
+      "rule": {
+        "hex": "#86efac",
+        "a": 0.119999997317791
+      },
+      "rule_strong": {
+        "hex": "#86efac",
+        "a": 0.2199999988079071
+      },
+      "edge": {
+        "hex": "#86efac",
+        "a": 0.25
+      },
+      "edge_strong": {
+        "hex": "#86efac",
+        "a": 0.2199999988079071
+      },
+      "focus": {
+        "hex": "#22c55e",
+        "a": 1.0
+      },
+      "ink": {
+        "hex": "#86efac",
+        "a": 1.0
+      },
+      "ink_dim": {
+        "hex": "#86efac",
+        "a": 0.8199999928474426
+      },
+      "ink_off": {
+        "hex": "#86efac",
+        "a": 0.699999988079071
+      },
+      "ink_faint": {
+        "hex": "#86efac",
+        "a": 0.7599999904632568
+      },
+      "ink_ghost": {
+        "hex": "#86efac",
+        "a": 0.20000000298023224
+      },
+      "ink_on_mark": {
+        "hex": "#86efac",
+        "a": 1.0
+      },
+      "ink_lit": {
+        "hex": "#86efac",
+        "a": 0.9200000166893004
+      },
+      "edge_rest": {
+        "hex": "#86efac",
+        "a": 0.23999999463558197
+      },
+      "face_rest": {
+        "hex": "#86efac",
+        "a": 0.05999999865889549
+      },
+      "mark": {
+        "hex": "#22c55e",
+        "a": 1.0
+      },
+      "mark_soft": {
+        "hex": "#22c55e",
+        "a": 0.8500000238418579
+      },
+      "mark_dim": {
+        "hex": "#22c55e",
+        "a": 0.4000000059604645
+      },
+      "mark_wash": {
+        "hex": "#22c55e",
+        "a": 0.05999999865889549
+      },
+      "select": {
+        "hex": "#d94da5",
+        "a": 1.0
+      },
+      "row_active": {
+        "hex": "#03100a",
+        "a": 0.8999999761581421
+      },
+      "hover": {
+        "hex": "#22c55e",
+        "a": 0.10000000149011612
+      },
+      "live": {
+        "hex": "#c52289",
+        "a": 1.0
+      },
+      "ok": {
+        "hex": "#4ade80",
+        "a": 1.0
+      },
+      "warn": {
+        "hex": "#fbe08a",
+        "a": 1.0
+      },
+      "danger": {
+        "hex": "#ff7b7b",
+        "a": 1.0
+      }
+    },
+    "metric": {
+      "radius": 4.0,
+      "radius_lg": 10.0,
+      "hairline": 1.0,
+      "border": 1.0,
+      "rule_gap": 2.0,
+      "gap": 6.0,
+      "pad_x": 9.0,
+      "pad_y": 6.0,
+      "chip_px": 8.0,
+      "chip_py": 3.0,
+      "row_h": 23.0,
+      "label_size": 16.0,
+      "bracket": 5.0,
+      "rail": 2.0,
+      "glow": 0.0,
+      "glow_a": 0.0,
+      "cut": 7.0,
+      "grain": 1.0,
+      "roughness": 1.0,
+      "lift": 1.0,
+      "marker_alpha": 0.2199999988079071
+    },
+    "type": {
+      "tag": {
+        "base": 9.0,
+        "pt": 16.0
+      },
+      "fine": {
+        "base": 9.5,
+        "pt": 16.0
+      },
+      "note": {
+        "base": 10.0,
+        "pt": 16.0
+      },
+      "small": {
+        "base": 11.0,
+        "pt": 16.0
+      },
+      "body": {
+        "base": 12.0,
+        "pt": 17.400001525878906
+      },
+      "lead": {
+        "base": 13.0,
+        "pt": 18.850000381469727
+      },
+      "head": {
+        "base": 15.0,
+        "pt": 21.75
+      },
+      "title": {
+        "base": 17.0,
+        "pt": 24.650001525878903
+      },
+      "display": {
+        "base": 20.0,
+        "pt": 29.0
+      }
+    },
+    "active_skin": "custom",
+    "scope": "outer",
+    "palette": null,
+    "custom_path": "/home/parker/.cache/td-surface-native/isolated/chalk-usage/config/terminal-delight/skin.toml"
+  },
+  "reload": {
+    "valid_edit": "applied",
+    "invalid_edit": "kept previous valid",
+    "file_restore": "exact bytes and live tokens",
+    "selection_restore": "custom",
+    "saved_selection": "custom",
+    "private_restart_selection": "default"
+  },
+  "idle_sample": {
+    "elapsed_seconds": 10.000305421999656,
+    "cpu_seconds": 0.24,
+    "rss_bytes_start": 196509696,
+    "rss_bytes_end": 197599232,
+    "method": "proc stat, private GUI process only; excludes child hosts and compositor; one sample, not a regression bound"
+  },
+  "isolation": {
+    "fixture_root": "/home/parker/.cache/td-surface-native/isolated/chalk-usage/home",
+    "shell": "explicit fixture program; no login profile",
+    "collector_canary_invoked": false
+  },
+  "states_unverified": [
+    "hover transitions",
+    "pointer/keyboard activation",
+    "drag interactions",
+    "other content and disabled states"
+  ],
+  "source_commit_reviewed": "affd2be29889306c825663fb093d0b24f78f62f3"
+}

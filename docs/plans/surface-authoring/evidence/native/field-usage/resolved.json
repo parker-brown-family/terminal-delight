@@ -1,0 +1,215 @@
+{
+  "skin": "field notes",
+  "theme": "hacker",
+  "ui_font": "Share Tech Mono",
+  "heading_font": "Oxanium",
+  "data_font": "Share Tech Mono",
+  "optical": {
+    "scale": 1.0,
+    "min_px": 11.0,
+    "line_height": 1.2000000476837158
+  },
+  "note": {
+    "decoration": "Plain",
+    "stock": false
+  },
+  "material": "Paper",
+  "scale": 1.0,
+  "text_size": 1.0,
+  "shape": {
+    "corner": "Square",
+    "boundary": "Hairline",
+    "emphasis": "Rail",
+    "divider": "Line",
+    "caps": "Upper",
+    "shine": "Flat",
+    "gauge": "Pips",
+    "title": "Plain",
+    "focus": "Plain",
+    "tube": "Glass"
+  },
+  "ink": {
+    "panel": {
+      "hex": "#071a10",
+      "a": 1.0
+    },
+    "panel_raised": {
+      "hex": "#071a10",
+      "a": 1.0
+    },
+    "panel_sunken": {
+      "hex": "#030a06",
+      "a": 1.0
+    },
+    "panel_glass": {
+      "hex": "#03100a",
+      "a": 0.699999988079071
+    },
+    "btn_face": {
+      "hex": "#092215",
+      "a": 1.0
+    },
+    "rule": {
+      "hex": "#86efac",
+      "a": 0.119999997317791
+    },
+    "rule_strong": {
+      "hex": "#86efac",
+      "a": 0.2199999988079071
+    },
+    "edge": {
+      "hex": "#22c55e",
+      "a": 0.3499999940395355
+    },
+    "edge_strong": {
+      "hex": "#22c55e",
+      "a": 0.5
+    },
+    "focus": {
+      "hex": "#22c55e",
+      "a": 1.0
+    },
+    "ink": {
+      "hex": "#86efac",
+      "a": 1.0
+    },
+    "ink_dim": {
+      "hex": "#86efac",
+      "a": 0.8600000143051147
+    },
+    "ink_off": {
+      "hex": "#14401f",
+      "a": 1.0
+    },
+    "ink_faint": {
+      "hex": "#86efac",
+      "a": 0.6000000238418579
+    },
+    "ink_ghost": {
+      "hex": "#86efac",
+      "a": 0.20000000298023224
+    },
+    "ink_on_mark": {
+      "hex": "#86efac",
+      "a": 1.0
+    },
+    "ink_lit": {
+      "hex": "#86efac",
+      "a": 0.9200000166893004
+    },
+    "edge_rest": {
+      "hex": "#86efac",
+      "a": 0.25999999046325684
+    },
+    "face_rest": {
+      "hex": "#86efac",
+      "a": 0.05999999865889549
+    },
+    "mark": {
+      "hex": "#22c55e",
+      "a": 1.0
+    },
+    "mark_soft": {
+      "hex": "#22c55e",
+      "a": 0.8500000238418579
+    },
+    "mark_dim": {
+      "hex": "#22c55e",
+      "a": 0.4000000059604645
+    },
+    "mark_wash": {
+      "hex": "#22c55e",
+      "a": 0.14000000059604645
+    },
+    "select": {
+      "hex": "#c52289",
+      "a": 1.0
+    },
+    "row_active": {
+      "hex": "#e49fcb",
+      "a": 0.07999999821186066
+    },
+    "hover": {
+      "hex": "#ffffff",
+      "a": 0.119999997317791
+    },
+    "live": {
+      "hex": "#c52289",
+      "a": 1.0
+    },
+    "ok": {
+      "hex": "#4ade80",
+      "a": 1.0
+    },
+    "warn": {
+      "hex": "#fbe08a",
+      "a": 1.0
+    },
+    "danger": {
+      "hex": "#ff7b7b",
+      "a": 1.0
+    }
+  },
+  "metric": {
+    "radius": 4.0,
+    "radius_lg": 10.0,
+    "hairline": 1.0,
+    "border": 1.0,
+    "rule_gap": 2.0,
+    "gap": 4.0,
+    "pad_x": 8.0,
+    "pad_y": 5.0,
+    "chip_px": 7.0,
+    "chip_py": 2.0,
+    "row_h": 20.0,
+    "label_size": 11.0,
+    "bracket": 5.0,
+    "rail": 2.0,
+    "glow": 0.0,
+    "glow_a": 0.0,
+    "cut": 7.0,
+    "grain": 0.3499999940395355,
+    "roughness": 0.20000000298023224,
+    "lift": 0.3499999940395355,
+    "marker_alpha": 0.14000000059604645
+  },
+  "type": {
+    "tag": {
+      "base": 9.0,
+      "pt": 11.0
+    },
+    "fine": {
+      "base": 9.5,
+      "pt": 11.0
+    },
+    "note": {
+      "base": 10.0,
+      "pt": 11.0
+    },
+    "small": {
+      "base": 11.0,
+      "pt": 11.0
+    },
+    "body": {
+      "base": 12.0,
+      "pt": 12.0
+    },
+    "lead": {
+      "base": 13.0,
+      "pt": 13.0
+    },
+    "head": {
+      "base": 15.0,
+      "pt": 15.0
+    },
+    "title": {
+      "base": 17.0,
+      "pt": 17.0
+    },
+    "display": {
+      "base": 20.0,
+      "pt": 20.0
+    }
+  },
+  "palette": null
+}
