@@ -15,10 +15,15 @@
 #   test fails before anyone has to notice by eye.
 
 name = "default"
-### Optional UI font, independent of the terminal grid's theme font:
+### Optional UI fonts, independent of the terminal grid's theme font. `heading`
+### sets names (projects, the notice, panel titles) and `data` sets numbers;
+### each falls back to `family`. The ops skin uses all three.
 # [font]
-# family = "Caveat"
-### In [shape], material = "paper" adds deckled controls and cached grain.
+# family  = "Caveat"
+# heading = "Oxanium"
+# data    = "Share Tech Mono"
+### In [shape], material = "paper" adds deckled controls and cached grain;
+### material = "grid" washes a faint grid under every region.
 icon = "▢"
 
 # ── ink ──────────────────────────────────────────────────────────────────────
@@ -105,13 +110,14 @@ icon = "▢"
 # rail       = 2.0    # the bar marking an active row
 # glow       = 5.25   # how far the phosphor ring blooms past its border
 # glow_a     = 0.11   # how hot the bloom is, 0..1 — NOT a length
+# cut        = 7.0    # how far a cut corner reaches, read only under corner = "cut"
 
 # ── shape ────────────────────────────────────────────────────────────────────
 # The strategies. These are what make a LOOK rather than a tint: they change
 # which element a helper builds, not what colour it is painted.
 
 [shape]
-corner   = "round"      # round | square
+corner   = "round"      # round | square | cut
 boundary = "hairline"   # hairline | double | inset | none
 # THE PHOSPHOR RING. Changed from `fill` on 2026-09-12, at the owner's request,
 # and it is the one place this file is NOT a transcription of the old chrome.
@@ -127,7 +133,11 @@ boundary = "hairline"   # hairline | double | inset | none
 # `render_node` does to the focused pane, scaled to row size. The first pass used
 # one soft shadow over a 0.22 wash, and the wash is what made a lit row read as a
 # selected item in a web list rather than as a lit edge.
-emphasis = "glow"       # fill | underline | bracket | rail | glow
+emphasis = "glow"       # fill | underline | bracket | rail | glow | bar
 divider  = "line"       # line | double | none
 caps     = "off"        # off | upper | tracked
 shine    = "gradient"   # gradient | flat — whether a raised surface is lit
+gauge    = "rail"       # rail | pips — how a measured share is drawn
+title    = "plain"      # plain | chevron — how a heading name is framed
+focus    = "plain"      # plain | hatch — what marks the pane with the keyboard
+# material = "plain"    # plain | paper | grid

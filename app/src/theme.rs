@@ -37,6 +37,7 @@ pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
     ),
     ("deco", include_str!("../themes/deco.toml")),
     ("hacker", DEFAULT_THEME_TOML),
+    ("intrusive", include_str!("../themes/intrusive.toml")),
 ];
 
 #[derive(Deserialize)]
@@ -67,6 +68,7 @@ struct FileEffects {
     jiggle: Option<f32>,
     screen_glare: Option<f32>,
     bezel: Option<f32>,
+    letter_glow: Option<f32>,
 }
 
 #[derive(Deserialize, Default)]
@@ -176,6 +178,11 @@ pub struct Theme {
     pub screen_glare: f32,
     /// Raised metallic frame around the pane edge (0 = flat). 0..1 strength.
     pub bezel: f32,
+    /// Phosphor bleeding off every letter of the terminal text, 0..1: the
+    /// grid draws each line again underneath in the accent, a pixel out in
+    /// four directions (`pane::grid_paint`). Zero for every design but
+    /// Intrusive, which is loud on purpose; zero whenever the CRT is off.
+    pub letter_glow: f32,
     pub font_family: String,
     pub font_size: f32,
     pub cell_h: f32,
@@ -2576,6 +2583,7 @@ pub fn flatten_tube(th: &mut Theme) {
     th.jiggle = 0.0;
     th.screen_glare = 0.0;
     th.bezel = 0.0;
+    th.letter_glow = 0.0;
 }
 
 /// Photo-negative of a colour: invert each RGB channel (`1 − x`), alpha kept. A
@@ -3086,6 +3094,7 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
             .unwrap_or(default_screen_glare)
             .clamp(0., 1.),
         bezel: file.effects.bezel.unwrap_or(0.).clamp(0., 1.),
+        letter_glow: file.effects.letter_glow.unwrap_or(0.).clamp(0., 1.),
         // A theme that names no font wears the desktop's: whatever Omarchy has
         // pointed `monospace` at, which is what every other terminal on this
         // machine is already using. An explicit `family =` in the theme file
@@ -3140,6 +3149,41 @@ mod tests {
         }
     }
 
+    /// The Tactical design brings the OPS skin, the way Deco brings its own;
+    /// Intrusive asks for none, because it is meant to be mixed with any.
+    #[test]
+    fn tactical_asks_for_ops_and_intrusive_asks_for_nothing() {
+        let skin_of = |id: &str| {
+            let src = BUILTIN_THEMES.iter().find(|(i, _)| *i == id).unwrap().1;
+            parse(src).unwrap().skin
+        };
+        assert_eq!(skin_of("tactical-overdrive").as_deref(), Some("ops"));
+        assert_eq!(skin_of("intrusive"), None);
+    }
+
+    /// Letter glow is Intrusive's alone, and switching the tube off takes it
+    /// away with the rest of the glass — a flat screen has no phosphor to
+    /// bleed.
+    #[test]
+    fn only_intrusive_glows_its_letters_and_a_flat_tube_never_does() {
+        for (id, src) in BUILTIN_THEMES {
+            let th = parse(src).unwrap();
+            if *id == "intrusive" {
+                assert!(th.letter_glow > 0.5, "intrusive lost its glow");
+            } else {
+                assert_eq!(th.letter_glow, 0.0, "{id} glows its letters");
+            }
+        }
+        let src = BUILTIN_THEMES
+            .iter()
+            .find(|(i, _)| *i == "intrusive")
+            .unwrap()
+            .1;
+        let mut th = parse(src).unwrap();
+        flatten_tube(&mut th);
+        assert_eq!(th.letter_glow, 0.0, "a flat tube still bleeds");
+    }
+
     #[test]
     fn embedded_themes_parse_with_distinct_ids_and_icons() {
         let mut icons = vec![];
@@ -3148,7 +3192,7 @@ mod tests {
             assert_eq!(&th.name, id, "theme file name must match registry id");
             icons.push(th.icon);
         }
-        assert_eq!(BUILTIN_THEMES.len(), 4);
+        assert_eq!(BUILTIN_THEMES.len(), 5);
         // The tray is glyph-only, so two themes sharing an icon are two themes
         // nobody can tell apart. This test has always collected the icons; it now
         // also reads them, which is what its name has always claimed.
