@@ -2862,6 +2862,7 @@ pub fn dial_menu(rows: Vec<Div>, sk: &Skin, th: &Theme) -> Div {
 /// nothing marked in it at all.
 pub fn dial_row(label: &str, lit: bool, chosen: bool, sk: &Skin, th: &Theme) -> Div {
     sk.chip(lit)
+        .flex_none()
         .relative()
         .flex()
         .flex_row()
@@ -3281,7 +3282,8 @@ pub fn zone(
     hit: crate::workbench::Hit,
 ) -> impl gpui::IntoElement {
     gpui::canvas(
-        move |bounds, _window, _cx| {
+        move |bounds, window, _cx| {
+            let bounds = bounds.intersect(&window.content_mask().bounds);
             into.borrow_mut().push(crate::workbench::Zone {
                 x: f32::from(bounds.origin.x),
                 y: f32::from(bounds.origin.y),

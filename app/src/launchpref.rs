@@ -21,27 +21,18 @@
 //! default` against a lit chip), so the distinction survives all the way to a
 //! person's eye.
 
-use crate::launcher::{Effort, Harness};
+use crate::launcher::Harness;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// The three things the LAUNCH AGENT panel opens holding, as words.
 ///
-/// Words rather than the enums, because this is a file a person may open: a
-/// line reading `effort = "xhigh"` is the same string the flag carries and the
-/// same string the chip says. See [`Effort::id`] and [`Harness::label`], which
-/// are the only tables that translate.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
     /// Which agent program a new session starts. `None` = nobody has chosen.
     pub harness: Option<String>,
-    /// The model id the panel opens on — `opus`, `configured`. `None` = the
-    /// first row of whichever harness is selected, which is what ships.
     pub model: Option<String>,
-    /// The effort word the panel opens on. `None` = the harness's own
-    /// [`Harness::default_effort`], and that is NOT the same as `"high"` being
-    /// stored: one is a decision and the other is the absence of one.
     pub effort: Option<String>,
 }
 
@@ -61,19 +52,11 @@ impl Prefs {
     /// `None` covers both *nobody chose* and *the choice belongs to the other
     /// harness* — `gpt-5-codex` under Claude is not a Claude model, and the
     /// honest answer is to fall back rather than to index a different list.
-    pub fn model_ix(&self, h: Harness) -> Option<usize> {
+    pub fn model_ix(&self, models: &[crate::model_catalog::Model]) -> Option<usize> {
         let want = self.model.as_deref()?;
-        h.models().iter().position(|m| m.id == want)
-    }
-
-    /// The effort level the panel opens on, already clamped to what `h` takes.
-    ///
-    /// Parsed against [`Effort::ALL`] rather than against `h.efforts()`: a file
-    /// written while Claude was selected can hold `max`, Codex has no such
-    /// level, and clamping it to `xhigh` keeps the choice where parsing against
-    /// Codex's own list would have thrown it away.
-    pub fn effort(&self, h: Harness) -> Option<Effort> {
-        Effort::from_id(self.effort.as_deref()?).map(|e| h.clamp_effort(e))
+        models
+            .iter()
+            .position(|model| model.id.as_deref() == Some(want))
     }
 }
 
@@ -112,6 +95,23 @@ fn save_to(path: &Path, p: &Prefs) {
 mod tests {
     use super::*;
 
+    fn models(harness: Harness) -> Vec<crate::model_catalog::Model> {
+        let ids = match harness {
+            Harness::Claude => ["opus", "sonnet"],
+            Harness::Codex => ["gpt-6.1-sol", "gpt-6-astra"],
+            Harness::Local => ["local", "local"],
+        };
+        ids.into_iter()
+            .map(|id| crate::model_catalog::Model {
+                id: Some(id.into()),
+                label: id.into(),
+                resolved_id: None,
+                efforts: None,
+                default_effort: None,
+            })
+            .collect()
+    }
+
     /// The branch that runs on every machine that has never opened the card.
     /// All three unset — NOT claude/opus/high, which is what a struct of
     /// concrete defaults would have made indistinguishable from a decision.
@@ -120,8 +120,8 @@ mod tests {
         let missing = PathBuf::from("/nonexistent/terminal-delight/launch.toml");
         let p = load_from(&missing);
         assert_eq!(p.harness(), None);
-        assert_eq!(p.model_ix(Harness::Claude), None);
-        assert_eq!(p.effort(Harness::Claude), None);
+        assert_eq!(p.model_ix(&models(Harness::Claude)), None);
+        assert_eq!(p.effort.as_deref(), None);
     }
 
     #[test]
@@ -133,27 +133,26 @@ mod tests {
             &path,
             &Prefs {
                 harness: Some("codex".into()),
-                model: Some("configured".into()),
+                model: Some("gpt-6-astra".into()),
                 effort: Some("high".into()),
             },
         );
         let back = load_from(&path);
         assert_eq!(back.harness(), Some(Harness::Codex));
-        assert_eq!(back.model_ix(Harness::Codex), Some(0));
-        assert_eq!(back.effort(Harness::Codex), Some(Effort::High));
+        assert_eq!(back.model_ix(&models(Harness::Codex)), Some(1));
+        assert_eq!(back.effort.as_deref(), Some("high"));
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// A level one harness offers and the other does not survives the switch
-    /// as the nearest thing the new harness takes, rather than as nothing.
     #[test]
-    fn a_level_the_other_harness_lacks_is_clamped_and_not_dropped() {
-        let p = Prefs {
-            effort: Some("max".into()),
+    fn future_effort_words_are_preserved_without_clamping() {
+        let pref = Prefs {
+            effort: Some("ultra".into()),
             ..Prefs::default()
         };
-        assert_eq!(p.effort(Harness::Claude), Some(Effort::Max));
-        assert_eq!(p.effort(Harness::Codex), Some(Effort::XHigh));
+        let stored = toml::to_string(&pref).unwrap();
+        let loaded: Prefs = toml::from_str(&stored).unwrap();
+        assert_eq!(loaded.effort.as_deref(), Some("ultra"));
     }
 
     /// A model belonging to the other harness is not an index into this one's
@@ -161,11 +160,11 @@ mod tests {
     #[test]
     fn a_model_from_the_other_harness_reads_as_unset_here() {
         let p = Prefs {
-            model: Some("configured".into()),
+            model: Some("gpt-6.1-sol".into()),
             ..Prefs::default()
         };
-        assert_eq!(p.model_ix(Harness::Codex), Some(0));
-        assert_eq!(p.model_ix(Harness::Claude), None);
+        assert_eq!(p.model_ix(&models(Harness::Codex)), Some(0));
+        assert_eq!(p.model_ix(&models(Harness::Claude)), None);
     }
 
     /// A hand-edited word nothing answers to is unset, not the first row.
@@ -177,8 +176,8 @@ mod tests {
             effort: Some("standard".into()),
         };
         assert_eq!(p.harness(), None);
-        assert_eq!(p.model_ix(Harness::Claude), None);
-        assert_eq!(p.effort(Harness::Claude), None);
+        assert_eq!(p.model_ix(&models(Harness::Claude)), None);
+        assert_eq!(p.effort.as_deref(), Some("standard"));
     }
 
     #[test]
@@ -188,9 +187,9 @@ mod tests {
         let path = dir.join("launch.toml");
         std::fs::write(&path, "model = \"sonnet\"\n").unwrap();
         let p = load_from(&path);
-        assert_eq!(p.model_ix(Harness::Claude), Some(1));
+        assert_eq!(p.model_ix(&models(Harness::Claude)), Some(1));
         assert_eq!(p.harness(), None, "an omitted field is unanswered");
-        assert_eq!(p.effort(Harness::Claude), None);
+        assert_eq!(p.effort.as_deref(), None);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -9,17 +9,6 @@
 //!
 //! So: a pane, a button, three choices and a project.
 //!
-//! ```text
-//!   ＋ pane  →  LAUNCH AGENT
-//!                  ├─ project   terminal-delight        (existing, or new)
-//!                  ├─ harness   claude │ codex
-//!                  ├─ model     opus │ sonnet │ haiku
-//!                  └─ effort    low │ medium │ high │ xhigh │ max
-//!                                        ↓
-//!                       the host spawns a terminal in that directory
-//!                       and types one line into it
-//! ```
-//!
 //! # This module is a string builder, and that is the point
 //!
 //! There is no process management here, because there does not need to be any.
@@ -27,10 +16,6 @@
 //! a fresh one — that is how a restored `claude --resume <id>` pane comes back
 //! after a restart. A launcher is therefore a recipe builder plus a directory,
 //! and the whole feature reduces to two things this window can already do.
-//!
-//! Everything below is pure: a command line is a value, and a value can be
-//! asserted about. Shell quoting in particular is not something to find out
-//! about from a directory with an apostrophe in it.
 //!
 //! # How the agent learns about the workbench
 //!
@@ -43,34 +28,16 @@
 //! local-agent.toml. Every launcher path uses the same packet and bundled kit.
 //! Agents compute their drop directory from TD_SESSION and TD_PANE_ID. A plain
 //! hand-started agent remains outside this launcher contract.
-//!
-//! # Effort is the harness's own dial, in the harness's own words
-//!
-//! The first version of this panel offered `quick / standard / hard / ultra`
-//! and turned them into a sentence appended to the system prompt, on the
-//! belief that Claude Code had no effort parameter. It does: `claude --effort
-//! <low|medium|high|xhigh|max>` (checked against `claude --help`, 2.1.270, on
-//! this machine on 2026-09-17), and Codex takes `model_reasoning_effort` with
-//! `low`, `medium`, `high` and `xhigh`. Parker, on the invented scale: *"effort
-//! does not correlate with ACTUAL claude efforts."* So the chips now say what
-//! the flag will say, the list is the harness's own list, and no prose about
-//! thinking is added on top — a dial and a plea for the same thing would be two
-//! instructions that can disagree.
 
 use std::path::{Path, PathBuf};
 
 /// Which agent program to start.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Harness {
     Claude,
     Codex,
     Local,
 }
-
-/// The model id that names no model: the harness picks from its own
-/// configuration. A launch with it passes no `--model`, and the live dial sends
-/// a bare `/model`, which opens the harness's own picker.
-pub const CONFIGURED: &str = "configured";
 
 impl Harness {
     pub const ALL: [Harness; 3] = [Harness::Claude, Harness::Codex, Harness::Local];
@@ -110,167 +77,8 @@ impl Harness {
         Harness::ALL.into_iter().find(|h| h.label() == word)
     }
 
-    /// The models this window offers for the harness.
-    ///
-    /// A short list on purpose. The full set changes under us and a stale menu
-    /// that silently starts the wrong model is worse than a short one — the
-    /// escape hatch is the terminal, which is right there.
-    pub fn models(self) -> &'static [Model] {
-        match self {
-            Harness::Claude => &[
-                Model {
-                    id: "opus",
-                    label: "opus",
-                },
-                Model {
-                    id: "sonnet",
-                    label: "sonnet",
-                },
-                Model {
-                    id: "haiku",
-                    label: "haiku",
-                },
-            ],
-            Harness::Local => &[Model {
-                id: "local-config",
-                label: "local-agent.toml",
-            }],
-            // Codex owns its account-specific model catalogue and configuration.
-            // A pinned model here can be retired while the CLI remains current.
-            Harness::Codex => &[Model {
-                id: CONFIGURED,
-                label: "Codex default",
-            }],
-        }
-    }
-
-    /// The effort levels this harness actually accepts, lowest first.
-    ///
-    /// Claude Code's five and Codex's four, verbatim. A level a harness does
-    /// not take is not offered for it, because a chip that silently maps to a
-    /// different word is the exact confusion this row used to cause.
-    pub fn efforts(self) -> &'static [Effort] {
-        match self {
-            Harness::Claude => &[
-                Effort::Low,
-                Effort::Medium,
-                Effort::High,
-                Effort::XHigh,
-                Effort::Max,
-            ],
-            Harness::Codex => &[Effort::Low, Effort::Medium, Effort::High, Effort::XHigh],
-            Harness::Local => &[],
-        }
-    }
-
-    /// The level lit when the panel opens: each harness's own middle-high
-    /// default, so a person who never touches the row gets what the harness
-    /// would have done untouched — except that the flag is now printed, so the
-    /// command line says so.
-    pub fn default_effort(self) -> Effort {
-        match self {
-            Harness::Claude => Effort::High,
-            Harness::Codex | Harness::Local => Effort::Medium,
-        }
-    }
-
-    /// The nearest level this harness offers to one chosen under another.
-    ///
-    /// Switching harness with `max` lit must not leave `max` lit on a harness
-    /// that has no such level. Levels are ordered, so the nearest is the
-    /// highest one not above the chosen — `max` on Codex becomes `xhigh`, and
-    /// anything Codex offers is offered by Claude unchanged.
-    pub fn clamp_effort(self, chosen: Effort) -> Effort {
-        let offered = self.efforts();
-        if offered.is_empty() {
-            return self.default_effort();
-        }
-        offered
-            .iter()
-            .rev()
-            .find(|e| **e <= chosen)
-            .copied()
-            .unwrap_or(offered[0])
-    }
-}
-
-/// One entry in a harness's model menu.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Model {
-    /// What the flag is given.
-    pub id: &'static str,
-    /// What the chip says.
-    pub label: &'static str,
-}
-
-/// How hard to think — the union of the levels the harnesses take, ordered.
-///
-/// The words are the harnesses' own, and the chip says the word the flag will
-/// carry. Ordered so [`Harness::clamp_effort`] can find the nearest level when
-/// the harness changes under a chosen one.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
-pub enum Effort {
-    Low,
-    Medium,
-    High,
-    XHigh,
-    Max,
-}
-
-impl Effort {
-    /// Every level, lowest first — the union, before any harness narrows it.
-    ///
-    /// [`Harness::efforts`] is what a harness *offers*; this is what the word
-    /// list can contain at all, which is what a stored preference has to be
-    /// read against. A file written while Claude was selected can hold `max`,
-    /// and Codex has no such level — parsing it against Codex's own list would
-    /// lose the choice rather than clamp it.
-    pub const ALL: [Effort; 5] = [
-        Effort::Low,
-        Effort::Medium,
-        Effort::High,
-        Effort::XHigh,
-        Effort::Max,
-    ];
-
-    /// The level a stored word names, or `None` if it names none of them.
-    ///
-    /// The inverse of [`Self::id`]. One table, walked, rather than a second
-    /// `match` that can drift from the first — which is how `xhigh` would come
-    /// to mean `high` on a round trip through a config file.
-    pub fn from_id(word: &str) -> Option<Effort> {
-        Effort::ALL.into_iter().find(|e| e.id() == word)
-    }
-
-    /// The word on the chip, in the launch journal, and after the flag. One
-    /// word for all three on purpose: a label that differs from the value is
-    /// how `standard` came to mean nothing.
-    pub fn id(self) -> &'static str {
-        match self {
-            Effort::Low => "low",
-            Effort::Medium => "medium",
-            Effort::High => "high",
-            Effort::XHigh => "xhigh",
-            Effort::Max => "max",
-        }
-    }
-
-    #[cfg(test)]
-    pub fn label(self) -> &'static str {
-        self.id()
-    }
-
-    /// The chip's word in `l`, for display only. [`Self::label`] stays the
-    /// flag value, because the journal and the command line read it.
-    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
-        let p = l.strings().parts;
-        match self {
-            Effort::Low => p.launcher_effort_low,
-            Effort::Medium => p.launcher_effort_medium,
-            Effort::High => p.launcher_effort_high,
-            Effort::XHigh => p.launcher_effort_xhigh,
-            Effort::Max => p.launcher_effort_max,
-        }
+    pub fn models(self, cwd: &Path) -> crate::model_catalog::Snapshot {
+        crate::model_catalog::snapshot(self, cwd, None)
     }
 }
 
@@ -550,8 +358,8 @@ pub fn here_line(recipe_line: &str, from: Option<&Path>, to: &Path) -> String {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Recipe {
     pub harness: Harness,
-    pub model: &'static str,
-    pub effort: Effort,
+    pub model: Option<String>,
+    pub effort: Option<String>,
     /// How far the agent may reach without asking. See [`Reach`].
     pub reach: Reach,
     /// The directory the terminal starts in.
@@ -573,10 +381,14 @@ impl Recipe {
         let mut parts: Vec<String> = vec![self.harness.binary().to_string()];
         match self.harness {
             Harness::Claude => {
-                parts.push("--model".into());
-                parts.push(self.model.to_string());
-                parts.push("--effort".into());
-                parts.push(self.effort.id().into());
+                if let Some(model) = &self.model {
+                    parts.push("--model".into());
+                    parts.push(argument(model));
+                }
+                if let Some(effort) = &self.effort {
+                    parts.push("--effort".into());
+                    parts.push(argument(effort));
+                }
                 parts.extend(self.reach.flags(self.harness));
                 if let Some(path) = briefing {
                     parts.push("--append-system-prompt".into());
@@ -587,13 +399,15 @@ impl Recipe {
                 }
             }
             Harness::Codex => {
-                if self.model != CONFIGURED {
+                if let Some(model) = &self.model {
                     parts.push("--model".into());
-                    parts.push(self.model.to_string());
+                    parts.push(argument(model));
                 }
                 parts.extend(self.reach.flags(self.harness));
-                parts.push("-c".into());
-                parts.push(format!("model_reasoning_effort={}", self.effort.id()));
+                if let Some(effort) = &self.effort {
+                    parts.push("-c".into());
+                    parts.push(argument(&format!("model_reasoning_effort={effort}")));
+                }
             }
             Harness::Local => unreachable!("local launches use command_line_with_adapter"),
         }
@@ -668,6 +482,18 @@ impl Recipe {
 /// A persistent host can predate the desktop login. Carry the launching
 /// window's display connection to the agent, including into an existing shell.
 /// Missing values remain absent; never invent a display or forward unrelated env.
+fn argument(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "-_.=".contains(character))
+    {
+        value.to_string()
+    } else {
+        shell_quote(value)
+    }
+}
+
 fn with_desktop_environment(line: &str, read: impl Fn(&str) -> Option<String>) -> String {
     let assignments: Vec<_> = [
         "DISPLAY",
@@ -851,11 +677,11 @@ pub fn fingerprint(text: &str) -> String {
 mod tests {
     use super::*;
 
-    fn recipe(harness: Harness, effort: Effort) -> Recipe {
+    fn recipe(harness: Harness, effort: &str) -> Recipe {
         Recipe {
             harness,
-            model: harness.models()[0].id,
-            effort,
+            model: (harness == Harness::Claude).then(|| "opus".to_string()),
+            effort: Some(effort.into()),
             reach: Reach::Anywhere,
             cwd: PathBuf::from("/home/parker/Work/terminal-delight"),
             opener: None,
@@ -864,8 +690,8 @@ mod tests {
 
     #[test]
     fn anywhere_adds_nothing_and_the_other_reaches_add_the_harness_own_flags() {
-        let plain = recipe(Harness::Claude, Effort::High).command_line(None);
-        let mut r = recipe(Harness::Claude, Effort::High);
+        let plain = recipe(Harness::Claude, "high").command_line(None);
+        let mut r = recipe(Harness::Claude, "high");
         r.reach = Reach::Anywhere;
         assert_eq!(
             r.command_line(None),
@@ -881,7 +707,7 @@ mod tests {
         );
         r.reach = Reach::Machine;
         assert!(r.command_line(None).contains("--permission-mode auto"));
-        let mut c = recipe(Harness::Codex, Effort::High);
+        let mut c = recipe(Harness::Codex, "high");
         c.reach = Reach::Repo;
         assert!(c.command_line(None).contains("--sandbox workspace-write"));
         c.reach = Reach::Machine;
@@ -902,8 +728,8 @@ mod tests {
 
     #[test]
     fn a_claude_line_names_the_model_the_effort_and_reads_its_briefing_from_a_file() {
-        let line = recipe(Harness::Claude, Effort::High)
-            .command_line(Some(Path::new("/run/td/briefing.txt")));
+        let line =
+            recipe(Harness::Claude, "high").command_line(Some(Path::new("/run/td/briefing.txt")));
         assert!(
             line.starts_with("claude --model opus --effort high"),
             "{line}"
@@ -916,36 +742,21 @@ mod tests {
     }
 
     #[test]
-    fn the_chip_word_is_the_flag_word_for_every_level_on_every_harness() {
-        // The whole complaint was a chip saying `standard` and the harness
-        // hearing nothing. So the word on the chip is asserted to be the word
-        // after the flag, level by level, on each harness's own list.
-        for harness in Harness::ALL {
-            for effort in harness.efforts() {
-                let line = recipe(harness, *effort).command_line(None);
+    fn reported_effort_words_reach_the_flag_without_a_static_enum() {
+        for harness in [Harness::Claude, Harness::Codex] {
+            for effort in ["low", "high", "ultra", "future-level"] {
+                let line = recipe(harness, effort).command_line(None);
                 let expected = match harness {
-                    Harness::Claude => format!("--effort {}", effort.label()),
-                    Harness::Codex => format!("model_reasoning_effort={}", effort.label()),
-                    Harness::Local => unreachable!("local effort dials are empty"),
+                    Harness::Claude => format!("--effort {effort}"),
+                    Harness::Codex => format!("model_reasoning_effort={effort}"),
+                    Harness::Local => unreachable!(),
                 };
-                assert!(line.contains(&expected), "{harness:?} {effort:?}: {line}");
+                assert!(line.contains(&expected), "{line}");
             }
         }
-    }
-
-    /// A stored word survives the trip to disk and back as the same level and
-    /// the same harness — and a word neither table knows stays unknown rather
-    /// than becoming the first row of whichever list was walked.
-    #[test]
-    fn a_stored_word_reads_back_as_what_wrote_it_or_as_nothing() {
-        for e in Effort::ALL {
-            assert_eq!(Effort::from_id(e.id()), Some(e), "{e:?}");
+        for harness in Harness::ALL {
+            assert_eq!(Harness::from_label(harness.label()), Some(harness));
         }
-        for h in Harness::ALL {
-            assert_eq!(Harness::from_label(h.label()), Some(h), "{h:?}");
-        }
-        assert_eq!(Effort::from_id("standard"), None);
-        assert_eq!(Effort::from_id(""), None);
         assert_eq!(Harness::from_label("gemini"), None);
     }
 
@@ -960,7 +771,7 @@ mod tests {
             trap.display()
         );
         std::fs::write(&path, &body).unwrap();
-        let mut r = recipe(Harness::Codex, Effort::High);
+        let mut r = recipe(Harness::Codex, "high");
         r.opener = Some(format!(
             "Compare A & B; $(touch {})\nDon't execute this",
             trap.display()
@@ -1042,7 +853,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("td-shared-kit-{}", std::process::id()));
         let kit = dir.join("kit");
         for h in Harness::ALL {
-            let path = recipe(h, Effort::Medium)
+            let path = recipe(h, "medium")
                 .prepare_briefing(&dir.join(h.label()), &kit)
                 .unwrap();
             let text = std::fs::read_to_string(path).unwrap();
@@ -1052,7 +863,7 @@ mod tests {
         }
         let blocked = dir.join("blocked");
         std::fs::write(&blocked, "a file, not a directory").unwrap();
-        assert!(recipe(Harness::Codex, Effort::Medium)
+        assert!(recipe(Harness::Codex, "medium")
             .prepare_briefing(&dir, &blocked)
             .is_err());
         let invalid = dir.join("invalid.toml");
@@ -1080,18 +891,18 @@ mod tests {
         assert!(a
             .command_line(Path::new("/packet"), Some("a task"))
             .is_err());
-        let r = recipe(Harness::Local, Effort::Medium);
+        let r = recipe(Harness::Local, "medium");
         assert!(r
             .command_line_with_adapter(Some(Path::new("/packet")), None)
             .is_err());
         assert!(r.command_line_with_adapter(None, Some(&a)).is_err());
         assert!(LocalAdapter::load_from(Path::new("/nonexistent/local-agent.toml")).is_err());
-        assert!(Harness::Local.efforts().is_empty());
+        assert_eq!(Harness::Local.models(Path::new(".")).models.len(), 1);
     }
 
     #[test]
     fn a_codex_line_sets_its_own_reasoning_effort() {
-        let line = recipe(Harness::Codex, Effort::High).command_line(None);
+        let line = recipe(Harness::Codex, "high").command_line(None);
         assert!(
             !line.contains("--model"),
             "Codex must use its configured model: {line}"
@@ -1120,41 +931,29 @@ mod tests {
     }
 
     #[test]
-    fn a_level_a_harness_lacks_is_clamped_to_its_nearest_when_the_harness_changes() {
-        assert_eq!(Harness::Codex.clamp_effort(Effort::Max), Effort::XHigh);
-        assert_eq!(Harness::Codex.clamp_effort(Effort::Low), Effort::Low);
-        for effort in Harness::Codex.efforts() {
-            assert_eq!(
-                Harness::Claude.clamp_effort(*effort),
-                *effort,
-                "everything codex offers, claude offers unchanged"
-            );
-        }
-        assert!(
-            !Harness::Codex.efforts().contains(&Effort::Max),
-            "codex has no max and must not be offered one"
-        );
-        for harness in Harness::ALL {
-            if harness == Harness::Local {
-                assert!(harness.efforts().is_empty());
-                continue;
-            }
-            assert!(harness.efforts().contains(&harness.default_effort()));
-            assert!(
-                harness.efforts().windows(2).all(|w| w[0] < w[1]),
-                "ordered, lowest first"
-            );
-        }
+    fn dynamic_model_ids_are_literal_shell_arguments() {
+        let mut chosen = recipe(Harness::Codex, "ultra");
+        let model = "provider/model's $(exit 19) `exit 20`";
+        chosen.model = Some(model.into());
+        let line = chosen.command_line(None);
+        let output = std::process::Command::new("sh")
+            .args(["-c", &format!("set -- {line}; printf '%s\\0' \"$@\"")])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(output
+            .stdout
+            .split(|byte| *byte == 0)
+            .any(|arg| arg == model.as_bytes()));
     }
 
     #[test]
     fn effort_is_a_flag_and_never_also_a_sentence() {
         // The dial and a plea for the same thing would be two instructions
         // that can disagree. Every level's briefing is the same text.
-        let texts: Vec<String> = Harness::Claude
-            .efforts()
-            .iter()
-            .map(|e| recipe(Harness::Claude, *e).briefing("/run/td/7", None))
+        let texts: Vec<String> = ["low", "high", "ultra"]
+            .into_iter()
+            .map(|effort| recipe(Harness::Claude, effort).briefing("/run/td/7", None))
             .collect();
         assert!(
             texts.windows(2).all(|w| w[0] == w[1]),
@@ -1198,7 +997,7 @@ mod tests {
 
     #[test]
     fn an_opener_is_quoted_and_an_empty_one_is_not_passed_at_all() {
-        let mut r = recipe(Harness::Claude, Effort::Low);
+        let mut r = recipe(Harness::Claude, "low");
         r.opener = Some("fix the login bug".into());
         assert!(r.command_line(None).ends_with("'fix the login bug'"));
         r.opener = Some("   ".into());
@@ -1305,7 +1104,7 @@ mod tests {
     /// that could not write one briefs without it.
     #[test]
     fn the_briefing_names_the_kit_the_launch_wrote() {
-        let r = recipe(Harness::Claude, Effort::High);
+        let r = recipe(Harness::Claude, "high");
         let kit = Path::new("/data/terminal-delight/skills/decision-brief/SKILL.md");
         assert!(r
             .briefing("/run/td/7", Some(kit))
@@ -1315,7 +1114,7 @@ mod tests {
 
     #[test]
     fn the_briefing_carries_the_drop_directory_and_the_verb() {
-        let text = recipe(Harness::Claude, Effort::Max).briefing("/run/td/surfaces/s/7", None);
+        let text = recipe(Harness::Claude, "max").briefing("/run/td/surfaces/s/7", None);
         assert!(text.contains("/run/td/surfaces/s/7"));
         assert!(text.contains("present_surface"), "and the verb");
         assert!(
@@ -1327,23 +1126,22 @@ mod tests {
     #[test]
     fn every_launcher_harness_is_offered_the_shared_briefing() {
         for harness in Harness::ALL {
-            assert!(recipe(harness, Effort::Low).takes_briefing());
+            assert!(recipe(harness, "low").takes_briefing());
         }
     }
 
     #[test]
-    fn every_harness_offers_at_least_one_model_and_they_are_distinct() {
-        for harness in Harness::ALL {
-            let models = harness.models();
-            assert!(!models.is_empty(), "{harness:?} offers nothing");
-            for m in models {
-                assert!(!m.id.is_empty() && !m.label.is_empty());
-            }
+    fn agent_default_omits_both_overrides_for_each_builtin_harness() {
+        for harness in [Harness::Claude, Harness::Codex] {
+            let mut recipe = recipe(harness, "high");
+            recipe.model = None;
+            recipe.effort = None;
+            let line = recipe.command_line(None);
+            assert!(!line.contains("--model"), "{line}");
+            assert!(!line.contains("--effort"), "{line}");
+            assert!(!line.contains("model_reasoning_effort"), "{line}");
         }
-        assert_ne!(
-            Harness::Claude.models()[0].id,
-            Harness::Codex.models()[0].id
-        );
+        assert_eq!(crate::model_catalog::Model::agent_default().id, None);
     }
 
     #[test]
@@ -1437,10 +1235,6 @@ mod tests {
         for h in Harness::ALL {
             assert_eq!(h.label_in(Lang::En), h.label());
             assert_eq!(Harness::from_label(h.label()), Some(h));
-        }
-        for e in Effort::ALL {
-            assert_eq!(e.label_in(Lang::En), e.id());
-            assert_eq!(e.label(), e.id());
         }
         for r in Reach::ALL {
             assert_eq!(r.label_in(Lang::En), r.label());
