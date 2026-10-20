@@ -2829,4 +2829,136 @@ mod tests {
             );
         }
     }
+
+    /// Fields whose translation may equal the English: cognates (CRT, DESIGN,
+    /// Plugins), Git words developers keep (HEAD, staged, Checkout), and
+    /// templates that are only placeholders and symbols.
+    const SAME_AS_ENGLISH: &[&str] = &[
+        "chrome.bar_m_recover_left",
+        "chrome.dead_meta_kb",
+        "chrome.focus_hdr",
+        "chrome.la_effort",
+        "chrome.la_harness",
+        "chrome.lcfg_effort",
+        "chrome.logo_fld_in",
+        "chrome.logo_fld_name",
+        "chrome.mcp_btn_usage",
+        "chrome.mcp_stat_agent",
+        "chrome.mcp_stat_service",
+        "chrome.notif_tab_fallback",
+        "chrome.ntf_hdr",
+        "chrome.pal_hdr_skin",
+        "chrome.pal_hdr_style",
+        "chrome.pal_hdr_theme",
+        "chrome.pal_skin_console",
+        "chrome.pal_skin_deco",
+        "chrome.pal_thm_deco",
+        "chrome.plg_hdr",
+        "chrome.rail_btn_no",
+        "chrome.sav_stat_compression",
+        "chrome.sav_tab_usage",
+        "chrome.scale_xl",
+        "coord.checkout",
+        "coord.crumb_checkouts",
+        "coord.dirty",
+        "coord.dirty_n",
+        "coord.dur_15m",
+        "coord.err_status_prefix",
+        "coord.hud_git",
+        "coord.ref_base",
+        "coord.ref_head",
+        "coord.section_participants",
+        "coord.session",
+        "coord.src_staged",
+        "coord.src_unstaged",
+        "coord.src_untracked",
+        "coord.untracked_n",
+        "lang.cm_ansi",
+        "lang.cm_mono",
+        "lang.d_angle",
+        "lang.d_crt_hdr",
+        "lang.g_gamma",
+        "lang.m_control",
+        "lang.notifications",
+        "lang.np_accent",
+        "lang.ph_live",
+        "lang.ph_shell",
+        "lang.plugins",
+        "lang.s_agents",
+        "lang.s_amcp",
+        "lang.s_links",
+        "lang.sc_code",
+        "lang.t_syntax",
+        "lang.t_theme",
+        "lang.thm_hacker",
+    ];
+
+    /// Every `name: "literal",` line of each `pub const XX` table in `src`,
+    /// keyed by the table's language code.
+    fn literal_fields(src: &str) -> Vec<(&str, Vec<(&str, &str)>)> {
+        let mut tables: Vec<(&str, Vec<(&str, &str)>)> = Vec::new();
+        for line in src.lines() {
+            if let Some(rest) = line.strip_prefix("pub const ") {
+                if let Some((code, _)) = rest.split_once(':') {
+                    tables.push((code, Vec::new()));
+                }
+                continue;
+            }
+            if line.starts_with("};") {
+                continue;
+            }
+            let Some(field) = line.strip_prefix("    ") else {
+                continue;
+            };
+            let (Some((name, value)), Some(table)) = (field.split_once(": \""), tables.last_mut())
+            else {
+                continue;
+            };
+            if let Some(value) = value.strip_suffix("\",") {
+                if name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                {
+                    table.1.push((name, value));
+                }
+            }
+        }
+        tables
+    }
+
+    #[test]
+    fn no_translation_is_left_as_its_english_unless_it_is_a_cognate() {
+        // A table regenerated without its translations falls back to English
+        // silently and still compiles; this is the check that notices.
+        let sources = [
+            ("lang", include_str!("lang.rs")),
+            ("coord", include_str!("lang/coord.rs")),
+            ("chrome", include_str!("lang/chrome.rs")),
+        ];
+        let mut found = Vec::new();
+        for (table, src) in sources {
+            let tables = literal_fields(src);
+            let en: std::collections::HashMap<_, _> = tables
+                .iter()
+                .find(|(code, _)| *code == "EN")
+                .map(|(_, fields)| fields.iter().copied().collect())
+                .unwrap_or_default();
+            assert!(!en.is_empty(), "no EN table read from {table}");
+            for (code, fields) in tables.iter().filter(|(code, _)| *code != "EN") {
+                for (name, value) in fields {
+                    let words = value
+                        .split(|c: char| !c.is_ascii_alphabetic())
+                        .any(|w| w.len() >= 2);
+                    let key = format!("{table}.{name}");
+                    if words
+                        && en.get(name) == Some(value)
+                        && !SAME_AS_ENGLISH.contains(&key.as_str())
+                    {
+                        found.push(format!("{code} {key} = {value:?}"));
+                    }
+                }
+            }
+        }
+        assert!(found.is_empty(), "left in English:\n{}", found.join("\n"));
+    }
 }
