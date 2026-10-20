@@ -193,8 +193,14 @@ fn stderr_is_regular_file() -> bool {
 /// in a terminal, or it already goes to a file somebody chose (a test harness,
 /// `2>somewhere.log`, or the host log [`crate::hostctl`] opened). What is left
 /// is exactly the case that lost everything: `/dev/null`, or nothing at all.
+///
+/// A debug switch (`TD_KEYDEBUG`, `TD_HITDEBUG`, any `TD_…DEBUG`) also leaves
+/// stderr where it is: those traces print keystrokes and the text under the
+/// pointer, which is a person's terminal content, and the person who switched
+/// one on is reading stderr themselves. Routing them into a file would put
+/// typed input on disk.
 pub fn route_stderr(role: &Role) {
-    if stderr_is_tty() || stderr_is_regular_file() {
+    if stderr_is_tty() || stderr_is_regular_file() || debug_switch_on(std::env::vars_os()) {
         return;
     }
     let Ok(file) = open_log(role) else {
@@ -206,6 +212,14 @@ pub fn route_stderr(role: &Role) {
     unsafe {
         libc::dup2(file.as_raw_fd(), 2);
     }
+}
+
+/// Whether any `TD_…DEBUG` switch is set, however it is spelled after `TD_`.
+fn debug_switch_on(vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>) -> bool {
+    vars.into_iter().any(|(k, _)| {
+        k.to_str()
+            .is_some_and(|k| k.starts_with("TD_") && k.ends_with("DEBUG"))
+    })
 }
 
 /// Crash records this process has written since it started.
@@ -880,6 +894,36 @@ terminal-delight: the session host would not save: refused at /home/a/x
             );
             assert!(!stderr.contains(leak), "stderr quotes {leak:?}: {stderr}");
         }
+    }
+
+    #[test]
+    fn a_debug_switch_keeps_its_traces_out_of_the_log() {
+        let env = |pairs: &[&str]| {
+            pairs
+                .iter()
+                .map(|k| (std::ffi::OsString::from(k), std::ffi::OsString::from("1")))
+                .collect::<Vec<_>>()
+                .into_iter()
+        };
+        // Every switch in the source today, and the spelling a new one would use.
+        for switch in [
+            "TD_ANCHORDEBUG",
+            "TD_BENCHDEBUG",
+            "TD_DOCDEBUG",
+            "TD_HITDEBUG",
+            "TD_KEYDEBUG",
+            "TD_PICTUREDEBUG",
+            "TD_RAIL_DEBUG",
+            "TD_SELDEBUG",
+        ] {
+            assert!(debug_switch_on(env(&["HOME", switch])), "{switch}");
+        }
+        assert!(!debug_switch_on(env(&[
+            "HOME",
+            "TD_SESSION",
+            "TD_PANE_ID",
+            "DEBUG"
+        ])));
     }
 
     #[test]

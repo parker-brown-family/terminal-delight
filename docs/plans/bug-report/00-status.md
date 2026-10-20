@@ -56,6 +56,6 @@ A report never carries a person's terminal input or output: no scrollback, rows,
 
 ## Least-confident decisions
 
-1. Developer debug traces still write terminal text (token, cwd, row heads) to the local log when someone sets `TD_HITDEBUG` / `TD_ANCHORDEBUG` / `TD_SELDEBUG`. They never reach a report, but they do reach the disk.
+1. ~~Developer debug traces write terminal text to the local log~~ — fixed 2026-10-20. Eight `TD_…DEBUG` switches exist, and `TD_KEYDEBUG` prints keystrokes: routing them into a file would have put typed input, passwords included, on disk. Any `TD_…DEBUG` switch now leaves stderr where it is. Checked live: a host started with `TD_KEYDEBUG=1` and stderr on `/dev/null` kept `/dev/null` and wrote no log; without it, it logged.
 2. A path printed without quotes is cut to the next clause break. That can remove some of TD's own wording after it, the safe way to be wrong.
 3. Log lines carry no timestamps; only each process's header line does. Adding them would mean a pipe and a thread, and a crash would lose the last lines in that thread's buffer.
