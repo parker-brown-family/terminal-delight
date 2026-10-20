@@ -190,6 +190,65 @@ pub fn bezel(th: &Theme) -> impl IntoElement {
         ])
 }
 
+/// Corner radius of the glass where it meets the bezel, for a FLAT screen.
+/// A bent screen is rounded by the CRT pass instead (`td-glass-rim` in
+/// `crt_pass.wgsl`, docs/patches/0006-glass-rim.patch), at about the same size.
+pub const RIM_RADIUS: f32 = 14.0;
+
+/// The glass seated in its bezel, for a screen the CRT pass leaves flat: the
+/// square corners are filled with the pane's own `ground`, so the glass reads
+/// as a rounded opening, and the bezel's lip throws a soft shadow onto the glass
+/// that is heaviest under the top edge and doubles where two edges meet.
+///
+/// Drawn as the screen's last child, so the screen's `overflow_hidden` clips
+/// the corner mask's outer border away and only its rounded inner edge shows.
+/// Carries no handlers, so input passes through. A bent screen must NOT get
+/// this as well: the pass already rounds and shades it, in its own geometry.
+pub fn rim(strength: f32, ground: Hsla) -> impl IntoElement {
+    let b = RIM_RADIUS;
+    div()
+        .absolute()
+        .inset_0()
+        // the corner mask: a border as thick as the radius, whose inner edge
+        // is rounded to RIM_RADIUS (gpui rounds a border's inner edge at its
+        // outer radius less its width, as CSS does)
+        .child(
+            div()
+                .absolute()
+                .top(px(-b))
+                .left(px(-b))
+                .right(px(-b))
+                .bottom(px(-b))
+                .rounded(px(RIM_RADIUS + b))
+                .border(px(b))
+                .border_color(ground),
+        )
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .rounded(px(RIM_RADIUS))
+                .shadow(vec![
+                    // the lip's shadow on the glass, dropped from the top edge
+                    BoxShadow {
+                        color: hsla(0., 0., 0., 0.55 * strength),
+                        offset: point(px(0.), px(3.)),
+                        blur_radius: px(16.),
+                        spread_radius: px(0.),
+                        inset: true,
+                    },
+                    // the contact shadow right where glass meets bezel
+                    BoxShadow {
+                        color: hsla(0., 0., 0., 0.45 * strength),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(4.),
+                        spread_radius: px(0.),
+                        inset: true,
+                    },
+                ]),
+        )
+}
+
 /// The full glass overlay: scanlines + tracking band canvas, vignette shadows,
 /// center bloom. Non-occluding — mouse/keys pass through to the panes below.
 pub fn glass(th: &Theme, fx: &Fx) -> impl IntoElement {
