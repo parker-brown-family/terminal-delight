@@ -34,7 +34,7 @@ Review dark and pale palettes, narrow geometry, intended scale and CRT grade, a 
 
 ## Apply and Restore
 
-Identify the target window before changing it. Record `ctl --pid <window-pid> skin status` and `skin snapshot`, the custom-file path, its original bytes or absence, and the previous explicit/theme-following selection. `TD_SKIN` can override the normal file location.
+Identify the target window before changing it. Record `ctl --pid <window-pid> skin status` and `skin snapshot`, the custom-file path, its original bytes or absence, and the previous explicit/theme-following selection. `TD_SKIN` overrides the normal file location and wins over a saved selection on startup. The runner uses its private standard config path when testing persistence.
 
 Back up the previous file, write the validated file and select `custom` on that window. The 300 ms watcher keeps the previous valid skin when an edit cannot parse. `skin snapshot` reads the live registry rather than parsing the saved file again. A valid edit, invalid edit and exact restoration can be exercised safely with the runner's `--verify-reload` flag.
 

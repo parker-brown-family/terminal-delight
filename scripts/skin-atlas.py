@@ -92,6 +92,9 @@ def main():
         (out / directory).mkdir(parents=True)
     shutil.copyfile(__file__, out / "runner.py")
     shutil.copyfile(skin, out / "skin.toml")
+    # Use the standard path inside the private config. TD_SKIN is an explicit
+    # override and deliberately wins over a saved selection on restart.
+    (out / "config/terminal-delight/skin.toml").symlink_to(out / "skin.toml")
     (out / "resolved.json").write_text(json.dumps(resolved, indent=2) + "\n")
     (out / "catalogue.json").write_text(json.dumps(catalogue, indent=2) + "\n")
     session = "skin-atlas-" + uuid.uuid4().hex[:12]
@@ -112,7 +115,7 @@ def main():
     saved.write_text(head)
     desktop_keys = {"HOME", "USER", "LOGNAME", "PATH", "LANG", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "HYPRLAND_INSTANCE_SIGNATURE", "WGPU_BACKEND", "VK_ICD_FILENAMES", "LIBGL_ALWAYS_SOFTWARE"}
     env = {key: value for key, value in os.environ.items() if key in desktop_keys or key.startswith("LC_")}
-    env.update(TD_SESSION=session, TD_SKIN=str(out / "skin.toml"), XDG_CONFIG_HOME=str(out / "config"), XDG_CACHE_HOME=str(out / "cache"), XDG_STATE_HOME=str(out / "state"), TMPDIR=str(out / "tmp"), SHELL="/bin/bash")
+    env.update(TD_SESSION=session, XDG_CONFIG_HOME=str(out / "config"), XDG_CACHE_HOME=str(out / "cache"), XDG_STATE_HOME=str(out / "state"), TMPDIR=str(out / "tmp"), SHELL="/bin/bash")
     env.update(fixture["environment"])
     launch = out / "launch.sh"
     launch.write_text("#!/bin/sh\nexec env -i " + shlex.join([f"{key}={value}" for key, value in env.items()]) + " " + shlex.quote(str(binary)) + " > " + shlex.quote(str(out / "window.log")) + " 2>&1\n")
@@ -217,6 +220,7 @@ def main():
             try:
                 (out / "skin.toml").write_text('name = "atlas reload witness"\n[font]\nfamily = "Share Tech Mono"\n')
                 valid = await_skin(lambda s: s["skin"] == "atlas reload witness")
+                receipt["reload"] = {"valid_edit": "applied"}
                 (out / "skin.toml").write_text("name = [invalid\n")
                 deadline = time.monotonic() + 8
                 while time.monotonic() < deadline:
@@ -228,9 +232,11 @@ def main():
                 invalid = json.loads(request(pid, "skin snapshot"))
                 if invalid != valid:
                     raise RuntimeError("invalid edit changed the previous valid skin")
+                receipt["reload"]["invalid_edit"] = "kept previous valid"
             finally:
                 (out / "skin.toml").write_bytes(original)
             restored = await_skin(lambda s: s == before)
+            receipt["reload"]["file_restore"] = "exact bytes and live tokens"
             request(pid, "skin default")
             await_skin(lambda s: s["active_skin"] == "default")
 
