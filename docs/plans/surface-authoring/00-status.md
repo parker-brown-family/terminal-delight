@@ -1,29 +1,31 @@
 # Custom surface authoring
 
-**Difficulty: 6/10.** The existing skin/material seam can be strengthened, but the authoring contract has to prevent the omissions and font/layout surprises exposed by Chalk.
+**Difficulty: 6/10. Post-hoc: 7/10.** Native integration and concurrent mainline changes cost more than expected. Repeated release builds and expanding fixture coverage made the turn too long; the next run needs one bounded proof matrix and one final build.
 
-- Inventory audit: complete against the tactical workshop's 46 rows and main 0dcdb741. Source corrections and an unapplied patch are retained in `evidence/`.
-- Combined architecture and slice plan: APPROVED 2026-10-20 through all three concurs and Parker's “Basically concur all”.
-- Implementation: in progress; integrate the sibling's OPS vocabulary before extending it.
-- Skill: follows the second file-only look and native proof.
+The combined plan was approved on 2026-10-20 through all three concurs and Parker’s “Basically concur all”. All four implementation slices are complete:
 
-The inventory under review lives on `design/tactical-skin-workshop` at `docs/spec/skin-surface-inventory.md`, introduced by 96316efd. Preserve its ownership and coordinate corrections with that pane. Source work is isolated in this worktree; the shared primary checkout contains other work.
+- [x] Subscriptions tracer and native dark/pale fixtures.
+- [x] Shared material/type policy, bounded data and legacy compatibility.
+- [x] Canonical catalogue and exported native atlas runner.
+- [x] Second file-only look, reload/persistence/restore proof and published portable skill.
 
-## Verification
+The sibling’s OPS vocabulary and subsequent mainline fixes through 50cf0106 are incorporated. The primary checkout and normal running windows were preserved. The separate installed screenshot-paste build is not replaced by this work.
 
-The self-contained review page passed browser checks at 968 and 390 pixels: no horizontal overflow, no external requests or JavaScript errors, all 46 inventory rows annotatable, notes added/exported/saved, and concurrence and clear exercised. See `evidence/browser-qa.json` and retained captures. The proposed correction patch passes `git apply --check` against the sibling's inventory; it has not been applied to their branch.
+## Review and proof
 
-This was a source audit, not a new native certification of every surface. No application code or installed skin changed. Performance was not measured. The narrative diagnostic classified the page as an argument; it did not establish a cold-reader journey. Application tests were not rerun for this documentation-only change.
+Open `reports/2026-10-20-custom-skins-built.html` from the repository root. It contains native captures, the implemented architecture, all 65 catalogue entries, proof limits and the public skill link. The original annotated plan retains its three concurs.
 
-## Next
+The full default suite passed 2,570 tests and the fallback suite passed 2,523, each with ten ignored. Later boundary changes passed 36 skin tests and 24 allowance tests plus both CI Clippy variants. Final action-order and capture-isolation changes passed strict Clippy and release builds. GitHub CI passed at the preceding integrated head; the final review push starts a fresh CI run.
 
-Start with the Subscriptions tracer and prove a custom file changes the real native controls without editing their caller. Keep all four slices and the eventual skill in this task's single implementation review.
+There are 29 final native captures across 25 registered scenes. All account-collector canaries remained untouched; the workbench sample ran for ten seconds. Two skins passed valid edit, rejected invalid edit, exact restoration and saved-selection persistence in private previews. These are scoped static reviews: hover, drag, full keyboard interaction and seven catalogue families without dedicated fixtures remain unverified.
 
-## Slices
+Browser checks exercise desktop/mobile fitting, all inventory note anchors, image zoom, notes export/save/clear, external-request absence and JavaScript errors. The narrative diagnostic classified the implementation page as a journey; it is not evidence of universal cold-reader comprehension.
 
-- [ ] Subscriptions tracer and native dark/pale fixture.
-- [ ] Shared material/type policy, data and compatibility.
-- [ ] Catalogue coverage and native atlas.
-- [ ] Portable skill, second file-only look, reload/persistence/restore proof.
+## Deliverables
 
-The sibling's approved OPS implementation introduces cut corners, emphasis bars, pip gauges, heading/data type and grid/hatch/chevron devices. Reuse those additions. Do not overwrite its source work or restart from the audit snapshot.
+- Implementation: https://github.com/parker-brown-family/terminal-delight/pull/1035
+- Published skill: https://github.com/parker-brown-family/agent-skills/blob/main/td-skin/SKILL.md
+- Guide: `docs/skins/README.md`.
+- File-only example: `docs/skins/examples/field-notes.toml`.
+- Native proof: `docs/plans/surface-authoring/evidence/native/`.
+- Feedback and failures: `docs/plans/surface-authoring/implementation-log.md` and `evidence/native-failures/`.

@@ -14,6 +14,8 @@ python3 skin-atlas.py --binary /path/to/terminal-delight --skin personal-skin.to
 
 `--template default` documents the optional metrics. Bundled templates demonstrate the finite strategies. [Field Notes](examples/field-notes.toml) combines existing strategies into a second stock material look without changing Rust. It uses a monospace UI, restrained grain and lift, plain notes and a glass terminal tube. Chalk keeps its handwriting, flower and stock tube.
 
+The headless resolver accepts `--palette <bundled-id|TD-palette-file>` independently of `--theme`. The native runner accepts bundled palette ids. Its optional `--grade-json` reads the config API's 0–100 percent values and applies them only to the private preview; the receipt also records live read-back.
+
 ## Boundaries
 
 Palette supplies colours. Design supplies terminal type and CRT effects. Grade supplies the current viewing adjustments. Skin supplies native furniture, UI families, optical fitting and material. A paper material does not imply a handwriting correction. Older Caveat files retain their previous fitting fallback; new authors should declare optical settings explicitly.
@@ -26,7 +28,7 @@ An existing effect can be composed through data. A new silhouette, shader or ass
 
 Edit `app/skin-surfaces.json`, then regenerate `docs/spec/skin-surface-inventory.md` with the binary. Each stable entry declares its owner, scope, material, boundary, emphasis, typography, colour policy and optional fixture. Owner/fixture tests catch stale references. Mixed facets remain mixed until their owner is migrated. This map describes source routing; it is not a visual coverage percentage.
 
-The native runner launches only a new private session. The default capture backend requires Hyprland 0.56 and grim; `--visible --hold` provides a private window on another desktop. `--capture` takes a JSON argv array for a native capture utility. No normal window, config or session host is adopted.
+The native runner launches only a new private session. Its fixture root disables account collection and supplies an empty plugin home. An explicit fixture shell bypasses login profiles. The default capture backend requires Hyprland 0.56 and grim; `--visible --hold` provides a private window on another desktop. `--capture` takes a JSON argv array for a native capture utility. No normal window, config or session host is adopted.
 
 A receipt records the build, skin and runner hashes; requested and observed geometry; requested palette and grade; live resolved tokens; capture hash; and optional reload or idle sample. `visual_verdict` and `states_reviewed` start absent. Inspect the pictures before filling those fields. Missing fixtures, untested interaction states and stale captures remain unverified.
 
