@@ -14,6 +14,10 @@ removed, sessions saved by 0.3.0 load, and a 0.4.0 window attaches to a session
 host started by 0.3.0, because the host protocol is still version 1. These are
 the changes you may notice in the first hour.
 
+- **On Omarchy, add one line so Super+C and Super+V work.** Put
+  `o.window("terminal-delight", { tag = "+terminal" })` in
+  `~/.config/hypr/hyprland.lua`. Without it Omarchy sends Super+C to Terminal
+  Delight as Ctrl+C, which interrupts the program in the pane. (#892)
 - **SUPER+ALT+T opens the key menu instead of sending a tile.** On Omarchy that
   chord used to move the focused terminal into Terminal Delight. It now opens
   the list of Terminal Delight's keys, and `scripts/install-keys-hotkey.sh`
@@ -591,6 +595,13 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
+- **Omarchy's Super+C copies in a terminal pane, and Super+V pastes.** Omarchy
+  sends its universal copy and paste to a window as Ctrl+Insert and Shift+Insert
+  when it counts the window as a terminal, and as Ctrl+C and Ctrl+V when it does
+  not. Terminal Delight was not counted, so Super+C interrupted whatever ran in
+  the pane and Super+V typed `^V`. A pane now takes Ctrl+Insert as copy and
+  Shift+Insert as paste, the chords every other terminal takes, and the README
+  gives the one-line Hyprland rule that tags Terminal Delight a terminal. (#892)
 - **Launching Codex no longer picks a retired model.** The launcher's Codex
   menu offered `gpt-5-codex` and `gpt-5` and passed one with `--model`, which a
   current Codex account rejects with HTTP 400. Codex now starts on the model in

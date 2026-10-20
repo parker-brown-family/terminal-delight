@@ -7322,6 +7322,18 @@ impl TerminalView {
             }
             return Handled::Consumed;
         }
+        // Ctrl+Insert is the copy Ctrl+Shift+C is, and Shift+Insert the paste
+        // Ctrl+Shift+V is (see `keylayer::pane_chord`).
+        if k.key == "insert" {
+            if k.control {
+                if !self.bench_copy(cx) {
+                    self.copy_selection(cx);
+                }
+            } else {
+                self.paste_clipboard(cx);
+            }
+            return Handled::Declined;
+        }
         if k.shift {
             match k.key {
                 // Ctrl+Shift+T is the workspace's new-tab chord: taken from the
