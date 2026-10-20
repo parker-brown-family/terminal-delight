@@ -28087,7 +28087,7 @@ impl Render for Workspace {
                 MenuScope::Pane(p) => p.read(cx).appearance.inherit_theme,
                 MenuScope::Outer => false,
             };
-            // THEME picker (retained — hacker/custom/field/tactical are the base
+            // THEME picker (retained — hacker/custom/quiet/tactical are the base
             // theming). The dynamics glyph column is an orthogonal dimension
             // layered on top of whichever theme is active here.
             let mut theme_row = div().flex().flex_row().flex_wrap().gap_2();
@@ -28096,13 +28096,11 @@ impl Render for Workspace {
                 let cur_c = cur.clone();
                 let tip_path = (id == "custom").then(theme::theme_path);
                 let tlbl = match lbl.as_str() {
-                    "quiet" => t.thm_quiet, "field" => t.thm_field,
-                    "tactical" => t.thm_tactical, "hacker" => t.thm_hacker,
+                    "quiet" => t.thm_quiet, "tactical" => t.thm_tactical, "hacker" => t.thm_hacker,
                     "custom" => t.thm_custom, _ => lbl.as_str(),
                 };
                 let help = match lbl.as_str() {
                     "quiet" => "Light screen; no scanlines, glow, or flicker.",
-                    "field" => "Matte screen, faint scanlines, low glow.",
                     "tactical" => "Bright glow, raised bezel, slight flicker.",
                     "deco" => "Minimal CRT texture; may request matching trim.",
                     "hacker" => "Green phosphor, scanlines, glow, tracking, flicker, jiggle.",

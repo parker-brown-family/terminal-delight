@@ -364,10 +364,10 @@ ink_tokens! {
 
     // ---- states ----
     // The BRIGHT ansi slots, not the normal ones. A terminal palette very often
-    // points its accent at one of its own normal colours — field-command's accent
-    // and its `ansi2` are both `#8fa85f` — so `ok = ansi2` would have painted
-    // "healthy" in exactly the colour of the furniture on a theme we already
-    // ship. The brights are both further from the accent and better signals
+    // points its accent at one of its own normal colours — the field-command
+    // theme we shipped until 0.4.0 had `#8fa85f` as both its accent and its
+    // `ansi2` — so `ok = ansi2` would have painted "healthy" in exactly the
+    // colour of the furniture. The brights are both further from the accent and better signals
     // against a dark ground, and
     // `no_state_ink_collapses_onto_the_accent_in_any_builtin_pairing` is what
     // keeps the next palette from reintroducing the collision.
@@ -2396,7 +2396,7 @@ mod tests {
     fn paper_ui_handwriting_does_not_change_the_terminal_font() {
         let spec = parse(include_str!("../skins/chalk.toml")).unwrap();
         assert!(spec.unknown.is_empty(), "{:?}", spec.unknown);
-        for id in ["quiet-command", "field-command", "hacker"] {
+        for id in ["quiet-command", "tactical-overdrive", "hacker"] {
             let th = theme::parse(theme::builtin_toml(id).unwrap()).unwrap();
             let terminal_font = th.font_family.clone();
             let sk = spec.bake(&th, 1.0);
