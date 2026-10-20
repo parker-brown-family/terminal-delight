@@ -2,16 +2,6 @@
   "note": "Differences between rio-vt and alacritty_terminal that are understood. Each entry says how to take its cause out of a case; a cross-core finding is explained by an entry when removing that cause makes the cores agree (run.py, classify_all). Explained findings are still counted in every summary. An entry is a claim about the cores, so it carries its evidence and, where one core is wrong, the issue that tracks it.",
   "differences": [
     {
-      "id": "origin-mode-does-not-home",
-      "neutralize": {
-        "strip": "\\x1b\\[\\?6[hl]"
-      },
-      "wrong": "rio-vt",
-      "reason": "Setting or resetting origin mode (DECSET/DECRST 6) must move the cursor to the home position (DEC STD 070; xterm and alacritty do). rio-vt 0.5.28 leaves the cursor where it was, so the next text lands outside the scrolling region.",
-      "evidence": "minimized: size 2x1, write \"\\t\\x1b[?6h\" -> cursor column rio 1, alacritty 0",
-      "issue": null
-    },
-    {
       "id": "narrowing-reflow",
       "neutralize": {
         "drop_resize": true

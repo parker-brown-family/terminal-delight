@@ -138,6 +138,18 @@
         {"write_hex": "1b5b3939393939393939393939393b393939393939393948 45"},
         "checkpoint"
       ]
+    },
+    {
+      "name": "origin-mode-homes-the-cursor",
+      "size": [10, 5],
+      "ops": [
+        {"write": "abc\u001b[2;4r\u001b[3;5H\u001b[?6h"},
+        {"expect": {"cursor": [1, 0], "modes": {"ORIGIN": true}}},
+        {"write": "X\u001b[?6h"},
+        {"expect": {"rows": [[1, "X"]], "cursor": [1, 0]}},
+        {"write": "\u001b[3;1H\u001b[?6hY"},
+        {"expect": {"rows": [[1, "Y"]], "cursor": [1, 1]}}
+      ]
     }
   ]
 }

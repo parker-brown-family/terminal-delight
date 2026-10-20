@@ -533,6 +533,12 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
+- **Turning origin mode on moves the cursor home again.** A program that sets
+  origin mode (DECOM) expects the cursor at the top of its scrolling region,
+  where xterm, tmux and the old core put it. The rio-vt core left it where it
+  was, so the program's next text landed in the wrong place. Found by the
+  Terminal Lab.
+
 - **The agent wall says NO READING for a session it has not measured, instead
   of calling it empty and healthy.** A session whose newest record carried no
   context figure was drawn 0% full, 100% relevant and RUN, with thousands of
