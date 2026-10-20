@@ -388,6 +388,13 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
     if size_chord(k).is_some() {
         return true;
     }
+    // Ctrl+Insert copies and Shift+Insert pastes: the old chords every other
+    // terminal takes, and what Omarchy's Super+C and Super+V send a window it
+    // tags as a terminal (#892). The paste leaves a note, a sticky or a header
+    // name being written to take it, exactly as ctrl+shift+v does below.
+    if k.key == "insert" && !k.alt && k.control != k.shift {
+        return k.control || !(note_caret(up) || up.sticky || up.rename);
+    }
     if k.alt && !k.control && !k.shift {
         return match k.key {
             "a" | "s" => true,
@@ -1135,6 +1142,50 @@ mod tests {
             Layer::PaneChord,
             "with the box closed the paste is the pane's"
         );
+    }
+
+    /// Omarchy's Super+C and Super+V arrive at a window it tags as a terminal
+    /// as Ctrl+Insert and Shift+Insert (#892). On either face, with no caret
+    /// up, both are the pane's: the copy and the paste that Ctrl+Shift+C and
+    /// Ctrl+Shift+V are. Ctrl+Insert stays the pane's over a note being
+    /// written, the way Ctrl+Shift+C does; a third modifier makes it nobody's.
+    #[test]
+    fn omarchys_universal_copy_and_paste_are_the_panes() {
+        let copy = ctrl("insert");
+        for up in [Up::default(), on_bench(), floating()] {
+            assert_eq!(route(&copy, &up), Layer::PaneChord, "copy {up:?}");
+            assert_eq!(
+                route(&shift_insert(), &up),
+                Layer::PaneChord,
+                "paste {up:?}"
+            );
+        }
+        for up in [
+            Up {
+                sticky: true,
+                ..Up::default()
+            },
+            Up {
+                rename: true,
+                ..Up::default()
+            },
+        ] {
+            assert_eq!(route(&copy, &up), Layer::PaneChord, "copy over {up:?}");
+        }
+        let neither = Key {
+            key: "insert",
+            control: true,
+            shift: true,
+            ..Key::default()
+        };
+        assert!(!pane_chord(&neither, &Up::default()));
+        assert!(!pane_chord(
+            &Key {
+                key: "insert",
+                ..Key::default()
+            },
+            &Up::default()
+        ));
     }
 
     /// A caret somewhere else on the pane keeps its own Escape: a note being

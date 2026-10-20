@@ -156,6 +156,18 @@ cwd, `claude`/`codex` agents resume by session id, tmux attaches re-attach.
 Anything else in the foreground (vim, htop…) is refused and nothing is closed.
 `td-send --dry-run` prints the plan without touching anything.
 
+**Super+C and Super+V.** Omarchy's universal copy and paste reach a window it
+counts as a terminal as Ctrl+Insert and Shift+Insert, which Terminal Delight
+takes as copy and paste. Its own list of terminals does not name Terminal
+Delight, so add this line to `~/.config/hypr/hyprland.lua`:
+
+```lua
+o.window("terminal-delight", { tag = "+terminal" })
+```
+
+Without it, Super+C arrives as Ctrl+C and interrupts the program in the pane.
+Ctrl+Shift+C and Ctrl+Shift+V work either way.
+
 Runtime dependencies (checked by the scripts, which fail with a message):
 
 - **Hyprland** (`hyprctl`) — window addressing and close dispatches; both the
