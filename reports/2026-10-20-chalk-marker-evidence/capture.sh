@@ -34,10 +34,11 @@ cp "$OUT/config/terminal-delight/sessions/$SESSION.toml" "$OUT/seed.toml"
 cat > "$OUT/launch.sh" <<EOF
 export TD_SESSION=$SESSION XDG_CONFIG_HOME=$OUT/config XDG_CACHE_HOME=$OUT/cache XDG_STATE_HOME=$OUT/state
 export SHELL=/bin/bash FLOWER_BUSY=$OUT/busy
-unset TD_DEMO_STATE TD_THEME TD_PALETTE TD_SKIN TD_WALL_DEMO TD_BENCH_DEMO TD_TRAY_DEMO TD_OSD_DEMO TD_SPINE_DEMO
+unset TD_DEMO_STATE TD_THEME TD_PALETTE TD_SKIN TD_WALL_DEMO TD_BENCH_DEMO TD_TRAY_DEMO TD_OSD_DEMO TD_SPINE_DEMO TD_USAGE_DEMO TD_USAGE_LIVE TD_SAVINGS_DEMO
 EOF
 case "$SURFACE" in
  tray) echo 'export TD_TRAY_DEMO=1' >> "$OUT/launch.sh";;
+ usage) echo 'export TD_USAGE_DEMO=1' >> "$OUT/launch.sh";;
  gauges) echo 'export TD_OSD_DEMO=1' >> "$OUT/launch.sh";;
  rail) echo 'export TD_SPINE_DEMO=1' >> "$OUT/launch.sh";;
 esac

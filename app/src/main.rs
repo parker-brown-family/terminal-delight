@@ -9295,6 +9295,7 @@ impl Workspace {
     /// — see [`Self::launch_defaults_open`] for why the fold lives on the
     /// window rather than on disk.
     fn render_launch_defaults(&self, th: &theme::Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let sk = skin::skin(cx, 1.);
         let pref = &self.launch_defaults;
         // What the panel would open on right now. `unwrap_or` is the fallback
         // and it is deliberately not written anywhere durable.
@@ -9308,7 +9309,7 @@ impl Workspace {
         // The same pill the subscription row below wears, in three states:
         // chosen (accent, filled), in force but unchosen (quiet edge, no
         // fill), and neither.
-        let chip = move |word: &str, lit: bool, chosen: bool| {
+        let chip = |word: &str, lit: bool, chosen: bool| {
             div()
                 .flex()
                 .flex_row()
@@ -9328,13 +9329,14 @@ impl Workspace {
                 } else {
                     txt.alpha(0.04)
                 })
-                .text_size(px(10.))
+                .text_size(sk.text_px(10.))
                 .text_color(if lit { txt } else { txt.alpha(0.62) })
                 .cursor_pointer()
                 .hover(move |st| st.bg(acc.alpha(0.12)))
+                .when(sk.is_paper(), |d| sk.paper_option(d, lit))
                 .child(word.to_string())
         };
-        let row = move |name: &str, chips: gpui::Div, chosen: bool| {
+        let row = |name: &str, chips: gpui::Div, chosen: bool| {
             div()
                 .flex()
                 .flex_row()
@@ -9344,7 +9346,7 @@ impl Workspace {
                     div()
                         .w(px(44.))
                         .flex_none()
-                        .text_size(px(9.))
+                        .text_size(sk.text_px(9.))
                         .text_color(txt.alpha(0.45))
                         .child(name.to_string()),
                 )
@@ -9353,7 +9355,7 @@ impl Workspace {
                 .child(
                     div()
                         .flex_none()
-                        .text_size(px(8.5))
+                        .text_size(sk.text_px(8.5))
                         .text_color(if chosen {
                             acc.alpha(0.85)
                         } else {
@@ -9441,13 +9443,13 @@ impl Workspace {
                     .cursor_pointer()
                     .child(
                         div()
-                            .text_size(px(8.))
+                            .text_size(sk.text_px(8.))
                             .text_color(th.complement.alpha(0.75))
                             .child(if open { "\u{25be}" } else { "\u{25b8}" }),
                     )
                     .child(
                         div()
-                            .text_size(px(10.))
+                            .text_size(sk.text_px(10.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.complement)
                             .child("LAUNCH AGENT CONFIG"),
@@ -9470,7 +9472,7 @@ impl Workspace {
                     .when(harness == launcher::Harness::Local, |d| {
                         d.child(
                             div()
-                                .text_size(px(10.))
+                                .text_size(sk.text_px(10.))
                                 .child("The local runner uses local-agent.toml"),
                         )
                     })
@@ -9485,6 +9487,7 @@ impl Workspace {
     /// rounded up on this side. Where a vendor cannot answer, its own words go in
     /// the card (`usageStatusText`) with its own remedy under them.
     fn render_usage_body(&self, th: &theme::Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let sk = skin::skin(cx, 1.);
         // FIRST, and before the early return below. The defaults are a fact
         // about this machine, not about whether a collector has ever managed to
         // write a usage record — a box whose whole content vanishes on the
@@ -9514,13 +9517,13 @@ impl Workspace {
             return body
                 .child(
                     div()
-                        .text_size(px(10.5))
+                        .text_size(sk.text_px(10.5))
                         .text_color(hsla(0.09, 0.8, 0.62, 1.))
                         .child(msg),
                 )
                 .child(
                     div()
-                        .text_size(px(9.5))
+                        .text_size(sk.text_px(9.5))
                         .text_color(th.text.alpha(0.65))
                         .child(
                             "One JSON record per subscription, written by a collector that knows \
@@ -9531,7 +9534,7 @@ impl Workspace {
                 )
                 .child(
                     div()
-                        .text_size(px(8.5))
+                        .text_size(sk.text_px(8.5))
                         .text_color(th.text.alpha(0.42))
                         .child(format!("looked in {looked}")),
                 );
@@ -9544,13 +9547,15 @@ impl Workspace {
         // slot reads the same gauge and a second set of thresholds beside this
         // one is how two surfaces start disagreeing about what 87% looks like.
         let track = th.text.alpha(0.10);
-        let meter = move |frac: f32, col: gpui::Hsla, h: f32| {
+        let meter = |frac: f32, col: gpui::Hsla, h: f32| {
             let f = frac.clamp(0., 1.);
             div()
+                .relative()
                 .w_full()
                 .h(px(h))
                 .rounded_full()
                 .bg(track)
+                .when(sk.is_paper(), |d| d.rounded_none().children(sk.grain()))
                 .overflow_hidden()
                 .child(
                     div()
@@ -9560,7 +9565,10 @@ impl Workspace {
                         // is the whole reason to look at the row.
                         .w(gpui::relative(if f > 0. { f.max(0.02) } else { 0. }))
                         .rounded_full()
-                        .bg(col),
+                        .bg(col)
+                        .when(sk.is_paper(), |d| {
+                            d.relative().rounded_none().children(sk.grain())
+                        }),
                 )
         };
 
@@ -9586,10 +9594,11 @@ impl Workspace {
                     .border_1()
                     .border_color(if on { acc.alpha(0.85) } else { txt.alpha(0.16) })
                     .bg(if on { acc.alpha(0.16) } else { txt.alpha(0.04) })
-                    .text_size(px(10.))
+                    .text_size(sk.text_px(10.))
                     .text_color(if on { txt } else { txt.alpha(0.62) })
                     .cursor_pointer()
                     .hover(move |st| st.bg(acc.alpha(0.12)))
+                    .when(sk.is_paper(), |d| sk.paper_option(d, on))
                     .child(div().w(px(5.)).h(px(5.)).rounded_full().bg(dot))
                     .child(
                         div()
@@ -9599,7 +9608,7 @@ impl Workspace {
                     .when(!r.tier_label.is_empty(), |d| {
                         d.child(
                             div()
-                                .text_size(px(8.5))
+                                .text_size(sk.text_px(8.5))
                                 .text_color(txt.alpha(0.5))
                                 .child(r.tier_label.clone()),
                         )
@@ -9630,14 +9639,14 @@ impl Workspace {
                 .bg(hsla(0.09, 0.8, 0.6, 0.08))
                 .child(
                     div()
-                        .text_size(px(10.))
+                        .text_size(sk.text_px(10.))
                         .text_color(hsla(0.09, 0.85, 0.66, 1.))
                         .child(rec.status_text.clone()),
                 );
             if !rec.auth_help.is_empty() {
                 card = card.child(
                     div()
-                        .text_size(px(9.))
+                        .text_size(sk.text_px(9.))
                         .text_color(th.text.alpha(0.6))
                         .child(rec.auth_help.clone()),
                 );
@@ -9701,7 +9710,7 @@ impl Workspace {
             // band-coloured fill of width `margin` CENTRED in it (this is a
             // margin either side of "now", not a left-to-right progress bar),
             // with the flame riding in the middle of the fill.
-            let margin_bar = move |margin: f32, col: gpui::Hsla, h: f32, flame_px: f32| {
+            let margin_bar = |margin: f32, col: gpui::Hsla, h: f32, flame_px: f32| {
                 div()
                     .relative()
                     .w_full()
@@ -9714,7 +9723,8 @@ impl Workspace {
                             .absolute()
                             .inset_0()
                             .rounded_full()
-                            .bg(th.text.alpha(0.08)),
+                            .bg(th.text.alpha(0.08))
+                            .when(sk.is_paper(), |d| d.rounded_none().children(sk.grain())),
                     )
                     .child(
                         div()
@@ -9722,6 +9732,9 @@ impl Workspace {
                             .h(px(h))
                             .rounded_full()
                             .bg(col.alpha(0.85))
+                            .when(sk.is_paper(), |d| {
+                                d.relative().rounded_none().children(sk.grain())
+                            })
                             .flex()
                             .items_center()
                             .justify_center()
@@ -9751,7 +9764,7 @@ impl Workspace {
                                 .flex_row()
                                 .items_baseline()
                                 .gap_2()
-                                .text_size(px(10.))
+                                .text_size(sk.text_px(10.))
                                 .child(div().text_color(th.text.alpha(0.8)).child(l.label.clone()))
                                 .child(
                                     div()
@@ -9762,7 +9775,7 @@ impl Workspace {
                                 .child(div().flex_1().min_w(px(0.)))
                                 .child(
                                     div()
-                                        .text_size(px(9.))
+                                        .text_size(sk.text_px(9.))
                                         .text_color(th.text.alpha(0.5))
                                         .child(resets),
                                 ),
@@ -9788,7 +9801,7 @@ impl Workspace {
                                 .flex_col()
                                 .child(
                                     div()
-                                        .text_size(px(10.5))
+                                        .text_size(sk.text_px(10.5))
                                         .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                         .text_color(th.text.alpha(0.85))
                                         .child("TOKEN USAGE PACE"),
@@ -9801,14 +9814,14 @@ impl Workspace {
                                         .gap_2()
                                         .child(
                                             div()
-                                                .text_size(px(9.))
+                                                .text_size(sk.text_px(9.))
                                                 .font_weight(gpui::FontWeight::BOLD)
                                                 .text_color(band)
                                                 .child(p.verdict.label()),
                                         )
                                         .child(
                                             div()
-                                                .text_size(px(8.5))
+                                                .text_size(sk.text_px(8.5))
                                                 .text_color(th.text.alpha(0.6))
                                                 .child(
                                                     if matches!(
@@ -9851,13 +9864,13 @@ impl Workspace {
                             .child(
                                 div()
                                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                                    .text_size(px(16.))
+                                    .text_size(sk.text_px(16.))
                                     .text_color(col)
                                     .child(format!("{} {:.2}", b.currency, b.remaining)),
                             )
                             .child(
                                 div()
-                                    .text_size(px(9.))
+                                    .text_size(sk.text_px(9.))
                                     .text_color(th.text.alpha(0.55))
                                     .child(if b.estimated {
                                         "left (estimated)"
@@ -9868,7 +9881,7 @@ impl Workspace {
                             .child(div().flex_1().min_w(px(0.)))
                             .child(
                                 div()
-                                    .text_size(px(9.))
+                                    .text_size(sk.text_px(9.))
                                     .text_color(th.text.alpha(0.5))
                                     .child(format!(
                                         "{:.2} spent of {:.2} funded",
@@ -9895,13 +9908,13 @@ impl Workspace {
                 .cursor_pointer()
                 .child(
                     div()
-                        .text_size(px(8.))
+                        .text_size(sk.text_px(8.))
                         .text_color(th.text.alpha(0.55))
                         .child(if history_open { "\u{25be}" } else { "\u{25b8}" }),
                 )
                 .child(
                     div()
-                        .text_size(px(9.))
+                        .text_size(sk.text_px(9.))
                         .text_color(th.text.alpha(0.55))
                         .child("today, the week, by model"),
                 )
@@ -9937,11 +9950,16 @@ impl Workspace {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(9.))
+                        .text_size(sk.text_px(9.))
                         .text_color(th.text.alpha(0.5))
                         .child("TODAY"),
                 )
-                .child(div().text_size(px(10.5)).text_color(th.text).child(today)),
+                .child(
+                    div()
+                        .text_size(sk.text_px(10.5))
+                        .text_color(th.text)
+                        .child(today),
+                ),
         );
 
         // ---- the week behind it ---------------------------------------------
@@ -9963,7 +9981,7 @@ impl Workspace {
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        .text_size(px(9.))
+                        .text_size(sk.text_px(9.))
                         .child(
                             div()
                                 .w(px(28.))
@@ -9989,7 +10007,7 @@ impl Workspace {
                     .gap_1()
                     .child(
                         div()
-                            .text_size(px(9.))
+                            .text_size(sk.text_px(9.))
                             .text_color(th.text.alpha(0.5))
                             .child("LAST 7 DAYS"),
                     )
@@ -10009,7 +10027,7 @@ impl Workspace {
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        .text_size(px(9.))
+                        .text_size(sk.text_px(9.))
                         .child(
                             div()
                                 .w(px(132.))
@@ -10046,14 +10064,14 @@ impl Workspace {
                     .gap_1()
                     .child(
                         div()
-                            .text_size(px(9.))
+                            .text_size(sk.text_px(9.))
                             .text_color(th.text.alpha(0.5))
                             .child("BY MODEL"),
                     )
                     .child(list)
                     .child(
                         div()
-                            .text_size(px(8.5))
+                            .text_size(sk.text_px(8.5))
                             .text_color(th.text.alpha(0.45))
                             .child(format!(
                                 "in {}  \u{00b7}  out {}  \u{00b7}  cache read {}  \u{00b7}  cache write {}",
@@ -10089,7 +10107,7 @@ impl Workspace {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(8.5))
+                        .text_size(sk.text_px(8.5))
                         .text_color(th.text.alpha(0.45))
                         .child(prov),
                 )
@@ -10101,10 +10119,11 @@ impl Workspace {
                         .rounded_sm()
                         .border_1()
                         .border_color(acc.alpha(if refreshing { 0.3 } else { 0.6 }))
-                        .text_size(px(9.))
+                        .text_size(sk.text_px(9.))
                         .text_color(acc.alpha(if refreshing { 0.5 } else { 1. }))
                         .cursor_pointer()
                         .hover(move |st| st.bg(acc.alpha(0.15)))
+                        .when(sk.is_paper(), |d| sk.paper_control(d, false))
                         .child(if refreshing {
                             "\u{21bb} collecting\u{2026}"
                         } else {
@@ -10123,7 +10142,7 @@ impl Workspace {
         if let Some(err) = &self.usage_status {
             body = body.child(
                 div()
-                    .text_size(px(9.))
+                    .text_size(sk.text_px(9.))
                     .text_color(hsla(0.09, 0.8, 0.62, 1.))
                     .child(err.clone()),
             );
@@ -10150,6 +10169,7 @@ impl Workspace {
         vw: f32,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Div> {
+        let sk = skin::skin(cx, 1.);
         if !self.savings_menu {
             return None;
         }
@@ -10179,7 +10199,7 @@ impl Workspace {
                     .border_1()
                     .border_color(green.alpha(0.5))
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                    .text_size(px(13.))
+                    .text_size(sk.text_px(13.))
                     .child(div().text_color(white).child("\u{003c}"))
                     .child(div().text_color(green).child("/"))
                     .child(div().text_color(white).child("\u{003e}")),
@@ -10187,20 +10207,20 @@ impl Workspace {
             .child(
                 div()
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                    .text_size(px(15.))
+                    .text_size(sk.text_px(15.))
                     .text_color(white)
                     .child("Lean"),
             )
             .child(
                 div()
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                    .text_size(px(15.))
+                    .text_size(sk.text_px(15.))
                     .text_color(green)
                     .child("CTX"),
             )
             .child(
                 div()
-                    .text_size(px(10.))
+                    .text_size(sk.text_px(10.))
                     .text_color(white.alpha(0.5))
                     .child("token savings"),
             );
@@ -10218,27 +10238,27 @@ impl Workspace {
                     .border_1()
                     .border_color(th.accent.alpha(0.55))
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                    .text_size(px(13.))
+                    .text_size(sk.text_px(13.))
                     .text_color(th.accent)
                     .child("\u{03a3}"),
             )
             .child(
                 div()
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                    .text_size(px(15.))
+                    .text_size(sk.text_px(15.))
                     .text_color(th.text)
                     .child("Subscription"),
             )
             .child(
                 div()
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                    .text_size(px(15.))
+                    .text_size(sk.text_px(15.))
                     .text_color(th.accent)
                     .child("usage"),
             )
             .child(
                 div()
-                    .text_size(px(10.))
+                    .text_size(sk.text_px(10.))
                     .text_color(th.text.alpha(0.5))
                     .child("what each plan has left"),
             );
@@ -10255,11 +10275,12 @@ impl Workspace {
                 .border_1()
                 .border_color(if on { acc.alpha(0.85) } else { txt.alpha(0.16) })
                 .bg(if on { acc.alpha(0.16) } else { txt.alpha(0.03) })
-                .text_size(px(10.))
+                .text_size(sk.text_px(10.))
                 .when(on, |d| d.font_weight(gpui::FontWeight::EXTRA_BOLD))
                 .text_color(if on { txt } else { txt.alpha(0.6) })
                 .cursor_pointer()
                 .hover(move |st| st.bg(acc.alpha(0.12)))
+                .when(sk.is_paper(), |d| sk.paper_option(d, on))
                 .child(label)
                 .on_mouse_down(
                     MouseButton::Left,
@@ -10293,7 +10314,6 @@ impl Workspace {
         let bar_chip = {
             let (acc, txt) = (th.accent, th.text);
             div()
-                .id("slot-remaining-toggle")
                 .px_2p5()
                 .py_0p5()
                 .rounded_full()
@@ -10308,10 +10328,12 @@ impl Workspace {
                 } else {
                     txt.alpha(0.03)
                 })
-                .text_size(px(10.))
+                .text_size(sk.text_px(10.))
                 .text_color(if left_mode { txt } else { txt.alpha(0.6) })
                 .cursor_pointer()
                 .hover(move |st| st.bg(acc.alpha(0.12)))
+                .when(sk.is_paper(), |d| sk.paper_option(d, left_mode))
+                .id("slot-remaining-toggle")
                 .child(if left_mode {
                     "bar · what's left"
                 } else {
@@ -10380,13 +10402,13 @@ impl Workspace {
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                            .text_size(px(20.))
+                            .text_size(sk.text_px(20.))
                             .text_color(col)
                             .child(big),
                     )
                     .child(
                         div()
-                            .text_size(px(9.))
+                            .text_size(sk.text_px(9.))
                             .text_color(th.text.alpha(0.5))
                             .child(sub.to_string()),
                     )
@@ -10412,7 +10434,7 @@ impl Workspace {
                             .rounded_full()
                             .border_1()
                             .border_color(green.alpha(0.5))
-                            .text_size(px(10.))
+                            .text_size(sk.text_px(10.))
                             .text_color(green)
                             .child(format!("\u{2605} {}  \u{00b7}  {}", v.score, v.level)),
                     ),
@@ -10420,7 +10442,7 @@ impl Workspace {
             // ---- "across N agents" + per-agent estimate list ----
             body = body.child(
                 div()
-                    .text_size(px(10.))
+                    .text_size(sk.text_px(10.))
                     .text_color(th.text.alpha(0.75))
                     .child(format!(
                         "across {} agents (per-agent \u{2248} estimated):",
@@ -10442,7 +10464,7 @@ impl Workspace {
                         .rounded_sm()
                         .border_1()
                         .border_color(th.text.alpha(0.10))
-                        .text_size(px(9.5))
+                        .text_size(sk.text_px(9.5))
                         .child(
                             div()
                                 .w(px(150.))
@@ -10476,7 +10498,7 @@ impl Workspace {
                             div()
                                 .w(px(110.))
                                 .flex_none()
-                                .text_size(px(8.))
+                                .text_size(sk.text_px(8.))
                                 .text_color(th.text.alpha(0.4))
                                 .child(seen),
                         ),
@@ -10491,7 +10513,7 @@ impl Workspace {
             );
             // ---- top files by compression ----
             if !v.top_files.is_empty() {
-                let mut flist = div().flex().flex_col().gap_0p5().text_size(px(9.));
+                let mut flist = div().flex().flex_col().gap_0p5().text_size(sk.text_px(9.));
                 for f in v.top_files.iter().take(5) {
                     let short: String = f
                         .path
@@ -10535,7 +10557,7 @@ impl Workspace {
                         .gap_1()
                         .child(
                             div()
-                                .text_size(px(9.5))
+                                .text_size(sk.text_px(9.5))
                                 .text_color(th.text.alpha(0.55))
                                 .child("top files by compression:"),
                         )
@@ -10545,14 +10567,14 @@ impl Workspace {
             // ---- honesty caveat ----
             body = body.child(
                 div()
-                    .text_size(px(8.))
+                    .text_size(sk.text_px(8.))
                     .text_color(th.text.alpha(0.45))
                     .child(v.note.clone()),
             );
         } else if let Some(err) = &self.savings_status {
             body = body.child(
                 div()
-                    .text_size(px(10.5))
+                    .text_size(sk.text_px(10.5))
                     .text_color(hsla(0., 0.7, 0.62, 1.))
                     .child(err.clone()),
             );
@@ -10566,7 +10588,7 @@ impl Workspace {
             // was unreachable-by-construction it shipped, and said nothing.
             body = body.child(
                 div()
-                    .text_size(px(10.5))
+                    .text_size(sk.text_px(10.5))
                     .text_color(th.text.alpha(0.6))
                     .child("no rollup read yet \u{2014} not zero saved"),
             );
@@ -10586,6 +10608,7 @@ impl Workspace {
         body: gpui::Div,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        let sk = skin::skin(cx, 1.);
         // 840 is the width the card WANTS, not the width it takes. Fixed, it
         // sailed straight out of a tiled TD window — a tile here is ~380–530px —
         // and the numbers ran off BOTH edges, because the card was centred and
@@ -10603,6 +10626,7 @@ impl Workspace {
         // half-working.
         let w = (vw - 28.).clamp(240., 840.);
         let panel = div()
+            .relative()
             .w(px(w))
             .max_h(px(600.))
             .overflow_hidden()
@@ -10615,8 +10639,13 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_3()
-            .text_size(px(10.))
+            .text_size(sk.text_px(10.))
             .text_color(th.text)
+            .map(|d| sk.finish(d))
+            .when(sk.is_paper(), |d| {
+                d.font_family(sk.font_family.clone())
+                    .line_height(gpui::relative(1.15))
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
@@ -10630,7 +10659,7 @@ impl Workspace {
             )
             .child(
                 div()
-                    .text_size(px(8.5))
+                    .text_size(sk.text_px(8.5))
                     .text_color(th.accent.alpha(0.8))
                     .child("Escape: back, then close · click outside to close"),
             );
@@ -26038,7 +26067,7 @@ fn theme_icon_btn(
         .border_1()
         .cursor_pointer();
     if sk.is_paper() {
-        sk.paper_control(b, false).child(
+        sk.paper_option(b, false).child(
             div()
                 .size_full()
                 .relative()
@@ -26101,7 +26130,7 @@ fn color_mode_btn(
         .border_1()
         .cursor_pointer();
     if sk.is_paper() {
-        sk.paper_control(b, false).child(
+        sk.paper_option(b, false).child(
             div()
                 .size_full()
                 .relative()
@@ -26205,7 +26234,7 @@ fn note_paper_btn(
         .border_1()
         .cursor_pointer();
     if sk.is_paper() {
-        sk.paper_control(b, false)
+        sk.paper_option(b, false)
             .child(inner.justify_center().line_height(gpui::relative(1.15)))
     } else if active {
         b.bg(linear_gradient(

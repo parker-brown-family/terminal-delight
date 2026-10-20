@@ -748,6 +748,16 @@ impl Skin {
 
     /// A paper control's backing is laid down before its caller adds text.
     pub fn paper_control(&self, d: Div, active: bool) -> Div {
+        self.paper_option(d, false).child(crate::paper::backing(
+            self.ink.btn_face,
+            self.ink.select,
+            active,
+        ))
+    }
+
+    /// Choices are writing on the sheet, marked once rather than laid over a
+    /// second filled tile. Action buttons retain their raised cotton backing.
+    pub fn paper_option(&self, d: Div, active: bool) -> Div {
         d.relative()
             .bg(hsla(0., 0., 0., 0.))
             .border_color(hsla(0., 0., 0., 0.))
@@ -755,11 +765,7 @@ impl Skin {
             .text_size(self.text_px(11. * self.scale))
             .line_height(gpui::relative(1.15))
             .text_color(self.ink.ink)
-            .child(crate::paper::backing(
-                self.ink.btn_face,
-                self.ink.select,
-                active,
-            ))
+            .children(active.then(|| crate::paper::selection(self.ink.select)))
     }
     /// A caption owns its marker: icons above it must not move the mark away
     /// from the handwriting. A relative line height prevents inherited leading

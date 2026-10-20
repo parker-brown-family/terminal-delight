@@ -1,12 +1,12 @@
 {
   "passed": true,
   "desktop": {
-    "figures": 9,
+    "figures": 11,
     "asks": 2,
     "width": 953,
     "viewport": 968,
     "notesFile": "2026-10-20-chalk-marker-and-depth.html",
-    "targets": 27
+    "targets": 31
   },
   "mobile": {
     "width": 390,

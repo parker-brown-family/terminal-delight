@@ -12,7 +12,7 @@ The additional reference clarifies the material target: “the amount of DEPTH f
 
 ## Shape
 
-Keep one palette-following Chalk skin. Centre each marker on its caption, preserving the uneven dry score and overhang. Compact relative line heights fit the enlarged handwriting. Card words sit at the centre; small glyph stamps occupy the upper corner. Use the palette’s complementary colour for the selection pigment. Give the existing cotton outline a visible compressed edge, a soft contact shadow and stronger fibre relief; the UI keeps its current hit targets and terminal shaping.
+Keep one palette-following Chalk skin. Centre each marker on its caption, preserving the uneven overhang. The latest review replaces the earlier dry score with one broad pigment stroke and removes solid selector tiles. Compact relative line heights fit the enlarged handwriting. Card words sit at the centre; small glyph stamps occupy the upper corner. Blend the palette’s complementary role forty percent toward Human for selection pigment. Give the existing cotton outline a visible compressed edge, a soft contact shadow and stronger fibre relief; the UI keeps its current hit targets and terminal shaping.
 
 ## Acceptance and review
 
@@ -43,3 +43,23 @@ Keep one palette-following Chalk skin. Centre each marker on its caption, preser
 12. Installed `td-chalk-marker-f430d05` under the shared deployment lock after rechecking the source and binary hashes. The suffix is a binary hash. The current GUI and session host were left running. The update takes effect on reopening TD; Chalk is already saved as the chosen skin.
 
 **Turned out to be: 4/10.** The rendering changes remain within the shared material and its caption layout. Native review was necessary to distinguish centring a two-line group from centring the word itself. Final tactile judgement remains Parker’s next review, with both the source photograph and native result available to annotate.
+
+## Latest review — one stroke, including Subscriptions
+
+“Subscriptions doen't get the surface texture treatment!” The modal uses its own shell, so earlier palette and queue coverage did not reach it. The supplied original is feedback-v03/14.png.
+
+“NOOOOO ok, scrape the 2 tone... JUST the highligher stroke... JUST liek the agent state rail”. The rejected selector and approved counter are feedback-v03/15.png and 16.png. Remove the second dry core and contrasting flecks; draw one broad translucent mark, through and beyond the writing. Retain the cotton panel material and caption centring. Selector options are writing on that sheet, with no solid backing tile; action buttons retain their raised stock.
+
+- [x] Replace the layered selection with one pigment pass.
+- [x] Apply the material to the shared Subscriptions/Savings shell, its chips, launch configuration and meters.
+- [x] Capture Subscriptions in dark and pale palettes with fictional data.
+- [x] Rebuild, verify and update the same review before merging.
+
+13. Main gained the session-save watchdog during review. Merged it into this branch before the new build, preserving the concurrent persistence correction. The older third-pass binary is superseded by this review; it is not the final selection treatment.
+
+14. A native trial removed the thin core but still left two surfaces: the filled option tile and the marker. Removed that tile from selector options as well. `paper_option` supplies shared handwriting and one optional marker; `paper_control` reuses that style and adds the raised stock for action buttons. Subscriptions choices use the same option vocabulary. This interpretation follows “JUST” literally; an optional clarification was sent while the independent Subscriptions review continued.
+15. The shared Subscriptions/Savings frame now passes through the existing material finisher before content is added. Provider/view/default choices, refresh, limit tracks and the pace track/fill respect Chalk. Ordinary skins keep their prior styles and sizes. Fictional records are captured in both dark and pale palettes; their unset reset instants deliberately leave pace absent in the staged image.
+
+16. The final frozen source passes 2,499 Rio tests and 2,452 Alacritty tests, nine ignored per core, strict Clippy, formatting and release build. The native run covers nine final scenes plus the earlier comparison. Installed `td-chalk-single-2fc2d2d` under the shared deployment lock, replacing the sibling’s integrated save-watchdog/Chalk build only after checking that the same corrections are in this source. The launcher update preserves the live GUI and host; it activates on the next GUI launch. The binary hash, source hashes and running/installed distinction are retained in the receipts.
+
+17. The updated self-contained review passes browser QA with eleven figures, two choices, native capture zoom and annotation add/export/save/clear at desktop and 390 px widths. The download check now clears its own previous downloads first, so an older saved page cannot satisfy the new check. The delivered file carries no test notes; source feedback remains alongside it. The review opens the final selector first and folds the earlier lower-edge trial beneath it.

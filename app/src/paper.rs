@@ -98,13 +98,13 @@ fn polygon(bounds: Bounds<Pixels>, points: &[(f32, f32)], ink: Hsla, window: &mu
     }
 }
 
-/// A translucent marker across the middle, with an uneven dry chalk score.
+/// One translucent highlighter stroke through the writing.
 /// The overhang is visual only; hit targets and text layout remain unchanged.
 fn stroke(bounds: Bounds<Pixels>, ink: Hsla, window: &mut Window) {
     let w = f32::from(bounds.size.width);
     let h = f32::from(bounds.size.height);
     let mid = h * 0.5;
-    let half = (h * 0.23).clamp(2., 7.);
+    let half = (h * 0.60).clamp(3., 14.);
     polygon(
         bounds,
         &[
@@ -115,33 +115,9 @@ fn stroke(bounds: Bounds<Pixels>, ink: Hsla, window: &mut Window) {
             (w * 0.64, mid + half + 0.8),
             (-3., mid + half - 0.6),
         ],
-        ink.alpha(0.30),
+        ink.alpha(0.22),
         window,
     );
-    polygon(
-        bounds,
-        &[
-            (-3., mid + 0.6),
-            (w * 0.29, mid - 1.1),
-            (w + 2., mid - 0.3),
-            (w + 3., mid + 1.0),
-            (w * 0.64, mid + 1.8),
-            (-2., mid + 1.5),
-        ],
-        ink.alpha(0.50),
-        window,
-    );
-    for i in 0..14 {
-        let x = -2. + (w + 4.) * i as f32 / 14.;
-        let d = (hash(i) % 100) as f32 / 100.;
-        window.paint_quad(fill(
-            Bounds::new(
-                bounds.origin + point(px(x), px(mid - half + d * 2.)),
-                size(px(1.7), px(0.6)),
-            ),
-            ink.alpha(0.60),
-        ));
-    }
 }
 
 /// Soft contact shadow plus a compressed cotton edge, never a luminous frame.

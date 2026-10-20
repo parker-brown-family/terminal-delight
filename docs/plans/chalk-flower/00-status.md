@@ -15,7 +15,7 @@ Chalk is one skin over the chosen TD or desktop palette. It supplies paper, chal
 - [x] Add compressed stock edges, contact shadows and fibre relief to controls and regions.
 - [x] Check selection colour remains distinct from live state.
 - [x] Verify the frozen build in the current saved theme, pale stock, queue, paint and CRT warp.
-- [x] Pass regressions, merge, install for next launch and deliver the annotatable review.
+- [ ] Merge the revised pass and deliver the updated annotatable review.
 
 ## Second pass
 
@@ -37,3 +37,9 @@ The previous GUI replacement guard rolled back on placement mismatch while retai
 **Turned out to be: 6/10.** Native checks exposed position overrides, width assumptions and texture joins that source tests could not judge. The second pass is implemented and installed for the next launch; Parker’s next visual review remains open.
 
 **Third-pass result: 4/10.** Marker and word centring, compressed stock edges and contact shadows are implemented, natively captured and installed for the next launch. The next visual judgement remains open.
+
+### Latest review reopened
+
+The selection must be a single broad highlighter stroke. Subscriptions was missed by the material pass. Continuing the same approved iteration and pull request; see `03-marker-and-depth.md` and feedback-v03/14–16. Earlier “installed” and checked acceptance entries describe the superseded trial, not acceptance of these latest changes.
+
+The revised source passes both terminal-core suites, strict Clippy, formatting and release build. The single-stroke/no-tile selector and Subscriptions material have nine final native captures. Installed build `td-chalk-single-2fc2d2d` activates on the next GUI launch; the running GUI remains the earlier integrated save-watchdog/Chalk build. Browser review and pull-request closure are the remaining checks for this revision.

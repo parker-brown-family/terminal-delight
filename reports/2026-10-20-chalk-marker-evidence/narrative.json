@@ -1,6 +1,6 @@
 {
-  "file": "reports/2026-10-20-chalk-marker-and-depth.html",
-  "subject": "Native Chalk revision after the centring and tactile-depth feedback",
+  "file": "/home/parker/Work/td-chalk-flower/reports/2026-10-20-chalk-marker-and-depth.html",
+  "subject": "Native Chalk revision with single-stroke selectors and the missing Subscriptions paper surface",
   "reader": "Parker, who supplied the screenshots and cotton-paper reference and is reviewing the running material",
   "model": "jev-latest",
   "backend": "https://openrouter.ai/api",
@@ -11,19 +11,19 @@
     },
     "headings_tell_the_story": {
       "type": "noul",
-      "noul": 0.65
+      "noul": 0.73
     },
     "arc": {
       "type": "choice",
       "choice": "journey",
       "probabilities": {
-        "journey": 0.49,
+        "journey": 0.39,
         "catalogue": 0.08,
-        "argument": 0.15,
-        "report": 0.26,
+        "argument": 0.24,
+        "report": 0.27,
         "none_of_the_above": 0.02
       },
-      "confidence": 0.36
+      "confidence": 0.24
     }
   },
   "document_failure": null,
@@ -31,11 +31,11 @@
     {
       "index": 1,
       "heading": "Chalk \u00b7 marker and depth",
-      "text": "The selection stroke now crosses the middle of the writing. Labels fit inside their cards, and the paper has a compressed edge and a soft cast shadow. This review follows your latest screenshots and cotton-stock reference.",
+      "text": "The selection stroke now crosses the middle of the writing. Labels fit their controls, and the paper has a compressed edge and a soft cast shadow. This review includes your latest correction: one highlighter stroke, plus the missing Subscriptions surface.",
       "answers": {
         "unexplained": {
           "type": "score",
-          "score": 1.82,
+          "score": 1.9,
           "legend": {
             "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
             "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
@@ -43,47 +43,47 @@
             "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
           },
           "probabilities": {
-            "0": 0.11,
+            "0": 0.06,
             "1": 0.26,
-            "2": 0.34,
+            "2": 0.39,
             "3": 0.29
           },
-          "confidence": 0.23
+          "confidence": 0.33
         },
         "stands_on_identifier": {
           "type": "noul",
-          "noul": 0.04
+          "noul": 0.16
         },
         "raises_a_question": {
           "type": "noul",
-          "noul": 0.12
+          "noul": 0.49
         },
         "role": {
           "type": "choice",
           "choice": "setup",
           "probabilities": {
-            "setup": 0.53,
-            "complication": 0.01,
-            "turn": 0.05,
-            "consequence": 0.13,
-            "resolution": 0.07,
-            "aside": 0.11,
-            "none_of_the_above": 0.1
+            "setup": 0.42,
+            "complication": 0.07,
+            "turn": 0.12,
+            "consequence": 0.08,
+            "resolution": 0.12,
+            "aside": 0.08,
+            "none_of_the_above": 0.11
           },
-          "confidence": 0.45
+          "confidence": 0.32
         }
       },
-      "latency_ms": 371.00372300483286,
+      "latency_ms": 460.38263698574156,
       "failure": null
     },
     {
       "index": 2,
       "heading": "Centre the writing and its mark",
-      "text": "Your review found two linked problems: the marker underlined the word, and the larger handwriting overflowed the old tiles. Compact line spacing now fits the handwriting. The words sit in the middle of the cards, with small glyph stamps above them. Each caption carries its own irregular marker, so a taller card cannot pull the stroke away from the word. 01 \u00b7 After \u00b7 the same saved theme \nHacker, tactical and agentic fit. The marker crosses the caption; the switches use the same centre line. Compare with the previous build 02 \u00b7 Before \u00b7 the saved Last Horizon theme \nThe previous build puts the mark at the lower edge and leaves too little room beneath the captions. 03 \u00b7 Tree and pane tabs \nThe selected tree row and TERM label use the same uneven centre stroke, with visual overhang beyond their hit targets.",
+      "text": "Your review found two linked problems: the marker underlined the word, and the larger handwriting overflowed the old tiles. Compact line spacing now fits the handwriting. The words sit in the middle of their hit targets, with small glyph stamps above them. The solid selector tiles are removed. Each caption carries one broad, translucent highlighter stroke. The rejected second line and flecks are removed; the mark extends beyond the writing like the agent-state counter. 01 \u00b7 After \u00b7 the same saved theme \nHacker, tactical and agentic fit. Selector options have no filled tile behind them; only the selected word gets a broad highlighter stroke. Previous lower-edge trial 02 \u00b7 Before \u00b7 the saved Last Horizon theme \nThe previous build puts the mark at the lower edge and leaves too little room beneath the captions. 03 \u00b7 Tree and pane tabs \nThe selected tree row and TERM label use the same uneven centre stroke, with visual overhang beyond their hit targets.",
       "answers": {
         "unexplained": {
           "type": "score",
-          "score": 1.78,
+          "score": 1.84,
           "legend": {
             "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
             "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
@@ -92,19 +92,19 @@
           },
           "probabilities": {
             "0": 0.02,
-            "1": 0.29,
-            "2": 0.57,
-            "3": 0.12
+            "1": 0.25,
+            "2": 0.6,
+            "3": 0.13
           },
-          "confidence": 0.55
+          "confidence": 0.58
         },
         "stands_on_identifier": {
           "type": "noul",
-          "noul": 0.27
+          "noul": 0.34
         },
         "seam": {
           "type": "score",
-          "score": 1.27,
+          "score": 1.07,
           "legend": {
             "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
             "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
@@ -112,33 +112,33 @@
             "3": "The opening reads as the first paragraph of a separate document about a different subject."
           },
           "probabilities": {
-            "0": 0.11,
-            "1": 0.54,
-            "2": 0.32,
-            "3": 0.03
+            "0": 0.17,
+            "1": 0.6,
+            "2": 0.22,
+            "3": 0.01
           },
-          "confidence": 0.51
+          "confidence": 0.59
         },
         "raises_a_question": {
           "type": "noul",
-          "noul": 0.72
+          "noul": 0.85
         },
         "role": {
           "type": "choice",
           "choice": "turn",
           "probabilities": {
             "setup": 0.01,
-            "complication": 0.14,
-            "turn": 0.59,
-            "consequence": 0.15,
-            "resolution": 0.08,
+            "complication": 0.21,
+            "turn": 0.46,
+            "consequence": 0.17,
+            "resolution": 0.12,
             "aside": 0.03,
             "none_of_the_above": 0
           },
-          "confidence": 0.52
+          "confidence": 0.37
         }
       },
-      "latency_ms": 362.5606650020927,
+      "latency_ms": 422.7239090250805,
       "failure": null
     },
     {
@@ -148,7 +148,7 @@
       "answers": {
         "unexplained": {
           "type": "score",
-          "score": 1.26,
+          "score": 1.21,
           "legend": {
             "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
             "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
@@ -156,20 +156,20 @@
             "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
           },
           "probabilities": {
-            "0": 0.14,
-            "1": 0.49,
-            "2": 0.35,
-            "3": 0.02
+            "0": 0.17,
+            "1": 0.48,
+            "2": 0.32,
+            "3": 0.03
           },
-          "confidence": 0.47
+          "confidence": 0.45
         },
         "stands_on_identifier": {
           "type": "noul",
-          "noul": 0.15
+          "noul": 0.13
         },
         "seam": {
           "type": "score",
-          "score": 1.06,
+          "score": 1.04,
           "legend": {
             "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
             "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
@@ -177,43 +177,43 @@
             "3": "The opening reads as the first paragraph of a separate document about a different subject."
           },
           "probabilities": {
-            "0": 0.03,
-            "1": 0.89,
+            "0": 0.04,
+            "1": 0.88,
             "2": 0.08,
             "3": 0
           },
-          "confidence": 0.89
+          "confidence": 0.88
         },
         "raises_a_question": {
           "type": "noul",
-          "noul": 0.1
+          "noul": 0.14
         },
         "role": {
           "type": "choice",
           "choice": "turn",
           "probabilities": {
-            "setup": 0.01,
-            "complication": 0.02,
-            "turn": 0.56,
-            "consequence": 0.1,
-            "resolution": 0.25,
-            "aside": 0.05,
-            "none_of_the_above": 0.01
+            "setup": 0.02,
+            "complication": 0.03,
+            "turn": 0.54,
+            "consequence": 0.08,
+            "resolution": 0.27,
+            "aside": 0.06,
+            "none_of_the_above": 0
           },
-          "confidence": 0.49
+          "confidence": 0.46
         }
       },
-      "latency_ms": 377.8539659688249,
+      "latency_ms": 406.258481903933,
       "failure": null
     },
     {
       "index": 4,
-      "heading": "Carry this into the next review",
-      "text": "The same material still follows the active theme. These final windows check pale terminal stock and the existing CRT warp. Your approved bottom-bar controls and messy marker character remain the reference for the next pass. 08 \u00b7 Pale terminal stock \nThe backing, pane rims and surrounding cabinet share the cotton material. Terminal type stays monospace. 09 \u00b7 Last Horizon \u00b7 CRT warp \nThe terminal stock remains inside its existing warp. The cabinet and its raised paper controls stay separate. \n Marker pigment \nCurrent choice: Complement blended 40% toward Human, drawn as a translucent stroke with a dry uneven score. It remains distinct from the live-state colour in the built-in palettes. \n Paper depth \nCurrent choice: a compressed lower edge, lit fibres and two soft contact-shadow layers. Annotate a capture if the stock should feel thicker, softer or less raised. \nYour numbered screenshots, exact feedback and each corrective step are retained in the third-pass record . Notes on these figures can start the next pass from the same surface. Evidence and source \nNative fixtures: 1576 \u00d7 950 logical pixels on the 1.6\u00d7 landscape display. Current-theme scenes copy the saved Last Horizon palette and display grade; pale scenes use Flexoki Light with a neutral grade. Terminal output and attention cases are staged. WebP storage is lossless, checked pixel-for-pixel against each original native PNG. \nRio: 2,495 passed; Alacritty: 2,448 passed. Each has 9 ignored tests. Strict Clippy, formatting and release build passed. Logs, source hashes and the reusable native recipe live in reports/2026-10-20-chalk-marker-evidence/ . \nThe renderer is in app/src/paper.rs ; caption layout and material integration are in skin.rs , main.rs and paint.rs . The verified build is installed for the next GUI launch. The running GUI and session host were left untouched; reopen TD to load the update. Your Chalk selection is already saved. \n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "heading": "Bring Subscriptions onto the same paper",
+      "text": "Your latest screenshot caught a separate modal shell that still drew the old flat background. Subscriptions and Savings now share the Chalk material: textured stock, a cotton edge and soft contact shadow. The chips, launch configuration and meter fills also follow the material. These two captures use fictional subscription records. 08 \u00b7 Subscriptions \u00b7 dark stock \nThe modal now has the same grain and edge as the cabinet. Provider and view choices have no filled backing; their selected words get one highlighter stroke. 09 \u00b7 Subscriptions \u00b7 pale stock \nThe same shell follows the active theme, including pale paper. The numbers are staged, not this account\u2019s usage.",
       "answers": {
         "unexplained": {
           "type": "score",
-          "score": 1.91,
+          "score": 1.17,
           "legend": {
             "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
             "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
@@ -221,20 +221,20 @@
             "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
           },
           "probabilities": {
-            "0": 0.01,
-            "1": 0.17,
-            "2": 0.71,
-            "3": 0.11
+            "0": 0.15,
+            "1": 0.54,
+            "2": 0.3,
+            "3": 0.01
           },
-          "confidence": 0.7
+          "confidence": 0.53
         },
         "stands_on_identifier": {
           "type": "noul",
-          "noul": 0.4
+          "noul": 0.1
         },
         "seam": {
           "type": "score",
-          "score": 1.05,
+          "score": 1.18,
           "legend": {
             "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
             "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
@@ -242,33 +242,98 @@
             "3": "The opening reads as the first paragraph of a separate document about a different subject."
           },
           "probabilities": {
-            "0": 0.12,
-            "1": 0.71,
-            "2": 0.16,
-            "3": 0.01
+            "0": 0.02,
+            "1": 0.78,
+            "2": 0.2,
+            "3": 0
           },
-          "confidence": 0.7
+          "confidence": 0.78
         },
         "raises_a_question": {
           "type": "noul",
-          "noul": 0.73
+          "noul": 0.05
+        },
+        "role": {
+          "type": "choice",
+          "choice": "complication",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.35000000000000003,
+            "turn": 0.32,
+            "consequence": 0.08,
+            "resolution": 0.22,
+            "aside": 0.03,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.24
+        }
+      },
+      "latency_ms": 453.09945894405246,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "Carry this into the next review",
+      "text": "The same material still follows the active theme. These final windows check pale terminal stock and the existing CRT warp. Your approved bottom-bar controls and messy marker character remain the reference for the next pass. 10 \u00b7 Pale terminal stock \nThe backing, pane rims and surrounding cabinet share the cotton material. Terminal type stays monospace. 11 \u00b7 Last Horizon \u00b7 CRT warp \nThe terminal stock remains inside its existing warp. The cabinet and its raised paper controls stay separate. \n Marker pigment \nCurrent choice: Complement blended 40% toward Human, drawn once as a broad translucent stroke with uneven ends. It remains distinct from the live-state colour in the built-in palettes. \n Paper depth \nCurrent choice: a compressed lower edge, lit fibres and two soft contact-shadow layers. Annotate a capture if the stock should feel thicker, softer or less raised. \nYour numbered screenshots, exact feedback and each corrective step are retained in the third-pass record . Notes on these figures can start the next pass from the same surface. Evidence and source \nNative fixtures: 1576 \u00d7 950 logical pixels on the 1.6\u00d7 landscape display. Current-theme scenes copy the saved Last Horizon palette and display grade; pale scenes use Flexoki Light with a neutral grade. Terminal output and attention cases are staged. WebP storage is lossless, checked pixel-for-pixel against each original native PNG. \nRio: 2,499 passed; Alacritty: 2,452 passed. Each has 9 ignored tests. Strict Clippy, formatting and release build passed. Logs, source hashes and the reusable native recipe live in reports/2026-10-20-chalk-marker-evidence/ . \nThe renderer is in app/src/paper.rs ; caption layout and material integration are in skin.rs , main.rs and paint.rs . The verified build is installed for the next GUI launch. The running GUI and session host were left untouched; reopen TD to load the update. Your Chalk selection is already saved. \n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.86,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.2,
+            "2": 0.68,
+            "3": 0.1
+          },
+          "confidence": 0.66
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.35
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.38,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.67,
+            "1": 0.29,
+            "2": 0.04,
+            "3": 0
+          },
+          "confidence": 0.63
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.55
         },
         "role": {
           "type": "choice",
           "choice": "resolution",
           "probabilities": {
-            "setup": 0.01,
-            "complication": 0,
+            "setup": 0,
+            "complication": 0.01,
             "turn": 0.01,
-            "consequence": 0.08,
-            "resolution": 0.54,
-            "aside": 0.35,
+            "consequence": 0.11,
+            "resolution": 0.52,
+            "aside": 0.34,
             "none_of_the_above": 0.01
           },
-          "confidence": 0.46
+          "confidence": 0.44
         }
       },
-      "latency_ms": 370.19613990560174,
+      "latency_ms": 438.76609404105693,
       "failure": null
     }
   ]
