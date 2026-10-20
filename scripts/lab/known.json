@@ -1,0 +1,77 @@
+{
+  "note": "Differences between rio-vt and alacritty_terminal that are understood. Each entry says how to take its cause out of a case; a cross-core finding is explained by an entry when removing that cause makes the cores agree (run.py, classify_all). Explained findings are still counted in every summary. An entry is a claim about the cores, so it carries its evidence and, where one core is wrong, the issue that tracks it.",
+  "differences": [
+    {
+      "id": "origin-mode-does-not-home",
+      "neutralize": {
+        "strip": "\\x1b\\[\\?6[hl]"
+      },
+      "wrong": "rio-vt",
+      "reason": "Setting or resetting origin mode (DECSET/DECRST 6) must move the cursor to the home position (DEC STD 070; xterm and alacritty do). rio-vt 0.5.28 leaves the cursor where it was, so the next text lands outside the scrolling region.",
+      "evidence": "minimized: size 2x1, write \"\\t\\x1b[?6h\" -> cursor column rio 1, alacritty 0",
+      "issue": null
+    },
+    {
+      "id": "narrowing-reflow",
+      "neutralize": {
+        "drop_resize": true
+      },
+      "wrong": "undecided",
+      "reason": "The cores reflow differently when a pane narrows: rio-vt pushes extra blank wrapped rows into history (16 rows against 12 after 20 -> 3 columns), and wide characters split differently at a 2-column width. Which is right is not settled; TD resizes panes on every split, so the history rows are user-visible.",
+      "evidence": "minimized: size 20x3, italic + NEL + two lines, resize to 3x3, write 7 chars -> history_size rio 16, alacritty 12",
+      "issue": null
+    },
+    {
+      "id": "zero-width-with-no-base",
+      "neutralize": {
+        "strip": "\\xcc[\\x80-\\xbf]|\\xcd[\\x80-\\xaf]|\\xe2\\x80\\x8d"
+      },
+      "wrong": "rio-vt",
+      "reason": "A combining mark or zero-width joiner with no printed character to attach to — at the start of a line, or after an escape sequence: alacritty attaches it (to a blank, or to the last printed character), rio-vt drops it.",
+      "evidence": "minimized: size 4x1, write U+0323 -> row 0 rio \"\", alacritty \" \\u0323\"; size 2x1, writes \"m\", \"\\x1bb\", U+200D -> rio \"m\", alacritty \"m\\u200d\"",
+      "issue": null
+    },
+    {
+      "id": "wide-character-halves",
+      "neutralize": {
+        "strip": "[\\xe3-\\xe9][\\x80-\\xbf]{2}|\\xef[\\xbc-\\xbf][\\x80-\\xbf]|\\xf0\\x9f[\\x80-\\xbf]{2}"
+      },
+      "wrong": "undecided",
+      "reason": "Writing, erasing, inserting or backspacing over one half of a wide character. rio-vt clears the whole character when either half is touched; alacritty can keep an orphaned half. Neither is clearly wrong across the board, and xterm's own behaviour differs by operation. Removing every wide character from a case is a broad cause, so a new wide-character bug can hide here: read its minimized reproducers before trusting the count.",
+      "evidence": "minimized: size 2x1, write \"好\\x1b[X\" then \"h\" -> history row rio \"\", alacritty \"好\"; size 4x2, write \"\\x1b[7m好\\bm\" -> screens differ",
+      "issue": null
+    },
+    {
+      "id": "tab-onto-the-last-column",
+      "neutralize": {
+        "strip": "\\t"
+      },
+      "wrong": "rio-vt",
+      "reason": "Both cores keep a literal tab in the first cell a tab covers, so copying the line gives the tab back. When the tab only moves the cursor onto the last column, alacritty still keeps it and rio-vt does not, so a copy loses the tab.",
+      "evidence": "minimized: size 2x1, writes \" \\r\", \"\\t\" -> row 0 rio \"\", alacritty \"\\t\"",
+      "issue": null
+    },
+    {
+      "id": "clear-screen-with-an-attribute",
+      "neutralize": {
+        "strip": "\\x1b\\[2J"
+      },
+      "wrong": "rio-vt",
+      "reason": "Clear screen (ED 2) while any attribute is set — dim, underline, a colour — pushes one more blank row into rio-vt's scrollback than alacritty's. With no attribute set they agree. Seen as stray blank lines in scrollback after `clear` under a styled prompt.",
+      "evidence": "minimized: size 4x2, writes \"\\x1b[2m\", \"\\x1b[J\", \"\\x1b[2J\" -> history_size rio 2, alacritty 1; the same without \\x1b[2m agrees",
+      "issue": null
+    },
+    {
+      "id": "vte-split-utf8-drops-the-next-character",
+      "kind": "chunk",
+      "core": "alacritty",
+      "neutralize": {
+        "strip": "[\\x80-\\xff]"
+      },
+      "wrong": "alacritty_terminal (vte 0.15.0)",
+      "reason": "When one read completes a UTF-8 character split across reads and also holds more characters after it, vte 0.15.0 prints the completed character but counts the following ones as consumed, so they are never printed. Valid UTF-8 is enough: c3 | a9 61 c3 | a9 62 reads 'ééb' instead of 'éaéb'. rio-vt is not affected. Fixed upstream on vte master, not in any release; only the fallback core (core-alacritty) carries it. Pinned by vt::lab::tests::a_character_split_across_reads_keeps_the_one_after_it.",
+      "evidence": "minimized by the lab: size 2x1, writes cc | a3 61 88 joined vs whole; root cause advance_partial_utf8 returns valid_bytes - old_bytes after printing only the first character",
+      "issue": "https://github.com/alacritty/vte/issues/159"
+    }
+  ]
+}
