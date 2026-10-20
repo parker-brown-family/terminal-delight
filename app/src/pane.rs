@@ -326,6 +326,27 @@ type LiveRowsMemo = ((u64, usize, usize), std::rc::Rc<Vec<String>>);
 /// screen changes. See `TerminalView::agent_status`.
 type StatusMemo = (std::rc::Rc<Vec<String>>, crate::hud::AgentStatus);
 
+/// The frame round a bent tube's glass, for [`crate::warp::register_tube`]: a
+/// plastic in the pane's own chrome hue, desaturated and at a fixed lightness so
+/// it reads as a moulding beside the glass and not as another screen colour, at
+/// a low strength. The CRT pass shades it as a slope lit from above, so it shows
+/// most on the lower lip and round the inside of each corner, and it fades out
+/// before the tube's straight boundary. Paper skins get none.
+pub(crate) fn tube_bezel(th: &Theme, paper: bool) -> [f32; 2] {
+    if paper {
+        return crate::warp::NO_BEZEL;
+    }
+    let chrome = graded(th.surface, &th.grade, Channel::Bg);
+    let moulding: gpui::Rgba = gpui::hsla(chrome.h, chrome.s.min(0.22), 0.30, 1.0).into();
+    let byte = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u32;
+    let rgb = (byte(moulding.r) << 16) | (byte(moulding.g) << 8) | byte(moulding.b);
+    crate::warp::bezel(rgb, TUBE_BEZEL_STRENGTH)
+}
+
+/// How much of [`tube_bezel`]'s moulding shows. Kept low on purpose: the frame
+/// should be noticed in the corners, not looked at.
+const TUBE_BEZEL_STRENGTH: f32 = 0.4;
+
 /// The pane header's shadows: the bright inner edge that makes it read as
 /// solid, and, on a tube, its bloom.
 ///
@@ -10847,6 +10868,7 @@ impl Render for TerminalView {
         } else {
             crate::workbench::vignette_on(face_now, th.vignette)
         };
+        let tube_bezel = tube_bezel(&th, sk.is_paper());
         let seat_flat_rim = rim_strength > 0.001 && {
             let (k1, k2) = self.warp_k;
             let bent = k1.abs() >= 0.0005 || k2.abs() >= 0.0005 || (th.crawl && on_terminal);
@@ -11661,6 +11683,7 @@ impl Render for TerminalView {
                                         k1,
                                         k2,
                                         crawl,
+                                        tube_bezel,
                                     );
                                     let changed = {
                                         let mut slot = store.lock().unwrap();

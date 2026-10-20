@@ -17,8 +17,20 @@ use std::sync::Mutex;
 /// crawl perspective of *its own* pane theme, so a bent/crawling pane stays
 /// independent of its neighbours. `crawl[0]` is `1.0` when crawl is on (else
 /// `0.0`), `crawl[1]` the top-edge width ratio `a`, `crawl[2]` the depth ratio
-/// — see `theme::crawl_coeffs` and `fs_crt` in `crt_pass.wgsl`.
-type Tube = ([f32; 4], f32, f32, f32, [f32; 3]);
+/// — see `theme::crawl_coeffs` and `fs_crt` in `crt_pass.wgsl`. Last, the
+/// bezel round the glass, `[0xRRGGBB as f32, strength]` ([`bezel`]); only a
+/// pane's own tube has one, and [`NO_BEZEL`] leaves the glass edge alone.
+type Tube = ([f32; 4], f32, f32, f32, [f32; 3], [f32; 2]);
+
+/// A tube with no bezel drawn round its glass.
+pub const NO_BEZEL: [f32; 2] = [0.0, 0.0];
+
+/// A bezel for [`register_tube`]: `rgb` as `0xRRGGBB`, `strength` `0..1`. The
+/// colour travels to the shader as an `f32`, which holds every 24-bit value
+/// exactly.
+pub fn bezel(rgb: u32, strength: f32) -> [f32; 2] {
+    [(rgb & 0x00FF_FFFF) as f32, strength.clamp(0.0, 1.0)]
+}
 
 /// Max simultaneous warp tubes the renderer reads. MUST match the `array<…, N>`
 /// sizes in `crt_pass.wgsl` and the `[_; N]` packing in `gpui_wgpu::wgpu_renderer`.
@@ -100,21 +112,28 @@ pub fn clear_focus_blur() {
 pub fn register_focus_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: [f32; 3]) {
     let mut rects = RECTS.lock().unwrap();
     rects.clear();
-    rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl));
+    rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl, NO_BEZEL));
     push(&rects);
 }
 
 /// Register one pane's tube for this frame: its content rect (physical px),
 /// glass glare, its own barrel curvature (k1, k2), and its crawl perspective
 /// (`crawl = [enabled, a, depth]`, all `0`/identity when crawl is off), each
-/// from its resolved theme.
-pub fn register_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: [f32; 3]) {
+/// from its resolved theme, and the bezel drawn round its glass ([`bezel`]).
+pub fn register_tube(
+    rect: [f32; 4],
+    glare: f32,
+    k1: f32,
+    k2: f32,
+    crawl: [f32; 3],
+    bezel: [f32; 2],
+) {
     if is_suppressed() {
         return;
     }
     let mut rects = RECTS.lock().unwrap();
     if rects.len() < MAX_TUBES {
-        rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl));
+        rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl, bezel));
     }
     push(&rects);
 }
@@ -139,7 +158,7 @@ pub fn is_suppressed() -> bool {
 pub fn register_overlay_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: [f32; 3]) {
     let mut rects = RECTS.lock().unwrap();
     if rects.len() < MAX_TUBES {
-        rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl));
+        rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl, NO_BEZEL));
     }
     push(&rects);
 }
@@ -147,7 +166,7 @@ pub fn register_overlay_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl
 #[allow(unused_variables)]
 fn push(rects: &[Tube]) {
     #[cfg(target_os = "linux")]
-    gpui_wgpu::set_crt_rects_tubes(rects);
+    gpui_wgpu::set_crt_rects_tubes_bezel(rects);
 }
 
 #[cfg(test)]
@@ -158,7 +177,7 @@ fn rect_count() -> usize {
 #[cfg(test)]
 fn rect_curvature(i: usize) -> (f32, f32) {
     let rects = RECTS.lock().unwrap();
-    let (_, _, k1, k2, _) = rects[i];
+    let (_, _, k1, k2, _, _) = rects[i];
     (k1, k2)
 }
 
@@ -197,7 +216,7 @@ mod tests {
         begin_frame();
         set_suppressed(false);
         flatten();
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
         assert_eq!(
             rect_count(),
             0,
@@ -210,7 +229,7 @@ mod tests {
 
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
         assert_eq!(rect_count(), 1, "the next frame is bent again");
         assert!(!is_suppressed());
     }
@@ -229,8 +248,8 @@ mod tests {
         let r = [0.0, 0.0, 100.0, 100.0];
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
         assert_eq!(rect_count(), 2, "the panes bank their tubes first");
 
         flatten();
@@ -240,7 +259,7 @@ mod tests {
             "a surface drawn over the glass flattens it even from the far side of prepaint"
         );
         assert!(is_suppressed(), "and nothing re-registers behind it");
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
         assert_eq!(rect_count(), 0);
 
         begin_frame();
@@ -253,27 +272,27 @@ mod tests {
         let r = [0.0, 0.0, 100.0, 100.0];
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
         assert_eq!(rect_count(), 2, "tubes register while the glass is live");
 
         // an open menu suppresses: begin_frame clears, and nothing re-registers
         begin_frame();
         set_suppressed(true);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
         assert_eq!(rect_count(), 0, "an open overlay flattens the whole screen");
 
         // closing the menu restores warping on the next frame
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
         assert_eq!(rect_count(), 1, "warp resumes once the overlay closes");
 
         // never bank more than MAX_TUBES the renderer reads
         begin_frame();
         for _ in 0..(MAX_TUBES + 8) {
-            register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF);
+            register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
         }
         assert_eq!(
             rect_count(),
@@ -286,8 +305,8 @@ mod tests {
         // bend its neighbours. This is what makes the sub-tab theme an override.
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.4, 0.0, 0.0, CRAWL_OFF); // a no-bend pane
-        register_tube(r, 0.4, 0.14, 0.06, CRAWL_OFF); // a bent pane
+        register_tube(r, 0.4, 0.0, 0.0, CRAWL_OFF, NO_BEZEL); // a no-bend pane
+        register_tube(r, 0.4, 0.14, 0.06, CRAWL_OFF, NO_BEZEL); // a bent pane
         assert_eq!(rect_count(), 2);
         assert_eq!(rect_curvature(0), (0.0, 0.0), "flat pane stays flat");
         assert_eq!(rect_curvature(1), (0.14, 0.06), "bent pane keeps its bend");
@@ -298,7 +317,7 @@ mod tests {
         // no rect-ordering ambiguity over the panel pixels.
         begin_frame();
         set_suppressed(true); // a reader open flattens the panes behind
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF); // no-op while suppressed
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL); // no-op while suppressed
         assert_eq!(rect_count(), 0, "panes don't register under the reader");
         register_focus_tube(r, 0.4, 0.20, 0.08, CRAWL_OFF);
         assert_eq!(
@@ -323,8 +342,8 @@ mod tests {
         let r = [0.0, 0.0, 100.0, 100.0];
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.4, 0.14, 0.06, CRAWL_OFF); // plain pane
-        register_tube(r, 0.4, 0.14, 0.06, [1.0, 0.6, 2.5]); // a crawling pane
+        register_tube(r, 0.4, 0.14, 0.06, CRAWL_OFF, NO_BEZEL); // plain pane
+        register_tube(r, 0.4, 0.14, 0.06, [1.0, 0.6, 2.5], NO_BEZEL); // a crawling pane
         assert_eq!(rect_count(), 2);
         assert_eq!(rect_crawl(0), CRAWL_OFF, "plain pane carries no crawl");
         assert_eq!(
@@ -369,5 +388,20 @@ mod tests {
             corner_pt < 0.5,
             "rounded corner reads as outside, got {corner_pt}"
         );
+    }
+
+    #[test]
+    fn a_bezel_colour_survives_the_trip_as_a_float() {
+        // The shader reads the colour back as `u32(x)` and splits it into
+        // bytes, so the f32 has to hold every 24-bit colour exactly. (It once
+        // read `u32(x + 0.5)`, which this caught: white came back as 2^24.)
+        for rgb in [0x000000, 0x000001, 0x4d5a52, 0x7f7f80, 0x800001, 0xfffffe, 0xffffff] {
+            let [packed, _] = bezel(rgb, 0.4);
+            assert_eq!(packed as u32, rgb, "{rgb:06x}");
+        }
+        // only 24 bits travel, and strength is a 0..1 dial
+        assert_eq!(bezel(0xff_123456, 0.4)[0] as u32, 0x123456);
+        assert_eq!(bezel(0x123456, 3.0)[1], 1.0);
+        assert_eq!(bezel(0x123456, -1.0)[1], 0.0);
     }
 }

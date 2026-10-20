@@ -33,9 +33,11 @@
 #   0008-glass-rim          — seats each bent tube's glass in a bezel: rounded
 #                             corners in source space, so the warp bends them
 #                             with everything else, and the lip's soft shadow
-#                             on the glass, deepest where two edges meet. The
-#                             shader alone; the renderer's API is unchanged.
-#                             Delta on 0001-0004's crt_pass.wgsl.
+#                             on the glass, deepest where two edges meet; and
+#                             a faint moulding round it, coloured per tube and
+#                             lit from above. Adds set_crt_rects_tubes_bezel
+#                             beside set_crt_rects_tubes, which is unchanged.
+#                             Delta on 0001-0004 and 0007.
 # Idempotent; safe to re-run.
 set -euo pipefail
 

@@ -63,5 +63,10 @@ bump has to rebase them:
   corners along with everything else, and the bezel's lip throws a soft shadow
   onto the glass that is heavier under the top edge and doubles where two edges
   meet, with a faint highlight on the lip just outside. Replaces the hard
-  rectangular clip and its 2.5-pixel edge fade in `fs_crt`. Shader only, no
-  uniform or API change; applies after 0001-0004.
+  rectangular clip and its 2.5-pixel edge fade in `fs_crt`. Round that, a
+  faint moulding: a ring in a per-tube colour, shaded as a slope lit from
+  above so it turns with each corner's curve, fading out before the tube's
+  straight boundary. Its colour (0xRRGGBB as an f32) and strength ride the two
+  spare uniform lanes, `glare.w` and `crawl.w`, set through a new
+  `set_crt_rects_tubes_bezel`; `set_crt_rects_tubes` and the uniform's size are
+  unchanged and send no bezel. Applies after 0001-0004 and 0007.

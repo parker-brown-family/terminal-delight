@@ -1,7 +1,21 @@
 diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
 --- a/crates/gpui_wgpu/src/crt_pass.wgsl
 +++ b/crates/gpui_wgpu/src/crt_pass.wgsl
-@@ -106,13 +106,38 @@
+@@ -18,11 +18,11 @@
+ struct CrtParams {
+     k: vec4<f32>,                  // global k1, k2 (gate only), rect_count, _pad
+     rects: array<vec4<f32>, 32>,    // x, y, w, h (physical px)
+-    glare: array<vec4<f32>, 32>,    // strength, k1, k2, _pad (per-rect curvature)
++    glare: array<vec4<f32>, 32>,    // strength, k1, k2, bezel 0xRRGGBB (per-rect curvature)
+     focus_rect: vec4<f32>,         // x, y, w, h (physical px) — the sharp panel
+     focus_params: vec4<f32>,       // blur_radius_px, feather_px, tint, corner_radius_px
+     crawl: array<vec4<f32>, 32>,    // per-rect Star-Wars crawl: enabled(0/1), a (top
+-                                   // width ratio), D (depth = h_bottom/h_top), _pad
++                                   // width ratio), D (depth = h_bottom/h_top), bezel strength
+ }
+ 
+ @group(0) @binding(0) var<uniform> crt: CrtParams;
+@@ -106,13 +106,81 @@
              let r2 = dot(c, c);
              let f = 1.0 + k1 * r2 + k2 * r2 * r2;
              let l2 = vec2<f32>(0.5, 0.5) + c * f;
@@ -35,7 +49,50 @@ diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.
 +            // Just outside the glass, the bezel's own edge catches the room light,
 +            // brighter on the lower lip that faces up toward it.
 +            let lip_d = (sd - aa * 1.5) / max(aa * 1.2, 1.0);
-+            let lip = exp(-lip_d * lip_d) * mix(0.03, 0.09, clamp(l2.y, 0.0, 1.0)) * step(0.0, sd);
++            var lip = exp(-lip_d * lip_d) * mix(0.03, 0.09, clamp(l2.y, 0.0, 1.0)) * step(0.0, sd);
++            // ---- the bezel: a coloured ring sloping down into the glass ----
++            // glare.w carries the colour as 0xRRGGBB, crawl.w the strength; 0
++            // strength (every caller but set_crt_rects_tubes_bezel) leaves it out.
++            // The slope's facing is the outward normal of the rounded edge, so
++            // round a corner the shading turns with the curve: the slopes that
++            // face up toward the light (bottom, right) are lit, the ones that
++            // face down away from it (top, left) fall into shade. A thin dark
++            // gasket sits between glass and slope, and the ring fades out before
++            // it can meet the tube's straight outer boundary.
++            let bezel_strength = crt.crawl[i].w;
++            var bezel = vec3<f32>(0.0);
++            if (bezel_strength > 0.001 && sd > 0.0) {
++                // exact: the setter rounded it, and an f32 holds every 24-bit integer;
++                // adding 0.5 would round odd values above 2^23 up a step
++                let packed = u32(crt.glare[i].w);
++                let bezel_rgb = vec3<f32>(
++                    f32((packed >> 16u) & 255u),
++                    f32((packed >> 8u) & 255u),
++                    f32(packed & 255u),
++                ) / 255.0;
++                let pc = l2 * sz - sz * 0.5;
++                let side = select(vec2<f32>(-1.0), vec2<f32>(1.0), pc >= vec2<f32>(0.0));
++                var n = vec2<f32>(0.0, 1.0);
++                if (qq.x > 0.0 && qq.y > 0.0) {
++                    n = normalize(qq);
++                } else if (qq.x > qq.y) {
++                    n = vec2<f32>(1.0, 0.0);
++                }
++                n = n * side;
++                let light = normalize(vec2<f32>(-0.45, -0.89));
++                let facing = dot(-n, light);
++                let ring_w = clamp(short_side * 0.028, 8.0, 34.0);
++                let t = sd / ring_w;
++                let ring = smoothstep(0.08, 0.30, t) * (1.0 - smoothstep(0.45, 1.0, t));
++                let room = min(min(p.x - r.x, r.x + r.z - p.x), min(p.y - r.y, r.y + r.w - p.y));
++                let fade = smoothstep(0.0, 6.0, room);
++                let tone = mix(0.35, 1.0, facing * 0.5 + 0.5);
++                let crest_d = (t - 0.32) / 0.12;
++                let lit = max(facing, 0.0);
++                let crest = lit * lit * lit * exp(-crest_d * crest_d) * 0.35;
++                bezel = bezel_rgb * (ring * tone + crest) * fade * bezel_strength;
++                lip = lip * (1.0 - bezel_strength);
++            }
              let g = (r.xy + clamp(l2, vec2<f32>(0.0), vec2<f32>(1.0)) * r.zw) / dims;
              let col = textureSampleLevel(screen_tex, screen_samp, g, 0.0);
              let falloff = mix(0.86, 1.0, smoothstep(0.5, 0.12, r2));
@@ -43,7 +100,7 @@ diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.
              let glare_strength = crt.glare[i].x;
              let glare_offset = (local - vec2<f32>(0.18, 0.10)) / vec2<f32>(0.34, 0.18);
              let glare_hotspot = exp(-dot(glare_offset, glare_offset) * 2.2);
-@@ -123,9 +148,8 @@
+@@ -123,9 +191,8 @@
              let glare_color = vec3<f32>(0.72, 1.0, 0.78);
              // sub-terminal phosphor runs +35% hotter than the raw sample so the
              // warped tube doesn't read dim against flat chrome / flat panes.
@@ -51,7 +108,94 @@ diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.
 -                + glare_color * glare_amount;
 -            return vec4<f32>(tube * inb, 1.0);
 +            let tube = col.rgb * falloff * 1.35 * shade + glare_color * glare_amount;
-+            return vec4<f32>(tube * inb + vec3<f32>(lip), 1.0);
++            return vec4<f32>(tube * inb + vec3<f32>(lip) + bezel, 1.0);
          }
      }
  
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -135,7 +135,13 @@
+ // perspective are per rect so each tube bends/recedes on its own theme regardless
+ // of the window-wide dial. crawl[0]=1 enables the perspective pre-map; a is the
+ // top-edge width ratio, depth the bottom:top text-height ratio (see crt_pass.wgsl).
+-type CrtRect = ([f32; 4], f32, f32, f32, [f32; 3]);
++// td-glass-rim: and bezel[packed rgb, strength] — the frame round the glass.
++// The colour is 0xRRGGBB carried in an f32 (exact up to 2^24); strength 0 draws
++// no bezel, which is what every setter but `set_crt_rects_tubes_bezel` sends.
++type CrtRect = ([f32; 4], f32, f32, f32, [f32; 3], [f32; 2]);
++
++/// No bezel: the glass edge alone.
++const BEZEL_NONE: [f32; 2] = [0.0, 0.0];
+ 
+ /// Crawl identity (disabled): no perspective, no taper, flat depth.
+ const CRAWL_IDENTITY: [f32; 3] = [0.0, 1.0, 1.0];
+@@ -150,7 +156,7 @@
+         rects
+             .iter()
+             .take(32)
+-            .map(|rect| (*rect, 0.0, 0.0, 0.0, CRAWL_IDENTITY)),
++            .map(|rect| (*rect, 0.0, 0.0, 0.0, CRAWL_IDENTITY, BEZEL_NONE)),
+     );
+ }
+ 
+@@ -162,7 +168,7 @@
+         rects
+             .iter()
+             .take(32)
+-            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0), 0.0, 0.0, CRAWL_IDENTITY)),
++            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0), 0.0, 0.0, CRAWL_IDENTITY, BEZEL_NONE)),
+     );
+ }
+ 
+@@ -176,10 +182,24 @@
+         rects
+             .iter()
+             .take(32)
+-            .map(|(rect, glare, k1, k2, crawl)| (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl)),
++            .map(|(rect, glare, k1, k2, crawl)| {
++                (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl, BEZEL_NONE)
++            }),
+     );
+ }
+ 
++/// `set_crt_rects_tubes`, plus a bezel per tube: `[0xRRGGBB as f32, strength]`.
++/// The frame round the glass is shaded in that colour, lit from above, at that
++/// strength (`0..1`); `0` leaves the edge exactly as `set_crt_rects_tubes` does.
++pub fn set_crt_rects_tubes_bezel(rects: &[([f32; 4], f32, f32, f32, [f32; 3], [f32; 2])]) {
++    let mut guard = CRT_RECTS.lock().unwrap();
++    guard.clear();
++    guard.extend(rects.iter().take(32).map(|(rect, glare, k1, k2, crawl, bezel)| {
++        let rgb = bezel[0].clamp(0.0, 16_777_215.0).round();
++        (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl, [rgb, bezel[1].clamp(0.0, 1.0)])
++    }));
++}
++
+ /// Returns (rects, packed glare+curvature [glare, k1, k2, _], crawl [enabled, a,
+ /// depth, _], count, max|k|). The max curvature magnitude lets the caller turn
+ /// the pass on when any tube bends, even if the global dial is flat — and a tube
+@@ -191,10 +211,10 @@
+     let mut glare = [[0.0f32; 4]; 32];
+     let mut crawl = [[0.0f32, 1.0, 1.0, 0.0]; 32];
+     let mut max_k = 0.0f32;
+-    for (i, (r, g, k1, k2, c)) in guard.iter().take(32).enumerate() {
++    for (i, (r, g, k1, k2, c, b)) in guard.iter().take(32).enumerate() {
+         rects[i] = *r;
+-        glare[i] = [*g, *k1, *k2, 0.0];
+-        crawl[i] = [c[0], c[1], c[2], 0.0];
++        glare[i] = [*g, *k1, *k2, b[0]];
++        crawl[i] = [c[0], c[1], c[2], b[1]];
+         max_k = max_k.max(k1.abs()).max(k2.abs());
+         // A crawling tube must keep the pass live even when it's barrel-flat.
+         if c[0] > 0.5 {
+diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
+--- a/crates/gpui_wgpu/src/gpui_wgpu.rs
++++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
+@@ -10,6 +10,7 @@
+ pub use wgpu_renderer::set_crt_warp;
+ pub use wgpu_renderer::set_crt_rects;
+ pub use wgpu_renderer::set_crt_rects_tubes;
++pub use wgpu_renderer::set_crt_rects_tubes_bezel;
+ pub use wgpu_renderer::set_crt_rects_with_glare;
+ pub use wgpu_renderer::set_focus_blur;
+ pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
