@@ -32,15 +32,22 @@ into `lang.rs`), so no separate gate was taken.
       applied, 16 refused (the translated brand and the localized FOCUS name are decisions)
 - [x] Batch 3a (modules, 218 + the four lost help-menu headers) collected from the tool outputs
       of a reply whose final message stalled; parts table 214/595 translated
-- [ ] Batches 3b (224) and 4 (document viewer, 157), sent to two fresh Pro chats in parallel
-      with the glossary and the 510 earlier translations attached as memory
-- [ ] Shorten pass: rebuilt from `width.py` over the Rust tables once 3b and 4 land
-      (55 fields more than 25% over budget after 3a, 26 of them Japanese)
+- [x] Batches 3b (224) and 4 (document viewer, 157), from two fresh Pro chats run in parallel
+      with the glossary and the 510 earlier translations attached as memory; parts 596/596
+- [x] Shorten pass done by hand (taste delegated): 20 shortened, 39 still >25% over a soft
+      budget; three doubled prefixes fixed (✔ on SUBMIT/NEXT, `default=`, the D tile)
 - [x] Wiring: main.rs and every other module, merged; main.rs adopts the modules' display
       accessors; the notes control-socket report stays English (2498 tests pass)
 - [x] The four stale help-menu fields re-translated; a test refuses English in a non-English
-      flat field outside a 57-entry cognate allowlist (parts joins it when its batches land)
-- [ ] Merge the three branches, regenerate all tables, full gates, one PR
+      flat field outside a 94-entry cognate allowlist, all four tables
+- [x] Merged origin/main (63 commits, 21 conflicts; main's new strings translated), full
+      gates on both cores, German and Japanese photographed in a hidden window
+- [x] One PR: https://github.com/parker-brown-family/terminal-delight/pull/1033
+- [x] OUTER is "outer" in every language (Parker, 2026-10-19: window is a reserved word)
+
+Post-hoc difficulty: 6/10 held. What made it longer than the score was the browser
+pipeline (two extension disconnects, a Pro reply stalled for five hours) and main moving
+63 commits underneath, not the translation design.
 
 ## How the matrix moves
 
