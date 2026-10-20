@@ -1,0 +1,143 @@
+{
+  "note": "Differences between rio-vt and alacritty_terminal that are understood. Each entry says how to take its cause out of a case; a cross-core finding is explained by an entry when removing that cause makes the cores agree (run.py, classify_all). Explained findings are still counted in every summary. An entry is a claim about the cores, so it carries its evidence and, where one core is wrong, the issue that tracks it.",
+  "differences": [
+    {
+      "id": "origin-mode-does-not-home",
+      "neutralize": {
+        "strip": "\\x1b\\[\\?6[hl]"
+      },
+      "wrong": "rio-vt",
+      "reason": "Setting or resetting origin mode (DECSET/DECRST 6) must move the cursor to the home position (DEC STD 070; xterm and alacritty do). rio-vt 0.5.28 leaves the cursor where it was, so the next text lands outside the scrolling region.",
+      "evidence": "minimized: size 2x1, write \"\\t\\x1b[?6h\" -> cursor column rio 1, alacritty 0",
+      "issue": null
+    },
+    {
+      "id": "narrowing-reflow",
+      "neutralize": {
+        "drop_resize": true
+      },
+      "wrong": "rio-vt",
+      "reason": "When a pane is resized, rio-vt keeps more rows than alacritty: extra blank rows in history, and a widened line keeps the padding it was wrapped with (\"1235      r\" against \"1235r\"). Settled on 2026-10-19 with tmux as a third opinion: in every minimized case checked, tmux agrees with alacritty, and rio-vt agrees too once the text style (bold, dim, italic, underline, reverse) is taken out. So the cause is the same as clear-screen-with-an-attribute: rio-vt counts blank cells written under a style as content, and reflow keeps them. TD resizes panes on every split, so this is user-visible. The neutralize rule still drops every resize, which is broad; narrow it once the styled-blank fix lands.",
+      "evidence": "minimized: size 10x3, writes \"\\x1b[1m\", \"\\x1bM1235\", resize 3x2, \"r\", resize 80x3 -> row rio \"1235      r\", alacritty and tmux \"1235r\"; without \\x1b[1m rio \"1235r\". size 4x2, writes \"\\x1b[2m\", \"\\x1b[J\", resize 3x10 -> history rio 1, alacritty 0, tmux 0; without the style rio 0",
+      "issue": null
+    },
+    {
+      "id": "zero-width-with-no-base",
+      "neutralize": {
+        "strip": "\\xcc[\\x80-\\xbf]|\\xcd[\\x80-\\xaf]|\\xe2\\x80\\x8d"
+      },
+      "wrong": "rio-vt",
+      "reason": "A combining mark or zero-width joiner with no printed character to attach to — at the start of a line, or after an escape sequence: alacritty attaches it (to a blank, or to the last printed character), rio-vt drops it.",
+      "evidence": "minimized: size 4x1, write U+0323 -> row 0 rio \"\", alacritty \" \\u0323\"; size 2x1, writes \"m\", \"\\x1bb\", U+200D -> rio \"m\", alacritty \"m\\u200d\"",
+      "issue": null
+    },
+    {
+      "id": "wide-erased-in-half",
+      "neutralize": {
+        "strip": "\\x1b\\[[0-9;]*[XKJ]",
+        "when": "[\\xe3-\\xe9][\\x80-\\xbf]{2}|\\xef[\\xbc-\\xbf][\\x80-\\xbf]|\\xf0\\x9f[\\x80-\\xbf]{2}"
+      },
+      "wrong": "undecided",
+      "reason": "Erasing characters, a line or the screen (ECH, EL, ED) where the erase covers only one half of a wide character, or the cursor sits on its right half: rio-vt clears the whole character, alacritty can keep it. Split on 2026-10-19 out of one broad entry that removed every wide character from a case, which would have hidden any new wide-character bug: each entry now removes one operation, and only from a case that holds a wide character. Which core is right differs by operation and is not settled; xterm's own behaviour differs by operation too.",
+      "evidence": "minimized: size 2x1, writes \"ｗ\\x1b[X\", \"d\" -> history differs; size 2x1, write \"🙂\\x1b[Jo\" -> history differs",
+      "issue": null
+    },
+    {
+      "id": "wide-inserted-or-deleted",
+      "neutralize": {
+        "strip": "\\x1b\\[[0-9;]*[@P]|\\x1b\\[4h",
+        "when": "[\\xe3-\\xe9][\\x80-\\xbf]{2}|\\xef[\\xbc-\\xbf][\\x80-\\xbf]|\\xf0\\x9f[\\x80-\\xbf]{2}"
+      },
+      "wrong": "undecided",
+      "reason": "Inserting or deleting characters (ICH, DCH, insert mode) that shifts a wide character across the right margin or splits it: the cores keep different halves. Split on 2026-10-19 out of one broad entry that removed every wide character from a case, which would have hidden any new wide-character bug: each entry now removes one operation, and only from a case that holds a wide character. Which core is right differs by operation and is not settled; xterm's own behaviour differs by operation too.",
+      "evidence": "minimized: size 7x24, write \"a\\x1b[4b\\x1b[X你\\x1b[@\" -> screens differ",
+      "issue": null
+    },
+    {
+      "id": "wide-repeated",
+      "neutralize": {
+        "strip": "\\x1b\\[[0-9;]*b",
+        "when": "[\\xe3-\\xe9][\\x80-\\xbf]{2}|\\xef[\\xbc-\\xbf][\\x80-\\xbf]|\\xf0\\x9f[\\x80-\\xbf]{2}"
+      },
+      "wrong": "undecided",
+      "reason": "Repeating the last printed character (REP) when that character is wide, or when the repeat runs into the margin with a wide character on the line. Split on 2026-10-19 out of one broad entry that removed every wide character from a case, which would have hidden any new wide-character bug: each entry now removes one operation, and only from a case that holds a wide character. Which core is right differs by operation and is not settled; xterm's own behaviour differs by operation too.",
+      "evidence": "minimized: size 2x1, writes \"\\x1b[?7l\\x1b[3m\", \"ｗ\\x1b[5b\", \"a\\n\" -> differ",
+      "issue": null
+    },
+    {
+      "id": "wide-at-the-right-margin",
+      "neutralize": {
+        "strip": "\\x1b\\[\\?7l",
+        "when": "[\\xe3-\\xe9][\\x80-\\xbf]{2}|\\xef[\\xbc-\\xbf][\\x80-\\xbf]|\\xf0\\x9f[\\x80-\\xbf]{2}"
+      },
+      "wrong": "undecided",
+      "reason": "With autowrap off (DECAWM reset), a wide character that does not fit before the right margin: the cores place or drop it differently. Split on 2026-10-19 out of one broad entry that removed every wide character from a case, which would have hidden any new wide-character bug: each entry now removes one operation, and only from a case that holds a wide character. Which core is right differs by operation and is not settled; xterm's own behaviour differs by operation too.",
+      "evidence": "minimized: size 80x2 with \\x1b[?7l and 🙂 near the margin, then a resize to 20x1 -> differ",
+      "issue": null
+    },
+    {
+      "id": "wide-backspaced-over",
+      "neutralize": {
+        "strip": "\\x08",
+        "when": "[\\xe3-\\xe9][\\x80-\\xbf]{2}|\\xef[\\xbc-\\xbf][\\x80-\\xbf]|\\xf0\\x9f[\\x80-\\xbf]{2}"
+      },
+      "wrong": "undecided",
+      "reason": "Backspace onto the right half of a wide character and print over it: the cores leave different remains of the wide character. Split on 2026-10-19 out of one broad entry that removed every wide character from a case, which would have hidden any new wide-character bug: each entry now removes one operation, and only from a case that holds a wide character. Which core is right differs by operation and is not settled; xterm's own behaviour differs by operation too.",
+      "evidence": "minimized: size 20x1, writes \"\\x1b[1m🙂\", \"\\b\", \"t\\n\" -> differ",
+      "issue": null
+    },
+    {
+      "id": "wide-half-keeps-its-style",
+      "neutralize": {
+        "strip": "\\x1b\\[[0-9;:]*m",
+        "when": "[\\xe3-\\xe9][\\x80-\\xbf]{2}|\\xef[\\xbc-\\xbf][\\x80-\\xbf]|\\xf0\\x9f[\\x80-\\xbf]{2}"
+      },
+      "wrong": "undecided",
+      "reason": "Overwriting the right half of a styled wide character leaves a blank in its left half. The text agrees in every core and in tmux; only that blank's style differs: alacritty keeps the wide character's style on it (an underline stays visible), rio-vt clears it. Split on 2026-10-19 out of one broad entry that removed every wide character from a case, which would have hidden any new wide-character bug: each entry now removes one operation, and only from a case that holds a wide character. Which core is right differs by operation and is not settled; xterm's own behaviour differs by operation too.",
+      "evidence": "minimized: size 3x24, writes \"\\x1b[3m\", \"好\", \"\\x1b[D7\" -> row \" 7\" in rio, alacritty and tmux; style run rio [1,1], alacritty [0,2]; without \\x1b[3m they agree",
+      "issue": null
+    },
+    {
+      "id": "tab-onto-the-last-column",
+      "neutralize": {
+        "strip": "\\t"
+      },
+      "wrong": "rio-vt",
+      "reason": "Both cores keep a literal tab in the first cell a tab covers, so copying the line gives the tab back. When the tab only moves the cursor onto the last column, alacritty still keeps it and rio-vt does not, so a copy loses the tab.",
+      "evidence": "minimized: size 2x1, writes \" \\r\", \"\\t\" -> row 0 rio \"\", alacritty \"\\t\"",
+      "issue": null
+    },
+    {
+      "id": "clear-screen-with-an-attribute",
+      "neutralize": {
+        "strip": "\\x1b\\[2J"
+      },
+      "wrong": "rio-vt",
+      "reason": "Clear screen (ED 2) while any attribute is set — dim, underline, a colour — pushes one more blank row into rio-vt's scrollback than alacritty's. With no attribute set they agree. Seen as stray blank lines in scrollback after `clear` under a styled prompt. Same root cause as narrowing-reflow: rio-vt counts a blank cell written under a style as content.",
+      "evidence": "minimized: size 4x2, writes \"\\x1b[2m\", \"\\x1b[J\", \"\\x1b[2J\" -> history_size rio 2, alacritty 1; the same without \\x1b[2m agrees",
+      "issue": null
+    },
+    {
+      "id": "vte-split-utf8-drops-the-next-character",
+      "kind": "chunk",
+      "core": "alacritty",
+      "neutralize": {
+        "strip": "[\\x80-\\xff]"
+      },
+      "wrong": "alacritty_terminal (vte 0.15.0)",
+      "reason": "When one read completes a UTF-8 character split across reads and also holds more characters after it, vte 0.15.0 prints the completed character but counts the following ones as consumed, so they are never printed. Valid UTF-8 is enough: c3 | a9 61 c3 | a9 62 reads 'ééb' instead of 'éaéb'. rio-vt is not affected. Fixed upstream on vte master, not in any release; only the fallback core (core-alacritty) carries it. Pinned by vt::lab::tests::a_character_split_across_reads_keeps_the_one_after_it.",
+      "evidence": "minimized by the lab: size 2x1, writes cc | a3 61 88 joined vs whole; root cause advance_partial_utf8 returns valid_bytes - old_bytes after printing only the first character",
+      "issue": "https://github.com/alacritty/vte/issues/159"
+    },
+    {
+      "id": "invalid-utf8-cut-by-an-escape",
+      "neutralize": {
+        "strip": "(?:[\\xc2-\\xdf]|[\\xe0-\\xef][\\x80-\\xbf]?|[\\xf0-\\xf4][\\x80-\\xbf]{0,2})(?=\\x1b)"
+      },
+      "wrong": "undecided",
+      "reason": "An incomplete UTF-8 sequence cut short by an escape. Followed by more text, both cores print one replacement character (U+FFFD); left at the end of the input, alacritty prints it at once and rio-vt has not printed it yet. tmux prints nothing at all for it. Found when the wide-character entry was split; seen only from the generator's invalid bytes, never from a real program yet.",
+      "evidence": "minimized: size 4x2, write \"9m\" f0 1b, resize to 2x10 -> alacritty shows U+FFFD, rio-vt and tmux do not; f0 1b followed by \"x\" -> both cores show U+FFFD",
+      "issue": null
+    }
+  ]
+}

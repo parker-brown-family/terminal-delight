@@ -30,6 +30,10 @@ pub mod pty;
 pub mod pump;
 pub mod socket;
 
+// The Terminal Lab's replay harness: test-only, no runtime (`lab.rs`).
+#[cfg(test)]
+mod lab;
+
 #[cfg(feature = "core-alacritty")]
 mod alacritty;
 #[cfg(feature = "core-alacritty")]

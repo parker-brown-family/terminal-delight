@@ -50,23 +50,6 @@ pub enum Kind {
     Pane,
 }
 
-impl Kind {
-    /// What a tray row calls this, in the words the left bar already uses.
-    ///
-    /// The tray offers projects, groups, tabs and panes in one list, and
-    /// `Recover "UX"` means four different things across them — so each row says
-    /// which it is rather than leaving it to be inferred from a name that may
-    /// be shared.
-    pub fn noun(self) -> &'static str {
-        match self {
-            Kind::Project => "project",
-            Kind::Initiative => "group",
-            Kind::Task => "tab",
-            Kind::Pane => "pane",
-        }
-    }
-}
-
 /// What went into the trash, and what it is still worth.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Holding<T> {
@@ -237,6 +220,7 @@ impl<T> Trash<T> {
 /// Rounded down, and never to "0m": a holding with thirty seconds on it says
 /// "under a minute", because an offer reading "0m left" invites a click that
 /// will fail between the reading and the pressing.
+#[cfg(test)]
 pub fn remaining_label(left: Duration) -> String {
     let secs = left.as_secs();
     if secs < 60 {
@@ -249,6 +233,37 @@ pub fn remaining_label(left: Duration) -> String {
     } else {
         format!("{m}m left")
     }
+}
+
+/// "3h 41m left" in `l` — the trash tray's offers. This and
+/// [`span_label_in`] are the two shapes a person reads; the English
+/// [`remaining_label`] is kept for the tests that pin the wording.
+pub fn remaining_label_in(l: crate::lang::Lang, left: Duration) -> String {
+    hm_in(l, left, false)
+}
+
+/// How long a holding lasts, with no "left": the span inside the delete
+/// dialog's "recoverable … for {window}" — a sentence of its own in each
+/// language, so the span is never cut out of the tray's wording.
+pub fn span_label_in(l: crate::lang::Lang, span: Duration) -> String {
+    hm_in(l, span, true)
+}
+
+fn hm_in(l: crate::lang::Lang, d: Duration, bare: bool) -> String {
+    let t = &l.strings().parts;
+    let secs = d.as_secs();
+    if secs < 60 {
+        return t.hold_under_a_minute.to_string();
+    }
+    let mins = secs / 60;
+    let (h, m) = (mins / 60, mins % 60);
+    let template = match (h > 0, bare) {
+        (true, false) => t.hold_left_hm,
+        (false, false) => t.hold_left_m,
+        (true, true) => t.hold_span_hm,
+        (false, true) => t.hold_span_m,
+    };
+    crate::lang::fill(template, &[("h", &h.to_string()), ("m", &m.to_string())])
 }
 
 #[cfg(test)]
@@ -527,6 +542,16 @@ mod tests {
         assert_eq!(remaining_label(mins(48)), "48m left");
         assert_eq!(remaining_label(mins(60)), "1h 0m left");
         assert_eq!(remaining_label(mins(221)), "3h 41m left");
+        // The language-taking shapes say the same in English, and the bare
+        // span is exactly what main.rs gets today by trimming " left".
+        use crate::lang::Lang;
+        for d in [Duration::from_secs(30), mins(48), mins(60), mins(221)] {
+            assert_eq!(remaining_label_in(Lang::En, d), remaining_label(d));
+            assert_eq!(
+                span_label_in(Lang::En, d),
+                remaining_label(d).trim_end_matches(" left")
+            );
+        }
     }
 
     #[test]

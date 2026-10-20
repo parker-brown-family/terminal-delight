@@ -536,20 +536,34 @@ pub fn refresh_command(home: &Path) -> Option<(String, Vec<String>)> {
 
 /// Run the updater and wait for it. Slow on purpose — it is talking to vendor
 /// endpoints — so this belongs on a background thread, never on the frame.
+///
+/// The error is drawn on the usage card, so what this function says itself is
+/// in the reader's language. A line the updater printed on stderr is passed
+/// through as it printed it — that is the collector's CLI talking, in English.
 pub fn refresh(home: &Path) -> Result<(), String> {
+    let p = crate::lang::current().strings().parts;
     let Some((cmd, args)) = refresh_command(home) else {
-        return Err("cannot locate a usage collector, or this binary".into());
+        return Err(p.usage_err_no_collector.into());
     };
     let out = std::process::Command::new(&cmd)
         .args(&args)
         .stdin(std::process::Stdio::null())
         .output()
-        .map_err(|e| format!("could not run {cmd}: {e}"))?;
+        .map_err(|e| {
+            crate::lang::fill(
+                p.usage_err_could_not_run,
+                &[("cmd", &cmd), ("e", &e.to_string())],
+            )
+        })?;
     if out.status.success() {
         Ok(())
     } else {
         let err = String::from_utf8_lossy(&out.stderr);
-        let line = err.lines().next().unwrap_or("collector failed").trim();
+        let line = err
+            .lines()
+            .next()
+            .unwrap_or(p.usage_err_collector_failed)
+            .trim();
         Err(line.to_string())
     }
 }
@@ -624,43 +638,76 @@ pub fn now_epoch() -> i64 {
 /// "3h 47m", "12m", "6d 4h" — how long until `ts`. `None` when the stamp is
 /// unparseable or already past, so a stale window renders as nothing rather than
 /// as a confident negative.
+#[cfg(test)]
 pub fn until(ts: &str, now: i64) -> Option<String> {
+    until_in(ts, now, crate::lang::Lang::En)
+}
+
+/// [`until`], with the units in `l`.
+pub fn until_in(ts: &str, now: i64, l: crate::lang::Lang) -> Option<String> {
     let then = parse_epoch(ts)?;
     let left = then - now;
     if left <= 0 {
         return None;
     }
-    Some(compact_duration(left))
+    Some(compact_duration(left, l))
 }
 
 /// "just now", "4m ago", "3h ago" — how long since `ts`.
+#[cfg(test)]
 pub fn since(ts: &str, now: i64) -> Option<String> {
-    let then = parse_epoch(ts)?;
-    let ago = now - then;
-    if ago < 45 {
-        return Some("just now".into());
-    }
-    Some(format!("{} ago", compact_duration(ago)))
+    since_in(ts, now, crate::lang::Lang::En)
 }
 
-/// "Mon", "Tue", … for a bare `YYYY-MM-DD`, empty when it isn't one. The epoch
-/// began on a Thursday, which is why the table starts there.
+/// [`since`], worded in `l`.
+pub fn since_in(ts: &str, now: i64, l: crate::lang::Lang) -> Option<String> {
+    let then = parse_epoch(ts)?;
+    let ago = now - then;
+    let p = l.strings().parts;
+    if ago < 45 {
+        return Some(p.usage_just_now.into());
+    }
+    Some(crate::lang::fill(
+        p.usage_ago,
+        &[("dur", &compact_duration(ago, l))],
+    ))
+}
+
+/// "Mon", "Tue", … for a bare `YYYY-MM-DD`, empty when it isn't one.
+#[cfg(test)]
 pub fn weekday(date: &str) -> &'static str {
-    const NAMES: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+    weekday_in(date, crate::lang::Lang::En)
+}
+
+/// [`weekday`] in `l`. The epoch began on a Thursday, which is why the table
+/// starts there.
+pub fn weekday_in(date: &str, l: crate::lang::Lang) -> &'static str {
+    let p = l.strings().parts;
+    let names: [&'static str; 7] = [
+        p.usage_weekday_thu,
+        p.usage_weekday_fri,
+        p.usage_weekday_sat,
+        p.usage_weekday_sun,
+        p.usage_weekday_mon,
+        p.usage_weekday_tue,
+        p.usage_weekday_wed,
+    ];
     match parse_epoch(&format!("{date}T00:00:00Z")) {
-        Some(e) => NAMES[(((e / 86_400) % 7 + 7) % 7) as usize],
+        Some(e) => names[(((e / 86_400) % 7 + 7) % 7) as usize],
         None => "",
     }
 }
 
-fn compact_duration(secs: i64) -> String {
+fn compact_duration(secs: i64, l: crate::lang::Lang) -> String {
     let (d, h, m) = (secs / 86_400, (secs % 86_400) / 3600, (secs % 3600) / 60);
+    let p = l.strings().parts;
+    let n = |v: i64| v.to_string();
     if d > 0 {
-        format!("{d}d {h}h")
+        crate::lang::fill(p.usage_dur_dh, &[("d", &n(d)), ("h", &n(h))])
     } else if h > 0 {
-        format!("{h}h {m}m")
+        crate::lang::fill(p.usage_dur_hm, &[("h", &n(h)), ("m", &n(m))])
     } else {
-        format!("{}m", m.max(1))
+        crate::lang::fill(p.usage_dur_m, &[("m", &n(m.max(1)))])
     }
 }
 
@@ -715,12 +762,14 @@ impl PaceVerdict {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    /// The verdict chip in `l`.
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        let ui = l.strings().ui;
         match self {
-            PaceVerdict::OnPace => "ON PACE",
-            PaceVerdict::Banked => "BANKED",
-            PaceVerdict::Behind => "BEHIND",
-            PaceVerdict::WayOver => "WAY OVER",
+            PaceVerdict::OnPace => ui.use_verdict_on_pace,
+            PaceVerdict::Banked => ui.use_verdict_banked,
+            PaceVerdict::Behind => ui.use_verdict_behind,
+            PaceVerdict::WayOver => ui.use_verdict_way_over,
         }
     }
 }
@@ -948,6 +997,27 @@ mod tests {
         assert_eq!(weekday("2026-09-02"), "Wed");
         assert_eq!(weekday("2026-09-06"), "Sun");
         assert_eq!(weekday("not-a-date"), "");
+    }
+
+    #[test]
+    fn the_english_wrappers_are_the_english_table() {
+        use crate::lang::Lang;
+        let now = parse_epoch("2026-09-02T12:00:00Z").unwrap();
+        for ts in [
+            "2026-09-02T15:47:00Z",
+            "2026-09-02T12:00:10Z",
+            "2026-09-08T16:00:00Z",
+            "2026-09-02T15:00:00Z",
+        ] {
+            assert_eq!(until_in(ts, now, Lang::En), until(ts, now));
+            assert_eq!(
+                since_in(ts, now + 864_000, Lang::En),
+                since(ts, now + 864_000)
+            );
+        }
+        // a whole hour keeps its zero minutes, as the hand-built format did
+        assert_eq!(until("2026-09-02T15:00:00Z", now).as_deref(), Some("3h 0m"));
+        assert_eq!(weekday_in("2026-09-06", Lang::En), "Sun");
     }
 
     #[test]

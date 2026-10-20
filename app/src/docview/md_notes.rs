@@ -33,6 +33,7 @@ use std::path::{Path, PathBuf};
 
 use super::markdown::{block_plain, Block, MdDoc};
 use super::notes::{self, Json, NoteMap, Obj};
+use super::notes_ui::Words;
 
 /// One block that takes notes: its id, the words that name it, the line it
 /// starts on (1-based, as an editor counts; `None` if the parse did not say),
@@ -360,10 +361,14 @@ pub fn read(store: &Path) -> Result<NoteMap, String> {
 /// Keep a document's notes: a new file beside the old one in the store,
 /// renamed into its place, so a reader never sees half of one. The only
 /// write in this module, and it never touches the document.
-pub fn write(store: &Path, doc: &Path, notes: &NoteMap) -> Result<(), String> {
+pub fn write(store: &Path, doc: &Path, notes: &NoteMap) -> Result<(), Words> {
     use std::io::Write;
-    let dir = store.parent().ok_or("the store has no folder")?;
-    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    // Only the bar says these, after a note was written and not kept, and
+    // the report carries them in English.
+    let dir = store
+        .parent()
+        .ok_or_else(|| Words::said(|l| l.strings().parts.notes_md_store_no_folder.into()))?;
+    std::fs::create_dir_all(dir).map_err(|e| Words::as_is(format!("{}: {e}", dir.display())))?;
     let mut top = Obj::default();
     top.insert("format".into(), Json::Num(f64::from(FORMAT)));
     top.insert(
@@ -388,7 +393,13 @@ pub fn write(store: &Path, doc: &Path, notes: &NoteMap) -> Result<(), String> {
     })();
     written.map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
-        format!("the note could not be kept: {e}")
+        let error = e.to_string();
+        Words::said(|l| {
+            crate::lang::fill(
+                l.strings().parts.notes_md_store_keep_failed,
+                &[("error", &error)],
+            )
+        })
     })
 }
 
@@ -401,10 +412,11 @@ pub fn keep(
     doc: &Path,
     edits: &[notes::NoteEdit],
     known: &[&str],
-) -> Result<NoteMap, String> {
-    let mut map = read(store)?;
+) -> Result<NoteMap, Words> {
+    let mut map = read(store).map_err(Words::as_is)?;
     let mut concurs = notes::ConcurMap::default();
-    notes::apply(&mut map, &mut concurs, edits, known, false).map_err(|r| r.sentence())?;
+    notes::apply(&mut map, &mut concurs, edits, known, false)
+        .map_err(|r| Words::said(|l| r.say(l)))?;
     write(store, doc, &map)?;
     Ok(map)
 }

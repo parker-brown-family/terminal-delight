@@ -144,6 +144,19 @@ impl Bar {
     pub fn unknown(&self) -> bool {
         self.fill.is_none()
     }
+
+    /// The bar's heading in `l`, for the card. [`Self::label`] stays English
+    /// because it is what identifies the bar; a label this table does not
+    /// know is drawn as it is.
+    pub fn label_in(&self, l: crate::lang::Lang) -> &'static str {
+        let p = l.strings().parts;
+        match self.label {
+            "CTX WINDOW" => p.vitals_bar_ctx_window,
+            "FATIGUE" => p.vitals_bar_fatigue,
+            "RELEVANCE" => p.vitals_bar_relevance,
+            other => other,
+        }
+    }
 }
 
 /// Smooth 0→1 across `[lo, hi]`, flat outside it. WINDOW's charge rides this so
@@ -225,6 +238,20 @@ impl Call {
             Call::HandOff => "HAND OFF",
             Call::Stop => "STOP",
             Call::Unknown => "NO READING",
+        }
+    }
+
+    /// The verdict chip in `l`. [`Self::label`] stays English: the `vitals`
+    /// CLI emits it as the `call` field.
+    pub fn label_in(self, l: crate::lang::Lang) -> &'static str {
+        let p = l.strings().parts;
+        match self {
+            Call::Run => p.vitals_call_run,
+            Call::Watch => p.vitals_call_watch,
+            Call::Compact => p.vitals_call_compact,
+            Call::HandOff => p.vitals_call_hand_off,
+            Call::Stop => p.vitals_call_stop,
+            Call::Unknown => p.vitals_call_unknown,
         }
     }
 
@@ -3105,5 +3132,31 @@ mod tests {
         let rev = assign(&[b, a], &cands);
         assert_eq!(fwd, rev);
         assert_eq!(cands[fwd[&1]].id, "f88ffe3f");
+    }
+
+    #[test]
+    fn the_card_words_are_display_only() {
+        use crate::lang::Lang;
+        // label() is the CLI's `call` value; label_in is only the chip.
+        for c in [
+            Call::Run,
+            Call::Watch,
+            Call::Compact,
+            Call::HandOff,
+            Call::Stop,
+            Call::Unknown,
+        ] {
+            assert_eq!(c.label_in(Lang::En), c.label());
+        }
+        for label in ["CTX WINDOW", "FATIGUE", "RELEVANCE", "X"] {
+            let b = Bar {
+                label,
+                fill: Some(0.5),
+                tone: Tone::Bad,
+                charge: 0.0,
+                caption: String::new(),
+            };
+            assert_eq!(b.label_in(Lang::En), label);
+        }
     }
 }

@@ -84,19 +84,22 @@ impl Change {
     /// `title` is the pane's name as the person sees it, read when the ask
     /// arrived; it is `None` for the window-wide changes and for a pane that
     /// had no name to read.
+    ///
+    /// Drawn and nowhere else, so it is in the reader's language; the answer
+    /// line the agent gets back ([`Self::done_words`], [`Self::kept_words`])
+    /// stays English.
     pub fn ask_words(self, title: Option<&str>) -> String {
+        let t = &crate::lang::current().strings().parts;
         let pane = match title {
-            Some(t) => format!("\u{201c}{}\u{201d}", one_line(t)),
-            None => "a pane".to_string(),
+            Some(name) => format!("\u{201c}{}\u{201d}", one_line(name)),
+            None => t.access_ask_a_pane.to_string(),
         };
         match self {
-            Change::OpenPane => format!("Let agents see {pane}"),
-            Change::ClosePane => format!("Mark {pane} off-limits to agents"),
-            Change::WritesOn => {
-                "Let agents write: notes, deliverables, the bench, appearance".into()
-            }
-            Change::ExposeShells => "Show plain shells to agents, not only agent panes".into(),
-            Change::EventsOn => "Let agents read other agents' tool calls".into(),
+            Change::OpenPane => crate::lang::fill(t.access_ask_open_pane, &[("pane", &pane)]),
+            Change::ClosePane => crate::lang::fill(t.access_ask_close_pane, &[("pane", &pane)]),
+            Change::WritesOn => t.access_ask_writes_on.into(),
+            Change::ExposeShells => t.access_ask_expose_shells.into(),
+            Change::EventsOn => t.access_ask_events_on.into(),
         }
     }
 
