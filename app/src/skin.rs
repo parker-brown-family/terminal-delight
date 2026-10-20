@@ -1053,6 +1053,28 @@ impl Skin {
             .children(self.grain())
     }
 
+    /// An allowance may use discrete marks; the owner still chooses its count and semantic inks.
+    pub fn discrete_meter(
+        &self,
+        reading: Option<f32>,
+        count: usize,
+        ink: Hsla,
+        track: Hsla,
+        unknown: Hsla,
+    ) -> Option<Div> {
+        (self.shape.gauge == Gauge::Pips)
+            .then(|| crate::deck::pips(crate::deck::pips_for(reading, count), ink, track, unknown))
+    }
+
+    /// A floating plain frame keeps its phosphor shadow; stock and cut frames own their depth.
+    pub fn floating_shadow<E: Styled>(&self, d: E, ink: Hsla, phosphor: f32) -> E {
+        if self.is_paper() || self.is_cut() {
+            d
+        } else {
+            d.shadow(crate::float_shadows(ink, phosphor))
+        }
+    }
+
     /// A bounded reading. Absence draws hollow pips or an explicitly unknown rail.
     pub fn meter(
         &self,
@@ -1063,17 +1085,8 @@ impl Skin {
         height: f32,
     ) -> Div {
         let reading = reading.filter(|v| v.is_finite()).map(|v| v.clamp(0., 1.));
-        if self.shape.gauge == Gauge::Pips {
-            return div()
-                .relative()
-                .w_full()
-                .h(px(height * 1.8))
-                .child(crate::deck::pips(
-                    crate::deck::pips_for(reading, 24),
-                    ink,
-                    track,
-                    unknown,
-                ));
+        if let Some(pips) = self.discrete_meter(reading, 24, ink, track, unknown) {
+            return div().relative().w_full().h(px(height * 1.8)).child(pips);
         }
         let track = self.meter_part(div().w_full().h(px(height)).bg(track));
         match reading {
@@ -1202,7 +1215,7 @@ impl Skin {
 
     /// Whether regions are drawn as cut plates rather than as styled quads.
     /// Paper wins where both are asked for: a sheet of cotton is not machined.
-    pub fn is_cut(&self) -> bool {
+    fn is_cut(&self) -> bool {
         self.shape.corner == Corner::Cut && !self.is_paper()
     }
 
@@ -3224,11 +3237,13 @@ mod tests {
                     "material branch escaped to {}",
                     path.display()
                 );
-                assert!(
-                    !source.contains("crate::paper::"),
-                    "paper backend escaped to {}",
-                    path.display()
-                );
+                for backend in ["crate::paper::", "crate::deck::"] {
+                    assert!(
+                        !source.contains(backend),
+                        "material backend {backend} escaped to {}",
+                        path.display()
+                    );
+                }
             }
         }
         visit(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));

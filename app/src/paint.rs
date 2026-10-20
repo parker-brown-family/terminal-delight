@@ -459,17 +459,18 @@ pub fn card(th: &Theme, sk: &Skin, scale: f32, aimed: bool) -> Div {
         .map(|d| sk.finish(d))
         .text_color(th.text)
         .font_family(sk.font_family.clone())
-        // A cut plate carries its own hard shadow in its own shape; a blurred
-        // rectangle here would show in the two corners the plate cut away.
-        .when(!sk.is_cut(), |d| {
-            d.shadow(crate::float_shadows(
+        // Stock and cut plates own their contact shadow; the plain skin keeps
+        // the legacy phosphor treatment.
+        .map(|d| {
+            sk.floating_shadow(
+                d,
                 if aimed {
                     th.accent
                 } else {
                     th.accent.alpha(0.35)
                 },
                 th.grade.phosphor,
-            ))
+            )
         })
 }
 

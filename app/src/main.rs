@@ -22789,7 +22789,6 @@ impl Workspace {
         // long window as a row of tall pips, the short one as short pips, one
         // per unit the vendor named — the same two rails, drawn as XCOM draws
         // health. Unknown stays unknown: hollow pips, never dark ones.
-        let pip_gauge = sk.shape.gauge == skin::Gauge::Pips;
         let pip_n = ((rail_w / 8.0).floor() as usize).clamp(6, 16);
         let pip_unknown = faint.alpha(0.70);
 
@@ -22867,85 +22866,76 @@ impl Workspace {
                 .map(|p| pace_ramp(p.delta));
 
             // The long window, as one solid rail.
-            let week = match lit_colour(&row.week) {
-                _ if pip_gauge => {
-                    let reading = lit_colour(&row.week);
-                    let col = reading.map_or(track, |(_, c)| c);
-                    div()
-                        .relative()
-                        .w_full()
-                        .h(px(rail_h * 1.5))
-                        .child(crate::deck::pips(
-                            crate::deck::pips_for(reading.map(|(f, _)| f), pip_n),
-                            col,
-                            track,
-                            pip_unknown,
-                        ))
-                }
-                None => hatch(rail_h),
-                Some((shown, col)) => {
-                    div()
-                        .w_full()
-                        .h(px(rail_h))
-                        .rounded(pill)
-                        .bg(track)
-                        .map(|d| sk.meter_part(d))
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .h_full()
-                                // A non-zero share never renders as an empty
-                                // track — the same floor the usage panel's
-                                // meter uses, for the same reason.
-                                .w(gpui::relative(if shown > 0.0 {
-                                    shown.max(0.02)
-                                } else {
-                                    0.0
-                                }))
-                                .rounded(pill)
-                                .bg(col)
-                                .map(|d| sk.meter_part(d)),
-                        )
-                }
-            };
+            let reading = lit_colour(&row.week);
+            let week = sk
+                .discrete_meter(
+                    reading.map(|(f, _)| f),
+                    pip_n,
+                    reading.map_or(track, |(_, c)| c),
+                    track,
+                    pip_unknown,
+                )
+                .map(|meter| div().relative().w_full().h(px(rail_h * 1.5)).child(meter))
+                .unwrap_or_else(|| match reading {
+                    None => hatch(rail_h),
+                    Some((shown, col)) => {
+                        div()
+                            .w_full()
+                            .h(px(rail_h))
+                            .rounded(pill)
+                            .bg(track)
+                            .map(|d| sk.meter_part(d))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .h_full()
+                                    // A non-zero share never renders as an empty
+                                    // track — the same floor the usage panel's
+                                    // meter uses, for the same reason.
+                                    .w(gpui::relative(if shown > 0.0 {
+                                        shown.max(0.02)
+                                    } else {
+                                        0.0
+                                    }))
+                                    .rounded(pill)
+                                    .bg(col)
+                                    .map(|d| sk.meter_part(d)),
+                            )
+                    }
+                });
 
             // The short window, as a notched rail: one tick per unit of the
             // window the vendor named.
-            let session = match lit_colour(&row.session) {
-                _ if pip_gauge => {
-                    let reading = lit_colour(&row.session);
-                    let col = reading.map_or(track, |(_, c)| c);
-                    let n = usize::from(deg.ticks).max(1);
-                    div()
-                        .relative()
-                        .w_full()
-                        .h(px(tick_h))
-                        .child(crate::deck::pips(
-                            crate::deck::pips_for(reading.map(|(f, _)| f), n),
-                            col,
-                            track,
-                            pip_unknown,
-                        ))
-                }
-                None => hatch(tick_h),
-                Some((shown, col)) => {
-                    let lit = slot::ticks_lit(shown, deg.ticks);
-                    let mut d = div()
-                        .flex()
-                        .flex_row()
-                        .w_full()
-                        .h(px(tick_h))
-                        .gap(px(1.0 * s));
-                    for i in 0..deg.ticks {
-                        d = d.child(div().flex_1().h_full().rounded(rad).bg(if i < lit {
-                            col
-                        } else {
-                            track
-                        }));
+            let reading = lit_colour(&row.session);
+            let session = sk
+                .discrete_meter(
+                    reading.map(|(f, _)| f),
+                    usize::from(deg.ticks).max(1),
+                    reading.map_or(track, |(_, c)| c),
+                    track,
+                    pip_unknown,
+                )
+                .map(|meter| div().relative().w_full().h(px(tick_h)).child(meter))
+                .unwrap_or_else(|| match reading {
+                    None => hatch(tick_h),
+                    Some((shown, col)) => {
+                        let lit = slot::ticks_lit(shown, deg.ticks);
+                        let mut d = div()
+                            .flex()
+                            .flex_row()
+                            .w_full()
+                            .h(px(tick_h))
+                            .gap(px(1.0 * s));
+                        for i in 0..deg.ticks {
+                            d = d.child(div().flex_1().h_full().rounded(rad).bg(if i < lit {
+                                col
+                            } else {
+                                track
+                            }));
+                        }
+                        d
                     }
-                    d
-                }
-            };
+                });
 
             // The trailing cell: a percentage, an age, or an em dash. Never a
             // zero standing in for a number nobody has — which is why every
