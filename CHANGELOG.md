@@ -21,8 +21,9 @@ the changes you may notice in the first hour.
   run by hand. (#921)
 - **The Field design is now Tactical.** A window or pane saved on Field opens
   on Tactical, keeping any palette you picked and its dials. Field and
-  Tactical differed only in how much glow and bezel they drew, so four designs
-  remain: Hacker, Tactical, Quiet and Deco. (#1029)
+  Tactical differed only in how much glow and bezel they drew. Tactical now
+  also wears the new OPS skin, with a quieter glow and bezel than before; pick
+  another skin from the SKIN row to keep the old trim. (#1029)
 - **Some keys do something different.** Ctrl+Alt+R now renames the highlighted
   left-bar row; Alt+V still makes a side-by-side split. Shift+click on a file
   path reveals it in the file manager, and Ctrl+click opens it. On the
@@ -113,6 +114,20 @@ the changes you may notice in the first hour.
   0.3.0 file. (#560, #655, #735, #741, #813, #907, #940)
 
 ### Added
+
+- **Tactical has a skin of its own, OPS.** Picking the Tactical design brings
+  it; it can also be picked under any design from the SKIN row. Names are set
+  in Oxanium, interface text in Chakra Petch and numbers in Share Tech Mono
+  (all bundled, SIL OFL). Panels have cut corners, the notice and the focused
+  pane's title sit between chevrons, the focused pane carries a hatched strip,
+  the selected row is a solid bar with an arrow tip, and allowances are rows
+  of pips you can count, hollow where there is no reading. Tactical's own
+  glow and bezel are toned down to suit it. The new skin keys (`corner =
+  "cut"`, `emphasis = "bar"`, `gauge`, `title`, `focus`, `material = "grid"`,
+  and `[font] heading` and `data`) work in any skin.
+- **A new design, Intrusive.** The CRT turned all the way up: scan lines over
+  the text and phosphor glow bleeding off every letter, in each letter's own
+  colour. It asks for no skin, so it mixes with OPS, Chalk or any other.
 
 - **Alt+click on a file path opens it inside Terminal Delight.** Pictures (PNG,
   JPEG, WebP, GIF, BMP, SVG), Markdown, HTML pages, PDFs, video and sound open
