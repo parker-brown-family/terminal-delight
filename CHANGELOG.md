@@ -19,6 +19,10 @@ the changes you may notice in the first hour.
   the list of Terminal Delight's keys, and `scripts/install-keys-hotkey.sh`
   removes the old binding when it adds the new one. `td-send` still works when
   run by hand. (#921)
+- **The Field design is now Tactical.** A window or pane saved on Field opens
+  on Tactical, keeping any palette you picked and its dials. Field and
+  Tactical differed only in how much glow and bezel they drew, so four designs
+  remain: Hacker, Tactical, Quiet and Deco. (#1029)
 - **Some keys do something different.** Ctrl+Alt+R now renames the highlighted
   left-bar row; Alt+V still makes a side-by-side split. Shift+click on a file
   path reveals it in the file manager, and Ctrl+click opens it. On the
@@ -205,6 +209,14 @@ the changes you may notice in the first hour.
   holds every left-bar entry, every pane by its header title and every sticky
   note by its words, each with where it sits written underneath. Type to narrow
   it, Enter goes there, Escape or a second Alt+L closes it. (#965)
+- **Chalk, a paper skin for the whole window.** Pick Skin → Chalk in the
+  painter's Style area. Controls, menus, gauges and the attention rail become
+  deckled paper with pigment grain and handwritten labels, while the terminal's
+  own text stays monospace. It follows the chosen palette, Terminal Delight's or
+  the Omarchy theme's, light or dark, and sticky notes gain paper fibres, tape
+  and a small flower on their curled corner. It costs a little more to draw: at
+  20 updates a second, about 20% of one core against 16–17% for the default
+  skin. (#1020, #1022)
 - **A GIT signal warns when panes are changing the same files.** One compact
   signal covers every project in the window. Alt+G opens an inspector with a
   card per project, the working copies that share files, and the checkouts,
@@ -539,6 +551,17 @@ the changes you may notice in the first hour.
   was, so the program's next text landed in the wrong place. Found by the
   Terminal Lab.
 
+- **Tabs no longer come back out of their projects after the window restarts.**
+  One answer from the session host that took longer than five seconds marked
+  the host as gone for the rest of the window's life, and the only thing that
+  checked was saving. The window kept working but stopped writing its layout,
+  so tabs opened after that were missing from the file and the next window
+  brought them back bare, with no name and no project. A slow answer no longer
+  counts; only a closed connection does. And whatever stops saves in future,
+  the window now checks every half minute that the saved layout matches what
+  it shows. It saves again quietly the first time they differ, and if they
+  still differ it says "Layout not saving" across the top of the window and
+  in a desktop notification. (#1017, #1024)
 - **The agent wall says NO READING for a session it has not measured, instead
   of calling it empty and healthy.** A session whose newest record carried no
   context figure was drawn 0% full, 100% relevant and RUN, with thousands of
@@ -660,6 +683,8 @@ the changes you may notice in the first hour.
 - **The Gamba design and its slot-machine overlay.** A pane saved on it opens on
   the custom theme; pick another design in the painter's Style area. Bells and
   attention badges are unaffected. (#992)
+- **The Field design.** It is folded into Tactical, and a pane saved on it
+  opens on Tactical. See Upgrading from 0.3.0. (#1029)
 - **The painter's COLOUR SETS shelf and colour wheel.** The Omarchy themes
   replace the colour sets; colours already chosen with either are still applied.
   (#972, #992)

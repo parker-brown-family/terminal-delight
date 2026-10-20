@@ -865,11 +865,13 @@ impl Hit {
 /// `hover_peel` lifts the bottom edge further, which is the whole teaching for
 /// the mouse gesture: the corner curls under the pointer, so it reads as
 /// something you can pull.
+#[allow(clippy::too_many_arguments)]
 pub fn paint(
     note: &Sticky,
     lay: &Layout,
     pal: &Paper,
     hover_peel: bool,
+    paper_stock: bool,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -898,7 +900,22 @@ pub fn paint(
     // The sheet. Lit from above: brighter where it lies flat against the glass,
     // falling off toward the free edge. The gradient is turned by the tilt so it
     // runs down the PAPER rather than down the screen.
-    let paper_poly = sheet.outline(1.0, (0.0, 0.0));
+    let mut paper_poly = sheet.outline(1.0, (0.0, 0.0));
+    if paper_stock {
+        // Subdivide the same sheet outline, retaining its curl, tilt, hit map
+        // and inverse warp. The seed remains the note's, never the frame's.
+        let mut fibres = Vec::with_capacity(paper_poly.len() * 3);
+        for i in 0..paper_poly.len() {
+            let a = paper_poly[i];
+            let b = paper_poly[(i + 1) % paper_poly.len()];
+            for j in 0..3 {
+                let t = j as f32 / 3.;
+                let d = jitter(note.seed, (i * 3 + j) as u32 + 400) * 1.4;
+                fibres.push((a.0 + (b.0 - a.0) * t + d, a.1 + (b.1 - a.1) * t - d));
+            }
+        }
+        paper_poly = fibres;
+    }
     fill(
         lay,
         &paper_poly,
@@ -953,6 +970,38 @@ pub fn paint(
         ),
         window,
     );
+
+    if paper_stock {
+        // A small taped offcut with a pressed-flower seal on the empty curl.
+        // Both decorate paper, before writing is painted at full contrast.
+        fill(
+            lay,
+            &quad(-17., -hh - 3., 17., -hh + 6.),
+            pal.ink.alpha(0.10),
+            window,
+        );
+        for i in 0..45 {
+            let x = jitter(note.seed, i + 600) * (hw * 2. - 12.);
+            let y = jitter(note.seed, i + 700) * (hh * 2. - 12.);
+            fill(
+                lay,
+                &quad(x, y, x + 2.4, y + 0.35),
+                pal.ink.alpha(0.06),
+                window,
+            );
+        }
+        let (x, y) = (hw - 10., hh - 9.);
+        for i in 0..5 {
+            let angle = i as f32 * std::f32::consts::TAU / 5.;
+            fill(
+                lay,
+                &disc(x + angle.cos() * 3.2, y + angle.sin() * 3.2, 2.1),
+                pal.pin.alpha(0.45),
+                window,
+            );
+        }
+        fill(lay, &disc(x, y, 1.1), pal.ink.alpha(0.55), window);
+    }
 
     paint_writing(note, lay, pal, window, cx);
 

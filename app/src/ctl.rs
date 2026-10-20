@@ -1140,7 +1140,10 @@ pub fn start(cx: &mut Context<Workspace>) {
                     // An id the window does not know still gets refused here —
                     // the socket-side check is a fast path, not the authority.
                     Req::Skin(id) => match crate::skin::select(cx, &id) {
-                        Ok(now) => eprintln!("terminal-delight: skin -> {now}"),
+                        Ok(now) => {
+                            ws.save(cx);
+                            eprintln!("terminal-delight: skin -> {now}");
+                        }
                         Err(e) => eprintln!("terminal-delight: {e}"),
                     },
                     Req::McpPolicy(p) => {

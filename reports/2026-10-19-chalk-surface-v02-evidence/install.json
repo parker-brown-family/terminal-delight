@@ -1,0 +1,11 @@
+{
+  "installed_at": "2026-10-20T02:15:29.327309+00:00",
+  "launcher": "/home/parker/.local/bin/terminal-delight",
+  "previous_target": "/home/parker/.local/lib/terminal-delight/td-22f01eb-chalk-flower",
+  "installed_target": "/home/parker/.local/lib/terminal-delight/td-chalk-surface-c8e4715",
+  "binary_sha256": "c8e4715ae7eb4f5ae6683f8ea38f31f236523d08e010cffb1d3f0112fbeb2858",
+  "running_gui_pid": 3745708,
+  "running_gui_executable": "/home/parker/.local/lib/terminal-delight/td-22f01eb-chalk-flower",
+  "activation": "next GUI launch; current GUI and session host left running",
+  "source_manifest_verified": true
+}

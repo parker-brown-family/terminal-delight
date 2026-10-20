@@ -32,10 +32,6 @@ pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
         include_str!("../themes/quiet-command.toml"),
     ),
     (
-        "field-command",
-        include_str!("../themes/field-command.toml"),
-    ),
-    (
         "tactical-overdrive",
         include_str!("../themes/tactical-overdrive.toml"),
     ),
@@ -1129,10 +1125,27 @@ impl Grade {
     }
 }
 
+// Designs that were offered once and have since been retired, read back as the
+// design that replaced them. The first Chalk preview incorrectly registered
+// materials as colour designs, so those two go to the house design. Field was
+// folded into Tactical for 0.4.0: the two differed only in how much glow and
+// bezel they drew, and the colours they once carried now come from the palette.
+// Keep saved palette/grade fields while retiring the picker entries; without
+// this an unknown id resolves to the custom file, which nobody chose.
+fn read_design_id<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let id = String::deserialize(d)?;
+    Ok(match id.as_str() {
+        "chalk-flower" | "chalk-night" => "hacker".into(),
+        "field-command" => "tactical-overdrive".into(),
+        _ => id,
+    })
+}
+
 /// One scope's appearance pick: a theme id plus an optional seed-colour
 /// override ("#rrggbb"). Panes carry `Option<ThemeChoice>`; None = follow outer.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThemeChoice {
+    #[serde(deserialize_with = "read_design_id")]
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<String>,
@@ -1312,6 +1325,7 @@ pub fn house_terminal() -> ThemeChoice {
 /// which is what the theme tray's "follow outer" toggle governs.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThemeGroup {
+    #[serde(deserialize_with = "read_design_id")]
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<String>,
@@ -3090,6 +3104,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn chalk_material_is_not_offered_as_a_colour_design() {
+        assert!(!builtin_ids().iter().any(|id| id.starts_with("chalk")));
+        for id in ["chalk-flower", "chalk-night"] {
+            let mut saved = serde_json::to_value(ThemeChoice::default()).unwrap();
+            saved["id"] = id.into();
+            let restored: ThemeChoice = serde_json::from_value(saved).unwrap();
+            assert_eq!(restored.id, "hacker");
+        }
+    }
+
+    #[test]
+    fn a_saved_field_design_comes_back_as_tactical() {
+        assert!(!builtin_ids().contains(&"field-command"));
+        let mut saved = serde_json::to_value(ThemeChoice::default()).unwrap();
+        saved["id"] = "field-command".into();
+        let restored: ThemeChoice = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.id, "tactical-overdrive");
+        // A pane's own pinned group is saved separately from the outer choice,
+        // and has to come back the same way.
+        let mut group = serde_json::to_value(ThemeGroup::of(&ThemeChoice::default())).unwrap();
+        group["id"] = "field-command".into();
+        let restored: ThemeGroup = serde_json::from_value(group).unwrap();
+        assert_eq!(restored.id, "tactical-overdrive");
+        for id in builtin_ids() {
+            let mut saved = serde_json::to_value(ThemeChoice::default()).unwrap();
+            saved["id"] = id.into();
+            let restored: ThemeChoice = serde_json::from_value(saved).unwrap();
+            assert_eq!(
+                restored.id, id,
+                "a design still offered reads back as itself"
+            );
+        }
+    }
+
+    #[test]
     fn embedded_themes_parse_with_distinct_ids_and_icons() {
         let mut icons = vec![];
         for (id, src) in BUILTIN_THEMES {
@@ -3097,7 +3146,7 @@ mod tests {
             assert_eq!(&th.name, id, "theme file name must match registry id");
             icons.push(th.icon);
         }
-        assert_eq!(BUILTIN_THEMES.len(), 5);
+        assert_eq!(BUILTIN_THEMES.len(), 4);
         // The tray is glyph-only, so two themes sharing an icon are two themes
         // nobody can tell apart. This test has always collected the icons; it now
         // also reads them, which is what its name has always claimed.
@@ -3205,7 +3254,7 @@ mod tests {
 
     #[test]
     fn pane_theme_inherits_each_group_independently() {
-        let outer = outer_named("field-command", 0.8);
+        let outer = outer_named("quiet-command", 0.8);
         // Inherit theme, but pin a divergent grade.
         let mut p = PaneTheme::default();
         p.set_grade(Grade {
@@ -3213,7 +3262,7 @@ mod tests {
             ..Default::default()
         });
         let eff = p.effective(&outer);
-        assert_eq!(eff.id, "field-command", "theme group still follows outer");
+        assert_eq!(eff.id, "quiet-command", "theme group still follows outer");
         assert!(!p.inherit_theme || (eff.grade.brightness - 0.2).abs() < 1e-6);
         assert!(
             (eff.grade.brightness - 0.2).abs() < 1e-6,
@@ -3779,14 +3828,14 @@ mod tests {
         // A pristine pane mirrors whatever outer currently is — the link is live.
         assert_eq!(p.effective(&outer_named("hacker", 0.5)).id, "hacker");
         assert_eq!(
-            p.effective(&outer_named("field-command", 0.5)).id,
-            "field-command"
+            p.effective(&outer_named("quiet-command", 0.5)).id,
+            "quiet-command"
         );
     }
 
     #[test]
     fn follow_outer_toggle_is_non_destructive() {
-        let outer = outer_named("field-command", 0.5);
+        let outer = outer_named("quiet-command", 0.5);
         let mut p = PaneTheme::default();
         // Diverge to an explicit theme.
         p.set_theme(ThemeGroup {
@@ -3797,7 +3846,7 @@ mod tests {
         // Toggle ON: follows outer live, but the pick is RETAINED, not discarded.
         p.toggle_theme(&outer);
         assert!(p.inherit_theme);
-        assert_eq!(p.effective(&outer).id, "field-command");
+        assert_eq!(p.effective(&outer).id, "quiet-command");
         assert_eq!(
             p.theme.as_ref().unwrap().id,
             "hacker",
@@ -3816,7 +3865,7 @@ mod tests {
         p.toggle_theme(&outer_named("hacker", 0.5));
         assert!(!p.inherit_theme);
         // A later outer change no longer affects this now-detached pane.
-        assert_eq!(p.effective(&outer_named("field-command", 0.5)).id, "hacker");
+        assert_eq!(p.effective(&outer_named("quiet-command", 0.5)).id, "hacker");
     }
 
     #[test]
@@ -3825,7 +3874,7 @@ mod tests {
         // terminal (warp was a single global). The fix makes warp ride the grade
         // group, so it resolves per-pane (own override else inherited outer) and
         // an override never touches the outer or its siblings.
-        let mut outer = outer_named("field-command", 0.5);
+        let mut outer = outer_named("quiet-command", 0.5);
         outer.grade.warp = 1.2;
 
         // a pristine pane inherits the outer warp (grade group follows outer)
@@ -3857,7 +3906,7 @@ mod tests {
             warp: 1.4,
             ..Grade::default()
         });
-        let mut flat_outer = outer_named("field-command", 0.5);
+        let mut flat_outer = outer_named("quiet-command", 0.5);
         flat_outer.grade.warp = 0.0;
         assert!(
             (bent.effective(&flat_outer).grade.warp - 1.4).abs() < 1e-6,
@@ -3867,7 +3916,7 @@ mod tests {
 
     #[test]
     fn tracking_is_per_pane_via_the_grade_group() {
-        let mut outer = outer_named("field-command", 0.5);
+        let mut outer = outer_named("quiet-command", 0.5);
         outer.grade.tracking = Some([0.9, 0.5, 0.3]);
 
         // inherit: a pristine pane follows the outer roll bar
