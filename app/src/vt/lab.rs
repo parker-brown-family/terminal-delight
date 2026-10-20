@@ -32,10 +32,14 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::{Cell, Color, Column, Event, Flags, Line, Listener, Term, TermMode, TermSize};
+use super::{
+    Cell, Color, Column, Event, Flags, Line, Listener, Rgb, Term, TermMode, TermSize, WindowSize,
+};
 
-/// The shape of a case file and of the observations written for it.
-pub const FORMAT_VERSION: u64 = 1;
+/// The shape of a case file and of the observations written for it. 2 added
+/// `sync_open` to observations and expectations (synchronized updates, DEC
+/// 2026), and `events`: what the core told its owner (`Ear`).
+pub const FORMAT_VERSION: u64 = 2;
 
 /// Limits applied before a single byte reaches a parser. A generated or
 /// minimized case that breaks one is refused as a setup failure, never
@@ -76,6 +80,10 @@ pub struct Expect {
     pub modes: std::collections::BTreeMap<String, bool>,
     #[serde(default)]
     pub history: Option<usize>,
+    /// Whether a synchronized update (DEC 2026) is open: the core is holding
+    /// the program's bytes back until it closes.
+    #[serde(default)]
+    pub sync_open: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -364,13 +372,52 @@ pub fn check_limits(case: &Case) -> Result<(), Failure> {
 
 // --- observing ---------------------------------------------------------------
 
-/// Events are not part of an observation yet: the first corpus is about the
-/// grid. They are swallowed here rather than answered, so nothing a case
-/// writes can reach anywhere.
-struct Deaf;
+/// What a core tells its owner while a case replays, in order: the replies it
+/// would write back to the program (answers to DA, DSR, DECRQM, XTGETTCAP,
+/// colour and size queries), the title, the bell, the clipboard. A screen can
+/// be right while an answer is wrong, and a program waiting on a wrong answer
+/// hangs, so each observation carries what was heard since the one before.
+///
+/// Nothing here goes anywhere: requests that need an answer from the window
+/// are answered with fixed values, so both cores format the same input.
+#[derive(Default)]
+struct Ear(std::sync::Mutex<Vec<Value>>);
 
-impl Listener for Deaf {
-    fn send_event(&self, _event: Event) {}
+/// The colour and cell size a request is answered with.
+const ANSWER_RGB: Rgb = Rgb {
+    r: 0x12,
+    g: 0x34,
+    b: 0x56,
+};
+const ANSWER_SIZE: WindowSize = WindowSize {
+    num_lines: 24,
+    num_cols: 80,
+    cell_width: 8,
+    cell_height: 16,
+};
+
+impl Ear {
+    fn take(&self) -> Vec<Value> {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+impl Listener for Ear {
+    fn send_event(&self, event: Event) {
+        let heard = match event {
+            Event::PtyWrite(text) => json!(["reply", text]),
+            Event::TextAreaSizeRequest(answer) => json!(["reply", answer(ANSWER_SIZE)]),
+            Event::ColorRequest(index, answer) => json!(["reply", answer(ANSWER_RGB), index]),
+            Event::Title(title) => json!(["title", title]),
+            Event::ResetTitle => json!(["title-reset"]),
+            Event::Bell => json!(["bell"]),
+            Event::ClipboardStore(kind, text) => json!(["clipboard", format!("{kind:?}"), text]),
+            Event::CursorBlinkingChange => json!(["cursor-blinking"]),
+            // Redraw hints and the pump's own messages: not the core's word.
+            Event::MouseCursorDirty | Event::Wakeup | Event::ChildExit(_) | Event::Exit => return,
+        };
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).push(heard);
+    }
 }
 
 fn colour(color: Color) -> String {
@@ -434,7 +481,7 @@ fn mode_names(mode: TermMode) -> Vec<String> {
 }
 
 /// Everything a checkpoint records, in TD's own vocabulary.
-pub fn observe(term: &Term) -> Value {
+pub fn observe(term: &Term, heard: Vec<Value>) -> Value {
     let screen: Vec<Value> = (0..term.screen_lines() as i32)
         .map(|line| row(term, Line(line)))
         .collect();
@@ -450,6 +497,15 @@ pub fn observe(term: &Term) -> Value {
         },
         "modes": mode_names(term.mode()),
         "history_size": term.history_size(),
+        // An open synchronized update holds the program's bytes back, so the
+        // screen here is the frame from before it, and whether one is open
+        // is state of its own. Both cores set its deadline exactly while one
+        // is open. The count of bytes held is not compared: TD's text guard
+        // holds an unfinished sequence in front of rio-vt, alacritty holds it
+        // in its own buffer, and neither is wrong.
+        "sync_open": term.sync_deadline().is_some(),
+        // What the core told its owner since the last checkpoint (`Ear`).
+        "events": heard,
         "screen": screen,
         "history": history,
     })
@@ -489,6 +545,11 @@ fn check_expect(term: &Term, expect: &Expect) -> Result<(), String> {
             ));
         }
     }
+    if let Some(open) = expect.sync_open {
+        if term.sync_deadline().is_some() != open {
+            wrong.push(format!("synchronized update: expected open {open}"));
+        }
+    }
     if wrong.is_empty() {
         Ok(())
     } else {
@@ -524,10 +585,8 @@ pub fn replay_unguarded(
     mutation: Mutation,
 ) -> Result<Vec<Value>, Failure> {
     check_limits(case)?;
-    let mut term = Term::new(
-        TermSize::new(case.columns, case.rows, 8, 16),
-        Arc::new(Deaf),
-    );
+    let ear = Arc::new(Ear::default());
+    let mut term = Term::new(TermSize::new(case.columns, case.rows, 8, 16), ear.clone());
     let mut rng = SplitMix::new(match plan {
         ChunkPlan::Seeded(seed) => seed,
         _ => 0,
@@ -565,7 +624,7 @@ pub fn replay_unguarded(
             Op::Resize { columns, rows } => {
                 term.resize(TermSize::new(*columns, *rows, 8, 16));
             }
-            Op::Checkpoint => observations.push(observe(&term)),
+            Op::Checkpoint => observations.push(observe(&term, ear.take())),
             Op::Expect(expect) => {
                 if let Err(detail) = check_expect(&term, expect) {
                     return Err(Failure::StateMismatch {
@@ -573,14 +632,14 @@ pub fn replay_unguarded(
                         detail: format!("{} (expected state): {detail}", case.name),
                     });
                 }
-                observations.push(observe(&term));
+                observations.push(observe(&term, ear.take()));
             }
         }
     }
     if !joined.is_empty() {
         term.advance(&joined);
     }
-    observations.push(observe(&term));
+    observations.push(observe(&term, ear.take()));
     Ok(observations)
 }
 
@@ -644,6 +703,8 @@ pub fn first_difference(a: &[Value], b: &[Value]) -> Option<(usize, String)> {
                 "cursor",
                 "modes",
                 "history_size",
+                "sync_open",
+                "events",
                 "screen",
                 "history",
             ];
@@ -824,6 +885,51 @@ mod tests {
         assert!(caught, "a lost escape at a seam went unnoticed");
     }
 
+    #[test]
+    fn an_observation_carries_what_the_core_said_since_the_last_one() {
+        let case = Case {
+            corpus_version: "test".into(),
+            name: "events".into(),
+            seed: None,
+            columns: 8,
+            rows: 2,
+            ops: vec![
+                Op::Write(b"ab\x1b[6n\x07".to_vec()),
+                Op::Checkpoint,
+                Op::Checkpoint,
+            ],
+        };
+        let observations = run(&case, ChunkPlan::Whole, Mutation::None).expect("replays");
+        assert_eq!(
+            observations[0]["events"],
+            json!([["reply", "\x1b[1;3R"], ["bell"]]),
+            "the cursor report and the bell, in order"
+        );
+        assert_eq!(observations[1]["events"], json!([]), "each heard once");
+    }
+
+    #[test]
+    fn an_observation_says_whether_a_synchronized_update_is_open() {
+        let case = Case {
+            corpus_version: "test".into(),
+            name: "sync".into(),
+            seed: None,
+            columns: 8,
+            rows: 1,
+            ops: vec![
+                Op::Write(b"a\x1b[?2026hb".to_vec()),
+                Op::Checkpoint,
+                Op::Write(b"\x1b[?2026l".to_vec()),
+                Op::Checkpoint,
+            ],
+        };
+        let observations = run(&case, ChunkPlan::Whole, Mutation::None).expect("replays");
+        assert_eq!(observations[0]["sync_open"], true);
+        assert_eq!(observations[0]["screen"][0]["text"], "a", "held back");
+        assert_eq!(observations[1]["sync_open"], false);
+        assert_eq!(observations[1]["screen"][0]["text"], "ab");
+    }
+
     /// A UTF-8 character split across reads, completed by a read that holds
     /// more text after it. The lab found alacritty's parser losing that text
     /// (vte 0.15.0, alacritty/vte#159: fixed on vte master, in no release).
@@ -918,9 +1024,10 @@ mod tests {
         for text in [
             "",
             "{",
-            r#"{"format_version": 2, "corpus_version": "x", "cases": []}"#,
-            r#"{"format_version": 1, "corpus_version": "x", "cases": [{"name": "a", "size": [5, 5], "ops": [{"write_hex": "1"}]}]}"#,
-            r#"{"format_version": 1, "corpus_version": "x", "cases": [{"name": "a", "size": [5, 5], "ops": [{"wirte": "x"}]}]}"#,
+            r#"{"format_version": 1, "corpus_version": "x", "cases": []}"#,
+            r#"{"format_version": 2, "corpus_version": "x", "cases": [{"name": "a", "size": [5, 5], "ops": [{"write_hex": "1"}]}]}"#,
+            r#"{"format_version": 2, "corpus_version": "x", "cases": [{"name": "a", "size": [5, 5], "ops": [{"wirte": "x"}]}]}"#,
+            r#"{"format_version": 2, "corpus_version": "x", "cases": [{"name": "a", "size": [5, 5], "ops": [{"expect": {"sync_opne": true}}]}]}"#,
         ] {
             let failure = parse_corpus(text).expect_err(text);
             assert_eq!(failure.kind(), "setup_failed", "{text}");

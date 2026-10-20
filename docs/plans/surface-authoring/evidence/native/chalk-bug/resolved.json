@@ -1,0 +1,215 @@
+{
+  "skin": "chalk",
+  "theme": "hacker",
+  "ui_font": "Caveat",
+  "heading_font": "Caveat",
+  "data_font": "Caveat",
+  "optical": {
+    "scale": 1.4500000476837158,
+    "min_px": 16.0,
+    "line_height": 1.149999976158142
+  },
+  "note": {
+    "decoration": "Flower",
+    "stock": true
+  },
+  "material": "Paper",
+  "scale": 1.0,
+  "text_size": 1.0,
+  "shape": {
+    "corner": "Square",
+    "boundary": "Hairline",
+    "emphasis": "Rail",
+    "divider": "Line",
+    "caps": "Off",
+    "shine": "Flat",
+    "gauge": "Rail",
+    "title": "Plain",
+    "focus": "Plain",
+    "tube": "Stock"
+  },
+  "ink": {
+    "panel": {
+      "hex": "#dce0e8",
+      "a": 1.0
+    },
+    "panel_raised": {
+      "hex": "#dce0e8",
+      "a": 1.0
+    },
+    "panel_sunken": {
+      "hex": "#edeff3",
+      "a": 1.0
+    },
+    "panel_glass": {
+      "hex": "#eff1f5",
+      "a": 0.699999988079071
+    },
+    "btn_face": {
+      "hex": "#dee2ea",
+      "a": 1.0
+    },
+    "rule": {
+      "hex": "#4c4f69",
+      "a": 0.119999997317791
+    },
+    "rule_strong": {
+      "hex": "#4c4f69",
+      "a": 0.2199999988079071
+    },
+    "edge": {
+      "hex": "#4c4f69",
+      "a": 0.25
+    },
+    "edge_strong": {
+      "hex": "#4c4f69",
+      "a": 0.2199999988079071
+    },
+    "focus": {
+      "hex": "#1e66f5",
+      "a": 1.0
+    },
+    "ink": {
+      "hex": "#4c4f69",
+      "a": 1.0
+    },
+    "ink_dim": {
+      "hex": "#4c4f69",
+      "a": 0.8199999928474426
+    },
+    "ink_off": {
+      "hex": "#4c4f69",
+      "a": 0.699999988079071
+    },
+    "ink_faint": {
+      "hex": "#4c4f69",
+      "a": 0.7599999904632568
+    },
+    "ink_ghost": {
+      "hex": "#4c4f69",
+      "a": 0.20000000298023224
+    },
+    "ink_on_mark": {
+      "hex": "#4c4f69",
+      "a": 1.0
+    },
+    "ink_lit": {
+      "hex": "#4c4f69",
+      "a": 0.9200000166893004
+    },
+    "edge_rest": {
+      "hex": "#4c4f69",
+      "a": 0.23999999463558197
+    },
+    "face_rest": {
+      "hex": "#4c4f69",
+      "a": 0.05999999865889549
+    },
+    "mark": {
+      "hex": "#1e66f5",
+      "a": 1.0
+    },
+    "mark_soft": {
+      "hex": "#1e66f5",
+      "a": 0.8500000238418579
+    },
+    "mark_dim": {
+      "hex": "#1e66f5",
+      "a": 0.4000000059604645
+    },
+    "mark_wash": {
+      "hex": "#1e66f5",
+      "a": 0.05999999865889549
+    },
+    "select": {
+      "hex": "#a9750f",
+      "a": 1.0
+    },
+    "row_active": {
+      "hex": "#eff1f5",
+      "a": 0.8999999761581421
+    },
+    "hover": {
+      "hex": "#1e66f5",
+      "a": 0.10000000149011612
+    },
+    "live": {
+      "hex": "#f5ad1e",
+      "a": 1.0
+    },
+    "ok": {
+      "hex": "#40a02b",
+      "a": 1.0
+    },
+    "warn": {
+      "hex": "#df8e1d",
+      "a": 1.0
+    },
+    "danger": {
+      "hex": "#d20f39",
+      "a": 1.0
+    }
+  },
+  "metric": {
+    "radius": 4.0,
+    "radius_lg": 10.0,
+    "hairline": 1.0,
+    "border": 1.0,
+    "rule_gap": 2.0,
+    "gap": 6.0,
+    "pad_x": 9.0,
+    "pad_y": 6.0,
+    "chip_px": 8.0,
+    "chip_py": 3.0,
+    "row_h": 23.0,
+    "label_size": 16.0,
+    "bracket": 5.0,
+    "rail": 2.0,
+    "glow": 0.0,
+    "glow_a": 0.0,
+    "cut": 7.0,
+    "grain": 1.0,
+    "roughness": 1.0,
+    "lift": 1.0,
+    "marker_alpha": 0.2199999988079071
+  },
+  "type": {
+    "tag": {
+      "base": 9.0,
+      "pt": 16.0
+    },
+    "fine": {
+      "base": 9.5,
+      "pt": 16.0
+    },
+    "note": {
+      "base": 10.0,
+      "pt": 16.0
+    },
+    "small": {
+      "base": 11.0,
+      "pt": 16.0
+    },
+    "body": {
+      "base": 12.0,
+      "pt": 17.400001525878906
+    },
+    "lead": {
+      "base": 13.0,
+      "pt": 18.850000381469727
+    },
+    "head": {
+      "base": 15.0,
+      "pt": 21.75
+    },
+    "title": {
+      "base": 17.0,
+      "pt": 24.650001525878903
+    },
+    "display": {
+      "base": 20.0,
+      "pt": 29.0
+    }
+  },
+  "palette": "catppuccin-latte"
+}

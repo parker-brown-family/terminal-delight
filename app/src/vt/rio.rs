@@ -828,6 +828,25 @@ mod tests {
     }
 
     #[test]
+    fn setting_origin_mode_homes_the_cursor_and_resetting_it_does_not() {
+        use crate::vt::Backend;
+        let mut core =
+            super::Core::new(TermSize::new(10, 5, 8, 16), Arc::new(Heard::default()), 100);
+        let at = |core: &super::Core| {
+            let point = core.cursor().point;
+            (point.line.0, point.column.0)
+        };
+        // Set: the top of the scrolling region, rows 2 to 4.
+        core.advance(b"abc\x1b[2;4r\x1b[3;5H\x1b[?6h");
+        assert_eq!(at(&core), (1, 0));
+        // Reset: left where it is, as alacritty_terminal 0.26 leaves it, though
+        // xterm and tmux home it. A session host's snapshot places the cursor
+        // and then resets the mode (`vt/text.rs` says why that wins).
+        core.advance(b"\x1b[2;5H\x1b[?6l");
+        assert_eq!(at(&core), (2, 4));
+    }
+
+    #[test]
     fn grapheme_clustering_is_neither_offered_nor_taken() {
         use crate::vt::Backend;
         let (replies, _) = replies_to(b"\x1b[?2027h\x1b[?2027$p");
@@ -912,6 +931,28 @@ mod tests {
         term.advance(b"\x1b[?2026l");
         assert_eq!(term.pictures().len(), 1, "drawn when the update closed");
         assert!(!path.exists(), "and deleted after");
+    }
+
+    /// The older way to open a synchronized update, the string `ESC P = 1 s`,
+    /// holds the frame back just as `ESC [ ? 2026 h` does, even when the
+    /// frame's first text shares the opener's read (issue 1046).
+    #[test]
+    fn the_older_opener_holds_back_text_that_shares_its_read() {
+        use crate::vt::{Column, Line, Point};
+        let first = |term: &Term| term.cell(Point::new(Line(0), Column(0))).c;
+        let mut term = Term::new(TermSize::new(40, 10, 8, 16), Arc::new(Heard::default()));
+        term.advance(b"\x1bP=1s\x1b\\hello");
+        assert_ne!(
+            first(&term),
+            'h',
+            "drawn before the update closed: a torn frame"
+        );
+        assert!(
+            term.sync_bytes_count() > 0,
+            "the update holds the text back"
+        );
+        term.advance(b"\x1bP=2s\x1b\\");
+        assert_eq!(first(&term), 'h', "drawn when the update closed");
     }
 
     /// rio-vt's own rule for which temporary file it may delete is that the

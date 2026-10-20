@@ -4,15 +4,23 @@ icon = "✿"
 
 [font]
 family = "Caveat"
+scale = 1.45
+min_px = 16.0
+line_height = 1.15
 
 [shape]
 material = "paper"
+tube = "stock"
 corner = "square"
 boundary = "hairline"
 emphasis = "rail"
 divider = "line"
 caps = "off"
 shine = "flat"
+
+[note]
+decoration = "flower"
+stock = true
 
 [metric]
 gap = 6.0
@@ -29,7 +37,7 @@ glow_a = 0.0
 panel = { from = "surface" }
 panel_raised = { from = "surface" }
 panel_sunken = { from = "bg", toward = "surface", t = 0.12 }
-btn_face = { from = "surface", toward = "bg", t = 0.65 }
+btn_face = { from = "surface", toward = "light", t = 0.12 }
 rule = { from = "text", a = 0.12 }
 rule_strong = { from = "text", a = 0.22 }
 edge = { from = "text", a = 0.25 }

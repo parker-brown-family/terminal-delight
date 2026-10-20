@@ -2,22 +2,12 @@
   "note": "Differences between rio-vt and alacritty_terminal that are understood. Each entry says how to take its cause out of a case; a cross-core finding is explained by an entry when removing that cause makes the cores agree (run.py, classify_all). Explained findings are still counted in every summary. An entry is a claim about the cores, so it carries its evidence and, where one core is wrong, the issue that tracks it.",
   "differences": [
     {
-      "id": "origin-mode-does-not-home",
-      "neutralize": {
-        "strip": "\\x1b\\[\\?6[hl]"
-      },
-      "wrong": "rio-vt",
-      "reason": "Setting or resetting origin mode (DECSET/DECRST 6) must move the cursor to the home position (DEC STD 070; xterm and alacritty do). rio-vt 0.5.28 leaves the cursor where it was, so the next text lands outside the scrolling region.",
-      "evidence": "minimized: size 2x1, write \"\\t\\x1b[?6h\" -> cursor column rio 1, alacritty 0",
-      "issue": null
-    },
-    {
       "id": "narrowing-reflow",
       "neutralize": {
         "drop_resize": true
       },
       "wrong": "rio-vt",
-      "reason": "When a pane is resized, rio-vt keeps more rows than alacritty: extra blank rows in history, and a widened line keeps the padding it was wrapped with (\"1235      r\" against \"1235r\"). Settled on 2026-10-19 with tmux as a third opinion: in every minimized case checked, tmux agrees with alacritty, and rio-vt agrees too once the text style (bold, dim, italic, underline, reverse) is taken out. So the cause is the same as clear-screen-with-an-attribute: rio-vt counts blank cells written under a style as content, and reflow keeps them. TD resizes panes on every split, so this is user-visible. The neutralize rule still drops every resize, which is broad; narrow it once the styled-blank fix lands.",
+      "reason": "When a pane is resized, rio-vt keeps more rows than alacritty: extra blank rows in history, and a widened line keeps the padding it was wrapped with (\"1235      r\" against \"1235r\"). Settled on 2026-10-19 with tmux as a third opinion: in every minimized case checked, tmux agrees with alacritty, and rio-vt agrees too once the text style (bold, dim, italic, underline, reverse) is taken out. So the cause is the same as clear-screen-with-an-attribute: rio-vt counts blank cells written under a style as content, and reflow keeps them. TD resizes panes on every split, so this is user-visible. Not fixable at TD's side of the boundary, for the reason clear-screen-with-an-attribute gives; the fix belongs upstream. The neutralize rule still drops every resize, which is broad; narrow it once the styled-blank fix lands.",
       "evidence": "minimized: size 10x3, writes \"\\x1b[1m\", \"\\x1bM1235\", resize 3x2, \"r\", resize 80x3 -> row rio \"1235      r\", alacritty and tmux \"1235r\"; without \\x1b[1m rio \"1235r\". size 4x2, writes \"\\x1b[2m\", \"\\x1b[J\", resize 3x10 -> history rio 1, alacritty 0, tmux 0; without the style rio 0",
       "issue": null
     },
@@ -26,10 +16,11 @@
       "neutralize": {
         "strip": "\\xcc[\\x80-\\xbf]|\\xcd[\\x80-\\xaf]|\\xe2\\x80\\x8d"
       },
-      "wrong": "rio-vt",
-      "reason": "A combining mark or zero-width joiner with no printed character to attach to — at the start of a line, or after an escape sequence: alacritty attaches it (to a blank, or to the last printed character), rio-vt drops it.",
+      "wrong": "neither: TD drops it on purpose",
+      "reason": "A combining mark or zero-width joiner with nothing to sit on, at the start of a line or after any escape sequence other than a colour: alacritty attaches it (to a blank, or to the last printed character), and under rio-vt TD drops it before the core sees it. That drop is TD's own text guard (vt/text.rs), which lets a mark through only straight after the character it belongs to so that a cursor move cannot walk the per-character mark limit; it is deliberate. tmux 3.7c also drops a mark at the start of a line, so alacritty is the odd one out there.",
       "evidence": "minimized: size 4x1, write U+0323 -> row 0 rio \"\", alacritty \" \\u0323\"; size 2x1, writes \"m\", \"\\x1bb\", U+200D -> rio \"m\", alacritty \"m\\u200d\"",
-      "issue": null
+      "issue": null,
+      "third_opinion": "tmux 3.7c: a lone U+0323 at column 0 leaves the row empty, as rio-vt under TD does"
     },
     {
       "id": "wide-erased-in-half",
@@ -98,14 +89,15 @@
       "issue": null
     },
     {
-      "id": "tab-onto-the-last-column",
+      "id": "tab-over-a-written-space",
       "neutralize": {
         "strip": "\\t"
       },
       "wrong": "rio-vt",
-      "reason": "Both cores keep a literal tab in the first cell a tab covers, so copying the line gives the tab back. When the tab only moves the cursor onto the last column, alacritty still keeps it and rio-vt does not, so a copy loses the tab.",
+      "reason": "A tab leaves a literal tab in the first cell it covers, so copying the line gives the tab back. rio-vt 0.5.28 does that only when the cell is blank (NUL); alacritty and tmux also do it over a space a program wrote there. So after \" \\r\\t\" a copy from rio-vt gives a space where the other two give a tab. Not fixable at TD's side of the boundary without wrapping all of rio-vt's handler: the guard cannot see what a cell holds. Copy fidelity only; nothing on screen differs. Fix belongs upstream in put_tab.",
       "evidence": "minimized: size 2x1, writes \" \\r\", \"\\t\" -> row 0 rio \"\", alacritty \"\\t\"",
-      "issue": null
+      "issue": null,
+      "third_opinion": "tmux 3.7c: \" \\r\\t\" at 2x1 and 4x1 captures as a tab, as alacritty does"
     },
     {
       "id": "clear-screen-with-an-attribute",
@@ -113,9 +105,10 @@
         "strip": "\\x1b\\[2J"
       },
       "wrong": "rio-vt",
-      "reason": "Clear screen (ED 2) while any attribute is set — dim, underline, a colour — pushes one more blank row into rio-vt's scrollback than alacritty's. With no attribute set they agree. Seen as stray blank lines in scrollback after `clear` under a styled prompt. Same root cause as narrowing-reflow: rio-vt counts a blank cell written under a style as content.",
+      "reason": "rio-vt 0.5.28 erases rows with the cursor's whole style, not just its background (Row::reset takes the template's style id), so a row erased while dim, underline or a foreground colour is set is not empty to it. Clear screen (ED 2) then pushes that row into scrollback, and alacritty and tmux do not. Seen as stray blank lines in scrollback after `clear` under a styled prompt. Not fixable at TD's side of the boundary: every erase and every scroll writes rows this way, so a guard around ED alone would fix half of it. Fix belongs upstream: an erased cell keeps only the background (xterm's bce). The same cause accounts for most of narrowing-reflow.",
       "evidence": "minimized: size 4x2, writes \"\\x1b[2m\", \"\\x1b[J\", \"\\x1b[2J\" -> history_size rio 2, alacritty 1; the same without \\x1b[2m agrees",
-      "issue": null
+      "issue": null,
+      "third_opinion": "tmux 3.7c: \"x\\e[2m\\e[J\\e[2J\" at 4x2 leaves history_size 1, the same as without \\e[2m"
     },
     {
       "id": "vte-split-utf8-drops-the-next-character",
@@ -137,6 +130,60 @@
       "wrong": "undecided",
       "reason": "An incomplete UTF-8 sequence cut short by an escape. Followed by more text, both cores print one replacement character (U+FFFD); left at the end of the input, alacritty prints it at once and rio-vt has not printed it yet. tmux prints nothing at all for it. Found when the wide-character entry was split; seen only from the generator's invalid bytes, never from a real program yet.",
       "evidence": "minimized: size 4x2, write \"9m\" f0 1b, resize to 2x10 -> alacritty shows U+FFFD, rio-vt and tmux do not; f0 1b followed by \"x\" -> both cores show U+FFFD",
+      "issue": null
+    },
+    {
+      "id": "legacy-dcs-sync-is-rio-only",
+      "neutralize": {
+        "strip": "\\x1bP=[12]s(?:\\x1b\\\\)?"
+      },
+      "wrong": "neither: alacritty_terminal has no legacy form",
+      "reason": "The legacy iTerm2 form of a synchronized update, DCS = 1 s ST to open and DCS = 2 s ST to close, which older terminfo Sync capabilities advertise. rio-vt 0.5.28 implements it as it implements CSI ? 2026 (and lets either form close an update the other opened); vte 0.15, under alacritty_terminal, ignores it, so alacritty draws what rio-vt holds back. rio-vt also opens the update as soon as DCS = 1 s is read, before the string terminator. alacritty is the referee and never ships, so this is not a defect in what TD runs.",
+      "evidence": "minimized: size 2x1, write \"\\x1bP=1s\" -> sync_open rio true, alacritty false; size 2x1, writes \"\\x1b[?2026h\", \"C\\x1bP=2s\\x1b\\\\\" -> rio closes the update and draws C, alacritty stays open",
+      "issue": null
+    },
+    {
+      "id": "sync-opened-in-a-mode-list-is-lost-at-a-close",
+      "kind": "chunk",
+      "core": "rio",
+      "neutralize": {
+        "strip": "\\x1b\\[\\?(?:[0-9]*;)+2026(?:;[0-9]*)*h|\\x1b\\[\\?2026(?:;[0-9]*)+h"
+      },
+      "wrong": "rio-vt and vte 0.15 (the same design)",
+      "reason": "While an update is open, both parsers buffer bytes and scan only for the exact ESC [ ? 2026 h and ESC [ ? 2026 l. When the update closes, the buffer is replayed through the ordinary parser; an update opened inside it by a mode list (ESC [ ? 25 ; 2026 h) sets its deadline during that replay, and the close then clears the deadline, so the new update is lost and its frame is drawn at once. Arriving in the next read, the same opener works. So the screen depends on where reads end, the same way in both cores. The plain opener is found by the scan and survives. Programs mostly send ESC [ ? 2026 h on its own, so this is rare; TD's text guard could cure it for rio-vt by splitting a read after a close as it splits before an open.",
+      "evidence": "size 10x1: writes \"a\\x1b[?2026h\", \"b\\x1b[?2026l\\x1b[?25;2026hc\" -> \"abc\" with no update open, in both cores; the opener in its own read -> \"ab\", update open; \"\\x1b[?2026h\" in place of the mode list -> \"ab\", update open",
+      "issue": null
+    },
+    {
+      "id": "sync-opened-in-a-mode-list-is-lost-at-a-close-on-alacritty",
+      "kind": "chunk",
+      "core": "alacritty",
+      "neutralize": {
+        "strip": "\\x1b\\[\\?(?:[0-9]*;)+2026(?:;[0-9]*)*h|\\x1b\\[\\?2026(?:;[0-9]*)+h"
+      },
+      "wrong": "rio-vt and vte 0.15 (the same design)",
+      "reason": "The same as sync-opened-in-a-mode-list-is-lost-at-a-close, in vte 0.15 under alacritty_terminal: a chunk entry names one core, so the shared cause is listed once per core.",
+      "evidence": "as sync-opened-in-a-mode-list-is-lost-at-a-close",
+      "issue": null
+    },
+    {
+      "id": "primary-device-attributes-differ",
+      "neutralize": {
+        "strip": "\\x1b\\[0?c"
+      },
+      "wrong": "neither: each core names its own terminal",
+      "reason": "Asked for primary device attributes (DA1), rio-vt answers as a VT220 with colour (CSI ? 62 ; 22 c) and alacritty as a VT102 (CSI ? 6 c). Both are valid answers; programs read them to pick features. Every other reply nvim asked for at start-up (mode reports, the background colour, status) matched exactly.",
+      "evidence": "recorded nvim 80x24: first checkpoint replies identical but for \"\\x1b[?62;22c\" against \"\\x1b[?6c\"",
+      "issue": null
+    },
+    {
+      "id": "alacritty-resets-an-unchanged-title",
+      "neutralize": {
+        "strip": "\\x1b\\[23(?:;[0-9]*)*t"
+      },
+      "wrong": "neither: TD ignores a title reset",
+      "reason": "Popping the title stack (CSI 23 t, sent by the rmcup of xterm-256color when a full-screen program exits): alacritty restores the title it saved, and when none had been set it sends a title reset every time; rio-vt saved an empty title and sends a title event only when the title actually changes. TD's pane acts on a title and ignores a reset, so nothing a person sees differs.",
+      "evidence": "recorded less, tput and whiptail: at the program's exit alacritty sends title-reset and rio-vt nothing; screens identical",
       "issue": null
     }
   ]

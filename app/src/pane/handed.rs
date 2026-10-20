@@ -469,7 +469,8 @@ impl TerminalView {
                 .bg(face)
                 .overflow_hidden()
                 .whitespace_nowrap()
-                .text_size(text)
+                .text_size(sk.text_px(f32::from(text)))
+                .map(|d| sk.choice(d, fresh))
                 .child(label)
                 .child(caret)
                 .into_any_element(),

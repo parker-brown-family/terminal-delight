@@ -17,12 +17,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run  # noqa: E402
 
-HEADER = json.dumps({"format_version": 1, "core": "stand-in", "chunks": "whole", "mutation": ""})
+HEADER = json.dumps({"format_version": 2, "core": "stand-in", "chunks": "whole", "mutation": ""})
 
 
 def observation(text="hi", line=0, column=2):
     return {"size": [10, 2], "cursor": {"line": line, "column": column, "shape": "Block"},
-            "modes": ["SHOW_CURSOR"], "history_size": 0,
+            "modes": ["SHOW_CURSOR"], "history_size": 0, "sync_open": False, "events": [],
             "screen": [{"text": text, "runs": []}, {"text": "", "runs": []}], "history": []}
 
 
@@ -57,6 +57,27 @@ class Determinism(unittest.TestCase):
     def test_generated_cases_respect_the_limits(self):
         for seed in range(300):
             run.check_limits(run.generate(seed))
+
+    def test_about_a_quarter_of_generated_cases_set_no_style(self):
+        cases = [run.generate(seed) for seed in range(2000)]
+        free = [c for c in cases if run.is_style_free(c)]
+        self.assertGreater(len(free), 2000 * 0.2)
+        self.assertLess(len(free), 2000 * 0.35, "a quarter by choice, plus styled cases that drew no style")
+        resized = [c for c in free if any(isinstance(op, dict) and "resize" in op for op in c["ops"])]
+        self.assertGreater(len(resized), 200, "style-free cases must resize too")
+
+    def test_a_style_is_one_that_sets_something(self):
+        def case(text):
+            return {"name": "c", "size": [4, 1], "ops": [{"write": text}]}
+        self.assertTrue(run.is_style_free(case("a\x1b[mb\x1b[0m\x1b[0;0m")))
+        for styled in ("\x1b[1m", "\x1b[0;31m", "\x1b[38;5;202m", "\x1b[4:3m"):
+            self.assertFalse(run.is_style_free(case(styled)), repr(styled))
+
+    def test_gen_2_sends_synchronized_updates_and_prompt_marks(self):
+        data = b"".join(run.all_bytes(run.generate(seed)) for seed in range(200))
+        for needle in (b"\x1b[?2026h", b"\x1b[?2026l", b"\x1b[?25;2026h", b"\x1bP=1s\x1b\\",
+                       b"\x1b]133;A\x07", b"\x1b]133;A;aid=7\x1b\\"):
+            self.assertIn(needle, data)
 
     def test_shards_partition_the_generated_cases(self):
         names = lambda i: {c["name"] for c in run.select(30, 7, (i, 3))}  # noqa: E731
@@ -132,6 +153,16 @@ class Comparing(unittest.TestCase):
         index, detail = run.first_difference(a["observations"], b["observations"])
         self.assertEqual(index, 0)
         self.assertIn("screen row 0", detail)
+
+    def test_an_open_update_and_what_the_core_said_are_named_too(self):
+        held = observation()
+        held["sync_open"] = True
+        self.assertEqual(run.signature({"observations": [observation()]}, {"observations": [held]}),
+                         "differs in sync_open")
+        told = observation()
+        told["events"] = [["reply", "\x1b[?6c"]]
+        self.assertEqual(run.signature({"observations": [observation()]}, {"observations": [told]}),
+                         "differs in events")
 
     def test_a_crash_on_one_side_is_a_difference(self):
         a = {"observations": [observation()]}

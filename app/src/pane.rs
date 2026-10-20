@@ -3392,6 +3392,8 @@ pub struct TerminalView {
     wb_card_at: Option<crate::surface::SurfaceId>,
     /// Which of the strip's dials has its list open, if either.
     wb_dial: Option<crate::workbench::Dial>,
+    wb_dial_options: Vec<crate::model_catalog::DialChoice>,
+    wb_dial_scroll: gpui::ScrollHandle,
     /// A dial press that has typed its command and is waiting on the harness.
     ///
     /// See [`crate::workbench::DialSent`]. While this is `Some`, the bench
@@ -3431,7 +3433,7 @@ pub struct TerminalView {
     /// The effort level this pane's agent was told to use. `None` for the same
     /// reason as [`Self::wb_model`], and never the harness's default: a level
     /// nobody chose and a level someone chose are different facts.
-    wb_effort: Option<crate::launcher::Effort>,
+    wb_effort: Option<String>,
     /// Has an agent ever run in this pane?
     ///
     /// The third state a pane has always had and the code has never stored.
@@ -4512,6 +4514,7 @@ impl TerminalView {
             self.wb_running_model = None;
             self.wb_effort = None;
             self.wb_dial = None;
+            self.wb_dial_options.clear();
             // And the conversation with it. The next agent in this pane is a
             // different conversation, and the last thing said to the one that
             // left would be drawn over its first reply as if it had been the
@@ -5241,6 +5244,8 @@ impl TerminalView {
             wb_card_scroll: gpui::ScrollHandle::new(),
             wb_card_at: None,
             wb_dial: None,
+            wb_dial_options: Vec::new(),
+            wb_dial_scroll: gpui::ScrollHandle::new(),
             wb_dial_sent: None,
             wb_asked: Vec::new(),
             wb_model: None,
@@ -7478,6 +7483,15 @@ impl TerminalView {
                 }
             }
         }
+        // Read images in the GUI, not in the agent process: a session host
+        // can outlive the desktop environment it inherited at startup.
+        if !k.alt
+            && crate::workbench::is_paste_chord(k.key, k.control, k.shift)
+            && self.clipboard_holds_an_image()
+        {
+            self.paste_clipboard(cx);
+            return Handled::Declined;
+        }
         if let Some(bytes) = keystroke_bytes(ks) {
             self.send(bytes, cx);
         }
@@ -8296,6 +8310,14 @@ impl TerminalView {
     /// reason a file dropped on a document is not typed into it.
     fn paste_clipboard(&self, cx: &mut Context<Self>) {
         if self.bench.face() == crate::workbench::Face::Document {
+            return;
+        }
+        if self.clipboard_holds_an_image() {
+            if let Some(path) = self.clipboard_image_path() {
+                self.paste_text(&crate::workbench::paths_as_words(&[path.into()]));
+            } else {
+                eprintln!("terminal-delight: could not read the clipboard image");
+            }
             return;
         }
         if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
@@ -10190,6 +10212,7 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.resolved_theme(cx);
+        let menu_skin = crate::skin::for_theme(cx, &th, th.grade.scale);
         // The floating square re-records where its controls are as it paints.
         self.float_zones.borrow_mut().clear();
         // right-click context menu (Copy / Paste / Open link), anchored at the cursor
@@ -10205,7 +10228,7 @@ impl Render for TerminalView {
                 th.surface,
                 th.text,
                 th.faint,
-                th.font_family.clone(),
+                menu_skin.font_family.clone(),
             );
             let row = |label: &str, lit: bool| {
                 div()
@@ -10240,11 +10263,12 @@ impl Render for TerminalView {
                 .bg(surf)
                 .border_1()
                 .border_color(acc.alpha(0.55))
-                .rounded(px(8.))
+                .rounded(menu_skin.rad_raw(8.))
                 .occlude()
-                .text_size(px(13.))
+                .text_size(menu_skin.text_px(13.))
                 .font_family(ff)
-                .shadow_md();
+                .shadow_md()
+                .map(|d| menu_skin.finish(d));
             if let Some(l) = link {
                 // The rows come from `docopen::link_menu`, so a row is offered
                 // only where it does something: Open here on a document TD can
@@ -10748,7 +10772,7 @@ impl Render for TerminalView {
             .map(|b| f32::from(b.size.width))
             .unwrap_or(f32::MAX);
         // Reserve the launch button before deciding which optional controls fit.
-        let optical = if sk.is_paper() { 1.45 } else { 1. };
+        let optical = sk.type_scale;
         let controls_w = (pane_w - 64. * scale) / optical;
         let show_human = SHOW_HUMAN_NAV_GLYPH && controls_w >= 470.; // 1st: 👤 ▲▼ nav
         let show_eq = controls_w >= 410.; //    2nd: EQ / display
@@ -10769,7 +10793,7 @@ impl Render for TerminalView {
         // The ⋯ overflow menu lists exactly the controls hidden at this width, in
         // the same order they collapse. Mirrors the right-click menu's look.
         let overflow_el = self.hdr_overflow.map(|pos| {
-            let (acc, surf, txt, human, ff) = (
+            let (acc, surf, txt, human, _ff) = (
                 th.accent,
                 th.surface,
                 th.text,
@@ -10798,11 +10822,12 @@ impl Render for TerminalView {
                 .bg(surf)
                 .border_1()
                 .border_color(acc.alpha(0.55))
-                .rounded(px(8.))
+                .rounded(sk.rad_raw(8.))
                 .occlude()
                 .text_size(sk.text_px(13.))
-                .font_family(ff)
-                .shadow_md();
+                .font_family(sk.font_family.clone())
+                .shadow_md()
+                .map(|d| sk.finish(d));
             // 👤 ▲▼ message-nav keeps its live steppers inline so you can step
             // repeatedly; this row does not dismiss the menu.
             if SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent() {
@@ -11031,12 +11056,12 @@ impl Render for TerminalView {
         // The glass seated in its bezel (`crt::rim`), for a screen the CRT pass
         // leaves flat. The pass's own flatness test, mirrored: a tube it bends
         // or crawls is rounded and shaded in the shader, and must not get both.
-        let rim_strength = if sk.is_paper() {
+        let rim_strength = if !sk.glass() {
             0.0
         } else {
             crate::workbench::vignette_on(face_now, th.vignette)
         };
-        let tube_bezel = tube_bezel(&th, sk.is_paper());
+        let tube_bezel = tube_bezel(&th, !sk.glass());
         let seat_flat_rim = rim_strength > 0.001 && {
             let (k1, k2) = self.warp_k;
             let bent = k1.abs() >= 0.0005 || k2.abs() >= 0.0005 || (th.crawl && on_terminal);
@@ -11187,7 +11212,7 @@ impl Render for TerminalView {
             .flex_row()
             .items_center()
             .justify_between()
-            .gap(px(if sk.is_paper() { 8. * scale } else { 0. }))
+            .gap(px(sk.fit(0., 8. * scale)))
             .px(hpad)
             // Lit or flat is the skin's call, not this call site's — see
             // `Shine`. Both stops are this PANE's, so a retinted pane keeps its
@@ -11672,14 +11697,9 @@ impl Render for TerminalView {
         // same rectangle or the cancellation is against the wrong curve.
         // Nothing on the bench face — see [`Self::note_layout`].
         let note_el = self.note.clone().filter(|_| on_terminal).map(|note| {
-            let paper_stock = sk.is_paper();
+            let paper_stock = sk.note_decoration == crate::skin::NoteDecoration::Flower;
             let store = self.content_bounds.clone();
-            let mut pal = crate::sticky::paper_for(&th);
-            if paper_stock && th.note_paper == crate::theme::NotePaper::Contrast {
-                pal.base = crate::mix(sk.ink.btn_face, th.accent, 0.07);
-                pal.ink = th.text;
-                pal.pin = th.ansi[1];
-            }
+            let pal = sk.note_palette(&th);
             let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
             // The pane's own curvature, and zero while a modal has flattened the
             // whole screen — the note un-bends with everything else that frame
@@ -11900,13 +11920,11 @@ impl Render for TerminalView {
                     // output stopped being watched is not an agent that stopped.
                     // A document the same way: it fills the screen in the
                     // grid's place, and the shell under it keeps running.
-                    .when(sk.is_paper(), |d| {
-                        d.bg(graded(
-                            crate::mix(th.bg, th.surface, 0.18),
-                            &th.grade,
-                            Channel::Bg,
-                        ))
-                        .children(sk.grain())
+                    .map(|d| {
+                        sk.terminal_stock(
+                            d,
+                            graded(crate::mix(th.bg, th.surface, 0.18), &th.grade, Channel::Bg),
+                        )
                     })
                     .children(pictures_under)
                     .child(if on_bench {
@@ -11989,7 +12007,7 @@ impl Render for TerminalView {
                 el.child(crt::glass(&glass_th, &self.fx))
             })
             // raised bezel frame sits above the glass, framing the whole pane
-            .when(th.bezel > 0.001 && !sk.is_paper(), |el| {
+            .when(th.bezel > 0.001 && sk.glass(), |el| {
                 el.child(crt::bezel(&th))
             })
             .children(ctx_menu_el)

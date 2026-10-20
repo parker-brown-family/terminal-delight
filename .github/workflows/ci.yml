@@ -159,6 +159,26 @@ jobs:
   # candidate and a stable tag publish, and which tags publish nothing. The
   # publish job runs the same script, so a change to the policy that this
   # does not accept cannot reach a release.
+  # On-screen English a pull request adds is drawn in English in all nine
+  # languages until it is in the language pack. This names it, on the changed
+  # lines and in the run summary, and never fails: a suggestion, not a gate
+  # (Parker, 2026-10-20). docs/TRANSLATING.md is the how. A pull request is
+  # checked out as its merge commit, so a branch that merged an older main is
+  # judged on what it changes now.
+  translations:
+    name: Translation suggestions
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Suggest translations for new on-screen English
+        run: python3 scripts/translation-suggest.py "${{ github.event.pull_request.base.sha }}" HEAD
+      - name: Prove the suggester against history
+        run: bash scripts/test-translation-suggest.sh
+
   release-policy:
     name: Release policy
     runs-on: ubuntu-latest

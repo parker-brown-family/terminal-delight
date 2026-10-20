@@ -413,6 +413,14 @@ the changes you may notice in the first hour.
 
 ### Changed
 
+- **Model menus name the models your agents actually offer.** The launcher,
+  the saved launch defaults and the workbench's live model dial read their
+  choices and reasoning levels from the installed Codex or Claude, and cards and
+  dials keep the reported family and version: SOL 6.1, ASTRA 6, LUNA 6,
+  TERRA 5.6, OPUS 5.5. A name TD does not know is shown whole. *Agent default*
+  passes no model or effort override. If an agent cannot be asked, the menu
+  says so and offers retry rather than guessing, and a saved choice the agent no
+  longer lists stays visible until you change it. (#1067)
 - **OPS has a name in every language.** Its caption was the three Latin
   letters "ops" in all nine languages; it is now the word for "command" that
   its own help line already used in each (mando, Kommando, commande, штаб, 指挥,
@@ -585,15 +593,24 @@ the changes you may notice in the first hour.
 
 - **Launching Codex no longer picks a retired model.** The launcher's Codex
   menu offered `gpt-5-codex` and `gpt-5` and passed one with `--model`, which a
-  current Codex account rejects with HTTP 400. Its one row is now *Codex
-  default*: no `--model`, so Codex uses the model in its own configuration.
-  Picking that row on the workbench's live dial opens Codex's own `/model`
-  picker. (#1044)
+  current Codex account rejects with HTTP 400. Codex now starts on the model in
+  its own configuration unless you pick one it lists. (#1044)
 - **Pasting a screenshot into Claude or Codex works again.** The agents could
   not reach the desktop clipboard from the session host, so Codex timed out on
   X11 and Claude found no image. TD now saves the picture and pastes its path,
   which both agents attach as `[Image #1]`; Ctrl+V, Ctrl+Shift+V, Shift+Insert
   and workbench paste all do it. (#1060)
+- **Turning origin mode on moves the cursor home again.** A program that sets
+  origin mode (DECOM) expects the cursor at the top of its scrolling region,
+  where xterm, tmux and the old core put it. The rio-vt core left it where it
+  was, so the program's next text landed in the wrong place. Found by the
+  Terminal Lab. (#1034)
+- **A screen redraw opened the older way is no longer drawn half-finished.**
+  Programs can ask the terminal to hold a redraw back until it is complete,
+  either with `ESC [ ? 2026 h` or with an older string, `ESC P = 1 s ESC \`.
+  Terminal Delight already held the first form back properly; with the second,
+  text that arrived together with the request was drawn at once, so the frame
+  could appear torn. Found by the Terminal Lab. (#1046)
 - **Tabs no longer come back out of their projects after the window restarts.**
   One answer from the session host that took longer than five seconds marked
   the host as gone for the rest of the window's life, and the only thing that

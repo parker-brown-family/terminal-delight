@@ -1816,12 +1816,19 @@ impl NotesLayer {
     }
 
     /// A bar button: a word in a thin border, lit when it can be pressed.
-    fn button(&self, label: &str, zone: Zone, live: bool, th: &Theme) -> gpui::Div {
-        div()
+    fn button(
+        &self,
+        label: &str,
+        zone: Zone,
+        live: bool,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> gpui::Div {
+        sk.action(div(), false)
             .relative()
             .px(px(7.))
             .py(px(1.))
-            .rounded(px(4.))
+            .rounded(sk.radius())
             .border_1()
             .border_color(th.accent.alpha(if live { 1.0 } else { 0.3 }))
             .text_color(th.accent.alpha(if live { 1.0 } else { 0.4 }))
@@ -1839,12 +1846,19 @@ impl NotesLayer {
 
     /// The bar, bottom-right and fixed in the view. `beside` names the agent
     /// pane ↪ would send to; see [`Self::send_button`].
-    pub fn draw_bar(&self, anchors: &[Anchor], th: &Theme, beside: Option<&str>) -> AnyElement {
-        let text = th.font_size * 0.85;
+    pub fn draw_bar(
+        &self,
+        anchors: &[Anchor],
+        th: &Theme,
+        beside: Option<&str>,
+        sk: &crate::skin::Skin,
+    ) -> AnyElement {
+        let text = f32::from(sk.text_px(th.font_size * 0.85));
         let (notes, concurs) = self.counts(anchors);
         let l = crate::lang::current();
         let t = &l.strings().parts;
-        let mut row = div()
+        let mut row = sk
+            .chrome(sk.sheet())
             .relative()
             .flex()
             .flex_row()
@@ -1853,12 +1867,12 @@ impl NotesLayer {
             .gap(px(8.))
             .px(px(10.))
             .py(px(5.))
-            .rounded(px(6.))
+            .rounded(sk.rad_raw(6.))
             .bg(th.surface.alpha(0.96))
             .border_1()
             .border_color(th.accent.alpha(0.45))
             .shadow(crate::float_shadows(th.accent, th.grade.phosphor))
-            .font_family(SharedString::from(th.font_family.clone()))
+            .font_family(SharedString::from(sk.font_family.clone()))
             .text_size(px(text))
             .text_color(th.text.alpha(0.8))
             .child(self.record(Zone::Bar));
@@ -1881,9 +1895,10 @@ impl NotesLayer {
                     Zone::CopyMap,
                     self.mappable(anchors),
                     th,
+                    sk,
                 ));
                 if let Some((label, live)) = self.send_button_in(anchors, beside, l) {
-                    row = row.child(self.button(&label, Zone::Send, live, th));
+                    row = row.child(self.button(&label, Zone::Send, live, th, sk));
                 }
                 let gone: usize = self
                     .orphans(anchors)
@@ -1892,7 +1907,7 @@ impl NotesLayer {
                     .sum();
                 if gone > 0 {
                     let label = l.count(&t.notes_orphans_button_n, gone);
-                    row = row.child(self.button(&label, Zone::Gone, true, th));
+                    row = row.child(self.button(&label, Zone::Gone, true, th, sk));
                 }
                 match &self.writable {
                     // Kept as written: nothing to save, and nothing to say
@@ -1904,6 +1919,7 @@ impl NotesLayer {
                             Zone::Save,
                             self.can_save().is_ok(),
                             th,
+                            sk,
                         ));
                         if !self.pending.is_empty() {
                             row = row.child(
@@ -1977,7 +1993,13 @@ impl NotesLayer {
     /// never where it is kept: *"a one-way pass of a screenshot"*, with the
     /// path masked. A picture whose file is gone says so in its row; a list
     /// that cannot be read says why. `None` when there is nothing to list.
-    fn draw_pictures(&self, nid: &str, deletable: bool, th: &Theme) -> Option<gpui::Div> {
+    fn draw_pictures(
+        &self,
+        nid: &str,
+        deletable: bool,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> Option<gpui::Div> {
         let body = th.font_size;
         let t = &crate::lang::current().strings().parts;
         let pictures = self.pictures_on(nid);
@@ -2014,7 +2036,7 @@ impl NotesLayer {
                 .gap(px(8.))
                 .child(
                     div()
-                        .font_family(SharedString::from(th.font_family.clone()))
+                        .font_family(SharedString::from(sk.font_family.clone()))
                         .child(img.label()),
                 )
                 .child(
@@ -2043,7 +2065,12 @@ impl NotesLayer {
     /// its id, its notes oldest first (each with its delete), its pictures,
     /// the draft, and Add note, Close and the hint, as the brief's own dialog
     /// lays them out.
-    pub fn draw_box(&self, view: gpui::Size<Pixels>, th: &Theme) -> Option<AnyElement> {
+    pub fn draw_box(
+        &self,
+        view: gpui::Size<Pixels>,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> Option<AnyElement> {
         let b = self.note_box.as_ref()?;
         let editable = self.has_caret();
         let deletable = self.can_delete();
@@ -2131,7 +2158,7 @@ impl NotesLayer {
             .px(px(12.))
             .py(px(10.))
             .child(list.min_h(px(0.)).overflow_hidden());
-        if let Some(pictures) = self.draw_pictures(&b.nid, deletable, th) {
+        if let Some(pictures) = self.draw_pictures(&b.nid, deletable, th, sk) {
             content = content.child(pictures);
         }
         if editable {
@@ -2164,7 +2191,8 @@ impl NotesLayer {
             );
         }
         content = content.child(actions.flex_none());
-        let panel = div()
+        let panel = sk
+            .chrome(sk.panel())
             .absolute()
             .left(px(((vw - w) / 2.0).max(0.0)))
             .top(px((vh * 0.1).min(110.0)))
@@ -2176,7 +2204,7 @@ impl NotesLayer {
             .bg(th.surface)
             .border_2()
             .border_color(th.accent)
-            .rounded(px(10.))
+            .rounded(sk.radius_lg())
             .shadow(crate::float_shadows(th.accent, th.grade.phosphor))
             .text_size(px(body))
             .text_color(th.text)
@@ -2195,7 +2223,7 @@ impl NotesLayer {
                         div()
                             .text_size(px(body * 0.75))
                             .text_color(th.faint)
-                            .font_family(SharedString::from(th.font_family.clone()))
+                            .font_family(SharedString::from(sk.font_family.clone()))
                             .child(format!("#{}", b.nid)),
                     ),
             )

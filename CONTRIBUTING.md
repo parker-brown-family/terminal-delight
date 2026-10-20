@@ -115,6 +115,9 @@ To ship your theme with the app:
    Keep `name` in the file equal to the registry id — a test enforces this.
 3. Run `cargo test` (the theme-parsing tests will validate your file).
 4. Add a screenshot to the PR.
+5. Give it a caption in the picker, in all nine languages, as
+   [`docs/TRANSLATING.md`](docs/TRANSLATING.md) describes. CI's
+   **Translation suggestions** check reminds you, and never blocks.
 
 A good built-in is internally coherent (the ANSI ramp reads as one family) and
 legible at a glance. Loud is fine; unreadable is not.
@@ -148,6 +151,11 @@ cargo deny check                       # license + source policy
 ```
 
 Plus, from the repo root, `node --check src/js/*.js` for the browser prototype.
+
+Text a person reads on screen is drawn from the language pack, in nine
+languages. If your change adds some, `python3 scripts/translation-suggest.py`
+lists it and [`docs/TRANSLATING.md`](docs/TRANSLATING.md) says how to add it. CI
+runs the same check as a suggestion; it never fails the build.
 
 ### Clean-room rule for Zed (important)
 

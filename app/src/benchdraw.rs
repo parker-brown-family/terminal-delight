@@ -207,16 +207,24 @@ fn depth() -> Vec<BoxShadow> {
 ///
 /// `strength` dims the whole thing for a state that is present without being
 /// urgent: a frame that shouts at Idle is a frame nobody reads at Waiting.
-pub fn spine_frame<E: Styled>(el: E, tint: Hsla, strength: f32, sk: &Skin, th: &Theme) -> E {
+pub fn spine_frame<E: Styled + ParentElement>(
+    el: E,
+    tint: Hsla,
+    strength: f32,
+    sk: &Skin,
+    th: &Theme,
+) -> E {
     let lit = tint.alpha(0.85 * strength);
-    el.rounded(sk.rad_raw(8.))
+    let el = el
+        .rounded(sk.rad_raw(8.))
         .border_2()
         .border_color(lit)
         .bg(crate::darken(th.surface, 0.45))
         .shadow(crate::float_shadows(
             tint.alpha(strength),
             th.grade.phosphor,
-        ))
+        ));
+    sk.finish_edged(el, lit)
 }
 
 /// Depth AND the tube's phosphor — for the one thing on a surface that is
@@ -281,11 +289,11 @@ pub fn aglow_at<E: Styled>(el: E, tint: Hsla, strength: f32, th: &Theme) -> E {
 
 /// A small mono label — the chrome's own voice, used for every kind chip,
 /// field name and count on the bench.
-fn micro(text: impl Into<String>, step: Step, colour: Hsla, sk: &Skin, th: &Theme) -> Div {
+fn micro(text: impl Into<String>, step: Step, colour: Hsla, sk: &Skin, _th: &Theme) -> Div {
     div()
         .text_size(px(sk.pt(step)))
         .text_color(colour)
-        .font_family(th.font_family.clone())
+        .font_family(sk.font_family.clone())
         // Through `sel`, which is what makes eighty call sites selectable in
         // one edit. A `StyledText` inherits the size, colour and family set
         // above exactly as the plain string it replaced did.
@@ -559,7 +567,7 @@ pub fn shelf_tab(
 ) -> Div {
     sk.chip(active)
         .text_size(px(sk.pt(Step::Note)))
-        .font_family(th.font_family.clone())
+        .font_family(sk.font_family.clone())
         .when(unseen > 0 && !active, |d| {
             d.text_color(ink(crate::workbench::Tint::Waiting, th))
         })
@@ -857,7 +865,7 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
         .border_1()
         .border_color(sk.ink.rule)
         .text_size(px(sk.pt(Step::Fine)))
-        .font_family(th.font_family.clone())
+        .font_family(sk.font_family.clone())
         .text_color(crate::emphasis::meta(th))
         .child(sel(line.text).with_highlights(spans))
 }
@@ -962,7 +970,7 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
                 .child(
                     sk.chip(false)
                         .text_size(px(sk.pt(Step::Fine)))
-                        .font_family(th.font_family.clone())
+                        .font_family(sk.font_family.clone())
                         .text_color(ink(crate::workbench::tint_of(&surface.kind), th))
                         .child(surface.kind.word()),
                 )
@@ -1344,7 +1352,7 @@ fn response(title: &str, r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Th
                         .items_baseline()
                         .gap(px(4.))
                         .text_size(px(sk.pt(Step::Note)))
-                        .font_family(th.font_family.clone())
+                        .font_family(sk.font_family.clone())
                         .text_color(if active {
                             facet.ink
                         } else {
@@ -1412,7 +1420,7 @@ fn response(title: &str, r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Th
                     let chip = div()
                         .px(px(sk.tpx(5.)))
                         .text_size(px(sk.pt(Step::Note)))
-                        .font_family(th.font_family.clone())
+                        .font_family(sk.font_family.clone())
                         .text_color(if active {
                             facet.ink
                         } else {
@@ -1740,7 +1748,7 @@ pub fn round_progress(
                         .px(px(sk.tpx(3.)))
                         .py(px(sk.tpx(2.)))
                         .text_size(px(sk.pt(Step::Body)))
-                        .font_family(th.font_family.clone())
+                        .font_family(sk.font_family.clone())
                         // An answered tab reads as answered even while you stand
                         // on it: the underline and the size say "here", the ink
                         // says "done", matching its answered siblings. Parker:
@@ -1792,7 +1800,7 @@ pub fn round_progress(
                             .px(px(sk.tpx(3.)))
                             .py(px(sk.tpx(2.)))
                             .text_size(px(sk.pt(Step::Body)))
-                            .font_family(th.font_family.clone())
+                            .font_family(sk.font_family.clone())
                             .text_color(tint)
                             .cursor_pointer()
                             .child(sel(words().benchdraw_submit.to_string()))
@@ -2268,7 +2276,7 @@ fn patch(text: &str, sk: &Skin, th: &Theme) -> Div {
         div()
             .text_size(px(sk.pt(Step::Small)))
             .text_color(colour)
-            .font_family(th.font_family.clone())
+            .font_family(sk.font_family.clone())
             .child(sel(line.to_string()))
     }))
 }
@@ -2854,6 +2862,7 @@ pub fn dial_menu(rows: Vec<Div>, sk: &Skin, th: &Theme) -> Div {
 /// nothing marked in it at all.
 pub fn dial_row(label: &str, lit: bool, chosen: bool, sk: &Skin, th: &Theme) -> Div {
     sk.chip(lit)
+        .flex_none()
         .relative()
         .flex()
         .flex_row()
@@ -3273,7 +3282,8 @@ pub fn zone(
     hit: crate::workbench::Hit,
 ) -> impl gpui::IntoElement {
     gpui::canvas(
-        move |bounds, _window, _cx| {
+        move |bounds, window, _cx| {
+            let bounds = bounds.intersect(&window.content_mask().bounds);
             into.borrow_mut().push(crate::workbench::Zone {
                 x: f32::from(bounds.origin.x),
                 y: f32::from(bounds.origin.y),
@@ -3540,7 +3550,7 @@ pub fn composer(
                     // chat composer does: the caret stays on screen while you
                     // type, and the wheel reads back over what you wrote.
                     .text_size(px(pt))
-                    .font_family(th.font_family.clone())
+                    .font_family(sk.font_family.clone())
                     .text_color(th.text)
                     .child(body),
             )
@@ -3792,7 +3802,7 @@ pub fn asked(lines: &[String], sk: &Skin, th: &Theme) -> Div {
         .children(lines.iter().map(|line| {
             div()
                 .text_size(px(sk.pt(Step::Body)))
-                .font_family(th.font_family.clone())
+                .font_family(sk.font_family.clone())
                 .text_color(th.human)
                 .child(sel(line.clone()))
         }))
@@ -3874,7 +3884,7 @@ pub fn woken(w: &crate::channel::Woken, sk: &Skin, th: &Theme) -> Div {
         .child(
             div()
                 .text_size(px(sk.pt(Step::Body)))
-                .font_family(th.font_family.clone())
+                .font_family(sk.font_family.clone())
                 .text_color(th.text.alpha(0.78))
                 .child(sel(body)),
         )
@@ -3938,7 +3948,7 @@ pub fn live_card(
         .child(match doing {
             Some(d) => div()
                 .text_size(px(sk.pt(Step::Body)))
-                .font_family(th.font_family.clone())
+                .font_family(sk.font_family.clone())
                 .text_color(th.accent.alpha(0.9))
                 .child(sel(d)),
             // The usual reason is simply the first seconds of a turn, before
@@ -4005,7 +4015,7 @@ pub fn conversation(tail: &[String], sk: &Skin, th: &Theme) -> Div {
                 line.trim_start().starts_with('\u{203a}') || line.trim_start().starts_with('>');
             div()
                 .text_size(px(sk.pt(Step::Body)))
-                .font_family(th.font_family.clone())
+                .font_family(sk.font_family.clone())
                 .text_color(if mine { th.human } else { th.text.alpha(0.62) })
                 .child(sel(line.clone()))
         }))

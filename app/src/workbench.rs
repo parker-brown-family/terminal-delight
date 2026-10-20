@@ -1336,6 +1336,7 @@ pub enum Pointer {
 /// What a wheel turn over the bench moves.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Wheel {
+    Dial,
     /// The composer's draft, by the delta.
     Composer,
     /// The card in the body, when one is on it.
@@ -1372,6 +1373,7 @@ pub enum Wheel {
 /// changed: the thing a person is reading beats the debug flag.
 pub fn wheel_target(over: Option<&Hit>, card: bool, mirror: bool) -> Wheel {
     match over {
+        Some(Hit::DialPick(..)) => Wheel::Dial,
         Some(Hit::Composer) => Wheel::Composer,
         _ if card => Wheel::Card,
         _ if mirror => Wheel::Mirror,
@@ -2435,75 +2437,12 @@ pub fn flag_value(cmd: &str, flag: &str) -> Option<String> {
     None
 }
 
-/// The Claude families a model id can name. A word in this list is a family;
-/// every other word in an id is a version, a date, or a vendor prefix.
-const CLAUDE_FAMILIES: [&str; 4] = ["opus", "fable", "sonnet", "haiku"];
-
-/// What each alias resolves to today. Bump when a model ships; a transcript
-/// that reports a different version still wins on the dial.
-const CURRENT_VERSION: [(&str, &str); 4] = [
-    ("opus", "5.5"),
-    ("fable", "5.1"),
-    ("sonnet", "5"),
-    ("haiku", "4.5"),
-];
-
-/// What the Workbench's model dial calls a model: `claude-opus-5-5` → `opus 5.5`.
-///
-/// The overview card drops the version on purpose — [`crate::vitals::model_name`]
-/// says OPUS, which is what fits a card. The dial has the room, and a dial that
-/// says only `opus` cannot tell Opus 5.5 from a session still pinned to 4.8.
-/// Parker: *"It just says Opus or Sonnet, whatever. We want to say Opus x.x."*
-///
-/// Claude ids come in two shapes, `claude-opus-5-5` and the older
-/// `claude-3-5-sonnet-20241022`, so the version is every short run of digits
-/// wherever it sits, and the eight-digit date stamp is not a version. `[1m]` is
-/// the context window, not the model. An id naming no Claude family is its own
-/// label: `gpt-5-codex` already says which one it is, and is already a row.
-///
-/// Idempotent: `opus 5.5` comes back as `opus 5.5`, so a label can be fed back
-/// through it and compared with an id.
 pub fn model_label(raw: &str) -> Option<String> {
-    let lower = raw.trim().to_ascii_lowercase();
-    let id = lower.split('[').next().unwrap_or("").trim();
-    if id.is_empty() || id == "<synthetic>" {
-        return None;
-    }
-    let words: Vec<&str> = id.split(['-', ' ', '.']).collect();
-    let Some(family) = words.iter().copied().find(|w| CLAUDE_FAMILIES.contains(w)) else {
-        return Some(id.to_string());
-    };
-    let version: Vec<&str> = words
-        .iter()
-        .copied()
-        .filter(|w| !w.is_empty() && w.len() <= 2 && w.chars().all(|c| c.is_ascii_digit()))
-        .collect();
-    Some(if version.is_empty() {
-        // A bare alias: name the version it currently resolves to, so the
-        // dial says OPUS 5.5 from launch rather than after the first reply.
-        match CURRENT_VERSION.iter().find(|(f, _)| *f == family) {
-            Some((_, v)) => format!("{family} {v}"),
-            None => family.to_string(),
-        }
-    } else {
-        format!("{family} {}", version.join("."))
-    })
+    crate::model_catalog::label(raw)
 }
 
-/// Do two ways of naming a model name the same ROW of the dial?
-///
-/// `opus`, `Opus`, `claude-opus-5-5` and `opus 5.5` all do: the row is the
-/// alias the harness is given, and the alias is a family. So the `--model opus`
-/// a launcher passed and the `claude-opus-5-5` the transcript reports light the
-/// same row, and two versions of one family are the same row too — the list has
-/// one row per family, and lighting nothing for a 4.8 session would be a lie
-/// about which button is pressed.
 pub fn same_model(a: &str, b: &str) -> bool {
-    fn row(s: &str) -> Option<String> {
-        let label = model_label(s)?;
-        Some(label.split(' ').next().unwrap_or_default().to_string())
-    }
-    matches!((row(a), row(b)), (Some(x), Some(y)) if x == y)
+    matches!((model_label(a), model_label(b)), (Some(left), Some(right)) if left == right)
 }
 
 /// Does this keystroke ask the composer for HISTORY rather than for an edit?
@@ -7371,11 +7310,10 @@ mod tests {
             ("claude-3-5-sonnet-20241022", "sonnet 3.5"),
             // The context window is not the model.
             ("claude-opus-5-5[1m]", "opus 5.5"),
-            // A bare alias names the version it resolves to today.
-            ("opus", "opus 5.5"),
-            ("Opus", "opus 5.5"),
-            ("sonnet", "sonnet 5"),
-            ("haiku", "haiku 4.5"),
+            ("opus", "opus"),
+            ("Opus", "opus"),
+            ("sonnet", "sonnet"),
+            ("haiku", "haiku"),
             // A label fed back in is itself.
             ("opus 5.5", "opus 5.5"),
             // Not a Claude family: the id is the label, and is the row.
@@ -7388,10 +7326,25 @@ mod tests {
     }
 
     #[test]
-    fn an_alias_and_the_version_it_resolved_to_light_the_same_row() {
-        assert!(same_model("opus", "claude-opus-5-5"));
-        assert!(same_model("OPUS 5.5", "opus"));
-        assert!(same_model("opus", "claude-opus-4-8"), "one row per family");
+    fn the_model_menu_takes_the_wheel_before_the_card_or_mirror() {
+        for dial in [Dial::Model, Dial::Effort] {
+            for card in [false, true] {
+                for mirror in [false, true] {
+                    assert_eq!(
+                        wheel_target(Some(&Hit::DialPick(dial, 0)), card, mirror),
+                        Wheel::Dial
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn only_the_same_reported_version_lights_a_model_row() {
+        assert!(same_model("opus 5.5", "claude-opus-5-5"));
+        assert!(!same_model("OPUS 5.5", "opus"));
+        assert!(!same_model("opus 5.5", "claude-opus-4-8"));
+        assert!(!same_model("gpt-6.1-sol", "gpt-5.6-sol"));
         assert!(!same_model("opus", "claude-sonnet-5"));
         // The haiku 4.5 in `claude-haiku-4-5` must not leak a row onto opus 4.x.
         assert!(!same_model("opus", "claude-haiku-4-5-20251001"));

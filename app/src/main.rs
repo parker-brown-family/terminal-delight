@@ -70,6 +70,7 @@ mod lookup;
 mod mcp;
 mod mcp_tail;
 mod mcp_transport;
+mod model_catalog;
 mod notepaper;
 mod notifpref;
 mod notify;
@@ -86,6 +87,7 @@ mod recover;
 mod screenread;
 mod session;
 mod skin;
+use skin::parts::{color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn};
 mod slot;
 mod sticky;
 mod surface;
@@ -1451,73 +1453,6 @@ const SLOT_RAIL_GROWTH: f32 = 1.5;
 /// bar's vertical space.
 const BAY_H: f32 = 56.0;
 
-/// A slider switch: a track with a knob at one end. The house control for a
-/// boolean that takes effect immediately.
-///
-/// Not a checkbox. A checkbox is a field in a form you submit, and nothing in
-/// this window is submitted — the switch IS the write. The knob's position
-/// carries the state on its own, so the control still reads at a glance with
-/// the label covered, which a tick in a box does not.
-fn slider_switch(on: bool, th: &theme::Theme, sk: &skin::Skin) -> gpui::Div {
-    if sk.is_paper() {
-        return sk.paper_control(div().w(px(36.)).h(px(18.)), on).child(
-            div()
-                .absolute()
-                .left(px(if on { 22. } else { 3. }))
-                .top(px(3.))
-                .w(px(11.))
-                .h(px(11.))
-                .child(crate::paper::backing(sk.ink.ink_dim, sk.ink.select, false)),
-        );
-    }
-    const TRACK_W: f32 = 36.;
-    const TRACK_H: f32 = 18.;
-    const KNOB: f32 = 13.;
-    let pad = (TRACK_H - KNOB) / 2.;
-    div()
-        .w(px(TRACK_W))
-        .h(px(TRACK_H))
-        .flex_none()
-        // A pill under a round skin, a slot under a square or cut one.
-        .rounded(sk.radius_pill())
-        .border_1()
-        .border_color(if on { th.accent } else { th.text.alpha(0.25) })
-        .bg(if on {
-            th.accent.alpha(0.35)
-        } else {
-            th.text.alpha(0.08)
-        })
-        .flex()
-        .flex_row()
-        .items_center()
-        .when(on, |d| d.justify_end())
-        .when(!on, |d| d.justify_start())
-        .px(px(pad))
-        .child(
-            div()
-                .w(px(KNOB))
-                .h(px(KNOB))
-                .rounded(sk.radius_pill())
-                .bg(if on { th.accent } else { th.text.alpha(0.45) })
-                .when(on, |d| {
-                    d.shadow(
-                        theme::phosphor(
-                            th.grade.phosphor,
-                            BoxShadow {
-                                color: th.accent.alpha(0.8),
-                                offset: point(px(0.), px(0.)),
-                                blur_radius: px(6.),
-                                spread_radius: px(0.),
-                                inset: false,
-                            },
-                        )
-                        .into_iter()
-                        .collect(),
-                    )
-                }),
-        )
-}
-
 /// How long a marquee banner stays up before it fades itself out.
 const MARQUEE_SECS: f32 = 6.0;
 
@@ -1527,7 +1462,7 @@ const MARQUEE_SECS: f32 = 6.0;
 /// The small bulbs follow the window accent — this
 /// is the loud channel, opted into by a switch that says so, and a quiet
 /// version of it would just be the toast we already had.
-fn marquee_banner(text: &str, age: f32, th: &theme::Theme) -> gpui::Div {
+fn marquee_banner(text: &str, age: f32, th: &theme::Theme, sk: &skin::Skin) -> gpui::Div {
     // Fade the last second rather than vanishing on a frame boundary.
     let fade = ((MARQUEE_SECS - age) / 1.0).clamp(0.0, 1.0);
     let t = anim_clock();
@@ -1559,11 +1494,12 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme) -> gpui::Div {
                 .gap_3()
                 .px_3()
                 .py_1()
-                .rounded_md()
+                .rounded(sk.radius_lg())
                 .border_1()
                 .border_color(th.accent.alpha(0.8 * fade))
                 .bg(th.bg.alpha(0.88 * fade))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
+                .map(|d| sk.finish(d))
                 .child(bulbs(0))
                 .child(
                     div()
@@ -3799,10 +3735,8 @@ struct AgentLauncher {
     order: Vec<usize>,
     selected: usize,
     harness: launcher::Harness,
-    /// Index into `harness.models()`; clamped whenever the harness changes,
-    /// because the two lists are different lengths.
-    model_ix: usize,
-    effort: launcher::Effort,
+    model_id: Option<String>,
+    effort: Option<String>,
     /// How far the launched agent may reach without asking. Defaults to the
     /// machine posture; see [`launcher::Reach`].
     reach: launcher::Reach,
@@ -3823,9 +3757,12 @@ impl AgentLauncher {
         self.selected = self.selected.min(self.order.len().saturating_sub(1));
     }
 
-    fn model(&self) -> &'static launcher::Model {
-        let models = self.harness.models();
-        &models[self.model_ix.min(models.len() - 1)]
+    fn catalog(&self) -> model_catalog::Snapshot {
+        self.harness.models(
+            self.project()
+                .map(|project| project.path.as_path())
+                .unwrap_or(std::path::Path::new(".")),
+        )
     }
 
     fn project(&self) -> Option<&launcher::Project> {
@@ -6333,7 +6270,9 @@ impl Workspace {
         // The collectors' cached JSON, off disk, before the first frame. Small
         // files that are already written; the numbers in them may be old, which
         // is what `slot::Reading::Stale` and the slot's dimming exist to say.
-        ws.adopt_usage_records(usage::read_all(&session::home_dir()));
+        if skin_atlas_home().is_none() {
+            ws.adopt_usage_records(usage::read_all(&session::home_dir()));
+        }
         if let Some(ctx) = ws.attach.clone() {
             // A host is holding the terminals: what is running beats what was
             // written down. Everything else in this function is untouched by
@@ -9341,7 +9280,7 @@ impl Workspace {
         }
         // Under a capture hook the records on screen are fictional; running a
         // collector would swap this machine's real plan in behind the camera.
-        if std::env::var("TD_USAGE_DEMO").is_ok() {
+        if skin_atlas_home().is_some() || std::env::var("TD_USAGE_DEMO").is_ok() {
             return;
         }
         let home = session::home_dir();
@@ -9409,10 +9348,7 @@ impl Workspace {
         // What the panel would open on right now. `unwrap_or` is the fallback
         // and it is deliberately not written anywhere durable.
         let harness = pref.harness().unwrap_or(launcher::Harness::Claude);
-        let model_at = pref.model_ix(harness).unwrap_or(0);
-        let effort_now = pref
-            .effort(harness)
-            .unwrap_or_else(|| harness.default_effort());
+        let catalog = harness.models(std::path::Path::new("."));
         let acc = th.accent;
         let txt = th.text;
         let ui = self.lang.strings().ui;
@@ -9443,7 +9379,7 @@ impl Workspace {
                 .text_color(if lit { txt } else { txt.alpha(0.62) })
                 .cursor_pointer()
                 .hover(move |st| st.bg(acc.alpha(0.12)))
-                .when(sk.is_paper(), |d| sk.paper_option(d, lit))
+                .map(|d| sk.choice(d, lit))
                 .child(word.to_string())
         };
         let row = |name: &str, chips: gpui::Div, chosen: bool| {
@@ -9504,16 +9440,57 @@ impl Workspace {
         }
 
         let mut model_chips = pills();
-        for (i, m) in harness.models().iter().enumerate() {
-            let id = m.id;
+        for model in &catalog.models {
+            let id = model.id.clone();
+            let selected = pref.model == id;
             model_chips = model_chips.child(
-                chip(m.label, i == model_at, pref.model_ix(harness) == Some(i)).on_mouse_down(
+                chip(&model.label, selected, selected && id.is_some()).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
-                        ws.launch_defaults.model = (ws.launch_defaults.model.as_deref()
-                            != Some(id))
-                        .then(|| id.to_string());
+                        ws.launch_defaults.model = id.clone();
+                        ws.launch_defaults.effort = None;
+                        launchpref::save(&ws.launch_defaults);
+                        cx.notify();
+                    }),
+                ),
+            );
+        }
+        if pref.model.is_some() && pref.model_ix(&catalog.models).is_none() {
+            model_chips = model_chips.child(chip(
+                &format!(
+                    "{} · unavailable",
+                    pref.model.as_deref().unwrap_or_default()
+                ),
+                true,
+                true,
+            ));
+        }
+
+        model_chips = model_chips.child(chip(&catalog.status, false, false).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |ws, _: &MouseDownEvent, _window, cx| {
+                model_catalog::retry(harness, std::path::Path::new("."), None);
+                ws.watch_model_catalogs(cx);
+                cx.notify();
+            }),
+        ));
+        let mut effort_chips = pills();
+        for effort in std::iter::once(None)
+            .chain(catalog.efforts(pref.model.as_deref()).into_iter().map(Some))
+        {
+            let selected = pref.effort == effort;
+            effort_chips = effort_chips.child(
+                chip(
+                    effort.as_deref().unwrap_or("Agent default"),
+                    selected,
+                    selected && effort.is_some(),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.launch_defaults.effort = effort.clone();
                         launchpref::save(&ws.launch_defaults);
                         cx.notify();
                     }),
@@ -9521,28 +9498,12 @@ impl Workspace {
             );
         }
 
-        let mut effort_chips = pills();
-        for e in harness.efforts() {
-            let e = *e;
-            let id = e.id();
-            effort_chips = effort_chips.child(
-                chip(
-                    e.label_in(self.lang),
-                    e == effort_now,
-                    pref.effort(harness) == Some(e),
-                )
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.launch_defaults.effort = (ws.launch_defaults.effort.as_deref()
-                            != Some(id))
-                        .then(|| id.to_string());
-                        launchpref::save(&ws.launch_defaults);
-                        cx.notify();
-                    }),
-                ),
-            );
+        if let Some(effort) = pref
+            .effort
+            .as_ref()
+            .filter(|effort| !catalog.efforts(pref.model.as_deref()).contains(effort))
+        {
+            effort_chips = effort_chips.child(chip(&format!("{effort} · unavailable"), true, true));
         }
 
         // ONE LINE UNTIL IT IS ASKED FOR. The title carries the whole of the
@@ -9583,6 +9544,9 @@ impl Workspace {
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
                             ws.launch_defaults_open = !ws.launch_defaults_open;
+                            if ws.launch_defaults_open {
+                                ws.watch_model_catalogs(cx);
+                            }
                             cx.notify();
                         }),
                     ),
@@ -9594,16 +9558,8 @@ impl Workspace {
                     pref.harness().is_some(),
                 ))
                 .when(harness != launcher::Harness::Local, |d| {
-                    d.child(row(
-                        ui.lcfg_model,
-                        model_chips,
-                        pref.model_ix(harness).is_some(),
-                    ))
-                    .child(row(
-                        ui.lcfg_effort,
-                        effort_chips,
-                        pref.effort(harness).is_some(),
-                    ))
+                    d.child(row(ui.lcfg_model, model_chips, pref.model.is_some()))
+                        .child(row(ui.lcfg_effort, effort_chips, pref.effort.is_some()))
                 })
                 .when(harness == launcher::Harness::Local, |d| {
                     d.child(div().text_size(sk.text_px(10.)).child(ui.lcfg_local_note))
@@ -9678,46 +9634,8 @@ impl Workspace {
         // slot reads the same gauge and a second set of thresholds beside this
         // one is how two surfaces start disagreeing about what 87% looks like.
         let track = th.text.alpha(0.10);
-        let pips = sk.shape.gauge == skin::Gauge::Pips;
-        let pip_dark = track;
-        let pip_none = th.faint.alpha(0.70);
         let meter = |frac: f32, col: gpui::Hsla, h: f32| {
-            let f = frac.clamp(0., 1.);
-            if pips {
-                // Counted, not estimated: twenty-four pips across the panel,
-                // taller than the rail they replace so each one reads.
-                return div()
-                    .relative()
-                    .w_full()
-                    .h(px(h * 1.8))
-                    .child(crate::deck::pips(
-                        crate::deck::pips_for(Some(f), 24),
-                        col,
-                        pip_dark,
-                        pip_none,
-                    ));
-            }
-            div()
-                .relative()
-                .w_full()
-                .h(px(h))
-                .rounded_full()
-                .bg(track)
-                .when(sk.is_paper(), |d| d.rounded_none().children(sk.grain()))
-                .overflow_hidden()
-                .child(
-                    div()
-                        .h_full()
-                        // a non-zero share never renders as an empty track: the
-                        // difference between "barely used" and "not reporting"
-                        // is the whole reason to look at the row.
-                        .w(gpui::relative(if f > 0. { f.max(0.02) } else { 0. }))
-                        .rounded_full()
-                        .bg(col)
-                        .when(sk.is_paper(), |d| {
-                            d.relative().rounded_none().children(sk.grain())
-                        }),
-                )
+            sk.meter(Some(frac), col, track, th.faint.alpha(0.70), h)
         };
 
         // ---- one chip per subscription --------------------------------------
@@ -9746,7 +9664,7 @@ impl Workspace {
                     .text_color(if on { txt } else { txt.alpha(0.62) })
                     .cursor_pointer()
                     .hover(move |st| st.bg(acc.alpha(0.12)))
-                    .when(sk.is_paper(), |d| sk.paper_option(d, on))
+                    .map(|d| sk.choice(d, on))
                     .child(div().w(px(5.)).h(px(5.)).rounded_full().bg(dot))
                     .child(
                         div()
@@ -9872,7 +9790,7 @@ impl Workspace {
                             .inset_0()
                             .rounded_full()
                             .bg(th.text.alpha(0.08))
-                            .when(sk.is_paper(), |d| d.rounded_none().children(sk.grain())),
+                            .map(|d| sk.meter_part(d)),
                     )
                     .child(
                         div()
@@ -9880,9 +9798,7 @@ impl Workspace {
                             .h(px(h))
                             .rounded_full()
                             .bg(col.alpha(0.85))
-                            .when(sk.is_paper(), |d| {
-                                d.relative().rounded_none().children(sk.grain())
-                            })
+                            .map(|d| sk.meter_part(d))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -10293,7 +10209,7 @@ impl Workspace {
                         .text_color(acc.alpha(if refreshing { 0.5 } else { 1. }))
                         .cursor_pointer()
                         .hover(move |st| st.bg(acc.alpha(0.15)))
-                        .when(sk.is_paper(), |d| sk.paper_control(d, false))
+                        .map(|d| sk.action(d, false))
                         .child(if refreshing {
                             ui.use_collecting
                         } else {
@@ -10451,7 +10367,7 @@ impl Workspace {
                 .text_color(if on { txt } else { txt.alpha(0.6) })
                 .cursor_pointer()
                 .hover(move |st| st.bg(acc.alpha(0.12)))
-                .when(sk.is_paper(), |d| sk.paper_option(d, on))
+                .map(|d| sk.choice(d, on))
                 .child(label)
                 .on_mouse_down(
                     MouseButton::Left,
@@ -10503,7 +10419,7 @@ impl Workspace {
                 .text_color(if left_mode { txt } else { txt.alpha(0.6) })
                 .cursor_pointer()
                 .hover(move |st| st.bg(acc.alpha(0.12)))
-                .when(sk.is_paper(), |d| sk.paper_option(d, left_mode))
+                .map(|d| sk.choice(d, left_mode))
                 .id("slot-remaining-toggle")
                 .child(if left_mode {
                     ui.sav_bar_left
@@ -10821,10 +10737,7 @@ impl Workspace {
             .text_size(sk.text_px(10.))
             .text_color(th.text)
             .map(|d| sk.finish(d))
-            .when(sk.is_paper(), |d| {
-                d.font_family(sk.font_family.clone())
-                    .line_height(gpui::relative(1.15))
-            })
+            .map(|d| sk.chrome(d))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
@@ -12006,11 +11919,7 @@ impl Workspace {
             .overflow_hidden()
             .border_2()
             .border_color(danger.alpha(0.9))
-            .bg(if sk.is_paper() {
-                sk.ink.panel
-            } else {
-                darken(th.surface, 0.62)
-            })
+            .bg(sk.region_face(darken(th.surface, 0.62)))
             .shadow(float_shadows(danger, th.grade.phosphor))
             .map(|d| sk.finish_edged(d, danger.alpha(0.9)))
             .text_color(th.text)
@@ -14949,10 +14858,8 @@ impl Workspace {
             order: Vec::new(),
             selected: 0,
             harness,
-            model_ix: pref.model_ix(harness).unwrap_or(0),
-            effort: pref
-                .effort(harness)
-                .unwrap_or_else(|| harness.default_effort()),
+            model_id: pref.model.clone().filter(|id| id != "configured"),
+            effort: pref.effort.clone(),
             reach: launcher::Reach::Anywhere,
             from,
             error: None,
@@ -14969,11 +14876,32 @@ impl Workspace {
             }
         }
         self.agent_launcher = Some(lp);
+        self.watch_model_catalogs(cx);
         // Take the keyboard off the focused pane (whose `on_key` writes to the
         // PTY) so typing filters the panel instead of leaking into the shell —
         // exactly like `open_find` and the logo picker.
         window.focus(&self.focus_handle, cx);
         cx.notify();
+    }
+
+    fn watch_model_catalogs(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |workspace, cx| {
+            for _ in 0..120 {
+                cx.background_executor()
+                    .timer(Duration::from_millis(500))
+                    .await;
+                let open = workspace
+                    .update(cx, |workspace, cx| {
+                        cx.notify();
+                        workspace.agent_launcher.is_some() || workspace.launch_defaults_open
+                    })
+                    .unwrap_or(false);
+                if !open {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     /// Start the agent the panel describes.
@@ -14992,10 +14920,34 @@ impl Workspace {
             self.agent_launcher = Some(lp);
             return;
         };
+        let catalog = lp.catalog();
+        if lp.harness != launcher::Harness::Local
+            && lp.model_id.is_some()
+            && (!catalog.ready || catalog.model(lp.model_id.as_deref()).is_none())
+        {
+            lp.error = Some(format!("Selected model unavailable · {}", catalog.status));
+            self.agent_launcher = Some(lp);
+            cx.notify();
+            return;
+        }
+        if let Some(effort) = lp
+            .effort
+            .as_ref()
+            .filter(|_| lp.harness != launcher::Harness::Local)
+        {
+            if !catalog.efforts(lp.model_id.as_deref()).contains(effort) {
+                lp.error = Some(
+                    "Selected effort unavailable; choose Agent default or a reported effort".into(),
+                );
+                self.agent_launcher = Some(lp);
+                cx.notify();
+                return;
+            }
+        }
         let recipe = launcher::Recipe {
             harness: lp.harness,
-            model: lp.model().id,
-            effort: lp.effort,
+            model: lp.model_id.clone(),
+            effort: lp.effort.clone(),
             reach: lp.reach,
             cwd: project.path.clone(),
             opener: None,
@@ -15048,8 +15000,8 @@ impl Workspace {
                     "type": "launch",
                     "at_ms": surfacefeed::now_ms(),
                     "harness": recipe.harness.binary(),
-                    "model": (recipe.harness != launcher::Harness::Local).then_some(recipe.model),
-                    "effort": (recipe.harness != launcher::Harness::Local).then_some(recipe.effort.id()),
+                    "model": (recipe.harness != launcher::Harness::Local).then_some(recipe.model.clone()),
+                    "effort": (recipe.harness != launcher::Harness::Local).then_some(recipe.effort.clone()),
                     "reach": (recipe.harness != launcher::Harness::Local).then_some(recipe.reach.id()),
                     "cwd": project.path.to_string_lossy(),
                     "command": line,
@@ -15359,6 +15311,7 @@ impl Workspace {
     /// absolutely from the measured pane/window box. Only a window of rows around
     /// the selection renders, so the keyboard selection always stays in view.
     fn render_find(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let sk = skin::for_theme(cx, th, th.grade.scale);
         let find = self.find.as_ref()?;
         let (ww, wh) = self
             .last_win
@@ -15432,14 +15385,14 @@ impl Workspace {
                     .justify_between()
                     .child(
                         div()
-                            .text_size(px(10.))
+                            .text_size(sk.text_px(10.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.accent)
                             .child(format!("\u{1f50d}  {scope_lbl}")),
                     )
                     .child(
                         div()
-                            .text_size(px(9.))
+                            .text_size(sk.text_px(9.))
                             .text_color(th.text.alpha(0.5))
                             .child(if q.trim().is_empty() {
                                 String::new()
@@ -15456,11 +15409,11 @@ impl Workspace {
                     .w_full()
                     .px_2()
                     .py_1()
-                    .rounded_sm()
+                    .rounded(sk.radius())
                     .bg(th.bg.alpha(0.55))
                     .border_1()
                     .border_color(th.accent.alpha(0.4))
-                    .text_size(px(13.))
+                    .text_size(sk.text_px(13.))
                     .child(input),
             );
 
@@ -15477,7 +15430,7 @@ impl Workspace {
                 div()
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .text_size(px(10.))
+                    .text_size(sk.text_px(10.))
                     .text_color(th.text)
                     .child(hit.title.clone()),
             );
@@ -15485,7 +15438,7 @@ impl Workspace {
                 title_line.child(
                     div()
                         .flex_none()
-                        .text_size(px(8.))
+                        .text_size(sk.text_px(8.))
                         .text_color(th.accent.alpha(0.75))
                         .child(format!("{}\u{00d7}", hit.same_pane_count)),
                 )
@@ -15500,7 +15453,7 @@ impl Workspace {
                 .gap_2()
                 .px_2()
                 .h(px(ROW_H))
-                .rounded_sm()
+                .rounded(sk.radius())
                 .cursor_pointer()
                 .bg(if selected {
                     th.accent.alpha(0.16)
@@ -15527,7 +15480,7 @@ impl Workspace {
                     div()
                         .w(px(54.))
                         .flex_none()
-                        .text_size(px(9.))
+                        .text_size(sk.text_px(9.))
                         .font_weight(gpui::FontWeight::EXTRA_BOLD)
                         .text_color(mode_col)
                         .child(hit.mode.clone()),
@@ -15554,7 +15507,7 @@ impl Workspace {
                 div()
                     .px_2()
                     .py_2()
-                    .text_size(px(10.))
+                    .text_size(sk.text_px(10.))
                     .text_color(th.text.alpha(0.4))
                     .child(if q.trim().is_empty() {
                         ui.find_empty_prompt.to_string()
@@ -15571,12 +15524,13 @@ impl Workspace {
             .w(px(panel_w))
             .flex()
             .flex_col()
-            .rounded(px(10.))
+            .rounded(sk.rad_raw(10.))
             .overflow_hidden()
             .bg(darken(th.surface, 0.35))
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
+            .map(|d| sk.chrome(sk.finish(d)))
             .child(header)
             .child(div().pb_1().flex().flex_col().child(list))
             .child(
@@ -15584,7 +15538,7 @@ impl Workspace {
                     .px_2()
                     .pb_1()
                     .pt_0p5()
-                    .text_size(px(8.5))
+                    .text_size(sk.text_px(8.5))
                     .text_color(th.text.alpha(0.45))
                     .child(ui.find_footer),
             )
@@ -16044,11 +15998,7 @@ impl Workspace {
             .flex_col()
             .rounded(sk.radius_lg())
             .overflow_hidden()
-            .bg(if sk.is_paper() {
-                sk.ink.panel
-            } else {
-                darken(th.surface, 0.35)
-            })
+            .bg(sk.region_face(darken(th.surface, 0.35)))
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -16119,10 +16069,11 @@ impl Workspace {
         th: &theme::Theme,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Div> {
+        let sk = skin::for_theme(cx, th, th.grade.scale);
         if !self.plugins_menu {
             return None;
         }
-        let home = session::home_dir();
+        let home = skin_atlas_home().cloned().unwrap_or_else(session::home_dir);
         let found = plugins::discover(&home);
         let n = found.len();
         let ui = self.lang.strings().ui;
@@ -16131,7 +16082,7 @@ impl Workspace {
         if found.is_empty() {
             list = list.child(
                 div()
-                    .text_size(px(9.5))
+                    .text_size(sk.text_px(9.5))
                     .text_color(th.text.alpha(0.6))
                     .child(ui.plg_none_found),
             );
@@ -16142,7 +16093,7 @@ impl Workspace {
                 .flex_row()
                 .flex_wrap()
                 .gap_1()
-                .text_size(px(8.5));
+                .text_size(sk.text_px(8.5));
             for a in &m.actions {
                 actions_row = actions_row.child(
                     div()
@@ -16163,7 +16114,7 @@ impl Workspace {
                     .gap_1()
                     .px_2()
                     .py_1()
-                    .rounded_sm()
+                    .rounded(sk.radius())
                     .border_1()
                     .border_color(th.text.alpha(0.12))
                     .child(
@@ -16180,21 +16131,21 @@ impl Workspace {
                             )
                             .child(
                                 div()
-                                    .text_size(px(8.5))
+                                    .text_size(sk.text_px(8.5))
                                     .text_color(th.text.alpha(0.45))
                                     .child(format!("v{}", m.version)),
                             )
                             .child(div().flex_1().min_w(px(0.)))
                             .child(
                                 div()
-                                    .text_size(px(8.))
+                                    .text_size(sk.text_px(8.))
                                     .text_color(th.accent.alpha(0.7))
                                     .child(m.command.clone()),
                             ),
                     )
                     .child(
                         div()
-                            .text_size(px(9.))
+                            .text_size(sk.text_px(9.))
                             .text_color(th.text.alpha(0.7))
                             .child(m.description.clone()),
                     )
@@ -16209,7 +16160,7 @@ impl Workspace {
             .overflow_x_hidden()
             .overflow_y_scroll()
             .p_3()
-            .rounded_md()
+            .rounded(sk.radius_lg())
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
@@ -16217,19 +16168,20 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
-            .text_size(px(10.))
+            .text_size(sk.text_px(10.))
             .text_color(th.text)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
             )
+            .map(|d| sk.chrome(sk.finish(d)))
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .text_size(px(13.))
+                    .text_size(sk.text_px(13.))
                     .child(div().child("\u{1f9e9}"))
                     .child(
                         div()
@@ -16246,7 +16198,7 @@ impl Workspace {
             )
             .child(
                 div()
-                    .text_size(px(8.5))
+                    .text_size(sk.text_px(8.5))
                     .text_color(th.accent.alpha(0.85))
                     .child(ui.plg_blurb),
             )
@@ -16340,6 +16292,7 @@ impl Workspace {
             return None;
         }
         let ui = self.lang.strings().ui;
+        let sk = skin::skin(cx, th.grade.scale);
         let prepared = self.bug_prepared();
         let agent = diag::chosen_agent();
 
@@ -16352,7 +16305,7 @@ impl Workspace {
                 .gap_3()
                 .px_2()
                 .py_2()
-                .rounded_sm()
+                .rounded(sk.radius())
                 .border_1()
                 .border_color(if live {
                     th.accent.alpha(0.55)
@@ -16362,9 +16315,10 @@ impl Workspace {
                 .when(live, |d| {
                     d.cursor_pointer().hover(|s| s.bg(th.accent.alpha(0.15)))
                 })
+                .map(|d| sk.action(d, false))
                 .child(
                     div()
-                        .text_size(px(15.))
+                        .text_size(sk.text_px(15.))
                         .child(SharedString::from(glyph.to_string())),
                 )
                 .child(
@@ -16382,7 +16336,7 @@ impl Workspace {
                         )
                         .child(
                             div()
-                                .text_size(px(8.5))
+                                .text_size(sk.text_px(8.5))
                                 .text_color(th.text.alpha(if live { 0.6 } else { 0.35 }))
                                 .child(SharedString::from(blurb)),
                         ),
@@ -16404,7 +16358,7 @@ impl Workspace {
             .overflow_x_hidden()
             .overflow_y_scroll()
             .p_3()
-            .rounded_md()
+            .rounded(sk.radius())
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
@@ -16412,7 +16366,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
-            .text_size(px(10.))
+            .text_size(sk.text_px(10.))
             .text_color(th.text)
             .on_mouse_down(
                 MouseButton::Left,
@@ -16424,10 +16378,10 @@ impl Workspace {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .text_size(px(13.))
+                    .text_size(sk.text_px(13.))
                     // The panel's mark is a lock, not the bug again: what it
                     // promises first is what it will not take.
-                    .child(div().text_size(px(18.)).child("\u{1f512}"))
+                    .child(div().text_size(sk.text_px(18.)).child("\u{1f512}"))
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -16437,7 +16391,7 @@ impl Workspace {
             )
             .child(
                 div()
-                    .text_size(px(8.5))
+                    .text_size(sk.text_px(8.5))
                     .text_color(th.accent.alpha(0.85))
                     .child(ui.bug_blurb),
             )
@@ -16446,7 +16400,7 @@ impl Workspace {
                 |d| {
                     d.child(
                         div()
-                            .text_size(px(8.5))
+                            .text_size(sk.text_px(8.5))
                             .text_color(gpui::hsla(0.07, 0.9, 0.6, 1.0))
                             .child(ui.bug_crashed),
                     )
@@ -16476,7 +16430,7 @@ impl Workspace {
                 };
                 d.child(
                     div()
-                        .text_size(px(8.))
+                        .text_size(sk.text_px(8.))
                         .text_color(th.text.alpha(0.55))
                         .child(SharedString::from(format!("{label} {detail}"))),
                 )
@@ -16534,7 +16488,7 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(sk.finish(panel)),
         )
     }
 
@@ -16546,6 +16500,7 @@ impl Workspace {
     /// themselves to disk, and the slider is the control that says so — the
     /// knob is already where the setting is.
     fn render_notif_overlay(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let sk = skin::for_theme(cx, th, th.grade.scale);
         let ui = self.lang.strings().ui;
         if !self.notif_menu {
             return None;
@@ -16564,7 +16519,7 @@ impl Workspace {
                 .gap_3()
                 .px_2()
                 .py_2()
-                .rounded_sm()
+                .rounded(sk.radius())
                 .border_1()
                 .border_color(if on {
                     th.accent.alpha(0.55)
@@ -16573,7 +16528,7 @@ impl Workspace {
                 })
                 .child(
                     div()
-                        .text_size(px(15.))
+                        .text_size(sk.text_px(15.))
                         .child(SharedString::from(glyph.to_string())),
                 )
                 .child(
@@ -16591,7 +16546,7 @@ impl Workspace {
                         )
                         .child(
                             div()
-                                .text_size(px(8.5))
+                                .text_size(sk.text_px(8.5))
                                 .text_color(th.text.alpha(0.6))
                                 .child(SharedString::from(blurb.to_string())),
                         ),
@@ -16606,7 +16561,7 @@ impl Workspace {
             .overflow_x_hidden()
             .overflow_y_scroll()
             .p_3()
-            .rounded_md()
+            .rounded(sk.radius_lg())
             .border_2()
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
@@ -16614,23 +16569,24 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
-            .text_size(px(10.))
+            .text_size(sk.text_px(10.))
             .text_color(th.text)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
             )
+            .map(|d| sk.chrome(sk.finish(d)))
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .text_size(px(13.))
+                    .text_size(sk.text_px(13.))
                     // The mochi. It is the panel's mark, not decoration: the
                     // 🔔 glyph in the footer says WHERE you are, and a bell
                     // repeated inside the panel it opened says nothing twice.
-                    .child(div().text_size(px(18.)).child("\u{1f361}"))
+                    .child(div().text_size(sk.text_px(18.)).child("\u{1f361}"))
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -16640,7 +16596,7 @@ impl Workspace {
             )
             .child(
                 div()
-                    .text_size(px(8.5))
+                    .text_size(sk.text_px(8.5))
                     .text_color(th.accent.alpha(0.85))
                     .child(ui.ntf_blurb),
             )
@@ -16690,7 +16646,7 @@ impl Workspace {
             )
             .child(
                 div()
-                    .text_size(px(8.))
+                    .text_size(sk.text_px(8.))
                     .text_color(th.text.alpha(0.45))
                     .child(ui.ntf_both_off),
             );
@@ -16715,6 +16671,7 @@ impl Workspace {
     }
 
     fn render_lang_picker(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let sk = skin::for_theme(cx, th, th.grade.scale);
         let lp = self.lang_picker.as_ref()?;
         let (ww, wh) = self
             .last_win
@@ -16758,14 +16715,14 @@ impl Workspace {
                     .justify_between()
                     .child(
                         div()
-                            .text_size(px(10.))
+                            .text_size(sk.text_px(10.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.accent)
                             .child(format!("\u{1f310}  {}", ui.lng_hdr)),
                     )
                     .child(
                         div()
-                            .text_size(px(9.))
+                            .text_size(sk.text_px(9.))
                             .text_color(th.text.alpha(0.5))
                             .child(format!("{}/{}", langs.len(), lang::Lang::ALL.len())),
                     ),
@@ -16778,11 +16735,11 @@ impl Workspace {
                     .w_full()
                     .px_2()
                     .py_1()
-                    .rounded_sm()
+                    .rounded(sk.radius())
                     .bg(th.bg.alpha(0.55))
                     .border_1()
                     .border_color(th.accent.alpha(0.4))
-                    .text_size(px(13.))
+                    .text_size(sk.text_px(13.))
                     .child(input),
             );
 
@@ -16798,7 +16755,7 @@ impl Workspace {
                 .gap_2()
                 .h(px(ROW_H))
                 .px_2()
-                .rounded_sm()
+                .rounded(sk.radius())
                 .cursor_pointer()
                 .when(selected, |d| d.bg(th.accent.alpha(0.18)))
                 .child(
@@ -16812,13 +16769,13 @@ impl Workspace {
                     div()
                         .flex_1()
                         .min_w(px(0.))
-                        .text_size(px(14.))
+                        .text_size(sk.text_px(14.))
                         .text_color(th.text)
                         .child(l.native().to_string()),
                 )
                 .child(
                     div()
-                        .text_size(px(9.5))
+                        .text_size(sk.text_px(9.5))
                         .text_color(th.text.alpha(0.45))
                         .child(l.english().to_string()),
                 )
@@ -16840,7 +16797,7 @@ impl Workspace {
                 div()
                     .px_2()
                     .py_2()
-                    .text_size(px(10.))
+                    .text_size(sk.text_px(10.))
                     .text_color(th.text.alpha(0.4))
                     .child(lang::fill(ui.lng_no_match, &[("query", q.trim())])),
             );
@@ -16853,7 +16810,7 @@ impl Workspace {
             .w(px(panel_w))
             .flex()
             .flex_col()
-            .rounded(px(10.))
+            .rounded(sk.rad_raw(10.))
             .overflow_hidden()
             .bg(darken(th.surface, 0.35))
             .border_2()
@@ -16868,6 +16825,7 @@ impl Workspace {
                 d
             })
             .shadow(float_shadows(th.accent, th.grade.phosphor))
+            .map(|d| sk.chrome(sk.finish(d)))
             .child(header)
             .child(div().pb_1().flex().flex_col().child(list))
             .child(
@@ -16875,7 +16833,7 @@ impl Workspace {
                     .px_2()
                     .pb_1()
                     .pt_0p5()
-                    .text_size(px(8.5))
+                    .text_size(sk.text_px(8.5))
                     .text_color(th.text.alpha(0.45))
                     .child(ui.lng_footer),
             )
@@ -16925,13 +16883,14 @@ impl Workspace {
             .map(|(_, _, w, h)| (w, h))
             .unwrap_or((1200., 800.));
         use launcher::{MAX_ROWS, ROW_H};
-        let panel_w = 520.;
+        let panel_w = (ww - 16.).clamp(280., 520.);
         // Sized by `launcher::panel_height`, which counts every fixed child
         // in — the formula that lived here counted one chip row and squeezed
         // the project list to nothing once there were four.
         let panel_h = launcher::panel_height(lp.order.len(), wh);
         let left = (ww * 0.5 - panel_w * 0.5).clamp(8., (ww - panel_w - 8.).max(8.));
         let top = (wh * 0.16).clamp(8., (wh - panel_h - 8.).max(8.));
+        let panel_h = (wh - top - 8.).max(panel_h);
         let sel = lp.selected.min(lp.order.len().saturating_sub(1));
 
         let ui = self.lang.strings().ui;
@@ -17020,8 +16979,8 @@ impl Workspace {
                                 cx.stop_propagation();
                                 if let Some(lp) = ws.agent_launcher.as_mut() {
                                     lp.harness = h;
-                                    lp.model_ix = lp.model_ix.min(h.models().len() - 1);
-                                    lp.effort = h.clamp_effort(lp.effort);
+                                    lp.model_id = None;
+                                    lp.effort = None;
                                     if h == launcher::Harness::Local {
                                         lp.reach = launcher::Reach::Anywhere;
                                     }
@@ -17031,52 +16990,118 @@ impl Workspace {
                             }),
                         )
                 }));
-        let model_row = div().flex().flex_row().gap_1().children(
-            lp.harness
-                .models()
-                .iter()
-                .enumerate()
-                .map(|(i, model)| {
-                    sk.chip(i == lp.model_ix.min(lp.harness.models().len() - 1))
-                        .cursor_pointer()
-                        .text_size(sk.text_px(11.))
-                        .child(model.label)
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                if let Some(lp) = ws.agent_launcher.as_mut() {
-                                    lp.model_ix = i;
-                                }
-                                cx.notify();
-                            }),
-                        )
-                })
-                .collect::<Vec<_>>(),
-        );
+        let catalog = lp.catalog();
+        let model_row = div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap_1()
+            .children(
+                catalog
+                    .models
+                    .iter()
+                    .map(|model| {
+                        let id = model.id.clone();
+                        sk.chip(id == lp.model_id)
+                            .cursor_pointer()
+                            .text_size(sk.text_px(11.))
+                            .child(model.label.clone())
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(lp) = ws.agent_launcher.as_mut() {
+                                        lp.model_id = id.clone();
+                                        lp.effort = None;
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .when(
+                lp.model_id.is_some() && catalog.model(lp.model_id.as_deref()).is_none(),
+                |row| {
+                    row.child(div().text_color(th.accent).child(format!(
+                        "{} · unavailable",
+                        lp.model_id.as_deref().unwrap_or_default()
+                    )))
+                },
+            )
+            .child(
+                div()
+                    .text_size(sk.text_px(9.))
+                    .text_color(if catalog.ready {
+                        th.text.alpha(0.65)
+                    } else {
+                        th.complement
+                    })
+                    .child(catalog.status.clone())
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _window, cx| {
+                            if let Some(lp) = &ws.agent_launcher {
+                                model_catalog::retry(
+                                    lp.harness,
+                                    lp.project()
+                                        .map(|project| project.path.as_path())
+                                        .unwrap_or(std::path::Path::new(".")),
+                                    None,
+                                );
+                            }
+                            ws.watch_model_catalogs(cx);
+                            cx.notify();
+                        }),
+                    ),
+            );
         // The harness's own levels, in the harness's own words: what the chip
         // says is what the flag will say.
-        let effort_row =
-            div()
-                .flex()
-                .flex_row()
-                .gap_1()
-                .children(lp.harness.efforts().iter().copied().map(|e| {
-                    sk.chip(e == lp.effort)
-                        .cursor_pointer()
-                        .text_size(sk.text_px(11.))
-                        .child(e.label_in(self.lang))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                if let Some(lp) = ws.agent_launcher.as_mut() {
-                                    lp.effort = e;
-                                }
-                                cx.notify();
-                            }),
-                        )
-                }));
+        let effort_row = div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap_1()
+            .children(
+                std::iter::once(None)
+                    .chain(
+                        catalog
+                            .efforts(lp.model_id.as_deref())
+                            .into_iter()
+                            .map(Some),
+                    )
+                    .map(|effort| {
+                        sk.chip(effort == lp.effort)
+                            .cursor_pointer()
+                            .text_size(sk.text_px(11.))
+                            .child(effort.clone().unwrap_or_else(|| "Agent default".into()))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(lp) = ws.agent_launcher.as_mut() {
+                                        lp.effort = effort.clone();
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                    }),
+            )
+            .when_some(
+                lp.effort
+                    .as_ref()
+                    .filter(|effort| !catalog.efforts(lp.model_id.as_deref()).contains(effort)),
+                |row, effort| {
+                    row.child(
+                        div()
+                            .text_color(th.accent)
+                            .child(format!("{effort} · unavailable")),
+                    )
+                },
+            );
 
         // How far it may reach without asking. `anywhere` is lit by default
         // and adds nothing; the other two add the harness's own flags, which
@@ -17109,8 +17134,8 @@ impl Workspace {
         let preview = {
             let recipe = launcher::Recipe {
                 harness: lp.harness,
-                model: lp.model().id,
-                effort: lp.effort,
+                model: lp.model_id.clone(),
+                effort: lp.effort.clone(),
                 reach: lp.reach,
                 cwd: lp
                     .project()
@@ -17140,11 +17165,13 @@ impl Workspace {
         );
 
         let panel = div()
+            .id("agent-launcher-panel")
             .absolute()
             .left(px(left))
             .top(px(top))
             .w(px(panel_w))
             .max_h(px(panel_h))
+            .overflow_y_scroll()
             .occlude()
             .bg(th.surface)
             .border_1()
@@ -17156,6 +17183,7 @@ impl Workspace {
             .gap_2()
             .p_3()
             .font_family(skin::for_theme(cx, th, 1.0).font_family)
+            .map(|d| sk.chrome(sk.finish(d)))
             .child(
                 div()
                     .flex()
@@ -17168,7 +17196,7 @@ impl Workspace {
                             .text_color(th.accent)
                             .child(ui.la_hdr),
                     )
-                    .child(head(ui.la_sub)),
+                    .child(head(ui.la_sub).flex_1().min_w(px(0.))),
             )
             .child(
                 // The filter, with its caret, so it reads as a field rather
@@ -17284,6 +17312,7 @@ impl Workspace {
     /// the highlighted file as the target pane's logo, click a row to set it, esc
     /// closes. A "remove logo" row leads when the target already has one.
     fn render_logo_picker(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let sk = skin::for_theme(cx, th, th.grade.scale);
         let lp = self.logo_picker.as_ref()?;
         let (ww, wh) = self
             .last_win
@@ -17350,7 +17379,7 @@ impl Workspace {
                     .w_full()
                     .px_2()
                     .py(px(7.))
-                    .rounded_md()
+                    .rounded(sk.radius_lg())
                     .bg(th.bg.alpha(if active { 0.7 } else { 0.35 }))
                     .border_2()
                     .border_color(if active {
@@ -17358,13 +17387,13 @@ impl Workspace {
                     } else {
                         th.accent.alpha(0.22)
                     })
-                    .text_size(px(13.))
+                    .text_size(sk.text_px(13.))
                     // the field LABEL chip (NAME / IN)
                     .child(
                         div()
                             .flex_none()
                             .w(px(34.))
-                            .text_size(px(9.))
+                            .text_size(sk.text_px(9.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(if active {
                                 th.accent
@@ -17378,7 +17407,7 @@ impl Workspace {
                         d.child(
                             div()
                                 .flex_none()
-                                .text_size(px(12.))
+                                .text_size(sk.text_px(12.))
                                 .text_color(th.text.alpha(0.55))
                                 .child(icon),
                         )
@@ -17400,14 +17429,14 @@ impl Workspace {
                     .justify_between()
                     .child(
                         div()
-                            .text_size(px(10.))
+                            .text_size(sk.text_px(10.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.accent)
                             .child(format!("\u{1f5bc}  {}", ui.logo_hdr)),
                     )
                     .child(
                         div()
-                            .text_size(px(9.))
+                            .text_size(sk.text_px(9.))
                             .text_color(th.text.alpha(0.5))
                             .child(if lp.scanning {
                                 // The ellipsis says the wide sweep is still
@@ -17462,7 +17491,7 @@ impl Workspace {
             )
             .child(
                 div()
-                    .text_size(px(8.5))
+                    .text_size(sk.text_px(8.5))
                     .text_color(if gated {
                         th.accent.alpha(0.8)
                     } else {
@@ -17478,7 +17507,7 @@ impl Workspace {
                 // The OPINIONATED contract, said out loud: a pick writes the
                 // DIRECTORY default — persistent, inherited by subdirs.
                 div()
-                    .text_size(px(8.5))
+                    .text_size(sk.text_px(8.5))
                     .text_color(th.complement.alpha(0.8))
                     .child(match lp.cwd.as_deref() {
                         Some(d) => lang::fill(ui.logo_sets_dir_default, &[("dir", &tilde(d))]),
@@ -17497,7 +17526,7 @@ impl Workspace {
                     .gap_2()
                     .h(px(ROW_H))
                     .px_2()
-                    .rounded_sm()
+                    .rounded(sk.radius())
                     .cursor_pointer()
                     .text_color(th.text.alpha(0.7))
                     .child(div().w(px(16.)).flex_none().child("\u{2715}"))
@@ -17529,7 +17558,7 @@ impl Workspace {
                 .gap_2()
                 .h(px(ROW_H))
                 .px_2()
-                .rounded_sm()
+                .rounded(sk.radius())
                 .cursor_pointer()
                 .when(selected, |d| d.bg(th.accent.alpha(0.18)))
                 // a small thumbnail of the candidate, cover-cropped
@@ -17539,7 +17568,7 @@ impl Workspace {
                         .h(px(24.))
                         .flex_none()
                         .overflow_hidden()
-                        .rounded_sm()
+                        .rounded(sk.radius())
                         .border_1()
                         .border_color(th.text.alpha(0.15))
                         .child(
@@ -17554,7 +17583,7 @@ impl Workspace {
                         .min_w(px(0.))
                         .overflow_hidden()
                         .whitespace_nowrap()
-                        .text_size(px(14.))
+                        .text_size(sk.text_px(14.))
                         .text_color(th.text)
                         .child(c.base.clone()),
                 )
@@ -17564,7 +17593,7 @@ impl Workspace {
                         .max_w(px(190.))
                         .overflow_hidden()
                         .whitespace_nowrap()
-                        .text_size(px(9.5))
+                        .text_size(sk.text_px(9.5))
                         .text_color(th.text.alpha(0.45))
                         .child(c.dir.clone()),
                 )
@@ -17584,7 +17613,7 @@ impl Workspace {
                 div()
                     .px_2()
                     .py_2()
-                    .text_size(px(10.))
+                    .text_size(sk.text_px(10.))
                     .text_color(th.text.alpha(0.4))
                     .child(if total == 0 {
                         ui.logo_none_found.to_string()
@@ -17604,7 +17633,7 @@ impl Workspace {
             .max_h(px(panel_h))
             .flex()
             .flex_col()
-            .rounded(px(10.))
+            .rounded(sk.rad_raw(10.))
             .overflow_hidden()
             .bg(darken(th.surface, 0.35))
             .border_1()
@@ -17617,6 +17646,7 @@ impl Workspace {
                 spread_radius: px(2.),
                 inset: false,
             }])
+            .map(|d| sk.chrome(sk.finish(d)))
             .child(header)
             .child(
                 div()
@@ -17632,7 +17662,7 @@ impl Workspace {
                     .px_2()
                     .pb_1()
                     .pt_0p5()
-                    .text_size(px(8.5))
+                    .text_size(sk.text_px(8.5))
                     .text_color(th.text.alpha(0.45))
                     .child(ui.logo_footer),
             )
@@ -17706,13 +17736,20 @@ impl Workspace {
     /// The reader's glass: a panel `w` × `h` in the pane's paper, ringed in its
     /// accent, lifted off the window by a shadow and the phosphor gauge's glow.
     /// Whatever the reader reads, it wears the one glass.
-    fn reader_panel(w: f32, h: f32, bg: Hsla, accent: Hsla, phosphor: f32) -> gpui::Div {
+    fn reader_panel(
+        w: f32,
+        h: f32,
+        bg: Hsla,
+        accent: Hsla,
+        phosphor: f32,
+        sk: &skin::Skin,
+    ) -> gpui::Div {
         div()
             .w(px(w))
             .h(px(h))
             .flex()
             .flex_col()
-            .rounded(px(12.))
+            .rounded(sk.rad_raw(12.))
             .overflow_hidden()
             .bg(bg)
             .border_2()
@@ -17737,6 +17774,7 @@ impl Workspace {
                 ))
                 .collect(),
             )
+            .map(|d| sk.chrome(sk.finish(d)))
     }
 
     /// Measure the glass's exact on-screen box (physical px) as it paints and
@@ -17975,7 +18013,7 @@ impl Workspace {
                     ws.focus_doc_holding = view.update(cx, |v, cx| v.press(at, mods, window, cx));
                 }),
             );
-        let panel = Self::reader_panel(panel_w, panel_h, bg, accent, phosphor)
+        let panel = Self::reader_panel(panel_w, panel_h, bg, accent, phosphor, &skin::skin(cx, 1.))
             .child(header)
             .child(body)
             .child(Self::reader_frost(ramp, None))
@@ -18239,7 +18277,7 @@ impl Workspace {
     /// FOCUS reader's. Drives `card_scale` CARD_MIN..=CARD_MAX; live-only.
     fn card_scale_slider(
         &self,
-        accent: gpui::Hsla,
+        _accent: gpui::Hsla,
         text: gpui::Hsla,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -18284,50 +18322,7 @@ impl Workspace {
                         )
                         .size_full(),
                     )
-                    .when(!sk.is_paper(), |d| {
-                        d.child(
-                            div()
-                                .absolute()
-                                .left_0()
-                                .right_0()
-                                .top(px(6.))
-                                .h(px(3.))
-                                .rounded_full()
-                                .bg(accent.alpha(0.18)),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .left_0()
-                                .top(px(6.))
-                                .h(px(3.))
-                                .w(px(TRACK * frac))
-                                .rounded_full()
-                                .bg(accent),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .left(px((TRACK * frac - 5.).max(0.)))
-                                .top(px(2.))
-                                .w(px(10.))
-                                .h(px(10.))
-                                .rounded_full()
-                                .bg(linear_gradient(
-                                    135.,
-                                    linear_color_stop(brighten(accent, 1.4), 0.),
-                                    linear_color_stop(darken(accent, 0.7), 1.),
-                                )),
-                        )
-                    })
-                    .when(sk.is_paper(), |d| {
-                        d.child(crate::paper::gauge(
-                            frac,
-                            sk.ink.btn_face,
-                            sk.ink.ink_dim,
-                            sk.ink.select,
-                        ))
-                    }),
+                    .child(sk.scrubber(frac)),
             )
             .child(
                 div()
@@ -18344,7 +18339,7 @@ impl Workspace {
     /// the OSD grade sliders). Live-only — the zoom never persists.
     fn focus_zoom_slider(
         &self,
-        accent: gpui::Hsla,
+        _accent: gpui::Hsla,
         text: gpui::Hsla,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -18391,52 +18386,7 @@ impl Workspace {
                         .size_full(),
                     )
                     // groove
-                    .when(!sk.is_paper(), |d| {
-                        d.child(
-                            div()
-                                .absolute()
-                                .left_0()
-                                .right_0()
-                                .top(px(6.))
-                                .h(px(3.))
-                                .rounded_full()
-                                .bg(accent.alpha(0.18)),
-                        )
-                        // fill up to the thumb
-                        .child(
-                            div()
-                                .absolute()
-                                .left_0()
-                                .top(px(6.))
-                                .h(px(3.))
-                                .w(px(TRACK * frac))
-                                .rounded_full()
-                                .bg(accent),
-                        )
-                        // thumb
-                        .child(
-                            div()
-                                .absolute()
-                                .left(px((TRACK * frac - 5.).max(0.)))
-                                .top(px(2.))
-                                .w(px(10.))
-                                .h(px(10.))
-                                .rounded_full()
-                                .bg(linear_gradient(
-                                    135.,
-                                    linear_color_stop(brighten(accent, 1.4), 0.),
-                                    linear_color_stop(darken(accent, 0.7), 1.),
-                                )),
-                        )
-                    })
-                    .when(sk.is_paper(), |d| {
-                        d.child(crate::paper::gauge(
-                            frac,
-                            sk.ink.btn_face,
-                            sk.ink.ink_dim,
-                            sk.ink.select,
-                        ))
-                    }),
+                    .child(sk.scrubber(frac)),
             )
             // large "A" — the grow end
             .child(
@@ -18457,15 +18407,16 @@ impl Workspace {
         text: gpui::Hsla,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        let sk = skin::skin(cx, 1.);
         let on = self.focus_inherit_theme;
-        div()
+        sk.choice(div(), on)
             .flex()
             .flex_row()
             .items_center()
             .gap_1()
             .px_2()
             .py_0p5()
-            .rounded_md()
+            .rounded(sk.radius())
             .cursor_pointer()
             .border_1()
             .border_color(if on {
@@ -18478,7 +18429,7 @@ impl Workspace {
             } else {
                 hsla(0., 0., 0., 0.)
             })
-            .text_size(px(11.))
+            .text_size(sk.text_px(11.))
             .text_color(if on { accent } else { text.alpha(0.7) })
             .child(if on { "◉" } else { "○" })
             .child(self.lang.strings().ui.focus_inherit_btn)
@@ -19221,8 +19172,8 @@ impl Workspace {
                     // was valid for one harness can be past the end of the next
                     // — and the effort lists differ too, so the level is
                     // clamped to the nearest one this harness takes.
-                    lp.model_ix = lp.model_ix.min(lp.harness.models().len() - 1);
-                    lp.effort = lp.harness.clamp_effort(lp.effort);
+                    lp.model_id = None;
+                    lp.effort = None;
                     if lp.harness == launcher::Harness::Local {
                         lp.reach = launcher::Reach::Anywhere;
                     }
@@ -19232,21 +19183,37 @@ impl Workspace {
                     return;
                 }
                 "tab" => {
-                    lp.model_ix = (lp.model_ix + 1) % lp.harness.models().len();
+                    let models = lp.catalog().models;
+                    if let Some(at) = models.iter().position(|model| model.id == lp.model_id) {
+                        lp.model_id = models[(at + 1) % models.len()].id.clone();
+                    } else {
+                        lp.model_id = None;
+                    }
+                    lp.effort = None;
                     self.agent_launcher = Some(lp);
                     cx.notify();
                     return;
                 }
                 "left" | "right" => {
-                    let offered = lp.harness.efforts();
+                    let offered: Vec<_> = std::iter::once(None)
+                        .chain(
+                            lp.catalog()
+                                .efforts(lp.model_id.as_deref())
+                                .into_iter()
+                                .map(Some),
+                        )
+                        .collect();
                     if offered.is_empty() {
                         self.agent_launcher = Some(lp);
                         return;
                     }
-                    let at = offered.iter().position(|e| *e == lp.effort).unwrap_or(0) as i32;
+                    let at = offered
+                        .iter()
+                        .position(|effort| *effort == lp.effort)
+                        .unwrap_or(0) as i32;
                     let n = offered.len() as i32;
                     let step = if ks.key == "right" { 1 } else { n - 1 };
-                    lp.effort = offered[((at + step) % n) as usize];
+                    lp.effort = offered[((at + step) % n) as usize].clone();
                     self.agent_launcher = Some(lp);
                     cx.notify();
                     return;
@@ -20952,60 +20919,11 @@ impl Workspace {
                         )
                         .size_full(),
                     )
-                    .when(!sk.is_paper(), |d| {
-                        d.child(
-                            div()
-                                .absolute()
-                                .left_0()
-                                .right_0()
-                                .top(px(6.))
-                                .h(px(3.))
-                                .rounded_full()
-                                .bg(if sk.is_paper() {
-                                    sk.ink.panel
-                                } else {
-                                    darken(th.surface, 0.4)
-                                })
-                                .border_1()
-                                .border_color(th.faint),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .left_0()
-                                .top(px(6.))
-                                .h(px(3.))
-                                .w(px(TRACK * frac))
-                                .rounded_full()
-                                .bg(th.accent),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .left(px((TRACK * frac - 5.).max(0.)))
-                                .top(px(2.))
-                                .w(px(10.))
-                                .h(px(10.))
-                                .rounded_full()
-                                .bg(linear_gradient(
-                                    135.,
-                                    linear_color_stop(brighten(th.accent, 1.4), 0.),
-                                    linear_color_stop(darken(th.accent, 0.7), 1.),
-                                )),
-                        )
-                    })
-                    .when(sk.is_paper(), |d| {
-                        d.child(crate::paper::gauge(
-                            frac,
-                            sk.ink.btn_face,
-                            sk.ink.ink_dim,
-                            sk.ink.select,
-                        ))
-                    }),
+                    .child(sk.scrubber(frac)),
             )
             .child(
                 div()
-                    .w(px(if sk.is_paper() { 42. } else { 28. }))
+                    .w(px(sk.fit(28., 42.)))
                     .whitespace_nowrap()
                     .text_size(sk.text_px(9.))
                     .text_color(th.accent)
@@ -21242,54 +21160,7 @@ impl Workspace {
                         )
                         .size_full(),
                     )
-                    .when(!sk.is_paper(), |d| {
-                        d.child(
-                            div()
-                                .absolute()
-                                .left_0()
-                                .right_0()
-                                .top(px(6.))
-                                .h(px(3.))
-                                .rounded_full()
-                                .bg(if sk.is_paper() {
-                                    sk.ink.panel
-                                } else {
-                                    darken(th.surface, 0.4)
-                                })
-                                .border_1()
-                                .border_color(th.faint),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .left_0()
-                                .top(px(6.))
-                                .h(px(3.))
-                                .w(px(TRACK * frac))
-                                .rounded_full()
-                                .bg(th.accent),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .left(px((TRACK * frac - 5.0).max(0.0)))
-                                .top(px(2.))
-                                .w(px(10.))
-                                .h(px(10.))
-                                .rounded_full()
-                                .border_2()
-                                .border_color(white())
-                                .bg(th.accent),
-                        )
-                    })
-                    .when(sk.is_paper(), |d| {
-                        d.child(crate::paper::gauge(
-                            frac,
-                            sk.ink.btn_face,
-                            sk.ink.ink_dim,
-                            sk.ink.select,
-                        ))
-                    }),
+                    .child(sk.scrubber(frac)),
             )
     }
 
@@ -21491,20 +21362,20 @@ impl Workspace {
     /// slider `s`. The caller adds the glyph child (an emoji via `.child("…")`
     /// or `pane::eq_icon`) and `on_mouse_down`.
     fn hicon_s(sk: &skin::Skin, active: bool, s: f32) -> gpui::Div {
-        if sk.is_paper() {
-            return sk.paper_control(div().px(px(4. * s)).border_1().cursor_pointer(), active);
-        }
-        div()
-            .px(px(4. * s))
-            .rounded(sk.radius())
-            .border_1()
-            .border_color(sk.ink.edge_strong)
-            .bg(if active {
-                sk.ink.mark.alpha(0.2)
-            } else {
-                sk.ink.mark.alpha(0.0)
-            })
-            .cursor_pointer()
+        sk.action(
+            div()
+                .px(px(4. * s))
+                .rounded(sk.radius())
+                .border_1()
+                .border_color(sk.ink.edge_strong)
+                .bg(if active {
+                    sk.ink.mark.alpha(0.2)
+                } else {
+                    sk.ink.mark.alpha(0.0)
+                })
+                .cursor_pointer(),
+            active,
+        )
     }
 
     fn bezel_btn(sk: &skin::Skin, label: &str, active: bool) -> gpui::Div {
@@ -22753,6 +22624,7 @@ impl Workspace {
         let travel = px(open * (self.left_bar_w * s - 12. * s).max(20.) / 2.);
 
         let ember = hsla(0.06, 0.95, 0.55, 1.);
+        let door_skin = &sk;
         let door = move |right: bool| {
             div()
                 .absolute()
@@ -22775,6 +22647,7 @@ impl Workspace {
                 // panel that never opened and the sliding was invisible. A door
                 // that does not occlude is not a door.
                 .bg(sk.ink.panel)
+                .children(door_skin.grain())
                 // The inner edge is the one that moves and the one the fire
                 // falls on, so it takes the ember as the gap widens — the doors
                 // are lit BY what is behind them. Dark at rest, because shut
@@ -22866,6 +22739,7 @@ impl Workspace {
                     },
                 ])
             })
+            .map(|d| sk.frame(d))
             // What is behind the doors. Faded in with the opening rather than
             // switched on, so the reveal is the doors' doing.
             //
@@ -23062,7 +22936,6 @@ impl Workspace {
         // long window as a row of tall pips, the short one as short pips, one
         // per unit the vendor named — the same two rails, drawn as XCOM draws
         // health. Unknown stays unknown: hollow pips, never dark ones.
-        let pip_gauge = sk.shape.gauge == skin::Gauge::Pips;
         let pip_n = ((rail_w / 8.0).floor() as usize).clamp(6, 16);
         let pip_unknown = faint.alpha(0.70);
 
@@ -23140,83 +23013,76 @@ impl Workspace {
                 .map(|p| pace_ramp(p.delta));
 
             // The long window, as one solid rail.
-            let week = match lit_colour(&row.week) {
-                _ if pip_gauge => {
-                    let reading = lit_colour(&row.week);
-                    let col = reading.map_or(track, |(_, c)| c);
-                    div()
-                        .relative()
-                        .w_full()
-                        .h(px(rail_h * 1.5))
-                        .child(crate::deck::pips(
-                            crate::deck::pips_for(reading.map(|(f, _)| f), pip_n),
-                            col,
-                            track,
-                            pip_unknown,
-                        ))
-                }
-                None => hatch(rail_h),
-                Some((shown, col)) => {
-                    div()
-                        .w_full()
-                        .h(px(rail_h))
-                        .rounded(pill)
-                        .bg(track)
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .h_full()
-                                // A non-zero share never renders as an empty
-                                // track — the same floor the usage panel's
-                                // meter uses, for the same reason.
-                                .w(gpui::relative(if shown > 0.0 {
-                                    shown.max(0.02)
-                                } else {
-                                    0.0
-                                }))
-                                .rounded(pill)
-                                .bg(col),
-                        )
-                }
-            };
+            let reading = lit_colour(&row.week);
+            let week = sk
+                .discrete_meter(
+                    reading.map(|(f, _)| f),
+                    pip_n,
+                    reading.map_or(track, |(_, c)| c),
+                    track,
+                    pip_unknown,
+                )
+                .map(|meter| div().relative().w_full().h(px(rail_h * 1.5)).child(meter))
+                .unwrap_or_else(|| match reading {
+                    None => hatch(rail_h),
+                    Some((shown, col)) => {
+                        div()
+                            .w_full()
+                            .h(px(rail_h))
+                            .rounded(pill)
+                            .bg(track)
+                            .map(|d| sk.meter_part(d))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .h_full()
+                                    // A non-zero share never renders as an empty
+                                    // track — the same floor the usage panel's
+                                    // meter uses, for the same reason.
+                                    .w(gpui::relative(if shown > 0.0 {
+                                        shown.max(0.02)
+                                    } else {
+                                        0.0
+                                    }))
+                                    .rounded(pill)
+                                    .bg(col)
+                                    .map(|d| sk.meter_part(d)),
+                            )
+                    }
+                });
 
             // The short window, as a notched rail: one tick per unit of the
             // window the vendor named.
-            let session = match lit_colour(&row.session) {
-                _ if pip_gauge => {
-                    let reading = lit_colour(&row.session);
-                    let col = reading.map_or(track, |(_, c)| c);
-                    let n = usize::from(deg.ticks).max(1);
-                    div()
-                        .relative()
-                        .w_full()
-                        .h(px(tick_h))
-                        .child(crate::deck::pips(
-                            crate::deck::pips_for(reading.map(|(f, _)| f), n),
-                            col,
-                            track,
-                            pip_unknown,
-                        ))
-                }
-                None => hatch(tick_h),
-                Some((shown, col)) => {
-                    let lit = slot::ticks_lit(shown, deg.ticks);
-                    let mut d = div()
-                        .flex()
-                        .flex_row()
-                        .w_full()
-                        .h(px(tick_h))
-                        .gap(px(1.0 * s));
-                    for i in 0..deg.ticks {
-                        d = d.child(div().flex_1().h_full().rounded(rad).bg(if i < lit {
-                            col
-                        } else {
-                            track
-                        }));
+            let reading = lit_colour(&row.session);
+            let session = sk
+                .discrete_meter(
+                    reading.map(|(f, _)| f),
+                    usize::from(deg.ticks).max(1),
+                    reading.map_or(track, |(_, c)| c),
+                    track,
+                    pip_unknown,
+                )
+                .map(|meter| div().relative().w_full().h(px(tick_h)).child(meter))
+                .unwrap_or_else(|| match reading {
+                    None => hatch(tick_h),
+                    Some((shown, col)) => {
+                        let lit = slot::ticks_lit(shown, deg.ticks);
+                        let mut d = div()
+                            .flex()
+                            .flex_row()
+                            .w_full()
+                            .h(px(tick_h))
+                            .gap(px(1.0 * s));
+                        for i in 0..deg.ticks {
+                            d = d.child(div().flex_1().h_full().rounded(rad).bg(if i < lit {
+                                col
+                            } else {
+                                track
+                            }));
+                        }
+                        d
                     }
-                    d
-                }
-            };
+                });
 
             // The trailing cell: a percentage, an age, or an em dash. Never a
             // zero standing in for a number nobody has — which is why every
@@ -24681,7 +24547,7 @@ impl Workspace {
         let mut list = sk
             .sheet()
             .id("attention-stock-list")
-            .when(sk.is_paper(), |d| {
+            .map(|d| {
                 d.when_some(
                     self.last_win.map(|(_, _, _, h)| (h - 130. * s).max(120.)),
                     |d, h| d.max_h(px(h)).overflow_y_scroll(),
@@ -24695,11 +24561,7 @@ impl Workspace {
             .rounded(sk.rad_raw(8.))
             .border_2()
             .border_color(th.accent.alpha(0.85))
-            .bg(if sk.is_paper() {
-                sk.ink.panel
-            } else {
-                darken(th.surface, 0.45)
-            })
+            .bg(sk.region_face(darken(th.surface, 0.45)))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
             .map(|d| sk.finish(d));
         let ui = self.lang.strings().ui;
@@ -24708,9 +24570,7 @@ impl Workspace {
             div()
                 .flex()
                 .flex_row()
-                .when(sk.is_paper(), |d| {
-                    d.flex_col().items_start().gap(px(4. * s))
-                })
+                .map(|d| sk.reading_header(d))
                 .justify_between()
                 .px(px(3. * s))
                 .pb(px(5. * s))
@@ -25117,15 +24977,11 @@ impl Workspace {
                             .cursor_pointer()
                             .hover(move |st| st.bg(sk.ink.ink.alpha(0.14)))
                             .map(|d| {
-                                if sk.is_paper() {
-                                    sk.paper_control(d, false).text_color(if yes {
-                                        ink
-                                    } else {
-                                        sk.ink.ink_dim
-                                    })
+                                sk.action(d, false).text_color(if yes {
+                                    ink
                                 } else {
-                                    d
-                                }
+                                    sk.ink.ink_dim
+                                })
                             })
                             .child(SharedString::from(label))
                             .on_mouse_down(
@@ -26196,11 +26052,7 @@ impl Workspace {
                 .rounded(sk.rad_raw(8.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
-                .bg(if sk.is_paper() {
-                    sk.ink.panel
-                } else {
-                    darken(th.surface, 0.45)
-                })
+                .bg(sk.region_face(darken(th.surface, 0.45)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .map(|d| sk.finish(d))
                 // a click inside the panel is the panel's, not the scrim's
@@ -26474,11 +26326,7 @@ fn over_the_glass_tip(th: &theme::Theme, sk: &skin::Skin, s: f32) -> gpui::Div {
         .rounded(sk.rad_raw(8.))
         .border_2()
         .border_color(th.accent.alpha(0.85))
-        .bg(if sk.is_paper() {
-            sk.ink.panel
-        } else {
-            darken(th.surface, 0.45)
-        })
+        .bg(sk.region_face(darken(th.surface, 0.45)))
         .shadow(float_shadows(th.accent, th.grade.phosphor))
         .map(|d| sk.finish(d))
 }
@@ -26659,226 +26507,6 @@ fn palette_rule(label: &str, on: bool, th: &theme::Theme, sk: &skin::Skin) -> gp
         .cursor_pointer()
         .child(label.to_string())
         .child(slider_switch(on, th, sk))
-}
-
-/// Theme-icon button for the breakout menu: glyph over a tiny caption naming the
-/// slot, so two themes that share a glyph stay tellable apart.
-fn theme_icon_btn(
-    th: &theme::Theme,
-    sk: &skin::Skin,
-    icon: &str,
-    label: &str,
-    active: bool,
-) -> gpui::Div {
-    let inner = div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap_0()
-        .when(sk.is_paper(), |d| {
-            d.justify_center().line_height(gpui::relative(1.15))
-        })
-        .child(div().text_size(sk.text_px(14.)).child(icon.to_string()))
-        .child(
-            div()
-                .text_size(sk.text_px(if sk.is_paper() { 11. } else { 8. }))
-                .text_color(th.text.alpha(if active { 0.85 } else { 0.6 }))
-                .child(label.to_string()),
-        );
-    let b = div()
-        .w(px(if sk.is_paper() { 56. } else { TRAY_BTN_W }))
-        .h(px(if sk.is_paper() { 54. } else { TRAY_BTN_H }))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_md()
-        .border_1()
-        .cursor_pointer();
-    if sk.is_paper() {
-        sk.paper_option(b, false).child(
-            div()
-                .size_full()
-                .relative()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(3.))
-                        .left(px(4.))
-                        .text_size(sk.px(11.))
-                        .line_height(gpui::relative(1.0))
-                        .child(icon.to_string()),
-                )
-                .child(sk.paper_caption(label, 11., active)),
-        )
-    } else if active {
-        b.bg(linear_gradient(
-            135.,
-            linear_color_stop(th.accent.alpha(0.45), 0.),
-            linear_color_stop(th.accent.alpha(0.15), 1.),
-        ))
-        .border_color(th.accent)
-        .text_color(white().alpha(0.95))
-        .child(inner)
-    } else {
-        b.bg(darken(th.surface, 0.8).alpha(0.5))
-            .border_color(th.accent.alpha(0.35))
-            .text_color(th.text)
-            .child(inner)
-    }
-}
-
-/// Text-colour-mode button for the breakout menu: glyph over a tiny caption.
-fn color_mode_btn(
-    th: &theme::Theme,
-    sk: &skin::Skin,
-    icon: &str,
-    caption: &str,
-    active: bool,
-) -> gpui::Div {
-    let inner = div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap_0()
-        .when(sk.is_paper(), |d| {
-            d.justify_center().line_height(gpui::relative(1.15))
-        })
-        .child(div().text_size(sk.text_px(15.)).child(icon.to_string()))
-        .child(div().text_size(sk.text_px(8.)).child(caption.to_string()));
-    let b = div()
-        .w(px(TRAY_MODE_BTN_W))
-        .h(px(if sk.is_paper() { 54. } else { TRAY_MODE_BTN_H }))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_md()
-        .border_1()
-        .cursor_pointer();
-    if sk.is_paper() {
-        sk.paper_option(b, false).child(
-            div()
-                .size_full()
-                .relative()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(3.))
-                        .left(px(4.))
-                        .text_size(sk.px(11.))
-                        .line_height(gpui::relative(1.0))
-                        .child(icon.to_string()),
-                )
-                .child(sk.paper_caption(caption, 11., active)),
-        )
-    } else if active {
-        b.bg(linear_gradient(
-            135.,
-            linear_color_stop(th.accent.alpha(0.45), 0.),
-            linear_color_stop(th.accent.alpha(0.15), 1.),
-        ))
-        .border_color(th.accent)
-        .text_color(white().alpha(0.95))
-        .child(inner)
-    } else {
-        b.bg(darken(th.surface, 0.8).alpha(0.5))
-            .border_color(th.accent.alpha(0.35))
-            .text_color(th.text)
-            .child(inner)
-    }
-}
-
-/// A STICKY NOTE button: the paper that mode would give, drawn as a tiny note
-/// with its pin and two lines of ink, over a caption. The button IS the preview,
-/// so the three can be compared before any is pressed, and they recolour as a
-/// wheel pip is dragged.
-fn note_paper_btn(
-    th: &theme::Theme,
-    paper: &sticky::Paper,
-    sk: &skin::Skin,
-    caption: &str,
-    active: bool,
-) -> gpui::Div {
-    let ink = |w: f32| div().w(px(w)).h(px(1.5)).bg(paper.ink.alpha(0.7));
-    let sheet = div()
-        .relative()
-        .w(px(26.))
-        .h(px(18.))
-        .bg(paper.base)
-        .border_b_1()
-        .border_color(darken(paper.base, 0.7))
-        .shadow(vec![BoxShadow {
-            color: hsla(0., 0., 0., 0.55),
-            offset: point(px(1.), px(1.5)),
-            blur_radius: px(2.),
-            spread_radius: px(0.),
-            inset: false,
-        }])
-        .flex()
-        .flex_col()
-        .justify_end()
-        .gap(px(2.5))
-        .px(px(4.))
-        .pb(px(3.))
-        .child(ink(15.))
-        .child(ink(10.))
-        .child(
-            div()
-                .absolute()
-                .top(px(1.5))
-                .left(px(11.))
-                .w(px(4.))
-                .h(px(4.))
-                .rounded_full()
-                .bg(paper.pin),
-        );
-    let inner = div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap(px(3.))
-        .child(sheet)
-        .child(if sk.is_paper() {
-            sk.paper_caption(caption, TRAY_NOTE_CAPTION, active)
-        } else {
-            div()
-                .text_size(sk.text_px(TRAY_NOTE_CAPTION))
-                .whitespace_nowrap()
-                .child(caption.to_string())
-        });
-    let b = div()
-        .w(px(if sk.is_paper() { 60. } else { TRAY_NOTE_BTN_W }))
-        .h(px(if sk.is_paper() { 50. } else { TRAY_MODE_BTN_H }))
-        .flex()
-        .items_center()
-        .justify_center()
-        .overflow_hidden()
-        .rounded_md()
-        .border_1()
-        .cursor_pointer();
-    if sk.is_paper() {
-        sk.paper_option(b, false)
-            .child(inner.justify_center().line_height(gpui::relative(1.15)))
-    } else if active {
-        b.bg(linear_gradient(
-            135.,
-            linear_color_stop(th.accent.alpha(0.45), 0.),
-            linear_color_stop(th.accent.alpha(0.15), 1.),
-        ))
-        .border_color(th.accent)
-        .text_color(white().alpha(0.95))
-        .child(inner)
-    } else {
-        b.bg(darken(th.surface, 0.8).alpha(0.5))
-            .border_color(th.accent.alpha(0.35))
-            .text_color(th.text)
-            .child(inner)
-    }
 }
 
 pub(crate) fn darken(mut c: Hsla, f: f32) -> Hsla {
@@ -27313,11 +26941,7 @@ fn render_node(
                     ));
                     d.shadow(stack)
                 })
-                .when(sk.is_paper(), |d| {
-                    d.rounded(px(0.))
-                        .border_color(gpui::transparent_black())
-                        .shadow(paper::shadows())
-                })
+                .map(|d| sk.frame(d))
                 // measure this pane's box (entity → rect) for drop hit-testing
                 .child(
                     div().absolute().inset_0().child(
@@ -27331,13 +26955,7 @@ fn render_node(
                     ),
                 )
                 .child(e.clone())
-                .when(sk.is_paper(), |d| {
-                    d.child(paper::rim(
-                        if is_focused { acc } else { sk.ink.edge_rest },
-                        acc,
-                        false,
-                    ))
-                })
+                .children(sk.rim(if is_focused { acc } else { sk.ink.edge_rest }, acc, false))
                 // dim every pane that isn't focused so the live one is the bright
                 // one. Plain bg overlay (no .occlude()) → a click still falls
                 // through to the terminal beneath to focus it.
@@ -27489,6 +27107,14 @@ fn render_node(
     }
 }
 
+/// A private atlas root also disables account collectors. It never changes HOME.
+fn skin_atlas_home() -> Option<&'static PathBuf> {
+    static ATLAS_ROOT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    ATLAS_ROOT
+        .get_or_init(|| std::env::var_os("TD_SKIN_ATLAS_HOME").map(PathBuf::from))
+        .as_ref()
+}
+
 // Capture/demo hook: when TD_FOCUS_DEMO is set, the workspace auto-opens the
 // FOCUS reading modal on the first pane at first render, so headless screenshot
 // tooling can frame the frosted-glass backdrop without a synthetic mouse click
@@ -27505,6 +27131,7 @@ static SAVINGS_DEMO_ARMED: std::sync::atomic::AtomicBool =
 // prompt counts and how close the account is to its ceiling — none of which
 // belongs in a screenshot.
 static USAGE_DEMO_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SKIN_ATLAS_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 // Dev hook: TD_USAGE_LIVE opens the same face on the REAL records. Not for
 // capture — see the comment where it fires.
@@ -27734,6 +27361,75 @@ impl Render for Workspace {
         if self.tabs.is_empty() {
             return csd::decorate(div(), window);
         }
+        // Private native-authoring fixtures. Read once, and never scan a real
+        // project or account to populate a capture. Ordinary launches do nothing.
+        static ATLAS_SCENE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        if !SKIN_ATLAS_ARMED.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(scene) = ATLAS_SCENE.get_or_init(|| std::env::var("TD_SKIN_SCENE").ok()) {
+                let mut leaves = Vec::new();
+                self.tabs[self.active].root.leaves(&mut leaves);
+                let Some(first) = leaves.first().cloned() else {
+                    return csd::decorate(div(), window);
+                };
+                SKIN_ATLAS_ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
+                match scene.as_str() {
+                    "find" => self.open_find(first.entity_id(), true, window, cx),
+                    "lookup" => self.open_lookup(window, cx),
+                    "plugins" => self.plugins_menu = true,
+                    "notifications" => self.notif_menu = true,
+                    "bug" => self.bug_menu = true,
+                    "language" => {
+                        self.lang_picker = Some(LangPicker {
+                            query: EditBuffer::seeded(""),
+                            selected: 0,
+                        })
+                    }
+                    "help" => self.help_open = true,
+                    "size" => self.scale_menu = true,
+                    "tab" => self.open_tab_menu(self.active, point(px(350.), px(90.)), cx),
+                    "launcher" => {
+                        let cwd = first
+                            .read(cx)
+                            .current_cwd()
+                            .map(PathBuf::from)
+                            .unwrap_or_else(std::env::temp_dir);
+                        self.agent_launcher = Some(AgentLauncher {
+                            query: EditBuffer::seeded(""),
+                            projects: vec![launcher::Project {
+                                path: cwd,
+                                name: "Native fixture".into(),
+                                repo: false,
+                            }],
+                            order: vec![0],
+                            selected: 0,
+                            harness: launcher::Harness::Claude,
+                            model_id: None,
+                            effort: None,
+                            reach: launcher::Reach::Anywhere,
+                            from: Some(first.entity_id()),
+                            error: None,
+                            local_adapter: Err("Native fixture: local adapter unavailable".into()),
+                        });
+                        self.watch_model_catalogs(cx);
+                    }
+                    "logo" => {
+                        self.logo_picker = Some(LogoPicker {
+                            target: first.entity_id(),
+                            cwd: first.read(cx).current_cwd(),
+                            name: EditBuffer::seeded(""),
+                            loc: EditBuffer::seeded(""),
+                            field: LogoField::Name,
+                            selected: 0,
+                            order: Vec::new(),
+                            candidates: Vec::new(),
+                            scanning: false,
+                        })
+                    }
+                    _ => {}
+                }
+                cx.notify();
+            }
+        }
         // demo/capture hook (TD_FOCUS_DEMO): auto-open FOCUS on the first pane once,
         // so the frosted backdrop can be screenshotted without a mouse. Arms only
         // ON SUCCESS (retries each render until a leaf exists), and sets the flag
@@ -27953,6 +27649,12 @@ impl Render for Workspace {
                 },
             ]);
             self.usage_pick = 0;
+            self.launch_defaults_open = std::env::var("TD_USAGE_DEMO").as_deref() == Ok("choices");
+            match std::env::var("TD_USAGE_DEMO").as_deref() {
+                Ok("zero") => self.usage_records[0].limits[0].percent = 0.,
+                Ok("unknown") => self.usage_pick = 1,
+                _ => {}
+            }
             self.usage_status = None;
             self.savings_tab = OverlayTab::Usage;
             self.savings_menu = true;
@@ -28240,11 +27942,7 @@ impl Render for Workspace {
                             .top(px(5.))
                             .h(px(3.))
                             .rounded(sk.radius_pill())
-                            .bg(if sk.is_paper() {
-                                sk.ink.panel
-                            } else {
-                                darken(th.surface, 0.4)
-                            })
+                            .bg(sk.region_face(darken(th.surface, 0.4)))
                             .border_1()
                             .border_color(th.faint),
                     )
@@ -29161,12 +28859,7 @@ impl Render for Workspace {
             ));
             const PER_COL: usize = 10; // fill a column vertically before wrapping
             let columns = dyn_entries.len().div_ceil(PER_COL);
-            let glyph_col_w = (if sk.is_paper() {
-                190.
-            } else {
-                TRAY_GLYPH_COL_W
-            })
-            .max(
+            let glyph_col_w = sk.fit(TRAY_GLYPH_COL_W, 190.).max(
                 columns as f32 * 40.
                     + columns.saturating_sub(1) as f32 * (2. * TRAY_GAP + TRAY_SEP),
             );
@@ -29205,17 +28898,11 @@ impl Render for Workspace {
                             } else {
                                 tile.border_1().border_color(c.chips[0].alpha(0.55))
                             };
-                            tile.when(sk.is_paper(), |d| {
-                                d.border_color(gpui::transparent_black())
-                                    .shadow(paper::shadows())
-                                    .children(sk.grain())
-                                    .child(crate::paper::rim(
-                                        c.chips[0].alpha(0.3),
-                                        th.accent,
-                                        active,
-                                    ))
-                            })
-                            .child(glyph::element(&c.id, c.chips[0], 20.))
+                            sk.frame(tile)
+                                .relative()
+                                .children(sk.grain())
+                                .children(sk.rim(c.chips[0].alpha(0.3), th.accent, active))
+                                .child(glyph::element(&c.id, c.chips[0], 20.))
                         }
                         // The custom wheel's cog, in the tray's own ink.
                         None => tile
@@ -29412,11 +29099,7 @@ impl Render for Workspace {
                 .rounded(sk.rad_raw(6.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
-                .bg(if sk.is_paper() {
-                    sk.ink.panel
-                } else {
-                    th.surface.alpha(0.82)
-                })
+                .bg(sk.region_face(th.surface.alpha(0.82)))
                 // never spill past the RENDER: clip horizontally, scroll a
                 // tall tray vertically rather than running down over the
                 // bottom bezel. The cap is the terminal band this tray hangs
@@ -29503,7 +29186,7 @@ impl Render for Workspace {
                     .cursor_pointer()
                     .child(format!("{} {}", if open { "▾" } else { "▸" }, name))
             };
-            let panel_w: f32 = if sk.is_paper() { 320. } else { 300. };
+            let panel_w: f32 = sk.fit(300., 320.);
             const PANEL_H_EST: f32 = 346.; // 10 slider rows + reset + follow-outer
             let mut panel = sk.sheet().id("osd-panel").absolute().w(px(panel_w));
             let tray_top = match self.osd_at {
@@ -29534,11 +29217,7 @@ impl Render for Workspace {
                 .rounded(sk.rad_raw(6.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
-                .bg(if sk.is_paper() {
-                    sk.ink.panel
-                } else {
-                    darken(th.surface, 0.6)
-                })
+                .bg(sk.region_face(darken(th.surface, 0.6)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .map(|d| sk.finish(d))
                 .flex()
@@ -29760,7 +29439,7 @@ impl Render for Workspace {
         // the fade actually runs.
         let marquee = self.marquee_says.as_ref().and_then(|(text, at)| {
             let age = at.elapsed().as_secs_f32();
-            (age < MARQUEE_SECS).then(|| marquee_banner(text, age, &th))
+            (age < MARQUEE_SECS).then(|| marquee_banner(text, age, &th, &sk))
         });
         if marquee.is_some() {
             window.request_animation_frame();
@@ -30824,6 +30503,9 @@ impl Render for Workspace {
                                 ws.activate_tab(ti, window, cx);
                             }),
                         )
+                        .map(|d| {
+                            sk.finish_edged(d, kind_col.alpha(if live_glow { 0.42 } else { 0.32 }))
+                        })
                         .child(
                             div()
                                 .size_full()
@@ -30835,7 +30517,8 @@ impl Render for Workspace {
                                 .rounded(sk.rad_raw(6.))
                                 .border_1()
                                 .border_color(kind_col.alpha(0.3))
-                                .bg(card_bg)
+                                .bg(sk.region_face(card_bg))
+                                .children(sk.grain())
                                 // TITLE BAND: crest · name · status pip · type tag
                                 .child(
                                     div()
@@ -31498,46 +31181,49 @@ impl Render for Workspace {
                         .child(t.m_watches.to_string()),
                 )
                 .child(label(t.m_transport.to_string()))
-                // The dashboard ALWAYS frosts the panes behind it (premium glass).
+                // Only the frontmost region owns backdrop processing. A wall
+                // behind Subscriptions must not frost or bend that wider panel.
                 // Theme-on additionally bends the panel into a curved-glass CRT tube
                 // (the OUTER gauges' warp). NB: under the curve the cards' flat gpui
                 // hit-boxes no longer match the bent visual, so corner clicks offset
                 // (the #81 tradeoff) — the real fix is warp-aware click dispatch.
-                .child(
-                    div().absolute().inset_0().child(
-                        gpui::canvas(
-                            move |bounds, window, _cx| {
-                                let sf = window.scale_factor();
-                                let rect = [
-                                    f32::from(bounds.origin.x) * sf,
-                                    f32::from(bounds.origin.y) * sf,
-                                    f32::from(bounds.size.width) * sf,
-                                    f32::from(bounds.size.height) * sf,
-                                ];
-                                // always blur the background
-                                crate::warp::set_focus_blur(
-                                    rect,
-                                    28.0 * sf,
-                                    16.0 * sf,
-                                    0.78,
-                                    8.0 * sf,
-                                );
-                                // theme-on → curved glass
-                                if mcp_preview {
-                                    crate::warp::register_focus_tube(
+                .when(!self.savings_menu, |d| {
+                    d.child(
+                        div().absolute().inset_0().child(
+                            gpui::canvas(
+                                move |bounds, window, _cx| {
+                                    let sf = window.scale_factor();
+                                    let rect = [
+                                        f32::from(bounds.origin.x) * sf,
+                                        f32::from(bounds.origin.y) * sf,
+                                        f32::from(bounds.size.width) * sf,
+                                        f32::from(bounds.size.height) * sf,
+                                    ];
+                                    // always blur the background
+                                    crate::warp::set_focus_blur(
                                         rect,
-                                        mcp_glare,
-                                        mcp_k1,
-                                        mcp_k2,
-                                        [0.0, 1.0, 1.0],
+                                        28.0 * sf,
+                                        16.0 * sf,
+                                        0.78,
+                                        8.0 * sf,
                                     );
-                                }
-                            },
-                            |_, _, _, _| {},
-                        )
-                        .size_full(),
-                    ),
-                );
+                                    // theme-on → curved glass
+                                    if mcp_preview {
+                                        crate::warp::register_focus_tube(
+                                            rect,
+                                            mcp_glare,
+                                            mcp_k1,
+                                            mcp_k2,
+                                            [0.0, 1.0, 1.0],
+                                        );
+                                    }
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .size_full(),
+                        ),
+                    )
+                });
 
             // Full-screen scrim with a fixed-position panel. Filters can change
             // the card count, but the dashboard's screen rectangle never moves.
@@ -32035,11 +31721,7 @@ impl Render for Workspace {
                 .rounded(sk.rad_raw(6.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
-                .bg(if sk.is_paper() {
-                    sk.ink.panel
-                } else {
-                    darken(th.surface, 0.6)
-                })
+                .bg(sk.region_face(darken(th.surface, 0.6)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .map(|d| sk.finish(d))
                 .flex()
@@ -32334,11 +32016,7 @@ impl Render for Workspace {
                 .rounded(sk.rad_raw(8.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
-                .bg(if sk.is_paper() {
-                    sk.ink.panel
-                } else {
-                    darken(th.surface, 0.45)
-                })
+                .bg(sk.region_face(darken(th.surface, 0.45)))
                 .text_color(th.text)
                 .font_family(skin::for_theme(cx, &th, 1.0).font_family)
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -32452,11 +32130,7 @@ impl Render for Workspace {
                 .rounded(sk.rad_raw(8.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
-                .bg(if sk.is_paper() {
-                    sk.ink.panel
-                } else {
-                    darken(th.surface, 0.45)
-                })
+                .bg(sk.region_face(darken(th.surface, 0.45)))
                 .text_color(th.text)
                 .font_family(skin::for_theme(cx, &th, 1.0).font_family)
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -32854,11 +32528,7 @@ impl Render for Workspace {
                 .rounded(sk.rad_raw(8.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
-                .bg(if sk.is_paper() {
-                    sk.ink.panel
-                } else {
-                    darken(th.surface, 0.45)
-                })
+                .bg(sk.region_face(darken(th.surface, 0.45)))
                 .text_color(th.text)
                 .font_family(skin::for_theme(cx, &th, 1.0).font_family)
                 .map(|mut d| {
@@ -33230,11 +32900,7 @@ impl Render for Workspace {
                     .rounded(sk.rad_raw(6.))
                     .border_1()
                     .border_color(th.accent.alpha(0.85))
-                    .bg(if sk.is_paper() {
-                        sk.ink.panel
-                    } else {
-                        darken(th.surface, 0.6)
-                    })
+                    .bg(sk.region_face(darken(th.surface, 0.6)))
                     .shadow(float_shadows(th.accent, th.grade.phosphor))
                     .map(|d| sk.finish(d))
                     .flex()
@@ -33388,11 +33054,7 @@ impl Render for Workspace {
                 .rounded(sk.rad_raw(6.))
                 .border_2()
                 .border_color(th.accent.alpha(0.85))
-                .bg(if sk.is_paper() {
-                    sk.ink.panel
-                } else {
-                    darken(th.surface, 0.6)
-                })
+                .bg(sk.region_face(darken(th.surface, 0.6)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .map(|d| sk.finish(d))
                 .flex()
@@ -33832,93 +33494,99 @@ impl Render for Workspace {
             } else {
                 header
             };
-            let panel =
-                Self::reader_panel(panel_w, panel_h, snap.bg, snap.accent, th.grade.phosphor)
-                    .child(header)
-                    .child(
-                        // The reading area: a clip box with the mirror absolutely
-                        // anchored inside it. Absolute positioning (not a flex child +
-                        // margins) pins the vertical origin deterministically:
-                        // `top = pad + v_offset - scroll_y`. `v_offset` centres a short
-                        // read (slack split top/bottom); once the read overflows it's 0
-                        // and the wheel pans `scroll_y` from the top. The fixed-width
-                        // frame is centred horizontally at `content_left`. A press here
-                        // starts a click-drag text selection (mapped back to a source
-                        // cell through the warp); the trailing probe canvas captures this
-                        // box's exact on-screen rect so the hit-test stays curve-accurate.
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_hidden()
-                            .relative()
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation(); // don't let the panel/scrim close
-                                    if ws.focus_link_click(ev, cx) {
-                                        cx.notify();
-                                        return;
-                                    }
-                                    match ws.focus_cell_at(ev.position) {
-                                        Some(cell) => {
-                                            ws.focus_sel = Some((cell, cell));
-                                            ws.focus_sel_drag = true;
-                                        }
-                                        None => ws.focus_sel = None,
-                                    }
-                                    cx.notify();
-                                }),
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .top(px(body_top))
-                                    .left(px(content_left))
-                                    .flex()
-                                    .flex_col()
-                                    .child(body),
-                            )
-                            .child(
-                                div().absolute().inset_0().child(
-                                    gpui::canvas(
-                                        {
-                                            let store = self.focus_body_bounds.clone();
-                                            move |bounds, _window, _cx| {
-                                                *store.lock().unwrap() = Some(bounds);
-                                            }
-                                        },
-                                        |_, _, _, _| {},
-                                    )
-                                    .size_full(),
-                                ),
-                            ),
-                    )
-                    .children((!foot.is_empty()).then(|| {
-                        Self::reader_foot(
-                            &foot,
-                            content_left,
-                            cell_h,
-                            base_size,
-                            snap.font_family.clone(),
-                            snap.text,
-                            snap.accent,
-                        )
-                    }))
-                    // The frost around the glass, and — with "Inherit theme" on — the
-                    // same rect registered as the lone warp tube so the reader bends
-                    // and glares like its pane. crawl stays identity: the body
-                    // already centres crawl rows for readable mirroring.
-                    .when(!self.focus_inline, |panel| {
-                        panel.child(Self::reader_frost(
-                            focus_ramp,
-                            inherit.then_some((hdr_h, glare, k1, k2)),
-                        ))
-                    })
-                    // clicks inside the panel must not fall through to the scrim
+            let panel = Self::reader_panel(
+                panel_w,
+                panel_h,
+                snap.bg,
+                snap.accent,
+                th.grade.phosphor,
+                &skin::skin(cx, 1.),
+            )
+            .child(header)
+            .child(
+                // The reading area: a clip box with the mirror absolutely
+                // anchored inside it. Absolute positioning (not a flex child +
+                // margins) pins the vertical origin deterministically:
+                // `top = pad + v_offset - scroll_y`. `v_offset` centres a short
+                // read (slack split top/bottom); once the read overflows it's 0
+                // and the wheel pans `scroll_y` from the top. The fixed-width
+                // frame is centred horizontally at `content_left`. A press here
+                // starts a click-drag text selection (mapped back to a source
+                // cell through the warp); the trailing probe canvas captures this
+                // box's exact on-screen rect so the hit-test stays curve-accurate.
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .relative()
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
-                    );
+                        cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation(); // don't let the panel/scrim close
+                            if ws.focus_link_click(ev, cx) {
+                                cx.notify();
+                                return;
+                            }
+                            match ws.focus_cell_at(ev.position) {
+                                Some(cell) => {
+                                    ws.focus_sel = Some((cell, cell));
+                                    ws.focus_sel_drag = true;
+                                }
+                                None => ws.focus_sel = None,
+                            }
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(body_top))
+                            .left(px(content_left))
+                            .flex()
+                            .flex_col()
+                            .child(body),
+                    )
+                    .child(
+                        div().absolute().inset_0().child(
+                            gpui::canvas(
+                                {
+                                    let store = self.focus_body_bounds.clone();
+                                    move |bounds, _window, _cx| {
+                                        *store.lock().unwrap() = Some(bounds);
+                                    }
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .size_full(),
+                        ),
+                    ),
+            )
+            .children((!foot.is_empty()).then(|| {
+                Self::reader_foot(
+                    &foot,
+                    content_left,
+                    cell_h,
+                    base_size,
+                    snap.font_family.clone(),
+                    snap.text,
+                    snap.accent,
+                )
+            }))
+            // The frost around the glass, and — with "Inherit theme" on — the
+            // same rect registered as the lone warp tube so the reader bends
+            // and glares like its pane. crawl stays identity: the body
+            // already centres crawl rows for readable mirroring.
+            .when(!self.focus_inline, |panel| {
+                panel.child(Self::reader_frost(
+                    focus_ramp,
+                    inherit.then_some((hdr_h, glare, k1, k2)),
+                ))
+            })
+            // clicks inside the panel must not fall through to the scrim
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            );
             let reader = if let Some((x, y, _, _)) = inline_rect {
                 div()
                     .absolute()
@@ -34118,11 +33786,7 @@ impl Render for Workspace {
         let root = div()
             .size_full()
             .relative()
-            .bg(if sk.is_paper() {
-                th.surface
-            } else {
-                darken(bezel, 0.5)
-            })
+            .bg(sk.region_face(darken(bezel, 0.5)))
             .children(sk.grain())
             .px(px(5.))
             .pt(px(5. + jiggle.max(0.)))

@@ -220,7 +220,13 @@ impl MarkdownDoc {
 impl Backend for MarkdownDoc {
     /// The column, and over it the notes: each block's rule and 💬, the bar,
     /// and the note box above everything.
-    fn element(&mut self, view: &Drawn, window: &mut Window, th: &Theme) -> AnyElement {
+    fn element(
+        &mut self,
+        view: &Drawn,
+        window: &mut Window,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> AnyElement {
         let size = view.frame.map(|(size, _)| size);
         self.view = size;
         // Where the LAST paint put each block, read before the column is
@@ -239,8 +245,8 @@ impl Backend for MarkdownDoc {
         let marks = layer.marks(&anchors, &self.note_map(size), self.pointer);
         let mut layers = vec![column];
         layers.extend(layer.draw_marks(&marks, th));
-        layers.push(layer.draw_bar(&anchors, th, self.beside.as_deref()));
-        layers.extend(layer.draw_box(size, th));
+        layers.push(layer.draw_bar(&anchors, th, self.beside.as_deref(), sk));
+        layers.extend(layer.draw_box(size, th, sk));
         div()
             .absolute()
             .inset_0()

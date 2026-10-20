@@ -22,6 +22,9 @@ name = "default"
 # family  = "Caveat"
 # heading = "Oxanium"
 # data    = "Share Tech Mono"
+### Optional font.scale (0.5..3), min_px (0..32), line_height (0.8..2)
+### control optical UI fitting independently of material. Caveat's legacy
+### fallback is 1.45 / 16 / 1.15; other faces use 1 / 0 / 1.15.
 ### In [shape], material = "paper" adds deckled controls and cached grain;
 ### material = "grid" washes a faint grid under every region.
 icon = "▢"
@@ -33,7 +36,7 @@ icon = "▢"
 # palettes times two skins is ten working looks rather than ten files.
 #
 #   from    a palette role: bg surface text accent complement human faint cursor
-#           white black ansi0..ansi15
+#           light (the lighter of bg/text) white black ansi0..ansi15
 #   l       multiply lightness   (darken(c, 0.3)  is  l = 0.3)
 #   s       multiply saturation
 #   a       SET alpha            (c.alpha(0.45)   is  a = 0.45)
@@ -111,6 +114,10 @@ icon = "▢"
 # glow       = 5.25   # how far the phosphor ring blooms past its border
 # glow_a     = 0.11   # how hot the bloom is, 0..1 — NOT a length
 # cut        = 7.0    # how far a cut corner reaches, read only under corner = "cut"
+# grain      = 1.0    # cached grain strength, 0..1
+# roughness  = 1.0    # edge irregularity, 0..1
+# lift       = 1.0    # contact shadow and stock depth, 0..2
+# marker_alpha = 0.22 # highlighter opacity, 0..1
 
 # ── shape ────────────────────────────────────────────────────────────────────
 # The strategies. These are what make a LOOK rather than a tint: they change
@@ -141,3 +148,6 @@ gauge    = "rail"       # rail | pips — how a measured share is drawn
 title    = "plain"      # plain | chevron — how a heading name is framed
 focus    = "plain"      # plain | hatch — what marks the pane with the keyboard
 # material = "plain"    # plain | paper | grid
+# tube = "glass"        # glass | stock; omitted paper files retain stock
+### Optional [note]: decoration = "plain" | "flower", stock = true | false.
+### Absent note fields retain the existing material's note defaults.

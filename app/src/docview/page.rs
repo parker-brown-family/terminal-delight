@@ -2130,7 +2130,12 @@ impl PageDoc {
     /// painted, which moves when the square is dragged without resizing, so
     /// the tiles are snapped against it rather than against the origin they
     /// were first measured at.
-    pub fn element(&mut self, th: &Theme, origin: Option<Point<Pixels>>) -> gpui::AnyElement {
+    pub fn element(
+        &mut self,
+        th: &Theme,
+        origin: Option<Point<Pixels>>,
+        sk: &crate::skin::Skin,
+    ) -> gpui::AnyElement {
         let note = |s: String| {
             div()
                 .absolute()
@@ -2221,8 +2226,8 @@ impl PageDoc {
         // TD's own chrome over the page: the bar, then the note box above
         // everything, as a browser's dialog sits above its notebar.
         if let (Some(layer), Some(r)) = (&self.notes, &self.current) {
-            layers.push(layer.draw_bar(&r.layout.anchors, th, self.beside.as_deref()));
-            layers.extend(layer.draw_box(m.size, th));
+            layers.push(layer.draw_bar(&r.layout.anchors, th, self.beside.as_deref(), sk));
+            layers.extend(layer.draw_box(m.size, th, sk));
         }
         div()
             .absolute()
@@ -2326,8 +2331,14 @@ pub fn moved_anchors(drawn: &[(String, Option<RectCss>)], now: &[Anchor]) -> Vec
 // fragment, follows its file and carries a brief's notes. It does not zoom or
 // follow a drag, so those are the trait's defaults.
 impl Backend for PageDoc {
-    fn element(&mut self, view: &Drawn, _window: &mut Window, th: &Theme) -> gpui::AnyElement {
-        PageDoc::element(self, th, view.placed)
+    fn element(
+        &mut self,
+        view: &Drawn,
+        _window: &mut Window,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> gpui::AnyElement {
+        PageDoc::element(self, th, view.placed, sk)
     }
 
     fn give_back(&mut self, path: &Path, cx: &mut App) {

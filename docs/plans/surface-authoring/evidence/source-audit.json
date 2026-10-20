@@ -1,0 +1,391 @@
+{
+  "source_commit": "0dcdb741c75e170b0c2ebd2a361f74fcf6867246",
+  "inventory_commit": "96316efd",
+  "inventory_sha256": "77eaecb1442a4ab7788f07b623a1dd86179b1e420054b6c775dd6892c915421d",
+  "inventory_rows": [
+    {
+      "surface": "Root ground behind the cabinet",
+      "owner": "main.rs:33196\u201333209",
+      "route_claim": "mixed",
+      "font_claim": "sets the UI font"
+    },
+    {
+      "surface": "Window cabinet / outer frame",
+      "owner": "main.rs:33263\u201333315 in `Workspace::render`. Literal `rounded(px(14.))`, gradient from `bezel`, accent border",
+      "route_claim": "mixed (literal corner)",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Top band",
+      "owner": "main.rs:27902\u201328023, `sk.sheet()`",
+      "route_claim": "skin",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Top-band tabs and strip chips",
+      "owner": "`tab_button` main.rs:25086 (`sk.tab` 25157), `strip_chip` 25410, `render_strip_head` 25323, `eng_badge` 25472",
+      "route_claim": "skin",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Agent-state counter, top right",
+      "owner": "`render_agent_counter` main.rs:22832",
+      "route_claim": "mixed",
+      "font_claim": "UI + glyph font (22895)"
+    },
+    {
+      "surface": "Menu-bar SIZE button and track",
+      "owner": "main.rs:27545\u201327756",
+      "route_claim": "mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Bottom band",
+      "owner": "main.rs:28026\u201328077, `sk.sheet()`. Text is raw `th.text` (28048). Glyph row 27757, `bezel_btn` 20974",
+      "route_claim": "skin, text colour raw",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Left bar tree",
+      "owner": "`render_left_bar` main.rs:24877. Rows: `bar_row` 21319, `branch_row` 21512, `task_row` 21823 (`sk.active_row` 21879). `bar_cursor_ring` 21474 is a raw `th.cursor` wash. Rename boxes `darken(th.bg,0.8)` (21554, 21857)",
+      "route_claim": "mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Left-bar bay and slot rails",
+      "owner": "`render_bay` 22178, `render_bar_slot` 22481, `under_the_tree` 3516",
+      "route_claim": "skin-leaning, unconfirmed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Left-bar tray menu",
+      "owner": "`render_bar_menu` main.rs:11945, `bar_menu_row` 11900, `bar_menu_rule` 11931",
+      "route_claim": "skin",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Pane frame and focus ring",
+      "owner": "`render_node` main.rs:26600\u201326720. `rounded_md`, raw shadows, unfocused dim. Paper patch 26683\u201326707",
+      "route_claim": "bypass (paper patched)",
+      "font_claim": "\u2014"
+    },
+    {
+      "surface": "Pane header",
+      "owner": "pane.rs:10978\u201310992",
+      "route_claim": "skin",
+      "font_claim": "UI (10975)"
+    },
+    {
+      "surface": "TERM / BENCH / DOC slider",
+      "owner": "pane.rs:10760\u201310790",
+      "route_claim": "skin",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Handover chip",
+      "owner": "pane/handed.rs:387",
+      "route_claim": "skin (counted, not read)",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Pane right-click and \u22ef menus",
+      "owner": "pane.rs:10050\u201310110, 10610\u201310650. Raw `th.surface`/`accent`, `rounded(px(8.))`",
+      "route_claim": "bypass",
+      "font_claim": "grid font (10057, 10614)"
+    },
+    {
+      "surface": "Terminal tube stock",
+      "owner": "pane.rs:11680\u201311687 (paper only, inside the warp tube)",
+      "route_claim": "paper only",
+      "font_claim": "\u2014"
+    },
+    {
+      "surface": "Terminal grid",
+      "owner": "pane/grid_paint.rs:40",
+      "route_claim": "design",
+      "font_claim": "grid font"
+    },
+    {
+      "surface": "CRT glass",
+      "owner": "`crt::glass` crt.rs:195, attached pane.rs:11749",
+      "route_claim": "design `[effects]`",
+      "font_claim": "\u2014"
+    },
+    {
+      "surface": "Raised CRT bezel",
+      "owner": "`crt::bezel` crt.rs:147\u2013190. Raw `rounded_lg`, hsla seams. Hidden under paper (pane.rs:11759)",
+      "route_claim": "bypass",
+      "font_claim": "\u2014"
+    },
+    {
+      "surface": "Attention spine pill",
+      "owner": "`render_spine_pill` main.rs:23893",
+      "route_claim": "mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Attention queue",
+      "owner": "`rail_panel` main.rs:24071. `rail_ink` 23844 hard-codes kind colours (23849\u201323852). `render_rail` 24826, `render_rail_docked` 24050",
+      "route_claim": "mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Window palette tray (THEME / STYLE / RULES)",
+      "owner": "main.rs:28078\u201328584. `theme-panel` 28525. `theme_icon_btn` 26038, `color_mode_btn` 26106, `note_paper_btn` 26172, `palette_rule` 26022. SKIN row 28130\u201328190",
+      "route_claim": "mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "GAUGES / DISPLAY tray",
+      "owner": "main.rs:28585\u201328877 (`osd-panel` 28637)",
+      "route_claim": "mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Switches and sliders",
+      "owner": "`slider_switch` main.rs:1437, `slider_row` 20371, `track_slider` 20660, `lightness_bar` 20897, `tab_lightness_bar` 25751, `card_scale_slider` 17723, `focus_zoom_slider` 17828. `focus_inherit_toggle` 17937 has no skin calls",
+      "route_claim": "mixed; `focus_inherit_toggle` bypass",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Paint cards (Super+Alt+P)",
+      "owner": "`paint::card` paint.rs:417, `paint::tile` 560, shelf chip 691",
+      "route_claim": "mixed",
+      "font_claim": "UI (paint.rs:435)"
+    },
+    {
+      "surface": "Sticky note",
+      "owner": "`sticky::paint` sticky.rs:869, `note_el` pane.rs:11452. Colours from notepaper.rs:367",
+      "route_claim": "own system, by design",
+      "font_claim": "Caveat, fixed (sticky.rs:42)"
+    },
+    {
+      "surface": "Subscriptions / usage panel",
+      "owner": "`render_savings_overlay` main.rs:10166, `savings_shell` 10604, `render_usage_body` 9489, `pace_band` 26315",
+      "route_claim": "mixed",
+      "font_claim": "UI (10646)"
+    },
+    {
+      "surface": "FOCUS reader (Alt+R)",
+      "owner": "main.rs:32526\u201333190. `reader_panel` 17234 raw",
+      "route_claim": "bypass, deliberate (keeps the measured monospace)",
+      "font_claim": "grid font from the snapshot"
+    },
+    {
+      "surface": "Document square",
+      "owner": "pane/doc.rs:304 `float_el`, `square_el` ~330\u2013445",
+      "route_claim": "bypass",
+      "font_claim": "inherited, unconfirmed"
+    },
+    {
+      "surface": "Document face and notes bar",
+      "owner": "pane/doc.rs:1100, docview/notes_ui.rs",
+      "route_claim": "bypass",
+      "font_claim": "grid font (notes_ui 1725)"
+    },
+    {
+      "surface": "Bench cards",
+      "owner": "benchdraw.rs: `title_card` 2448, `rail_row` 326, `shelf_tab` 533, `dial_menu` 2696, `spine_frame` 194. Corners skinned (test `every_corner_on_the_bench_goes_through_the_skin`); colours from `benchdraw::ink` 125. No paper",
+      "route_claim": "mixed",
+      "font_claim": "grid font (14 sites)"
+    },
+    {
+      "surface": "Agent wall and agent cards",
+      "owner": "main.rs:28898\u201330677; card 29911\u201329935, `agent_card_shadows` 26389",
+      "route_claim": "cards bypass; panel mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Dead-agent recover manifest",
+      "owner": "main.rs:30679\u201331336",
+      "route_claim": "mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Confirm-close and delete-branch dialogs",
+      "owner": "`danger_panel` main.rs:11796",
+      "route_claim": "mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Help modal",
+      "owner": "main.rs:31942\u201331968",
+      "route_claim": "mixed",
+      "font_claim": "UI (31958)"
+    },
+    {
+      "surface": "SIZE and \u2026 popovers",
+      "owner": "main.rs:31411\u201331449, 31510\u201331567",
+      "route_claim": "mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Tab config pane, group menu",
+      "owner": "main.rs:32071\u201332331, 32368\u201332482",
+      "route_claim": "mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Tooltips",
+      "owner": "`over_the_glass_tip` main.rs:25843, `SlotTooltip` 25864, `ThemeTooltip` 25894",
+      "route_claim": "mixed",
+      "font_claim": "unconfirmed"
+    },
+    {
+      "surface": "Marquee toast",
+      "owner": "`marquee_banner` main.rs:1505",
+      "route_claim": "bypass",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Find (Ctrl+F)",
+      "owner": "`render_find` main.rs:15149",
+      "route_claim": "bypass",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Lookup (Alt+L)",
+      "owner": "`render_lookup` main.rs:15595",
+      "route_claim": "mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Plugins, notifications, logo picker",
+      "owner": "main.rs:15904, 16071, 16807",
+      "route_claim": "bypass",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Language picker",
+      "owner": "main.rs:16241",
+      "route_claim": "bypass",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Agent launcher",
+      "owner": "`render_agent_launcher` main.rs:16439; shell raw `th.surface`",
+      "route_claim": "mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "Git coordination overlay",
+      "owner": "`render_eng_table` main.rs:25525, coordination_view.rs:720",
+      "route_claim": "mixed",
+      "font_claim": "UI"
+    },
+    {
+      "surface": "CSD resize edges",
+      "owner": "csd.rs",
+      "route_claim": "n/a",
+      "font_claim": "\u2014"
+    }
+  ],
+  "material_predicate_calls": {
+    "app/src/main.rs": [
+      1438,
+      9336,
+      9558,
+      9569,
+      9601,
+      9727,
+      9735,
+      10126,
+      10283,
+      10335,
+      10645,
+      11813,
+      15834,
+      17770,
+      17806,
+      17877,
+      17915,
+      20425,
+      20434,
+      20467,
+      20478,
+      20709,
+      20718,
+      20749,
+      20958,
+      24090,
+      24104,
+      24116,
+      24517,
+      25575,
+      25853,
+      26050,
+      26056,
+      26061,
+      26062,
+      26069,
+      26118,
+      26125,
+      26132,
+      26218,
+      26227,
+      26228,
+      26236,
+      26683,
+      26701,
+      27606,
+      28393,
+      28432,
+      28548,
+      28633,
+      28664,
+      31147,
+      31439,
+      31557,
+      31950,
+      32323,
+      32474,
+      33198
+    ],
+    "app/src/pane.rs": [
+      10588,
+      10982,
+      11453,
+      11680,
+      11759
+    ],
+    "app/src/paint.rs": [
+      566,
+      581,
+      605,
+      612,
+      617,
+      645,
+      662
+    ],
+    "app/src/skin.rs": [
+      707,
+      716,
+      725,
+      746,
+      953,
+      1052,
+      1108,
+      1182,
+      1208,
+      1263,
+      1293,
+      1356,
+      1420,
+      1482,
+      1547,
+      2403,
+      2413
+    ]
+  },
+  "method": "Source audit and targeted renderer reads; a method-call count is not a count of distinct surfaces or proof of visual coverage. No native re-certification was performed in this audit.",
+  "sources": {
+    "app/src/skin.rs": "7c94519dab71aa664395f6d1be42dbf0fe7280592b974f494a747f15422b356b",
+    "app/src/main.rs": "346fb6c4ed8499837ed70140842082173e98357d761646f20020aba4a93149fc",
+    "app/src/pane.rs": "1c1e5acaaa6449b691cc9d624facc3402afea4bbd77ed48c964888a5c43a2eef",
+    "app/src/paint.rs": "4b676ab195f6a9026e7d90cad9bd14102c645627030f858af22ca00a7f33acad",
+    "app/src/pane/handed.rs": "05a111dda2ba744b330c40d683422f62356cb39bac99fbfc4330dd2d41b5e0f7",
+    "app/src/pane/doc.rs": "8f883b666c264df110c70a3bc1c9844aaebc2b2e8aec8632780e189a04fe8c4b",
+    "app/src/benchdraw.rs": "a43e985c6efc3d9b7242f216d9e38b3181fa341007eb9699f78832dc2ccdb271",
+    "app/src/workbench.rs": "aed049deea01abe165c495a00b90f34f2273d75819352299c141e820736a5cd0"
+  }
+}

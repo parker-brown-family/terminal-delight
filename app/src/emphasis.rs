@@ -178,7 +178,7 @@ impl Call {
     /// exists: a renderer reaching for `spine_frame` itself would be a second
     /// place deciding what an escalation looks like, and two places that agree
     /// today are two places that disagree after the first edit.
-    pub fn clothe<E: Styled>(self, el: E, sk: &Skin, th: &Theme) -> E {
+    pub fn clothe<E: Styled + gpui::ParentElement>(self, el: E, sk: &Skin, th: &Theme) -> E {
         crate::benchdraw::spine_frame(el, self.tint(th), self.strength, sk, th)
     }
 }

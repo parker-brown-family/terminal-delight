@@ -1,0 +1,63 @@
+{
+  "passed": true,
+  "desktop": {
+    "figures": 6,
+    "asks": 3,
+    "width": 953,
+    "viewport": 968,
+    "notesFile": "2026-10-20-surface-authoring.html",
+    "coverage": [
+      {
+        "selector": "figure",
+        "present": 6,
+        "tagged": 6
+      },
+      {
+        "selector": ".ask",
+        "present": 3,
+        "tagged": 3
+      },
+      {
+        "selector": ".finding",
+        "present": 1,
+        "tagged": 1
+      },
+      {
+        "selector": ".esc-list li",
+        "present": 4,
+        "tagged": 4
+      },
+      {
+        "selector": "table.wide tbody tr",
+        "present": 46,
+        "tagged": 46
+      }
+    ],
+    "svg": [
+      {
+        "view": true,
+        "fixed": false,
+        "label": true
+      },
+      {
+        "view": true,
+        "fixed": false,
+        "label": true
+      },
+      {
+        "view": true,
+        "fixed": false,
+        "label": true
+      }
+    ]
+  },
+  "mobile": {
+    "width": 390,
+    "viewport": 390,
+    "inner": 390
+  },
+  "inventory_rows": 46,
+  "notes": "grill and inventory row add/export/save, concurrence and clear passed",
+  "errors": [],
+  "external_requests": []
+}
