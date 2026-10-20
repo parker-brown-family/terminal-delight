@@ -719,16 +719,17 @@ pub fn spawn_host(key: &str, budget: Duration) -> std::io::Result<Arc<HostLink>>
     }
 
     let exe = std::env::current_exe()?;
+    let (log_out, log_err) = host_logs(key);
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("serve")
         .arg("--session")
         .arg(key)
         .stdin(std::process::Stdio::null())
         // A host outlives the window that started it, so its output cannot go
-        // to that window's terminal. It goes next to the socket, where anyone
-        // looking for the session will already be looking.
-        .stdout(host_log(key))
-        .stderr(host_log(key));
+        // to that window's terminal. It goes to the host's log under the state
+        // directory, which survives the reboot a runtime directory does not.
+        .stdout(log_out)
+        .stderr(log_err);
     // Its own session leader. Without this the host stays in the launching
     // window's process group and dies with the terminal that started it —
     // precisely the loss this feature exists to end, and one that no `kill -9`
@@ -773,16 +774,21 @@ pub fn spawn_host(key: &str, budget: Duration) -> std::io::Result<Arc<HostLink>>
 }
 
 fn host_log_path(key: &str) -> PathBuf {
-    host_socket_path(key).with_extension("log")
+    crate::diag::log_path(&crate::diag::Role::Host(key.to_string()))
 }
 
-fn host_log(key: &str) -> std::process::Stdio {
-    std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(host_log_path(key))
-        .map(std::process::Stdio::from)
-        .unwrap_or_else(|_| std::process::Stdio::null())
+/// The host's log, for its stdout and its stderr. [`crate::diag::open_log`]
+/// sets an oversized log aside and marks where this host's lines begin; the
+/// host's own [`crate::diag::route_stderr`] then leaves the file it was handed.
+fn host_logs(key: &str) -> (std::process::Stdio, std::process::Stdio) {
+    let null = || (std::process::Stdio::null(), std::process::Stdio::null());
+    let Ok(file) = crate::diag::open_log(&crate::diag::Role::Host(key.to_string())) else {
+        return null();
+    };
+    match file.try_clone() {
+        Ok(second) => (second.into(), file.into()),
+        Err(_) => (std::process::Stdio::null(), file.into()),
+    }
 }
 
 #[cfg(test)]

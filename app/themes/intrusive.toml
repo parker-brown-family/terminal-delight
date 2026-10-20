@@ -35,7 +35,7 @@ ansi = [
 ]
 
 [effects]
-scanline_opacity = 0.34    # over the text: the whole point
+scanline_opacity = 0.31    # over the text: the whole point. 0.34 at first; Parker, in use: "about 10% too much on the grainy scan lines front"
 scanline_step    = 3.0
 vignette         = 0.90
 glow             = 1.0

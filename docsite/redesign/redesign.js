@@ -32,7 +32,7 @@
   var PAGES = [['01.0', 'Introduction', '/'], ['01.1', 'Install', '/install'], ['01.2', 'First launch', '/first-launch'], ['01.3', 'Keys', '/keys']];
   var REFERENCE = [['Config files', '/config-files', 'every file'], ['Environment flags', '/environment', 'TD_ variables'],
     ['Command line', '/cli', 'every verb'], ['Plugins', '/plugins', 'MCP servers'], ['lean-ctx', '/plugins', 'token savings'],
-    ['Omarchy', KIOSK + '/omarchy.html', 'the desktop half'], ['Terminal core', '/install#technical-building-from-source', 'alacritty_terminal · gpui'],
+    ['Omarchy', KIOSK + '/omarchy.html', 'the desktop half'], ['Terminal core', '/install#technical-building-from-source', 'rio-vt · gpui'],
     ['Version', 'https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.3.0', 'v0.3.0']];
 
   var here = document.body.dataset.page || '/';
