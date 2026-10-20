@@ -572,6 +572,13 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
+- **A screen redraw opened the older way is no longer drawn half-finished.**
+  Programs can ask the terminal to hold a redraw back until it is complete,
+  either with `ESC [ ? 2026 h` or with an older string, `ESC P = 1 s ESC \`.
+  Terminal Delight already held the first form back properly; with the second,
+  text that arrived together with the request was drawn at once, so the frame
+  could appear torn. Found by the Terminal Lab. (#1046)
+
 - **Tabs no longer come back out of their projects after the window restarts.**
   One answer from the session host that took longer than five seconds marked
   the host as gone for the rest of the window's life, and the only thing that
