@@ -1,0 +1,25 @@
+{
+  "skin": "chalk",
+  "theme": {
+    "color": "default",
+    "follow_omarchy": false,
+    "id": "deco",
+    "palette": "flexoki-light",
+    "grade": {
+      "background": 0.5,
+      "brightness": 0.5,
+      "colour": 0.5,
+      "contrast": 0.5,
+      "crawl_angle": 12.0,
+      "crawl_depth": 2.5,
+      "crt": false,
+      "gamma": 0.5,
+      "phosphor": 0.0,
+      "scale": 1.149999976158142,
+      "text": 0.5,
+      "text_size": 1.0,
+      "warp": 0.0
+    }
+  },
+  "win": null
+}

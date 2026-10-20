@@ -579,7 +579,7 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
         })
         .map(|d| {
             if sk.is_paper() {
-                sk.paper_control(d, lit)
+                sk.paper_control(d, false)
             } else {
                 d
             }
@@ -614,6 +614,10 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
                 .flex_col()
                 .items_center()
                 .justify_center()
+                .when(sk.is_paper(), |d| {
+                    d.relative()
+                        .children(lit.then(|| crate::paper::selection(sk.ink.select)))
+                })
                 .child(
                     // The name, with its chord worn loud — bigger, heavier,
                     // underlined, and inked in the TILE'S OWN colour, so the key

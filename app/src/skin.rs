@@ -726,7 +726,7 @@ impl Skin {
             d.bg(self.ink.panel)
                 .border_color(hsla(0., 0., 0., 0.))
                 .rounded(self.radius())
-                .shadow(Vec::new())
+                .shadow(crate::paper::shadows())
                 .children(self.grain())
                 .child(crate::paper::rim(
                     self.ink.edge_rest,
@@ -748,17 +748,38 @@ impl Skin {
 
     /// A paper control's backing is laid down before its caller adds text.
     pub fn paper_control(&self, d: Div, active: bool) -> Div {
+        self.paper_option(d, false).child(crate::paper::backing(
+            self.ink.btn_face,
+            self.ink.select,
+            active,
+        ))
+    }
+
+    /// Choices are writing on the sheet, marked once rather than laid over a
+    /// second filled tile. Action buttons retain their raised cotton backing.
+    pub fn paper_option(&self, d: Div, active: bool) -> Div {
         d.relative()
             .bg(hsla(0., 0., 0., 0.))
             .border_color(hsla(0., 0., 0., 0.))
             .font_family(self.font_family.clone())
             .text_size(self.text_px(11. * self.scale))
+            .line_height(gpui::relative(1.15))
             .text_color(self.ink.ink)
-            .child(crate::paper::backing(
-                self.ink.btn_face,
-                self.ink.select,
-                active,
-            ))
+            .children(active.then(|| crate::paper::selection(self.ink.select)))
+    }
+    /// A caption owns its marker: icons above it must not move the mark away
+    /// from the handwriting. A relative line height prevents inherited leading
+    /// from overflowing compact two-line controls.
+    pub fn paper_caption(&self, text: &str, size: f32, active: bool) -> Div {
+        div()
+            .relative()
+            .flex_none()
+            .text_size(self.text_px(size))
+            .line_height(gpui::relative(1.15))
+            .whitespace_nowrap()
+            .text_color(self.ink.ink)
+            .children(active.then(|| crate::paper::selection(self.ink.select)))
+            .child(text.to_string())
     }
     /// This skin, wearing a pane's text-size gauge.
     ///
@@ -1029,7 +1050,7 @@ impl Skin {
             .py(self.px(self.m.pad_y));
         let d = d.children(self.grain());
         if self.is_paper() {
-            return b_all(d, self.m.border)
+            return b_all(d.shadow(crate::paper::shadows()), self.m.border)
                 .border_color(hsla(0., 0., 0., 0.))
                 .child(crate::paper::rim(
                     self.ink.rule_strong,
