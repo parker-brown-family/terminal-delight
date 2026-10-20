@@ -7,7 +7,7 @@
         "drop_resize": true
       },
       "wrong": "rio-vt",
-      "reason": "When a pane is resized, rio-vt keeps more rows than alacritty: extra blank rows in history, and a widened line keeps the padding it was wrapped with (\"1235      r\" against \"1235r\"). Settled on 2026-10-19 with tmux as a third opinion: in every minimized case checked, tmux agrees with alacritty, and rio-vt agrees too once the text style (bold, dim, italic, underline, reverse) is taken out. So the cause is the same as clear-screen-with-an-attribute: rio-vt counts blank cells written under a style as content, and reflow keeps them. TD resizes panes on every split, so this is user-visible. The neutralize rule still drops every resize, which is broad; narrow it once the styled-blank fix lands.",
+      "reason": "When a pane is resized, rio-vt keeps more rows than alacritty: extra blank rows in history, and a widened line keeps the padding it was wrapped with (\"1235      r\" against \"1235r\"). Settled on 2026-10-19 with tmux as a third opinion: in every minimized case checked, tmux agrees with alacritty, and rio-vt agrees too once the text style (bold, dim, italic, underline, reverse) is taken out. So the cause is the same as clear-screen-with-an-attribute: rio-vt counts blank cells written under a style as content, and reflow keeps them. TD resizes panes on every split, so this is user-visible. Not fixable at TD's side of the boundary, for the reason clear-screen-with-an-attribute gives; the fix belongs upstream. The neutralize rule still drops every resize, which is broad; narrow it once the styled-blank fix lands.",
       "evidence": "minimized: size 10x3, writes \"\\x1b[1m\", \"\\x1bM1235\", resize 3x2, \"r\", resize 80x3 -> row rio \"1235      r\", alacritty and tmux \"1235r\"; without \\x1b[1m rio \"1235r\". size 4x2, writes \"\\x1b[2m\", \"\\x1b[J\", resize 3x10 -> history rio 1, alacritty 0, tmux 0; without the style rio 0",
       "issue": null
     },
@@ -16,10 +16,11 @@
       "neutralize": {
         "strip": "\\xcc[\\x80-\\xbf]|\\xcd[\\x80-\\xaf]|\\xe2\\x80\\x8d"
       },
-      "wrong": "rio-vt",
-      "reason": "A combining mark or zero-width joiner with no printed character to attach to — at the start of a line, or after an escape sequence: alacritty attaches it (to a blank, or to the last printed character), rio-vt drops it.",
+      "wrong": "neither: TD drops it on purpose",
+      "reason": "A combining mark or zero-width joiner with nothing to sit on, at the start of a line or after any escape sequence other than a colour: alacritty attaches it (to a blank, or to the last printed character), and under rio-vt TD drops it before the core sees it. That drop is TD's own text guard (vt/text.rs), which lets a mark through only straight after the character it belongs to so that a cursor move cannot walk the per-character mark limit; it is deliberate. tmux 3.7c also drops a mark at the start of a line, so alacritty is the odd one out there.",
       "evidence": "minimized: size 4x1, write U+0323 -> row 0 rio \"\", alacritty \" \\u0323\"; size 2x1, writes \"m\", \"\\x1bb\", U+200D -> rio \"m\", alacritty \"m\\u200d\"",
-      "issue": null
+      "issue": null,
+      "third_opinion": "tmux 3.7c: a lone U+0323 at column 0 leaves the row empty, as rio-vt under TD does"
     },
     {
       "id": "wide-erased-in-half",
@@ -88,14 +89,15 @@
       "issue": null
     },
     {
-      "id": "tab-onto-the-last-column",
+      "id": "tab-over-a-written-space",
       "neutralize": {
         "strip": "\\t"
       },
       "wrong": "rio-vt",
-      "reason": "Both cores keep a literal tab in the first cell a tab covers, so copying the line gives the tab back. When the tab only moves the cursor onto the last column, alacritty still keeps it and rio-vt does not, so a copy loses the tab.",
+      "reason": "A tab leaves a literal tab in the first cell it covers, so copying the line gives the tab back. rio-vt 0.5.28 does that only when the cell is blank (NUL); alacritty and tmux also do it over a space a program wrote there. So after \" \\r\\t\" a copy from rio-vt gives a space where the other two give a tab. Not fixable at TD's side of the boundary without wrapping all of rio-vt's handler: the guard cannot see what a cell holds. Copy fidelity only; nothing on screen differs. Fix belongs upstream in put_tab.",
       "evidence": "minimized: size 2x1, writes \" \\r\", \"\\t\" -> row 0 rio \"\", alacritty \"\\t\"",
-      "issue": null
+      "issue": null,
+      "third_opinion": "tmux 3.7c: \" \\r\\t\" at 2x1 and 4x1 captures as a tab, as alacritty does"
     },
     {
       "id": "clear-screen-with-an-attribute",
@@ -103,9 +105,10 @@
         "strip": "\\x1b\\[2J"
       },
       "wrong": "rio-vt",
-      "reason": "Clear screen (ED 2) while any attribute is set — dim, underline, a colour — pushes one more blank row into rio-vt's scrollback than alacritty's. With no attribute set they agree. Seen as stray blank lines in scrollback after `clear` under a styled prompt. Same root cause as narrowing-reflow: rio-vt counts a blank cell written under a style as content.",
+      "reason": "rio-vt 0.5.28 erases rows with the cursor's whole style, not just its background (Row::reset takes the template's style id), so a row erased while dim, underline or a foreground colour is set is not empty to it. Clear screen (ED 2) then pushes that row into scrollback, and alacritty and tmux do not. Seen as stray blank lines in scrollback after `clear` under a styled prompt. Not fixable at TD's side of the boundary: every erase and every scroll writes rows this way, so a guard around ED alone would fix half of it. Fix belongs upstream: an erased cell keeps only the background (xterm's bce). The same cause accounts for most of narrowing-reflow.",
       "evidence": "minimized: size 4x2, writes \"\\x1b[2m\", \"\\x1b[J\", \"\\x1b[2J\" -> history_size rio 2, alacritty 1; the same without \\x1b[2m agrees",
-      "issue": null
+      "issue": null,
+      "third_opinion": "tmux 3.7c: \"x\\e[2m\\e[J\\e[2J\" at 4x2 leaves history_size 1, the same as without \\e[2m"
     },
     {
       "id": "vte-split-utf8-drops-the-next-character",
