@@ -131,9 +131,10 @@ bash scripts/release-smoke.sh     # fmt + clippy + tests + deny + AppImage check
 
 First launch seeds `~/.config/terminal-delight/theme.toml` (hacker). Change any value —
 colors, the 16 ANSI slots, `scanline_opacity`, `vignette`, `glow`, font — and the running
-app picks it up in ~300ms. Four themes ship in [`app/themes/`](app/themes/):
+app picks it up in ~300ms. Five themes ship in [`app/themes/`](app/themes/):
 **hacker** (phosphor green) · **tactical-overdrive** (cyan) · **quiet-command** (light,
-effects off) · **deco** (quiet brass). Copy one over your config file to switch.
+effects off) · **deco** (quiet brass) · **intrusive** (the CRT turned all the way up).
+Copy one over your config file to switch.
 
 ![The four built-in themes side by side](assets/showcase-themes.png)
 
