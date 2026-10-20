@@ -143,18 +143,6 @@
       "issue": null
     },
     {
-      "id": "legacy-dcs-sync-is-torn-in-one-read",
-      "kind": "chunk",
-      "core": "rio",
-      "neutralize": {
-        "strip": "\\x1bP=[12]s(?:\\x1b\\\\)?"
-      },
-      "wrong": "TD (vt/text.rs)",
-      "reason": "TD's text guard splits a read where a program opens a synchronized update, because rio-vt holds an update's bytes back only from its next read; but it does so only for CSI ? 2026 h, not for the legacy DCS = 1 s ST that rio-vt also honours. So text after DCS = 1 s ST in the same read is drawn at once, while the update is open: a torn frame, and a screen that depends on where reads end. The CSI form is not affected (named case synchronized-update). Rare in practice: modern tmux and programs send the CSI form, and TD's TERM advertises no Sync capability. The fix belongs in vt/text.rs: split after the DCS = 1 s string terminator too.",
-      "evidence": "size 20x1: write \"before\", write \"\\r\\x1bP=1s\\x1b\\\\frame\" -> rio-vt shows \"framee\" with sync_open true (the CSI form shows \"before\"); minimized by the lab: size 2x1, writes \"\\x1bP=1s\", \"\\x1b\\\\d\" joined vs whole -> screens differ",
-      "issue": null
-    },
-    {
       "id": "sync-opened-in-a-mode-list-is-lost-at-a-close",
       "kind": "chunk",
       "core": "rio",
