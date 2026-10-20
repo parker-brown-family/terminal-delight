@@ -1,7 +1,7 @@
 <script type="application/json" data-page>
 {
   "title": "Skins",
-  "description": "A skin sets the shape of Terminal Delight's chrome: round or square corners, how edges are drawn, how the active tab is marked, how labels are set. Three are built in, and your own skin.toml reloads as you save it. Any skin works with any theme.",
+  "description": "A skin sets the shape of Terminal Delight's chrome: round or square corners, how edges are drawn, how the active tab is marked, how labels are set. Five are built in — default, deco, console, chalk and ops — and your own skin.toml reloads as you save it. Any skin works with any theme.",
   "updated": "2026-09-25",
   "trueOf": "main at d7cf383",
   "summary": "The shape of the chrome around the panes"
@@ -60,17 +60,23 @@ panel_raised = { from = "surface", l = 1.25, max_l = 0.30 }</code></pre>
 <table>
   <thead><tr><th>Key</th><th>Default</th><th>Decides</th></tr></thead>
   <tbody>
-    <tr><td><code>corner</code></td><td><code>round</code></td><td>Rounded corners or none.</td></tr>
+    <tr><td><code>corner</code></td><td><code>round</code></td><td>Rounded corners, none, or <code>cut</code>: the top-left and bottom-right corners of each region cut off, by the <code>cut</code> metric.</td></tr>
     <tr><td><code>boundary</code></td><td><code>hairline</code></td><td>How a region's edge is drawn. <code>double</code> is two thin rules.</td></tr>
-    <tr><td><code>emphasis</code></td><td><code>fill</code>; the <code>default</code> skin sets <code>glow</code></td><td>How the active item stands out. <code>glow</code> is a phosphor ring, <code>rail</code> a bar along one side.</td></tr>
+    <tr><td><code>emphasis</code></td><td><code>fill</code>; the <code>default</code> skin sets <code>glow</code></td><td>How the active item stands out. <code>glow</code> is a phosphor ring, <code>rail</code> a bar along one side, <code>bar</code> a solid bar with an arrow tip, the way a Pip-Boy marks its selection.</td></tr>
     <tr><td><code>divider</code></td><td><code>line</code></td><td>Horizontal dividers.</td></tr>
     <tr><td><code>caps</code></td><td><code>off</code></td><td>Labels as written, in capitals, or <code>tracked</code> with thin spaces between the letters.</td></tr>
     <tr><td><code>shine</code></td><td><code>gradient</code></td><td>Whether raised surfaces carry a soft gradient.</td></tr>
+    <tr><td><code>material</code></td><td><code>plain</code></td><td>What lies under each region: nothing, <code>paper</code> with its grain, or a faint <code>grid</code>.</td></tr>
+    <tr><td><code>gauge</code></td><td><code>rail</code></td><td>How an allowance is drawn: a filled rail, or a row of <code>pips</code> you can count. A missing reading draws hollow pips, never empty ones.</td></tr>
+    <tr><td><code>title</code></td><td><code>plain</code></td><td>Whether the top band's notice and the focused pane's title sit between <code>chevron</code>s, <code>» like this «</code>.</td></tr>
+    <tr><td><code>focus</code></td><td><code>plain</code></td><td>Whether the pane with the keyboard carries a <code>hatch</code>ed strip along its top edge.</td></tr>
   </tbody>
 </table>
 
 <h3>Metrics</h3>
-<p>In pixels before the window's scale is applied; borders never scale. Defaults: <code>radius</code> 4, <code>radius_lg</code> 10, <code>hairline</code> 1, <code>border</code> 1, <code>rule_gap</code> 2, <code>gap</code> 4, <code>pad_x</code> 6, <code>pad_y</code> 4, <code>chip_px</code> 5, <code>chip_py</code> 1, <code>row_h</code> 15, <code>label_size</code> 9, <code>bracket</code> 5, <code>rail</code> 2, <code>glow</code> 5.25 (how far the ring spreads) and <code>glow_a</code> 0.11 (how bright it is, 0 to 1).</p>
+<p>In pixels before the window's scale is applied; borders never scale. Defaults: <code>radius</code> 4, <code>radius_lg</code> 10, <code>hairline</code> 1, <code>border</code> 1, <code>rule_gap</code> 2, <code>gap</code> 4, <code>pad_x</code> 6, <code>pad_y</code> 4, <code>chip_px</code> 5, <code>chip_py</code> 1, <code>row_h</code> 15, <code>label_size</code> 9, <code>bracket</code> 5, <code>rail</code> 2, <code>glow</code> 5.25 (how far the ring spreads), <code>glow_a</code> 0.11 (how bright it is, 0 to 1) and <code>cut</code> 7 (how far a cut corner reaches, read only under <code>corner = "cut"</code>).</p>
+<h3>Fonts</h3>
+<p><code>[font]</code> sets the chrome's type, never the terminal's. <code>family</code> is the interface face; <code>heading</code> sets names (projects, the notice, a pane's title) and <code>data</code> sets numbers (percentages, counts, the zoom), each falling back to <code>family</code>, which falls back to the theme's font. Terminal Delight bundles Caveat, Oxanium, Chakra Petch and Share Tech Mono, all under the SIL Open Font License, so a skin can name them on any machine.</p>
 
 <h3>Inks</h3>
 <p>An ink is either a fixed colour, <code>"#1a2226"</code>, or a recipe over one of the theme's colours: <code>{ from = "accent", l = 0.8, s = 1.2, a = 0.5, max_l = 0.3, toward = "text", t = 0.4 }</code>. <code>from</code> and <code>toward</code> name <code>bg</code>, <code>surface</code>, <code>text</code>, <code>accent</code>, <code>complement</code>, <code>human</code>, <code>faint</code>, <code>cursor</code>, <code>white</code>, <code>black</code> or <code>ansi0</code> to <code>ansi15</code>. <code>l</code> scales lightness, <code>max_l</code> caps it, <code>s</code> scales saturation, <code>toward</code> blends by <code>t</code> (0.5 if left out), and <code>a</code> sets opacity, applied in that order.</p>

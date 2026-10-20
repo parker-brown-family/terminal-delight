@@ -41,6 +41,7 @@ mod coordination_view;
 mod crt;
 mod csd;
 mod ctl;
+mod deck;
 mod defaultterm;
 mod demo;
 mod derive;
@@ -1477,7 +1478,8 @@ fn slider_switch(on: bool, th: &theme::Theme, sk: &skin::Skin) -> gpui::Div {
         .w(px(TRACK_W))
         .h(px(TRACK_H))
         .flex_none()
-        .rounded_full()
+        // A pill under a round skin, a slot under a square or cut one.
+        .rounded(sk.radius_pill())
         .border_1()
         .border_color(if on { th.accent } else { th.text.alpha(0.25) })
         .bg(if on {
@@ -1495,7 +1497,7 @@ fn slider_switch(on: bool, th: &theme::Theme, sk: &skin::Skin) -> gpui::Div {
             div()
                 .w(px(KNOB))
                 .h(px(KNOB))
-                .rounded_full()
+                .rounded(sk.radius_pill())
                 .bg(if on { th.accent } else { th.text.alpha(0.45) })
                 .when(on, |d| {
                     d.shadow(
@@ -9676,8 +9678,25 @@ impl Workspace {
         // slot reads the same gauge and a second set of thresholds beside this
         // one is how two surfaces start disagreeing about what 87% looks like.
         let track = th.text.alpha(0.10);
+        let pips = sk.shape.gauge == skin::Gauge::Pips;
+        let pip_dark = track;
+        let pip_none = th.faint.alpha(0.70);
         let meter = |frac: f32, col: gpui::Hsla, h: f32| {
             let f = frac.clamp(0., 1.);
+            if pips {
+                // Counted, not estimated: twenty-four pips across the panel,
+                // taller than the rail they replace so each one reads.
+                return div()
+                    .relative()
+                    .w_full()
+                    .h(px(h * 1.8))
+                    .child(crate::deck::pips(
+                        crate::deck::pips_for(Some(f), 24),
+                        col,
+                        pip_dark,
+                        pip_none,
+                    ));
+            }
             div()
                 .relative()
                 .w_full()
@@ -9719,7 +9738,7 @@ impl Workspace {
                     .gap_1p5()
                     .px_2()
                     .py_0p5()
-                    .rounded_full()
+                    .rounded(sk.radius_pill())
                     .border_1()
                     .border_color(if on { acc.alpha(0.85) } else { txt.alpha(0.16) })
                     .bg(if on { acc.alpha(0.16) } else { txt.alpha(0.04) })
@@ -11993,7 +12012,7 @@ impl Workspace {
                 darken(th.surface, 0.62)
             })
             .shadow(float_shadows(danger, th.grade.phosphor))
-            .map(|d| sk.finish(d))
+            .map(|d| sk.finish_edged(d, danger.alpha(0.9)))
             .text_color(th.text)
             .on_mouse_down(
                 MouseButton::Left,
@@ -22134,10 +22153,15 @@ impl Workspace {
                     .whitespace_nowrap()
                     .text_size(sk.text_px(CHROME_NAME_PT * s))
                     .when(is_project, |d| {
-                        d.font_weight(gpui::FontWeight::EXTRA_BOLD)
+                        sk.heading(d.font_weight(gpui::FontWeight::EXTRA_BOLD))
                             .text_color(th.text.alpha(0.9))
                     })
-                    .when(!is_project, |d| d.text_color(th.text.alpha(0.82)))
+                    // An initiative is a name too, one rung quieter than its
+                    // project: the heading face, a weight down. Under a skin
+                    // with no heading face both calls are no-ops.
+                    .when(!is_project, |d| {
+                        sk.subheading(d.text_color(th.text.alpha(0.82)))
+                    })
                     .child(label.clone()),
             )
             .children(self.branch_level_mark(branch, s))
@@ -22408,7 +22432,7 @@ impl Workspace {
                 // somebody's choice and the selection has no business
                 // overruling it.
                 .text_color(text.unwrap_or(if is_active {
-                    sk.ink.ink_lit
+                    sk.lit_label()
                 } else {
                     th.text.alpha(0.8)
                 }))
@@ -22992,6 +23016,13 @@ impl Workspace {
         // resolved against, not the bar's own width.
         let rail_w = (self.left_bar_w - mark_w - val_w - 22.0).max(8.0);
         let remaining_mode = self.slot_remaining;
+        // Under a pip skin both windows are COUNTED rather than estimated: the
+        // long window as a row of tall pips, the short one as short pips, one
+        // per unit the vendor named — the same two rails, drawn as XCOM draws
+        // health. Unknown stays unknown: hollow pips, never dark ones.
+        let pip_gauge = sk.shape.gauge == skin::Gauge::Pips;
+        let pip_n = ((rail_w / 8.0).floor() as usize).clamp(6, 16);
+        let pip_unknown = faint.alpha(0.70);
 
         // "No reading", drawn so it cannot be mistaken for either end of the
         // scale: a hatched track with its own outline, at the rail's height.
@@ -23068,6 +23099,20 @@ impl Workspace {
 
             // The long window, as one solid rail.
             let week = match lit_colour(&row.week) {
+                _ if pip_gauge => {
+                    let reading = lit_colour(&row.week);
+                    let col = reading.map_or(track, |(_, c)| c);
+                    div()
+                        .relative()
+                        .w_full()
+                        .h(px(rail_h * 1.5))
+                        .child(crate::deck::pips(
+                            crate::deck::pips_for(reading.map(|(f, _)| f), pip_n),
+                            col,
+                            track,
+                            pip_unknown,
+                        ))
+                }
                 None => hatch(rail_h),
                 Some((shown, col)) => {
                     div()
@@ -23096,6 +23141,21 @@ impl Workspace {
             // The short window, as a notched rail: one tick per unit of the
             // window the vendor named.
             let session = match lit_colour(&row.session) {
+                _ if pip_gauge => {
+                    let reading = lit_colour(&row.session);
+                    let col = reading.map_or(track, |(_, c)| c);
+                    let n = usize::from(deg.ticks).max(1);
+                    div()
+                        .relative()
+                        .w_full()
+                        .h(px(tick_h))
+                        .child(crate::deck::pips(
+                            crate::deck::pips_for(reading.map(|(f, _)| f), n),
+                            col,
+                            track,
+                            pip_unknown,
+                        ))
+                }
                 None => hatch(tick_h),
                 Some((shown, col)) => {
                     let lit = slot::ticks_lit(shown, deg.ticks);
@@ -23251,6 +23311,7 @@ impl Workspace {
                         .flex_none()
                         .w(px(val_w * s))
                         .text_size(sk.text_px(8.5 * SLOT_RAIL_GROWTH * s))
+                        .map(|d| sk.data(d))
                         .text_color(text.alpha(val_alpha))
                         .child(val),
                 );
@@ -23407,7 +23468,12 @@ impl Workspace {
                     .text_size(sk.text_px(10.0 * s))
                     .text_color(col)
                     .child(glyph.to_string())
-                    .child(div().text_size(sk.text_px(10.5 * s)).child(n.to_string())),
+                    .child(
+                        div()
+                            .text_size(sk.text_px(10.5 * s))
+                            .map(|d| sk.data(d))
+                            .child(n.to_string()),
+                    ),
             );
         }
         counter
@@ -25989,10 +26055,18 @@ impl Workspace {
         let chip = sk
             .bezel(false, s)
             .flex_none()
+            // A row, so a chevron title's » and « sit either side of the name
+            // rather than stacking above and below it.
+            .flex()
+            .flex_row()
+            .items_center()
             .text_size(sk.text_px(pt * 0.8))
             .font_weight(gpui::FontWeight::SEMIBOLD)
+            .map(|d| sk.heading(d))
             .text_color(ink)
-            .child(label);
+            .children(sk.chevron("»"))
+            .child(sk.heading_text(&label))
+            .children(sk.chevron("«"));
         // click: unfold it into the table. Propagation stops here so the
         // mother bar's move handle does not also arm on the press.
         chip.on_mouse_down(
@@ -27154,6 +27228,11 @@ fn render_node(
                 .when(!is_focused, |d| d.m(px(6.)))
                 .overflow_hidden()
                 .rounded_md()
+                // A skin that rounds nothing squares the pane too: a cut or a
+                // square deck with rounded panes inside it reads as two looks.
+                .when(sk.shape.corner != skin::Corner::Round, |d| {
+                    d.rounded(px(0.))
+                })
                 .border_1()
                 .border_color(if is_focused { acc } else { th.faint })
                 // highlighted pane gets a 2x-thick accent border (drawn inside the
@@ -27226,6 +27305,9 @@ fn render_node(
                             .absolute()
                             .inset_0()
                             .rounded_md()
+                            .when(sk.shape.corner != skin::Corner::Round, |d| {
+                                d.rounded(px(0.))
+                            })
                             .bg(hsla(0., 0., 0., 0.22)),
                     )
                 })
@@ -28179,6 +28261,7 @@ impl Render for Workspace {
             .child(
                 div()
                     .text_size(sk.text_px(10. * scale))
+                    .map(|d| sk.data(d))
                     .text_color(th.accent)
                     .child(format!("{}%", (scale * 100.).round() as i32)),
             )
@@ -28642,6 +28725,7 @@ impl Render for Workspace {
                     "quiet" => t.thm_quiet,
                     "tactical" => t.thm_tactical,
                     "hacker" => t.thm_hacker,
+                    "intrusive" => t.thm_intrusive,
                     "custom" => t.thm_custom,
                     "deco" => t.ui.pal_thm_deco,
                     _ => lbl.as_str(),
@@ -28649,6 +28733,7 @@ impl Render for Workspace {
                 let help = match lbl.as_str() {
                     "quiet" => t.ui.pal_help_theme_quiet,
                     "tactical" => t.ui.pal_help_theme_tactical,
+                    "intrusive" => t.ui.pal_help_theme_intrusive,
                     "deco" => t.ui.pal_help_theme_deco,
                     "hacker" => t.ui.pal_help_theme_hacker,
                     _ => t.ui.pal_help_theme_custom,
@@ -28705,6 +28790,7 @@ impl Render for Workspace {
                     "deco" => t.ui.pal_skin_deco,
                     "console" => t.ui.pal_skin_console,
                     "chalk" => t.ui.pal_skin_chalk,
+                    "ops" => t.ui.pal_skin_ops,
                     "custom" => t.ui.pal_skin_custom,
                     other => other,
                 };
@@ -28719,6 +28805,7 @@ impl Render for Workspace {
                                     "deco" => t.ui.pal_help_skin_deco,
                                     "console" => t.ui.pal_help_skin_console,
                                     "chalk" => t.ui.pal_help_skin_chalk,
+                                    "ops" => t.ui.pal_help_skin_ops,
                                     _ => t.ui.pal_help_skin_custom,
                                 },
                                 None,
@@ -44518,6 +44605,25 @@ fn main() {
                     include_bytes!("../assets/fonts/Caveat-Variable.ttf").as_slice(),
                 )]) {
                     eprintln!("terminal-delight: failed to load the sticky-note font: {e}");
+                }
+                // The OPS skin's three faces, all SIL OFL: Oxanium for names,
+                // Chakra Petch for interface text, Share Tech Mono for numbers.
+                // Oxanium ships as a variable font only, so its two weights are
+                // static instances cut with fontTools (no reserved font name);
+                // Share Tech Mono reserves "Share" and is bundled unmodified.
+                if let Err(e) = cx.text_system().add_fonts(
+                    [
+                        include_bytes!("../assets/fonts/Oxanium-Bold.ttf").as_slice(),
+                        include_bytes!("../assets/fonts/Oxanium-SemiBold.ttf").as_slice(),
+                        include_bytes!("../assets/fonts/ChakraPetch-Regular.ttf").as_slice(),
+                        include_bytes!("../assets/fonts/ChakraPetch-SemiBold.ttf").as_slice(),
+                        include_bytes!("../assets/fonts/ShareTechMono-Regular.ttf").as_slice(),
+                    ]
+                    .into_iter()
+                    .map(std::borrow::Cow::Borrowed)
+                    .collect(),
+                ) {
+                    eprintln!("terminal-delight: failed to load the OPS skin's fonts: {e}");
                 }
                 // First-run self-diagnostics for untested boxes (AMD/Intel,
                 // Wayland, fractional scaling): record installed fonts so the grid

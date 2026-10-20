@@ -1,0 +1,55 @@
+# terminal-delight theme — intrusive (the CRT, turned all the way up)
+#
+# Loud on purpose. In the 2026-10-19 tactical workshop the overlay comparison
+# put a quiet tube beside one whose scan lines and tint lay over the text and
+# whose glow bled off every letter, and Parker, on the loud one: "That
+# intrusive is wicked... can we get that to be a preset in the styles? …
+# INTRUSIVE style will be SO nice to mix in!"
+#
+# So it is a DESIGN, not a skin: it owns only the screen's finish, and it mixes
+# with any trim — Intrusive under OPS is the full Pip-Boy, Intrusive under Chalk
+# is a chalkboard behind wet glass. It asks for no skin of its own.
+#
+# What makes it intrusive rather than merely bright is `letter_glow`: the grid
+# draws every line again underneath, in each run's own colour, a pixel out in
+# four directions (pane/grid_paint.rs). No other design sets it.
+
+name = "intrusive"
+icon = "◉"
+
+# Colours only show where no palette is chosen; on a fresh window the TD palette
+# owns colour and this design owns the glass. Phosphor green, a shade hotter
+# than hacker's, for the windows where they do show.
+[colors]
+bg      = "#020d06"
+surface = "#06180d"
+text    = "#9bffc2"
+accent  = "#00ff9c"
+faint   = "#124227"
+cursor  = "#5cffb4"
+ansi = [
+  "#07100a", "#ff5d5d", "#00ff9c", "#ff9d2e",
+  "#4da6ff", "#d27ad0", "#6ff2e6", "#b8ffd6",
+  "#14472a", "#ff8a8a", "#66ffc0", "#ffbf6b",
+  "#8cc4ff", "#eaa6e8", "#a8fff6", "#efffef",
+]
+
+[effects]
+scanline_opacity = 0.34    # over the text: the whole point
+scanline_step    = 3.0
+vignette         = 0.90
+glow             = 1.0
+bloom            = 1.0
+tracking         = 0.75
+tracking_period  = 11.0
+tracking_sweep   = 6.0
+flicker          = 0.45
+jiggle           = 0.35
+screen_glare     = 0.55
+bezel            = 0.70
+letter_glow      = 1.0     # phosphor bleeding off every letter
+
+[font]
+family      = "JetBrains Mono"
+size        = 14.0
+cell_height = 20.0

@@ -459,14 +459,18 @@ pub fn card(th: &Theme, sk: &Skin, scale: f32, aimed: bool) -> Div {
         .map(|d| sk.finish(d))
         .text_color(th.text)
         .font_family(sk.font_family.clone())
-        .shadow(crate::float_shadows(
-            if aimed {
-                th.accent
-            } else {
-                th.accent.alpha(0.35)
-            },
-            th.grade.phosphor,
-        ))
+        // A cut plate carries its own hard shadow in its own shape; a blurred
+        // rectangle here would show in the two corners the plate cut away.
+        .when(!sk.is_cut(), |d| {
+            d.shadow(crate::float_shadows(
+                if aimed {
+                    th.accent
+                } else {
+                    th.accent.alpha(0.35)
+                },
+                th.grade.phosphor,
+            ))
+        })
 }
 
 /// A card's header: what is being painted on the left, what it has on now on
