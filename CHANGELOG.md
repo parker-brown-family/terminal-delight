@@ -692,6 +692,8 @@ the changes you may notice in the first hour.
 - **The Gamba design and its slot-machine overlay.** A pane saved on it opens on
   the custom theme; pick another design in the painter's Style area. Bells and
   attention badges are unaffected. (#992)
+- **The painter's ◎ theme button under SKIN.** Pick the skin you want instead;
+  a fresh window still starts on the skin its theme names. (#PR)
 - **The Field design.** It is folded into Tactical, and a pane saved on it
   opens on Tactical. See Upgrading from 0.3.0. (#1029)
 - **The painter's COLOUR SETS shelf and colour wheel.** The Omarchy themes

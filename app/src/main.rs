@@ -28457,7 +28457,6 @@ impl Render for Workspace {
             // that a person cannot evaluate a look they have no way to put on.
             let mut skin_row = div().flex().flex_row().flex_wrap().gap_2();
             let skin_now = skin::active_id(cx);
-            let skin_pinned = skin::is_pinned(cx);
             for (id, icon, _) in skin::all_skins(cx) {
                 // Lit when this skin is what is DRAWING — whether it was chosen
                 // here or inherited from the theme. Lighting only explicit
@@ -28504,35 +28503,6 @@ impl Render for Workspace {
                                 if let Err(e) = skin::select(cx, &click_id) {
                                     eprintln!("terminal-delight: {e}");
                                 }
-                                ws.save(cx);
-                                cx.notify();
-                            }),
-                        ),
-                );
-            }
-            // Back to following whatever the theme asks for. Shown only once a
-            // skin has actually been pinned: on a fresh window it would be a
-            // button that undoes nothing, and a control whose press does nothing
-            // is how a panel teaches people to stop reading it.
-            if skin_pinned {
-                skin_row = skin_row.child(
-                    theme_icon_btn(&th, &sk, "\u{25ce}", t.ui.pal_skin_follow_theme, false)
-                        .id("skin-btn-follow")
-                        .map(|b| {
-                            palette_help(
-                                b,
-                                t.ui.pal_help_skin_follow_theme,
-                                None,
-                                None,
-                                help_delay,
-                                help_owner.clone(),
-                            )
-                        })
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                let _ = skin::select(cx, skin::FOLLOW_THEME);
                                 ws.save(cx);
                                 cx.notify();
                             }),
