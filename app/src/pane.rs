@@ -7096,22 +7096,13 @@ impl TerminalView {
                 Handled::Consumed
             }
             crate::keylayer::Layer::Rename => self.rename_key(&k, ks, cx),
-            // Escape over a floating document closes it, and nothing else about
-            // the key is the square's — unless a note is being written in it,
-            // when `keylayer` routes every key here for the note box to take.
-            // The document is asked first: the note box, then a brief's own
-            // dialog, is what Escape puts away before the square itself.
-            crate::keylayer::Layer::Float => {
-                let took = self
-                    .float
-                    .as_ref()
-                    .map(|f| f.view.clone())
-                    .is_some_and(|view| view.update(cx, |doc, cx| doc.key(ks, cx)));
-                if !took {
-                    self.request_close_float(cx);
-                }
-                Handled::Consumed
-            }
+            // Escape over a floating document closes it, and ctrl+↑/↓ turns it;
+            // nothing else about the key is the square's — unless a note is
+            // being written in it, when `keylayer` routes every key here for the
+            // note box to take. The document is asked first: the note box, then
+            // a brief's own dialog, is what Escape puts away before the square
+            // itself, and an open note box turns its notes on the same chords.
+            crate::keylayer::Layer::Float => self.float_key(ks, cx),
             // The Document face: its own keys move the document, and every
             // other key it was handed stops there — the shell is hidden.
             crate::keylayer::Layer::Document => self.doc_key(ks, cx),
@@ -12040,7 +12031,7 @@ impl Render for TerminalView {
                         grid_paint::GridPaint::replace_if_changed(
                             &mut self.grid_paint,
                             grid_paint::Snapshot {
-                                lines,
+                                lines: std::rc::Rc::new(lines),
                                 glyphs,
                                 cell_h: self.cell_h,
                                 cell_w: self.cell_w,
@@ -12059,9 +12050,17 @@ impl Render for TerminalView {
                             },
                             cx,
                         );
-                        gpui::AnyView::from(self.grid_paint.clone())
-                            .cached(gpui::StyleRefinement::default().w_full().h(px(height)))
-                            .into_any_element()
+                        let paint = gpui::AnyView::from(self.grid_paint.clone());
+                        if self.grid_paint.read(cx).is_animating() {
+                            // Repainting a cached parent forces its cached children
+                            // to refresh too. Keep the animated wrapper uncached so
+                            // the independent live-text cache survives fade frames.
+                            paint.into_any_element()
+                        } else {
+                            paint
+                                .cached(gpui::StyleRefinement::default().w_full().h(px(height)))
+                                .into_any_element()
+                        }
                     })
                     .children(pictures_over)
                     .children(copy_el)

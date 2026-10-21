@@ -1163,6 +1163,13 @@ impl PageDoc {
 
     pub fn wheel(&mut self, delta: ScrollDelta, cx: &mut Context<DocumentView>) {
         let dy = f32::from(delta.pixel_delta(px(LINE)).y);
+        // The note box sits over everything, the page's own dialog too.
+        if let Some(moved) = self.notes.as_mut().and_then(|l| l.wheel_box(dy)) {
+            if moved {
+                cx.notify();
+            }
+            return;
+        }
         if let Some(d) = self.dialog.as_mut() {
             d.scroll = (d.scroll - dy).max(0.0);
             cx.notify();

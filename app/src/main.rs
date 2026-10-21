@@ -32441,6 +32441,7 @@ impl Render for Workspace {
                     vec![
                         row(s.k_scroll_wheel, s.scroll_hist),
                         row("Ctrl+Shift+K", s.clear_scroll),
+                        row("Ctrl+↑↓ · Ctrl+Shift+↑↓", s.turn_square),
                     ],
                 ))
                 .child(section(

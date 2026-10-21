@@ -14,7 +14,7 @@ pub(super) struct HistoryContext {
 
 #[derive(Default, PartialEq)]
 pub(super) struct Snapshot {
-    pub lines: styling::Lines,
+    pub lines: std::rc::Rc<styling::Lines>,
     pub glyphs: styling::Lines,
     pub cell_h: f32,
     pub cell_w: f32,
@@ -61,11 +61,33 @@ pub(super) fn bleed_runs(runs: &[TextRun], alpha: f32) -> Vec<TextRun> {
 pub(super) struct GridPaint {
     snapshot: Snapshot,
     trail: afterglow::Trail,
+    live: Option<gpui::Entity<LiveGrid>>,
     #[cfg(test)]
     pub renders: std::rc::Rc<std::cell::Cell<usize>>,
 }
 
+#[derive(Default, PartialEq)]
+struct LiveSnapshot {
+    lines: std::rc::Rc<styling::Lines>,
+    cell_h: f32,
+    cell_w: f32,
+    crawl: bool,
+    bleed: Option<f32>,
+    font_size: Option<f32>,
+}
+
+#[derive(Default)]
+struct LiveGrid {
+    snapshot: LiveSnapshot,
+    #[cfg(test)]
+    renders: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
 impl GridPaint {
+    pub fn is_animating(&self) -> bool {
+        !self.trail.glyphs.is_empty()
+    }
+
     pub fn clear_afterglow(&mut self) {
         self.trail.clear();
         self.snapshot.context = None;
@@ -104,6 +126,25 @@ impl GridPaint {
             }
             #[cfg(test)]
             let renders = view.read(cx).renders.clone();
+            let live_snapshot = LiveSnapshot {
+                lines: snapshot.lines.clone(),
+                cell_h: snapshot.cell_h,
+                cell_w: snapshot.cell_w,
+                crawl: snapshot.crawl,
+                bleed: snapshot.bleed,
+                font_size: snapshot.context.as_ref().map(|c| c.theme.font_size),
+            };
+            let live = previous
+                .live
+                .as_ref()
+                .filter(|live| live.read(cx).snapshot == live_snapshot)
+                .cloned();
+            let live = live.unwrap_or_else(|| {
+                cx.new(|_| LiveGrid {
+                    snapshot: live_snapshot,
+                    ..Default::default()
+                })
+            });
             // GPUI collects dirty views BEFORE rendering the parent. Notifying
             // an existing child here is too late for this frame. An immutable
             // replacement has no old paint to reuse, so the change is visible
@@ -111,6 +152,7 @@ impl GridPaint {
             *view = cx.new(|_| Self {
                 snapshot,
                 trail,
+                live: Some(live),
                 #[cfg(test)]
                 renders,
             });
@@ -132,10 +174,53 @@ impl Render for GridPaint {
         let s = &self.snapshot;
         div()
             .relative()
+            .w_full()
+            .h(px(s.cell_h * s.lines.len() as f32 + 2.0 * s.pad.1))
             .px(px(s.pad.0))
             .py(px(s.pad.1))
             .flex()
             .flex_col()
+            .children(self.live.clone().map(|live| {
+                gpui::AnyView::from(live).cached(
+                    gpui::StyleRefinement::default()
+                        .w_full()
+                        .h(px(s.cell_h * s.lines.len() as f32)),
+                )
+            }))
+            .children(self.trail.paint_groups(now).into_iter().map(|ghost| {
+                div()
+                    .absolute()
+                    .map(|d| {
+                        if s.crawl {
+                            d.left(gpui::relative(0.5)).ml(px((ghost.column as f32
+                                - ghost.leading_columns as f32
+                                - ghost.line_columns as f32 * 0.5)
+                                * s.cell_w))
+                        } else {
+                            d.left(px(s.pad.0 + ghost.column as f32 * s.cell_w))
+                        }
+                    })
+                    .top(px(s.pad.1 + ghost.row as f32 * s.cell_h))
+                    .h(px(s.cell_h))
+                    .whitespace_nowrap()
+                    .child(StyledText::new(ghost.text).with_runs(ghost.runs))
+            }))
+    }
+}
+
+impl Render for LiveGrid {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(test)]
+        self.renders.set(self.renders.get() + 1);
+        let s = &self.snapshot;
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .map(|d| match s.font_size {
+                Some(size) => d.text_size(px(size)),
+                None => d,
+            })
             .children(s.lines.iter().cloned().map(|(text, runs)| {
                 if s.crawl {
                     return match crawl_centered_runs(text, runs) {
@@ -174,24 +259,6 @@ impl Render for GridPaint {
                     line.child(StyledText::new(text).with_runs(runs))
                 }
             }))
-            .children(self.trail.paint_groups(now).into_iter().map(|ghost| {
-                div()
-                    .absolute()
-                    .map(|d| {
-                        if s.crawl {
-                            d.left(gpui::relative(0.5)).ml(px((ghost.column as f32
-                                - ghost.leading_columns as f32
-                                - ghost.line_columns as f32 * 0.5)
-                                * s.cell_w))
-                        } else {
-                            d.left(px(s.pad.0 + ghost.column as f32 * s.cell_w))
-                        }
-                    })
-                    .top(px(s.pad.1 + ghost.row as f32 * s.cell_h))
-                    .h(px(s.cell_h))
-                    .whitespace_nowrap()
-                    .child(StyledText::new(ghost.text).with_runs(ghost.runs))
-            }))
     }
 }
 
@@ -200,6 +267,78 @@ mod tests {
     use super::*;
     use crate::pane::harness::Pane;
     use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn fading_letters_reuse_the_live_grid_even_in_intrusive(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.settle();
+        pane.view.update(pane.cx, |v, _| {
+            let mut choice = theme::house_outer();
+            choice.id = "intrusive".into();
+            choice.palette = None;
+            choice.follow_omarchy = Some(false);
+            v.appearance.set_theme(theme::ThemeGroup::of(&choice));
+            let mut grade = theme::Grade::neutral();
+            grade.crt = true;
+            grade.afterglow_ms = Some(220.0);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+        });
+        pane.settle_size();
+        pane.view.update(pane.cx, |v, cx| {
+            v.session.term.lock().advance(b"\x1b[?25l\x1b[2J\x1b[HOLD");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+        });
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[HNEW"));
+        pane.redraw();
+        let (live, rendered, animated) = pane.view.read_with(pane.cx, |v, cx| {
+            let grid = v.grid_paint.read(cx);
+            let live = grid.live.clone().unwrap();
+            let rendered = live.read(cx).renders.get();
+            (live, rendered, grid.renders.get())
+        });
+        assert!(rendered > 0);
+        for _ in 0..4 {
+            pane.cx.executor().advance_clock(Duration::from_millis(40));
+            pane.view.update(pane.cx, |v, cx| {
+                v.grid_paint.update(cx, |_, cx| cx.notify());
+            });
+            pane.redraw();
+            pane.view.read_with(pane.cx, |v, cx| {
+                let grid = v.grid_paint.read(cx);
+                assert_eq!(grid.live.as_ref().unwrap().entity_id(), live.entity_id());
+                assert_eq!(
+                    live.read(cx).renders.get(),
+                    rendered,
+                    "fade laid out live letters again"
+                );
+                assert!(!grid.trail.glyphs.is_empty());
+            });
+        }
+        assert!(
+            pane.view
+                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).renders.get())
+                > animated,
+            "fixture did not draw the animated layer"
+        );
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[HFRESH"));
+        pane.redraw();
+        pane.view.read_with(pane.cx, |v, cx| {
+            let fresh = v.grid_paint.read(cx).live.as_ref().unwrap().read(cx);
+            assert!(fresh
+                .snapshot
+                .lines
+                .iter()
+                .any(|(text, _)| text.contains("FRESH")));
+            assert_ne!(
+                v.grid_paint.read(cx).live.as_ref().unwrap().entity_id(),
+                live.entity_id(),
+                "new output reused stale live text"
+            );
+        });
+    }
 
     /// Skin is chrome, design is texture, and crawl/glass are independent.
     /// Exercise the actual pane and GPU registration for every embedded pair;
