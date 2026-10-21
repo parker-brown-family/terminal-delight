@@ -2381,15 +2381,31 @@ pub fn apply_seed(base: &Theme, seed: Hsla) -> Theme {
     th
 }
 
+/// The palette actually supplying this choice's colours, including last-good
+/// desktop colours. Shared with the picker so parked manual choices cannot light.
+pub fn running_palette<'a>(
+    cx: &'a App,
+    choice: &ThemeChoice,
+) -> Option<&'a crate::palette::Palette> {
+    (choice.follow_omarchy == Some(true))
+        .then(|| crate::palette::current(cx))
+        .flatten()
+        .or_else(|| {
+            choice
+                .palette
+                .as_deref()
+                .and_then(|id| crate::palette::find(cx, id))
+        })
+}
+
 /// Resolve a choice to a concrete theme: registry lookup + seed recolour.
 pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
-    let desktop = (choice.follow_omarchy == Some(true))
-        .then(|| crate::palette::current(cx))
-        .flatten();
+    let desktop = choice.follow_omarchy == Some(true) && crate::palette::current(cx).is_some();
+    let palette = running_palette(cx, choice);
     // Suspend manual colour modifiers only in this resolved copy; switching
     // INHERIT off restores the exact settings kept in the state file.
     let inherited;
-    let choice = if desktop.is_some() {
+    let choice = if desktop {
         inherited = choice.clone().without_manual_colours();
         &inherited
     } else {
@@ -2415,15 +2431,7 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     // A palette id that no longer resolves — the theme was uninstalled since the
     // state file was written — leaves the theme's own colours standing. Losing
     // the borrowed look is the right failure; losing the pane is not.
-    let base = match desktop
-        .or_else(|| {
-            choice
-                .palette
-                .as_deref()
-                .and_then(|id| crate::palette::find(cx, id))
-        })
-        .and_then(|p| overlay_palette(&base, &p.toml).ok())
-    {
+    let base = match palette.and_then(|p| overlay_palette(&base, &p.toml).ok()) {
         Some(painted) => Arc::new(painted),
         None => base,
     };
