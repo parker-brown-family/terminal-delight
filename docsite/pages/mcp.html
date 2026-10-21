@@ -2,8 +2,8 @@
 {
   "title": "MCP server",
   "description": "Terminal Delight is an MCP server: an agent can list the panes of the window it runs in, grep their scrollback, tail another agent's tool calls, leave notes, put work on a workbench, and ask you for more access. Reads are off until you turn the server on; writes need a second switch; access is yours to grant with a Yes on the attention rail; no tool can type into a terminal.",
-  "updated": "2026-10-15",
-  "trueOf": "main at d7cf383, plus request_access",
+  "updated": "2026-10-21",
+  "trueOf": "main at d7cf383, plus request_access and the socket refusing to widen the MCP switches",
   "summary": "Thirteen tools for agents, off by default"
 }
 </script>
@@ -42,7 +42,7 @@
     <tr><td><code>Off-limits to agents</code> (right-click in a pane)</td><td>off</td><td>That one pane is gone from every tool and every pushed event, whatever the switches above say, and wears <code>OFF-LIMITS</code> in its header. The agent running inside it can still present its own work. Only a person sets or lifts it: no <code>ctl</code> or MCP verb reaches it.</td></tr>
   </tbody>
 </table>
-<p>They live in the MCP control panel: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> in a pane, or <code>AGENTS · MCP</code> in the footer's <code>…</code> menu. From a script: <code>ctl mcp on|off</code>, <code>ctl mcp writes on|off</code>, <code>ctl mcp expose agents|all</code>. Each change is saved with the session. <code>TD_MCP</code> starts the in-process transport but does not turn the server on, and <code>TD_MCP_WRITE</code> turns writes on only alongside <code>TD_MCP</code>.</p>
+<p>They live in the MCP control panel: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> in a pane, or <code>AGENTS · MCP</code> in the footer's <code>…</code> menu. From a script, <code>ctl mcp off</code>, <code>ctl mcp writes off</code> and <code>ctl mcp expose agents</code> turn them down. The three that turn them up are refused, because any process running as you can reach that socket, an agent included; a window launched with <code>TD_MCP_SCRIPTED=1</code> takes them. Each change is saved with the session. <code>TD_MCP</code> starts the in-process transport but does not turn the server on, and <code>TD_MCP_WRITE</code> turns writes on only alongside <code>TD_MCP</code>.</p>
 
 <h3>Tools</h3>
 <table>
