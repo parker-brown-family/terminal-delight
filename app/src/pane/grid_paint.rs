@@ -142,7 +142,8 @@ impl GridPaint {
             let live = live.unwrap_or_else(|| {
                 cx.new(|_| LiveGrid {
                     snapshot: live_snapshot,
-                    ..Default::default()
+                    #[cfg(test)]
+                    renders: Default::default(),
                 })
             });
             // GPUI collects dirty views BEFORE rendering the parent. Notifying
