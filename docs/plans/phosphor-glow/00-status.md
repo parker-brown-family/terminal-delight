@@ -34,7 +34,7 @@ Difficulty: 7/10. Parker expanded the request on 2026-10-21: active 15% glow, in
 - [x] Focus defaults, fields, MCP and grouped gauges.
 - [x] Bounded per-pane glyph afterglow.
 - [x] Native focus/fade checks and refreshed test instance.
-- [ ] Same PR, human review and qualification record updated.
+- [x] Same PR, human review and qualification record updated.
 
 The current test GUI is PID 2104454 on workspace 4, session `phosphor-glow-test`, using binary SHA-256 `209beed8441fd9fe940b234f2cd6b488fb70ec158b48db3ca18ee0d26c92d7d6`. Its active `TERMINAL LIGHT` tab has two fresh interactive shells. The original hosted shells and their typed text are preserved in the earlier tab; no PTY input was sent to them. The lab uses OPS and the captured picture grade, without changing ordinary session 1.
 
@@ -43,3 +43,5 @@ Defaults resolve at drawing time to active glow 15%, inactive glow 65%, inactive
 Current verification: default core 2,606 passed, fallback 2,553 passed, 10 ignored in each. Both Clippy gates, format, locked release build and native fade/default/zero/pane-isolation checks passed. Two new tests initially exposed float comparison and duration rounding errors; both were corrected before the passing full runs. The retained trail is capped at 4,096 glyphs per pane, expires on clock time and clears when its drawing context changes. No GPU history texture was added. Frame cost remains unmeasured and stays in the existing qualification issue.
 
 Turned out to be 7/10: keeping fading glyph positions correct across focus, geometry and terminal-face changes required a separate retained drawing state and native timing evidence. Individual design gates were recorded before code under the continuing end-to-end instruction; no independent human approvals are implied.
+
+The current human review is `reports/2026-10-21-terminal-light.html`, with native receipts, two restart checks, pixel comparisons, test counts and page QA in `reports/terminal-light-proof/`. Native restarts preserved explicit zero and the inactive-glow, inactive-text and afterglow pins independently; no seed was rewritten. Reader controls, figure/decision annotation coverage, concurrence, map export, embedded save and reopen passed at 390/968/1100px. The narrative measurement classified the page as an argument and scored cold comprehension 0.78; the CLI instructions still carry names by necessity. The same draft pull request and frame-cost qualification were updated; release intent remains unassigned. Parker's tuning judgement and promotion qualification are pending, while the requested testing build is delivered.
