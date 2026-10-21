@@ -3322,6 +3322,88 @@ mod tests {
     }
 
     #[test]
+    fn every_bundled_palette_preserves_lighting_defaults_pins_and_zero() {
+        let palettes = crate::palette::shipped_ids()
+            .map(|id| {
+                (
+                    id,
+                    crate::palette::bundled_toml(id).expect("bundled palette"),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(!palettes.is_empty());
+        for (design, source) in BUILTIN_THEMES {
+            let base = parse(source).unwrap();
+            let expected = if *design == "intrusive" {
+                (0.37, 0.52)
+            } else {
+                (0.20, 0.45)
+            };
+            for (id, palette) in &palettes {
+                for flat in [false, true] {
+                    let mut painted = overlay_palette(&base, palette).unwrap();
+                    if flat {
+                        flatten_tube(&mut painted);
+                    }
+                    let case = format!("{design}/{id}/flat={flat}");
+                    let absent = Grade::neutral();
+                    assert_eq!(
+                        absent.image_glow_at_edge(painted.terminal_light),
+                        expected.0,
+                        "{case}"
+                    );
+                    assert_eq!(
+                        absent.inactive_text_at_edge(painted.terminal_light),
+                        expected.1,
+                        "{case}"
+                    );
+                    assert_eq!(absent.inactive_image_glow_at_edge(), 1.0, "{case}");
+                    assert_eq!(absent.afterglow_ms_at_edge(), 220.0, "{case}");
+                    assert_eq!(
+                        absent.image_glow, None,
+                        "resolution materialized an absent value: {case}"
+                    );
+
+                    let mut outer = Grade::neutral();
+                    outer.image_glow = Some(0.73);
+                    outer.inactive_image_glow = Some(0.81);
+                    outer.inactive_text = Some(0.62);
+                    outer.afterglow_ms = Some(900.0);
+                    let mut own = Grade::neutral();
+                    own.image_glow = Some(0.0);
+                    own.inactive_image_glow = Some(0.0);
+                    own.inactive_text = Some(0.0);
+                    own.afterglow_ms = Some(0.0);
+                    let encoded = toml::to_string(&own).unwrap();
+                    let restored: Grade = toml::from_str(&encoded).unwrap();
+                    let followed = GradePins::NONE.merge(outer, restored);
+                    assert_eq!(followed.image_glow, Some(0.73), "{case}");
+                    assert_eq!(followed.inactive_image_glow, Some(0.81), "{case}");
+                    assert_eq!(followed.inactive_text, Some(0.62), "{case}");
+                    assert_eq!(followed.afterglow_ms, Some(900.0), "{case}");
+                    let pinned = GradePins::all().merge(outer, restored);
+                    assert_eq!(
+                        pinned.letter_glow_for_focus(true, painted.terminal_light),
+                        0.0,
+                        "{case}"
+                    );
+                    assert_eq!(
+                        pinned.letter_glow_for_focus(false, painted.terminal_light),
+                        0.0,
+                        "{case}"
+                    );
+                    assert_eq!(
+                        pinned.text_for_focus(false, painted.terminal_light),
+                        0.0,
+                        "{case}"
+                    );
+                    assert_eq!(pinned.afterglow_ms_at_edge(), 0.0, "{case}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn focus_light_defaults_are_effective_values_without_inventing_settings() {
         let grade = Grade::default();
         assert_eq!(

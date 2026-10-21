@@ -610,6 +610,23 @@ impl Pane {
         }
     }
 
+    /// A design can change font metrics and stage a debounced PTY resize.
+    /// Wait for that actual resize before measuring content-only behavior.
+    /// Its deadline uses wall time; the housekeeping wake uses the test clock.
+    pub(super) fn settle_size(&mut self) {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            self.redraw();
+            if self.read(|v| v.pending_pty.is_none()) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "PTY size did not settle");
+            std::thread::sleep(Duration::from_millis(10));
+            self.cx.executor().advance_clock(Duration::from_millis(33));
+            self.cx.run_until_parked();
+        }
+    }
+
     /// A wheel turn at `at` with `mods` held: `lines` notches, positive
     /// toward the top.
     pub(super) fn wheel(&mut self, at: Point<Pixels>, lines: f32, mods: Modifiers) {

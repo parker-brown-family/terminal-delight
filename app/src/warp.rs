@@ -197,6 +197,12 @@ fn rect_crawl(i: usize) -> [f32; 3] {
     rects[i].4
 }
 
+/// Observe the values actually sent by pane painting, not a second resolver.
+#[cfg(test)]
+pub(crate) fn rect_glows() -> Vec<f32> {
+    RECTS.lock().unwrap().iter().map(|tube| tube.6).collect()
+}
+
 /// Taken by every test that touches the tube set or its flags. `RECTS`,
 /// `SUPPRESSED` and `FLATTENED` are process-global, `cargo test` runs tests on
 /// parallel threads, and more than the tests below drive them: a real pane

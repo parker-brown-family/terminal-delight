@@ -37,6 +37,8 @@ November 20 is Parker’s explicit Friday exception to the usual Monday schedule
 
 ## Work and Current Evidence
 
+- **Explicit appearance inclusion, approved 2026-10-21:** Parker selected the tested terminal-lighting and deletion-shortcut feature for 0.5.0: “We are there! Ship and seal it... into the 0.5.0 branch”. Its [single feature PR](https://github.com/parker-brown-family/terminal-delight/pull/1074) now targets this branch and carries this milestone. It adds independent active/inactive letter glow, retained erased text, grouped gauges and word/line/all-input deletion gestures. Compatibility tests and native rendering-cost qualification are recorded under `docs/plans/phosphor-glow/13-promotion-product.md` through `16-promotion-slices.md`. This inclusion does not change the communication qualification, candidate hold or stable publication rules.
+
 - [Milestone: 0.5.0 agent-to-agent communication hardening](https://github.com/parker-brown-family/terminal-delight/milestone/2).
 - [Recorded native MCP handoffs](https://github.com/parker-brown-family/terminal-delight/pull/1069): implemented and locally tested; draft integration PR.
 - [Multi-pane qualification and candidate hold](https://github.com/parker-brown-family/terminal-delight/issues/1071): the measurable release work, including 50 harmless handoffs across at least two existing recipients and three controlled window-recovery exercises. Coverage is uncollected until linked evidence exists.
