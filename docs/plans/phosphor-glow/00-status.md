@@ -53,7 +53,7 @@ Difficulty: 7/10. Parker's 2026-10-21 native review approves the grouping, sets 
 - [x] Complete erased passages survive bottom alignment and cursor movement.
 - [x] Approved Standard/Intrusive lighting and shared picture defaults.
 - [x] Native timing evidence, both cores/lints and refreshed test window.
-- [ ] Same PR, review and qualification record updated.
+- [x] Same PR, review and qualification record updated.
 
 The refreshed test GUI is PID 4073052 on workspace 4, session `phosphor-glow-test`, using binary SHA-256 `81eb231005af6354ed33645988a517ef646549f4ebdad566ed22cd245e9a4a06`. The `ERASED TEXT · 220 / 450 ms` tab has fresh Standard and Intrusive shells. All four earlier hosted shell processes remain, with no PTY input sent to them. Both presets inherit the existing picture grade, palette and OPS skin; the lab's optional lighting pins were backed up and cleared to adopt the requested defaults.
 
@@ -62,3 +62,7 @@ Standard draws undeclared active glow at 20% and inactive text at 45% of the act
 Default core: 2,612 passed; fallback: 2,559 passed; 10 ignored in each. Both strict Clippy gates, format and locked release build passed. Native captures retain both the word and wrapped paragraph after the cursor moves at about 60ms and capture begins around 258ms; the neighboring text region changes by zero pixels. Ordinary replacement is within one 8-bit RGB level of the settled frame after 220ms; disabled erasure matches exactly. Deterministic tests verify exact 450ms expiry and retained glyph coordinates.
 
 The larger 107% fresh text default exposed the native harness's old 640px-high window clipping its intentional 100×28 grid. Increasing only the fixture height to 720px restores the original grid and all interaction assertions. Compatibility defaults for fields omitted from old grades remain unchanged; the screenshot's new picture values apply through `house_outer`, not through deserialization fallbacks.
+
+The current review is `reports/2026-10-21-deleted-text-afterglow.html`; its receipts are in `reports/deleted-text-afterglow-proof/`. All six recorded paragraph/word captures, responsive layout at 390/968/1100px, figure and decision annotations, concurrence, map export, embedded save and reopen passed. The narrative check scored opening comprehension 0.88 and classified the page as an argument. Source and commands in the expandable verification section still carry identifiers. The same draft PR and existing frame-cost qualification issue reflect this phase. Remote Rust CI is pending; all local gates passed. No merge or release assignment was made.
+
+Turned out to be 7/10: deletion exposed a painted-coordinate invalidation, a viewport-sized history requirement and a classifier interaction between independently changing rows. Native evidence found the row-count cancellation that pure replacement tests had missed. The testing instance and review are delivered; Parker's visual judgement and the existing promotion qualification remain open.
