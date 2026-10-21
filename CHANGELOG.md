@@ -595,6 +595,11 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
+- The palette menu names the running theme, marks its tile with a check badge,
+  and shows its inheritance source at the pane or outer-window level. Following
+  Omarchy no longer leaves every theme tile unmarked; unavailable sources show
+  the retained theme or manual fallback actually supplying the colours.
+
 - **The OPS skin no longer crashes the window.** A cut-cornered panel that was
   laid out at no size for a frame, as one is while it opens or collapses, made
   the window panic while drawing it. Clicking a tab in the left bar was one way
