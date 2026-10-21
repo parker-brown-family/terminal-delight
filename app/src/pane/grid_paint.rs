@@ -174,14 +174,7 @@ impl Render for GridPaint {
                     line.child(StyledText::new(text).with_runs(runs))
                 }
             }))
-            .children(self.trail.glyphs.iter().map(|ghost| {
-                let run = TextRun {
-                    color: ghost
-                        .run
-                        .color
-                        .alpha(ghost.run.color.a * ghost.opacity(now)),
-                    ..ghost.run.clone()
-                };
+            .children(self.trail.paint_groups(now).into_iter().map(|ghost| {
                 div()
                     .absolute()
                     .map(|d| {
@@ -197,7 +190,7 @@ impl Render for GridPaint {
                     .top(px(s.pad.1 + ghost.row as f32 * s.cell_h))
                     .h(px(s.cell_h))
                     .whitespace_nowrap()
-                    .child(StyledText::new(ghost.text.clone()).with_runs(vec![run]))
+                    .child(StyledText::new(ghost.text).with_runs(ghost.runs))
             }))
     }
 }

@@ -38,6 +38,18 @@ pub(super) struct Trail {
     pub glyphs: VecDeque<Ghost>,
 }
 
+/// Adjacent retained cells share layout, while each style keeps its own fade.
+/// Layer order and the old line's crawl origin remain authoritative.
+pub(super) struct PaintGroup {
+    pub row: usize,
+    pub column: usize,
+    pub text: String,
+    pub runs: Vec<TextRun>,
+    pub line_columns: usize,
+    pub leading_columns: usize,
+    columns: usize,
+}
+
 fn columns(text: &str) -> impl Iterator<Item = (usize, usize, &str)> {
     text.grapheme_indices(true)
         .scan(0, |column, (byte, glyph)| {
@@ -48,6 +60,55 @@ fn columns(text: &str) -> impl Iterator<Item = (usize, usize, &str)> {
 }
 
 impl Trail {
+    pub fn paint_groups(&self, now: Instant) -> Vec<PaintGroup> {
+        let mut groups: Vec<PaintGroup> = Vec::new();
+        for ghost in &self.glyphs {
+            let width = UnicodeWidthStr::width(ghost.text.as_str());
+            let color = ghost
+                .run
+                .color
+                .alpha(ghost.run.color.a * ghost.opacity(now));
+            let adjacent = groups.last_mut().filter(|group| {
+                width > 0
+                    && group.columns > 0
+                    && group.row == ghost.row
+                    && group.column + group.columns == ghost.column
+                    && group.line_columns == ghost.line_columns
+                    && group.leading_columns == ghost.leading_columns
+            });
+            if let Some(group) = adjacent {
+                group.text.push_str(&ghost.text);
+                group.columns += width;
+                if let Some(run) = group
+                    .runs
+                    .last_mut()
+                    .filter(|run| run.font == ghost.run.font && run.color == color)
+                {
+                    run.len += ghost.text.len();
+                } else {
+                    group.runs.push(TextRun {
+                        color,
+                        ..ghost.run.clone()
+                    });
+                }
+            } else {
+                groups.push(PaintGroup {
+                    row: ghost.row,
+                    column: ghost.column,
+                    text: ghost.text.clone(),
+                    runs: vec![TextRun {
+                        color,
+                        ..ghost.run.clone()
+                    }],
+                    line_columns: ghost.line_columns,
+                    leading_columns: ghost.leading_columns,
+                    columns: width,
+                });
+            }
+        }
+        groups
+    }
+
     pub fn clear(&mut self) {
         self.glyphs.clear();
     }
@@ -161,6 +222,96 @@ mod tests {
                 strikethrough: Some(Default::default()),
             }],
         )]
+    }
+
+    #[test]
+    fn a_full_erased_viewport_uses_one_layout_group_per_row() {
+        let now = Instant::now();
+        let row = lines(&"X".repeat(150)).pop().unwrap();
+        let old = vec![row; 36];
+        let mut trail = Trail::default();
+        trail.observe(&old, &Vec::new(), now, 220.0, 150 * 36);
+        assert_eq!(trail.glyphs.len(), 5400);
+        let groups = trail.paint_groups(now + Duration::from_millis(500));
+        assert_eq!(groups.len(), 36, "layout still scales per glyph");
+        for (row, group) in groups.iter().enumerate() {
+            assert_eq!((group.row, group.column, group.columns), (row, 0, 150));
+            assert_eq!(group.text, "X".repeat(150));
+            assert_eq!(group.runs.len(), 1);
+            assert_eq!(group.runs[0].len, 150);
+            assert!(group.runs[0].color.a > 0.0);
+        }
+        trail.prune(now + Duration::from_millis(650));
+        assert!(trail
+            .paint_groups(now + Duration::from_millis(650))
+            .is_empty());
+    }
+
+    #[test]
+    fn batching_preserves_wide_combining_spaces_colours_and_fade_ages() {
+        let now = Instant::now();
+        let mut old = lines("A 界e\u{301}Z");
+        let first = TextRun {
+            len: 2,
+            ..old[0].1[0].clone()
+        };
+        let second = TextRun {
+            len: old[0].0.len() - 2,
+            color: rgb(0xff7700).into(),
+            ..old[0].1[0].clone()
+        };
+        old[0].1 = vec![first, second];
+        let mut trail = Trail::default();
+        trail.observe(&old, &Vec::new(), now, 220.0, MIN_GLYPH_BUDGET);
+        let groups = trail.paint_groups(now + Duration::from_millis(500));
+        assert_eq!(groups.len(), 2, "a blank column must remain a gap");
+        assert_eq!((groups[0].column, groups[0].text.as_str()), (0, "A"));
+        assert_eq!(
+            (groups[1].column, groups[1].text.as_str(), groups[1].columns),
+            (2, "界e\u{301}Z", 4)
+        );
+        for group in &groups {
+            assert_eq!(
+                group.runs.iter().map(|r| r.len).sum::<usize>(),
+                group.text.len()
+            );
+            assert_eq!(group.line_columns, 6);
+            assert_eq!(group.leading_columns, 0);
+            assert!(group.runs.iter().all(|r| r.background_color.is_none()
+                && r.underline.is_none()
+                && r.strikethrough.is_none()));
+        }
+        assert_eq!(groups[0].runs[0].color.h, trail.glyphs[0].run.color.h);
+        assert_eq!(groups[1].runs[0].color.h, trail.glyphs[1].run.color.h);
+
+        // Two generations at the same cells remain two ordered layers.
+        let mut trail = Trail::default();
+        trail.observe(&lines("ABC"), &lines("XYZ"), now, 220.0, MIN_GLYPH_BUDGET);
+        trail.observe(
+            &lines("XYZ"),
+            &lines("---"),
+            now + Duration::from_millis(50),
+            220.0,
+            MIN_GLYPH_BUDGET,
+        );
+        let groups = trail.paint_groups(now + Duration::from_millis(100));
+        assert_eq!(
+            groups.iter().map(|g| g.text.as_str()).collect::<Vec<_>>(),
+            ["ABC", "XYZ"]
+        );
+        assert!(groups[0].runs[0].color.a < groups[1].runs[0].color.a);
+    }
+
+    #[test]
+    fn batching_does_not_join_distinct_old_crawl_origins() {
+        let now = Instant::now();
+        let mut trail = Trail::default();
+        trail.observe(&lines("AB"), &lines("XB"), now, 220.0, MIN_GLYPH_BUDGET);
+        trail.observe(&lines("XBC"), &lines("XYC"), now, 220.0, MIN_GLYPH_BUDGET);
+        let groups = trail.paint_groups(now);
+        assert_eq!(groups.len(), 2);
+        assert_eq!((groups[0].column, groups[0].line_columns), (0, 2));
+        assert_eq!((groups[1].column, groups[1].line_columns), (1, 3));
     }
 
     #[test]

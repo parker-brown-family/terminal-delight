@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prepare the patched gpui checkout that app/Cargo.toml's path deps point at:
 # a sibling `zed-upstream/` of the repo root, pinned to the rev recorded in
-# [package.metadata.terminal-delight], with three patches applied:
+# [package.metadata.terminal-delight], with the following patches applied:
 #   0001-td-crt-pass        — per-pane CRT barrel-warp renderer pass
 #   0002-focus-blur         — frosted-glass backdrop blur for the FOCUS modal
 #                             (delta on 0001; adds gpui_wgpu::set_focus_blur,
@@ -38,6 +38,10 @@
 #                             lit from above. Adds set_crt_rects_tubes_bezel
 #                             beside set_crt_rects_tubes, which is unchanged.
 #                             Delta on 0001-0004 and 0007.
+#   0009-image-glow         — pane-bounded terminal-image bloom, independent
+#                             of whether CRT glass is enabled.
+#   0010-image-glow-taps    — evaluates the same 16 weighted samples explicitly,
+#                             avoiding dynamic per-fragment array indexing.
 # Idempotent; safe to re-run.
 set -euo pipefail
 
@@ -54,9 +58,10 @@ patch_lazy="$repo_root/docs/patches/0006-lazy-path-targets.patch"
 patch_fit="$repo_root/docs/patches/0007-path-targets-fit-the-paths.patch"
 patch_rim="$repo_root/docs/patches/0008-glass-rim.patch"
 patch_image_glow="$repo_root/docs/patches/0009-image-glow.patch"
+patch_glow_taps="$repo_root/docs/patches/0010-image-glow-taps.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow"; do
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -135,3 +140,8 @@ apply_patch "$patch_rim" "glass-rim" \
 # Terminal-image bloom is a delta after the bezel/32-tube patch stack.
 apply_patch "$patch_image_glow" "image-glow" \
     'grep -rqF "td-image-glow" crates/gpui_wgpu/src/crt_pass.wgsl'
+
+# Keep this separate from 0009 so an existing experimental checkout upgrades
+# the shader instead of satisfying only the older image-glow API sentinel.
+apply_patch "$patch_glow_taps" "image-glow-taps" \
+    'grep -qF "Explicit taps preserve the kernel" crates/gpui_wgpu/src/crt_pass.wgsl'
