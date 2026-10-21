@@ -806,6 +806,14 @@ the changes you may notice in the first hour.
 - **Agents can be kept out of a pane.** Only a person can mark a pane off-limits
   or lift the mark, and an agent's request for more access waits for a person's
   Yes or No. (#956, #957)
+- **The control socket no longer turns on what an agent has to ask for.**
+  `ctl mcp on`, `ctl mcp writes on` and `ctl mcp expose all` set those switches
+  directly, so an agent refused on the attention rail could run one in its own
+  shell and have the access anyway. They now answer `err` and change nothing: a
+  person turns these on in the MCP control panel, and an agent asks with
+  `request_access`. Turning the switches off over the socket works as before. A
+  script that launches its own window and drives it over the socket starts it
+  with `TD_MCP_SCRIPTED=1`. (#1088)
 
 ## [0.3.0] — 2026-09-18
 
