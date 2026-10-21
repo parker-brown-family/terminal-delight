@@ -324,9 +324,9 @@ pub fn human_turn_chord(k: &Key) -> bool {
 /// - A PLAIN arrow walks the bench's rail and a PLAIN escape peels its overlays.
 ///   Only the modified forms leave.
 pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
-    // ctrl+alt+<anything> walks the left bar's tree. Matched on the modifiers
-    // alone, because that pair is not an editing chord anywhere.
-    if control && alt {
+    // Backspace belongs to the active editor: Ctrl+Shift+Alt+Backspace clears
+    // its input. The other Ctrl+Alt keys retain the tree-navigation route.
+    if control && alt && key != "backspace" {
         return true;
     }
     if !alt {
@@ -1663,5 +1663,69 @@ mod tests {
             doc_caret: true,
         };
         assert_eq!(route(&named("f1"), &everything), Layer::Help);
+    }
+
+    #[test]
+    fn deletion_chords_reach_the_active_editor_even_with_a_note_stuck() {
+        for (control, alt) in [(false, false), (true, false), (true, true)] {
+            let key = Key {
+                key: "backspace",
+                shift: true,
+                control,
+                alt,
+                ..Key::default()
+            };
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        note: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Terminal
+            );
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        bench: true,
+                        note: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Bench
+            );
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        sticky: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Sticky
+            );
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        rename: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Rename
+            );
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        document: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Document
+            );
+        }
     }
 }

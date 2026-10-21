@@ -66,3 +66,12 @@ The larger 107% fresh text default exposed the native harness's old 640px-high w
 The current review is `reports/2026-10-21-deleted-text-afterglow.html`; its receipts are in `reports/deleted-text-afterglow-proof/`. All six recorded paragraph/word captures, responsive layout at 390/968/1100px, figure and decision annotations, concurrence, map export, embedded save and reopen passed. The narrative check scored opening comprehension 0.88 and classified the page as an argument. Source and commands in the expandable verification section still carry identifiers. The same draft PR and existing frame-cost qualification issue reflect this phase. Remote Rust CI is pending; all local gates passed. No merge or release assignment was made.
 
 Turned out to be 7/10: deletion exposed a painted-coordinate invalidation, a viewport-sized history requirement and a classifier interaction between independently changing rows. Native evidence found the row-count cancellation that pure replacement tests had missed. The testing instance and review are delivered; Parker's visual judgement and the existing promotion qualification remain open.
+
+## Wrapped-input editing phase
+
+Difficulty: 7/10. Parker reports Backspace failing over selected text crossing rows and requests Shift+Backspace for the previous word, Ctrl+Shift+Backspace for the complete current line, and Ctrl+Shift+Alt+Backspace for the entire editable input. Erasures should last 650ms and remain visible away from the cursor. His GO and prior end-to-end instruction authorise the implementation and refreshed isolated testing window. Design stages are recorded in 09–12 before code; no independent gate approvals are claimed.
+
+- [x] Reproduce and fix selected wrapped/multiline deletion in a real line editor.
+- [x] Route the three shortcuts through terminal and composer input, with help and nine-language descriptions.
+- [x] Preserve text colours without selection/cursor decorations in a visible 650ms erasure fade.
+- [ ] Verify both cores and native interaction, refresh the existing testing window and update the same review branch.

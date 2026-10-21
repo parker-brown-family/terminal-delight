@@ -218,7 +218,7 @@ pub struct GradeReport {
     pub inactive_image_glow: Option<f32>,
     /// Percent of active text intensity; undeclared draws at 45% on Standard or 52% on Intrusive.
     pub inactive_text: Option<f32>,
-    /// Replaced-glyph fade time, 0..1200 milliseconds; undeclared draws at 220ms; erasures use at least 450ms.
+    /// Replaced-glyph fade time, 0..1200 milliseconds; undeclared draws at 220ms; erasures use at least 650ms.
     pub afterglow_ms: Option<f32>,
 }
 
@@ -255,7 +255,7 @@ pub struct ConfigPatch {
     pub inactive_image_glow: Option<f32>,
     /// Percent of active text intensity; undeclared draws at 45% on Standard or 52% on Intrusive.
     pub inactive_text: Option<f32>,
-    /// Replaced-glyph fade time, 0..1200 milliseconds; undeclared draws at 220ms; erasures use at least 450ms.
+    /// Replaced-glyph fade time, 0..1200 milliseconds; undeclared draws at 220ms; erasures use at least 650ms.
     pub afterglow_ms: Option<f32>,
     /// Attach (or clear) the pane's card LOGO: an absolute path to an image file
     /// (png/jpg/jpeg/svg/webp). An empty string clears it. Lets an agent brand the
@@ -1151,7 +1151,7 @@ fn tool_defs() -> Value {
                  image_glow — active letter glow, default 20 (Standard) / 37 (Intrusive); inactive_image_glow \
                  — inactive glow, default 100; inactive_text — percent of active \
                  text, default 45 (Standard) / 52 (Intrusive)). `afterglow_ms` uses milliseconds, range \
-                 0..1200, default 220; erased passages use at least 450ms while enabled. These four lighting fields remain null \
+                 0..1200, default 220; erased passages use at least 650ms while enabled. These four lighting fields remain null \
                  in GET while unset. `crawl` and `crt` are booleans (CRT off = a flat screen; \
                  warp and the roll bar keep their values but draw nothing). \
                  Omit `targets` to report every exposed pane \

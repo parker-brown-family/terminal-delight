@@ -5,7 +5,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 pub(super) const MIN_GLYPH_BUDGET: usize = 4096;
-pub(super) const ERASED_MIN_MS: f32 = 450.0;
+pub(super) const ERASED_MIN_MS: f32 = 650.0;
 
 #[derive(Clone)]
 pub(super) struct Ghost {
@@ -17,13 +17,19 @@ pub(super) struct Ghost {
     pub leading_columns: usize,
     born: Instant,
     lifetime: Duration,
+    erased: bool,
 }
 
 impl Ghost {
     pub fn opacity(&self, now: Instant) -> f32 {
         let remaining = 1.0
             - now.saturating_duration_since(self.born).as_secs_f32() / self.lifetime.as_secs_f32();
-        0.65 * remaining.clamp(0.0, 1.0).powi(2)
+        let remaining = remaining.clamp(0.0, 1.0);
+        0.65 * if self.erased {
+            remaining
+        } else {
+            remaining * remaining
+        }
     }
 }
 
@@ -132,6 +138,7 @@ impl Trail {
                     },
                     born: now,
                     lifetime,
+                    erased,
                 });
             }
         }
@@ -246,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn an_entire_erased_word_lingers_for_450ms_without_renewing_on_cursor_changes() {
+    fn an_entire_erased_word_lingers_for_650ms_without_renewing_on_cursor_changes() {
         let now = Instant::now();
         let mut trail = Trail::default();
         trail.observe(
@@ -277,7 +284,8 @@ mod tests {
         assert_eq!(trail.glyphs[0].born, born);
         trail.prune(now + Duration::from_millis(300));
         assert_eq!(trail.glyphs.len(), 4);
-        trail.prune(now + Duration::from_millis(450));
+        assert!(trail.glyphs[0].opacity(now + Duration::from_millis(500)) > 0.14);
+        trail.prune(now + Duration::from_millis(650));
         assert!(trail.glyphs.is_empty());
     }
 
@@ -300,7 +308,7 @@ mod tests {
         assert!(trail
             .glyphs
             .iter()
-            .all(|g| g.lifetime == Duration::from_millis(450)));
+            .all(|g| g.lifetime == Duration::from_millis(650)));
         trail.prune(now + Duration::from_millis(300));
         assert!(!trail.glyphs.is_empty());
         trail.observe(
@@ -343,6 +351,6 @@ mod tests {
         assert!(trail
             .glyphs
             .iter()
-            .all(|g| g.lifetime == Duration::from_millis(450)));
+            .all(|g| g.lifetime == Duration::from_millis(650)));
     }
 }

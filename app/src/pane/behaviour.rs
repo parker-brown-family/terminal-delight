@@ -4021,7 +4021,7 @@ fn pane_at_a_prompt(cx: &mut TestAppContext, alt: bool) -> Pane {
     let mut pane = Pane::running(
         cx,
         &format!(
-            "{screen}INPUTRC=/dev/null HISTFILE= PS1='ready> ' exec bash --norc --noprofile -i"
+            "{screen}TERM=xterm-256color INPUTRC=/dev/null HISTFILE= PS1='ready> ' exec bash --norc --noprofile -i"
         ),
     );
     pane.wait_for("ready>");
@@ -4109,4 +4109,114 @@ fn the_alternate_screen_erases_a_selection_only_in_an_agent_pane(cx: &mut TestAp
     other.keys("ctrl-shift-left backspace z enter");
     other.wait_for("ready> echo abc dez");
     other.wait_for_row("abc dez");
+}
+
+#[gpui::test]
+fn backspace_erases_a_mouse_selection_across_a_soft_wrap(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    let cols = pane.read(|v| v.session.term.lock().columns());
+    let prefix = "x".repeat(cols - 35);
+    let selected = format!("BEGIN{}END", "y".repeat(30));
+    let line = format!("echo {prefix} {selected} tail");
+    pane.read(|v| v.paste_text(&line));
+    pane.wait_for("END tail");
+    pane.settle();
+    let cell_w = pane.read(|v| v.cell_w);
+    let begin = pane.point_at("BEGIN");
+    let end = pane.point_at("END tail");
+    assert_ne!(begin.y, end.y, "fixture must cross a real grid wrap");
+    pane.press(point(begin.x - px(cell_w * 2.25), begin.y));
+    let last = point(end.x - px(cell_w * 1.75), end.y);
+    pane.drag_to(last);
+    pane.release(last);
+    assert_eq!(pane.read(|v| v.selection_clipboard_text()), Some(selected));
+    pane.keys("backspace");
+    pane.keys("enter");
+    pane.wait_for_row(&format!("{prefix} tail"));
+}
+
+#[gpui::test]
+fn keyboard_selection_and_backspace_cross_every_soft_wrap(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    let word = "WRAPPED".repeat(30);
+    pane.read(|v| v.paste_text(&format!("keep {word}")));
+    pane.wait_for("WRAPPED");
+    pane.settle();
+    pane.keys(&vec!["shift-left"; word.len()].join(" "));
+    assert_eq!(
+        pane.read(|v| v.selection_clipboard_text())
+            .unwrap()
+            .trim_end(),
+        word
+    );
+    pane.keys("backspace");
+    pane.wait_for_row("ready> keep");
+    assert!(!pane.rows().iter().any(|r| r.contains("WRAPPED")));
+}
+
+#[gpui::test]
+fn shift_backspace_deletes_the_previous_word_at_a_real_prompt(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    type_line(&mut pane, "echo first second");
+    pane.keys("shift-backspace z enter");
+    pane.wait_for_row("first z");
+}
+
+#[gpui::test]
+fn control_shift_backspace_erases_both_sides_of_a_wrapped_line(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    let text = format!("echo {} END", "word ".repeat(30));
+    pane.read(|v| v.paste_text(&text));
+    pane.wait_for("END");
+    pane.keys("left left ctrl-shift-backspace");
+    pane.wait_for_row("ready>");
+    assert!(!pane.rows().iter().any(|r| r.contains("word")));
+    type_line(&mut pane, "echo kept");
+    pane.keys("enter");
+    pane.wait_for_row("kept");
+}
+
+#[gpui::test]
+fn the_new_shortcuts_distinguish_a_line_from_the_entire_multiline_input(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    pane.read(|v| v.paste_text("first ONE\nsecond TWO\nthird THREE"));
+    pane.wait_for("third THREE");
+    pane.keys("ctrl-shift-backspace");
+    pane.keys("z");
+    pane.wait_for_row("z");
+    let rows = pane.rows().join("\n");
+    assert!(
+        rows.contains("first ONE") && rows.contains("second TWO"),
+        "{rows}"
+    );
+    assert!(!rows.contains("third THREE"), "{rows}");
+    pane.keys("ctrl-alt-shift-backspace");
+    pane.wait_for_row("ready>");
+    let rows = pane.rows().join("\n");
+    assert!(!rows.contains("ONE") && !rows.contains("TWO"), "{rows}");
+}
+
+#[gpui::test]
+fn backspace_erases_selected_literal_newlines_and_keeps_the_suffix(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    pane.read(|v| v.paste_text("prefix\nSELECTONE\nSELECTTWO suffix"));
+    pane.wait_for("SELECTTWO suffix");
+    pane.settle();
+    let cell_w = pane.read(|v| v.cell_w);
+    let start = pane.point_at("SELECTONE");
+    let end = pane.point_at("SELECTTWO");
+    let start = point(start.x - px(cell_w * 4.25), start.y);
+    let end = point(end.x + px(cell_w * 4.25), end.y);
+    pane.press(start);
+    pane.drag_to(end);
+    pane.release(end);
+    assert_eq!(
+        pane.read(|v| v.selection_clipboard_text()).as_deref(),
+        Some("SELECTONE\nSELECTTWO")
+    );
+    pane.keys("backspace");
+    pane.wait_for_row(" suffix");
+    let rows = pane.rows().join("\n");
+    assert!(rows.contains("ready> prefix"), "{rows}");
+    assert!(!rows.contains("SELECT"), "{rows}");
 }

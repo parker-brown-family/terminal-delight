@@ -15,6 +15,7 @@ pub(super) struct HistoryContext {
 #[derive(Default, PartialEq)]
 pub(super) struct Snapshot {
     pub lines: styling::Lines,
+    pub glyphs: styling::Lines,
     pub cell_h: f32,
     pub cell_w: f32,
     pub afterglow_ms: f32,
@@ -85,8 +86,8 @@ impl GridPaint {
                 && previous.snapshot.afterglow_ms == snapshot.afterglow_ms;
             if compatible {
                 trail.observe(
-                    &previous.snapshot.lines,
-                    &snapshot.lines,
+                    &previous.snapshot.glyphs,
+                    &snapshot.glyphs,
                     cx.background_executor().now(),
                     snapshot.afterglow_ms,
                     snapshot
@@ -323,7 +324,7 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(after_cursor, erased);
-        pane.cx.executor().advance_clock(Duration::from_millis(190));
+        pane.cx.executor().advance_clock(Duration::from_millis(390));
         pane.cx.update(|window, _| window.refresh());
         pane.cx.run_until_parked();
         assert!(pane.view.read_with(pane.cx, |v, cx| v

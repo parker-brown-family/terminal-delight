@@ -25,6 +25,7 @@ mod grid_paint;
 mod handed;
 /// Visibility-aware housekeeping deadlines and wakeups.
 mod housekeeping;
+mod input_edit;
 /// Bounded reuse of the viewport's styled text.
 mod styling;
 use crate::term;
@@ -7456,16 +7457,38 @@ impl TerminalView {
         // itself, so it types the edit (see `erase_selection_keys`). A selection
         // anywhere else is not text being typed, and the key goes through as it
         // always has.
-        if !k.control
+        let deletion_chord = k.key == "backspace" && k.shift && !k.platform && !k.function;
+        let edit_keys = if deletion_chord {
+            let term = self.session.term.lock();
+            let editable = (self.mode == PaneMode::Shell || self.mode.is_agent())
+                && (!term.mode().contains(TermMode::ALT_SCREEN) || self.mode.is_agent())
+                && term.display_offset() == 0;
+            if !editable {
+                None
+            } else if k.control && k.alt {
+                // Readline's whole edit buffer, including literal newlines.
+                // No Enter, interrupt or terminal-history clearing.
+                Some(b"\x01\x0b".to_vec())
+            } else if k.control {
+                input_edit::line_keys(&term)
+            } else if !k.alt {
+                Some(b"\x1b\x7f".to_vec())
+            } else {
+                None
+            }
+        } else if !k.control
             && !k.alt
             && !k.shift
             && !k.platform
             && matches!(k.key, "backspace" | "delete")
         {
-            if let Some(keys) = self.erase_selection_keys() {
-                self.send(keys, cx);
-                return Handled::Declined;
-            }
+            self.erase_selection_keys()
+        } else {
+            None
+        };
+        if let Some(keys) = edit_keys {
+            self.send(keys, cx);
+            return Handled::Declined;
         }
         // Paging the pane itself. PageUp/PageDown page the scrollback in AGENT
         // panes — a Claude/Codex session keeps its whole convo in our history and
@@ -7521,23 +7544,37 @@ impl TerminalView {
     /// both the live pane and the FOCUS mirror.
     fn extend_kbd_selection(&mut self, right: bool, word: bool, cx: &mut Context<Self>) {
         let last_col = self.grid.cols.saturating_sub(1);
-        // one cell in the requested direction, clamped to the row (no line-wrap:
-        // command-line selection is single-row; mouse handles multi-line spans).
-        let step = |p: TermPoint| -> TermPoint {
-            if right {
-                if p.column.0 < last_col {
-                    TermPoint::new(p.line, Column(p.column.0 + 1))
+        let next = {
+            let mut term = self.session.term.lock();
+            // A soft wrap is still the same editable line. Keep hard row
+            // boundaries as boundaries so shift-arrows do not enter history.
+            let step = |p: TermPoint| -> TermPoint {
+                if right {
+                    if p.column.0 < last_col {
+                        TermPoint::new(p.line, Column(p.column.0 + 1))
+                    } else if p.line < term.bottommost_line()
+                        && term
+                            .row(p.line)
+                            .iter()
+                            .any(|c| c.flags.contains(Flags::WRAPLINE))
+                    {
+                        TermPoint::new(Line(p.line.0 + 1), Column(0))
+                    } else {
+                        p
+                    }
+                } else if p.column.0 > 0 {
+                    TermPoint::new(p.line, Column(p.column.0 - 1))
+                } else if p.line > term.topmost_line()
+                    && term
+                        .row(Line(p.line.0 - 1))
+                        .iter()
+                        .any(|c| c.flags.contains(Flags::WRAPLINE))
+                {
+                    TermPoint::new(Line(p.line.0 - 1), Column(last_col))
                 } else {
                     p
                 }
-            } else if p.column.0 > 0 {
-                TermPoint::new(p.line, Column(p.column.0 - 1))
-            } else {
-                p
-            }
-        };
-        let next = {
-            let mut term = self.session.term.lock();
+            };
             let (anchor, active) = match self.kbd_sel {
                 Some(ae) => ae,
                 None => {
@@ -8288,8 +8325,9 @@ impl TerminalView {
     /// The keys that erase the selection from the line being typed, or `None`
     /// when the selection is not on that line.
     ///
-    /// On it means: one row, the cursor's row, with the view at the bottom —
-    /// scrollback is history, and a selection there is something to copy. And
+    /// Soft-wrapped rows form one editable line. A selection crossing explicit
+    /// newlines must span the cursor's row; unrelated history is only copied.
+    /// The view must be at the bottom. And
     /// not a full-screen program unless it is an agent: in `less` or `vim` the
     /// arrow keys scroll or move rather than walk a caret through a line, but
     /// Claude Code draws its prompt on the alternate screen too, with the
@@ -8297,25 +8335,13 @@ impl TerminalView {
     /// selects and deletes.
     fn erase_selection_keys(&self) -> Option<Vec<u8>> {
         let term = self.session.term.lock();
-        let range = term.selection_range()?;
         let mode = term.mode();
         if term.display_offset() != 0
             || (mode.contains(TermMode::ALT_SCREEN) && !self.mode.is_agent())
         {
             return None;
         }
-        let caret = term.cursor().point;
-        if range.start.line != caret.line || range.end.line != caret.line {
-            return None;
-        }
-        let row = term.row(caret.line).0;
-        erase_run_keys(
-            &row,
-            range.start.column.0,
-            range.end.column.0,
-            caret.column.0,
-            mode.contains(TermMode::APP_CURSOR),
-        )
+        input_edit::selection_keys(&term)
     }
     /// Paste the clipboard into the PTY, honouring bracketed-paste mode.
     ///
@@ -8929,6 +8955,9 @@ impl TerminalView {
         let mut lines: Vec<(String, Vec<TextRun>)> = (0..self.grid.rows)
             .map(|_| (String::with_capacity(cols), Vec::with_capacity(cols)))
             .collect();
+        let mut glyphs: styling::Lines = (0..self.grid.rows)
+            .map(|_| (String::with_capacity(cols), Vec::new()))
+            .collect();
 
         // The `syntax` overlay tokenises the literal text, so it needs each full
         // row up front. Collect the cells once, build per-row colour palettes,
@@ -9019,6 +9048,17 @@ impl TerminalView {
                 other => Some(ansi_to_hsla(other, th, th.bg)),
             };
             let mut flags = cell.flags;
+            // Retain the program's text colour, including its own inverse/DIM,
+            // before TD draws a selection or its block cursor over the glyph.
+            let mut glyph_fg = if flags.contains(Flags::INVERSE) {
+                bg.unwrap_or(th.bg)
+            } else {
+                fg
+            };
+            if flags.contains(Flags::DIM) {
+                glyph_fg.a *= 0.6;
+            }
+            let glyph_fg = grade.apply(glyph_fg, Channel::Text);
             if !sel_visual && selection.is_some_and(|s| s.contains(indexed.point)) {
                 flags.insert(Flags::INVERSE);
             }
@@ -9061,6 +9101,24 @@ impl TerminalView {
             let ch_len = ch.len_utf8();
             text.push(ch);
 
+            let (glyph_text, glyph_runs) = &mut glyphs[row as usize];
+            glyph_text.push(ch);
+            if let Some(last) = glyph_runs
+                .last_mut()
+                .filter(|r| r.color == glyph_fg && r.font.weight == weight)
+            {
+                last.len += ch_len;
+            } else {
+                glyph_runs.push(TextRun {
+                    len: ch_len,
+                    font: grid_font(th, weight),
+                    color: glyph_fg,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                });
+            }
+
             let matches_last = runs.last().is_some_and(|r: &TextRun| {
                 r.color == fg
                     && r.background_color == bg
@@ -9083,6 +9141,7 @@ impl TerminalView {
         *self.styled_memo.borrow_mut() = Some(styling::Memo {
             key,
             lines: std::rc::Rc::new(lines.clone()),
+            glyphs: std::rc::Rc::new(glyphs),
         });
         lines
     }
@@ -10695,7 +10754,19 @@ impl Render for TerminalView {
             } else {
                 self.styled_lines(&grid_th, inverted)
             };
+        let mut glyphs = if lines.is_empty() {
+            Vec::new()
+        } else {
+            (*self
+                .styled_memo
+                .borrow()
+                .as_ref()
+                .expect("styled viewport built")
+                .glyphs)
+                .clone()
+        };
         arm_grid_fallbacks(&mut lines, window.text_system());
+        arm_grid_fallbacks(&mut glyphs, window.text_system());
         if std::env::var("TD_ANCHORDEBUG").is_ok() {
             // The last few non-blank grid rows + whether each is detected as the
             // human prompt line — reveals a caret we don't recognise or a leading
@@ -10739,6 +10810,7 @@ impl Render for TerminalView {
         if th.crawl || !anchor_top() {
             // Bottom-anchor (crawl + default normal mode).
             self.paint_offset = bottom_anchor_rows(&mut lines, self.grid.rows);
+            bottom_anchor_rows(&mut glyphs, self.grid.rows);
             self.paint_inverted = false;
             self.paint_to_grid = None;
         } else if inverted {
@@ -10753,6 +10825,7 @@ impl Render for TerminalView {
             };
             let (new_lines, perm) = invert_logical_read(lines, &wraps, agent_mode);
             lines = new_lines;
+            glyphs = invert_logical_read(glyphs, &wraps, agent_mode).0;
             // #149: paint the selection in VISUAL order now that rows are permuted,
             // so a cross-section drag highlights the visually-contiguous span (not
             // whole reversed blocks). styled_lines skipped the logical highlight.
@@ -11960,6 +12033,7 @@ impl Render for TerminalView {
                             &mut self.grid_paint,
                             grid_paint::Snapshot {
                                 lines,
+                                glyphs,
                                 cell_h: self.cell_h,
                                 cell_w: self.cell_w,
                                 afterglow_ms: grade.afterglow_ms_at_edge(),
