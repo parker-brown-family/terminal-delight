@@ -172,6 +172,45 @@ fn alt_click_on_a_printed_picture_opens_a_square_and_escape_closes_it(cx: &mut T
     assert_eq!(pane.float_path(), None, "Escape closes the square");
 }
 
+/// Ctrl+W puts the square away and leaves the tab alone; with no square up it
+/// is the shell's werase again. Closing the tab is Ctrl+Shift+W. Parker,
+/// 2026-10-21: *"Alt+w closes the ENTIRE pane, ctrl+w closes the tab ...
+/// Ctrl-W closes one glow pane at a time."*
+#[gpui::test]
+fn ctrl_w_closes_the_square_not_the_tab(cx: &mut TestAppContext) {
+    let (mut pane, _dir, png) = pane_showing_a_picture(cx, "ctrl-w");
+    pane.settle();
+    let tab_closes = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = tab_closes.clone();
+    let view = pane.view.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, _: &super::RequestCloseTab, _| {
+            seen.set(seen.get() + 1)
+        })
+        .detach();
+    });
+
+    let at = pane.point_at(&png);
+    pane.click(at, Pane::alt());
+    assert!(pane.float_path().is_some(), "the square is up");
+    pane.keys("ctrl-w");
+    assert_eq!(pane.float_path(), None, "Ctrl+W closes the square");
+    assert_eq!(tab_closes.get(), 0, "and not the tab");
+
+    // No square: the chord is ^W, and the word before it goes.
+    pane.keys("z z z q ctrl-w d o n e enter");
+    pane.wait_for_row("done");
+    assert!(
+        !pane.rows().iter().any(|r| r.contains("zzzqdone")),
+        "^W reached the shell and erased the word: {:?}",
+        pane.rows()
+    );
+    assert_eq!(tab_closes.get(), 0);
+
+    pane.keys("ctrl-shift-w");
+    assert_eq!(tab_closes.get(), 1, "Ctrl+Shift+W asks to close the tab");
+}
+
 /// Codex's file reference shape: a parenthesized path split across indented
 /// rows, with room left at the right edge. Both rows must hit the same file.
 #[gpui::test]
