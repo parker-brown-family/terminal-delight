@@ -13,7 +13,7 @@
 - [x] Add the image-glow grade, CRT slider, saved settings and MCP bridge.
 - [x] Implement bounded image bloom in the existing GPU pass, including flat tubes.
 - [x] Verify zero/off, per-pane isolation, persistence, colours and native output.
-- [ ] Commit and publish the branch; leave a separate native test instance and a human review page.
+- [x] Commit and publish the branch; leave a separate native test instance and a human review page.
 
 ## Resume
 
@@ -24,3 +24,5 @@ Parker accepted the cool-retro-term study and requested a dedicated effect branc
 The isolated release binary is `/home/parker/Work/td-phosphor-glow-lab/bin/terminal-delight-phosphor`, SHA-256 `fb145f11e537e9332f6e9bd4ee587f34bab30f361aab49f7d7ca70c39b79ccf0`. Session `phosphor-glow-test` runs on workspace 4 with interactive Bash panes: 55% inherited glow on the left and explicit 0% pinned on the right. Its settings are private; ordinary session 1 remains running. Relaunch with `sh /home/parker/Work/td-phosphor-glow-lab/native-lab/launch.sh`.
 
 Default core: 2,594 tests passed, 10 ignored. Alacritty core: 2,541 passed, 10 ignored. Both Clippy gates, format, locked release build and fresh patch replay passed. Native grid comparisons prove exact restoration at zero and CRT off, no change to the reference pane, and persistence after a restart. GAUGES still suppresses CRT preview while open; close it to see the dial. GPU frame cost remains unmeasured.
+
+Review: https://github.com/parker-brown-family/terminal-delight/pull/1074 (draft, base main, no release milestone). GPU timing qualification: https://github.com/parker-brown-family/terminal-delight/issues/1075. Native delivery is complete; Parker’s strength/readability judgement is pending.
