@@ -2,6 +2,9 @@
     <!-- Declared outright: a release build does not get it from the Flutter
          tooling, and without it every request fails as "no network". -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Whether the phone is on Wi-Fi and whether Tailscale is up, so a route
+         that fails can say "Tailscale off here" rather than "no answer". -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:label="Terminal Delight"

@@ -24,9 +24,11 @@ class WallPage extends ConsumerWidget {
     final session = ref.watch(sessionProvider);
     return Ground(
       child: Scaffold(
+        // A look that is still under way keeps the last trouble on screen,
+        // rather than flashing back to "finding the desk" every few seconds.
         body: switch (session) {
           AsyncValue(valueOrNull: final String s) => _Wall(session: s),
-          AsyncError(error: final e) => Trouble(error: e),
+          AsyncValue(:final error?) => Trouble(error: error),
           _ => const Seeking(),
         },
       ),
@@ -43,7 +45,7 @@ class _Wall extends ConsumerWidget {
     final wall = ref.watch(wallProvider(session));
     return switch (wall) {
       AsyncValue(valueOrNull: final Wall w) => _WallBody(wall: w),
-      AsyncError(error: final e) => Trouble(error: e),
+      AsyncValue(:final error?) => Trouble(error: error),
       _ => const Seeking(),
     };
   }
@@ -501,11 +503,22 @@ class Trouble extends ConsumerWidget {
               else
                 Text('$e', style: TdType.p(15)),
               const SizedBox(height: 12),
-              Text(
-                'Plugged in: run td-mobile-gateway pair on the laptop again. '
-                'Away from the desk: switch Tailscale on here. Either way, the gateway must be running.',
-                style: TdType.p(14, color: Td.inkAt(0.75)),
-              ),
+              if (e is Unreachable)
+                for (final line in advice(e))
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(line, style: TdType.p(14, color: Td.inkAt(0.75))),
+                  )
+              else
+                Text(
+                  'The gateway must be running on the laptop.',
+                  style: TdType.p(14, color: Td.inkAt(0.75)),
+                ),
+              if (e is Unreachable)
+                Text(
+                  'Looking again every few seconds.',
+                  style: TdType.m(11, color: Td.inkAt(0.5), spacing: 1.2),
+                ),
               const SizedBox(height: 18),
               Row(
                 children: [

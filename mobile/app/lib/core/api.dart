@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:terminal_delight/core/json.dart';
 import 'package:terminal_delight/core/link.dart';
@@ -180,8 +181,10 @@ final benchProvider = FutureProvider.autoDispose
 /// It is also what notices the route has gone. Pull the cable and the feed
 /// drops at once; a second failure on the same route means the route is dead
 /// rather than hiccuping, so the link looks again — and finds the tailnet —
-/// without anybody tapping anything. With no route at all it keeps looking,
-/// slowly, so a phone that walks back into range reconnects by itself.
+/// without anybody tapping anything. With no route at all it keeps looking:
+/// every few seconds while the app is on screen, so plugging the cable back in
+/// is enough, and slowly in the pocket, so a phone that walks back into range
+/// reconnects by itself.
 class Events {
   Events(this.ref);
   final Ref ref;
@@ -203,8 +206,7 @@ class Events {
     if (api == null) {
       if (ref.read(linkProvider).hasError) {
         _retry?.cancel();
-        _retry = Timer(Duration(seconds: _backoff), () => unawaited(_lookAgain()));
-        _backoff = (_backoff * 2).clamp(1, 30);
+        _retry = Timer(_nextLook(), () => unawaited(_lookAgain(quiet: true)));
       } else {
         _schedule();
       }
@@ -248,14 +250,28 @@ class Events {
   /// Probe every route again. When a different one answers, the api changes
   /// and this feed is replaced by one on the new route; when none does, this
   /// one goes on looking.
-  Future<void> _lookAgain() async {
+  Future<void> _lookAgain({bool quiet = false}) async {
     if (_closed) return;
     try {
-      await ref.read(linkProvider.notifier).rediscover();
+      final link = ref.read(linkProvider.notifier);
+      await (quiet ? link.lookQuietly() : link.rediscover());
     } on Object {
       // No route answered. `start` sees the error and schedules the next look.
     }
     if (!_closed) await start();
+  }
+
+  /// How long until the next look when no route answers. A few seconds while
+  /// the app is on screen, so a cable plugged back in is found while the
+  /// person is still holding the phone; backing off to half a minute in the
+  /// pocket, where coming back to the screen looks at once anyway.
+  Duration _nextLook() {
+    if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+      return const Duration(seconds: 3);
+    }
+    final wait = Duration(seconds: _backoff);
+    _backoff = (_backoff * 2).clamp(1, 30);
+    return wait;
   }
 
   void _schedule() {
