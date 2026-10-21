@@ -400,6 +400,9 @@ pub enum GradeKey {
     Glare,
     /// Light emitted by the terminal image, independently of border halos.
     ImageGlow,
+    InactiveImageGlow,
+    InactiveText,
+    AfterglowMs,
     /// Crawl convergence angle in degrees (`2..=59`). Not a paint grade — it
     /// drives the per-pane crawl perspective the renderer warps by — but it
     /// rides the grade group for the per-pane override + "follow outer".
@@ -424,7 +427,9 @@ impl GradeKey {
             GradeKey::TextSize | GradeKey::BenchSize => (0.6, 2.0, 1.0),
             GradeKey::Warp => (0.0, WARP_MAX, 0.0),
             // The CRT pass clamps a tube's glare to `0..1` (`warp::register_tube`).
-            GradeKey::Glare | GradeKey::ImageGlow => (0.0, 1.0, 0.0),
+            GradeKey::Glare | GradeKey::ImageGlow | GradeKey::InactiveImageGlow => (0.0, 1.0, 0.0),
+            GradeKey::InactiveText => (0.0, 1.0, 0.75),
+            GradeKey::AfterglowMs => (0.0, 1200.0, 180.0),
             GradeKey::CrawlAngle => (CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX, CRAWL_ANGLE_DEFAULT),
             GradeKey::CrawlDepth => (CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX, CRAWL_DEPTH_DEFAULT),
             GradeKey::Phosphor => (0.0, PHOSPHOR_MAX, 1.0),
@@ -552,9 +557,18 @@ pub struct Grade {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glare: Option<f32>,
     /// Terminal-image glow, 0..1. Unset stays absent on disk and on the API.
-    /// The current drawing policy leaves it off until somebody sets the dial.
+    /// Drawing defaults to 15% on the selected terminal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_glow: Option<f32>,
+    /// Inactive terminal glow. None preserves an undeclared dial; drawing uses 65%.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inactive_image_glow: Option<f32>,
+    /// Fraction of active text intensity while inactive; drawing defaults to 75%.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inactive_text: Option<f32>,
+    /// Lifetime of replaced glyphs in milliseconds; zero disables the trail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub afterglow_ms: Option<f32>,
     /// CRT tracking-band dials `[intensity, speed, size]` in `0..1`, or `None` to
     /// use whatever the resolved theme authored. Per-pane via the grade group.
     pub tracking: Option<[f32; 3]>,
@@ -569,7 +583,8 @@ pub struct Grade {
     pub crawl_depth: f32,
     /// The CRT master switch. Off ⇒ a flat, clean screen: no warp, roll bar,
     /// scanlines, vignette, bloom, flicker, jiggle, glare or bezel, and no
-    /// power-on flash — see [`flatten_tube`]. The dials are not touched, so
+    /// power-on flash — see [`flatten_tube`]. Letter glow and text afterglow
+    /// have their own dials and also work on flat panes. The glass dials stay set, so
     /// switching it back on restores exactly the tube they describe.
     ///
     /// An ABSENT key reads as on. Every grade written before this switch
@@ -606,6 +621,9 @@ pub enum GradeChannel {
     Glare,
     /// Light emitted by the terminal image, independently of border halos.
     ImageGlow,
+    InactiveImageGlow,
+    InactiveText,
+    AfterglowMs,
     CrawlAngle,
     CrawlDepth,
     Crawl,
@@ -622,7 +640,7 @@ impl GradeChannel {
     ///
     /// Thirty-two is the most the bitmask holds — [`GradePins`] is a `u32`,
     /// widened from `u16` when glare became the seventeenth channel.
-    pub const ALL: [GradeChannel; 18] = [
+    pub const ALL: [GradeChannel; 21] = [
         Self::Brightness,
         Self::Contrast,
         Self::Colour,
@@ -635,6 +653,9 @@ impl GradeChannel {
         Self::Warp,
         Self::Glare,
         Self::ImageGlow,
+        Self::InactiveImageGlow,
+        Self::InactiveText,
+        Self::AfterglowMs,
         Self::CrawlAngle,
         Self::CrawlDepth,
         Self::Crawl,
@@ -659,6 +680,9 @@ impl GradeChannel {
             Self::Warp => "warp",
             Self::Glare => "glare",
             Self::ImageGlow => "image_glow",
+            Self::AfterglowMs => "afterglow_ms",
+            Self::InactiveText => "inactive_text",
+            Self::InactiveImageGlow => "inactive_image_glow",
             Self::CrawlAngle => "crawl_angle",
             Self::CrawlDepth => "crawl_depth",
             Self::Crawl => "crawl",
@@ -703,6 +727,21 @@ impl GradeChannel {
             },
             Self::Warp => close(a.warp, b.warp),
             // Unset and explicitly off remain distinct choices.
+            Self::InactiveImageGlow => match (a.inactive_image_glow, b.inactive_image_glow) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
+            Self::InactiveText => match (a.inactive_text, b.inactive_text) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
+            Self::AfterglowMs => match (a.afterglow_ms, b.afterglow_ms) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
             Self::ImageGlow => match (a.image_glow, b.image_glow) {
                 (None, None) => true,
                 (Some(x), Some(y)) => close(x, y),
@@ -741,6 +780,9 @@ impl GradeChannel {
             Self::Warp => dst.warp = src.warp,
             Self::Glare => dst.glare = src.glare,
             Self::ImageGlow => dst.image_glow = src.image_glow,
+            Self::AfterglowMs => dst.afterglow_ms = src.afterglow_ms,
+            Self::InactiveText => dst.inactive_text = src.inactive_text,
+            Self::InactiveImageGlow => dst.inactive_image_glow = src.inactive_image_glow,
             Self::CrawlAngle => dst.crawl_angle = src.crawl_angle,
             Self::CrawlDepth => dst.crawl_depth = src.crawl_depth,
             Self::Crawl => dst.crawl = src.crawl,
@@ -766,6 +808,9 @@ impl From<GradeKey> for GradeChannel {
             GradeKey::Warp => Self::Warp,
             GradeKey::Glare => Self::Glare,
             GradeKey::ImageGlow => Self::ImageGlow,
+            GradeKey::AfterglowMs => Self::AfterglowMs,
+            GradeKey::InactiveText => Self::InactiveText,
+            GradeKey::InactiveImageGlow => Self::InactiveImageGlow,
             GradeKey::CrawlAngle => Self::CrawlAngle,
             GradeKey::CrawlDepth => Self::CrawlDepth,
             GradeKey::Phosphor => Self::Phosphor,
@@ -918,6 +963,9 @@ impl Default for Grade {
             bench_size: None,   // unset: the bench follows the grid's dial
             warp: WARP_DEFAULT, // the house near-fishbowl bend
             image_glow: None,
+            inactive_image_glow: None,
+            inactive_text: None,
+            afterglow_ms: None,
             glare: None,    // defer to the theme's authored glass
             tracking: None, // defer to the theme's authored roll bar
             crawl: false,   // crawl mode off until toggled
@@ -940,7 +988,7 @@ impl Grade {
     /// roll bar live in the collapsed CRT section and the crawl knobs in their
     /// own, so this list is also exactly what `reset` clears — see
     /// [`Grade::reset_gauges`].
-    pub const CHANNELS: [(GradeKey, &'static str); 10] = [
+    pub const CHANNELS: [(GradeKey, &'static str); 14] = [
         (GradeKey::TextSize, "text size"),
         (GradeKey::BenchSize, "bench size"),
         (GradeKey::Brightness, "brightness"),
@@ -951,6 +999,10 @@ impl Grade {
         (GradeKey::Gamma, "gamma"),
         (GradeKey::Scale, "menu bar"),
         (GradeKey::Phosphor, "phosphor"),
+        (GradeKey::ImageGlow, "letter glow"),
+        (GradeKey::InactiveImageGlow, "inactive letter glow"),
+        (GradeKey::InactiveText, "inactive text"),
+        (GradeKey::AfterglowMs, "afterglow time"),
     ];
 
     /// This grade with its MAIN gauges ([`Self::CHANNELS`]) back at neutral and
@@ -972,6 +1024,10 @@ impl Grade {
             text_size: n.text_size,
             bench_size: n.bench_size,
             phosphor: n.phosphor,
+            image_glow: n.image_glow,
+            inactive_image_glow: n.inactive_image_glow,
+            inactive_text: n.inactive_text,
+            afterglow_ms: n.afterglow_ms,
             ..self
         }
     }
@@ -996,6 +1052,9 @@ impl Grade {
             bench_size: None,
             warp: 0.0, // reset = dead flat
             image_glow: None,
+            inactive_image_glow: None,
+            inactive_text: None,
+            afterglow_ms: None,
             glare: None,    // reset = defer to the theme's glass
             tracking: None, // reset = defer to the theme's roll bar
             crawl: false,   // reset = crawl off
@@ -1075,6 +1134,10 @@ impl Grade {
             && (self.text_size - d.text_size).abs() < EPS
             && self.bench_size == d.bench_size
             && (self.warp - d.warp).abs() < EPS
+            && self.image_glow == d.image_glow
+            && self.inactive_image_glow == d.inactive_image_glow
+            && self.inactive_text == d.inactive_text
+            && self.afterglow_ms == d.afterglow_ms
             && self.glare == d.glare
             && self.tracking == d.tracking
             && self.crawl == d.crawl
@@ -1096,13 +1159,49 @@ impl Grade {
         self.bench_size.unwrap_or(self.text_size)
     }
 
-    /// Collapse the new dial only at the presentation edge. An absent setting
-    /// draws no glow; an explicit zero remains a distinct stored choice.
+    /// Active letter glow. Collapse an undeclared setting only while drawing.
     pub fn image_glow_at_edge(&self) -> f32 {
         self.image_glow
             .filter(|v| v.is_finite())
-            .unwrap_or(0.0)
+            .unwrap_or(0.15)
             .clamp(0.0, 1.0)
+    }
+
+    pub fn inactive_image_glow_at_edge(&self) -> f32 {
+        self.inactive_image_glow
+            .filter(|v| v.is_finite())
+            .unwrap_or(0.65)
+            .clamp(0.0, 1.0)
+    }
+
+    pub fn letter_glow_for_focus(&self, focused: bool) -> f32 {
+        if focused {
+            self.image_glow_at_edge()
+        } else {
+            self.inactive_image_glow_at_edge()
+        }
+    }
+
+    pub fn inactive_text_at_edge(&self) -> f32 {
+        self.inactive_text
+            .filter(|v| v.is_finite())
+            .unwrap_or(0.75)
+            .clamp(0.0, 1.0)
+    }
+
+    pub fn text_for_focus(&self, focused: bool) -> f32 {
+        if focused {
+            self.text
+        } else {
+            self.text * self.inactive_text_at_edge()
+        }
+    }
+
+    pub fn afterglow_ms_at_edge(&self) -> f32 {
+        self.afterglow_ms
+            .filter(|v| v.is_finite())
+            .unwrap_or(180.0)
+            .clamp(0.0, 1200.0)
     }
 
     /// The glare this grade shines with on a theme that authored `authored`.
@@ -1128,6 +1227,9 @@ impl Grade {
             GradeKey::Warp => self.warp,
             GradeKey::Glare => return self.glare,
             GradeKey::ImageGlow => return self.image_glow,
+            GradeKey::AfterglowMs => return self.afterglow_ms,
+            GradeKey::InactiveText => return self.inactive_text,
+            GradeKey::InactiveImageGlow => return self.inactive_image_glow,
             GradeKey::CrawlAngle => self.crawl_angle,
             GradeKey::CrawlDepth => self.crawl_depth,
             GradeKey::Phosphor => self.phosphor,
@@ -1149,6 +1251,21 @@ impl Grade {
             GradeKey::BenchSize => self.bench_size = Some(v),
             GradeKey::Warp => self.warp = v,
             GradeKey::Glare => self.glare = Some(v),
+            GradeKey::InactiveImageGlow => {
+                if v.is_finite() {
+                    self.inactive_image_glow = Some(v);
+                }
+            }
+            GradeKey::InactiveText => {
+                if v.is_finite() {
+                    self.inactive_text = Some(v);
+                }
+            }
+            GradeKey::AfterglowMs => {
+                if v.is_finite() {
+                    self.afterglow_ms = Some(v);
+                }
+            }
             GradeKey::ImageGlow => {
                 if v.is_finite() {
                     self.image_glow = Some(v);
@@ -1301,6 +1418,9 @@ pub fn house_outer() -> ThemeChoice {
             crt: false,
             warp: WARP_MAX,
             image_glow: None,
+            inactive_image_glow: None,
+            inactive_text: None,
+            afterglow_ms: None,
             glare: None, // the `custom` theme's glass, seeded from `hacker`
             tracking: Some(HOUSE_ROLL),
             crawl: false,
@@ -3145,6 +3265,60 @@ mod tests {
     use super::*;
 
     #[test]
+    fn focus_light_defaults_are_effective_values_without_inventing_settings() {
+        let grade = Grade::default();
+        assert_eq!(grade.letter_glow_for_focus(true), 0.15);
+        assert_eq!(grade.letter_glow_for_focus(false), 0.65);
+        assert_eq!(grade.inactive_text_at_edge(), 0.75);
+        assert_eq!(grade.afterglow_ms_at_edge(), 180.0);
+        assert_eq!(grade.text_for_focus(true), grade.text);
+        assert!((grade.text_for_focus(false) - grade.text * 0.75).abs() < 0.0001);
+        assert!(!toml::to_string(&grade).unwrap().contains("afterglow_ms"));
+        assert_eq!(grade.image_glow, None);
+        assert_eq!(grade.inactive_image_glow, None);
+    }
+
+    #[test]
+    fn light_only_changes_prevent_the_entire_grade_from_being_omitted() {
+        for key in [
+            GradeKey::ImageGlow,
+            GradeKey::InactiveImageGlow,
+            GradeKey::InactiveText,
+            GradeKey::AfterglowMs,
+        ] {
+            let mut grade = Grade::default();
+            assert!(grade.is_default());
+            grade.set(key, 0.0);
+            assert!(
+                !grade.is_default(),
+                "explicit zero for {key:?} must persist"
+            );
+            let encoded = toml::to_string(&grade).unwrap();
+            let restored: Grade = toml::from_str(&encoded).unwrap();
+            assert_eq!(restored.get(key), Some(0.0));
+        }
+    }
+
+    #[test]
+    fn inactive_and_afterglow_settings_pin_independently_and_reset_to_defaults() {
+        let mut outer = Grade::default();
+        outer.set(GradeKey::InactiveImageGlow, 0.9);
+        outer.set(GradeKey::InactiveText, 0.4);
+        outer.set(GradeKey::AfterglowMs, 500.0);
+        let mut own = Grade::default();
+        own.set(GradeKey::AfterglowMs, 0.0);
+        let merged = GradePins::only(GradeChannel::AfterglowMs).merge(outer, own);
+        assert_eq!(merged.inactive_image_glow, Some(0.9));
+        assert_eq!(merged.inactive_text, Some(0.4));
+        assert_eq!(merged.afterglow_ms, Some(0.0));
+        assert_eq!(merged.reset_gauges().afterglow_ms, None);
+        own.set(GradeKey::AfterglowMs, 9000.0);
+        assert_eq!(own.afterglow_ms, Some(1200.0));
+        own.set(GradeKey::AfterglowMs, f32::NAN);
+        assert_eq!(own.afterglow_ms, Some(1200.0));
+    }
+
+    #[test]
     fn chalk_material_is_not_offered_as_a_colour_design() {
         assert!(!builtin_ids().iter().any(|id| id.starts_with("chalk")));
         for id in ["chalk-flower", "chalk-night"] {
@@ -3855,7 +4029,8 @@ mod tests {
             toml::from_str::<Grade>(&encoded).unwrap().image_glow,
             Some(0.0)
         );
-        assert_eq!(old.image_glow_at_edge(), own.image_glow_at_edge());
+        assert_eq!(old.image_glow_at_edge(), 0.15);
+        assert_eq!(own.image_glow_at_edge(), 0.0);
         assert!(!GradeChannel::ImageGlow.same(&old, &own));
     }
 
@@ -3873,7 +4048,7 @@ mod tests {
             toml::from_str::<Grade>(&encoded).unwrap().image_glow,
             Some(0.0)
         );
-        assert_eq!(own.reset_gauges().image_glow, own.image_glow);
+        assert_eq!(own.reset_gauges().image_glow, None);
     }
 
     #[test]
@@ -3913,6 +4088,9 @@ mod tests {
             // neutral() leaves glare to the theme, so the walk needs one set.
             glare: Some(0.6),
             image_glow: Some(0.7),
+            inactive_image_glow: Some(0.9),
+            inactive_text: Some(0.3),
+            afterglow_ms: Some(900.0),
             crawl_angle: 40.0,
             crawl_depth: 9.0,
             crawl: true,
@@ -4607,7 +4785,7 @@ warp = 1.5
     fn glare_is_a_channel_that_pins_and_persists() {
         // Every channel still owns a separate bit after extending the set.
         let last = *GradeChannel::ALL.last().unwrap();
-        assert_eq!(GradeChannel::ALL.len(), 18);
+        assert_eq!(GradeChannel::ALL.len(), 21);
         assert_eq!(GradePins::all().iter().count(), GradeChannel::ALL.len());
         assert!(!GradePins::only(last).has(GradeChannel::Brightness));
         assert_eq!(GradeChannel::parse("glare"), Some(GradeChannel::Glare));
@@ -4634,9 +4812,8 @@ warp = 1.5
         assert_eq!((pane.glare, pane.warp), (Some(0.3), 0.2));
     }
 
-    /// The GAUGES tray draws a main gauge only when it has a position, so every
-    /// one of them must always have one — only a dial left to the theme may
-    /// answer `None`.
+    /// Paint/size channels have stored positions; optional light controls keep
+    /// their absence and expose an effective position only for drawing.
     #[test]
     fn main_gauges_always_hold_a_position() {
         for g in [
@@ -4646,7 +4823,15 @@ warp = 1.5
             house_terminal().grade,
         ] {
             for (k, _) in Grade::CHANNELS {
-                assert!(g.get(k).is_some(), "{k:?} has a position");
+                match k {
+                    GradeKey::ImageGlow
+                    | GradeKey::InactiveImageGlow
+                    | GradeKey::InactiveText
+                    | GradeKey::AfterglowMs => {
+                        assert!(g.get(k).is_none(), "{k:?} remains undeclared");
+                    }
+                    _ => assert!(g.get(k).is_some(), "{k:?} has a position"),
+                }
             }
             assert_eq!(g.get(GradeKey::Glare), None, "unset glare is the theme's");
         }

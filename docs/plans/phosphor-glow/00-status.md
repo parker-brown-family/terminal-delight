@@ -19,10 +19,27 @@
 
 Parker accepted the cool-retro-term study and requested a dedicated effect branch with a slider. The first effect is terminal-image bloom. Independently implement it; upstream effect code is GPL-3.0-or-later. Keep unset distinct from an explicit zero. The existing GAUGES preview limitation is tracked in the glass-preview issue; record what this branch actually proves about it.
 
-## Native delivery
+## Initial bloom-only delivery
 
 The isolated release binary is `/home/parker/Work/td-phosphor-glow-lab/bin/terminal-delight-phosphor`, SHA-256 `fb145f11e537e9332f6e9bd4ee587f34bab30f361aab49f7d7ca70c39b79ccf0`. Session `phosphor-glow-test` runs on workspace 4 with interactive Bash panes: 55% inherited glow on the left and explicit 0% pinned on the right. Its settings are private; ordinary session 1 remains running. Relaunch with `sh /home/parker/Work/td-phosphor-glow-lab/native-lab/launch.sh`.
 
 Default core: 2,594 tests passed, 10 ignored. Alacritty core: 2,541 passed, 10 ignored. Both Clippy gates, format, locked release build and fresh patch replay passed. Native grid comparisons prove exact restoration at zero and CRT off, no change to the reference pane, and persistence after a restart. GAUGES still suppresses CRT preview while open; close it to see the dial. GPU frame cost remains unmeasured.
 
 Review: https://github.com/parker-brown-family/terminal-delight/pull/1074 (draft, base main, no release milestone). GPU timing qualification: https://github.com/parker-brown-family/terminal-delight/issues/1075. Native delivery is complete; Parker’s strength/readability judgement is pending.
+
+## Focus and afterglow phase
+
+Difficulty: 7/10. Parker expanded the request on 2026-10-21: active 15% glow, inactive 65% glow with lower text intensity, real fading text and organised gauges. The four design stages are recorded in 01-focus-product.md through 04-focus-slices.md under the continuing end-to-end authorisation; no separate human gate reviews are claimed. Preserve existing picture grades. Inactive text starts at 75% pending Parker’s optional preference.
+
+- [x] Focus defaults, fields, MCP and grouped gauges.
+- [x] Bounded per-pane glyph afterglow.
+- [x] Native focus/fade checks and refreshed test instance.
+- [ ] Same PR, human review and qualification record updated.
+
+The current test GUI is PID 2104454 on workspace 4, session `phosphor-glow-test`, using binary SHA-256 `209beed8441fd9fe940b234f2cd6b488fb70ec158b48db3ca18ee0d26c92d7d6`. Its active `TERMINAL LIGHT` tab has two fresh interactive shells. The original hosted shells and their typed text are preserved in the earlier tab; no PTY input was sent to them. The lab uses OPS and the captured picture grade, without changing ordinary session 1.
+
+Defaults resolve at drawing time to active glow 15%, inactive glow 65%, inactive text 75% of the active text setting, and 180ms of replaced-glyph afterglow. All four lighting fields stay optional in storage and GET reports, so explicit zero survives independently. Letter glow and afterglow are independent of the CRT glass switch. This deliberately supersedes the first build's CRT-off bloom contract.
+
+Current verification: default core 2,606 passed, fallback 2,553 passed, 10 ignored in each. Both Clippy gates, format, locked release build and native fade/default/zero/pane-isolation checks passed. Two new tests initially exposed float comparison and duration rounding errors; both were corrected before the passing full runs. The retained trail is capped at 4,096 glyphs per pane, expires on clock time and clears when its drawing context changes. No GPU history texture was added. Frame cost remains unmeasured and stays in the existing qualification issue.
+
+Turned out to be 7/10: keeping fading glyph positions correct across focus, geometry and terminal-face changes required a separate retained drawing state and native timing evidence. Individual design gates were recorded before code under the continuing end-to-end instruction; no independent human approvals are implied.

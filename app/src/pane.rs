@@ -12,6 +12,7 @@ use crate::screenread::{
     rows_fingerprint, wants_human_row, wants_human_unless_answered, PROMPT_TAIL_ROWS,
 };
 
+mod afterglow;
 /// The workbench half of this view — every method that draws or drives the
 /// bench. A child module so it keeps private access; see `pane/bench.rs`.
 mod bench;
@@ -5675,6 +5676,7 @@ impl TerminalView {
     /// Forget every picture this pane holds — the textures here and the images
     /// in the core. Called when its tab stops being shown.
     pub fn forget_pictures(&mut self, cx: &mut Context<Self>) {
+        self.grid_paint.update(cx, |v, _| v.clear_afterglow());
         let held = {
             let mut term = self.session.term.lock();
             let held = term.pictures().len();
@@ -10146,6 +10148,7 @@ impl TerminalView {
             return;
         }
         if self.bench.face() != face {
+            self.grid_paint.update(cx, |v, _| v.clear_afterglow());
             self.bench.set_face(face);
             // A pane whose face changed has changed what its keystrokes mean,
             // so the header's own count and the tab badge both want redrawing.
@@ -10157,6 +10160,7 @@ impl TerminalView {
     /// its shell; anywhere else it swaps the terminal and the bench. See
     /// [`crate::workbench::next_face`].
     pub fn toggle_face(&mut self, cx: &mut Context<Self>) {
+        self.grid_paint.update(cx, |v, _| v.clear_afterglow());
         self.bench.toggle_face(self.doc.is_some());
         cx.notify();
     }
@@ -10224,6 +10228,10 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.resolved_theme(cx);
+        let focused_now = self.focus_handle(cx).is_focused(window);
+        let letter_glow = th.grade.letter_glow_for_focus(focused_now);
+        let mut grid_th = th.clone();
+        grid_th.grade.text = th.grade.text_for_focus(focused_now);
         let menu_skin = crate::skin::for_theme(cx, &th, th.grade.scale);
         // The floating square re-records where its controls are as it paints.
         self.float_zones.borrow_mut().clear();
@@ -10633,7 +10641,6 @@ impl Render for TerminalView {
         // edge below is the acknowledgement (a click, alt+arrows, or the
         // notification jump all land here), so you never miss which agent
         // finished while you were away, and there is nothing to dismiss.
-        let focused_now = self.focus_handle(cx).is_focused(window);
         if focused_now != self.was_focused {
             self.was_focused = focused_now;
             if focused_now {
@@ -10681,9 +10688,10 @@ impl Render for TerminalView {
         // drawn there. The next terminal frame snapshots the current viewport.
         let mut lines =
             if self.bench.face() == crate::workbench::Face::Workbench || self.has_doc_face() {
+                self.grid_paint.update(cx, |v, _| v.clear_afterglow());
                 Vec::new()
             } else {
-                self.styled_lines(&th, inverted)
+                self.styled_lines(&grid_th, inverted)
             };
         arm_grid_fallbacks(&mut lines, window.text_system());
         if std::env::var("TD_ANCHORDEBUG").is_ok() {
@@ -11903,11 +11911,7 @@ impl Render for TerminalView {
                                         k2,
                                         crawl,
                                         tube_bezel,
-                                        if on_terminal && th.crt {
-                                            th.grade.image_glow_at_edge()
-                                        } else {
-                                            0.0
-                                        },
+                                        if on_terminal { letter_glow } else { 0.0 },
                                     );
                                     let changed = {
                                         let mut slot = store.lock().unwrap();
@@ -11955,6 +11959,17 @@ impl Render for TerminalView {
                             grid_paint::Snapshot {
                                 lines,
                                 cell_h: self.cell_h,
+                                cell_w: self.cell_w,
+                                afterglow_ms: grade.afterglow_ms_at_edge(),
+                                context: Some(grid_paint::HistoryContext {
+                                    theme: grid_th.clone(),
+                                    offset: self.session.term.lock().display_offset(),
+                                    alternate: alt_screen_active,
+                                    cols: self.grid.cols,
+                                    rows: self.grid.rows,
+                                    paint_offset: self.paint_offset,
+                                    inverted: self.paint_inverted,
+                                }),
                                 pad: (grid_pad_x, grid_pad_y),
                                 crawl: th.crawl,
                                 bleed: (th.letter_glow > 0.001).then_some(0.35 * th.letter_glow),
