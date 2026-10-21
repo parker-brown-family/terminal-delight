@@ -1,0 +1,57 @@
+{
+  "method": "Each RGB pixel contributes its maximum absolute channel difference from the settled frame. The regions exclude chrome; absent changed_y_extent means no pixels differ.",
+  "binary_sha256": "7793d3d2fce5347a628e56da7d3936d4160b53b6a626e0dc9b64ab635f740b6c",
+  "size": [
+    2240,
+    1472
+  ],
+  "regions": {
+    "edited": [
+      45,
+      1022,
+      1085,
+      1377
+    ],
+    "neighbor": [
+      1175,
+      1022,
+      2145,
+      1377
+    ]
+  },
+  "early": {
+    "changed_pixels": 30505,
+    "absolute_peak_channel_sum": 2299603,
+    "peak_delta": 169,
+    "changed_y_extent": [
+      1229,
+      1347
+    ]
+  },
+  "after_500ms": {
+    "changed_pixels": 28648,
+    "absolute_peak_channel_sum": 642732,
+    "peak_delta": 31,
+    "changed_y_extent": [
+      1229,
+      1341
+    ]
+  },
+  "neighbor": {
+    "changed_pixels": 0,
+    "absolute_peak_channel_sum": 0,
+    "peak_delta": 0,
+    "changed_y_extent": null
+  },
+  "zero_disabled": {
+    "changed_pixels": 0,
+    "absolute_peak_channel_sum": 0,
+    "peak_delta": 0,
+    "changed_y_extent": null
+  },
+  "capture_start_ms": 506.6260420717299,
+  "capture_end_ms": 631.4771040342748,
+  "cursor_move_ms": 100.9689720813185,
+  "cursor_point_before": 5,
+  "cursor_point_after": 4
+}

@@ -366,9 +366,9 @@ pub fn human_turn_chord(k: &Key) -> bool {
 /// - A PLAIN arrow walks the bench's rail and a PLAIN escape peels its overlays.
 ///   Only the modified forms leave.
 pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
-    // ctrl+alt+<anything> walks the left bar's tree. Matched on the modifiers
-    // alone, because that pair is not an editing chord anywhere.
-    if control && alt {
+    // Backspace belongs to the active editor: Ctrl+Shift+Alt+Backspace clears
+    // its input. The other Ctrl+Alt keys retain the tree-navigation route.
+    if control && alt && key != "backspace" {
         return true;
     }
     if !alt {
@@ -429,6 +429,13 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
     // desktop it arrives with its shift already dropped.
     if size_chord(k).is_some() {
         return true;
+    }
+    // Ctrl+Insert copies and Shift+Insert pastes: the old chords every other
+    // terminal takes, and what Omarchy's Super+C and Super+V send a window it
+    // tags as a terminal (#892). The paste leaves a note, a sticky or a header
+    // name being written to take it, exactly as ctrl+shift+v does below.
+    if k.key == "insert" && !k.alt && k.control != k.shift {
+        return k.control || !(note_caret(up) || up.sticky || up.rename);
     }
     if k.alt && !k.control && !k.shift {
         return match k.key {
@@ -1280,6 +1287,50 @@ mod tests {
         );
     }
 
+    /// Omarchy's Super+C and Super+V arrive at a window it tags as a terminal
+    /// as Ctrl+Insert and Shift+Insert (#892). On either face, with no caret
+    /// up, both are the pane's: the copy and the paste that Ctrl+Shift+C and
+    /// Ctrl+Shift+V are. Ctrl+Insert stays the pane's over a note being
+    /// written, the way Ctrl+Shift+C does; a third modifier makes it nobody's.
+    #[test]
+    fn omarchys_universal_copy_and_paste_are_the_panes() {
+        let copy = ctrl("insert");
+        for up in [Up::default(), on_bench(), floating()] {
+            assert_eq!(route(&copy, &up), Layer::PaneChord, "copy {up:?}");
+            assert_eq!(
+                route(&shift_insert(), &up),
+                Layer::PaneChord,
+                "paste {up:?}"
+            );
+        }
+        for up in [
+            Up {
+                sticky: true,
+                ..Up::default()
+            },
+            Up {
+                rename: true,
+                ..Up::default()
+            },
+        ] {
+            assert_eq!(route(&copy, &up), Layer::PaneChord, "copy over {up:?}");
+        }
+        let neither = Key {
+            key: "insert",
+            control: true,
+            shift: true,
+            ..Key::default()
+        };
+        assert!(!pane_chord(&neither, &Up::default()));
+        assert!(!pane_chord(
+            &Key {
+                key: "insert",
+                ..Key::default()
+            },
+            &Up::default()
+        ));
+    }
+
     /// A caret somewhere else on the pane keeps its own Escape: a note being
     /// written or a name being typed is reverted first, the square second.
     #[test]
@@ -1766,5 +1817,69 @@ mod tests {
             doc_caret: true,
         };
         assert_eq!(route(&named("f1"), &everything), Layer::Help);
+    }
+
+    #[test]
+    fn deletion_chords_reach_the_active_editor_even_with_a_note_stuck() {
+        for (control, alt) in [(false, false), (true, false), (true, true)] {
+            let key = Key {
+                key: "backspace",
+                shift: true,
+                control,
+                alt,
+                ..Key::default()
+            };
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        note: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Terminal
+            );
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        bench: true,
+                        note: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Bench
+            );
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        sticky: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Sticky
+            );
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        rename: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Rename
+            );
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        document: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Document
+            );
+        }
     }
 }

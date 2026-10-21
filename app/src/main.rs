@@ -7953,6 +7953,12 @@ impl Workspace {
             crawl_depth: K::CrawlDepth.to_percent(g.crawl_depth),
             crt: g.crt,
             phosphor: K::Phosphor.to_percent(g.phosphor),
+            image_glow: g.image_glow.map(|v| K::ImageGlow.to_percent(v)),
+            inactive_image_glow: g
+                .inactive_image_glow
+                .map(|v| K::InactiveImageGlow.to_percent(v)),
+            inactive_text: g.inactive_text.map(|v| K::InactiveText.to_percent(v)),
+            afterglow_ms: g.afterglow_ms,
         }
     }
 
@@ -8011,6 +8017,19 @@ impl Workspace {
         }
         if let Some(p) = patch.crawl_depth {
             set!(K::CrawlDepth, p);
+        }
+        if let Some(p) = patch.inactive_image_glow {
+            set!(K::InactiveImageGlow, p);
+        }
+        if let Some(p) = patch.inactive_text {
+            set!(K::InactiveText, p);
+        }
+        if let Some(ms) = patch.afterglow_ms {
+            g.set(K::AfterglowMs, ms);
+            touched.insert(theme::GradeChannel::AfterglowMs);
+        }
+        if let Some(p) = patch.image_glow {
+            set!(K::ImageGlow, p);
         }
         if let Some(p) = patch.phosphor {
             set!(K::Phosphor, p);
@@ -16364,6 +16383,10 @@ impl Workspace {
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
+            // Finished BEFORE any content: under a cut skin `finish` adds an
+            // opaque plate as a child, and a plate added after the rows paints
+            // over them — the OPS bug panel drew as an empty frame.
+            .map(|d| sk.finish(d))
             .flex()
             .flex_col()
             .gap_2()
@@ -16489,7 +16512,7 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(sk.finish(panel)),
+                .child(panel),
         )
     }
 
@@ -20938,9 +20961,13 @@ impl Workspace {
                         | theme::GradeKey::TextSize
                         | theme::GradeKey::BenchSize
                         | theme::GradeKey::Phosphor
-                        | theme::GradeKey::Glare => {
+                        | theme::GradeKey::Glare
+                        | theme::GradeKey::ImageGlow
+                        | theme::GradeKey::InactiveImageGlow
+                        | theme::GradeKey::InactiveText => {
                             format!("{}%", (v * 100.).round() as i32)
                         }
+                        theme::GradeKey::AfterglowMs => format!("{} ms", v.round() as i32),
                         theme::GradeKey::CrawlAngle => format!("{}\u{00b0}", v.round() as i32),
                         theme::GradeKey::CrawlDepth => format!("{v:.1}\u{00d7}"),
                         _ => format!("{:+}", ((v - neutral) * 100.).round() as i32),
@@ -29142,6 +29169,7 @@ impl Render for Workspace {
             let is_pane = matches!(scope, MenuScope::Pane(_));
             let cur = self.choice_for(&scope, cx);
             let grade = cur.grade;
+            let light_preset = self.scope_theme(&scope, cx).terminal_light;
             // Grade-group "follow outer" state — independent of the theme tray.
             let following = match &scope {
                 MenuScope::Pane(p) => p.read(cx).appearance.follows_outer_grade(),
@@ -29154,27 +29182,71 @@ impl Render for Workspace {
                     .child(s.to_string())
             };
             let t = self.lang.strings();
-            let mut rows = div().flex().flex_col().gap_1();
-            for (key, _name) in theme::Grade::CHANNELS {
-                let name = match key {
-                    theme::GradeKey::TextSize => t.g_text_size,
-                    theme::GradeKey::BenchSize => t.g_bench_size,
-                    theme::GradeKey::Brightness => t.g_brightness,
-                    theme::GradeKey::Contrast => t.g_contrast,
-                    theme::GradeKey::Colour => t.g_colour,
-                    theme::GradeKey::Text => t.g_text,
-                    theme::GradeKey::Background => t.g_background,
-                    theme::GradeKey::Gamma => t.g_gamma,
-                    theme::GradeKey::Scale => t.g_menu_bar,
-                    theme::GradeKey::Phosphor => t.g_phosphor,
-                    _ => _name,
-                };
-                // A main gauge always holds its own position (pinned by
-                // `main_gauges_always_hold_a_position`); only a dial left to the
-                // theme answers `None`, and those live in the CRT section.
-                if let Some(v) = grade.get(key) {
-                    rows = rows.child(self.slider_row(key, name, v, &th, cx));
+            use theme::GradeKey as G;
+            let groups = [
+                (
+                    t.g_type_hdr,
+                    vec![
+                        (G::TextSize, t.g_text_size, grade.text_size),
+                        (G::BenchSize, t.g_bench_size, grade.bench_gauge()),
+                        (G::Scale, t.g_menu_bar, grade.scale),
+                    ],
+                ),
+                (
+                    t.g_picture_hdr,
+                    vec![
+                        (G::Brightness, t.g_brightness, grade.brightness),
+                        (G::Contrast, t.g_contrast, grade.contrast),
+                        (G::Colour, t.g_colour, grade.colour),
+                        (G::Background, t.g_background, grade.background),
+                        (G::Gamma, t.g_gamma, grade.gamma),
+                        (G::Phosphor, t.g_phosphor, grade.phosphor),
+                    ],
+                ),
+                (
+                    t.g_active_hdr,
+                    vec![
+                        (G::Text, t.g_text, grade.text),
+                        (
+                            G::ImageGlow,
+                            t.d_image_glow,
+                            grade.image_glow_at_edge(light_preset),
+                        ),
+                    ],
+                ),
+                (
+                    t.g_inactive_hdr,
+                    vec![
+                        (
+                            G::InactiveText,
+                            t.g_text_level,
+                            grade.inactive_text_at_edge(light_preset),
+                        ),
+                        (
+                            G::InactiveImageGlow,
+                            t.d_image_glow,
+                            grade.inactive_image_glow_at_edge(),
+                        ),
+                    ],
+                ),
+                (
+                    t.g_afterglow_hdr,
+                    vec![(G::AfterglowMs, t.g_fade_time, grade.afterglow_ms_at_edge())],
+                ),
+            ];
+            let mut rows = div().flex().flex_col().gap_2();
+            for (heading, controls) in groups {
+                let mut section = div().flex().flex_col().gap_1().child(label(heading));
+                for (key, name, value) in controls {
+                    section = section.child(self.slider_row(key, name, value, &th, cx));
+                    if key == G::InactiveText {
+                        section = section.child(label(t.g_text_relative));
+                    }
                 }
+                if heading == t.g_afterglow_hdr {
+                    section = section.child(label(t.g_afterglow_hint));
+                }
+                rows = rows.child(section);
             }
             // The foot of the tray: one faint disclosure row per easter egg.
             // Deliberately quieter than every label above it — somebody has to
@@ -29188,7 +29260,7 @@ impl Render for Workspace {
                     .child(format!("{} {}", if open { "▾" } else { "▸" }, name))
             };
             let panel_w: f32 = sk.fit(300., 320.);
-            const PANEL_H_EST: f32 = 346.; // 10 slider rows + reset + follow-outer
+            const PANEL_H_EST: f32 = 650.; // grouped sliders, hints, reset and inheritance
             let mut panel = sk.sheet().id("osd-panel").absolute().w(px(panel_w));
             let tray_top = match self.osd_at {
                 Some(at) => {
@@ -32338,6 +32410,9 @@ impl Render for Workspace {
                         row(s.k_rclick, s.rclick),
                         row("Ctrl+Shift+C / V", s.copy_paste),
                         row("Ctrl+X", s.cut),
+                        row("Shift+Backspace", s.delete_word),
+                        row("Ctrl+Shift+Backspace", s.delete_line),
+                        row("Ctrl+Shift+Alt+Backspace", s.clear_input),
                         row(s.k_ctrl_arrows, s.word_jump),
                         row("Ctrl+F", s.find),
                         row("Ctrl+Shift+F", s.find_all),
@@ -44513,5 +44588,49 @@ mod nav_tests {
             (1usize, (0., 120., 500., 600.)),
         ];
         assert_eq!(neighbour_in_dir(from, &cands, "left"), Some(1));
+    }
+    #[test]
+    fn image_glow_config_patch_pins_only_it_and_reports_unset() {
+        let mut grade = theme::Grade::neutral();
+        assert_eq!(Workspace::grade_report(&grade).image_glow, None);
+        let patch: mcp::ConfigPatch = serde_json::from_str(r#"{"image_glow":35}"#).unwrap();
+        let touched = Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(
+            touched,
+            theme::GradePins::only(theme::GradeChannel::ImageGlow)
+        );
+        assert_eq!(Workspace::grade_report(&grade).image_glow, Some(35.0));
+        let other: mcp::ConfigPatch = serde_json::from_str(r#"{"brightness":60}"#).unwrap();
+        Workspace::apply_config_patch(&mut grade, &other);
+        assert_eq!(Workspace::grade_report(&grade).image_glow, Some(35.0));
+        let off: mcp::ConfigPatch =
+            serde_json::from_str(r#"{"image_glow":0,"crt":false}"#).unwrap();
+        Workspace::apply_config_patch(&mut grade, &off);
+        assert_eq!(grade.image_glow, Some(0.0));
+        assert!(!grade.crt);
+    }
+
+    #[test]
+    fn terminal_light_patch_uses_percentages_and_explicit_milliseconds() {
+        let mut grade = theme::Grade::default();
+        let patch: mcp::ConfigPatch = serde_json::from_str(
+            r#"{"image_glow":15,"inactive_image_glow":65,"inactive_text":75,"afterglow_ms":360}"#,
+        )
+        .unwrap();
+        let touched = Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(touched.iter().count(), 4);
+        let report = Workspace::grade_report(&grade);
+        assert!((report.image_glow.unwrap() - 15.0).abs() < 0.0001);
+        assert!((report.inactive_image_glow.unwrap() - 65.0).abs() < 0.0001);
+        assert!((report.inactive_text.unwrap() - 75.0).abs() < 0.0001);
+        assert_eq!(report.afterglow_ms, Some(360.0));
+        let patch: mcp::ConfigPatch = serde_json::from_str(r#"{"afterglow_ms":0}"#).unwrap();
+        let touched = Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(
+            touched,
+            theme::GradePins::only(theme::GradeChannel::AfterglowMs)
+        );
+        assert_eq!(grade.afterglow_ms, Some(0.0));
+        assert_eq!(grade.inactive_text, Some(0.75));
     }
 }

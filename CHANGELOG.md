@@ -7,6 +7,25 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added for 0.5.0 development
+
+- **Terminal lighting follows focus in every skin.** Active and inactive panes
+  have separate letter-glow controls, and inactive text can dim relative to the
+  active setting. GAUGES groups type, picture, active terminals, inactive
+  terminals and afterglow. Standard starts at 20% active glow and 45% inactive
+  text; Intrusive uses 37% and 52%. Both use 100% inactive glow. Explicit settings
+  take priority, including zero. These effects also work with CRT glass off.
+- **Erased passages fade where they were drawn.** New text appears immediately;
+  old letters retain their original colour before selection/cursor decoration.
+  Ordinary replacement defaults to 220ms, and erasures fade for at least 650ms.
+  Zero disables afterglow. The retained history is bounded per pane.
+- **Backspace deletes selections across wrapped input.** Shift+Backspace deletes
+  the previous word, Ctrl+Shift+Backspace the entire current logical line, and
+  Ctrl+Shift+Alt+Backspace all editable input, including literal newlines. The
+  terminal gestures use Readline-compatible editing; full-screen editors keep
+  their own keys. The workbench composer has the same edits with undo. F1 Help
+  lists all three shortcuts in all nine languages.
+
 ### Upgrading from 0.3.0
 
 Nothing you saved is renamed or moved. No config or state file was renamed or
@@ -14,6 +33,10 @@ removed, sessions saved by 0.3.0 load, and a 0.4.0 window attaches to a session
 host started by 0.3.0, because the host protocol is still version 1. These are
 the changes you may notice in the first hour.
 
+- **On Omarchy, add one line so Super+C and Super+V work.** Put
+  `o.window("terminal-delight", { tag = "+terminal" })` in
+  `~/.config/hypr/hyprland.lua`. Without it Omarchy sends Super+C to Terminal
+  Delight as Ctrl+C, which interrupts the program in the pane. (#892)
 - **SUPER+ALT+T opens the key menu instead of sending a tile.** On Omarchy that
   chord used to move the focused terminal into Terminal Delight. It now opens
   the list of Terminal Delight's keys, and `scripts/install-keys-hotkey.sh`
@@ -600,6 +623,20 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
+- **The OPS skin no longer crashes the window.** A cut-cornered panel that was
+  laid out at no size for a frame, as one is while it opens or collapses, made
+  the window panic while drawing it. Clicking a tab in the left bar was one way
+  to hit it. (#1072)
+- **The 🐞 bug panel shows its rows under the OPS skin.** Its background was
+  drawn over its content, so the panel opened as an empty frame and a bug could
+  not be reported from it. (#1072)
+- **Omarchy's Super+C copies in a terminal pane, and Super+V pastes.** Omarchy
+  sends its universal copy and paste to a window as Ctrl+Insert and Shift+Insert
+  when it counts the window as a terminal, and as Ctrl+C and Ctrl+V when it does
+  not. Terminal Delight was not counted, so Super+C interrupted whatever ran in
+  the pane and Super+V typed `^V`. A pane now takes Ctrl+Insert as copy and
+  Shift+Insert as paste, the chords every other terminal takes, and the README
+  gives the one-line Hyprland rule that tags Terminal Delight a terminal. (#892)
 - **A note box holds any number of notes.** Notes past the box's height were
   saved but clipped out of sight with no way to scroll to them. The box now
   opens on the newest, the wheel turns back to the oldest, and a note just

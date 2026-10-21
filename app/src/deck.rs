@@ -24,8 +24,13 @@ use gpui::{
 /// sign. Cut on one diagonal it reads as a slab that has been machined, which
 /// is the XCOM panel. The cut never takes more than a third of the shorter
 /// side, so a short chip stays a chip rather than becoming a parallelogram.
+///
+/// A plate can be laid out at no size at all — a region opening or collapsing
+/// spends a frame at zero — and the stroke asks for one a pixel smaller still.
+/// The ceiling is floored at zero there, because `f32::clamp` with its ceiling
+/// below its floor panics, and that panic took the whole window down.
 pub fn chamfer(w: f32, h: f32, cut: f32) -> [(f32, f32); 6] {
-    let c = cut.clamp(0., w.min(h) / 3.);
+    let c = cut.clamp(0., (w.min(h) / 3.).max(0.));
     [(c, 0.), (w, 0.), (w, h - c), (w - c, h), (0., h), (0., c)]
 }
 
@@ -124,7 +129,9 @@ pub fn lit_count(frac: f32, n: usize) -> usize {
     if f >= 1. {
         return n;
     }
-    ((f * n as f32).round() as usize).clamp(1, n - 1)
+    // A one-pip gauge has no "last but one" to stop at; it lights, rather than
+    // panicking on a ceiling of zero under a floor of one.
+    ((f * n as f32).round() as usize).clamp(1, (n - 1).max(1))
 }
 
 /// The states of an `n`-pip gauge for one reading, `None` being no reading.
@@ -296,6 +303,16 @@ mod tests {
         );
     }
 
+    /// The crash of 2026-10-20: `plate` strokes `chamfer(w - 1., h - 1., …)`,
+    /// so a plate laid out at zero size asked for a cut clamped under a ceiling
+    /// of -1/3, and the window panicked painting it.
+    #[test]
+    fn a_plate_with_no_size_does_not_panic() {
+        assert_eq!(chamfer(-1., -1., 7.5)[0], (0., 0.));
+        assert_eq!(chamfer(0., 40., 8.)[0], (0., 0.));
+        assert_eq!(chamfer(f32::NAN, f32::NAN, 8.)[0].0, 0.);
+    }
+
     /// Unknown is not zero: no reading draws a different gauge from a reading
     /// of zero, and the pips say so on their own.
     #[test]
@@ -313,5 +330,6 @@ mod tests {
         assert_eq!(lit_count(0., 12), 0);
         assert_eq!(lit_count(0.88, 12), 11);
         assert_eq!(lit_count(0.5, 0), 0);
+        assert_eq!(lit_count(0.5, 1), 1, "a one-pip gauge lights, not panics");
     }
 }

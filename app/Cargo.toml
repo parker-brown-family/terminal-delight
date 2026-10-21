@@ -1,6 +1,6 @@
 [package]
 name = "terminal-delight"
-version = "0.4.0-rc.1"
+version = "0.4.0-rc.3"
 edition = "2021"
 license = "MIT"
 description = "Tabful tiling Linux terminal manager — native-snappy, web-app polished, themeable at will"
@@ -42,6 +42,9 @@ base64 = "0.22"
 # the search took a third of the core's throughput. Already in the graph
 # through rio-vt and gpui.
 memchr = "2"
+# Already in gpui; match retained glyphs at Unicode grapheme/column boundaries.
+unicode-segmentation = "1.13"
+unicode-width = "0.2"
 # The flags and modes in src/vt/types.rs, in the bitflags generation both
 # cores use.
 bitflags = "2"

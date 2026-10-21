@@ -169,16 +169,16 @@ pub struct PaneInfo {
     /// Whether this pane would be exposed under the current policy.
     pub exposed: bool,
     /// The pane's *effective* grade — what it actually renders with (its own
-    /// override, else the inherited outer) — in the config API's uniform
-    /// `0..100` percents. `#[serde(skip)]` so `list_panes` stays an
+    /// override, else the inherited outer) — in the config API's percentages
+    /// and explicit milliseconds. `#[serde(skip)]` so `list_panes` stays an
     /// identity-only listing; `get_pane_config` serialises it explicitly.
     #[serde(skip)]
     pub grade: GradeReport,
 }
 
-/// The grade group exactly as the config API reads and writes it: every channel
-/// a `0..=100` percent (see [`crate::theme::GradeKey::to_percent`]), uniform
-/// across channels so an agent never reasons about a channel's stored range.
+/// The grade group exactly as the config API reads and writes it: numeric dials
+/// use `0..=100` percent (see [`crate::theme::GradeKey::to_percent`]), except
+/// `afterglow_ms`, which carries milliseconds. Switches remain booleans.
 /// This is the **GET** shape — a full report of a scope's current grade.
 ///
 /// `tracking` is deliberately absent: it is a theme-authored roll-bar dial, not
@@ -211,12 +211,22 @@ pub struct GradeReport {
     /// Border phosphor: how much light the lit borders cast. `0` is none, and
     /// the house glow sits at `25` — the range runs to four times it.
     pub phosphor: f32,
+    /// Terminal-image glow percentage. None means the dial has never been set;
+    /// drawing defaults to 20% on Standard and 37% on Intrusive.
+    pub image_glow: Option<f32>,
+    /// Inactive letter glow percentage; undeclared draws at 100%.
+    pub inactive_image_glow: Option<f32>,
+    /// Percent of active text intensity; undeclared draws at 45% on Standard or 52% on Intrusive.
+    pub inactive_text: Option<f32>,
+    /// Replaced-glyph fade time, 0..1200 milliseconds; undeclared draws at 220ms; erasures use at least 650ms.
+    pub afterglow_ms: Option<f32>,
 }
 
 /// The **POST** shape: a *partial* grade. Every field is optional and an absent
 /// field is left **unchanged** (PATCH, not PUT) — so "dim the brightness" never
 /// silently resets the theme, the warp, or any other channel. Percents are
-/// `0..=100`; out-of-range values clamp (the API is "dumb" — it stores the
+/// `0..=100`; `afterglow_ms` uses `0..=1200` milliseconds. Out-of-range values
+/// clamp (the API is "dumb" — it stores the
 /// number it is given, it does not interpret "20% lower"; the agent does that
 /// math and posts the resulting absolute value). `deny_unknown_fields` makes a
 /// typo'd channel a loud error rather than a silent no-op.
@@ -239,6 +249,14 @@ pub struct ConfigPatch {
     pub crt: Option<bool>,
     /// Border phosphor, `0..=100` (`25` is the house glow, `0` none).
     pub phosphor: Option<f32>,
+    /// Terminal-image glow, 0..100. Omission leaves the setting unchanged.
+    pub image_glow: Option<f32>,
+    /// Inactive letter glow percentage; undeclared draws at 100%.
+    pub inactive_image_glow: Option<f32>,
+    /// Percent of active text intensity; undeclared draws at 45% on Standard or 52% on Intrusive.
+    pub inactive_text: Option<f32>,
+    /// Replaced-glyph fade time, 0..1200 milliseconds; undeclared draws at 220ms; erasures use at least 650ms.
+    pub afterglow_ms: Option<f32>,
     /// Attach (or clear) the pane's card LOGO: an absolute path to an image file
     /// (png/jpg/jpeg/svg/webp). An empty string clears it. Lets an agent brand the
     /// terminal it's working in — shown as the card portrait on the agent wall.
@@ -1077,8 +1095,8 @@ fn initialize_result(params: &Value) -> Value {
              appear, vanish, and call tools, so you can react without polling. \
              `get_pane_config` / `set_pane_config` read and change a pane's (or \
              the window-level `outer`) appearance — brightness, contrast, colour, \
-             warp, text size, crawl, the CRT switch — in uniform 0..100 percents \
-             and two booleans; writes need the \
+             warp, text size, crawl, the CRT switch — in 0..100 percents, \
+             booleans and explicit afterglow milliseconds; writes need the \
              server's opt-in writes toggle. The config API is dumb: it stores the \
              absolute number you give it, so compute relative changes (\"20% \
              lower\") yourself from a get_pane_config read. `document_notes` \
@@ -1126,11 +1144,15 @@ fn tool_defs() -> Value {
             "name": "get_pane_config",
             "description":
                 "Read the appearance (monitor grade) of one or more panes, or the \
-                 window-level `outer` scope. Every channel is reported as a \
-                 0..100 percent (brightness, contrast, colour, text, background, \
+                 window-level `outer` scope. Numeric dials use 0..100 percent \
+                 (brightness, contrast, colour, text, background, \
                  gamma, menu_bar, text_size, bench_size, warp, crawl_angle, crawl_depth, \
-                 phosphor — the glow of the lit borders, 25 the house look, 0 none) plus \
-                 a `crawl` boolean and a `crt` boolean (off = a flat screen; \
+                 phosphor — the glow of the lit borders, 25 the house look, 0 none; \
+                 image_glow — active letter glow, default 20 (Standard) / 37 (Intrusive); inactive_image_glow \
+                 — inactive glow, default 100; inactive_text — percent of active \
+                 text, default 45 (Standard) / 52 (Intrusive)). `afterglow_ms` uses milliseconds, range \
+                 0..1200, default 220; erased passages use at least 650ms while enabled. These four lighting fields remain null \
+                 in GET while unset. `crawl` and `crt` are booleans (CRT off = a flat screen; \
                  warp and the roll bar keep their values but draw nothing). \
                  Omit `targets` to report every exposed pane \
                  plus `outer`. Read-only. To change a value, GET it, compute the \
@@ -1152,7 +1174,8 @@ fn tool_defs() -> Value {
             "description":
                 "Set the appearance of one or more panes (by pid) or the `outer` \
                  scope. Each update carries a partial `config`: only the channels \
-                 you include change (0..100 percents; out-of-range values clamp), \
+                  you include change (0..100 percents, except `afterglow_ms`: \
+                  0..1200 milliseconds; out-of-range values clamp), \
                  everything else is left untouched. The API is deliberately dumb \
                  — it stores the absolute number you give it and does NOT \
                  interpret relative asks like \"20% lower\"; read the current \
@@ -1179,7 +1202,7 @@ fn tool_defs() -> Value {
                                 },
                                 "config": {
                                     "type": "object",
-                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth/phosphor (0..100; phosphor 25 = the house border glow, 0 = none) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
+                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth/phosphor/image_glow/inactive_image_glow/inactive_text (0..100; image_glow is active letter glow, 0 off; afterglow_ms is 0..1200 milliseconds; phosphor 25 = the house border glow, 0 = none) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
                                 }
                             },
                             "required": ["target", "config"],

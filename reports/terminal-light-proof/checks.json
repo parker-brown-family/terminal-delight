@@ -1,0 +1,21 @@
+{
+  "default": {
+    "passed": 2606,
+    "ignored": 10
+  },
+  "fallback": {
+    "passed": 2553,
+    "ignored": 10
+  },
+  "clippy": "passed",
+  "clippy-fallback": "passed",
+  "release": "passed",
+  "commands": [
+    "cargo test --locked -- --test-threads=1",
+    "cargo test --locked --features core-alacritty -- --test-threads=1",
+    "cargo clippy --locked -- -D warnings",
+    "cargo clippy --locked --features core-alacritty -- -D warnings",
+    "cargo fmt --check",
+    "cargo build --release --locked"
+  ]
+}
