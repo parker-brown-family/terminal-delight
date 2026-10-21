@@ -69,10 +69,13 @@ window launched afterwards. Neither can be closed from inside the program while
 every caller is the same user, because the file and the launch are the user's
 own.
 
-Two neighbours stay as 0002 left them. `ctl bench say` puts a line into the
-composer of an agent pane showing its workbench and sends it, without asking
-anybody; it writes only while that pane is on screen, and flashes when it does. And the pane a caller names in `mcp
-from` is still taken on its word.
+Two neighbours stay as 0002 left them. Three bench verbs reach an agent pane
+showing its workbench without asking anybody: `ctl bench say` sends a line
+through its composer, and `ctl bench choose` and `ctl bench submit` send an
+answer to the question on its bench, as keys into a live picker or as a
+`[workbench]` line. Each delivers only while that pane is on screen, and
+flashes when it does. And the pane a caller names in `mcp from` is still taken
+on its word.
 
 ## When this expires
 

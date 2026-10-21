@@ -1,7 +1,7 @@
 <script type="application/json" data-page>
 {
   "title": "ctl",
-  "description": "terminal-delight ctl sends one-line commands to a running window over its control socket: name and group tabs, flip faces, open documents, turn the MCP server's switches off, choose a skin. Only bench say writes to a terminal.",
+  "description": "terminal-delight ctl sends one-line commands to a running window over its control socket: name and group tabs, flip faces, open documents, turn the MCP server's switches off, choose a skin. Only bench say, bench choose and bench submit reach a terminal, through a pane's bench.",
   "updated": "2026-10-21",
   "trueOf": "main at d7cf383, plus the socket refusing to widen the MCP switches",
   "summary": "Script a running window"
@@ -9,7 +9,7 @@
 </script>
 
 <section data-register="brief">
-<p class="lede">Every Terminal Delight window listens on its own control socket, and the same binary is the client. <code>terminal-delight ctl</code> lets a script, a keybinding, a status bar or an agent's own shell change a running window. Only <code>bench say</code> writes to a terminal in it.</p>
+<p class="lede">Every Terminal Delight window listens on its own control socket, and the same binary is the client. <code>terminal-delight ctl</code> lets a script, a keybinding, a status bar or an agent's own shell change a running window. Only <code>bench say</code>, <code>bench choose</code> and <code>bench submit</code> reach a terminal in it, through a pane's bench.</p>
 <pre class="cmd"><code>terminal-delight ctl tab name "deploy"
 terminal-delight ctl mcp writes off
 terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
@@ -80,7 +80,7 @@ terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
 <pre><code>terminal-delight ctl tabs '[{"op":"name","pane":4121,"name":"api"},{"op":"group","pane":4121,"group":"backend","color":"#3ec6d1"}]'</code></pre>
 
 <h3>What would prove this wrong</h3>
-<p>No <code>ctl</code> command writes bytes into a terminal's input except <code>bench say</code> and <code>bench type</code>, which go to the agent through the bench on purpose. Any other command that does is a bug.</p>
+<p>No <code>ctl</code> command writes bytes into a terminal's input except three, which reach the agent through its bench on purpose: <code>bench say</code> sends a line, and <code>bench choose</code> and <code>bench submit</code> send an answer to the question on the bench, the way clicking it would. <code>bench type</code> only fills the bench's composer. Any other command that does is a bug.</p>
 </section>
 
 <ol data-sources>
