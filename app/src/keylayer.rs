@@ -123,10 +123,11 @@ pub enum Layer {
     /// The inline rename box in the header, also drawn on both faces, also a
     /// caret you can see. Same terms as [`Layer::Sticky`].
     Rename,
-    /// A document floating over the terminal face. Escape closes it, and
-    /// [`send_chord`] is its ↪ while its bar draws one; that is all it takes:
-    /// every other key still reaches the shell underneath, which is the whole
-    /// point of reading beside it rather than instead of it.
+    /// A document floating over the terminal face. Escape closes it,
+    /// [`send_chord`] is its ↪ while its bar draws one, and [`glow_chord`]
+    /// turns it; that is all it takes: every other key still reaches the
+    /// shell underneath, which is the whole point of reading beside it rather
+    /// than instead of it.
     ///
     /// Below [`Layer::Sticky`] and [`Layer::Rename`], so a caret blinking
     /// somewhere else on the pane keeps its own Escape.
@@ -233,6 +234,46 @@ pub fn send_chord(key: &str, control: bool, shift: bool, alt: bool) -> bool {
     key == "enter" && control && shift && !alt
 }
 
+/// A turn of a floating document from the keyboard: one step, or most of
+/// the view, `-1` towards the top and `1` towards the end.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GlowMove {
+    Step(i8),
+    Page(i8),
+}
+
+/// ctrl+↑/↓ steps the floating square, ctrl+shift+↑/↓ pages it, and with its
+/// note box open the same chords turn the notes.
+///
+/// Parker, 2026-10-21, laying the modifiers out by surface: ctrl for the
+/// floating square, alt for the panes, ctrl+alt for the left spine. Alt+arrows
+/// and ctrl+alt were already those. The square had nothing, so reading a
+/// brief beside an agent needed the wheel. Paging is on shift rather than on
+/// ctrl+PageUp/PageDown, which switch tabs and keep doing so with a square up:
+/// his pick, over taking them while the square floats.
+///
+/// What it costs: while a square floats, ctrl+↑/↓ and ctrl+shift+↑/↓ do not
+/// reach the shell as `CSI 1;5A` and `CSI 1;6A`. Word motion is ctrl+←/→, which
+/// stays the shell's. With no square up nothing is taken.
+///
+/// Takes the parts rather than a [`Key`], as [`send_chord`] does, so the note
+/// box, which reads a `gpui::Keystroke`, asks the same question.
+pub fn glow_chord(key: &str, control: bool, shift: bool, alt: bool) -> Option<GlowMove> {
+    if !control || alt {
+        return None;
+    }
+    let dir = match key {
+        "up" => -1,
+        "down" => 1,
+        _ => return None,
+    };
+    Some(if shift {
+        GlowMove::Page(dir)
+    } else {
+        GlowMove::Step(dir)
+    })
+}
+
 /// One rung: the layer, and whether it claims this keystroke.
 type Rung = (Layer, fn(&Key, &Up) -> bool);
 
@@ -268,7 +309,8 @@ const LADDER: [Rung; 13] = [
         u.float
             && (u.float_caret
                 || k.key == "escape"
-                || (u.float_sends && send_chord(k.key, k.control, k.shift, k.alt)))
+                || (u.float_sends && send_chord(k.key, k.control, k.shift, k.alt))
+                || (!k.platform && glow_chord(k.key, k.control, k.shift, k.alt).is_some()))
     }),
     (Layer::Document, |_, u| u.document),
     (Layer::Bench, |_, u| u.bench),
@@ -1080,6 +1122,56 @@ mod tests {
             ..Up::default()
         };
         assert_eq!(route(&ch("a"), &stray), Layer::Terminal);
+    }
+
+    /// ctrl for the floating square, alt for the panes, ctrl+alt for the left
+    /// spine. ctrl+↑/↓ and ctrl+shift+↑/↓ are the square's only while one
+    /// floats; ctrl+PageUp/PageDown still switch tabs over it, and with no
+    /// square the arrows are the shell's again.
+    #[test]
+    fn ctrl_arrows_turn_the_floating_square_and_nothing_else() {
+        let up = floating();
+        for k in [
+            ctrl("up"),
+            ctrl("down"),
+            ctrl_shift("up"),
+            ctrl_shift("down"),
+        ] {
+            assert_eq!(route(&k, &up), Layer::Float, "{k:?} over a square");
+            assert_eq!(
+                route(&k, &Up::default()),
+                Layer::Terminal,
+                "{k:?} with none"
+            );
+        }
+        assert_eq!(
+            glow_chord("up", true, false, false),
+            Some(GlowMove::Step(-1))
+        );
+        assert_eq!(
+            glow_chord("down", true, true, false),
+            Some(GlowMove::Page(1))
+        );
+        assert_eq!(
+            route(&ctrl("pageup"), &up),
+            Layer::Terminal,
+            "the tabs' chord"
+        );
+        assert_eq!(route(&ctrl("left"), &up), Layer::Terminal, "word motion");
+        assert_eq!(route(&alt("up"), &up), Layer::Window, "pane focus");
+        let spine = Key {
+            key: "up",
+            control: true,
+            alt: true,
+            ..Key::default()
+        };
+        assert_eq!(route(&spine, &up), Layer::Window, "the left spine");
+        assert_eq!(glow_chord("up", true, false, true), None);
+        assert_eq!(
+            route(&named("up"), &up),
+            Layer::Terminal,
+            "a plain arrow is the shell's"
+        );
     }
 
     /// Every paste chord goes to a note being written, on the square and on
