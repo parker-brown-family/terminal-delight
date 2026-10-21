@@ -3524,7 +3524,7 @@ impl gpui::EventEmitter<DragPaneStart> for TerminalView {}
 pub struct ClosePane;
 impl gpui::EventEmitter<ClosePane> for TerminalView {}
 
-/// Ctrl+W in this pane — the workspace closes the whole active tab, always via
+/// Ctrl+Shift+W in this pane — the workspace closes the whole active tab, always via
 /// the serious confirmation dialog (never a silent close).
 pub struct RequestCloseTab;
 impl gpui::EventEmitter<RequestCloseTab> for TerminalView {}
@@ -7051,8 +7051,8 @@ impl TerminalView {
             }
             // alt+k flips this pane between its two faces, from either side. It
             // was alt+w for one day, and alt+w was already taken: it is the
-            // middle rung of the close ladder (ctrl+w the tab, super+w the tile,
-            // alt+w the focused PANE). `keystroke_bytes` is told about `k` too,
+            // middle rung of the close ladder (ctrl+w the document box,
+            // ctrl+shift+w the tab, super+w the tile, alt+w the focused PANE). `keystroke_bytes` is told about `k` too,
             // so the letter cannot reach a shell as ESC k on the way past.
             crate::keylayer::Layer::Face => {
                 self.toggle_face(cx);
@@ -7375,6 +7375,10 @@ impl TerminalView {
                 "m" => self.toggle_handover_page(cx),
                 // The most recently closed thing comes back.
                 "z" => cx.emit(ReopenClosed),
+                // Ctrl+Shift+W closes the whole tab (always confirmed by the
+                // workspace). It was plain Ctrl+W until that chord went to the
+                // document box, the smallest thing a close can take.
+                "w" => cx.emit(RequestCloseTab),
                 // Two keys for one panel, and the second is not redundant.
                 // fcitx5's Unicode addon binds Ctrl+Shift+U — `libunicode.so`
                 // carries both `Control+Shift+U` and `Control+Alt+Shift+U` — and
@@ -7396,9 +7400,13 @@ impl TerminalView {
             return Handled::Declined;
         }
         match k.key {
-            // Ctrl+W closes the whole tab (always confirmed by the workspace).
-            // Intercepted here so it never reaches the PTY as werase (^W).
-            "w" => cx.emit(RequestCloseTab),
+            // Ctrl+W puts away the document box on top — a clip, then the
+            // square it was covering — the way its ✕ and Escape do, notes and
+            // all guarded. The table claims it only while a box is up, so with
+            // none it reaches the PTY as werase (^W).
+            "w" => {
+                self.request_close_float(cx);
+            }
             "f" => cx.emit(OpenFind { global: false }),
             // Ctrl+X = CUT the selection: copy it, and when it is the trailing
             // run on the live input line, erase it there too (see
@@ -10136,8 +10144,8 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         // absent from the table is one deleted `return` away from arriving as
         // ESC k. Taking alt+r costs readline's revert-line, alt+v its
         // page-scroll, alt+h its mark-paragraph, alt+w its copy-region-as-kill
-        // and alt+k its (unbound-by-default) slot (the DESTRUCTIVE ^W werase is
-        // ctrl+w, intercepted a layer up in `on_key` as close-tab, and is
+        // and alt+k its (unbound-by-default) slot (^W werase is ctrl+w, taken a
+        // layer up in `on_key` only while a document box is up, and is
         // untouched here) — fair trades for one-hand pane chords.
         //
         // THE LIST ITSELF LIVES IN `workbench`, because the bench needs exactly
@@ -16844,8 +16852,9 @@ mod tests {
         // anything, because the pane's handler runs first.
         assert_eq!(alt_char("k"), None);
         // ...and the neighbouring close chord is a DIFFERENT layer: ctrl+w is
-        // intercepted in `on_key` as close-tab and never gets here, so it keeps
-        // its werase encoding. Asserted so the two rungs stay distinguishable.
+        // taken in `on_key` while a document box is up, and with none it gets
+        // here and must still be werase. Asserted so the two rungs stay
+        // distinguishable.
         assert_eq!(bytes("ctrl-w"), Some(vec![0x17]));
         // ctrl+alt+arrows walk the LEFT BAR's tree — the workspace's, and never
         // PTY bytes. Covered by the blanket `m.control` arm; asserted because

@@ -29,7 +29,8 @@ the same class as Alacritty.
 | **Frameless window (CSD)** | No OS titlebar; app draws its own frame, shadow, resize edges, rounded corners (conditional on tiling) | `csd.rs` | — |
 | **Pane focus, no jiggle** | Focus is paint-only (border/shadow), never layout — zero reflow; +15% phosphor halo | constant geometry | `alt+←/→` |
 | **Agent-turn navigation** | Jump between *your* turns in a Claude/Codex pane | `human_input_rows` | `alt+↑/↓` |
-| **Close with confirm** | `ctrl+w` always confirms; last pane closes app | dialog | `ctrl+w` |
+| **Close with confirm** | `ctrl+shift+w` always confirms; last pane closes app | dialog | `ctrl+shift+w` |
+| **Close the document box** | `ctrl+w` puts away the box on top (clip, then the square under it), as `esc` and its ✕ do; with no box, `ctrl+w` is the shell's werase | `request_close_float` | `ctrl+w` |
 | **Agent-finished bell** | Sound + dismissable card when an agent finishes; per-pane; trim/loop/volume | `bell.rs` | click to ack |
 | **Desktop hotkey** | GNOME `ctrl+alt+t` launches TD (reversible installer) | `scripts/install-hotkey.sh` | install script |
 | **Latency probe** | `TD_LATENCY=1` → key→echo→parse p50 121 µs / p99 169 µs; `seq 1 100000` in 0.089 s | instrumentation | `TD_LATENCY` |

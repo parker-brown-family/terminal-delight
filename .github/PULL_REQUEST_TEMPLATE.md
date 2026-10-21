@@ -4,6 +4,13 @@
 
 <!-- What does this change, and what problem does it solve? -->
 
+## Release
+
+<!-- Read the current release section in RELEASING.md. Set the GitHub milestone as well as this text. -->
+- Intended release: <!-- milestone name, or explicitly unassigned -->
+- Merge target: <!-- actual base branch -->
+- Release fit: <!-- why this belongs, or which scope decision is still needed -->
+
 ## Type
 
 - [ ] Theme (new/updated `.toml`)
@@ -12,6 +19,8 @@
 - [ ] Docs / infra
 
 ## Checklist
+
+- [ ] Release intent is recorded with a milestone or explicitly unassigned, and the PR base matches the intended integration branch
 
 - [ ] `cargo fmt -- --check`, `cargo clippy --locked -- -D warnings`, `cargo test --locked` all pass (in `app/`)
 - [ ] No prebuilt binary is attached (releases are built by CI only — see `RELEASING.md`)

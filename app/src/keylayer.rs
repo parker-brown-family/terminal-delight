@@ -407,18 +407,35 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
             if k.key == "v" && (note_caret(up) || up.sticky || up.rename) {
                 return false;
             }
-            // The panels and the clipboard. Shift is what keeps raw ctrl+a / ^D /
-            // ^G / ^U reaching the pseudoterminal.
+            // The panels, the clipboard and closing the tab. Shift is what keeps
+            // raw ctrl+a / ^D / ^G / ^U / ^W reaching the pseudoterminal.
             return matches!(
                 k.key,
-                "t" | "c" | "v" | "k" | "a" | "b" | "n" | "m" | "z" | "u" | "y" | "d" | "g" | "f"
+                "t" | "c"
+                    | "v"
+                    | "k"
+                    | "a"
+                    | "b"
+                    | "n"
+                    | "m"
+                    | "z"
+                    | "u"
+                    | "y"
+                    | "d"
+                    | "g"
+                    | "f"
+                    | "w"
             );
         }
-        return matches!(
-            k.key,
-            // ^W is werase, and the tab is worth more than it here.
-            "w" | "f" | "x"
-        );
+        // ctrl+w puts away the document box on top, one press per box. With no
+        // box up it is ^W, werase, again: closing the tab moved to ctrl+shift+w,
+        // because the close nearest to hand should take the smallest thing, and
+        // a whole tab of live shells was what a stray ^W used to cost. A note
+        // being written in the box keeps the chord, so the box decides.
+        if k.key == "w" {
+            return up.float && !up.float_caret;
+        }
+        return matches!(k.key, "f" | "x");
     }
     false
 }
@@ -980,6 +997,35 @@ mod tests {
         assert_eq!(route(&named("enter"), &floating()), Layer::Terminal);
     }
 
+    /// ctrl+w is the document box's close while one is up, and ^W otherwise;
+    /// the tab's close is ctrl+shift+w whether a box is up or not.
+    #[test]
+    fn ctrl_w_closes_the_box_and_ctrl_shift_w_the_tab() {
+        let up = floating();
+        assert_eq!(route(&ctrl("w"), &up), Layer::PaneChord, "the box on top");
+        assert_eq!(route(&ctrl_shift("w"), &up), Layer::PaneChord);
+        assert_eq!(
+            route(&ctrl("w"), &Up::default()),
+            Layer::Terminal,
+            "no box: ^W reaches the shell as werase"
+        );
+        assert_eq!(route(&ctrl_shift("w"), &Up::default()), Layer::PaneChord);
+        assert_eq!(
+            route(&ctrl("w"), &on_bench()),
+            Layer::Bench,
+            "no box on the bench: the composer's kill-word"
+        );
+        let writing = Up {
+            float_caret: true,
+            ..floating()
+        };
+        assert_eq!(
+            route(&ctrl("w"), &writing),
+            Layer::Float,
+            "a note being written in the box hears the chord first"
+        );
+    }
+
     /// ctrl+shift+enter is ↪ over a square whose bar draws the button, and
     /// goes where it always went over one that does not — or with no square
     /// at all. The window's and the pane's chords still pass it by.
@@ -1028,7 +1074,12 @@ mod tests {
             assert_eq!(route(&k, &up), Layer::Float, "{k:?}");
         }
         assert_eq!(route(&alt("w"), &up), Layer::Window);
-        assert_eq!(route(&ctrl("w"), &up), Layer::PaneChord);
+        assert_eq!(route(&ctrl_shift("w"), &up), Layer::PaneChord);
+        assert_eq!(
+            route(&ctrl("w"), &up),
+            Layer::Float,
+            "the note's, not the close"
+        );
         assert_eq!(route(&alt("k"), &up), Layer::Face);
         // With no float the caret claims nothing: it is the float's.
         let stray = Up {
@@ -1237,7 +1288,11 @@ mod tests {
             Layer::PaneChord,
             "the pane's chord"
         );
-        assert_eq!(route(&ctrl("w"), &doc), Layer::PaneChord, "closing the tab");
+        assert_eq!(
+            route(&ctrl_shift("w"), &doc),
+            Layer::PaneChord,
+            "closing the tab"
+        );
         assert_eq!(route(&alt("k"), &doc), Layer::Face, "alt+k to the shell");
         assert_eq!(route(&named("f1"), &doc), Layer::Help);
         assert_eq!(
@@ -1289,9 +1344,9 @@ mod tests {
             "ctrl+shift+b opens the left bar on either face"
         );
         assert_eq!(
-            route(&ctrl("w"), &bench),
+            route(&ctrl_shift("w"), &bench),
             Layer::PaneChord,
-            "ctrl+w closes the tab on either face"
+            "ctrl+shift+w closes the tab on either face"
         );
         // The window's chords: the complaint that started this.
         assert_eq!(
@@ -1435,7 +1490,14 @@ mod tests {
         );
         assert!(pane_chord(&alt("backspace"), &stuck));
 
-        assert!(pane_chord(&ctrl("w"), &nothing), "^W closes the tab");
+        assert!(
+            !pane_chord(&ctrl("w"), &nothing),
+            "^W is werase with no box up"
+        );
+        assert!(
+            pane_chord(&ctrl_shift("w"), &nothing),
+            "ctrl+shift+w closes the tab"
+        );
         assert!(pane_chord(&ctrl("f"), &nothing));
         assert!(pane_chord(&ctrl_shift("f"), &nothing), "find across panes");
         assert!(pane_chord(&alt("s"), &nothing));
