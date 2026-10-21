@@ -96,7 +96,9 @@ fn take_the_turn() {
 }
 
 /// The window a harness pane fills, in logical pixels.
-const WINDOW: (f32, f32) = (1000.0, 640.0);
+// Fit the fixed 100×28 startup grid at the approved 107% text size. Its
+// column count is intentional: wrap/link fixtures are authored against it.
+const WINDOW: (f32, f32) = (1000.0, 720.0);
 
 /// How long the terminal gets to print what a test is waiting for. Generous:
 /// a loaded CI runner starting `sh` is slow, and a pass never waits this long.
@@ -605,6 +607,23 @@ impl Pane {
         let ready = self.read(|v| v.spawned) + Duration::from_millis(200);
         if let Some(left) = ready.checked_duration_since(Instant::now()) {
             std::thread::sleep(left);
+        }
+    }
+
+    /// A design can change font metrics and stage a debounced PTY resize.
+    /// Wait for that actual resize before measuring content-only behavior.
+    /// Its deadline uses wall time; the housekeeping wake uses the test clock.
+    pub(super) fn settle_size(&mut self) {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            self.redraw();
+            if self.read(|v| v.pending_pty.is_none()) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "PTY size did not settle");
+            std::thread::sleep(Duration::from_millis(10));
+            self.cx.executor().advance_clock(Duration::from_millis(33));
+            self.cx.run_until_parked();
         }
     }
 

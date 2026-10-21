@@ -1,0 +1,621 @@
+{
+  "pid": 585707,
+  "session": "phosphor-proof",
+  "client": {
+    "address": "0x57761df7dac0",
+    "mapped": true,
+    "hidden": false,
+    "visible": true,
+    "acceptsInput": true,
+    "at": [
+      12,
+      38
+    ],
+    "size": [
+      1576,
+      950
+    ],
+    "workspace": {
+      "id": -96,
+      "name": "special:phosphor-proof"
+    },
+    "floating": false,
+    "monitor": 1,
+    "class": "terminal-delight",
+    "title": "terminal-delight \u2014 phosphor-proof",
+    "initialClass": "terminal-delight",
+    "initialTitle": "terminal-delight \u2014 phosphor-proof",
+    "pid": 585707,
+    "xwayland": false,
+    "pinned": false,
+    "pinFullscreened": false,
+    "fullscreen": 0,
+    "fullscreenClient": 0,
+    "fullscreenHandler": "default",
+    "allowedOverFullscreen": true,
+    "grouped": [],
+    "tags": [
+      "default-opacity*",
+      "terminal*"
+    ],
+    "swallowing": "0x0",
+    "focusHistoryID": 6,
+    "inhibitingIdle": false,
+    "xdgTag": "",
+    "xdgDescription": "",
+    "contentType": "none",
+    "tearingHint": false,
+    "stableId": "1800069c"
+  },
+  "panes": [
+    {
+      "tab": 0,
+      "title": "Glow",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 585811,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-phosphor-glow-lab/terminal-delight",
+      "exposed": true
+    },
+    {
+      "tab": 0,
+      "title": "Reference \u00b7 zero glow",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 585813,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-phosphor-glow-lab/terminal-delight",
+      "exposed": true
+    }
+  ],
+  "binary_sha256": "fb145f11e537e9332f6e9bd4ee587f34bab30f361aab49f7d7ca70c39b79ccf0",
+  "snapshots": {
+    "zero": {
+      "content": [
+        {
+          "type": "text",
+          "text": "outer: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0\n585811: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0\n585813: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session phosphor-proof \u00b7 window 585707 \u00b7 terminal-delight"
+        }
+      ],
+      "structuredContent": {
+        "configs": [
+          {
+            "target": "outer",
+            "scope": "outer",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": true,
+              "phosphor": 0.0,
+              "image_glow": 0.0
+            }
+          },
+          {
+            "target": 585811,
+            "scope": "pane",
+            "tab": 0,
+            "title": "Glow",
+            "mode": "SHELL",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": true,
+              "phosphor": 0.0,
+              "image_glow": 0.0
+            }
+          },
+          {
+            "target": 585813,
+            "scope": "pane",
+            "tab": 0,
+            "title": "Reference \u00b7 zero glow",
+            "mode": "SHELL",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": true,
+              "phosphor": 0.0,
+              "image_glow": 0.0
+            }
+          }
+        ],
+        "instance": {
+          "session": "phosphor-proof",
+          "window": 585707,
+          "build": "terminal-delight"
+        }
+      }
+    },
+    "glow-100": {
+      "content": [
+        {
+          "type": "text",
+          "text": "outer: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0\n585811: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0\n585813: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session phosphor-proof \u00b7 window 585707 \u00b7 terminal-delight"
+        }
+      ],
+      "structuredContent": {
+        "configs": [
+          {
+            "target": "outer",
+            "scope": "outer",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": true,
+              "phosphor": 0.0,
+              "image_glow": 100.0
+            }
+          },
+          {
+            "target": 585811,
+            "scope": "pane",
+            "tab": 0,
+            "title": "Glow",
+            "mode": "SHELL",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": true,
+              "phosphor": 0.0,
+              "image_glow": 100.0
+            }
+          },
+          {
+            "target": 585813,
+            "scope": "pane",
+            "tab": 0,
+            "title": "Reference \u00b7 zero glow",
+            "mode": "SHELL",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": true,
+              "phosphor": 0.0,
+              "image_glow": 0.0
+            }
+          }
+        ],
+        "instance": {
+          "session": "phosphor-proof",
+          "window": 585707,
+          "build": "terminal-delight"
+        }
+      }
+    },
+    "zero-restored": {
+      "content": [
+        {
+          "type": "text",
+          "text": "outer: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0\n585811: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0\n585813: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session phosphor-proof \u00b7 window 585707 \u00b7 terminal-delight"
+        }
+      ],
+      "structuredContent": {
+        "configs": [
+          {
+            "target": "outer",
+            "scope": "outer",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": true,
+              "phosphor": 0.0,
+              "image_glow": 0.0
+            }
+          },
+          {
+            "target": 585811,
+            "scope": "pane",
+            "tab": 0,
+            "title": "Glow",
+            "mode": "SHELL",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": true,
+              "phosphor": 0.0,
+              "image_glow": 0.0
+            }
+          },
+          {
+            "target": 585813,
+            "scope": "pane",
+            "tab": 0,
+            "title": "Reference \u00b7 zero glow",
+            "mode": "SHELL",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": true,
+              "phosphor": 0.0,
+              "image_glow": 0.0
+            }
+          }
+        ],
+        "instance": {
+          "session": "phosphor-proof",
+          "window": 585707,
+          "build": "terminal-delight"
+        }
+      }
+    },
+    "crt-off": {
+      "content": [
+        {
+          "type": "text",
+          "text": "outer: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0 \u00b7 crt off\n585811: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0 \u00b7 crt off\n585813: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0 \u00b7 crt off"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session phosphor-proof \u00b7 window 585707 \u00b7 terminal-delight"
+        }
+      ],
+      "structuredContent": {
+        "configs": [
+          {
+            "target": "outer",
+            "scope": "outer",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": false,
+              "phosphor": 0.0,
+              "image_glow": 100.0
+            }
+          },
+          {
+            "target": 585811,
+            "scope": "pane",
+            "tab": 0,
+            "title": "Glow",
+            "mode": "SHELL",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": false,
+              "phosphor": 0.0,
+              "image_glow": 100.0
+            }
+          },
+          {
+            "target": 585813,
+            "scope": "pane",
+            "tab": 0,
+            "title": "Reference \u00b7 zero glow",
+            "mode": "SHELL",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": false,
+              "phosphor": 0.0,
+              "image_glow": 0.0
+            }
+          }
+        ],
+        "instance": {
+          "session": "phosphor-proof",
+          "window": 585707,
+          "build": "terminal-delight"
+        }
+      }
+    },
+    "glow-55": {
+      "content": [
+        {
+          "type": "text",
+          "text": "outer: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0\n585811: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0\n585813: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session phosphor-proof \u00b7 window 585707 \u00b7 terminal-delight"
+        }
+      ],
+      "structuredContent": {
+        "configs": [
+          {
+            "target": "outer",
+            "scope": "outer",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": true,
+              "phosphor": 0.0,
+              "image_glow": 55.0
+            }
+          },
+          {
+            "target": 585811,
+            "scope": "pane",
+            "tab": 0,
+            "title": "Glow",
+            "mode": "SHELL",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": true,
+              "phosphor": 0.0,
+              "image_glow": 55.0
+            }
+          },
+          {
+            "target": 585813,
+            "scope": "pane",
+            "tab": 0,
+            "title": "Reference \u00b7 zero glow",
+            "mode": "SHELL",
+            "grade": {
+              "brightness": 50.0,
+              "contrast": 50.0,
+              "colour": 50.0,
+              "text": 50.0,
+              "background": 50.0,
+              "gamma": 50.0,
+              "menu_bar": 33.333335876464844,
+              "text_size": 28.571426391601562,
+              "bench_size": 28.571426391601562,
+              "warp": 0.0,
+              "crawl": false,
+              "crawl_angle": 17.543859481811523,
+              "crawl_depth": 16.38796043395996,
+              "crt": true,
+              "phosphor": 0.0,
+              "image_glow": 0.0
+            }
+          }
+        ],
+        "instance": {
+          "session": "phosphor-proof",
+          "window": 585707,
+          "build": "terminal-delight"
+        }
+      }
+    }
+  },
+  "restart": {
+    "previous_pid": 487560,
+    "pid": 585707,
+    "configs": [
+      {
+        "target": "outer",
+        "scope": "outer",
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": true,
+          "phosphor": 0.0,
+          "image_glow": 55.0
+        }
+      },
+      {
+        "target": 585811,
+        "scope": "pane",
+        "tab": 0,
+        "title": "Glow",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": true,
+          "phosphor": 0.0,
+          "image_glow": 55.0
+        }
+      },
+      {
+        "target": 585813,
+        "scope": "pane",
+        "tab": 0,
+        "title": "Reference \u00b7 zero glow",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": true,
+          "phosphor": 0.0,
+          "image_glow": 0.0
+        }
+      }
+    ],
+    "seed_rewritten": false,
+    "binary_sha256": "fb145f11e537e9332f6e9bd4ee587f34bab30f361aab49f7d7ca70c39b79ccf0"
+  },
+  "saved_toml": "active = 0\nwin = [0.0, 0.0, 1300.0, 850.0]\nscale = 1.0\nskin = \"default\"\nwarp = 0.0\npanes = 2\ngroups = []\nprojects = []\nleft_bar = false\nleft_bar_w = 208.0\nrail_pinned = false\nslot_remaining = true\nfocus_inherit = false\nanchor_top = false\nagent_tint = false\nlang = \"en\"\nlast_workspace = \"special-phosphor-proof\"\nundo_hinted = false\n\n[theme]\nid = \"custom\"\ncolor = \"default\"\nfollow_omarchy = false\n\n[theme.grade]\nbrightness = 0.5\ncontrast = 0.5\ncolour = 0.5\ntext = 0.5\nbackground = 0.5\ngamma = 0.5\nscale = 1.0\ntext_size = 1.0\nwarp = 0.0\nglare = 0.0\nimage_glow = 0.550000011920929\ncrawl_angle = 12.0\ncrawl_depth = 2.5\nphosphor = 0.0\n\n[[tabs]]\nname = \"IMAGE GLOW \u00b7 experimental\"\n\n[tabs.node.Split]\ndir = \"Row\"\nratio = 0.5\n\n[tabs.node.Split.a.Leaf]\ncwd = \"/home/parker/Work/td-phosphor-glow-lab/terminal-delight\"\nname = \"Glow\"\n\n[tabs.node.Split.b.Leaf]\ncwd = \"/home/parker/Work/td-phosphor-glow-lab/terminal-delight\"\nname = \"Reference \u00b7 zero glow\"\n\n[tabs.node.Split.b.Leaf.appearance]\npins = [\"image_glow\"]\n\n[tabs.node.Split.b.Leaf.appearance.grade]\nbrightness = 0.1599999964237213\ncontrast = 0.44999998807907104\ncolour = 0.6899999976158142\ntext = 0.6600000262260437\nbackground = 0.4300000071525574\ngamma = 0.5\nscale = 0.9900000095367432\ntext_size = 1.0\nwarp = 1.4299999475479126\nimage_glow = 0.0\ncrawl_angle = 12.0\ncrawl_depth = 2.5\nphosphor = 1.0\n\n[mcp]\nenabled = true\nexpose = \"all\"\nevents = true\nwritable = true\n"
+}

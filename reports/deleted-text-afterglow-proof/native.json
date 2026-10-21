@@ -1,0 +1,267 @@
+{
+  "pid": 4051961,
+  "mode": "erasures",
+  "session": "deleted-text-erasures",
+  "binary_sha256": "81eb231005af6354ed33645988a517ef646549f4ebdad566ed22cd245e9a4a06",
+  "panes": [
+    {
+      "tab": 0,
+      "title": "Selected terminal",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 4052322,
+      "pane_id": null,
+      "cwd": "/tmp",
+      "exposed": true
+    },
+    {
+      "tab": 0,
+      "title": "Untouched neighbor",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 4052324,
+      "pane_id": null,
+      "cwd": "/tmp",
+      "exposed": true
+    }
+  ],
+  "captures": {
+    "full": {
+      "at": 683479.323146629,
+      "end": 683479.470913773,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "word-early": {
+      "at": 683479.552025816,
+      "end": 683479.718059434,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "word-linger": {
+      "at": 683479.731283247,
+      "end": 683479.877319077,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "word-finished": {
+      "at": 683480.131046089,
+      "end": 683480.272431281,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "erase-early": {
+      "at": 683480.958028406,
+      "end": 683481.107514989,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "erase-linger": {
+      "at": 683481.139330321,
+      "end": 683481.276635204,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "erase-finished": {
+      "at": 683481.540293746,
+      "end": 683481.689555578,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "ordinary-linger": {
+      "at": 683482.558472562,
+      "end": 683482.710682774,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "ordinary-finished": {
+      "at": 683482.960538932,
+      "end": 683483.116924158,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "zero-early": {
+      "at": 683521.143418244,
+      "end": 683521.339583647,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "zero-finished": {
+      "at": 683521.689484748,
+      "end": 683521.861108096,
+      "logical_size": [
+        1400,
+        920
+      ]
+    }
+  },
+  "mutations": {
+    "word": {
+      "command": "word",
+      "at": 683479.473254108,
+      "cursor_moved_at": 683479.533778199
+    },
+    "full": {
+      "command": "full",
+      "at": 683480.276594772
+    },
+    "erase": {
+      "command": "erase",
+      "at": 683480.880873749,
+      "cursor_moved_at": 683480.94130069
+    },
+    "ordinary-old": {
+      "command": "ordinary-old",
+      "at": 683481.69039019
+    },
+    "ordinary-new": {
+      "command": "ordinary-new",
+      "at": 683482.298317923
+    }
+  },
+  "config": {
+    "configs": [
+      {
+        "target": 4052322,
+        "scope": "pane",
+        "tab": 0,
+        "title": "Selected terminal",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 0.0,
+          "image_glow": 0.0,
+          "inactive_image_glow": 0.0,
+          "inactive_text": 100.0,
+          "afterglow_ms": 220.0
+        }
+      },
+      {
+        "target": 4052324,
+        "scope": "pane",
+        "tab": 0,
+        "title": "Untouched neighbor",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 0.0,
+          "image_glow": 0.0,
+          "inactive_image_glow": 0.0,
+          "inactive_text": 100.0,
+          "afterglow_ms": 220.0
+        }
+      },
+      {
+        "target": "outer",
+        "scope": "outer",
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 0.0,
+          "image_glow": 0.0,
+          "inactive_image_glow": 0.0,
+          "inactive_text": 100.0,
+          "afterglow_ms": 220.0
+        }
+      }
+    ],
+    "instance": {
+      "session": "deleted-text-erasures",
+      "window": 4051961,
+      "build": "terminal-delight"
+    }
+  },
+  "zero_update": {
+    "results": [
+      {
+        "target": "outer",
+        "ok": true,
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 0.0,
+          "image_glow": 0.0,
+          "inactive_image_glow": 0.0,
+          "inactive_text": 100.0,
+          "afterglow_ms": 0.0
+        }
+      }
+    ],
+    "instance": {
+      "session": "deleted-text-erasures",
+      "window": 4051961,
+      "build": "terminal-delight"
+    }
+  },
+  "zero_erasure_at": 683521.030073566
+}

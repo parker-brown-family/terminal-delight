@@ -1,0 +1,49 @@
+{
+  "layouts": [
+    {
+      "width": 390,
+      "overflow": false,
+      "figures": [
+        true,
+        true,
+        true
+      ],
+      "brokenImages": 0,
+      "external": [],
+      "svg": [
+        true
+      ]
+    },
+    {
+      "width": 968,
+      "overflow": false,
+      "figures": [
+        true,
+        true,
+        true
+      ],
+      "brokenImages": 0,
+      "external": [],
+      "svg": [
+        true
+      ]
+    },
+    {
+      "width": 1100,
+      "overflow": false,
+      "figures": [
+        true,
+        true,
+        true
+      ],
+      "brokenImages": 0,
+      "external": [],
+      "svg": [
+        true
+      ]
+    }
+  ],
+  "errors": [],
+  "notes": "note, concurrence, anchored export, embedded save and reopen passed",
+  "captures": "0/55/100 recorded capture buttons passed"
+}

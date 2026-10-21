@@ -1,0 +1,49 @@
+{
+  "method": "For each RGB pixel, sum the largest absolute channel difference versus the final frame. Regions exclude window chrome and include all visible fixture text.",
+  "regions": {
+    "both": [
+      50,
+      900,
+      2130,
+      1350
+    ],
+    "left": [
+      50,
+      900,
+      1000,
+      1350
+    ],
+    "right": [
+      1130,
+      900,
+      2130,
+      1350
+    ]
+  },
+  "binary_sha256": "209beed8441fd9fe940b234f2cd6b488fb70ec158b48db3ca18ee0d26c92d7d6",
+  "defaults_match_explicit": {
+    "changed_pixels": 0,
+    "absolute_peak_channel_sum": 0,
+    "max_delta": 0
+  },
+  "fade_early_left": {
+    "changed_pixels": 963,
+    "absolute_peak_channel_sum": 46329,
+    "max_delta": 103
+  },
+  "fade_mid_left": {
+    "changed_pixels": 930,
+    "absolute_peak_channel_sum": 15243,
+    "max_delta": 34
+  },
+  "fade_early_other_pane": {
+    "changed_pixels": 0,
+    "absolute_peak_channel_sum": 0,
+    "max_delta": 0
+  },
+  "zero_early_vs_late": {
+    "changed_pixels": 0,
+    "absolute_peak_channel_sum": 0,
+    "max_delta": 0
+  }
+}

@@ -37,6 +37,15 @@ audited 2026-09-08:
 | 8 | `pane.rs:2471` | `new_restored` | a **freshly spawned** shell is handed its recorded command line — session restore, the dead-agent *resurrect* menu, `ctl adopt --run`, or `TD_SEED_RESUME` at launch | see below |
 | 9 | `pane.rs` | `send_notes` | a press on **↪** in a brief's notes bar, or its chord **ctrl+shift+enter** over the square while the button is drawn — the brief's notes map, pasted into the prompt of the agent pane the brief sits beside, bracketed and **never followed by Enter**; on the bench face it goes into the composer instead and writes nothing here; see below | pointer + keystroke |
 
+The editing keys share site #1. Shift+Backspace sends backward-word deletion;
+Ctrl+Shift+Backspace computes the entire current logical line, including soft wraps, and walks
+the caret before sending DELs. Ctrl+Shift+Alt+Backspace sends beginning-of-input then kill-to-end
+for a Readline-compatible shell or agent input. The workbench composer applies these edits to
+its local draft, with undo. None submits input, sends an interrupt or clears terminal history.
+Mouse selections and Shift+Arrow selections can cross soft wraps. A selected range crossing
+literal newlines must include the caret's row; a range entirely in unrelated history is not
+expanded into an edit. The existing scrolled-view and non-agent alternate-screen guards remain.
+
 `send` is the only site that composes bytes from a keystroke, and it is reachable only from the key
 handler, the cut keybinding and the launch panel's `run_line`. That is the invariant. Everything
 else is the terminal answering its own program (#2, #3), a pointer gesture the person made (#4, #6,

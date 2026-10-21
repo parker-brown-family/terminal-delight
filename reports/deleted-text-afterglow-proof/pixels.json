@@ -1,0 +1,92 @@
+{
+  "method": "Each RGB pixel contributes its largest absolute channel difference from the settled frame; regions exclude chrome. None means no changed y extent, not y=0.",
+  "binary_sha256": "81eb231005af6354ed33645988a517ef646549f4ebdad566ed22cd245e9a4a06",
+  "regions": {
+    "left": [
+      45,
+      200,
+      1090,
+      1370
+    ],
+    "right": [
+      1130,
+      200,
+      2140,
+      1370
+    ]
+  },
+  "cases": {
+    "word": {
+      "early": {
+        "changed_pixels": 1391,
+        "absolute_peak_channel_sum": 85906,
+        "peak_delta": 85,
+        "changed_y_extent": [
+          1139,
+          1166
+        ]
+      },
+      "after_220ms": {
+        "changed_pixels": 1378,
+        "absolute_peak_channel_sum": 36262,
+        "peak_delta": 36,
+        "changed_y_extent": [
+          1139,
+          1166
+        ]
+      },
+      "neighbor": {
+        "changed_pixels": 0,
+        "absolute_peak_channel_sum": 0,
+        "peak_delta": 0,
+        "changed_y_extent": null
+      },
+      "capture_start_ms": 258.02913901861757,
+      "cursor_move_ms": 60.524091008119285
+    },
+    "erase": {
+      "early": {
+        "changed_pixels": 17611,
+        "absolute_peak_channel_sum": 1499568,
+        "peak_delta": 118,
+        "changed_y_extent": [
+          1051,
+          1341
+        ]
+      },
+      "after_220ms": {
+        "changed_pixels": 17512,
+        "absolute_peak_channel_sum": 748267,
+        "peak_delta": 59,
+        "changed_y_extent": [
+          1051,
+          1341
+        ]
+      },
+      "neighbor": {
+        "changed_pixels": 0,
+        "absolute_peak_channel_sum": 0,
+        "peak_delta": 0,
+        "changed_y_extent": null
+      },
+      "capture_start_ms": 258.4565719589591,
+      "cursor_move_ms": 60.426941025070846
+    }
+  },
+  "ordinary_after_220ms": {
+    "changed_pixels": 434,
+    "absolute_peak_channel_sum": 434,
+    "peak_delta": 1,
+    "changed_y_extent": [
+      1324,
+      1341
+    ]
+  },
+  "zero_disabled": {
+    "changed_pixels": 0,
+    "absolute_peak_channel_sum": 0,
+    "peak_delta": 0,
+    "changed_y_extent": null
+  },
+  "ordinary_tolerance": "At most one 8-bit RGB level per channel after 220 ms; capture timing is measured from emission, not the first GPU frame."
+}

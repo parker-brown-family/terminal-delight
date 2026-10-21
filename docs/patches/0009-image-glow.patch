@@ -1,0 +1,219 @@
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -138,7 +138,7 @@
+ // td-glass-rim: and bezel[packed rgb, strength] — the frame round the glass.
+ // The colour is 0xRRGGBB carried in an f32 (exact up to 2^24); strength 0 draws
+ // no bezel, which is what every setter but `set_crt_rects_tubes_bezel` sends.
+-type CrtRect = ([f32; 4], f32, f32, f32, [f32; 3], [f32; 2]);
++type CrtRect = ([f32; 4], f32, f32, f32, [f32; 3], [f32; 2], f32);
+
+ /// No bezel: the glass edge alone.
+ const BEZEL_NONE: [f32; 2] = [0.0, 0.0];
+@@ -156,7 +156,7 @@
+         rects
+             .iter()
+             .take(32)
+-            .map(|rect| (*rect, 0.0, 0.0, 0.0, CRAWL_IDENTITY, BEZEL_NONE)),
++            .map(|rect| (*rect, 0.0, 0.0, 0.0, CRAWL_IDENTITY, BEZEL_NONE, 0.0)),
+     );
+ }
+
+@@ -168,7 +168,7 @@
+         rects
+             .iter()
+             .take(32)
+-            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0), 0.0, 0.0, CRAWL_IDENTITY, BEZEL_NONE)),
++            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0), 0.0, 0.0, CRAWL_IDENTITY, BEZEL_NONE, 0.0)),
+     );
+ }
+
+@@ -183,7 +183,7 @@
+             .iter()
+             .take(32)
+             .map(|(rect, glare, k1, k2, crawl)| {
+-                (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl, BEZEL_NONE)
++                (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl, BEZEL_NONE, 0.0)
+             }),
+     );
+ }
+@@ -196,7 +196,18 @@
+     guard.clear();
+     guard.extend(rects.iter().take(32).map(|(rect, glare, k1, k2, crawl, bezel)| {
+         let rgb = bezel[0].clamp(0.0, 16_777_215.0).round();
+-        (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl, [rgb, bezel[1].clamp(0.0, 1.0)])
++        (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl, [rgb, bezel[1].clamp(0.0, 1.0)], 0.0)
++    }));
++}
++
++/// Terminal-image bloom per tube. Legacy callers retain zero glow.
++pub fn set_crt_rects_tubes_glow(rects: &[([f32; 4], f32, f32, f32, [f32; 3], [f32; 2], f32)]) {
++    let mut guard = CRT_RECTS.lock().unwrap();
++    guard.clear();
++    guard.extend(rects.iter().take(32).map(|(rect, glare, k1, k2, crawl, bezel, glow)| {
++        let rgb = bezel[0].clamp(0.0, 16_777_215.0).round();
++        (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl,
++            [rgb, bezel[1].clamp(0.0, 1.0)], glow.clamp(0.0, 1.0))
+     }));
+ }
+
+@@ -205,23 +216,25 @@
+ /// the pass on when any tube bends, even if the global dial is flat — and a tube
+ /// with crawl on also forces the pass active (`max_k` is bumped) so the
+ /// perspective is applied even on an otherwise-flat pane.
+-fn crt_rects() -> ([[f32; 4]; 32], [[f32; 4]; 32], [[f32; 4]; 32], u32, f32) {
++fn crt_rects() -> ([[f32; 4]; 32], [[f32; 4]; 32], [[f32; 4]; 32], [[f32; 4]; 32], u32, f32) {
+     let guard = CRT_RECTS.lock().unwrap();
+     let mut rects = [[0.0f32; 4]; 32];
+     let mut glare = [[0.0f32; 4]; 32];
+     let mut crawl = [[0.0f32, 1.0, 1.0, 0.0]; 32];
++    let mut image_glow = [[0.0f32; 4]; 32];
+     let mut max_k = 0.0f32;
+-    for (i, (r, g, k1, k2, c, b)) in guard.iter().take(32).enumerate() {
++    for (i, (r, g, k1, k2, c, b, glow)) in guard.iter().take(32).enumerate() {
+         rects[i] = *r;
+         glare[i] = [*g, *k1, *k2, b[0]];
+         crawl[i] = [c[0], c[1], c[2], b[1]];
++        image_glow[i][0] = *glow;
+         max_k = max_k.max(k1.abs()).max(k2.abs());
+         // A crawling tube must keep the pass live even when it's barrel-flat.
+-        if c[0] > 0.5 {
++        if c[0] > 0.5 || *glow > 0.0 {
+             max_k = max_k.max(1.0);
+         }
+     }
+-    (rects, glare, crawl, guard.len().min(32) as u32, max_k)
++    (rects, glare, crawl, image_glow, guard.len().min(32) as u32, max_k)
+ }
+
+ // ---- terminal-delight FOCUS frosted-glass backdrop ----
+@@ -345,8 +358,8 @@
+         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+             label: Some("crt_pass_params"),
+             // k(16) + rects(32*16) + glare(32*16) + focus_rect(16) + focus_params(16)
+-            // + crawl(32*16) = 1584 bytes (32 tubes; must match crt_pass.wgsl arrays)
+-            size: 16 + 32 * 16 + 32 * 16 + 32 + 32 * 16,
++            // + crawl(32*16) + image_glow(32*16) = 2096 bytes (32 tubes; matches WGSL)
++            size: 16 + 32 * 16 + 32 * 16 + 32 + 32 * 16 + 32 * 16,
+             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+             mapped_at_creation: false,
+         });
+@@ -1487,7 +1500,7 @@
+         // td-crt-pass: when warp is on, the scene renders offscreen and a
+         // final barrel-distortion pass writes the swapchain.
+         let (crt_k1, crt_k2) = crt_warp();
+-        let (crt_rect_arr, crt_glare_arr, crt_crawl_arr, crt_rect_count, crt_max_rect_k) =
++        let (crt_rect_arr, crt_glare_arr, crt_crawl_arr, crt_glow_arr, crt_rect_count, crt_max_rect_k) =
+             crt_rects();
+         let (fb_rect, fb_radius, fb_feather, fb_tint, fb_corner, fb_active) = focus_blur();
+         let crt_active = (crt_rect_count > 0
+@@ -1701,9 +1714,9 @@
+                 if let Some(crt) = self.crt.as_ref() {
+                     let resources = self.resources();
+                     // k(4) + rects(128) + glare(128) + focus_rect(4) + focus_params(4)
+-                    // + crawl(128) = 396 floats (32 tubes). crawl appended last so
+-                    // its field stays after focus; all offsets recomputed for N=32.
+-                    let mut params = [0.0f32; 4 + 128 + 128 + 8 + 128];
++                    // + crawl(128) + image_glow(128) = 524 floats (32 tubes).
++                    // Both arrays follow focus; existing offsets stay unchanged.
++                    let mut params = [0.0f32; 4 + 128 + 128 + 8 + 128 + 128];
+                     params[0] = crt_k1;
+                     params[1] = crt_k2;
+                     params[2] = crt_rect_count as f32;
+@@ -1722,6 +1735,10 @@
+                     // crawl[enabled, a, depth, _] per rect
+                     for (i, c) in crt_crawl_arr.iter().enumerate() {
+                         params[268 + i * 4..268 + i * 4 + 4].copy_from_slice(c);
++                    }
++                    // td-image-glow: vec4-aligned per-tube strengths (WGSL).
++                    for (i, glow) in crt_glow_arr.iter().enumerate() {
++                        params[396 + i * 4..396 + i * 4 + 4].copy_from_slice(glow);
+                     }
+                     resources.queue.write_buffer(
+                         &crt.params_buffer,
+diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
+--- a/crates/gpui_wgpu/src/crt_pass.wgsl
++++ b/crates/gpui_wgpu/src/crt_pass.wgsl
+@@ -21,8 +21,8 @@
+     glare: array<vec4<f32>, 32>,    // strength, k1, k2, bezel 0xRRGGBB (per-rect curvature)
+     focus_rect: vec4<f32>,         // x, y, w, h (physical px) — the sharp panel
+     focus_params: vec4<f32>,       // blur_radius_px, feather_px, tint, corner_radius_px
+-    crawl: array<vec4<f32>, 32>,    // per-rect Star-Wars crawl: enabled(0/1), a (top
+-                                   // width ratio), D (depth = h_bottom/h_top), bezel strength
++    crawl: array<vec4<f32>, 32>,    // enabled, top width, depth, bezel strength
++    image_glow: array<vec4<f32>, 32>, // strength, reserved (vec4 uniform alignment)
+ }
+
+ @group(0) @binding(0) var<uniform> crt: CrtParams;
+@@ -53,6 +53,36 @@
+     let sdf = min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - corner;
+     let f = max(feather, 1e-4);
+     return 1.0 - smoothstep(-f * 0.5, f * 0.5, sdf);
++}
++
++// td-image-glow: a bounded, separable 4x4 bright-pass kernel. The scene
++// texture already exists for CRT; no history or additional blur target is held.
++// Sampling in source space makes the halo bend with the letters. Out-of-pane
++// samples are black rather than clamped, so a neighbour cannot light this pane.
++fn glow_emission(p: vec2<f32>, r: vec4<f32>) -> vec3<f32> {
++    if (any(p < r.xy + vec2<f32>(0.5)) || any(p >= r.xy + r.zw - vec2<f32>(0.5))) {
++        return vec3<f32>(0.0);
++    }
++    let dims = vec2<f32>(textureDimensions(screen_tex));
++    let sample = textureSampleLevel(screen_tex, screen_samp, p / dims, 0.0);
++    let peak = max(sample.r, max(sample.g, sample.b));
++    let bright = max(peak - 0.12, 0.0) / max(peak, 0.0001);
++    return sample.rgb * bright * sample.a;
++}
++
++fn image_bloom(base: vec3<f32>, p: vec2<f32>, r: vec4<f32>, strength: f32) -> vec3<f32> {
++    if (strength <= 0.0) { return base; }
++    let offsets = array<f32, 4>(-3.0, -1.0, 1.0, 3.0);
++    let weights = array<f32, 4>(1.0, 3.0, 3.0, 1.0);
++    var halo = vec3<f32>(0.0);
++    for (var y = 0u; y < 4u; y += 1u) {
++        for (var x = 0u; x < 4u; x += 1u) {
++            let offset = vec2<f32>(offsets[x], offsets[y]) * 1.6;
++            halo += glow_emission(p + offset, r) * (weights[x] * weights[y] / 64.0);
++        }
++    }
++    // Screen blend preserves the sharp core and each colour channel's hue.
++    return base + halo * strength * 1.8 * (vec3<f32>(1.0) - base);
+ }
+
+ @fragment
+@@ -74,7 +104,8 @@
+             // vignette, no glare, exact hit-testing. A crawling pane never takes
+             // this path even when barrel-flat, so its perspective still applies.
+             if (abs(k1) < 0.0005 && abs(k2) < 0.0005 && !crawl_on) {
+-                return textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
++                let original = textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
++                return vec4<f32>(image_bloom(original.rgb, p, r, crt.image_glow[i].x), original.a);
+             }
+             var local = (p - r.xy) / r.zw;
+             // ---- crawl perspective pre-map (Star-Wars text recede) ----
+@@ -180,6 +211,7 @@
+             }
+             let g = (r.xy + clamp(l2, vec2<f32>(0.0), vec2<f32>(1.0)) * r.zw) / dims;
+             let col = textureSampleLevel(screen_tex, screen_samp, g, 0.0);
++            let lit_col = image_bloom(col.rgb, g * dims, r, crt.image_glow[i].x);
+             let falloff = mix(0.86, 1.0, smoothstep(0.5, 0.12, r2));
+             let glare_strength = crt.glare[i].x;
+             let glare_offset = (local - vec2<f32>(0.18, 0.10)) / vec2<f32>(0.34, 0.18);
+@@ -191,7 +223,7 @@
+             let glare_color = vec3<f32>(0.72, 1.0, 0.78);
+             // sub-terminal phosphor runs +35% hotter than the raw sample so the
+             // warped tube doesn't read dim against flat chrome / flat panes.
+-            let tube = col.rgb * falloff * 1.35 * shade + glare_color * glare_amount;
++            let tube = lit_col * falloff * 1.35 * shade + glare_color * glare_amount;
+             return vec4<f32>(tube * inb + vec3<f32>(lip) + bezel, 1.0);
+         }
+     }
+diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
+--- a/crates/gpui_wgpu/src/gpui_wgpu.rs
++++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
+@@ -15,3 +15,4 @@
+ pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
+ // td-glass-rim: last, so the patch anchors on lines every checkout agrees on
+ pub use wgpu_renderer::set_crt_rects_tubes_bezel;
++pub use wgpu_renderer::set_crt_rects_tubes_glow;

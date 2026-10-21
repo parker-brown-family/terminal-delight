@@ -1,0 +1,346 @@
+{
+  "pid": 2155239,
+  "client": {
+    "address": "0x57761dc78320",
+    "mapped": true,
+    "hidden": false,
+    "visible": true,
+    "acceptsInput": true,
+    "at": [
+      12,
+      38
+    ],
+    "size": [
+      1576,
+      950
+    ],
+    "workspace": {
+      "id": -95,
+      "name": "special:terminal-light-proof"
+    },
+    "floating": false,
+    "monitor": 1,
+    "class": "terminal-delight",
+    "title": "terminal-delight \u2014 terminal-light-proof",
+    "initialClass": "terminal-delight",
+    "initialTitle": "terminal-delight \u2014 terminal-light-proof",
+    "pid": 2155239,
+    "xwayland": false,
+    "pinned": false,
+    "pinFullscreened": false,
+    "fullscreen": 0,
+    "fullscreenClient": 0,
+    "fullscreenHandler": "default",
+    "allowedOverFullscreen": true,
+    "grouped": [],
+    "tags": [
+      "default-opacity*",
+      "terminal*"
+    ],
+    "swallowing": "0x0",
+    "focusHistoryID": 7,
+    "inhibitingIdle": false,
+    "xdgTag": "",
+    "xdgDescription": "",
+    "contentType": "none",
+    "tearingHint": false,
+    "stableId": "180006bc"
+  },
+  "session": "terminal-light-proof",
+  "binary_sha256": "209beed8441fd9fe940b234f2cd6b488fb70ec158b48db3ca18ee0d26c92d7d6",
+  "panes": [
+    {
+      "tab": 0,
+      "title": "Selected terminal",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 2155814,
+      "pane_id": null,
+      "cwd": "/tmp",
+      "exposed": true
+    },
+    {
+      "tab": 0,
+      "title": "Inactive terminal",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 2155819,
+      "pane_id": null,
+      "cwd": "/tmp",
+      "exposed": true
+    }
+  ],
+  "captures": {
+    "defaults": {
+      "at": 678099.399987368,
+      "end": 678099.602102621,
+      "size": [
+        1400,
+        920
+      ]
+    },
+    "explicit-defaults": {
+      "at": 678100.26637362,
+      "end": 678100.443480114,
+      "size": [
+        1400,
+        920
+      ]
+    },
+    "old-baseline": {
+      "at": 678101.063892406,
+      "end": 678101.264018416,
+      "size": [
+        1400,
+        920
+      ]
+    },
+    "fade-early": {
+      "at": 678101.38431707,
+      "end": 678101.580251092,
+      "size": [
+        1400,
+        920
+      ]
+    },
+    "fade-mid": {
+      "at": 678101.781344764,
+      "end": 678101.991744469,
+      "size": [
+        1400,
+        920
+      ]
+    },
+    "fade-late": {
+      "at": 678102.582409009,
+      "end": 678102.767490345,
+      "size": [
+        1400,
+        920
+      ]
+    },
+    "zero-early": {
+      "at": 678103.295659807,
+      "end": 678103.505315345,
+      "size": [
+        1400,
+        920
+      ]
+    },
+    "zero-late": {
+      "at": 678104.426058252,
+      "end": 678104.618628261,
+      "size": [
+        1400,
+        920
+      ]
+    }
+  },
+  "raw_defaults": {
+    "content": [
+      {
+        "type": "text",
+        "text": "outer: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0 \u00b7 crt off\n2155814: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0 \u00b7 crt off\n2155819: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0 \u00b7 crt off"
+      },
+      {
+        "type": "text",
+        "text": "\u2014 terminal-delight \u00b7 session terminal-light-proof \u00b7 window 2155239 \u00b7 terminal-delight"
+      }
+    ],
+    "structuredContent": {
+      "configs": [
+        {
+          "target": "outer",
+          "scope": "outer",
+          "grade": {
+            "brightness": 50.0,
+            "contrast": 50.0,
+            "colour": 50.0,
+            "text": 50.0,
+            "background": 50.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 0.0,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 0.0,
+            "image_glow": null,
+            "inactive_image_glow": null,
+            "inactive_text": null,
+            "afterglow_ms": null
+          }
+        },
+        {
+          "target": 2155814,
+          "scope": "pane",
+          "tab": 0,
+          "title": "Selected terminal",
+          "mode": "SHELL",
+          "grade": {
+            "brightness": 50.0,
+            "contrast": 50.0,
+            "colour": 50.0,
+            "text": 50.0,
+            "background": 50.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 0.0,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 0.0,
+            "image_glow": null,
+            "inactive_image_glow": null,
+            "inactive_text": null,
+            "afterglow_ms": null
+          }
+        },
+        {
+          "target": 2155819,
+          "scope": "pane",
+          "tab": 0,
+          "title": "Inactive terminal",
+          "mode": "SHELL",
+          "grade": {
+            "brightness": 50.0,
+            "contrast": 50.0,
+            "colour": 50.0,
+            "text": 50.0,
+            "background": 50.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 0.0,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 0.0,
+            "image_glow": null,
+            "inactive_image_glow": null,
+            "inactive_text": null,
+            "afterglow_ms": null
+          }
+        }
+      ],
+      "instance": {
+        "session": "terminal-light-proof",
+        "window": 2155239,
+        "build": "terminal-delight"
+      }
+    }
+  },
+  "replacement_at": 678101.272655362,
+  "right_control": "AAAAAAA",
+  "zero_replacement_at": 678103.131688158,
+  "config_after": {
+    "content": [
+      {
+        "type": "text",
+        "text": "outer: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0 \u00b7 crt off\n2155814: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0 \u00b7 crt off\n2155819: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 0 \u00b7 crt off"
+      },
+      {
+        "type": "text",
+        "text": "\u2014 terminal-delight \u00b7 session terminal-light-proof \u00b7 window 2155239 \u00b7 terminal-delight"
+      }
+    ],
+    "structuredContent": {
+      "configs": [
+        {
+          "target": "outer",
+          "scope": "outer",
+          "grade": {
+            "brightness": 50.0,
+            "contrast": 50.0,
+            "colour": 50.0,
+            "text": 50.0,
+            "background": 50.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 0.0,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 0.0,
+            "image_glow": 0.0,
+            "inactive_image_glow": 0.0,
+            "inactive_text": 100.0,
+            "afterglow_ms": 0.0
+          }
+        },
+        {
+          "target": 2155814,
+          "scope": "pane",
+          "tab": 0,
+          "title": "Selected terminal",
+          "mode": "SHELL",
+          "grade": {
+            "brightness": 50.0,
+            "contrast": 50.0,
+            "colour": 50.0,
+            "text": 50.0,
+            "background": 50.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 0.0,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 0.0,
+            "image_glow": 0.0,
+            "inactive_image_glow": 0.0,
+            "inactive_text": 100.0,
+            "afterglow_ms": 0.0
+          }
+        },
+        {
+          "target": 2155819,
+          "scope": "pane",
+          "tab": 0,
+          "title": "Inactive terminal",
+          "mode": "SHELL",
+          "grade": {
+            "brightness": 50.0,
+            "contrast": 50.0,
+            "colour": 50.0,
+            "text": 50.0,
+            "background": 50.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 0.0,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 0.0,
+            "image_glow": 0.0,
+            "inactive_image_glow": 0.0,
+            "inactive_text": 100.0,
+            "afterglow_ms": 0.0
+          }
+        }
+      ],
+      "instance": {
+        "session": "terminal-light-proof",
+        "window": 2155239,
+        "build": "terminal-delight"
+      }
+    }
+  }
+}

@@ -1,0 +1,235 @@
+{
+  "binary_sha256": "209beed8441fd9fe940b234f2cd6b488fb70ec158b48db3ca18ee0d26c92d7d6",
+  "seed_rewritten": false,
+  "initial_restart": {
+    "configs": [
+      {
+        "target": 2371151,
+        "scope": "pane",
+        "tab": 0,
+        "title": "Selected terminal",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 0.0,
+          "image_glow": 0.0,
+          "inactive_image_glow": 0.0,
+          "inactive_text": 100.0,
+          "afterglow_ms": 0.0
+        }
+      },
+      {
+        "target": 2371158,
+        "scope": "pane",
+        "tab": 0,
+        "title": "Inactive terminal",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 0.0,
+          "image_glow": 0.0,
+          "inactive_image_glow": 0.0,
+          "inactive_text": 100.0,
+          "afterglow_ms": 0.0
+        }
+      },
+      {
+        "target": "outer",
+        "scope": "outer",
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 0.0,
+          "image_glow": 0.0,
+          "inactive_image_glow": 0.0,
+          "inactive_text": 100.0,
+          "afterglow_ms": 0.0
+        }
+      }
+    ],
+    "instance": {
+      "session": "terminal-light-proof",
+      "window": 2370856,
+      "build": "terminal-delight"
+    }
+  },
+  "pane_update": {
+    "content": [
+      {
+        "type": "text",
+        "text": "applied 1 update(s)"
+      },
+      {
+        "type": "text",
+        "text": "\u2014 terminal-delight \u00b7 session terminal-light-proof \u00b7 window 2370856 \u00b7 terminal-delight"
+      }
+    ],
+    "structuredContent": {
+      "results": [
+        {
+          "target": 2371151,
+          "ok": true,
+          "grade": {
+            "brightness": 50.0,
+            "contrast": 50.0,
+            "colour": 50.0,
+            "text": 50.0,
+            "background": 50.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 0.0,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 0.0,
+            "image_glow": 0.0,
+            "inactive_image_glow": 80.0,
+            "inactive_text": 50.0,
+            "afterglow_ms": 420.0
+          }
+        }
+      ],
+      "instance": {
+        "session": "terminal-light-proof",
+        "window": 2370856,
+        "build": "terminal-delight"
+      }
+    }
+  },
+  "after_second_restart": {
+    "configs": [
+      {
+        "target": 2372228,
+        "scope": "pane",
+        "tab": 0,
+        "title": "Selected terminal",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 0.0,
+          "image_glow": 0.0,
+          "inactive_image_glow": 80.0,
+          "inactive_text": 50.0,
+          "afterglow_ms": 420.0
+        }
+      },
+      {
+        "target": 2372237,
+        "scope": "pane",
+        "tab": 0,
+        "title": "Inactive terminal",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 0.0,
+          "image_glow": 0.0,
+          "inactive_image_glow": 0.0,
+          "inactive_text": 100.0,
+          "afterglow_ms": 0.0
+        }
+      },
+      {
+        "target": "outer",
+        "scope": "outer",
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 0.0,
+          "image_glow": 0.0,
+          "inactive_image_glow": 0.0,
+          "inactive_text": 100.0,
+          "afterglow_ms": 0.0
+        }
+      }
+    ],
+    "instance": {
+      "session": "terminal-light-proof",
+      "window": 2372069,
+      "build": "terminal-delight"
+    }
+  },
+  "checks": [
+    "outer explicit-zero lighting values survived restart",
+    "inactive glow, text and afterglow pinned on one pane survived restart",
+    "untouched neighbor and active glow stayed unchanged"
+  ]
+}

@@ -22,6 +22,7 @@ pub(super) struct Key {
 pub(super) struct Memo {
     pub key: Key,
     pub lines: std::rc::Rc<Lines>,
+    pub glyphs: std::rc::Rc<Lines>,
 }
 
 #[cfg(test)]
@@ -29,6 +30,50 @@ mod tests {
     use super::*;
     use crate::pane::harness::{Pane, Scratch};
     use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn afterglow_keeps_text_colours_before_selection_and_cursor_overlays(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(
+            cx,
+            "printf '\\033[31mWORD\\033[0m\\033[7mI\\033[0m'; exec cat",
+        );
+        pane.wait_for("WORDI");
+        let th = pane.view.read_with(pane.cx, |v, cx| v.resolved_theme(cx));
+        styled(&mut pane, &th, false);
+        let (live, clean) = pane.read(|v| {
+            let m = v.styled_memo.borrow();
+            let m = m.as_ref().unwrap();
+            (m.lines.clone(), m.glyphs.clone())
+        });
+        pane.read(|v| {
+            let mut t = v.session.term.lock();
+            t.start_selection(
+                SelectionType::Simple,
+                TermPoint::new(Line(0), Column(0)),
+                Side::Left,
+            );
+            t.update_selection(TermPoint::new(Line(0), Column(3)), Side::Right);
+            t.advance(b"\x1b[1;2H");
+        });
+        styled(&mut pane, &th, false);
+        pane.read(|v| {
+            let m = v.styled_memo.borrow();
+            let m = m.as_ref().unwrap();
+            assert_ne!(
+                m.lines, live,
+                "the selection and cursor still paint normally"
+            );
+            assert_eq!(
+                m.glyphs, clean,
+                "retained glyph colours exclude TD overlays"
+            );
+            assert!(m
+                .glyphs
+                .iter()
+                .flat_map(|(_, runs)| runs)
+                .all(|r| r.background_color.is_none()));
+        });
+    }
 
     fn styled(pane: &mut Pane, th: &Theme, visual: bool) -> Lines {
         pane.read(|v| v.styled_lines(th, visual))
