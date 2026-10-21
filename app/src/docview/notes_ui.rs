@@ -1919,6 +1919,7 @@ impl NotesLayer {
             .font_family(SharedString::from(sk.font_family.clone()))
             .text_size(px(text))
             .text_color(th.text.alpha(0.8))
+            .max_w(px(900.))
             .child(self.record(Zone::Bar));
         match self.read_only_in(l) {
             Some(why) => row = row.child(div().child(why)),
@@ -1988,12 +1989,16 @@ impl NotesLayer {
         }
         // Clear of the reading rail down the right edge, with the first-time
         // line, when there is one, stacked above the bar rather than inside
-        // it, so the bar keeps its own width.
+        // it, so the bar keeps its own width. The stack spans the view from
+        // a 10 px margin on the left, so the line wraps inside a narrow
+        // square instead of running off its left edge (a square floating
+        // over a bench is about 480 px wide); each child keeps its own width
+        // and sits on the right.
         let mut stack = div()
             .absolute()
+            .left(px(10.))
             .right(px(super::progress::GUTTER))
             .bottom(px(10.))
-            .max_w(px(900.))
             .flex()
             .flex_col()
             .items_end()
