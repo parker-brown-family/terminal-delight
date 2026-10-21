@@ -1,0 +1,88 @@
+{
+  "layouts": [
+    {
+      "width": 390,
+      "overflow": false,
+      "coverage": [
+        [
+          "figure",
+          3,
+          3
+        ],
+        [
+          ".grill .ask",
+          1,
+          1
+        ],
+        [
+          "table.wide tbody tr",
+          3,
+          3
+        ]
+      ],
+      "brokenImages": 0,
+      "external": [],
+      "svg": [
+        true
+      ],
+      "wallpaper": "\"wallpaper · quattrocento · 1-codex.webp\""
+    },
+    {
+      "width": 968,
+      "overflow": false,
+      "coverage": [
+        [
+          "figure",
+          3,
+          3
+        ],
+        [
+          ".grill .ask",
+          1,
+          1
+        ],
+        [
+          "table.wide tbody tr",
+          3,
+          3
+        ]
+      ],
+      "brokenImages": 0,
+      "external": [],
+      "svg": [
+        true
+      ],
+      "wallpaper": "\"wallpaper · quattrocento · 1-codex.webp\""
+    },
+    {
+      "width": 1100,
+      "overflow": false,
+      "coverage": [
+        [
+          "figure",
+          3,
+          3
+        ],
+        [
+          ".grill .ask",
+          1,
+          1
+        ],
+        [
+          "table.wide tbody tr",
+          3,
+          3
+        ]
+      ],
+      "brokenImages": 0,
+      "external": [],
+      "svg": [
+        true
+      ],
+      "wallpaper": "\"wallpaper · quattrocento · 1-codex.webp\""
+    }
+  ],
+  "errors": [],
+  "frames": "all four recorded frames change on click",
+  "notes": "annotation, concurrence, anchored export, embedded save and reopen passed"
+}

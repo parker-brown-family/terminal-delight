@@ -1,0 +1,206 @@
+{
+  "pid": 957943,
+  "mode": "new",
+  "binary_sha256": "7793d3d2fce5347a628e56da7d3936d4160b53b6a626e0dc9b64ab635f740b6c",
+  "panes": [
+    {
+      "tab": 0,
+      "title": "Editable input",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 958205,
+      "pane_id": null,
+      "cwd": "/tmp",
+      "exposed": true
+    },
+    {
+      "tab": 0,
+      "title": "Untouched neighbor",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 958208,
+      "pane_id": null,
+      "cwd": "/tmp",
+      "exposed": true
+    }
+  ],
+  "captures": {
+    "before": {
+      "at": 687086.042801416,
+      "end": 687086.165270381,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "selected": {
+      "at": 687087.180496825,
+      "end": 687087.302886519,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "selection-early": {
+      "at": 687087.429941163,
+      "end": 687087.552797192,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "selection-linger": {
+      "at": 687087.809824615,
+      "end": 687087.934675677,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "selection-finished": {
+      "at": 687088.31019813,
+      "end": 687088.435355868,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "zero-early": {
+      "at": 687093.311457043,
+      "end": 687093.435523501,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "zero-finished": {
+      "at": 687094.041542255,
+      "end": 687094.169098085,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "help": {
+      "at": 687094.683355193,
+      "end": 687094.836185132,
+      "logical_size": [
+        1400,
+        920
+      ]
+    }
+  },
+  "cases": {
+    "selection": {
+      "before": {
+        "line": "keep WRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPED",
+        "point": 145,
+        "at": 687085.281525859,
+        "cols": 58
+      },
+      "after": {
+        "line": "keep ",
+        "point": 5,
+        "at": 687087.342389239,
+        "cols": 58
+      },
+      "at": 687087.303198573,
+      "cursor_moved": {
+        "line": "keep ",
+        "point": 4,
+        "at": 687087.404167545,
+        "cols": 58
+      }
+    },
+    "word": {
+      "before": {
+        "line": "keep WRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPED",
+        "point": 145,
+        "at": 687088.579104543,
+        "cols": 58
+      },
+      "after": {
+        "line": "keep ",
+        "point": 5,
+        "at": 687089.373174087,
+        "cols": 58
+      }
+    },
+    "line": {
+      "before": {
+        "line": "keep WRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPED",
+        "point": 145,
+        "at": 687089.518914025,
+        "cols": 58
+      },
+      "after": {
+        "line": "",
+        "point": 0,
+        "at": 687090.314853935,
+        "cols": 58
+      }
+    },
+    "current-line": {
+      "before": {
+        "line": "first ONE\nsecond TWO\nthird THREE",
+        "point": 32,
+        "at": 687090.462646457,
+        "cols": 58
+      },
+      "after": {
+        "line": "first ONE\nsecond TWO\n",
+        "point": 21,
+        "at": 687091.258199932,
+        "cols": 58
+      }
+    },
+    "input": {
+      "before": {
+        "line": "first ONE\nsecond TWO\nthird THREE",
+        "point": 32,
+        "at": 687091.40762822,
+        "cols": 58
+      },
+      "after": {
+        "line": "",
+        "point": 0,
+        "at": 687092.206380734,
+        "cols": 58
+      }
+    }
+  },
+  "zero_update": {
+    "results": [
+      {
+        "target": "outer",
+        "ok": true,
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 0.0,
+          "image_glow": 0.0,
+          "inactive_image_glow": 0.0,
+          "inactive_text": 100.0,
+          "afterglow_ms": 0.0
+        }
+      }
+    ],
+    "instance": {
+      "session": "input-edit-new",
+      "window": 957943,
+      "build": "terminal-delight"
+    }
+  }
+}
