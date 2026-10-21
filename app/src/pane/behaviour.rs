@@ -993,6 +993,38 @@ fn pane_with_history_and_a_document(cx: &mut TestAppContext, tag: &str) -> (Pane
     (pane, dir)
 }
 
+/// ctrl+↓ steps the document in a floating square and ctrl+shift+↓ pages
+/// it; ctrl+↑ and ctrl+shift+↑ go back. The square stays open through all of
+/// it: a key the square claims and its document declines closes the square,
+/// which is what Escape is, and these must not.
+///
+/// Parker, 2026-10-21: *"ctrl seems like it will apply to glow pane, alt applies
+/// to the main pane"*, with paging on shift so ctrl+PageUp/PageDown keep
+/// switching tabs.
+#[gpui::test]
+fn ctrl_arrows_turn_the_floating_square(cx: &mut TestAppContext) {
+    let (mut pane, _dir) = pane_with_history_and_a_document(cx, "glow-keys");
+    let view = pane.float_view().expect("a square");
+    let at = |pane: &mut Pane| pane.scroll_of(&view).expect("laid out");
+    pane.keys("ctrl-down");
+    pane.redraw();
+    let stepped = at(&mut pane);
+    assert!(stepped > 0.0, "ctrl+down steps the document: {stepped}");
+    assert!(pane.float_view().is_some(), "and the square stays open");
+    pane.keys("ctrl-shift-down");
+    pane.redraw();
+    let paged = at(&mut pane);
+    assert!(
+        paged > stepped * 2.0,
+        "ctrl+shift+down pages it: {stepped} then {paged}"
+    );
+    pane.keys("ctrl-shift-up");
+    pane.keys("ctrl-up");
+    pane.redraw();
+    assert_eq!(at(&mut pane), 0.0, "and the two go back to the top");
+    assert!(pane.float_view().is_some());
+}
+
 /// The wheel over the square moves the document in it, and never the
 /// scrollback behind it; off the square it moves the scrollback, and never
 /// the document. Ctrl+wheel over the square zooms the document and leaves the

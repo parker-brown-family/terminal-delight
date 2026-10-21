@@ -60,6 +60,7 @@ use super::notes::{
     PictureLines, Refusal, FORMAT,
 };
 use super::page::{place, PageToView};
+use crate::keylayer::GlowMove;
 use crate::lang::fill;
 use crate::theme::Theme;
 use crate::EditBuffer;
@@ -1244,6 +1245,18 @@ impl NotesLayer {
         Some((b.back - was).abs() > f32::EPSILON)
     }
 
+    /// The open box's notes, turned from the keyboard: a step is an arrow's
+    /// worth, and a page is nine tenths of the list as last measured. Before
+    /// it has been measured a page is a step, the least that can be wrong.
+    fn turn_box(&mut self, mv: GlowMove) {
+        let step = crate::docopen::DOC_ARROW_STEP;
+        let (dir, by) = match mv {
+            GlowMove::Step(dir) => (dir, step),
+            GlowMove::Page(dir) => (dir, self.room.get().view.map_or(step, |h| h * 0.9)),
+        };
+        self.wheel_box(-f32::from(dir) * by);
+    }
+
     /// Open the note box on an anchor, with an empty draft.
     pub fn open(&mut self, nid: String, title: String) {
         if self.note_box.as_ref().is_some_and(|b| b.nid == nid) {
@@ -1330,6 +1343,18 @@ impl NotesLayer {
         let m = &ks.modifiers;
         if ks.key == "escape" {
             self.note_box = None;
+            return true;
+        }
+        // The square's chords turn the notes while the box is over it, and
+        // plain PageUp/PageDown do too: the draft has no use for them.
+        let plain = !m.control && !m.alt && !m.shift && !m.platform;
+        let turn = match ks.key.as_str() {
+            "pageup" if plain => Some(GlowMove::Page(-1)),
+            "pagedown" if plain => Some(GlowMove::Page(1)),
+            _ => crate::keylayer::glow_chord(&ks.key, m.control, m.shift, m.alt),
+        };
+        if let Some(mv) = turn {
+            self.turn_box(mv);
             return true;
         }
         if !self.has_caret() {
@@ -2671,6 +2696,23 @@ mod tests {
             "and stops at the oldest"
         );
         assert_eq!(l.wheel_box(10.), Some(false), "past it nothing moves");
+        // The keyboard turns it as the wheel does: ctrl+↓ a step towards the
+        // newest, ctrl+shift+↓ and plain PageDown nine tenths of the list.
+        let press = |l: &mut NotesLayer, chord: &str| {
+            let k = Keystroke::parse(chord).expect("a chord");
+            assert!(l.key(&k, SystemTime::now()), "{chord} is the box's");
+            l.note_box().map(|b| b.back).expect("open")
+        };
+        let view_h = l.room.get().view.expect("measured");
+        let step = crate::docopen::DOC_ARROW_STEP;
+        assert_eq!(press(&mut l, "ctrl-down"), max - step);
+        assert_eq!(press(&mut l, "ctrl-up"), max);
+        assert_eq!(press(&mut l, "ctrl-shift-down"), max - view_h * 0.9);
+        assert_eq!(press(&mut l, "pageup"), max);
+        assert!(
+            l.note_box().is_some_and(|b| b.draft.text().is_empty()),
+            "none of it typed"
+        );
         let (shown, add) = deletes(&l, cx);
         assert!(add);
         assert!(shown.contains(&0), "the oldest shows: {shown:?}");
