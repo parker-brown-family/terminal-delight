@@ -10229,9 +10229,11 @@ impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.resolved_theme(cx);
         let focused_now = self.focus_handle(cx).is_focused(window);
-        let letter_glow = th.grade.letter_glow_for_focus(focused_now);
+        let letter_glow = th
+            .grade
+            .letter_glow_for_focus(focused_now, th.terminal_light);
         let mut grid_th = th.clone();
-        grid_th.grade.text = th.grade.text_for_focus(focused_now);
+        grid_th.grade.text = th.grade.text_for_focus(focused_now, th.terminal_light);
         let menu_skin = crate::skin::for_theme(cx, &th, th.grade.scale);
         // The floating square re-records where its controls are as it paints.
         self.float_zones.borrow_mut().clear();
@@ -11967,7 +11969,6 @@ impl Render for TerminalView {
                                     alternate: alt_screen_active,
                                     cols: self.grid.cols,
                                     rows: self.grid.rows,
-                                    paint_offset: self.paint_offset,
                                     inverted: self.paint_inverted,
                                 }),
                                 pad: (grid_pad_x, grid_pad_y),

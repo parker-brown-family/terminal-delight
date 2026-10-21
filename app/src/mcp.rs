@@ -212,13 +212,13 @@ pub struct GradeReport {
     /// the house glow sits at `25` — the range runs to four times it.
     pub phosphor: f32,
     /// Terminal-image glow percentage. None means the dial has never been set;
-    /// drawing defaults to 15% on the active terminal.
+    /// drawing defaults to 20% on Standard and 37% on Intrusive.
     pub image_glow: Option<f32>,
-    /// Inactive letter glow percentage; undeclared draws at 65%.
+    /// Inactive letter glow percentage; undeclared draws at 100%.
     pub inactive_image_glow: Option<f32>,
-    /// Percent of active text intensity; undeclared draws at 75%.
+    /// Percent of active text intensity; undeclared draws at 45% on Standard or 52% on Intrusive.
     pub inactive_text: Option<f32>,
-    /// Replaced-glyph fade time, 0..1200 milliseconds; undeclared draws at 180ms.
+    /// Replaced-glyph fade time, 0..1200 milliseconds; undeclared draws at 220ms; erasures use at least 450ms.
     pub afterglow_ms: Option<f32>,
 }
 
@@ -251,11 +251,11 @@ pub struct ConfigPatch {
     pub phosphor: Option<f32>,
     /// Terminal-image glow, 0..100. Omission leaves the setting unchanged.
     pub image_glow: Option<f32>,
-    /// Inactive letter glow percentage; undeclared draws at 65%.
+    /// Inactive letter glow percentage; undeclared draws at 100%.
     pub inactive_image_glow: Option<f32>,
-    /// Percent of active text intensity; undeclared draws at 75%.
+    /// Percent of active text intensity; undeclared draws at 45% on Standard or 52% on Intrusive.
     pub inactive_text: Option<f32>,
-    /// Replaced-glyph fade time, 0..1200 milliseconds; undeclared draws at 180ms.
+    /// Replaced-glyph fade time, 0..1200 milliseconds; undeclared draws at 220ms; erasures use at least 450ms.
     pub afterglow_ms: Option<f32>,
     /// Attach (or clear) the pane's card LOGO: an absolute path to an image file
     /// (png/jpg/jpeg/svg/webp). An empty string clears it. Lets an agent brand the
@@ -1148,10 +1148,10 @@ fn tool_defs() -> Value {
                  (brightness, contrast, colour, text, background, \
                  gamma, menu_bar, text_size, bench_size, warp, crawl_angle, crawl_depth, \
                  phosphor — the glow of the lit borders, 25 the house look, 0 none; \
-                 image_glow — active letter glow, default 15; inactive_image_glow \
-                 — inactive glow, default 65; inactive_text — percent of active \
-                 text, default 75). `afterglow_ms` uses milliseconds, range \
-                 0..1200, default 180. These four lighting fields remain null \
+                 image_glow — active letter glow, default 20 (Standard) / 37 (Intrusive); inactive_image_glow \
+                 — inactive glow, default 100; inactive_text — percent of active \
+                 text, default 45 (Standard) / 52 (Intrusive)). `afterglow_ms` uses milliseconds, range \
+                 0..1200, default 220; erased passages use at least 450ms while enabled. These four lighting fields remain null \
                  in GET while unset. `crawl` and `crt` are booleans (CRT off = a flat screen; \
                  warp and the roll bar keep their values but draw nothing). \
                  Omit `targets` to report every exposed pane \

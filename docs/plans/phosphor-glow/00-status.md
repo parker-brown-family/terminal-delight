@@ -45,3 +45,20 @@ Current verification: default core 2,606 passed, fallback 2,553 passed, 10 ignor
 Turned out to be 7/10: keeping fading glyph positions correct across focus, geometry and terminal-face changes required a separate retained drawing state and native timing evidence. Individual design gates were recorded before code under the continuing end-to-end instruction; no independent human approvals are implied.
 
 The current human review is `reports/2026-10-21-terminal-light.html`, with native receipts, two restart checks, pixel comparisons, test counts and page QA in `reports/terminal-light-proof/`. Native restarts preserved explicit zero and the inactive-glow, inactive-text and afterglow pins independently; no seed was rewritten. Reader controls, figure/decision annotation coverage, concurrence, map export, embedded save and reopen passed at 390/968/1100px. The narrative measurement classified the page as an argument and scored cold comprehension 0.78; the CLI instructions still carry names by necessity. The same draft pull request and frame-cost qualification were updated; release intent remains unassigned. Parker's tuning judgement and promotion qualification are pending, while the requested testing build is delivered.
+
+## Deleted-text phase
+
+Difficulty: 7/10. Parker's 2026-10-21 native review approves the grouping, sets Standard/Intrusive defaults from two screenshots, raises normal afterglow to 220ms and requests whole-passage erasures to linger roughly 450ms. The four design stages are recorded in 05-deleted-text-product.md through 08-deleted-text-slices.md under the continuing end-to-end instruction.
+
+- [x] Complete erased passages survive bottom alignment and cursor movement.
+- [x] Approved Standard/Intrusive lighting and shared picture defaults.
+- [x] Native timing evidence, both cores/lints and refreshed test window.
+- [ ] Same PR, review and qualification record updated.
+
+The refreshed test GUI is PID 4073052 on workspace 4, session `phosphor-glow-test`, using binary SHA-256 `81eb231005af6354ed33645988a517ef646549f4ebdad566ed22cd245e9a4a06`. The `ERASED TEXT · 220 / 450 ms` tab has fresh Standard and Intrusive shells. All four earlier hosted shell processes remain, with no PTY input sent to them. Both presets inherit the existing picture grade, palette and OPS skin; the lab's optional lighting pins were backed up and cleared to adopt the requested defaults.
+
+Standard draws undeclared active glow at 20% and inactive text at 45% of the active setting; Intrusive uses 37% and 52%. Both draw inactive glow at 100%. Ordinary replacement defaults to 220ms. An update that loses visible graphemes on any painted row retains its changed old glyphs for at least 450ms, without waiting for input or restarting the clock when the cursor moves. Zero disables the trail. The history budget is the larger of 4,096 glyphs and one visible viewport, so a complete visible paragraph is not truncated by the old fixed cap. Genuine scroll, geometry, focus and theme changes still clear history; bottom alignment alone does not.
+
+Default core: 2,612 passed; fallback: 2,559 passed; 10 ignored in each. Both strict Clippy gates, format and locked release build passed. Native captures retain both the word and wrapped paragraph after the cursor moves at about 60ms and capture begins around 258ms; the neighboring text region changes by zero pixels. Ordinary replacement is within one 8-bit RGB level of the settled frame after 220ms; disabled erasure matches exactly. Deterministic tests verify exact 450ms expiry and retained glyph coordinates.
+
+The larger 107% fresh text default exposed the native harness's old 640px-high window clipping its intentional 100×28 grid. Increasing only the fixture height to 720px restores the original grid and all interaction assertions. Compatibility defaults for fields omitted from old grades remain unchanged; the screenshot's new picture values apply through `house_outer`, not through deserialization fallbacks.

@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, VecDeque};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-pub(super) const MAX_GLYPHS: usize = 4096;
+pub(super) const MIN_GLYPH_BUDGET: usize = 4096;
+pub(super) const ERASED_MIN_MS: f32 = 450.0;
 
 #[derive(Clone)]
 pub(super) struct Ghost {
@@ -56,13 +57,36 @@ impl Trail {
         current: &styling::Lines,
         now: Instant,
         milliseconds: f32,
+        glyph_budget: usize,
     ) {
-        if !milliseconds.is_finite() || milliseconds <= 0.0 {
+        if !milliseconds.is_finite() || milliseconds <= 0.0 || glyph_budget == 0 {
             self.clear();
             return;
         }
         self.prune(now);
-        let lifetime = Duration::from_secs_f64(f64::from(milliseconds.min(1200.0)) / 1000.0);
+        // A row losing visible graphemes is an erasure of this image,
+        // regardless of which editor command caused it. Text added on another
+        // row must not cancel the erased word's longer lifetime.
+        // All changed old letters share that lifetime, including ones whose
+        // positions are now occupied by a moved prompt or another live line.
+        let ink = |s: &str| {
+            s.graphemes(true)
+                .filter(|g| !g.chars().all(char::is_whitespace))
+                .count()
+        };
+        let erased = (0..previous.len().max(current.len())).any(|row| {
+            let old = previous.get(row).map_or("", |(s, _)| s.as_str());
+            let new = current.get(row).map_or("", |(s, _)| s.as_str());
+            old != new && ink(old) > ink(new)
+        });
+        let milliseconds = milliseconds.min(1200.0);
+        let lifetime = Duration::from_secs_f64(
+            f64::from(if erased {
+                milliseconds.max(ERASED_MIN_MS)
+            } else {
+                milliseconds
+            }) / 1000.0,
+        );
         for (row, (old, runs)) in previous.iter().enumerate() {
             let new = current.get(row).map_or("", |(s, _)| s.as_str());
             if old == new {
@@ -90,7 +114,7 @@ impl Trail {
                 let Some(run) = runs.get(run_index) else {
                     continue;
                 };
-                while self.glyphs.len() >= MAX_GLYPHS {
+                while self.glyphs.len() >= glyph_budget {
                     self.glyphs.pop_front();
                 }
                 self.glyphs.push_back(Ghost {
@@ -138,7 +162,7 @@ mod tests {
         let (old, current) = (lines("OLD same"), lines("NEW same"));
         let before = current.clone();
         let mut trail = Trail::default();
-        trail.observe(&old, &current, now, 200.0);
+        trail.observe(&old, &current, now, 200.0, MIN_GLYPH_BUDGET);
         assert_eq!(
             trail
                 .glyphs
@@ -157,7 +181,7 @@ mod tests {
     fn fading_is_time_based_and_stops_even_without_more_output() {
         let now = Instant::now();
         let mut trail = Trail::default();
-        trail.observe(&lines("A"), &lines("B"), now, 200.0);
+        trail.observe(&lines("A"), &lines("B"), now, 200.0, MIN_GLYPH_BUDGET);
         let ghost = &trail.glyphs[0];
         assert!((ghost.opacity(now) - 0.65).abs() < 0.001);
         assert!((ghost.opacity(now + Duration::from_millis(100)) - 0.1625).abs() < 0.001);
@@ -171,10 +195,10 @@ mod tests {
         let mut trail = Trail::default();
         let mut recoloured = lines("A");
         recoloured[0].1[0].color = rgb(0xff0033).into();
-        trail.observe(&lines("A"), &recoloured, now, 200.0);
+        trail.observe(&lines("A"), &recoloured, now, 200.0, MIN_GLYPH_BUDGET);
         assert!(trail.glyphs.is_empty());
-        trail.observe(&lines("A"), &lines("B"), now, 200.0);
-        trail.observe(&lines("B"), &lines("C"), now, 0.0);
+        trail.observe(&lines("A"), &lines("B"), now, 200.0, MIN_GLYPH_BUDGET);
+        trail.observe(&lines("B"), &lines("C"), now, 0.0, MIN_GLYPH_BUDGET);
         assert!(trail.glyphs.is_empty());
     }
 
@@ -182,7 +206,13 @@ mod tests {
     fn wide_and_combining_glyphs_keep_their_terminal_columns() {
         let now = Instant::now();
         let mut trail = Trail::default();
-        trail.observe(&lines("界e\u{301}Z"), &lines("界xZ"), now, 200.0);
+        trail.observe(
+            &lines("界e\u{301}Z"),
+            &lines("界xZ"),
+            now,
+            200.0,
+            MIN_GLYPH_BUDGET,
+        );
         assert_eq!(trail.glyphs.len(), 1);
         assert_eq!(trail.glyphs[0].text, "e\u{301}");
         assert_eq!(trail.glyphs[0].column, 2);
@@ -193,8 +223,8 @@ mod tests {
     fn a_live_letter_replaces_its_own_older_ghost() {
         let now = Instant::now();
         let mut trail = Trail::default();
-        trail.observe(&lines("A"), &lines("B"), now, 200.0);
-        trail.observe(&lines("B"), &lines("A"), now, 200.0);
+        trail.observe(&lines("A"), &lines("B"), now, 200.0, MIN_GLYPH_BUDGET);
+        trail.observe(&lines("B"), &lines("A"), now, 200.0, MIN_GLYPH_BUDGET);
         assert_eq!(trail.glyphs.len(), 1);
         assert_eq!(trail.glyphs[0].text, "B");
     }
@@ -203,9 +233,116 @@ mod tests {
     fn history_has_a_hard_per_pane_budget() {
         let now = Instant::now();
         let mut trail = Trail::default();
-        trail.observe(&lines(&"X".repeat(MAX_GLYPHS + 30)), &lines(""), now, 200.0);
-        assert_eq!(trail.glyphs.len(), MAX_GLYPHS);
+        trail.observe(
+            &lines(&"X".repeat(MIN_GLYPH_BUDGET + 30)),
+            &lines(""),
+            now,
+            200.0,
+            MIN_GLYPH_BUDGET,
+        );
+        assert_eq!(trail.glyphs.len(), MIN_GLYPH_BUDGET);
         trail.clear();
         assert!(trail.glyphs.is_empty());
+    }
+
+    #[test]
+    fn an_entire_erased_word_lingers_for_450ms_without_renewing_on_cursor_changes() {
+        let now = Instant::now();
+        let mut trail = Trail::default();
+        trail.observe(
+            &lines("whole word"),
+            &lines("whole "),
+            now,
+            220.0,
+            MIN_GLYPH_BUDGET,
+        );
+        assert_eq!(
+            trail
+                .glyphs
+                .iter()
+                .map(|g| g.text.as_str())
+                .collect::<String>(),
+            "word"
+        );
+        let born = trail.glyphs[0].born;
+        let mut cursor = lines("whole ");
+        cursor[0].1[0].color = rgb(0xff0033).into();
+        trail.observe(
+            &lines("whole "),
+            &cursor,
+            now + Duration::from_millis(200),
+            220.0,
+            MIN_GLYPH_BUDGET,
+        );
+        assert_eq!(trail.glyphs[0].born, born);
+        trail.prune(now + Duration::from_millis(300));
+        assert_eq!(trail.glyphs.len(), 4);
+        trail.prune(now + Duration::from_millis(450));
+        assert!(trail.glyphs.is_empty());
+    }
+
+    #[test]
+    fn all_changed_letters_of_an_erased_paragraph_share_the_longer_fade() {
+        let now = Instant::now();
+        let mut previous = lines("The first line");
+        previous.extend(lines("The second line"));
+        previous.extend(lines("The final line"));
+        let mut trail = Trail::default();
+        trail.observe(&previous, &lines(">"), now, 220.0, MIN_GLYPH_BUDGET);
+        assert_eq!(
+            trail
+                .glyphs
+                .iter()
+                .map(|g| g.text.as_str())
+                .collect::<String>(),
+            "ThefirstlineThesecondlineThefinalline"
+        );
+        assert!(trail
+            .glyphs
+            .iter()
+            .all(|g| g.lifetime == Duration::from_millis(450)));
+        trail.prune(now + Duration::from_millis(300));
+        assert!(!trail.glyphs.is_empty());
+        trail.observe(
+            &lines(">"),
+            &lines("new"),
+            now + Duration::from_millis(310),
+            0.0,
+            MIN_GLYPH_BUDGET,
+        );
+        assert!(trail.glyphs.is_empty());
+    }
+
+    #[test]
+    fn a_whole_viewport_fits_even_when_it_exceeds_the_small_pane_budget() {
+        let now = Instant::now();
+        let viewport = 100 * 60;
+        let mut trail = Trail::default();
+        trail.observe(
+            &lines(&"X".repeat(viewport)),
+            &lines(""),
+            now,
+            220.0,
+            viewport,
+        );
+        assert_eq!(trail.glyphs.len(), viewport);
+        trail.observe(&lines("Y"), &lines("Z"), now, 220.0, viewport);
+        assert_eq!(trail.glyphs.len(), viewport);
+    }
+
+    #[test]
+    fn text_added_on_another_row_cannot_cancel_a_word_erasure() {
+        let now = Instant::now();
+        let mut previous = lines("");
+        previous.extend(lines("word"));
+        let mut current = lines("A newly restored heading");
+        current.extend(lines(""));
+        let mut trail = Trail::default();
+        trail.observe(&previous, &current, now, 220.0, MIN_GLYPH_BUDGET);
+        assert_eq!(trail.glyphs.len(), 4);
+        assert!(trail
+            .glyphs
+            .iter()
+            .all(|g| g.lifetime == Duration::from_millis(450)));
     }
 }

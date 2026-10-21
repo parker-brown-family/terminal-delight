@@ -9,7 +9,6 @@ pub(super) struct HistoryContext {
     pub alternate: bool,
     pub cols: usize,
     pub rows: usize,
-    pub paint_offset: usize,
     pub inverted: bool,
 }
 
@@ -90,6 +89,14 @@ impl GridPaint {
                     &snapshot.lines,
                     cx.background_executor().now(),
                     snapshot.afterglow_ms,
+                    snapshot
+                        .context
+                        .as_ref()
+                        .map_or(afterglow::MIN_GLYPH_BUDGET, |c| {
+                            c.cols
+                                .saturating_mul(c.rows)
+                                .max(afterglow::MIN_GLYPH_BUDGET)
+                        }),
                 );
             } else {
                 trail.clear();
@@ -239,7 +246,7 @@ mod tests {
                 .grade
                 .text
         });
-        assert!((inactive - 0.6).abs() < 0.001);
+        assert!((inactive - 0.36).abs() < 0.001);
         pane.cx.update(|window, cx| {
             window.focus(&pane.view.read(cx).focus_handle.clone(), cx);
         });
@@ -260,6 +267,71 @@ mod tests {
                 .text
         });
         assert!((active_again - active).abs() < 0.001);
+    }
+
+    #[gpui::test]
+    fn an_erased_paragraph_survives_bottom_alignment_and_cursor_motion(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.afterglow_ms = Some(220.0);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            v.session
+                .term
+                .lock()
+                .advance(b"\x1b[2J\x1b[HWHOLE WORD\r\nSECOND ROW\r\nFINAL ROW");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+            cx.notify();
+        });
+        pane.redraw();
+        let old_offset = pane.read(|v| v.paint_offset);
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[2J\x1b[H>"));
+        pane.redraw();
+        assert_ne!(
+            old_offset,
+            pane.read(|v| v.paint_offset),
+            "fixture must move bottom alignment"
+        );
+        let erased = pane.view.read_with(pane.cx, |v, cx| {
+            v.grid_paint
+                .read(cx)
+                .trail
+                .glyphs
+                .iter()
+                .map(|g| (g.row, g.column, g.text.clone()))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            erased
+                .iter()
+                .map(|(_, _, s)| s.as_str())
+                .collect::<String>(),
+            "WHOLEWORDSECONDROWFINALROW"
+        );
+        pane.cx.executor().advance_clock(Duration::from_millis(260));
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[1;3H"));
+        pane.redraw();
+        let after_cursor = pane.view.read_with(pane.cx, |v, cx| {
+            v.grid_paint
+                .read(cx)
+                .trail
+                .glyphs
+                .iter()
+                .map(|g| (g.row, g.column, g.text.clone()))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(after_cursor, erased);
+        pane.cx.executor().advance_clock(Duration::from_millis(190));
+        pane.cx.update(|window, _| window.refresh());
+        pane.cx.run_until_parked();
+        assert!(pane.view.read_with(pane.cx, |v, cx| v
+            .grid_paint
+            .read(cx)
+            .trail
+            .glyphs
+            .is_empty()));
     }
 
     #[gpui::test]

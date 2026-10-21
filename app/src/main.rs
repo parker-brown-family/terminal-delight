@@ -29168,6 +29168,7 @@ impl Render for Workspace {
             let is_pane = matches!(scope, MenuScope::Pane(_));
             let cur = self.choice_for(&scope, cx);
             let grade = cur.grade;
+            let light_preset = self.scope_theme(&scope, cx).terminal_light;
             // Grade-group "follow outer" state — independent of the theme tray.
             let following = match &scope {
                 MenuScope::Pane(p) => p.read(cx).appearance.follows_outer_grade(),
@@ -29205,7 +29206,11 @@ impl Render for Workspace {
                     t.g_active_hdr,
                     vec![
                         (G::Text, t.g_text, grade.text),
-                        (G::ImageGlow, t.d_image_glow, grade.image_glow_at_edge()),
+                        (
+                            G::ImageGlow,
+                            t.d_image_glow,
+                            grade.image_glow_at_edge(light_preset),
+                        ),
                     ],
                 ),
                 (
@@ -29214,7 +29219,7 @@ impl Render for Workspace {
                         (
                             G::InactiveText,
                             t.g_text_level,
-                            grade.inactive_text_at_edge(),
+                            grade.inactive_text_at_edge(light_preset),
                         ),
                         (
                             G::InactiveImageGlow,
