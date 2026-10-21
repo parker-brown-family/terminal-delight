@@ -53,9 +53,10 @@ patch_gpl="$repo_root/docs/patches/0002-sever-gpl-crates.patch"
 patch_lazy="$repo_root/docs/patches/0006-lazy-path-targets.patch"
 patch_fit="$repo_root/docs/patches/0007-path-targets-fit-the-paths.patch"
 patch_rim="$repo_root/docs/patches/0008-glass-rim.patch"
+patch_image_glow="$repo_root/docs/patches/0009-image-glow.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim"; do
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -130,3 +131,7 @@ apply_patch "$patch_fit" "path-targets-fit-the-paths" \
 # sentinel: its marker comment present means the rim is already in.
 apply_patch "$patch_rim" "glass-rim" \
     'grep -rqF "td-glass-rim" crates/gpui_wgpu/src'
+
+# Terminal-image bloom is a delta after the bezel/32-tube patch stack.
+apply_patch "$patch_image_glow" "image-glow" \
+    'grep -rqF "td-image-glow" crates/gpui_wgpu/src/crt_pass.wgsl'

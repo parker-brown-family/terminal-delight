@@ -7952,6 +7952,7 @@ impl Workspace {
             crawl_depth: K::CrawlDepth.to_percent(g.crawl_depth),
             crt: g.crt,
             phosphor: K::Phosphor.to_percent(g.phosphor),
+            image_glow: g.image_glow.map(|v| K::ImageGlow.to_percent(v)),
         }
     }
 
@@ -8010,6 +8011,9 @@ impl Workspace {
         }
         if let Some(p) = patch.crawl_depth {
             set!(K::CrawlDepth, p);
+        }
+        if let Some(p) = patch.image_glow {
+            set!(K::ImageGlow, p);
         }
         if let Some(p) = patch.phosphor {
             set!(K::Phosphor, p);
@@ -20941,7 +20945,8 @@ impl Workspace {
                         | theme::GradeKey::TextSize
                         | theme::GradeKey::BenchSize
                         | theme::GradeKey::Phosphor
-                        | theme::GradeKey::Glare => {
+                        | theme::GradeKey::Glare
+                        | theme::GradeKey::ImageGlow => {
                             format!("{}%", (v * 100.).round() as i32)
                         }
                         theme::GradeKey::CrawlAngle => format!("{}\u{00b0}", v.round() as i32),
@@ -29380,6 +29385,13 @@ impl Render for Workspace {
                             cx,
                         ))
                         .child(self.slider_row(theme::GradeKey::Glare, t.d_glare, glare, &th, cx))
+                        .child(self.slider_row(
+                            theme::GradeKey::ImageGlow,
+                            t.d_image_glow,
+                            grade.image_glow_at_edge(),
+                            &th,
+                            cx,
+                        ))
                         .child(self.track_slider(0, t.d_roll, dials, &th, cx))
                         .child(self.track_slider(1, t.d_roll_spd, dials, &th, cx))
                         .child(self.track_slider(2, t.d_roll_size, dials, &th, cx))
@@ -44514,5 +44526,25 @@ mod nav_tests {
             (1usize, (0., 120., 500., 600.)),
         ];
         assert_eq!(neighbour_in_dir(from, &cands, "left"), Some(1));
+    }
+    #[test]
+    fn image_glow_config_patch_pins_only_it_and_reports_unset() {
+        let mut grade = theme::Grade::neutral();
+        assert_eq!(Workspace::grade_report(&grade).image_glow, None);
+        let patch: mcp::ConfigPatch = serde_json::from_str(r#"{"image_glow":35}"#).unwrap();
+        let touched = Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(
+            touched,
+            theme::GradePins::only(theme::GradeChannel::ImageGlow)
+        );
+        assert_eq!(Workspace::grade_report(&grade).image_glow, Some(35.0));
+        let other: mcp::ConfigPatch = serde_json::from_str(r#"{"brightness":60}"#).unwrap();
+        Workspace::apply_config_patch(&mut grade, &other);
+        assert_eq!(Workspace::grade_report(&grade).image_glow, Some(35.0));
+        let off: mcp::ConfigPatch =
+            serde_json::from_str(r#"{"image_glow":0,"crt":false}"#).unwrap();
+        Workspace::apply_config_patch(&mut grade, &off);
+        assert_eq!(grade.image_glow, Some(0.0));
+        assert!(!grade.crt);
     }
 }

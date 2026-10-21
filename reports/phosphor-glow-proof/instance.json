@@ -1,0 +1,119 @@
+{
+  "session": "phosphor-glow-test",
+  "client": {
+    "address": "0x57761de156f0",
+    "mapped": true,
+    "hidden": false,
+    "visible": true,
+    "acceptsInput": true,
+    "at": [
+      16,
+      52
+    ],
+    "size": [
+      1568,
+      920
+    ],
+    "workspace": {
+      "id": 4,
+      "name": "4"
+    },
+    "floating": true,
+    "monitor": 1,
+    "class": "terminal-delight",
+    "title": "terminal-delight \u2014 phosphor-glow-test",
+    "initialClass": "terminal-delight",
+    "initialTitle": "terminal-delight \u2014 phosphor-glow-test",
+    "pid": 622621,
+    "xwayland": false,
+    "pinned": false,
+    "pinFullscreened": false,
+    "fullscreen": 0,
+    "fullscreenClient": 0,
+    "fullscreenHandler": "default",
+    "allowedOverFullscreen": true,
+    "grouped": [],
+    "tags": [
+      "default-opacity*",
+      "terminal*"
+    ],
+    "swallowing": "0x0",
+    "focusHistoryID": 0,
+    "inhibitingIdle": false,
+    "xdgTag": "",
+    "xdgDescription": "",
+    "contentType": "none",
+    "tearingHint": false,
+    "stableId": "1800069e"
+  },
+  "binary_sha256": "fb145f11e537e9332f6e9bd4ee587f34bab30f361aab49f7d7ca70c39b79ccf0",
+  "panes": {
+    "panes": [
+      {
+        "tab": 0,
+        "title": "Glow",
+        "mode": "SHELL",
+        "is_agent": false,
+        "pid": 588177,
+        "pane_id": 1,
+        "cwd": "/home/parker/Work/td-phosphor-glow-lab/terminal-delight",
+        "exposed": true
+      },
+      {
+        "tab": 0,
+        "title": "Reference \u00b7 zero glow",
+        "mode": "SHELL",
+        "is_agent": false,
+        "pid": 588183,
+        "pane_id": 2,
+        "cwd": "/home/parker/Work/td-phosphor-glow-lab/terminal-delight",
+        "exposed": true
+      }
+    ],
+    "untrusted_terminal_data": [
+      "panes[].title",
+      "panes[].mode",
+      "panes[].cwd",
+      "panes[].note.title",
+      "panes[].note.text"
+    ],
+    "instance": {
+      "session": "phosphor-glow-test",
+      "window": 622621,
+      "build": "terminal-delight-phosphor"
+    }
+  },
+  "config": {
+    "configs": [
+      {
+        "target": "outer",
+        "scope": "outer",
+        "grade": {
+          "brightness": 50.0,
+          "contrast": 50.0,
+          "colour": 50.0,
+          "text": 50.0,
+          "background": 50.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": true,
+          "phosphor": 0.0,
+          "image_glow": 55.0
+        }
+      }
+    ],
+    "instance": {
+      "session": "phosphor-glow-test",
+      "window": 622621,
+      "build": "terminal-delight-phosphor"
+    }
+  },
+  "normal_session_pid": 1592068,
+  "normal_still_running": true
+}

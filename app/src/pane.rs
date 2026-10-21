@@ -11903,6 +11903,11 @@ impl Render for TerminalView {
                                         k2,
                                         crawl,
                                         tube_bezel,
+                                        if on_terminal && th.crt {
+                                            th.grade.image_glow_at_edge()
+                                        } else {
+                                            0.0
+                                        },
                                     );
                                     let changed = {
                                         let mut slot = store.lock().unwrap();
