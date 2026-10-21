@@ -1120,6 +1120,27 @@ impl TerminalView {
         true
     }
 
+    /// A key the floating square was routed. The document is asked first —
+    /// the note box, then a brief's own dialog — and what it declines is
+    /// either [`crate::keylayer::glow_chord`], which turns the document, or
+    /// Escape, which closes the square.
+    pub(super) fn float_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> Handled {
+        let Some(view) = self.float.as_ref().map(|f| f.view.clone()) else {
+            return Handled::Consumed;
+        };
+        if view.update(cx, |doc, cx| doc.key(ks, cx)) {
+            return Handled::Consumed;
+        }
+        let m = &ks.modifiers;
+        match crate::keylayer::glow_chord(&ks.key, m.control, m.shift, m.alt) {
+            Some(mv) => view.update(cx, |doc, cx| doc.glow(mv, cx)),
+            None => {
+                self.request_close_float(cx);
+            }
+        }
+        Handled::Consumed
+    }
+
     /// A key on the Document face. Always consumed: the face's own keys move
     /// the document, and every other key stops here rather than typing into
     /// a shell nobody can see. `keylayer` has already let the window's and
@@ -1135,6 +1156,12 @@ impl TerminalView {
             return Handled::Consumed;
         }
         let m = &ks.modifiers;
+        // The floating square's chords move the face's document too, so a
+        // brief reads the same way in either seat.
+        if let Some(mv) = crate::keylayer::glow_chord(&ks.key, m.control, m.shift, m.alt) {
+            view.update(cx, |v, cx| v.glow(mv, cx));
+            return Handled::Consumed;
+        }
         let Some(key) = crate::docopen::doc_face_key(&ks.key, m.alt, m.control, m.platform) else {
             return Handled::Consumed;
         };

@@ -881,6 +881,24 @@ impl DocumentView {
         );
     }
 
+    /// ctrl+↑/↓ and ctrl+shift+↑/↓ ([`crate::keylayer::glow_chord`]): a step
+    /// is an arrow's worth, as the Document face's arrows move, and a page is
+    /// [`Self::page`]'s.
+    pub fn glow(&mut self, mv: crate::keylayer::GlowMove, cx: &mut Context<Self>) {
+        use crate::keylayer::{GlowMove, Paging};
+        match mv {
+            GlowMove::Step(dir) => {
+                let dy = -f32::from(dir) * crate::docopen::DOC_ARROW_STEP;
+                self.wheel(
+                    ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(dy))),
+                    cx,
+                );
+            }
+            GlowMove::Page(dir) if dir < 0 => self.page(Paging::PageUp, cx),
+            GlowMove::Page(_) => self.page(Paging::PageDown, cx),
+        }
+    }
+
     pub fn target(&self) -> &DocTarget {
         &self.target
     }
