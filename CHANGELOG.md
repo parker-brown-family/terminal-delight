@@ -413,6 +413,11 @@ the changes you may notice in the first hour.
 
 ### Changed
 
+- **Ctrl+W closes the document on top; Ctrl+Shift+W closes the tab.** A
+  picture, page or clip opened in a box over a pane now goes away with Ctrl+W,
+  one box per press, as Escape and its ✕ already did. Closing the whole tab
+  moved to Ctrl+Shift+W and still asks first. With no box open, Ctrl+W reaches
+  the shell or agent again as delete-word.
 - **Model menus name the models your agents actually offer.** The launcher,
   the saved launch defaults and the workbench's live model dial read their
   choices and reasoning levels from the installed Codex or Claude, and cards and

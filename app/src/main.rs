@@ -4,7 +4,8 @@
 //! other pane keeps its exact place. ctrl+shift+t / [+]: new tab · ctrl+shift+u|y: Σ usage ·
 //! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus
 //! by direction · ctrl+arrows: word-jump in the shell · alt+v / alt+h: split ↔ / ↕
-//! alt+w: close the focused PANE (ctrl+w closes the whole tab) ·
+//! alt+w: close the focused PANE (ctrl+shift+w closes the whole tab, ctrl+w the
+//! document box over a pane) ·
 //! alt+k: flip the focused pane between its TERMINAL and WORKBENCH faces ·
 //! alt+g: open or close Git coordination ·
 //! ctrl+alt+arrows: walk the left bar's tree (→ opens a branch, then steps in;
@@ -2315,7 +2316,7 @@ struct Deleted {
 /// What one retirement is holding.
 ///
 /// Every way of ending something in this application puts one of these in the
-/// trash instead of hanging up: the bay, the ✕, ctrl+w, alt+w, and the two menu
+/// trash instead of hanging up: the bay, the ✕, ctrl+shift+w, alt+w, and the two menu
 /// rows. They differ only in how they come back — a branch by its tab indices,
 /// a pane by the split it sat in — which is why this is an enum and not two
 /// trashes.
@@ -5124,7 +5125,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         ws.close_pane(pane.entity_id(), window, cx);
     })
     .detach();
-    // Ctrl+W in a pane → close the whole active tab, always via the confirm dialog
+    // Ctrl+Shift+W in a pane → close the whole active tab, always via the confirm dialog
     cx.subscribe(pane, |ws, _pane, _ev: &RequestCloseTab, cx| {
         ws.confirm_close_active_tab(cx);
     })
@@ -18664,7 +18665,7 @@ impl Workspace {
         }
     }
 
-    /// Ctrl+W: always raise the confirmation dialog for the active tab — even a
+    /// Ctrl+Shift+W: always raise the confirmation dialog for the active tab — even a
     /// single-pane tab. Closing a tab ends live shells, so it's never silent.
     fn confirm_close_active_tab(&mut self, cx: &mut Context<Self>) {
         if self.active < self.tabs.len() {
@@ -19648,7 +19649,7 @@ impl Workspace {
                 .position(|p| p.focus_handle(cx).is_focused(window))
                 .unwrap_or(0);
             // Alt+W closes the FOCUSED PANE — the rung that was missing from
-            // the middle of the close ladder. Ctrl+W already closed the whole
+            // the middle of the close ladder. Ctrl+Shift+W closes the whole
             // tab and Super+W closes the tile in Omarchy, but the one unit
             // Terminal Delight owns by itself had no chord at all, only the
             // header ×. Same path as that ×: one shell ends, the split collapses
@@ -32320,7 +32321,8 @@ impl Render for Workspace {
                         row("Alt+A", s.launch_agent),
                         row("Alt+L", s.lookup),
                         row("Alt+G", s.git_coordination),
-                        row("Ctrl+W", s.close_tab),
+                        row("Ctrl+W", s.close_doc),
+                        row("Ctrl+Shift+W", s.close_tab),
                         row("Ctrl+Alt+↑↓←→", s.walk_tree),
                         row("Ctrl+Alt+1…9", s.jump_branch),
                         row("Ctrl+Alt+R", s.rename_row),
