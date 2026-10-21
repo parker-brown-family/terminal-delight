@@ -218,14 +218,23 @@ pub struct GradeReport {
     pub inactive_image_glow: Option<f32>,
     /// Percent of active text intensity; undeclared draws at 45% on Standard or 52% on Intrusive.
     pub inactive_text: Option<f32>,
-    /// Replaced-glyph fade time, 0..1200 milliseconds; undeclared draws at 220ms; erasures use at least 650ms.
+    /// Legacy unified setting, 0..1200ms. New controls override it at drawing time.
     pub afterglow_ms: Option<f32>,
+    /// Active text-change trail, 0..220 milliseconds; zero disables it.
+    pub cursor_linger_ms: Option<f32>,
+    /// Active erased-text trail, 0..650 milliseconds; zero disables it.
+    pub off_cursor_linger_ms: Option<f32>,
+    /// Inactive text-change trail, 0..220 milliseconds; zero disables it.
+    pub inactive_cursor_linger_ms: Option<f32>,
+    /// Inactive erased-text trail, 0..650 milliseconds; zero disables it.
+    pub inactive_off_cursor_linger_ms: Option<f32>,
 }
 
 /// The **POST** shape: a *partial* grade. Every field is optional and an absent
 /// field is left **unchanged** (PATCH, not PUT) — so "dim the brightness" never
 /// silently resets the theme, the warp, or any other channel. Percents are
-/// `0..=100`; `afterglow_ms` uses `0..=1200` milliseconds. Out-of-range values
+/// `0..=100`; linger fields use milliseconds (cursor 0..220, off-cursor 0..650).
+/// Legacy `afterglow_ms` accepts 0..1200. Out-of-range values
 /// clamp (the API is "dumb" — it stores the
 /// number it is given, it does not interpret "20% lower"; the agent does that
 /// math and posts the resulting absolute value). `deny_unknown_fields` makes a
@@ -255,8 +264,16 @@ pub struct ConfigPatch {
     pub inactive_image_glow: Option<f32>,
     /// Percent of active text intensity; undeclared draws at 45% on Standard or 52% on Intrusive.
     pub inactive_text: Option<f32>,
-    /// Replaced-glyph fade time, 0..1200 milliseconds; undeclared draws at 220ms; erasures use at least 650ms.
+    /// Legacy unified setting, 0..1200ms. New controls override it at drawing time.
     pub afterglow_ms: Option<f32>,
+    /// Active text-change trail, 0..220 milliseconds; zero disables it.
+    pub cursor_linger_ms: Option<f32>,
+    /// Active erased-text trail, 0..650 milliseconds; zero disables it.
+    pub off_cursor_linger_ms: Option<f32>,
+    /// Inactive text-change trail, 0..220 milliseconds; zero disables it.
+    pub inactive_cursor_linger_ms: Option<f32>,
+    /// Inactive erased-text trail, 0..650 milliseconds; zero disables it.
+    pub inactive_off_cursor_linger_ms: Option<f32>,
     /// Attach (or clear) the pane's card LOGO: an absolute path to an image file
     /// (png/jpg/jpeg/svg/webp). An empty string clears it. Lets an agent brand the
     /// terminal it's working in — shown as the card portrait on the agent wall.
@@ -1150,8 +1167,12 @@ fn tool_defs() -> Value {
                  phosphor — the glow of the lit borders, 25 the house look, 0 none; \
                  image_glow — active letter glow, default 20 (Standard) / 37 (Intrusive); inactive_image_glow \
                  — inactive glow, default 100; inactive_text — percent of active \
-                 text, default 45 (Standard) / 52 (Intrusive)). `afterglow_ms` uses milliseconds, range \
-                 0..1200, default 220; erased passages use at least 650ms while enabled. These four lighting fields remain null \
+                 text, default 45 (Standard) / 52 (Intrusive)). The four linger fields use milliseconds: \
+                 cursor_linger_ms and inactive_cursor_linger_ms range 0..220; off_cursor_linger_ms \
+                 and inactive_off_cursor_linger_ms range 0..650. Defaults are the maxima; zero \
+                 disables that trail. Cursor means text changes; off-cursor means erased passages. \
+                 Legacy afterglow_ms accepts 0..1200 and supplies fallback timings capped to the \
+                 new maxima; legacy zero disables undeclared trails. Optional lighting fields remain null \
                  in GET while unset. `crawl` and `crt` are booleans (CRT off = a flat screen; \
                  warp and the roll bar keep their values but draw nothing). \
                  Omit `targets` to report every exposed pane \
@@ -1174,8 +1195,11 @@ fn tool_defs() -> Value {
             "description":
                 "Set the appearance of one or more panes (by pid) or the `outer` \
                  scope. Each update carries a partial `config`: only the channels \
-                  you include change (0..100 percents, except `afterglow_ms`: \
-                  0..1200 milliseconds; out-of-range values clamp), \
+                  you include change (0..100 percents, except linger fields in milliseconds: \
+                  cursor_linger_ms/inactive_cursor_linger_ms 0..220, \
+                  off_cursor_linger_ms/inactive_off_cursor_linger_ms 0..650; \
+                  legacy afterglow_ms 0..1200 resets the four overrides, with explicit \
+                  new fields in the same patch winning; out-of-range values clamp), \
                  everything else is left untouched. The API is deliberately dumb \
                  — it stores the absolute number you give it and does NOT \
                  interpret relative asks like \"20% lower\"; read the current \
@@ -1202,7 +1226,7 @@ fn tool_defs() -> Value {
                                 },
                                 "config": {
                                     "type": "object",
-                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth/phosphor/image_glow/inactive_image_glow/inactive_text (0..100; image_glow is active letter glow, 0 off; afterglow_ms is 0..1200 milliseconds; phosphor 25 = the house border glow, 0 = none) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
+                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth/phosphor/image_glow/inactive_image_glow/inactive_text (0..100; image_glow is active letter glow, 0 off; cursor_linger_ms/inactive_cursor_linger_ms are 0..220ms, off_cursor_linger_ms/inactive_off_cursor_linger_ms are 0..650ms, zero disables each; legacy afterglow_ms is 0..1200ms and resets the four overrides; phosphor 25 = the house border glow, 0 = none) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
                                 }
                             },
                             "required": ["target", "config"],

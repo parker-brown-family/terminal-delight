@@ -1,0 +1,292 @@
+{
+  "schema": "td-linger-proof/1",
+  "bounds_ms": {
+    "cursor": [
+      0,
+      220
+    ],
+    "off_cursor": [
+      0,
+      650
+    ]
+  },
+  "categories": {
+    "cursor": "existing changed-text trail",
+    "off_cursor": "existing erased-image trail"
+  },
+  "defaults_ms": {
+    "active": [
+      220,
+      650
+    ],
+    "inactive": [
+      220,
+      650
+    ]
+  },
+  "tests": {
+    "default": {
+      "passed": 2640,
+      "ignored": 10,
+      "targets": 7
+    },
+    "fallback": {
+      "passed": 2587,
+      "ignored": 10,
+      "targets": 7
+    }
+  },
+  "native": {
+    "session": "linger-check-c7bd7616cd",
+    "binary_sha256": "352c59bf190660bc71bd88bbc30a2c1fc6403db285f9fd92f5515b827eb748cd",
+    "cases": {
+      "default_absence": {
+        "grade": {
+          "brightness": 16.0,
+          "contrast": 45.0,
+          "colour": 69.0,
+          "text": 66.0,
+          "background": 43.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 95.33332824707031,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 25.0,
+          "image_glow": null,
+          "inactive_image_glow": null,
+          "inactive_text": null,
+          "afterglow_ms": null,
+          "cursor_linger_ms": null,
+          "off_cursor_linger_ms": null,
+          "inactive_cursor_linger_ms": null,
+          "inactive_off_cursor_linger_ms": null
+        },
+        "capture": {
+          "public_crop": "gauges-default.png",
+          "public_crop_sha256": "9502260cd3b491b1c4503302a31021628119213a12d8c90199deddd2191a2d32",
+          "original_window_sha256": "4c4a997cf1269722027deb9f5d5e99ec24c14d191ff0b9a81f6d067480483f0c",
+          "native_window_logical_size": [
+            1150,
+            940
+          ],
+          "method": "Cropped the rightmost 31% and bottom 62% of the original native window; no pixel edits."
+        }
+      },
+      "independent_partial_patch": {
+        "outer": {
+          "brightness": 16.0,
+          "contrast": 45.0,
+          "colour": 69.0,
+          "text": 66.0,
+          "background": 43.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 95.33332824707031,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 25.0,
+          "image_glow": null,
+          "inactive_image_glow": null,
+          "inactive_text": null,
+          "afterglow_ms": null,
+          "cursor_linger_ms": 110.0,
+          "off_cursor_linger_ms": 325.0,
+          "inactive_cursor_linger_ms": 40.0,
+          "inactive_off_cursor_linger_ms": 600.0
+        },
+        "pane": {
+          "brightness": 16.0,
+          "contrast": 45.0,
+          "colour": 69.0,
+          "text": 66.0,
+          "background": 43.0,
+          "gamma": 50.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 28.571426391601562,
+          "bench_size": 28.571426391601562,
+          "warp": 95.33332824707031,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 25.0,
+          "image_glow": null,
+          "inactive_image_glow": null,
+          "inactive_text": null,
+          "afterglow_ms": null,
+          "cursor_linger_ms": 0.0,
+          "off_cursor_linger_ms": 325.0,
+          "inactive_cursor_linger_ms": 40.0,
+          "inactive_off_cursor_linger_ms": 600.0
+        },
+        "capture": {
+          "public_crop": "gauges-intermediate.png",
+          "public_crop_sha256": "e689218a68d5af4d8120061f913829906cb9f9c6139400f2d4741eadf1ab8174",
+          "original_window_sha256": "b08c7db2dca7516a7a7adbbf8e903eb9cce70d73185e05201d53e603629644d7",
+          "native_window_logical_size": [
+            1150,
+            940
+          ],
+          "method": "Cropped the rightmost 31% and bottom 62% of the original native window; no pixel edits."
+        }
+      },
+      "clamped": {
+        "brightness": 16.0,
+        "contrast": 45.0,
+        "colour": 69.0,
+        "text": 66.0,
+        "background": 43.0,
+        "gamma": 50.0,
+        "menu_bar": 33.333335876464844,
+        "text_size": 28.571426391601562,
+        "bench_size": 28.571426391601562,
+        "warp": 95.33332824707031,
+        "crawl": false,
+        "crawl_angle": 17.543859481811523,
+        "crawl_depth": 16.38796043395996,
+        "crt": false,
+        "phosphor": 25.0,
+        "image_glow": null,
+        "inactive_image_glow": null,
+        "inactive_text": null,
+        "afterglow_ms": null,
+        "cursor_linger_ms": 0.0,
+        "off_cursor_linger_ms": 650.0,
+        "inactive_cursor_linger_ms": 220.0,
+        "inactive_off_cursor_linger_ms": 0.0
+      },
+      "restart_persistence": {
+        "before": {
+          "outer": {
+            "brightness": 16.0,
+            "contrast": 45.0,
+            "colour": 69.0,
+            "text": 66.0,
+            "background": 43.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 95.33332824707031,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 25.0,
+            "image_glow": null,
+            "inactive_image_glow": null,
+            "inactive_text": null,
+            "afterglow_ms": null,
+            "cursor_linger_ms": 0.0,
+            "off_cursor_linger_ms": 325.0,
+            "inactive_cursor_linger_ms": 40.0,
+            "inactive_off_cursor_linger_ms": 0.0
+          },
+          "pane": {
+            "brightness": 16.0,
+            "contrast": 45.0,
+            "colour": 69.0,
+            "text": 66.0,
+            "background": 43.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 95.33332824707031,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 25.0,
+            "image_glow": null,
+            "inactive_image_glow": null,
+            "inactive_text": null,
+            "afterglow_ms": null,
+            "cursor_linger_ms": 0.0,
+            "off_cursor_linger_ms": 125.0,
+            "inactive_cursor_linger_ms": 40.0,
+            "inactive_off_cursor_linger_ms": 0.0
+          }
+        },
+        "after": {
+          "outer": {
+            "brightness": 16.0,
+            "contrast": 45.0,
+            "colour": 69.0,
+            "text": 66.0,
+            "background": 43.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 95.33332824707031,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 25.0,
+            "image_glow": null,
+            "inactive_image_glow": null,
+            "inactive_text": null,
+            "afterglow_ms": null,
+            "cursor_linger_ms": 0.0,
+            "off_cursor_linger_ms": 325.0,
+            "inactive_cursor_linger_ms": 40.0,
+            "inactive_off_cursor_linger_ms": 0.0
+          },
+          "pane": {
+            "brightness": 16.0,
+            "contrast": 45.0,
+            "colour": 69.0,
+            "text": 66.0,
+            "background": 43.0,
+            "gamma": 50.0,
+            "menu_bar": 33.333335876464844,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 95.33332824707031,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 25.0,
+            "image_glow": null,
+            "inactive_image_glow": null,
+            "inactive_text": null,
+            "afterglow_ms": null,
+            "cursor_linger_ms": 0.0,
+            "off_cursor_linger_ms": 125.0,
+            "inactive_cursor_linger_ms": 40.0,
+            "inactive_off_cursor_linger_ms": 0.0
+          }
+        },
+        "capture": {
+          "public_crop": "gauges-persisted.png",
+          "public_crop_sha256": "c061c89df3c79220a1d969bed4f692f912861e7d16f197fa30985d09acd83b0b",
+          "original_window_sha256": "84b448698f48d5cb00656c9693eef35dd04f0e8bf46bd0e00fbbbaff2e04b90f",
+          "native_window_logical_size": [
+            1150,
+            940
+          ],
+          "method": "Cropped the rightmost 31% and bottom 62% of the original native window; no pixel edits."
+        }
+      }
+    },
+    "placement": "private hidden workspace; no focus or pointer change",
+    "closed": true,
+    "collector_canary_invoked": false,
+    "passed": true
+  },
+  "native_scope": "Actual gauges, MCP partial patch/limits and restart persistence in a private window; exact expiry and active focus routing are deterministic GPUI tests.",
+  "compatibility": "Legacy explicit afterglow zero owns all four absent new dials; no hidden erased-text minimum.",
+  "performance": "GPU stack unchanged. Prior lighting stress limits remain open in issue1075; no new performance sweep claimed."
+}

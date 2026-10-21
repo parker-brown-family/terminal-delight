@@ -12035,9 +12035,19 @@ impl Render for TerminalView {
                                 glyphs,
                                 cell_h: self.cell_h,
                                 cell_w: self.cell_w,
-                                afterglow_ms: grade.afterglow_ms_at_edge(),
+                                linger: grade.linger_for_focus(focused_now),
                                 context: Some(grid_paint::HistoryContext {
-                                    theme: grid_th.clone(),
+                                    theme: {
+                                        // Timings do not change the retained glyph paint.
+                                        // Keep them out of geometry/style invalidation.
+                                        let mut history = grid_th.clone();
+                                        history.grade.afterglow_ms = None;
+                                        history.grade.cursor_linger_ms = None;
+                                        history.grade.off_cursor_linger_ms = None;
+                                        history.grade.inactive_cursor_linger_ms = None;
+                                        history.grade.inactive_off_cursor_linger_ms = None;
+                                        history
+                                    },
                                     offset: self.session.term.lock().display_offset(),
                                     alternate: alt_screen_active,
                                     cols: self.grid.cols,
