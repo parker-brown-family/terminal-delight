@@ -216,6 +216,11 @@ pub struct NoteBox {
     /// Open on notes whose words a Markdown file no longer has: they can be
     /// read and deleted, and nothing can be added to them.
     pub gone: bool,
+    /// How far the notes are turned back from the newest, in pixels: 0 shows
+    /// the newest above the draft, which is where a note just added lands.
+    /// Parker, 2026-10-21: *"trying to add more comments just has them not
+    /// show up! needs to be scrollable for infinite comments!"*
+    pub back: f32,
 }
 
 /// A part of the bar or the note box, as the last paint laid it out.
@@ -371,6 +376,22 @@ impl Said {
 /// that recorded it.
 type Zones = Rc<RefCell<Vec<(Bounds<Pixels>, Zone)>>>;
 
+/// The note box's list as the last paint measured it: the height it was
+/// given and the height its notes needed. `None` until a paint has said,
+/// which is not the same as a list that fits.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ListRoom {
+    pub view: Option<f32>,
+    pub content: Option<f32>,
+}
+
+impl ListRoom {
+    /// How far the list can turn back from its newest note, when known.
+    pub fn back_max(&self) -> Option<f32> {
+        Some((self.content? - self.view?).max(0.0))
+    }
+}
+
 /// Where a layer's notes are written.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Keeping {
@@ -471,6 +492,8 @@ pub struct NotesLayer {
     /// what reached the screen, which is not always what a press would find.
     drawn: std::cell::Cell<(usize, usize)>,
     zones: Zones,
+    /// The open box's list, as the last paint measured it, for the wheel.
+    room: Rc<std::cell::Cell<ListRoom>>,
 }
 
 /// What a press on the layer did.
@@ -572,6 +595,7 @@ impl NotesLayer {
             revealing: false,
             drawn: std::cell::Cell::new((0, 0)),
             zones: Rc::new(RefCell::new(Vec::new())),
+            room: Rc::new(std::cell::Cell::new(ListRoom::default())),
         };
         layer.refresh();
         layer
@@ -617,6 +641,7 @@ impl NotesLayer {
             revealing: false,
             drawn: std::cell::Cell::new((0, 0)),
             zones: Rc::new(RefCell::new(Vec::new())),
+            room: Rc::new(std::cell::Cell::new(ListRoom::default())),
         };
         layer.refresh();
         layer
@@ -1205,6 +1230,20 @@ impl NotesLayer {
 
     // ── notes, added and taken away ─────────────────────────────────────────
 
+    /// A wheel turn while the note box is open turns its notes, never the
+    /// page under it. `dy` is the turn in pixels, positive towards the top.
+    /// `None` when no box is open; otherwise whether the notes moved.
+    pub fn wheel_box(&mut self, dy: f32) -> Option<bool> {
+        let b = self.note_box.as_mut()?;
+        let was = b.back;
+        let next = (b.back + dy).max(0.0);
+        b.back = match self.room.get().back_max() {
+            Some(max) => next.min(max),
+            None => next,
+        };
+        Some((b.back - was).abs() > f32::EPSILON)
+    }
+
     /// Open the note box on an anchor, with an empty draft.
     pub fn open(&mut self, nid: String, title: String) {
         if self.note_box.as_ref().is_some_and(|b| b.nid == nid) {
@@ -1215,6 +1254,7 @@ impl NotesLayer {
             title,
             draft: EditBuffer::default(),
             gone: false,
+            back: 0.0,
         });
     }
 
@@ -1226,6 +1266,7 @@ impl NotesLayer {
             title,
             draft: EditBuffer::default(),
             gone: true,
+            back: 0.0,
         });
     }
 
@@ -1388,6 +1429,7 @@ impl NotesLayer {
             return false;
         }
         b.draft = EditBuffer::default();
+        b.back = 0.0;
         let (nid, title) = (b.nid.clone(), b.title.clone());
         self.add_note(nid, title, text, utc_minute(now));
         true
@@ -1727,8 +1769,16 @@ impl NotesLayer {
     /// A canvas that records where its parent was painted as `zone`.
     fn record(&self, zone: Zone) -> impl IntoElement {
         let zones = self.zones.clone();
+        // Only what shows takes a press: a note turned out of the list keeps
+        // its delete's place, under the title or the draft, and a press there
+        // must not reach it.
         canvas(
-            move |bounds, _, _| zones.borrow_mut().push((bounds, zone)),
+            move |bounds, window, _| {
+                let shown = bounds.intersect(&window.content_mask().bounds);
+                if !shown.is_empty() {
+                    zones.borrow_mut().push((shown, zone));
+                }
+            },
             |_, _, _, _| {},
         )
         .absolute()
@@ -2149,7 +2199,66 @@ impl NotesLayer {
         }
         // A draft that wraps grows downward, and the box stops at eight
         // tenths of the view. The notes already written give up their room
-        // first, so the draft and Add note stay on screen as it grows.
+        // first, so the draft and Add note stay on screen as it grows. What
+        // they gave up is turned back to by the wheel: the list sits on its
+        // newest note, and `back` lowers it from there: an offset, never a
+        // margin, which would take the height the notes are seen through.
+        let room = self.room.get();
+        let back = room.back_max().map_or(b.back, |max| b.back.min(max));
+        let (seen, needed) = (self.room.clone(), self.room.clone());
+        let mut scroller = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .justify_end()
+            .min_h(px(0.))
+            .overflow_hidden()
+            .child(
+                canvas(
+                    move |bounds, _, _| {
+                        let mut r = seen.get();
+                        r.view = Some(f32::from(bounds.size.height));
+                        seen.set(r);
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+            .child(
+                list.flex_none().relative().top(px(back)).child(
+                    canvas(
+                        move |bounds, _, _| {
+                            let mut r = needed.get();
+                            r.content = Some(f32::from(bounds.size.height));
+                            needed.set(r);
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .inset_0(),
+                ),
+            );
+        // A thumb on the right edge, only when there is more than shows: as
+        // last measured, so it trails a frame behind a note added or deleted.
+        if let (Some(view_h), Some(content_h), Some(max)) =
+            (room.view, room.content, room.back_max())
+        {
+            if max > 0.5 && content_h > 0.0 {
+                let thumb = (view_h * view_h / content_h).max(16.0).min(view_h);
+                let top = (max - back) / max * (view_h - thumb);
+                scroller = scroller.child(
+                    div()
+                        .absolute()
+                        .right(px(0.))
+                        .top(px(top))
+                        .w(px(3.))
+                        .h(px(thumb))
+                        .rounded(px(2.))
+                        .bg(th.accent.alpha(0.55)),
+                );
+            }
+        }
         let mut content = div()
             .flex()
             .flex_col()
@@ -2157,7 +2266,7 @@ impl NotesLayer {
             .gap(px(10.))
             .px(px(12.))
             .py(px(10.))
-            .child(list.min_h(px(0.)).overflow_hidden());
+            .child(scroller);
         if let Some(pictures) = self.draw_pictures(&b.nid, deletable, th, sk) {
             content = content.child(pictures);
         }
@@ -2503,6 +2612,80 @@ mod tests {
             key: key.into(),
             key_char: ch.map(str::to_string),
         }
+    }
+
+    /// Parker, 2026-10-21: *"trying to add more comments just has them not
+    /// show up! needs to be scrollable for infinite comments!"* Thirty notes
+    /// in a short view: the newest shows above the draft, the wheel turns
+    /// back to the oldest, and only a delete that shows takes a press.
+    #[gpui::test]
+    fn a_long_thread_of_notes_turns_under_the_wheel(cx: &mut gpui::TestAppContext) {
+        let notes: Vec<String> = (0..30)
+            .map(|i| {
+                format!(r#"{{"text":"note {i}","title":"a title","ts":"2026-10-21 18:{i:02}"}}"#)
+            })
+            .collect();
+        let island = format!(r#"{{"a":[{}]}}"#, notes.join(","));
+        let mut l = layer(&island, "{}", ConcurSupport::Supported);
+        l.open("a".into(), "a title".into());
+        let th = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).expect("the embedded theme");
+        let sk = crate::skin::parse(crate::skin::DEFAULT_SKIN_TOML)
+            .expect("the embedded skin")
+            .bake(&th, 1.0);
+        let view = gpui::size(px(600.), px(400.));
+        let cx = cx.add_empty_window();
+        let deletes = |l: &NotesLayer, cx: &mut gpui::VisualTestContext| {
+            l.clear_zones();
+            cx.draw(Point::default(), view, |_, _| {
+                l.draw_box(view, &th, &sk).expect("open")
+            });
+            let zones = l.zones.borrow();
+            let shown: Vec<usize> = zones
+                .iter()
+                .filter_map(|(_, z)| match z {
+                    Zone::Delete(i) => Some(*i),
+                    _ => None,
+                })
+                .collect();
+            let add = zones.iter().any(|(_, z)| *z == Zone::AddNote);
+            (shown, add)
+        };
+        let (shown, add) = deletes(&l, cx);
+        assert!(add, "Add note stays on screen");
+        assert!(shown.contains(&29), "the newest shows: {shown:?}");
+        assert!(
+            !shown.contains(&0),
+            "the oldest is turned out, and takes no press: {shown:?}"
+        );
+        assert!(shown.len() < 30, "thirty do not fit in four hundred pixels");
+        let max = l
+            .room
+            .get()
+            .back_max()
+            .expect("the paint measured the list");
+        assert!(max > 0.0);
+        assert_eq!(l.wheel_box(1e6), Some(true), "the wheel turns the notes");
+        assert_eq!(
+            l.note_box().map(|b| b.back),
+            Some(max),
+            "and stops at the oldest"
+        );
+        assert_eq!(l.wheel_box(10.), Some(false), "past it nothing moves");
+        let (shown, add) = deletes(&l, cx);
+        assert!(add);
+        assert!(shown.contains(&0), "the oldest shows: {shown:?}");
+        assert!(!shown.contains(&29), "the newest is turned out: {shown:?}");
+        // A note added lands in view.
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_790_278_680);
+        for c in ["h", "i"] {
+            assert!(l.key(&ks(c, false, Some(c)), now));
+        }
+        assert!(l.add(now));
+        assert_eq!(l.note_box().map(|b| b.back), Some(0.0));
+        let (shown, _) = deletes(&l, cx);
+        assert!(shown.contains(&30), "the note just added shows: {shown:?}");
+        l.note_box = None;
+        assert_eq!(l.wheel_box(5.), None, "no box: the page takes the turn");
     }
 
     #[test]
