@@ -871,6 +871,12 @@ mod tests {
     /// launder a directory-wide guess into a claim.
     #[test]
     fn a_live_process_is_asked_rather_than_believed_about_itself() {
+        // Same lock as the ledger test, for a sharper reason. While the sibling's
+        // fake `claude` is alive, `agent_under` hands this pane that child; if
+        // the child is reaped before `declared_for` looks for its `/proc` entry,
+        // the agent reads as gone and the resume line below is believed, which
+        // is the very claim this test forbids (#840: 5 in 1,800 runs under load).
+        let _guard = crate::testsync::forks_and_locks();
         let home = Home::new("launder");
         let cwd = "/work/launder";
         home.transcript(
