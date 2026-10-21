@@ -7959,6 +7959,10 @@ impl Workspace {
                 .map(|v| K::InactiveImageGlow.to_percent(v)),
             inactive_text: g.inactive_text.map(|v| K::InactiveText.to_percent(v)),
             afterglow_ms: g.afterglow_ms,
+            cursor_linger_ms: g.cursor_linger_ms,
+            off_cursor_linger_ms: g.off_cursor_linger_ms,
+            inactive_cursor_linger_ms: g.inactive_cursor_linger_ms,
+            inactive_off_cursor_linger_ms: g.inactive_off_cursor_linger_ms,
         }
     }
 
@@ -8027,6 +8031,23 @@ impl Workspace {
         if let Some(ms) = patch.afterglow_ms {
             g.set(K::AfterglowMs, ms);
             touched.insert(theme::GradeChannel::AfterglowMs);
+        }
+        // Apply the legacy reset before explicit independent overrides.
+        if let Some(ms) = patch.cursor_linger_ms {
+            g.set(K::CursorLingerMs, ms);
+            touched.insert(theme::GradeChannel::CursorLingerMs);
+        }
+        if let Some(ms) = patch.off_cursor_linger_ms {
+            g.set(K::OffCursorLingerMs, ms);
+            touched.insert(theme::GradeChannel::OffCursorLingerMs);
+        }
+        if let Some(ms) = patch.inactive_cursor_linger_ms {
+            g.set(K::InactiveCursorLingerMs, ms);
+            touched.insert(theme::GradeChannel::InactiveCursorLingerMs);
+        }
+        if let Some(ms) = patch.inactive_off_cursor_linger_ms {
+            g.set(K::InactiveOffCursorLingerMs, ms);
+            touched.insert(theme::GradeChannel::InactiveOffCursorLingerMs);
         }
         if let Some(p) = patch.image_glow {
             set!(K::ImageGlow, p);
@@ -20967,7 +20988,13 @@ impl Workspace {
                         | theme::GradeKey::InactiveText => {
                             format!("{}%", (v * 100.).round() as i32)
                         }
-                        theme::GradeKey::AfterglowMs => format!("{} ms", v.round() as i32),
+                        theme::GradeKey::AfterglowMs
+                        | theme::GradeKey::CursorLingerMs
+                        | theme::GradeKey::OffCursorLingerMs
+                        | theme::GradeKey::InactiveCursorLingerMs
+                        | theme::GradeKey::InactiveOffCursorLingerMs => {
+                            format!("{} ms", v.round() as i32)
+                        }
                         theme::GradeKey::CrawlAngle => format!("{}\u{00b0}", v.round() as i32),
                         theme::GradeKey::CrawlDepth => format!("{v:.1}\u{00d7}"),
                         _ => format!("{:+}", ((v - neutral) * 100.).round() as i32),
@@ -29183,6 +29210,8 @@ impl Render for Workspace {
             };
             let t = self.lang.strings();
             use theme::GradeKey as G;
+            let active_linger = grade.linger_for_focus(true);
+            let inactive_linger = grade.linger_for_focus(false);
             let groups = [
                 (
                     t.g_type_hdr,
@@ -29212,6 +29241,16 @@ impl Render for Workspace {
                             t.d_image_glow,
                             grade.image_glow_at_edge(light_preset),
                         ),
+                        (
+                            G::CursorLingerMs,
+                            t.g_cursor_linger,
+                            active_linger.cursor_ms,
+                        ),
+                        (
+                            G::OffCursorLingerMs,
+                            t.g_off_cursor_linger,
+                            active_linger.off_cursor_ms,
+                        ),
                     ],
                 ),
                 (
@@ -29227,11 +29266,17 @@ impl Render for Workspace {
                             t.d_image_glow,
                             grade.inactive_image_glow_at_edge(),
                         ),
+                        (
+                            G::InactiveCursorLingerMs,
+                            t.g_cursor_linger,
+                            inactive_linger.cursor_ms,
+                        ),
+                        (
+                            G::InactiveOffCursorLingerMs,
+                            t.g_off_cursor_linger,
+                            inactive_linger.off_cursor_ms,
+                        ),
                     ],
-                ),
-                (
-                    t.g_afterglow_hdr,
-                    vec![(G::AfterglowMs, t.g_fade_time, grade.afterglow_ms_at_edge())],
                 ),
             ];
             let mut rows = div().flex().flex_col().gap_2();
@@ -29243,11 +29288,9 @@ impl Render for Workspace {
                         section = section.child(label(t.g_text_relative));
                     }
                 }
-                if heading == t.g_afterglow_hdr {
-                    section = section.child(label(t.g_afterglow_hint));
-                }
                 rows = rows.child(section);
             }
+            rows = rows.child(label(t.g_afterglow_hint));
             // The foot of the tray: one faint disclosure row per easter egg.
             // Deliberately quieter than every label above it — somebody has to
             // go looking.
@@ -29260,7 +29303,7 @@ impl Render for Workspace {
                     .child(format!("{} {}", if open { "▾" } else { "▸" }, name))
             };
             let panel_w: f32 = sk.fit(300., 320.);
-            const PANEL_H_EST: f32 = 650.; // grouped sliders, hints, reset and inheritance
+            const PANEL_H_EST: f32 = 700.; // grouped sliders, hints, reset and inheritance
             let mut panel = sk.sheet().id("osd-panel").absolute().w(px(panel_w));
             let tray_top = match self.osd_at {
                 Some(at) => {
@@ -44618,7 +44661,7 @@ mod nav_tests {
         )
         .unwrap();
         let touched = Workspace::apply_config_patch(&mut grade, &patch);
-        assert_eq!(touched.iter().count(), 4);
+        assert_eq!(touched.iter().count(), 8); // legacy timing owns all four new trails
         let report = Workspace::grade_report(&grade);
         assert!((report.image_glow.unwrap() - 15.0).abs() < 0.0001);
         assert!((report.inactive_image_glow.unwrap() - 65.0).abs() < 0.0001);
@@ -44632,5 +44675,73 @@ mod nav_tests {
         );
         assert_eq!(grade.afterglow_ms, Some(0.0));
         assert_eq!(grade.inactive_text, Some(0.75));
+    }
+
+    #[test]
+    fn linger_patch_uses_independent_milliseconds_and_preserves_omission() {
+        let mut grade = theme::Grade::default();
+        let report = Workspace::grade_report(&grade);
+        assert_eq!(report.cursor_linger_ms, None);
+        assert_eq!(report.off_cursor_linger_ms, None);
+        assert_eq!(report.inactive_cursor_linger_ms, None);
+        assert_eq!(report.inactive_off_cursor_linger_ms, None);
+        let patch = serde_json::from_str(r#"{"cursor_linger_ms":110,"off_cursor_linger_ms":325,"inactive_cursor_linger_ms":40,"inactive_off_cursor_linger_ms":600}"#).unwrap();
+        let touched = Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(touched.iter().count(), 4);
+        let report = Workspace::grade_report(&grade);
+        assert_eq!(report.cursor_linger_ms, Some(110.0));
+        assert_eq!(report.off_cursor_linger_ms, Some(325.0));
+        assert_eq!(report.inactive_cursor_linger_ms, Some(40.0));
+        assert_eq!(report.inactive_off_cursor_linger_ms, Some(600.0));
+        let patch = serde_json::from_str(r#"{"cursor_linger_ms":0}"#).unwrap();
+        let touched = Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(
+            touched,
+            theme::GradePins::only(theme::GradeChannel::CursorLingerMs)
+        );
+        assert_eq!(
+            grade.linger_for_focus(true),
+            theme::TextLinger {
+                cursor_ms: 0.0,
+                off_cursor_ms: 325.0
+            }
+        );
+        assert_eq!(
+            grade.linger_for_focus(false),
+            theme::TextLinger {
+                cursor_ms: 40.0,
+                off_cursor_ms: 600.0
+            }
+        );
+        let patch = serde_json::from_str(r#"{"cursor_linger_ms":null}"#).unwrap();
+        assert!(Workspace::apply_config_patch(&mut grade, &patch).is_empty());
+        assert_eq!(grade.cursor_linger_ms, Some(0.0));
+        let patch = serde_json::from_str(r#"{"cursor_linger_ms":900,"off_cursor_linger_ms":-10,"inactive_cursor_linger_ms":-1,"inactive_off_cursor_linger_ms":900}"#).unwrap();
+        Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(
+            grade.linger_for_focus(true),
+            theme::TextLinger {
+                cursor_ms: 220.0,
+                off_cursor_ms: 0.0
+            }
+        );
+        assert_eq!(
+            grade.linger_for_focus(false),
+            theme::TextLinger {
+                cursor_ms: 0.0,
+                off_cursor_ms: 650.0
+            }
+        );
+        let patch = serde_json::from_str(r#"{"afterglow_ms":0,"cursor_linger_ms":75}"#).unwrap();
+        Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(
+            grade.linger_for_focus(true),
+            theme::TextLinger {
+                cursor_ms: 75.0,
+                off_cursor_ms: 0.0
+            }
+        );
+        assert_eq!(grade.linger_for_focus(false), theme::TextLinger::default());
+        assert!(serde_json::from_str::<mcp::ConfigPatch>(r#"{"curser_linger_ms":50}"#).is_err());
     }
 }

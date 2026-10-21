@@ -437,6 +437,10 @@ pub enum GradeKey {
     InactiveImageGlow,
     InactiveText,
     AfterglowMs,
+    CursorLingerMs,
+    OffCursorLingerMs,
+    InactiveCursorLingerMs,
+    InactiveOffCursorLingerMs,
     /// Crawl convergence angle in degrees (`2..=59`). Not a paint grade — it
     /// drives the per-pane crawl perspective the renderer warps by — but it
     /// rides the grade group for the per-pane override + "follow outer".
@@ -464,6 +468,14 @@ impl GradeKey {
             GradeKey::Glare | GradeKey::ImageGlow | GradeKey::InactiveImageGlow => (0.0, 1.0, 0.0),
             GradeKey::InactiveText => (0.0, 1.0, 0.45),
             GradeKey::AfterglowMs => (0.0, 1200.0, 220.0),
+            GradeKey::CursorLingerMs | GradeKey::InactiveCursorLingerMs => {
+                (0.0, TextLinger::CURSOR_MAX_MS, TextLinger::CURSOR_MAX_MS)
+            }
+            GradeKey::OffCursorLingerMs | GradeKey::InactiveOffCursorLingerMs => (
+                0.0,
+                TextLinger::OFF_CURSOR_MAX_MS,
+                TextLinger::OFF_CURSOR_MAX_MS,
+            ),
             GradeKey::CrawlAngle => (CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX, CRAWL_ANGLE_DEFAULT),
             GradeKey::CrawlDepth => (CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX, CRAWL_DEPTH_DEFAULT),
             GradeKey::Phosphor => (0.0, PHOSPHOR_MAX, 1.0),
@@ -600,9 +612,18 @@ pub struct Grade {
     /// Fraction of active text intensity while inactive; default 45% / Intrusive 52%.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inactive_text: Option<f32>,
-    /// Lifetime of replaced glyphs in milliseconds; zero disables the trail.
+    /// Legacy unified timing. New optional dials override each trail independently.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub afterglow_ms: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_linger_ms: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub off_cursor_linger_ms: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inactive_cursor_linger_ms: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inactive_off_cursor_linger_ms: Option<f32>,
+
     /// CRT tracking-band dials `[intensity, speed, size]` in `0..1`, or `None` to
     /// use whatever the resolved theme authored. Per-pane via the grade group.
     pub tracking: Option<[f32; 3]>,
@@ -635,6 +656,18 @@ pub struct Grade {
     pub phosphor: f32,
 }
 
+/// Resolved drawing timings. Stored settings remain optional in [`Grade`].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TextLinger {
+    pub cursor_ms: f32,
+    pub off_cursor_ms: f32,
+}
+
+impl TextLinger {
+    pub const CURSOR_MAX_MS: f32 = 220.0;
+    pub const OFF_CURSOR_MAX_MS: f32 = 650.0;
+}
+
 /// One addressable channel of a [`Grade`] — every dial a pane can own, the two
 /// non-slider ones (`Crawl`, `Tracking`) included. [`GradeKey`] is the subset the
 /// OSD draws as a slider row; this is the FULL set, because provenance is tracked
@@ -658,6 +691,10 @@ pub enum GradeChannel {
     InactiveImageGlow,
     InactiveText,
     AfterglowMs,
+    CursorLingerMs,
+    OffCursorLingerMs,
+    InactiveCursorLingerMs,
+    InactiveOffCursorLingerMs,
     CrawlAngle,
     CrawlDepth,
     Crawl,
@@ -674,7 +711,7 @@ impl GradeChannel {
     ///
     /// Thirty-two is the most the bitmask holds — [`GradePins`] is a `u32`,
     /// widened from `u16` when glare became the seventeenth channel.
-    pub const ALL: [GradeChannel; 21] = [
+    pub const ALL: [GradeChannel; 25] = [
         Self::Brightness,
         Self::Contrast,
         Self::Colour,
@@ -690,6 +727,10 @@ impl GradeChannel {
         Self::InactiveImageGlow,
         Self::InactiveText,
         Self::AfterglowMs,
+        Self::CursorLingerMs,
+        Self::OffCursorLingerMs,
+        Self::InactiveCursorLingerMs,
+        Self::InactiveOffCursorLingerMs,
         Self::CrawlAngle,
         Self::CrawlDepth,
         Self::Crawl,
@@ -715,6 +756,11 @@ impl GradeChannel {
             Self::Glare => "glare",
             Self::ImageGlow => "image_glow",
             Self::AfterglowMs => "afterglow_ms",
+            Self::CursorLingerMs => "cursor_linger_ms",
+            Self::OffCursorLingerMs => "off_cursor_linger_ms",
+            Self::InactiveCursorLingerMs => "inactive_cursor_linger_ms",
+            Self::InactiveOffCursorLingerMs => "inactive_off_cursor_linger_ms",
+
             Self::InactiveText => "inactive_text",
             Self::InactiveImageGlow => "inactive_image_glow",
             Self::CrawlAngle => "crawl_angle",
@@ -776,6 +822,32 @@ impl GradeChannel {
                 (Some(x), Some(y)) => close(x, y),
                 _ => false,
             },
+            Self::CursorLingerMs => match (a.cursor_linger_ms, b.cursor_linger_ms) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
+            Self::OffCursorLingerMs => match (a.off_cursor_linger_ms, b.off_cursor_linger_ms) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
+            Self::InactiveCursorLingerMs => {
+                match (a.inactive_cursor_linger_ms, b.inactive_cursor_linger_ms) {
+                    (None, None) => true,
+                    (Some(x), Some(y)) => close(x, y),
+                    _ => false,
+                }
+            }
+            Self::InactiveOffCursorLingerMs => match (
+                a.inactive_off_cursor_linger_ms,
+                b.inactive_off_cursor_linger_ms,
+            ) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
+
             Self::ImageGlow => match (a.image_glow, b.image_glow) {
                 (None, None) => true,
                 (Some(x), Some(y)) => close(x, y),
@@ -815,6 +887,15 @@ impl GradeChannel {
             Self::Glare => dst.glare = src.glare,
             Self::ImageGlow => dst.image_glow = src.image_glow,
             Self::AfterglowMs => dst.afterglow_ms = src.afterglow_ms,
+            Self::CursorLingerMs => dst.cursor_linger_ms = src.cursor_linger_ms,
+            Self::OffCursorLingerMs => dst.off_cursor_linger_ms = src.off_cursor_linger_ms,
+            Self::InactiveCursorLingerMs => {
+                dst.inactive_cursor_linger_ms = src.inactive_cursor_linger_ms
+            }
+            Self::InactiveOffCursorLingerMs => {
+                dst.inactive_off_cursor_linger_ms = src.inactive_off_cursor_linger_ms
+            }
+
             Self::InactiveText => dst.inactive_text = src.inactive_text,
             Self::InactiveImageGlow => dst.inactive_image_glow = src.inactive_image_glow,
             Self::CrawlAngle => dst.crawl_angle = src.crawl_angle,
@@ -843,6 +924,11 @@ impl From<GradeKey> for GradeChannel {
             GradeKey::Glare => Self::Glare,
             GradeKey::ImageGlow => Self::ImageGlow,
             GradeKey::AfterglowMs => Self::AfterglowMs,
+            GradeKey::CursorLingerMs => Self::CursorLingerMs,
+            GradeKey::OffCursorLingerMs => Self::OffCursorLingerMs,
+            GradeKey::InactiveCursorLingerMs => Self::InactiveCursorLingerMs,
+            GradeKey::InactiveOffCursorLingerMs => Self::InactiveOffCursorLingerMs,
+
             GradeKey::InactiveText => Self::InactiveText,
             GradeKey::InactiveImageGlow => Self::InactiveImageGlow,
             GradeKey::CrawlAngle => Self::CrawlAngle,
@@ -893,6 +979,13 @@ impl GradePins {
 
     pub fn insert(&mut self, c: GradeChannel) {
         self.0 |= c.bit();
+        // A saved unified timing pin owned both trails in both focus states.
+        if c == GradeChannel::AfterglowMs {
+            self.0 |= GradeChannel::CursorLingerMs.bit();
+            self.0 |= GradeChannel::OffCursorLingerMs.bit();
+            self.0 |= GradeChannel::InactiveCursorLingerMs.bit();
+            self.0 |= GradeChannel::InactiveOffCursorLingerMs.bit();
+        }
     }
 
     pub fn extend(&mut self, other: Self) {
@@ -916,10 +1009,12 @@ impl GradePins {
         for (k, _) in Grade::CHANNELS {
             out.insert(k.into());
         }
+        // Reset also owns the hidden legacy fallback it clears.
+        out.insert(GradeChannel::AfterglowMs);
         out
     }
 
-    /// A single-channel set — what one slider drag or one patched MCP field pins.
+    /// One dial's ownership. The legacy timing dial owns all four newer timings.
     pub fn only(c: GradeChannel) -> Self {
         let mut out = Self::NONE;
         out.insert(c);
@@ -998,6 +1093,10 @@ impl Default for Grade {
             inactive_image_glow: None,
             inactive_text: None,
             afterglow_ms: None,
+            cursor_linger_ms: None,
+            off_cursor_linger_ms: None,
+            inactive_cursor_linger_ms: None,
+            inactive_off_cursor_linger_ms: None,
             glare: None,    // defer to the theme's authored glass
             tracking: None, // defer to the theme's authored roll bar
             crawl: false,   // crawl mode off until toggled
@@ -1020,7 +1119,7 @@ impl Grade {
     /// roll bar live in the collapsed CRT section and the crawl knobs in their
     /// own, so this list is also exactly what `reset` clears — see
     /// [`Grade::reset_gauges`].
-    pub const CHANNELS: [(GradeKey, &'static str); 14] = [
+    pub const CHANNELS: [(GradeKey, &'static str); 17] = [
         (GradeKey::TextSize, "text size"),
         (GradeKey::BenchSize, "bench size"),
         (GradeKey::Brightness, "brightness"),
@@ -1034,7 +1133,13 @@ impl Grade {
         (GradeKey::ImageGlow, "letter glow"),
         (GradeKey::InactiveImageGlow, "inactive letter glow"),
         (GradeKey::InactiveText, "inactive text"),
-        (GradeKey::AfterglowMs, "afterglow time"),
+        (GradeKey::CursorLingerMs, "cursor linger"),
+        (GradeKey::OffCursorLingerMs, "off-cursor linger"),
+        (GradeKey::InactiveCursorLingerMs, "inactive cursor linger"),
+        (
+            GradeKey::InactiveOffCursorLingerMs,
+            "inactive off-cursor linger",
+        ),
     ];
 
     /// This grade with its MAIN gauges ([`Self::CHANNELS`]) back at neutral and
@@ -1060,6 +1165,11 @@ impl Grade {
             inactive_image_glow: n.inactive_image_glow,
             inactive_text: n.inactive_text,
             afterglow_ms: n.afterglow_ms,
+            cursor_linger_ms: n.cursor_linger_ms,
+            off_cursor_linger_ms: n.off_cursor_linger_ms,
+            inactive_cursor_linger_ms: n.inactive_cursor_linger_ms,
+            inactive_off_cursor_linger_ms: n.inactive_off_cursor_linger_ms,
+
             ..self
         }
     }
@@ -1087,6 +1197,10 @@ impl Grade {
             inactive_image_glow: None,
             inactive_text: None,
             afterglow_ms: None,
+            cursor_linger_ms: None,
+            off_cursor_linger_ms: None,
+            inactive_cursor_linger_ms: None,
+            inactive_off_cursor_linger_ms: None,
             glare: None,    // reset = defer to the theme's glass
             tracking: None, // reset = defer to the theme's roll bar
             crawl: false,   // reset = crawl off
@@ -1170,6 +1284,10 @@ impl Grade {
             && self.inactive_image_glow == d.inactive_image_glow
             && self.inactive_text == d.inactive_text
             && self.afterglow_ms == d.afterglow_ms
+            && self.cursor_linger_ms == d.cursor_linger_ms
+            && self.off_cursor_linger_ms == d.off_cursor_linger_ms
+            && self.inactive_cursor_linger_ms == d.inactive_cursor_linger_ms
+            && self.inactive_off_cursor_linger_ms == d.inactive_off_cursor_linger_ms
             && self.glare == d.glare
             && self.tracking == d.tracking
             && self.crawl == d.crawl
@@ -1236,6 +1354,34 @@ impl Grade {
             .clamp(0.0, 1200.0)
     }
 
+    /// Independent new dials fall back to the old unified setting only at the
+    /// drawing edge. An active slider never becomes an inactive fallback.
+    pub fn linger_for_focus(&self, focused: bool) -> TextLinger {
+        let legacy = self.afterglow_ms_at_edge();
+        let (cursor, off_cursor) = if focused {
+            (self.cursor_linger_ms, self.off_cursor_linger_ms)
+        } else {
+            (
+                self.inactive_cursor_linger_ms,
+                self.inactive_off_cursor_linger_ms,
+            )
+        };
+        TextLinger {
+            cursor_ms: cursor
+                .filter(|v| v.is_finite())
+                .unwrap_or(legacy)
+                .clamp(0.0, TextLinger::CURSOR_MAX_MS),
+            off_cursor_ms: off_cursor
+                .filter(|v| v.is_finite())
+                .unwrap_or(if legacy > 0.0 {
+                    TextLinger::OFF_CURSOR_MAX_MS
+                } else {
+                    0.0
+                })
+                .clamp(0.0, TextLinger::OFF_CURSOR_MAX_MS),
+        }
+    }
+
     /// The glare this grade shines with on a theme that authored `authored`.
     /// An unset dial follows the theme's glass.
     pub fn glare_over(&self, authored: f32) -> f32 {
@@ -1260,6 +1406,11 @@ impl Grade {
             GradeKey::Glare => return self.glare,
             GradeKey::ImageGlow => return self.image_glow,
             GradeKey::AfterglowMs => return self.afterglow_ms,
+            GradeKey::CursorLingerMs => return self.cursor_linger_ms,
+            GradeKey::OffCursorLingerMs => return self.off_cursor_linger_ms,
+            GradeKey::InactiveCursorLingerMs => return self.inactive_cursor_linger_ms,
+            GradeKey::InactiveOffCursorLingerMs => return self.inactive_off_cursor_linger_ms,
+
             GradeKey::InactiveText => return self.inactive_text,
             GradeKey::InactiveImageGlow => return self.inactive_image_glow,
             GradeKey::CrawlAngle => self.crawl_angle,
@@ -1296,6 +1447,30 @@ impl Grade {
             GradeKey::AfterglowMs => {
                 if v.is_finite() {
                     self.afterglow_ms = Some(v);
+                    self.cursor_linger_ms = None;
+                    self.off_cursor_linger_ms = None;
+                    self.inactive_cursor_linger_ms = None;
+                    self.inactive_off_cursor_linger_ms = None;
+                }
+            }
+            GradeKey::CursorLingerMs => {
+                if v.is_finite() {
+                    self.cursor_linger_ms = Some(v);
+                }
+            }
+            GradeKey::OffCursorLingerMs => {
+                if v.is_finite() {
+                    self.off_cursor_linger_ms = Some(v);
+                }
+            }
+            GradeKey::InactiveCursorLingerMs => {
+                if v.is_finite() {
+                    self.inactive_cursor_linger_ms = Some(v);
+                }
+            }
+            GradeKey::InactiveOffCursorLingerMs => {
+                if v.is_finite() {
+                    self.inactive_off_cursor_linger_ms = Some(v);
                 }
             }
             GradeKey::ImageGlow => {
@@ -1452,6 +1627,10 @@ pub fn house_outer() -> ThemeChoice {
             inactive_image_glow: None,
             inactive_text: None,
             afterglow_ms: None,
+            cursor_linger_ms: None,
+            off_cursor_linger_ms: None,
+            inactive_cursor_linger_ms: None,
+            inactive_off_cursor_linger_ms: None,
             glare: None, // the `custom` theme's glass, seeded from `hacker`
             tracking: Some(HOUSE_ROLL),
             crawl: false,
@@ -4246,6 +4425,10 @@ mod tests {
             inactive_image_glow: Some(0.9),
             inactive_text: Some(0.3),
             afterglow_ms: Some(900.0),
+            cursor_linger_ms: Some(123.0),
+            off_cursor_linger_ms: Some(456.0),
+            inactive_cursor_linger_ms: Some(78.0),
+            inactive_off_cursor_linger_ms: Some(321.0),
             crawl_angle: 40.0,
             crawl_depth: 9.0,
             crawl: true,
@@ -4265,7 +4448,7 @@ mod tests {
             let merged = GradePins::only(c).merge(base, own);
             assert!(c.same(&merged, &own), "{} came from the pane", c.name());
             for other in GradeChannel::ALL {
-                if other != c {
+                if !GradePins::only(c).has(other) {
                     assert!(
                         other.same(&merged, &base),
                         "pinning {} moved {}",
@@ -4940,7 +5123,7 @@ warp = 1.5
     fn glare_is_a_channel_that_pins_and_persists() {
         // Every channel still owns a separate bit after extending the set.
         let last = *GradeChannel::ALL.last().unwrap();
-        assert_eq!(GradeChannel::ALL.len(), 21);
+        assert_eq!(GradeChannel::ALL.len(), 25);
         assert_eq!(GradePins::all().iter().count(), GradeChannel::ALL.len());
         assert!(!GradePins::only(last).has(GradeChannel::Brightness));
         assert_eq!(GradeChannel::parse("glare"), Some(GradeChannel::Glare));
@@ -4982,7 +5165,11 @@ warp = 1.5
                     GradeKey::ImageGlow
                     | GradeKey::InactiveImageGlow
                     | GradeKey::InactiveText
-                    | GradeKey::AfterglowMs => {
+                    | GradeKey::AfterglowMs
+                    | GradeKey::CursorLingerMs
+                    | GradeKey::OffCursorLingerMs
+                    | GradeKey::InactiveCursorLingerMs
+                    | GradeKey::InactiveOffCursorLingerMs => {
                         assert!(g.get(k).is_none(), "{k:?} remains undeclared");
                     }
                     _ => assert!(g.get(k).is_some(), "{k:?} has a position"),
@@ -4990,6 +5177,137 @@ warp = 1.5
             }
             assert_eq!(g.get(GradeKey::Glare), None, "unset glare is the theme's");
         }
+    }
+
+    #[test]
+    fn linger_defaults_and_legacy_zero_resolve_without_filling_stored_absence() {
+        let mut grade = Grade::default();
+        let maximum = TextLinger {
+            cursor_ms: 220.0,
+            off_cursor_ms: 650.0,
+        };
+        for focused in [true, false] {
+            assert_eq!(grade.linger_for_focus(focused), maximum);
+        }
+        for key in [
+            GradeKey::CursorLingerMs,
+            GradeKey::OffCursorLingerMs,
+            GradeKey::InactiveCursorLingerMs,
+            GradeKey::InactiveOffCursorLingerMs,
+        ] {
+            assert_eq!(grade.get(key), None);
+        }
+        grade.set(GradeKey::AfterglowMs, 0.0);
+        assert_eq!(grade.linger_for_focus(true), TextLinger::default());
+        assert_eq!(grade.linger_for_focus(false), TextLinger::default());
+        grade.set(GradeKey::OffCursorLingerMs, 125.0);
+        assert_eq!(
+            grade.linger_for_focus(true),
+            TextLinger {
+                cursor_ms: 0.0,
+                off_cursor_ms: 125.0
+            }
+        );
+        assert_eq!(grade.linger_for_focus(false), TextLinger::default());
+        grade.set(GradeKey::AfterglowMs, 1200.0);
+        assert_eq!(
+            grade.off_cursor_linger_ms, None,
+            "legacy reset clears new overrides"
+        );
+        assert_eq!(
+            grade.linger_for_focus(true),
+            maximum,
+            "new maximums bound old large settings"
+        );
+        grade.set(GradeKey::AfterglowMs, 80.0);
+        assert_eq!(
+            grade.linger_for_focus(false),
+            TextLinger {
+                cursor_ms: 80.0,
+                off_cursor_ms: 650.0
+            }
+        );
+    }
+
+    #[test]
+    fn each_linger_dial_clamps_and_keeps_the_other_three_independent() {
+        for key in [
+            GradeKey::CursorLingerMs,
+            GradeKey::OffCursorLingerMs,
+            GradeKey::InactiveCursorLingerMs,
+            GradeKey::InactiveOffCursorLingerMs,
+        ] {
+            let mut grade = Grade::default();
+            let (min, max, default) = key.range();
+            assert_eq!((min, max), (0.0, default));
+            grade.set(key, max / 2.0);
+            assert_eq!(grade.get(key), Some(max / 2.0));
+            let changed: Vec<_> = GradeChannel::ALL
+                .into_iter()
+                .filter(|c| !c.same(&grade, &Grade::default()))
+                .collect();
+            assert_eq!(changed, vec![GradeChannel::from(key)]);
+            grade.set(key, -10.0);
+            assert_eq!(grade.get(key), Some(0.0));
+            grade.set(key, max + 100.0);
+            assert_eq!(grade.get(key), Some(max));
+            grade.set(key, f32::NAN);
+            assert_eq!(grade.get(key), Some(max));
+            let wire = toml::to_string(&grade).unwrap();
+            let restored: Grade = toml::from_str(&wire).unwrap();
+            assert_eq!(restored, grade);
+        }
+        let mut grade = Grade::default();
+        grade.set(GradeKey::CursorLingerMs, 0.0);
+        assert_eq!(
+            grade.linger_for_focus(true),
+            TextLinger {
+                cursor_ms: 0.0,
+                off_cursor_ms: 650.0
+            }
+        );
+        assert_eq!(
+            grade.linger_for_focus(false),
+            TextLinger {
+                cursor_ms: 220.0,
+                off_cursor_ms: 650.0
+            }
+        );
+        let wire = toml::to_string(&grade).unwrap();
+        assert!(wire.contains("cursor_linger_ms = 0.0"));
+        assert!(!wire.contains("inactive_cursor_linger_ms"));
+    }
+
+    #[test]
+    fn legacy_timing_ownership_survives_outer_adoption_of_the_four_new_dials() {
+        let outer = Grade {
+            cursor_linger_ms: Some(120.0),
+            off_cursor_linger_ms: Some(300.0),
+            inactive_cursor_linger_ms: Some(60.0),
+            inactive_off_cursor_linger_ms: Some(400.0),
+            ..Grade::default()
+        };
+        let old: Grade = toml::from_str("afterglow_ms = 0.0").unwrap();
+        let pins: GradePins = serde_json::from_str(r#"["afterglow_ms"]"#).unwrap();
+        assert_eq!(pins.iter().count(), 5);
+        for pins in [pins, GradePins::differing(&old, &Grade::default())] {
+            let restored: GradePins =
+                serde_json::from_str(&serde_json::to_string(&pins).unwrap()).unwrap();
+            let merged = restored.merge(outer, old);
+            assert_eq!(merged.linger_for_focus(true), TextLinger::default());
+            assert_eq!(merged.linger_for_focus(false), TextLinger::default());
+        }
+        let mut reset_outer = outer;
+        reset_outer.afterglow_ms = Some(0.0);
+        let reset = GradePins::main_gauges().merge(reset_outer, old.reset_gauges());
+        assert_eq!(
+            reset.linger_for_focus(true),
+            TextLinger {
+                cursor_ms: 220.0,
+                off_cursor_ms: 650.0
+            }
+        );
+        assert_eq!(reset.linger_for_focus(false), reset.linger_for_focus(true));
     }
 
     #[test]
@@ -5009,12 +5327,13 @@ warp = 1.5
             (g.crt, g.warp, g.glare, g.tracking, g.crawl, g.crawl_angle),
             "the collapsed sections keep what they hold"
         );
-        // The pins a pane's reset takes are the same list, and nothing else.
+        // Reset owns the visible gauges and the hidden legacy timing it clears.
         let pins = GradePins::main_gauges();
         for c in GradeChannel::ALL {
-            let main = Grade::CHANNELS
-                .iter()
-                .any(|(k, _)| GradeChannel::from(*k) == c);
+            let main = c == GradeChannel::AfterglowMs
+                || Grade::CHANNELS
+                    .iter()
+                    .any(|(k, _)| GradeChannel::from(*k) == c);
             assert_eq!(pins.has(c), main, "{} pinned by reset", c.name());
         }
     }

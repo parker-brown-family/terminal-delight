@@ -11,14 +11,17 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 - **Terminal lighting follows focus in every skin.** Active and inactive panes
   have separate letter-glow controls, and inactive text can dim relative to the
-  active setting. GAUGES groups type, picture, active terminals, inactive
-  terminals and afterglow. Standard starts at 20% active glow and 45% inactive
+  active setting. GAUGES groups type, picture, active terminals and inactive
+  terminals. Standard starts at 20% active glow and 45% inactive
   text; Intrusive uses 37% and 52%. Both use 100% inactive glow. Explicit settings
   take priority, including zero. These effects also work with CRT glass off.
 - **Erased passages fade where they were drawn.** New text appears immediately;
   old letters retain their original colour before selection/cursor decoration.
-  Ordinary replacement defaults to 220ms, and erasures fade for at least 650ms.
-  Zero disables afterglow. The retained history is bounded per pane.
+  Active and inactive terminals each have cursor-linger and off-cursor-linger
+  sliders: text changes range from 0–220ms and erased passages from 0–650ms.
+  The existing 220/650ms appearance is the maximum and default; zero disables
+  each trail independently. Shorter settings have no hidden minimum. Old saved
+  afterglow zero stays off. The retained history is bounded per pane.
 - **Backspace deletes selections across wrapped input.** Shift+Backspace deletes
   the previous word, Ctrl+Shift+Backspace the entire current logical line, and
   Ctrl+Shift+Alt+Backspace all editable input, including literal newlines. The
