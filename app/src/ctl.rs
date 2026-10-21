@@ -140,10 +140,12 @@ fn bench_outcome(rx: mpsc::Receiver<String>) -> String {
 }
 
 /// One field of the MCP control-surface policy — the robot panel's toggles,
-/// reachable from the socket. Same escalation, same persistence: the panel and
-/// this path both write `ws.mcp` and `save()`, so a grant made from the CLI is
-/// visible in the panel and survives a restart. Kept as one-field-at-a-time so a
-/// script can grant reads without silently also granting writes.
+/// reachable from the socket in ONE direction. Narrowing (off, writes off,
+/// agents only) is applied like the panel's press: it writes `ws.mcp` and
+/// `save()`s, so it shows in the panel and survives a restart. Widening is
+/// refused unless the window was launched to be scripted — see [`Widening`].
+/// Kept as one-field-at-a-time so a script can grant reads without silently
+/// also granting writes.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum McpPolicy {
     /// The master switch (`mcp.enabled`).
@@ -152,6 +154,78 @@ pub(crate) enum McpPolicy {
     Writes(bool),
     /// `true` = expose every pane, `false` = agent panes only (the safe default).
     ExposeAll(bool),
+}
+
+impl McpPolicy {
+    /// Whether this gives agents more than they had: the server on, writes on,
+    /// or plain shells shown to them.
+    fn widens(self) -> bool {
+        matches!(
+            self,
+            McpPolicy::Enabled(true) | McpPolicy::Writes(true) | McpPolicy::ExposeAll(true)
+        )
+    }
+
+    /// The `err` line a widening verb gets from a window nobody launched to be
+    /// scripted. ONE line, because the wire is one line, and it says what to do
+    /// instead: who turns this on, and how an agent asks them to.
+    fn refusal(self) -> String {
+        let (verb, what, ask) = match self {
+            McpPolicy::Enabled(_) => (
+                "mcp on",
+                "Turning the MCP server on",
+                "An agent cannot ask for this one: request_access needs the server on.",
+            ),
+            McpPolicy::Writes(_) => (
+                "mcp writes on",
+                "Turning MCP writes on",
+                "An agent asks them with the request_access tool, change writes_on.",
+            ),
+            McpPolicy::ExposeAll(_) => (
+                "mcp expose all",
+                "Showing plain shells to agents",
+                "An agent asks them with the request_access tool, change expose_shells.",
+            ),
+        };
+        format!(
+            "err {verb}: nothing changed. {what} is a person's choice, made in the MCP \
+             control panel (Ctrl+Shift+A). {ask} A script that launches its own window \
+             can start it with TD_MCP_SCRIPTED=1."
+        )
+    }
+}
+
+/// Whether this window's control socket may WIDEN the MCP switches, settled
+/// once, from the environment the window was launched with.
+///
+/// Any process running as you can reach the socket, and an agent is one, so a
+/// socket that widened on request would let an agent turn on the very access
+/// `request_access` makes it ask a person for — one shell command around the
+/// rail's Yes. Narrowing stays open to everyone, because giving up access
+/// never needs permission. What the socket cannot tell apart, the launch can:
+/// a process in a pane cannot change the environment of a window that is
+/// already running. The test rigs launch a window of their own on a session of
+/// their own, so they opt in where they launch. `docs/decisions/0003` carries the argument and
+/// what is still open.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Widening {
+    /// The default. Widening verbs are answered with [`McpPolicy::refusal`].
+    Refused,
+    /// Launched with `TD_MCP_SCRIPTED=1`: the socket widens as the panel does.
+    Scripted,
+}
+
+impl Widening {
+    /// `TD_MCP_SCRIPTED`'s value, read. Exactly `1` opts in; anything else,
+    /// including `0`, empty and unset, does not — an authority switch should
+    /// not turn on for a value somebody meant as "off".
+    fn from_launch(value: Option<&str>) -> Self {
+        if value == Some("1") {
+            Widening::Scripted
+        } else {
+            Widening::Refused
+        }
+    }
 }
 
 /// WHICH tab an op acts on.
@@ -770,6 +844,7 @@ fn handle_conn(
     mcp_mirror: &AtomicU8,
     skin_mirror: &Mutex<SkinMirror>,
     tx: &mpsc::Sender<Req>,
+    widening: Widening,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
@@ -901,6 +976,9 @@ fn handle_conn(
                 )
             }
         }
+        // Refused before the queue: the ticker applies whatever reaches it, so
+        // this is the only place a widening can be stopped.
+        Ok(Cmd::McpPolicy(p)) if p.widens() && widening == Widening::Refused => p.refusal(),
         Ok(Cmd::McpPolicy(p)) => {
             if tx.send(Req::McpPolicy(p)).is_ok() {
                 "ok".into()
@@ -1067,6 +1145,8 @@ pub fn start(cx: &mut Context<Workspace>) {
     // Not an atomic: the skin mirror is a name plus a list, and it is read once
     // per socket connection rather than per frame.
     let skin_mirror = Arc::new(Mutex::new(SkinMirror::default()));
+    // Read once, here, so nothing that runs later can change the answer.
+    let widening = Widening::from_launch(std::env::var("TD_MCP_SCRIPTED").ok().as_deref());
 
     {
         let mirror = Arc::clone(&mirror);
@@ -1075,7 +1155,7 @@ pub fn start(cx: &mut Context<Workspace>) {
         let _ = thread::Builder::new().name("td-ctl".into()).spawn(move || {
             for conn in listener.incoming() {
                 let Ok(stream) = conn else { continue };
-                handle_conn(stream, &mirror, &mcp_mirror, &skin_mirror, &tx);
+                handle_conn(stream, &mirror, &mcp_mirror, &skin_mirror, &tx, widening);
             }
         });
     }
@@ -2698,7 +2778,14 @@ mod tests {
             // exactly five connections, in test order
             for _ in 0..5 {
                 let (stream, _) = listener.accept().unwrap();
-                handle_conn(stream, &m2, &mm2, &Mutex::new(SkinMirror::default()), &tx);
+                handle_conn(
+                    stream,
+                    &m2,
+                    &mm2,
+                    &Mutex::new(SkinMirror::default()),
+                    &tx,
+                    Widening::Refused,
+                );
             }
         });
         assert_eq!(send(&sock, "ping").unwrap(), "pong");
@@ -2743,7 +2830,14 @@ mod tests {
         let server = thread::spawn(move || {
             for _ in 0..2 {
                 let (stream, _) = listener.accept().unwrap();
-                handle_conn(stream, &m2, &mm2, &Mutex::new(SkinMirror::default()), &tx);
+                handle_conn(
+                    stream,
+                    &m2,
+                    &mm2,
+                    &Mutex::new(SkinMirror::default()),
+                    &tx,
+                    Widening::Refused,
+                );
             }
         });
 
@@ -2789,6 +2883,7 @@ mod tests {
                 &mcp_mirror,
                 &Mutex::new(SkinMirror::default()),
                 &tx,
+                Widening::Refused,
             );
         });
         assert!(send(&sock, "sudo make me a sandwich")
@@ -2797,6 +2892,8 @@ mod tests {
         server.join().unwrap();
     }
 
+    /// A scripted window — one launched with `TD_MCP_SCRIPTED=1`, as the test
+    /// rigs launch theirs — takes the widening verbs the way the panel would.
     #[test]
     fn mcp_policy_verbs_queue_and_status_reads_the_mirror() {
         let dir = tmp("mcp");
@@ -2810,7 +2907,14 @@ mod tests {
         let server = thread::spawn(move || {
             for _ in 0..4 {
                 let (stream, _) = listener.accept().unwrap();
-                handle_conn(stream, &m2, &mm2, &Mutex::new(SkinMirror::default()), &tx);
+                handle_conn(
+                    stream,
+                    &m2,
+                    &mm2,
+                    &Mutex::new(SkinMirror::default()),
+                    &tx,
+                    Widening::Scripted,
+                );
             }
         });
 
@@ -2832,6 +2936,98 @@ mod tests {
         // spelled in a way that quietly enables the other.
         assert!(send(&sock, "mcp writes").unwrap().starts_with("err"));
         server.join().unwrap();
+    }
+
+    /// The bypass this closes, over the real socket: an agent refused on the
+    /// rail used to run `terminal-delight ctl mcp writes on` and get exactly
+    /// what it had been refused. In a window nobody launched to be scripted,
+    /// every widening verb is answered `err`, says what to do instead, and
+    /// puts NOTHING on the queue — while every narrowing verb still applies.
+    #[test]
+    fn a_window_nobody_scripted_narrows_its_mcp_switches_but_will_not_widen_them() {
+        let dir = tmp("mcp-refused");
+        let sock = dir.join("ctl-5.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let (tx, rx) = mpsc::channel::<Req>();
+        let mirror = Arc::new(AtomicBool::new(false));
+        let mcp_mirror = Arc::new(AtomicU8::new(0));
+        let (m2, mm2) = (Arc::clone(&mirror), Arc::clone(&mcp_mirror));
+        let server = thread::spawn(move || {
+            for _ in 0..6 {
+                let (stream, _) = listener.accept().unwrap();
+                handle_conn(
+                    stream,
+                    &m2,
+                    &mm2,
+                    &Mutex::new(SkinMirror::default()),
+                    &tx,
+                    Widening::Refused,
+                );
+            }
+        });
+
+        for (verb, ask) in [
+            ("mcp on", "needs the server on"),
+            ("mcp writes on", "change writes_on"),
+            ("mcp expose all", "change expose_shells"),
+        ] {
+            let reply = send(&sock, verb).unwrap();
+            assert!(reply.starts_with("err"), "{verb} was not refused: {reply}");
+            for said in ["nothing changed", "Ctrl+Shift+A", ask, "TD_MCP_SCRIPTED=1"] {
+                assert!(
+                    reply.contains(said),
+                    "{verb}'s refusal lacks {said:?}: {reply}"
+                );
+            }
+            assert!(!reply.contains('\n'), "the wire is one line: {reply:?}");
+            assert!(
+                rx.try_recv().is_err(),
+                "{verb} was refused but still reached the window's queue"
+            );
+        }
+        for (verb, want) in [
+            ("mcp off", McpPolicy::Enabled(false)),
+            ("mcp writes off", McpPolicy::Writes(false)),
+            ("mcp expose agents", McpPolicy::ExposeAll(false)),
+        ] {
+            assert_eq!(send(&sock, verb).unwrap(), "ok", "{verb}");
+            match rx.try_recv() {
+                Ok(Req::McpPolicy(got)) => assert_eq!(got, want, "{verb}"),
+                other => panic!("{verb} did not queue its narrowing: {other:?}"),
+            }
+        }
+        server.join().unwrap();
+    }
+
+    /// Every policy verb, sorted by hand into the two directions. Written out
+    /// rather than derived, so a new switch has to be placed on purpose.
+    #[test]
+    fn exactly_the_three_switches_turning_on_count_as_widening() {
+        for (p, widens) in [
+            (McpPolicy::Enabled(true), true),
+            (McpPolicy::Writes(true), true),
+            (McpPolicy::ExposeAll(true), true),
+            (McpPolicy::Enabled(false), false),
+            (McpPolicy::Writes(false), false),
+            (McpPolicy::ExposeAll(false), false),
+        ] {
+            assert_eq!(p.widens(), widens, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn only_td_mcp_scripted_set_to_1_opens_the_socket_to_widening() {
+        assert_eq!(Widening::from_launch(Some("1")), Widening::Scripted);
+        for value in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("yes"),
+            Some("true"),
+            Some(" 1"),
+        ] {
+            assert_eq!(Widening::from_launch(value), Widening::Refused, "{value:?}");
+        }
     }
 
     #[test]
