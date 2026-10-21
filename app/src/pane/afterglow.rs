@@ -5,7 +5,6 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 pub(super) const MIN_GLYPH_BUDGET: usize = 4096;
-pub(super) const ERASED_MIN_MS: f32 = 650.0;
 
 #[derive(Clone)]
 pub(super) struct Ghost {
@@ -59,7 +58,29 @@ fn columns(text: &str) -> impl Iterator<Item = (usize, usize, &str)> {
         })
 }
 
+fn lifetime(timing: theme::TextLinger, erased: bool) -> Option<Duration> {
+    let (ms, max) = if erased {
+        (timing.off_cursor_ms, theme::TextLinger::OFF_CURSOR_MAX_MS)
+    } else {
+        (timing.cursor_ms, theme::TextLinger::CURSOR_MAX_MS)
+    };
+    (ms.is_finite() && ms > 0.0)
+        .then(|| Duration::from_secs_f64(f64::from(ms.min(max)) / 1000.0))
+        .filter(|duration| !duration.is_zero())
+}
+
 impl Trail {
+    /// A dial changes existing trails without renewing their original age.
+    /// A zero removes only that category, leaving the other one intact.
+    pub fn retime(&mut self, timing: theme::TextLinger, now: Instant) {
+        self.glyphs.retain_mut(|ghost| {
+            let Some(duration) = lifetime(timing, ghost.erased) else {
+                return false;
+            };
+            ghost.lifetime = duration;
+            now.saturating_duration_since(ghost.born) < duration
+        });
+    }
     pub fn paint_groups(&self, now: Instant) -> Vec<PaintGroup> {
         let mut groups: Vec<PaintGroup> = Vec::new();
         for ghost in &self.glyphs {
@@ -123,10 +144,12 @@ impl Trail {
         previous: &styling::Lines,
         current: &styling::Lines,
         now: Instant,
-        milliseconds: f32,
+        timing: theme::TextLinger,
         glyph_budget: usize,
     ) {
-        if !milliseconds.is_finite() || milliseconds <= 0.0 || glyph_budget == 0 {
+        let cursor_duration = lifetime(timing, false);
+        let erased_duration = lifetime(timing, true);
+        if glyph_budget == 0 || (cursor_duration.is_none() && erased_duration.is_none()) {
             self.clear();
             return;
         }
@@ -146,14 +169,11 @@ impl Trail {
             let new = current.get(row).map_or("", |(s, _)| s.as_str());
             old != new && ink(old) > ink(new)
         });
-        let milliseconds = milliseconds.min(1200.0);
-        let lifetime = Duration::from_secs_f64(
-            f64::from(if erased {
-                milliseconds.max(ERASED_MIN_MS)
-            } else {
-                milliseconds
-            }) / 1000.0,
-        );
+        let duration = if erased {
+            erased_duration
+        } else {
+            cursor_duration
+        };
         for (row, (old, runs)) in previous.iter().enumerate() {
             let new = current.get(row).map_or("", |(s, _)| s.as_str());
             if old == new {
@@ -164,6 +184,11 @@ impl Trail {
             self.glyphs.retain(|g| {
                 g.row != row || new_columns.get(&g.column).copied() != Some(g.text.as_str())
             });
+            // Suppression of returning live letters still applies when this
+            // category is disabled; it must not leave a stale older ghost.
+            let Some(lifetime) = duration else {
+                continue;
+            };
             let (mut run_index, mut run_end) = (0, runs.first().map_or(0, |r| r.len));
             let line_columns = UnicodeWidthStr::width(old.trim());
             let leading_columns =
@@ -210,6 +235,13 @@ impl Trail {
 mod tests {
     use super::*;
 
+    fn timing(ms: f32) -> theme::TextLinger {
+        theme::TextLinger {
+            cursor_ms: ms,
+            off_cursor_ms: if ms > 0.0 { 650.0 } else { 0.0 },
+        }
+    }
+
     fn lines(s: &str) -> styling::Lines {
         vec![(
             s.into(),
@@ -225,12 +257,117 @@ mod tests {
     }
 
     #[test]
+    fn erased_text_obeys_every_selected_time_without_a_hidden_minimum() {
+        let now = Instant::now();
+        for ms in [0, 1, 125, 325, 650] {
+            let mut trail = Trail::default();
+            trail.observe(
+                &lines("ENTIRE DELETED STRING"),
+                &lines(""),
+                now,
+                theme::TextLinger {
+                    cursor_ms: 220.0,
+                    off_cursor_ms: ms as f32,
+                },
+                MIN_GLYPH_BUDGET,
+            );
+            if ms == 0 {
+                assert!(trail.glyphs.is_empty());
+                continue;
+            }
+            assert_eq!(
+                trail
+                    .glyphs
+                    .iter()
+                    .map(|g| g.text.as_str())
+                    .collect::<String>(),
+                "ENTIREDELETEDSTRING"
+            );
+            trail.prune(now + Duration::from_millis(ms - 1));
+            assert!(!trail.glyphs.is_empty(), "{ms}ms expired early");
+            trail.prune(now + Duration::from_millis(ms));
+            assert!(trail.glyphs.is_empty(), "{ms}ms ignored the slider");
+        }
+    }
+
+    #[test]
+    fn retiming_preserves_birth_and_disabling_one_category_keeps_the_other() {
+        let now = Instant::now();
+        let maximum = timing(220.0);
+        let mut trail = Trail::default();
+        trail.observe(&lines("AB"), &lines("A"), now, maximum, MIN_GLYPH_BUDGET);
+        trail.observe(&lines("A"), &lines("C"), now, maximum, MIN_GLYPH_BUDGET);
+        assert_eq!(trail.glyphs.len(), 2);
+        let original_births: Vec<_> = trail.glyphs.iter().map(|g| g.born).collect();
+        let shorter = theme::TextLinger {
+            cursor_ms: 100.0,
+            off_cursor_ms: 400.0,
+        };
+        trail.retime(shorter, now + Duration::from_millis(50));
+        assert_eq!(
+            trail.glyphs.iter().map(|g| g.born).collect::<Vec<_>>(),
+            original_births
+        );
+        assert_eq!(trail.glyphs[0].lifetime, Duration::from_millis(400));
+        assert_eq!(trail.glyphs[1].lifetime, Duration::from_millis(100));
+        for disable_erased in [false, true] {
+            let mut changed = trail.clone();
+            let timing = if disable_erased {
+                theme::TextLinger {
+                    off_cursor_ms: 0.0,
+                    ..shorter
+                }
+            } else {
+                theme::TextLinger {
+                    cursor_ms: 0.0,
+                    ..shorter
+                }
+            };
+            changed.retime(timing, now + Duration::from_millis(60));
+            assert_eq!(changed.glyphs.len(), 1);
+            assert_eq!(changed.glyphs[0].erased, !disable_erased);
+            assert_eq!(changed.glyphs[0].born, now);
+        }
+        trail.retime(shorter, now + Duration::from_millis(100));
+        assert_eq!(trail.glyphs.len(), 1);
+        trail.retime(shorter, now + Duration::from_millis(400));
+        assert!(trail.glyphs.is_empty());
+    }
+
+    #[test]
+    fn a_disabled_text_change_cannot_clear_an_independent_erased_trail() {
+        let now = Instant::now();
+        let timing = theme::TextLinger {
+            cursor_ms: 0.0,
+            off_cursor_ms: 500.0,
+        };
+        let mut trail = Trail::default();
+        trail.observe(&lines("AB"), &lines("A"), now, timing, MIN_GLYPH_BUDGET);
+        trail.observe(&lines("A"), &lines("C"), now, timing, MIN_GLYPH_BUDGET);
+        assert_eq!(trail.glyphs.len(), 1);
+        assert_eq!(trail.glyphs[0].text, "B");
+        // A returning letter removes its own older image, even with short linger off.
+        trail.observe(&lines("CC"), &lines("CB"), now, timing, MIN_GLYPH_BUDGET);
+        assert!(trail.glyphs.is_empty());
+        for invalid in [f32::NAN, f32::INFINITY, -1.0, f32::MIN_POSITIVE] {
+            assert!(lifetime(
+                theme::TextLinger {
+                    cursor_ms: invalid,
+                    off_cursor_ms: invalid
+                },
+                false
+            )
+            .is_none());
+        }
+    }
+
+    #[test]
     fn a_full_erased_viewport_uses_one_layout_group_per_row() {
         let now = Instant::now();
         let row = lines(&"X".repeat(150)).pop().unwrap();
         let old = vec![row; 36];
         let mut trail = Trail::default();
-        trail.observe(&old, &Vec::new(), now, 220.0, 150 * 36);
+        trail.observe(&old, &Vec::new(), now, timing(220.0), 150 * 36);
         assert_eq!(trail.glyphs.len(), 5400);
         let groups = trail.paint_groups(now + Duration::from_millis(500));
         assert_eq!(groups.len(), 36, "layout still scales per glyph");
@@ -262,7 +399,7 @@ mod tests {
         };
         old[0].1 = vec![first, second];
         let mut trail = Trail::default();
-        trail.observe(&old, &Vec::new(), now, 220.0, MIN_GLYPH_BUDGET);
+        trail.observe(&old, &Vec::new(), now, timing(220.0), MIN_GLYPH_BUDGET);
         let groups = trail.paint_groups(now + Duration::from_millis(500));
         assert_eq!(groups.len(), 2, "a blank column must remain a gap");
         assert_eq!((groups[0].column, groups[0].text.as_str()), (0, "A"));
@@ -286,12 +423,18 @@ mod tests {
 
         // Two generations at the same cells remain two ordered layers.
         let mut trail = Trail::default();
-        trail.observe(&lines("ABC"), &lines("XYZ"), now, 220.0, MIN_GLYPH_BUDGET);
+        trail.observe(
+            &lines("ABC"),
+            &lines("XYZ"),
+            now,
+            timing(220.0),
+            MIN_GLYPH_BUDGET,
+        );
         trail.observe(
             &lines("XYZ"),
             &lines("---"),
             now + Duration::from_millis(50),
-            220.0,
+            timing(220.0),
             MIN_GLYPH_BUDGET,
         );
         let groups = trail.paint_groups(now + Duration::from_millis(100));
@@ -306,8 +449,20 @@ mod tests {
     fn batching_does_not_join_distinct_old_crawl_origins() {
         let now = Instant::now();
         let mut trail = Trail::default();
-        trail.observe(&lines("AB"), &lines("XB"), now, 220.0, MIN_GLYPH_BUDGET);
-        trail.observe(&lines("XBC"), &lines("XYC"), now, 220.0, MIN_GLYPH_BUDGET);
+        trail.observe(
+            &lines("AB"),
+            &lines("XB"),
+            now,
+            timing(220.0),
+            MIN_GLYPH_BUDGET,
+        );
+        trail.observe(
+            &lines("XBC"),
+            &lines("XYC"),
+            now,
+            timing(220.0),
+            MIN_GLYPH_BUDGET,
+        );
         let groups = trail.paint_groups(now);
         assert_eq!(groups.len(), 2);
         assert_eq!((groups[0].column, groups[0].line_columns), (0, 2));
@@ -320,7 +475,7 @@ mod tests {
         let (old, current) = (lines("OLD same"), lines("NEW same"));
         let before = current.clone();
         let mut trail = Trail::default();
-        trail.observe(&old, &current, now, 200.0, MIN_GLYPH_BUDGET);
+        trail.observe(&old, &current, now, timing(200.0), MIN_GLYPH_BUDGET);
         assert_eq!(
             trail
                 .glyphs
@@ -339,7 +494,13 @@ mod tests {
     fn fading_is_time_based_and_stops_even_without_more_output() {
         let now = Instant::now();
         let mut trail = Trail::default();
-        trail.observe(&lines("A"), &lines("B"), now, 200.0, MIN_GLYPH_BUDGET);
+        trail.observe(
+            &lines("A"),
+            &lines("B"),
+            now,
+            timing(200.0),
+            MIN_GLYPH_BUDGET,
+        );
         let ghost = &trail.glyphs[0];
         assert!((ghost.opacity(now) - 0.65).abs() < 0.001);
         assert!((ghost.opacity(now + Duration::from_millis(100)) - 0.1625).abs() < 0.001);
@@ -353,10 +514,23 @@ mod tests {
         let mut trail = Trail::default();
         let mut recoloured = lines("A");
         recoloured[0].1[0].color = rgb(0xff0033).into();
-        trail.observe(&lines("A"), &recoloured, now, 200.0, MIN_GLYPH_BUDGET);
+        trail.observe(
+            &lines("A"),
+            &recoloured,
+            now,
+            timing(200.0),
+            MIN_GLYPH_BUDGET,
+        );
         assert!(trail.glyphs.is_empty());
-        trail.observe(&lines("A"), &lines("B"), now, 200.0, MIN_GLYPH_BUDGET);
-        trail.observe(&lines("B"), &lines("C"), now, 0.0, MIN_GLYPH_BUDGET);
+        trail.observe(
+            &lines("A"),
+            &lines("B"),
+            now,
+            timing(200.0),
+            MIN_GLYPH_BUDGET,
+        );
+        trail.retime(timing(0.0), now);
+        trail.observe(&lines("B"), &lines("C"), now, timing(0.0), MIN_GLYPH_BUDGET);
         assert!(trail.glyphs.is_empty());
     }
 
@@ -368,7 +542,7 @@ mod tests {
             &lines("界e\u{301}Z"),
             &lines("界xZ"),
             now,
-            200.0,
+            timing(200.0),
             MIN_GLYPH_BUDGET,
         );
         assert_eq!(trail.glyphs.len(), 1);
@@ -381,8 +555,20 @@ mod tests {
     fn a_live_letter_replaces_its_own_older_ghost() {
         let now = Instant::now();
         let mut trail = Trail::default();
-        trail.observe(&lines("A"), &lines("B"), now, 200.0, MIN_GLYPH_BUDGET);
-        trail.observe(&lines("B"), &lines("A"), now, 200.0, MIN_GLYPH_BUDGET);
+        trail.observe(
+            &lines("A"),
+            &lines("B"),
+            now,
+            timing(200.0),
+            MIN_GLYPH_BUDGET,
+        );
+        trail.observe(
+            &lines("B"),
+            &lines("A"),
+            now,
+            timing(200.0),
+            MIN_GLYPH_BUDGET,
+        );
         assert_eq!(trail.glyphs.len(), 1);
         assert_eq!(trail.glyphs[0].text, "B");
     }
@@ -395,7 +581,7 @@ mod tests {
             &lines(&"X".repeat(MIN_GLYPH_BUDGET + 30)),
             &lines(""),
             now,
-            200.0,
+            timing(200.0),
             MIN_GLYPH_BUDGET,
         );
         assert_eq!(trail.glyphs.len(), MIN_GLYPH_BUDGET);
@@ -411,7 +597,7 @@ mod tests {
             &lines("whole word"),
             &lines("whole "),
             now,
-            220.0,
+            timing(220.0),
             MIN_GLYPH_BUDGET,
         );
         assert_eq!(
@@ -429,7 +615,7 @@ mod tests {
             &lines("whole "),
             &cursor,
             now + Duration::from_millis(200),
-            220.0,
+            timing(220.0),
             MIN_GLYPH_BUDGET,
         );
         assert_eq!(trail.glyphs[0].born, born);
@@ -447,7 +633,7 @@ mod tests {
         previous.extend(lines("The second line"));
         previous.extend(lines("The final line"));
         let mut trail = Trail::default();
-        trail.observe(&previous, &lines(">"), now, 220.0, MIN_GLYPH_BUDGET);
+        trail.observe(&previous, &lines(">"), now, timing(220.0), MIN_GLYPH_BUDGET);
         assert_eq!(
             trail
                 .glyphs
@@ -462,11 +648,12 @@ mod tests {
             .all(|g| g.lifetime == Duration::from_millis(650)));
         trail.prune(now + Duration::from_millis(300));
         assert!(!trail.glyphs.is_empty());
+        trail.retime(timing(0.0), now + Duration::from_millis(310));
         trail.observe(
             &lines(">"),
             &lines("new"),
             now + Duration::from_millis(310),
-            0.0,
+            timing(0.0),
             MIN_GLYPH_BUDGET,
         );
         assert!(trail.glyphs.is_empty());
@@ -481,11 +668,11 @@ mod tests {
             &lines(&"X".repeat(viewport)),
             &lines(""),
             now,
-            220.0,
+            timing(220.0),
             viewport,
         );
         assert_eq!(trail.glyphs.len(), viewport);
-        trail.observe(&lines("Y"), &lines("Z"), now, 220.0, viewport);
+        trail.observe(&lines("Y"), &lines("Z"), now, timing(220.0), viewport);
         assert_eq!(trail.glyphs.len(), viewport);
     }
 
@@ -497,7 +684,7 @@ mod tests {
         let mut current = lines("A newly restored heading");
         current.extend(lines(""));
         let mut trail = Trail::default();
-        trail.observe(&previous, &current, now, 220.0, MIN_GLYPH_BUDGET);
+        trail.observe(&previous, &current, now, timing(220.0), MIN_GLYPH_BUDGET);
         assert_eq!(trail.glyphs.len(), 4);
         assert!(trail
             .glyphs

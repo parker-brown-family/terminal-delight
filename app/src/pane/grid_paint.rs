@@ -18,7 +18,7 @@ pub(super) struct Snapshot {
     pub glyphs: styling::Lines,
     pub cell_h: f32,
     pub cell_w: f32,
-    pub afterglow_ms: f32,
+    pub linger: theme::TextLinger,
     pub context: Option<HistoryContext>,
     pub pad: (f32, f32),
     pub crawl: bool,
@@ -104,14 +104,16 @@ impl GridPaint {
                 && previous.snapshot.cell_h == snapshot.cell_h
                 && previous.snapshot.cell_w == snapshot.cell_w
                 && previous.snapshot.pad == snapshot.pad
-                && previous.snapshot.crawl == snapshot.crawl
-                && previous.snapshot.afterglow_ms == snapshot.afterglow_ms;
+                && previous.snapshot.crawl == snapshot.crawl;
             if compatible {
+                if previous.snapshot.linger != snapshot.linger {
+                    trail.retime(snapshot.linger, cx.background_executor().now());
+                }
                 trail.observe(
                     &previous.snapshot.glyphs,
                     &snapshot.glyphs,
                     cx.background_executor().now(),
-                    snapshot.afterglow_ms,
+                    snapshot.linger,
                     snapshot
                         .context
                         .as_ref()
@@ -418,7 +420,11 @@ mod tests {
                         });
                         let colour = pane.view.read_with(pane.cx, |v, cx| {
                             let grid = v.grid_paint.read(cx);
-                            assert_eq!(grid.snapshot.afterglow_ms, 220.0, "{case}");
+                            assert_eq!(
+                                grid.snapshot.linger,
+                                theme::Grade::default().linger_for_focus(true),
+                                "{case}"
+                            );
                             assert_eq!(grid.snapshot.crawl, crawl, "{case}");
                             grid.snapshot
                                 .glyphs
@@ -561,6 +567,10 @@ mod tests {
             let mut grade = theme::Grade::neutral();
             grade.text = 0.8;
             grade.afterglow_ms = Some(0.0);
+            grade.cursor_linger_ms = Some(80.0);
+            grade.off_cursor_linger_ms = Some(320.0);
+            grade.inactive_cursor_linger_ms = Some(30.0);
+            grade.inactive_off_cursor_linger_ms = Some(120.0);
             v.appearance.grade = Some(grade);
             v.appearance.pins = theme::GradePins::all();
             cx.notify();
@@ -579,6 +589,14 @@ mod tests {
                 .text
         });
         assert!((active - 0.8).abs() < 0.001);
+        assert_eq!(
+            pane.view
+                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).snapshot.linger),
+            theme::TextLinger {
+                cursor_ms: 80.0,
+                off_cursor_ms: 320.0
+            }
+        );
         pane.cx.update(|window, _| window.blur());
         pane.redraw();
         let inactive = pane.view.read_with(pane.cx, |v, cx| {
@@ -593,6 +611,14 @@ mod tests {
                 .text
         });
         assert!((inactive - 0.36).abs() < 0.001);
+        assert_eq!(
+            pane.view
+                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).snapshot.linger),
+            theme::TextLinger {
+                cursor_ms: 30.0,
+                off_cursor_ms: 120.0
+            }
+        );
         pane.cx.update(|window, cx| {
             window.focus(&pane.view.read(cx).focus_handle.clone(), cx);
         });
@@ -613,6 +639,85 @@ mod tests {
                 .text
         });
         assert!((active_again - active).abs() < 0.001);
+        assert_eq!(
+            pane.view
+                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).snapshot.linger),
+            theme::TextLinger {
+                cursor_ms: 80.0,
+                off_cursor_ms: 320.0
+            }
+        );
+    }
+
+    #[gpui::test]
+    fn adjusting_one_linger_slider_does_not_clear_the_other_trail(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.settle();
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.cursor_linger_ms = Some(220.0);
+            grade.off_cursor_linger_ms = Some(650.0);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            v.session.term.lock().advance(b"\x1b[?25l\x1b[2J\x1b[HAB");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+        });
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[H\x1b[2KA"));
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[H\x1b[2KC"));
+        pane.redraw();
+        let text = |pane: &mut Pane| {
+            pane.view.read_with(pane.cx, |v, cx| {
+                v.grid_paint
+                    .read(cx)
+                    .trail
+                    .glyphs
+                    .iter()
+                    .map(|g| g.text.as_str())
+                    .collect::<String>()
+            })
+        };
+        assert_eq!(text(&mut pane), "BA");
+        pane.cx.executor().advance_clock(Duration::from_millis(100));
+        pane.view.update(pane.cx, |v, _| {
+            v.appearance.grade.as_mut().unwrap().cursor_linger_ms = Some(0.0);
+        });
+        pane.redraw();
+        assert_eq!(
+            text(&mut pane),
+            "B",
+            "disabling short linger cleared the erased string"
+        );
+        pane.view.update(pane.cx, |v, _| {
+            v.appearance
+                .grade
+                .as_mut()
+                .unwrap()
+                .inactive_off_cursor_linger_ms = Some(0.0);
+        });
+        pane.redraw();
+        assert_eq!(
+            text(&mut pane),
+            "B",
+            "an inactive dial changed an active trail"
+        );
+        pane.view.update(pane.cx, |v, _| {
+            v.appearance.grade.as_mut().unwrap().off_cursor_linger_ms = Some(100.0);
+        });
+        pane.redraw();
+        assert!(
+            text(&mut pane).is_empty(),
+            "retiming renewed the trail's birth"
+        );
+        assert!(pane.view.read_with(pane.cx, |v, cx| v
+            .grid_paint
+            .read(cx)
+            .snapshot
+            .lines
+            .iter()
+            .any(|(s, _)| s.contains('C'))));
     }
 
     #[gpui::test]
