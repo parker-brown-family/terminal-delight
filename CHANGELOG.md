@@ -413,6 +413,10 @@ the changes you may notice in the first hour.
 
 ### Changed
 
+- **Ctrl+↑/↓ steps a floating document; Ctrl+Shift+↑/↓ pages it.** With its
+  note box open the same chords, and plain PageUp/PageDown, turn the notes. The
+  Document face takes them too. Ctrl+PageUp/PageDown still switch tabs, and
+  with no document floating the chords reach the shell as before.
 - **Ctrl+W closes the document on top; Ctrl+Shift+W closes the tab.** A
   picture, page or clip opened in a box over a pane now goes away with Ctrl+W,
   one box per press, as Escape and its ✕ already did. Closing the whole tab
@@ -596,6 +600,11 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
+- **A note box holds any number of notes.** Notes past the box's height were
+  saved but clipped out of sight with no way to scroll to them. The box now
+  opens on the newest, the wheel turns back to the oldest, and a note just
+  added is always in view. A hidden note's delete no longer takes a press
+  under the draft.
 - **Launching Codex no longer picks a retired model.** The launcher's Codex
   menu offered `gpt-5-codex` and `gpt-5` and passed one with `--model`, which a
   current Codex account rejects with HTTP 400. Codex now starts on the model in
