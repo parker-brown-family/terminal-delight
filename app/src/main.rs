@@ -1656,9 +1656,7 @@ fn tray_panel_h_est() -> f32 {
         theme::ColorMode::ALL.len(),
         theme::SyntaxScheme::ALL.len() + 1,
     ) + 2. * TRAY_AREA_PAD;
-    let themes = 66.
-        + TRAY_GAP
-        + 10. * 40.
+    let themes = 10. * 40.
         + 9. * TRAY_GLYPH_GAP
         + 2. * TRAY_LABEL_H
         + TRAY_SEP
@@ -26444,7 +26442,6 @@ enum PalettePreview {
 /// underneath an inherited desktop palette. An unnamed desktop stays unnamed.
 struct PaletteSelection {
     id: Option<String>,
-    name: String,
     custom: bool,
     desktop: bool,
 }
@@ -26461,31 +26458,8 @@ impl PaletteSelection {
             active.map(|p| p.id.clone())
         };
         let custom = active.is_none() && matches!(choice.dynamic, theme::Dynamic::Custom(_));
-        let name = if desktop {
-            palette::current_status(cx)
-                .1
-                .map(str::to_string)
-                .unwrap_or_else(|| {
-                    lang::current()
-                        .strings()
-                        .ui
-                        .pal_name_unavailable
-                        .to_string()
-                })
-        } else if let Some(p) = active {
-            p.id.clone()
-        } else if !choice.dynamic.is_plain() {
-            choice.dynamic.label().to_string()
-        } else {
-            theme::all_themes(cx)
-                .into_iter()
-                .find(|(id, _, _)| id == &choice.id)
-                .map(|(_, _, label)| label)
-                .unwrap_or_else(|| "custom".to_string())
-        };
         Self {
             id,
-            name: name.replace('-', " ").to_uppercase(),
             custom,
             desktop,
         }
@@ -28518,44 +28492,6 @@ impl Render for Workspace {
                 MenuScope::Outer => false,
             };
             let selection = PaletteSelection::of(cx, &cur);
-            let running = match &scope {
-                MenuScope::Pane(p) => p.read(cx).resolved_theme(cx),
-                MenuScope::Outer => (*theme::theme(cx)).clone(),
-            };
-            let mut source = if following {
-                format!("{} ← {}", t.scope_pane, t.scope_outer)
-            } else if cur.follow_omarchy == Some(true) {
-                if is_pane { t.scope_pane } else { t.scope_outer }.to_string()
-            } else {
-                format!(
-                    "{} · {}",
-                    if is_pane { t.scope_pane } else { t.scope_outer },
-                    t.ui.pal_source_own
-                )
-            };
-            if cur.follow_omarchy == Some(true) {
-                source.push_str(" ← OMARCHY");
-                if !palette::current_status(cx).0 {
-                    source.push_str(" · ");
-                    source.push_str(if selection.desktop {
-                        t.ui.pal_source_last_good
-                    } else {
-                        t.ui.pal_source_unavailable
-                    });
-                }
-            }
-            if let MenuScope::Pane(p) = &scope {
-                if following
-                    && pane::agent_tint()
-                    && running.accent != theme::resolve(cx, &cur).accent
-                {
-                    source.push_str(&format!(
-                        " · {}: {}",
-                        t.ui.pal_hdr_terminal_state,
-                        p.read(cx).mode.label_i18n()
-                    ));
-                }
-            }
             // THEME picker (retained — hacker/custom/quiet/tactical are the base
             // theming). The dynamics glyph column is an orthogonal dimension
             // layered on top of whichever theme is active here.
@@ -28943,8 +28879,8 @@ impl Render for Workspace {
             // tile is lit.
             let mut chips = palette::chips(cx);
             // A running theme hidden from Omarchy's picker still needs a marker.
-            // Uninstalled themes remain named in the summary, not offered as a
-            // tile that would discard retained colours when clicked.
+            // Never offer an uninstalled theme as a tile that would discard
+            // retained colours when clicked.
             if let Some(id) = &selection.id {
                 if !chips.iter().any(|c| &c.id == id) {
                     if let Some(p) = palette::find(cx, id) {
@@ -29043,23 +28979,28 @@ impl Render for Workspace {
                             .child(theme::Dynamic::Custom(Box::default()).glyph()),
                     };
                     let tile = tile.when(active, |d| {
-                        d.child(
-                            div()
-                                .absolute()
-                                .top(px(1.))
-                                .right(px(1.))
-                                .w(px(15.))
-                                .h(px(15.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(3.))
-                                .bg(th.text)
-                                .text_color(th.bg)
-                                .text_size(px(12.))
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child("✓"),
-                        )
+                        let d = d.border(px(3.)).border_color(th.text);
+                        if sk.shape.material == skin::Material::Paper {
+                            d.shadow(paper::shadows_with(paper::Stock {
+                                lift: (sk.m.lift * 1.5).min(2.),
+                                ..Default::default()
+                            }))
+                        } else {
+                            d.shadow(
+                                theme::phosphor(
+                                    th.grade.phosphor,
+                                    BoxShadow {
+                                        color: th.text.alpha(0.22),
+                                        offset: gpui::point(px(0.), px(0.)),
+                                        blur_radius: px(6.),
+                                        spread_radius: px(0.),
+                                        inset: false,
+                                    },
+                                )
+                                .into_iter()
+                                .collect(),
+                            )
+                        }
                     });
                     let (name, preview) = if let Some(c) = chip {
                         (
@@ -29111,33 +29052,7 @@ impl Render for Workspace {
                     .map(|d| sk.finish(d))
                     .child(label(title))
             };
-            let current_theme = div()
-                .id("palette-current-theme")
-                .min_h(px(66.))
-                .p_2()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .bg(running.bg)
-                .text_color(running.text)
-                .border_2()
-                .border_color(running.text)
-                .rounded(sk.rad_raw(5.))
-                .child(
-                    div()
-                        .text_size(sk.text_px(9.))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(format!("✓ {}", t.ui.pal_current)),
-                )
-                .child(
-                    div()
-                        .text_size(sk.text_px(12.))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(selection.name),
-                )
-                .child(div().text_size(sk.text_px(9.)).child(source));
             let themes = area(t.ui.pal_hdr_theme, glyph_col_w)
-                .child(current_theme)
                 .child(dyn_cols)
                 .child(hsep())
                 .child(label(t.t_note))

@@ -284,7 +284,6 @@ fn palette_menu_marks_the_running_theme_at_each_inheritance_level(cx: &mut gpui:
     cx.update(|cx| {
         let selected = crate::PaletteSelection::of(cx, &linked);
         assert_eq!(selected.id.as_deref(), Some("gruvbox"));
-        assert_eq!(selected.name, "GRUVBOX");
     });
     fs::remove_file(roots.primary.join("current/theme/colors.toml")).unwrap();
     tick(cx);
@@ -347,14 +346,6 @@ fn palette_menu_keeps_unnamed_and_unavailable_sources_distinct(cx: &mut gpui::Te
             "valid unnamed colours cannot identify a theme tile"
         );
         assert!(!selected.custom, "the parked custom palette is not running");
-        assert_eq!(
-            selected.name,
-            crate::lang::current()
-                .strings()
-                .ui
-                .pal_name_unavailable
-                .to_uppercase()
-        );
         assert_eq!(
             theme::resolve(cx, &custom).bg,
             theme::parse_hex("#334455").unwrap()
