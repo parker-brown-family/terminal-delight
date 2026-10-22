@@ -16,6 +16,46 @@ use crate::docopen::{Asker, DocSeat, FloatHit};
 use crate::workbench::Face;
 
 #[gpui::test]
+fn queued_input_waits_while_the_pane_is_off_limits(cx: &mut TestAppContext) {
+    use std::io::Read;
+    let mut attached = Pane::attached(cx);
+    attached.pane.running_as(super::PaneMode::Codex);
+    attached.pane.view.update(attached.pane.cx, |v, cx| {
+        v.set_on_screen(false, cx);
+        v.bench_deliver(b"queued-canary".to_vec(), cx);
+        assert_eq!(v.bench_queued(), 1);
+        v.off_limits = true;
+        v.set_on_screen(true, cx);
+        assert_eq!(
+            v.bench_queued(),
+            1,
+            "showing a hidden pane must not drain the instruction"
+        );
+    });
+    attached
+        .host
+        .set_read_timeout(Some(std::time::Duration::from_millis(30)))
+        .unwrap();
+    let mut bytes = [0; 128];
+    assert!(
+        attached.host.read(&mut bytes).is_err(),
+        "queued input reached the host"
+    );
+    attached.pane.view.update(attached.pane.cx, |v, cx| {
+        v.off_limits = false;
+        v.bench_drain(cx);
+        assert_eq!(v.bench_queued(), 0);
+    });
+    attached
+        .host
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    let mut received = [0; 13];
+    attached.host.read_exact(&mut received).unwrap();
+    assert_eq!(&received, b"queued-canary");
+}
+
+#[gpui::test]
 fn synthetic_bench_pointer_refuses_off_limits_but_reaches_an_allowed_pane(cx: &mut TestAppContext) {
     let pane = Pane::running(cx, "exec cat");
     let view = pane.view.clone();

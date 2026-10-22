@@ -3444,7 +3444,7 @@ impl TerminalView {
     /// A queue drained on one condition while the other still fails is how a
     /// held line ends up in a shell.
     pub(super) fn bench_drain(&mut self, cx: &mut Context<Self>) {
-        if self.wb_queued.is_empty() || !self.bench_may_write() {
+        if self.off_limits || self.wb_queued.is_empty() || !self.bench_may_write() {
             return;
         }
         let queued = std::mem::take(&mut self.wb_queued);

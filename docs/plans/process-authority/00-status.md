@@ -11,7 +11,7 @@ Parker authorized autonomous completion on 2026-10-21: “Great - execute now! T
 - Program design: preconnected typed own-note channel, immutable optional grant, exact process/start-time binding, external revocation and no automatic handoff. See [the contract](03-program-design.md).
 - Slices: implemented and under final qualification. See [verification](04-slices.md) and [the readable review](../../../reports/2026-10-21-restricted-commands.html).
 
-The existing [security PR](https://github.com/parker-brown-family/terminal-delight/pull/1088) is reused and targets `dev/0.5.0`. The 0.4 release, tags and assets are outside this change. The original launch/access mockups and research are historical design inputs; the implemented surface is a command, not a launch GUI.
+The first [security implementation](https://github.com/parker-brown-family/terminal-delight/pull/1088) and the [review hardening](https://github.com/parker-brown-family/terminal-delight/pull/1095) are merged into `dev/0.5.0`. The remaining review completion is one follow-up PR on `fix/restricted-review-completion`. The 0.4 release, tags and assets are outside this change. The original launch/access mockups and research are historical design inputs; the implemented surface is a command, not a launch GUI.
 
 ## What changed
 
@@ -21,11 +21,13 @@ Restricted commands require bubblewrap 0.12.0 or newer, Linux descriptor cleanup
 
 The [broad authority issue](https://github.com/parker-brown-family/terminal-delight/issues/1087) and [off-limits pointer issue](https://github.com/parker-brown-family/terminal-delight/issues/1090) are addressed here. The separate [native-handoff implementation](https://github.com/parker-brown-family/terminal-delight/pull/1069) retains its cooperative Standard contract. Its [multi-pane qualification and candidate hold](https://github.com/parker-brown-family/terminal-delight/issues/1071) remain independent release work.
 
-## Evidence
+## Review completion (in progress)
 
-Both full terminal-core suites, strict production lints, real OS probes, actual native-window notes/policy/revocation and eleven deliberately removed protections are qualified. Final counts, source/binary digests, commands, CI and integration state belong in the linked review receipt. Ignored tests are reported separately; the three OS probes are explicitly invoked.
+[The completion decisions](05-review-completion.md) extend the four selected gates under Parker's explicit AFK delegation. The chosen directory is a non-hidden home descendant and is validated through pinned descriptors and mount identity. Peer credentials now establish own-pane authority; remaining config, document, tab and queued-input paths have regression coverage. A single proposal appears in the run terminal with outside-only dismissal. Development pushes run CI; the dedicated user guide is linked in the site and feature catalog.
 
-The private filming rig was updated in its own local repository: `6d9c74e — Disposable filming windows opt in to operator MCP policy control`. Bash syntax and whitespace checks passed. No filming scene was staged over live panes.
+The post-merge inspection found that the surface patch still persisted before Apply: a stale allowed snapshot could leave a refused card for a later sweep. Persistence now follows an accepted UI receipt, and the test includes an allowed snapshot whose live Apply refuses. The actual effect also rechecks the master and Writes policy, preserving asks with Writes off.
+
+No live installation is authorized this round. All native qualification uses independent scratch sessions. Original receipts are historical and must not be presented as current-code checks. Current full checks, mutation results, source/binary digests and passed CI will be recorded in the updated readable report. The private media rig now refuses ctl/RPC failures (local commit a4b6e22).
 
 ## Limits
 

@@ -1627,7 +1627,7 @@ fn peer_is_us(stream: &UnixStream) -> bool {
 /// The pid on the other end, from SO_PEERCRED. Used only to record which window
 /// is attached, so the `mcp` relay can find its ctl socket by session rather
 /// than by a process-ancestry walk the split severed.
-fn peer_pid(stream: &UnixStream) -> Option<u32> {
+pub(crate) fn peer_pid(stream: &UnixStream) -> Option<u32> {
     use std::os::fd::AsRawFd;
     let mut cred = libc::ucred {
         pid: 0,

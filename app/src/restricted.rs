@@ -18,20 +18,24 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod seccomp;
+mod work;
 const MAX_REQUEST: usize = 2048;
 const TIMEOUT: Duration = Duration::from_millis(250);
 const HELP: &str =
     "terminal-delight restricted run --workdir PATH [--read-only] [--td-note] -- PROGRAM ARGS...\n\
 terminal-delight restricted status RUN\n\
 terminal-delight restricted revoke RUN\n\
+terminal-delight restricted dismiss RUN\n\
 Inside the command: terminal-delight restricted call '{\"op\":\"status\"}'\n\
   also {\"op\":\"note\",\"text\":\"...\"} (with --td-note; 1-10 words, one a second)\n\
-  and {\"op\":\"request_access\",\"reason\":\"...\"} (a proposal; it grants nothing)\n\n\
+  and {\"op\":\"request_access\",\"reason\":\"...\"} (one visible proposal per run; grants nothing)\n\n\
 Needs /usr/bin/bwrap 0.12.0+, Linux 5.11+, x86_64 or aarch64; otherwise no command starts.\n\
+Choose a directory below your OS account home, with no dot-directory in its path.\n\
+System trees, external volumes and hidden roots are refused; copy work into a project.\n\
 Offline, line-oriented commands only. /work is the chosen directory; home and\n\
 tmp are temporary. No network, host services, credentials outside the chosen\n\
 directory (anything inside it is granted), TUIs or automatic agent handoffs. Output is plain text. --td-note grants only an own-pane note,\n\
-subject to the existing MCP switches. Status shows one pending access request;\n\
+subject to the existing MCP switches. One proposal appears in the run terminal and status;\n\
 wider access needs an explicit new run. Standard terminals keep account access.\n\
 Shared writable output can influence a later privileged consumer. This is not\n\
 protection from host-user malware, kernel bugs or complete resource exhaustion.";
@@ -175,82 +179,7 @@ fn account_home() -> io::Result<PathBuf> {
 /// Pin the resource before starting user code; a renamed path cannot substitute
 /// another directory between validation and bubblewrap's mount.
 fn work_dir(path: &Path, runtime: &Path, home: Option<&Path>) -> io::Result<(PathBuf, File)> {
-    let canonical = fs::canonicalize(path)?;
-    let pinned = File::open(&canonical)?;
-    if !pinned.metadata()?.is_dir() {
-        return Err(io::Error::other("workdir must be a directory"));
-    }
-    for system in [
-        "/", "/home", "/tmp", "/var", "/run", "/etc", "/usr", "/bin", "/lib", "/lib64", "/proc",
-        "/sys", "/dev",
-    ] {
-        let p = Path::new(system);
-        if canonical == p
-            || (!matches!(system, "/" | "/home" | "/tmp" | "/var") && canonical.starts_with(p))
-        {
-            return Err(io::Error::other(
-                "choose a dedicated work directory, not a system directory",
-            ));
-        }
-    }
-    if overlaps(&canonical, runtime) {
-        return Err(io::Error::other("workdir overlaps protected runtime state"));
-    }
-    if let Some(home) = home {
-        let home = fs::canonicalize(home)?;
-        if home.starts_with(&canonical) {
-            return Err(io::Error::other("grant a project directory, not your home"));
-        }
-        for name in [
-            ".ssh", ".gnupg", ".config", ".local", ".claude", ".codex", ".gemini",
-        ] {
-            if overlaps(&canonical, &home.join(name)) {
-                return Err(io::Error::other("workdir overlaps protected user state"));
-            }
-        }
-    }
-    // A pre-existing socket/device/submount in a chosen tree is another host
-    // channel, not an ordinary file grant. Do not follow symlinks while scanning.
-    let mounts = fs::read_to_string("/proc/self/mountinfo")?;
-    for line in mounts.lines() {
-        if let Some(mount) = line.split_whitespace().nth(4) {
-            let mount = mount
-                .replace("\\040", " ")
-                .replace("\\011", "\t")
-                .replace("\\012", "\n")
-                .replace("\\134", "\\");
-            let mount = Path::new(&mount);
-            if mount != canonical && mount.starts_with(&canonical) {
-                return Err(io::Error::other("workdir contains a nested host mount"));
-            }
-        }
-    }
-    let mut pending = vec![canonical.clone()];
-    let mut seen = 0;
-    while let Some(dir) = pending.pop() {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            seen += 1;
-            if seen > 200_000 {
-                return Err(io::Error::other(
-                    "workdir validation exceeds 200000 entries; choose a smaller tree",
-                ));
-            }
-            let ty = entry.file_type()?;
-            if ty.is_dir() {
-                pending.push(entry.path());
-            } else if ty.is_file() && entry.metadata()?.nlink() != 1 {
-                return Err(io::Error::other(
-                    "workdir contains a hard-linked file; use an independent copy",
-                ));
-            } else if !(ty.is_file() || ty.is_symlink()) {
-                return Err(io::Error::other(
-                    "workdir contains a socket, pipe or device; remove host channels first",
-                ));
-            }
-        }
-    }
-    Ok((canonical, pinned))
+    work::validate(path, runtime, home)
 }
 
 fn sandbox(
@@ -428,9 +357,12 @@ enum Request {
         reason: String,
     },
     Revoke,
+    Dismiss,
 }
 
 struct Grants {
+    run_id: String,
+    proposal_issued: bool,
     revoked: bool,
     note: bool,
     pending: Option<String>,
@@ -447,18 +379,26 @@ fn text_ok(text: &str, words: usize) -> bool {
     !text.trim().is_empty()
         && text.len() <= 512
         && text.split_whitespace().count() <= words
-        && !text.chars().any(char::is_control)
+        && !text.chars().any(|c| c.is_control() || reorders_display(c))
 }
 
 impl Grants {
+    fn proposal_text(&self, reason: &str) -> String {
+        format!(
+            "\nRESTRICTED ACCESS PROPOSAL — workload request, no access granted\nRun: {}\nCurrent resource: {} ({})\nRequest supplied by workload: {}\nConsequence: changing scope requires a separately chosen new run. This proposal has no approval action.\nDismiss from Standard: terminal-delight restricted dismiss {}\n",
+            self.run_id, json!(self.work), if self.read_only { "read-only" } else { "read-write" }, json!(reason), self.run_id
+        )
+    }
+
     fn status(&self) -> Value {
-        json!({"ok":true, "profile":"offline-v1", "workdir":self.work,
+        json!({"ok":true, "run":self.run_id, "profile":"offline-v1", "workdir":self.work,
             "work_access":if self.read_only {"read_only"} else {"read_write"},
             "network":"none", "host_services":"none", "output":"plain_text",
             "global_mcp_enabled":Value::Null, "global_mcp_writes":Value::Null, "global_policy_check":"on_each_note",
             "system_read_only_policy":"/usr plus existing system bin/lib paths and linker cache",
             "note":if self.revoked {"revoked"} else if self.note {"granted"} else {"not_granted"},
             "automatic_handoffs":"unavailable", "pending_access_request":self.pending,
+            "access_request_available":!self.proposal_issued && !self.revoked,
             "wider_access":"explicit_new_run_required", "resource_quotas":"unavailable"})
     }
 
@@ -470,6 +410,11 @@ impl Grants {
     ) -> Value {
         match req {
             Request::Status => self.status(),
+            Request::Dismiss if operator => {
+                self.pending = None;
+                self.status()
+            }
+            Request::Dismiss => failure("only the outside operator channel may dismiss a proposal"),
             Request::Revoke if operator => {
                 self.revoked = true;
                 self.pending = None;
@@ -477,7 +422,7 @@ impl Grants {
             }
             Request::Revoke => failure("only the outside operator channel may revoke grants"),
             Request::Note { .. } | Request::AskAccess { .. } if operator => failure(
-                "operator channel accepts only status and revoke; new grants require a new run",
+                "operator channel accepts only status, dismiss and revoke; new grants require a new run",
             ),
             Request::Note { text } => {
                 if self.revoked || !self.note {
@@ -515,7 +460,11 @@ impl Grants {
                             "one access request is already pending; scope has not changed",
                         );
                     }
+                } else if self.proposal_issued {
+                    return failure("this run has used its one access proposal; scope has not changed");
                 } else {
+                    self.proposal_issued = true;
+                    eprintln!("{}", self.proposal_text(&reason));
                     self.pending = Some(reason);
                 }
                 json!({"ok":true,"pending":true,"granted":false,"requires_new_run":true})
@@ -775,6 +724,8 @@ fn run(launch: Launch) -> Result<i32, String> {
     let broker = Broker::start(
         &run,
         Grants {
+            run_id: run.id().to_string(),
+            proposal_issued: false,
             revoked: false,
             note: launch.note,
             pending: None,
@@ -939,7 +890,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             return 0;
         }
         ["run", ..] => parse_run(&args[1..]).and_then(run),
-        [verb @ ("status" | "revoke"), id] => operator_path(id).and_then(|path| {
+        [verb @ ("status" | "revoke" | "dismiss"), id] => operator_path(id).and_then(|path| {
             exchange(&path, &json!({"op":verb}).to_string()).map(|v| {
                 println!("{v}");
                 if v["ok"] == true {
@@ -1000,6 +951,8 @@ mod tests {
 
     fn grants(note: bool) -> Grants {
         Grants {
+            run_id: "11111111111111111111111111111111".into(),
+            proposal_issued: false,
             revoked: false,
             note,
             pending: None,
@@ -1167,6 +1120,24 @@ mod tests {
         assert_eq!(
             grants.status()["pending_access_request"],
             "Need external packages"
+        );
+        let visible = grants.proposal_text("Need external packages");
+        assert!(visible.contains("Current resource: \"/chosen/work\" (read-write)"));
+        assert!(visible.contains("no access granted") && visible.contains("restricted dismiss"));
+        assert_eq!(grants.apply(Request::Dismiss, false, &never)["ok"], false);
+        assert!(grants.status()["pending_access_request"].is_string());
+        assert_eq!(grants.apply(Request::Dismiss, true, &never)["ok"], true);
+        assert!(grants.status()["pending_access_request"].is_null());
+        assert_eq!(grants.status()["note"], "not_granted");
+        assert_eq!(
+            grants.apply(
+                Request::AskAccess {
+                    reason: "Need external packages".into()
+                },
+                false,
+                &never
+            )["ok"],
+            false
         );
         grants.apply(Request::Revoke, true, &never);
         assert_eq!(

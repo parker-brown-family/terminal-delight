@@ -25,6 +25,8 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   `TD_MCP_SCRIPTED=1`; a person changes policy in the MCP panel. This closes the
   route through a running window; a program running as you can still relaunch a
   window with that variable or edit the saved session (decision 0003). (#1088)
+- **Restricted validates the pinned directory and its mount identity.** The selected path must be below the OS account home without a dot-directory in that path. External volumes, system trees and hidden roots are refused; project contents remain granted. One lifetime access proposal appears in the run terminal and can be dismissed only from outside.
+- **Own-pane authority follows the connecting process.** The control socket checks kernel peer credentials against the current pane shell. Forged pane claims lose their own-pane exception. Hidden document notes, tab edits and queued bench input respect off-limits; appearance JSON cannot bypass note or deliverable validation.
 - **New: `terminal-delight restricted run` runs an offline command with less
   authority.** `terminal-delight restricted run --workdir DIR [--read-only]
   [--td-note] -- CMD` runs a line-oriented command that sees only DIR (at
@@ -32,7 +34,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   has no network, no other files, no other processes and no Terminal Delight
   controls; with `--td-note` it may post a short note on its own pane. Its
   output reaches you as plain text, with terminal control sequences removed.
-  `restricted status RUN` and `restricted revoke RUN` inspect and revoke it from
+  `restricted status RUN`, `restricted dismiss RUN` and `restricted revoke RUN` inspect or reduce it from
   outside. It needs `/usr/bin/bwrap` 0.12.0 or newer and Linux 5.11 or newer on
   x86_64 or aarch64, and refuses to start rather than run without its
   protections. Anything inside DIR is granted to it, credentials included.
