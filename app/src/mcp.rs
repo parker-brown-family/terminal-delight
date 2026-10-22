@@ -3059,9 +3059,9 @@ mod tests {
     #[test]
     fn config_json_cannot_inject_validated_notes_or_deliverables() {
         for value in [
-            json!({"note":{"Post":{"text":"x".repeat(9000),"title":"bad","pinned":false}}}),
-            json!({"deliverable":{"Declare":{"label":"bad","href":"javascript:alert(1)"}}}),
-            json!({"deliverable":{"Declare":{"label":"bad","href":"data:text/html,unsafe"}}}),
+            json!({"note":{"post":{"text":"x".repeat(9000),"title":"bad","pin":false}}}),
+            json!({"deliverable":{"declare":{"label":"bad","href":"javascript:alert(1)"}}}),
+            json!({"deliverable":{"declare":{"label":"bad","href":"data:text/html,unsafe"}}}),
         ] {
             assert!(
                 serde_json::from_value::<ConfigPatch>(value.clone()).is_err(),
