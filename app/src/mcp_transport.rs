@@ -272,6 +272,7 @@ fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot
         coordination: Some(ws.coord_authorized.clone()),
         engineering_allowed: ws.coordination_full_scope(),
         documents: ws.mcp_documents(cx),
+        chart: ws.chart.clone(),
     }
 }
 
@@ -487,14 +488,27 @@ fn notify_loop(
         // also re-walk every transcript in every project directory.
         let bound = paneident::certain(&fleet_facts(&snap.panes), &home);
         let mut tailed: HashMap<u32, Vec<mcp::ToolEvent>> = HashMap::new();
-        for p in snap.panes.iter().filter(|p| p.exposed && p.is_agent) {
+        // Pushed events reach every connection at once, so each pane carries
+        // the reach an agent nobody can name gets: a seated pane is not pushed.
+        let pushable: Vec<mcp::PaneInfo> = snap
+            .panes
+            .iter()
+            .map(|p| mcp::PaneInfo {
+                reach: Some(crate::warroom::anonymous_reach(&snap.config, &p.party())),
+                ..p.clone()
+            })
+            .collect();
+        for p in pushable
+            .iter()
+            .filter(|p| p.is_agent && p.reach >= Some(crate::warroom::Reach::Read))
+        {
             let events = match bound.get(&p.pid) {
                 Some(path) => mcp_tail::tail_tool_events(path, PUSH_TAIL),
                 None => vec![],
             };
             tailed.insert(p.pid, events);
         }
-        for n in watcher.diff(&snap.panes, &tailed) {
+        for n in watcher.diff(&pushable, &tailed) {
             if out_tx.send(mcp::encode_notification(&n)).is_err() {
                 return; // writer gone
             }
@@ -532,7 +546,9 @@ mod tests {
                 session: Some("claude --resume x".into()),
                 tool: None,
                 note: None,
-                exposed: true,
+                reach: None,
+                access: crate::warroom::AgentAccess::Open,
+                seat: None,
                 grade: mcp::GradeReport::default(),
             }],
             outer_grade: mcp::GradeReport::default(),
@@ -546,6 +562,7 @@ mod tests {
             coordination: None,
             engineering_allowed: false,
             documents: vec![],
+            chart: crate::warroom::Chart::default(),
         }
     }
 

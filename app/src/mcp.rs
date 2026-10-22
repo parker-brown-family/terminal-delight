@@ -166,8 +166,18 @@ pub struct PaneInfo {
     /// with `leave_note`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<NoteReport>,
-    /// Whether this pane would be exposed under the current policy.
-    pub exposed: bool,
+    /// How far the agent asking reaches this pane — `seen`, `read` or `ask`.
+    /// Filled per caller by the verbs that list panes; absent in the raw
+    /// snapshot, which is built before anyone asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<crate::warroom::Reach>,
+    /// A person's position for this pane (open, read-only, off-limits). Never
+    /// on the wire: what an agent learns is its own reach.
+    #[serde(skip)]
+    pub access: crate::warroom::AgentAccess,
+    /// The pane's War Room seat, when a person seated it. Never on the wire.
+    #[serde(skip)]
+    pub seat: Option<crate::warroom::SeatId>,
     /// The pane's *effective* grade — what it actually renders with (its own
     /// override, else the inherited outer) — in the config API's percentages
     /// and explicit milliseconds. `#[serde(skip)]` so `list_panes` stays an
@@ -557,28 +567,21 @@ pub type ConfigUpdate = (Target, ConfigPatch);
 /// effective grade on success, or a human-readable reason it was refused.
 pub type ApplyOutcome = (Target, Result<GradeReport, String>);
 
-/// The single policy gate: would a pane with this agent-ness be exposed under
-/// `cfg`? Pure, so the safety rule is unit-tested in isolation.
-///
-/// Disabled ⇒ nothing. `AgentsOnly` ⇒ agents only. `All` ⇒ every pane — but
-/// still only while the master switch is on. And never a pane a person has
-/// marked off-limits to agents, whatever the policy: that is the person
-/// saying *not this one*, and it outranks the window-wide switches.
-///
-/// `off_limits` is an argument rather than something a caller remembers to
-/// check alongside, so every site that decides exposure has to say what the
-/// pane's mark is — adding it made the compiler name all six.
-pub fn should_expose(cfg: &McpConfig, is_agent: bool, off_limits: bool) -> bool {
-    cfg.enabled && !off_limits && (matches!(cfg.expose, Expose::All) || is_agent)
-}
+// Exposure is decided in `warroom`: `reach` says how far one agent reaches one
+// pane (the window's switches, the pane's position, and in the War Room the
+// caller's line), and `may_write` says whether one of TD's write verbs may land.
+// The old yes/no gate answered both questions at once, which is what a
+// read-only position and a line that reaches only `see` cannot survive.
 
-/// May this update reach that pane? The exposure gate, with the one exception
-/// off-limits makes: an update on the caller's OWN pane (its note, its
-/// deliverable, its bench — [`ConfigPatch::own_pane`]) still lands on a pane
-/// marked off-limits, because the mark hides a pane from other agents and does
-/// not silence the one inside it. Everything else follows [`should_expose`].
-pub fn may_write(cfg: &McpConfig, is_agent: bool, off_limits: bool, own_pane: bool) -> bool {
-    should_expose(cfg, is_agent, off_limits && !own_pane)
+impl PaneInfo {
+    /// This pane as the War Room's rules see it.
+    pub fn party(&self) -> crate::warroom::Party {
+        crate::warroom::Party {
+            seat: self.seat,
+            is_agent: self.is_agent,
+            access: self.access,
+        }
+    }
 }
 
 /// Recheck policy at the actual UI effect, after a request's snapshot may have
@@ -671,6 +674,9 @@ pub struct Snapshot {
     /// with what its notes layer shows. What `document_notes` looks through
     /// for the one beside its caller.
     pub documents: Vec<DocInfo>,
+    /// The War Room's lines: which seat may reach which, and how far. Empty
+    /// means nobody is seated, and every pane behaves as before the War Room.
+    pub chart: crate::warroom::Chart,
 }
 
 /// Where an open document is drawn: floating over a pane's terminal, or on a
@@ -778,9 +784,31 @@ pub struct Caller {
 }
 
 impl Snapshot {
-    /// Panes the policy currently permits a connected agent to see.
-    fn exposed(&self) -> Vec<&PaneInfo> {
-        self.panes.iter().filter(|p| p.exposed).collect()
+    /// The pane the caller is sitting in, when the connection could say.
+    fn caller_info(&self) -> Option<&PaneInfo> {
+        let pane = self.caller.as_ref()?.pane?;
+        self.panes.iter().find(|p| p.pane_id == Some(pane))
+    }
+
+    /// How far the caller reaches `p`. An unknown caller is no seat: it still
+    /// reads a pane nobody seated, and reaches no seated pane at all.
+    fn reach_of(&self, p: &PaneInfo) -> crate::warroom::Reach {
+        let caller = self.caller_info().map(PaneInfo::party);
+        crate::warroom::reach(
+            &self.config,
+            &self.chart,
+            caller.as_ref(),
+            &p.party(),
+            self.is_callers(p.pid),
+        )
+    }
+
+    /// Panes the caller reaches at least as far as `at_least`.
+    fn reachable(&self, at_least: crate::warroom::Reach) -> Vec<&PaneInfo> {
+        self.panes
+            .iter()
+            .filter(|p| self.reach_of(p) >= at_least)
+            .collect()
     }
 
     /// Which pane a pane-scoped verb should act on: the one the caller named,
@@ -881,6 +909,7 @@ impl Snapshot {
             coordination: None,
             engineering_allowed: true,
             documents: vec![],
+            chart: crate::warroom::Chart::default(),
         }
     }
 }
@@ -1714,6 +1743,13 @@ where
     // Per-pane match cap so a noisy pane can't flood one response.
     const PER_PANE: usize = 50;
     let mut panes = search(query, cap);
+    // The window's walk filters by position and switches; the caller's own
+    // lines narrow it here, so a seated pane answers only along a line.
+    panes.retain(|m| {
+        snap.panes
+            .iter()
+            .any(|p| p.pid == m.pid && snap.reach_of(p) >= crate::warroom::Reach::Read)
+    });
     let mut truncated = false;
     let mut total = 0usize;
     for p in &mut panes {
@@ -1845,7 +1881,14 @@ fn list_panes(snap: &Snapshot) -> Value {
              CONTROL panel (the robot button on the mother bar).",
         );
     }
-    let exposed = snap.exposed();
+    let exposed: Vec<PaneInfo> = snap
+        .reachable(crate::warroom::Reach::Seen)
+        .into_iter()
+        .map(|p| PaneInfo {
+            reach: Some(snap.reach_of(p)),
+            ..p.clone()
+        })
+        .collect();
     let text = if exposed.is_empty() {
         "no panes are currently exposed under the active policy".to_string()
     } else {
@@ -1914,7 +1957,11 @@ where
         .and_then(Value::as_u64)
         .unwrap_or(20)
         .clamp(1, 200) as usize;
-    let Some(pane) = snap.panes.iter().find(|p| p.pid == pid && p.exposed) else {
+    let Some(pane) = snap
+        .panes
+        .iter()
+        .find(|p| p.pid == pid && snap.reach_of(p) >= crate::warroom::Reach::Read)
+    else {
         return tool_err(&format!("no exposed pane with pid {pid}"));
     };
     if !pane.is_agent {
@@ -1948,7 +1995,11 @@ fn get_pane_config(args: &Value, snap: &Snapshot) -> Value {
     }
     let targets = match args.get("targets") {
         None | Some(Value::Null) => {
-            let mut ts: Vec<Target> = snap.exposed().iter().map(|p| Target::Pane(p.pid)).collect();
+            let mut ts: Vec<Target> = snap
+                .reachable(crate::warroom::Reach::Read)
+                .iter()
+                .map(|p| Target::Pane(p.pid))
+                .collect();
             ts.push(Target::Outer);
             ts
         }
@@ -1984,7 +2035,11 @@ fn resolve_get(t: &Target, snap: &Snapshot) -> Value {
             "scope": "outer",
             "grade": snap.outer_grade,
         }),
-        Target::Pane(pid) => match snap.panes.iter().find(|p| p.pid == *pid && p.exposed) {
+        Target::Pane(pid) => match snap
+            .panes
+            .iter()
+            .find(|p| p.pid == *pid && snap.reach_of(p) >= crate::warroom::Reach::Read)
+        {
             Some(p) => json!({
                 "target": t.to_json(),
                 "scope": "pane",
@@ -2274,11 +2329,10 @@ where
         Err(e) => return tool_err(&e),
     };
     if let Some(pid) = pid {
-        if !snap
-            .panes
-            .iter()
-            .any(|p| p.pid == pid && (p.exposed || snap.is_callers(pid)))
-        {
+        if !snap.panes.iter().any(|p| {
+            p.pid == pid
+                && (snap.reach_of(p) >= crate::warroom::Reach::Seen || snap.is_callers(pid))
+        }) {
             return tool_err(&format!("no pane with pid {pid}"));
         }
     }
@@ -2424,7 +2478,10 @@ where
         .panes
         .iter()
         .find(|p| p.pid == pid)
-        .filter(|p| p.exposed || snap.is_callers(pid))
+        .filter(|p| {
+            crate::warroom::may_write(&snap.config, snap.reach_of(p), &p.party(), false)
+                || snap.is_callers(pid)
+        })
         .and_then(|p| p.pane_id)
         .zip(snap.instance.as_ref())
         .map(|(pane, inst)| crate::surfacefeed::pane_dir(&inst.session, pane));
@@ -2511,7 +2568,7 @@ fn document_notes(args: &Value, snap: &Snapshot) -> Value {
         Ok(p) => p,
         Err(why) => return tool_err(&why),
     };
-    if !should_expose(&snap.config, me.is_agent, false) {
+    if !crate::warroom::policy_admits(&snap.config, me.is_agent) {
         return tool_err(&format!(
             "the pane you are calling from ({}) is not exposed under the current \
              policy, so nothing about it is answered",
@@ -2755,7 +2812,7 @@ where
         Ok(p) => p,
         Err(why) => return tool_err(&why),
     };
-    if !should_expose(&snap.config, me.is_agent, false) {
+    if !crate::warroom::policy_admits(&snap.config, me.is_agent) {
         return tool_err(&format!(
             "the pane you are calling from ({}) is not exposed under the current \
              policy, so nothing opens in it",
@@ -2922,7 +2979,13 @@ impl Watcher {
         panes: &[PaneInfo],
         tailed: &HashMap<u32, Vec<ToolEvent>>,
     ) -> Vec<Notification> {
-        let agents: Vec<&PaneInfo> = panes.iter().filter(|p| p.exposed && p.is_agent).collect();
+        // The caller passes panes stamped with the reach an anonymous agent
+        // gets (`warroom::anonymous_reach`), since a pushed event goes to every
+        // connection at once.
+        let agents: Vec<&PaneInfo> = panes
+            .iter()
+            .filter(|p| p.is_agent && p.reach >= Some(crate::warroom::Reach::Read))
+            .collect();
         let now: HashSet<u32> = agents.iter().map(|p| p.pid).collect();
         let mut out = vec![];
 
@@ -3090,7 +3153,8 @@ mod tests {
         let mut own = doc(0, 100, DocPlace::Float, None, "/own/notes.html");
         own.off_limits = true;
         s.documents.push(own);
-        s.panes.iter_mut().find(|p| p.pid == 100).unwrap().exposed = false;
+        s.panes.iter_mut().find(|p| p.pid == 100).unwrap().access =
+            crate::warroom::AgentAccess::OffLimits;
         assert_eq!(notes_of(&s)["structuredContent"]["path"], "/own/notes.html");
         s.config.writable = true;
         let md = TempDoc::new("own-hidden.md", "# Own document\n");
@@ -3109,7 +3173,8 @@ mod tests {
     #[test]
     fn access_requests_do_not_disclose_hidden_panes() {
         let mut s = window_with(vec![]);
-        s.panes.iter_mut().find(|p| p.pid == 200).unwrap().exposed = false;
+        s.panes.iter_mut().find(|p| p.pid == 200).unwrap().access =
+            crate::warroom::AgentAccess::OffLimits;
         for pid in [200, 9999] {
             let result = call(
                 &s,
@@ -3121,6 +3186,39 @@ mod tests {
         }
     }
     use super::*;
+
+    /// The old yes/no gate, asked of the War Room's rules for a pane nobody
+    /// seated — so the policy tests below keep pinning the same table.
+    fn should_expose(c: &McpConfig, is_agent: bool, off_limits: bool) -> bool {
+        let access = if off_limits {
+            crate::warroom::AgentAccess::OffLimits
+        } else {
+            crate::warroom::AgentAccess::Open
+        };
+        let p = crate::warroom::Party {
+            seat: None,
+            is_agent,
+            access,
+        };
+        crate::warroom::reach(c, &crate::warroom::Chart::default(), None, &p, false)
+            >= crate::warroom::Reach::Read
+    }
+
+    /// The old write gate, the same way.
+    fn may_write(c: &McpConfig, is_agent: bool, off_limits: bool, own_pane: bool) -> bool {
+        let access = if off_limits {
+            crate::warroom::AgentAccess::OffLimits
+        } else {
+            crate::warroom::AgentAccess::Open
+        };
+        let p = crate::warroom::Party {
+            seat: None,
+            is_agent,
+            access,
+        };
+        let r = crate::warroom::reach(c, &crate::warroom::Chart::default(), None, &p, own_pane);
+        crate::warroom::may_write(c, r, &p, own_pane)
+    }
 
     #[test]
     fn default_is_locked_down() {
@@ -3371,7 +3469,20 @@ mod tests {
             session: Some("claude --resume abc".into()),
             tool: None,
             note: None,
-            exposed,
+            // What the old `exposed` flag said, in the War Room's terms: an
+            // open pane nobody seated, or one a person put off-limits. The
+            // reach stamp is what the push feed's caller hands `diff`.
+            reach: Some(if exposed {
+                crate::warroom::Reach::Read
+            } else {
+                crate::warroom::Reach::Hidden
+            }),
+            access: if exposed {
+                crate::warroom::AgentAccess::Open
+            } else {
+                crate::warroom::AgentAccess::OffLimits
+            },
+            seat: None,
             grade: GradeReport::default(),
         }
     }
@@ -3493,6 +3604,7 @@ mod tests {
             coordination: None,
             engineering_allowed: true,
             documents: vec![],
+            chart: crate::warroom::Chart::default(),
         }
     }
 
@@ -3634,6 +3746,110 @@ mod tests {
     /// Parse a response line back to a Value for assertions.
     fn resp(line: &str) -> Value {
         serde_json::from_str(line).unwrap()
+    }
+
+    /// A seated pane is reachable only along a line from the caller: absent
+    /// from the census, grep, the event tail and appearance reads without one,
+    /// present along one, and a pane nobody seated behaves exactly as before.
+    /// The agent inside a seated pane still finds itself.
+    ///
+    /// Mutation-tested: a seated target with no line read as `Read` fails this.
+    #[test]
+    fn a_seated_pane_is_hidden_from_every_reading_verb_without_a_line() {
+        use crate::warroom::{Chart, Reach, Rung, SeatId};
+        let mut me = agent_pane(100, true);
+        me.seat = Some(SeatId(1));
+        let mut them = agent_pane(200, true);
+        them.seat = Some(SeatId(2));
+        let loose = agent_pane(300, true);
+        let mut s = snap(true, true, vec![me, them, loose]);
+        s.caller = Some(Caller {
+            session: "s".into(),
+            pane: Some(u64::from(100u32 % 97)),
+        });
+        let listed = |s: &Snapshot| -> Vec<(u64, String)> {
+            call(s, "list_panes", json!({}))["structuredContent"]["panes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| {
+                    (
+                        p["pid"].as_u64().unwrap(),
+                        p["reach"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect()
+        };
+        let grepped = |s: &Snapshot| -> Vec<u64> {
+            let line = json!({"id": 1, "method": "tools/call",
+                "params": {"name": "grep", "arguments": {"query": "x"}}})
+            .to_string();
+            let hits = |_: &str, _: usize| -> Vec<PaneMatches> {
+                [100u32, 200, 300]
+                    .iter()
+                    .map(|&pid| PaneMatches {
+                        pid,
+                        tab: 0,
+                        title: "t".into(),
+                        mode: "CLAUDE".into(),
+                        matches: vec![GrepMatch {
+                            line: 0,
+                            col: 0,
+                            text: "x".into(),
+                        }],
+                    })
+                    .collect()
+            };
+            let out = resp(&handle_line_with(&line, s, no_tail, no_apply, hits).unwrap());
+            out["result"]["structuredContent"]["panes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p["pid"].as_u64().unwrap())
+                .collect()
+        };
+        let tails = |s: &Snapshot| call(s, "pane_events", json!({"pid": 200}))["isError"] != true;
+        let reads_look = |s: &Snapshot| {
+            call(s, "get_pane_config", json!({"targets": [200]}))["structuredContent"]
+                .to_string()
+                .contains("\"grade\"")
+        };
+
+        assert_eq!(listed(&s), vec![(100, "read".into()), (300, "read".into())]);
+        assert_eq!(grepped(&s), vec![100, 300]);
+        assert!(!tails(&s), "no line, no tail");
+        assert!(!reads_look(&s), "no line, no appearance");
+
+        s.chart = Chart::default();
+        s.chart.draw(SeatId(1), SeatId(2), Rung::See);
+        assert_eq!(
+            listed(&s),
+            vec![
+                (100, "read".into()),
+                (200, "seen".into()),
+                (300, "read".into())
+            ],
+            "a see line lists the pane and nothing more"
+        );
+        assert_eq!(grepped(&s), vec![100, 300]);
+        assert!(!tails(&s));
+
+        s.chart.draw(SeatId(1), SeatId(2), Rung::Read);
+        assert_eq!(grepped(&s), vec![100, 200, 300]);
+        assert!(tails(&s), "a read line tails the pane");
+        assert!(reads_look(&s));
+        assert_eq!(
+            s.reach_of(&s.panes[1]),
+            Reach::Read,
+            "a read line reads, and stops short of ask"
+        );
+
+        s.caller = None;
+        assert_eq!(
+            listed(&s),
+            vec![(300, "read".into())],
+            "an unknown caller reaches no seat"
+        );
     }
 
     #[test]
@@ -5484,7 +5700,9 @@ mod tests {
             session: None,
             tool: None,
             note: None,
-            exposed: true,
+            reach: None,
+            access: crate::warroom::AgentAccess::Open,
+            seat: None,
             grade: GradeReport::default(),
         };
         let hidden_agent = agent_pane(8, false);

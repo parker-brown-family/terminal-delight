@@ -55,8 +55,14 @@ impl TerminalView {
     ) -> String {
         // Defence at dispatch as well as selection: a queued pointer must not
         // turn an off-limits pane's controls into operator input.
-        if self.off_limits {
-            return "err an off-limits pane takes no scripted pointer".into();
+        match self.agent_access {
+            crate::warroom::AgentAccess::Open => {}
+            crate::warroom::AgentAccess::ReadOnly => {
+                return "err a read-only pane takes no scripted pointer".into();
+            }
+            crate::warroom::AgentAccess::OffLimits => {
+                return "err an off-limits pane takes no scripted pointer".into();
+            }
         }
         // `p` is FLAT, as `bench probe` prints zones. The pane un-bends every
         // pointer through its tube, so the event has to arrive where the
@@ -3508,7 +3514,8 @@ impl TerminalView {
     /// A queue drained on one condition while the other still fails is how a
     /// held line ends up in a shell.
     pub(super) fn bench_drain(&mut self, cx: &mut Context<Self>) {
-        if self.off_limits || self.wb_queued.is_empty() || !self.bench_may_write() {
+        if !self.agent_access.takes_writes() || self.wb_queued.is_empty() || !self.bench_may_write()
+        {
             return;
         }
         let queued = std::mem::take(&mut self.wb_queued);

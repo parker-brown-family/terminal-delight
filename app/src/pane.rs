@@ -2911,15 +2911,19 @@ pub struct TerminalView {
     /// window is a process away from the terminal, and a reading that comes
     /// back empty is not evidence that the recipe was wrong.
     staged: crate::session::PaneRestore,
-    /// A person marked this pane off-limits to agents: no agent reads it or
-    /// writes to it through MCP, except the one running inside it acting on
-    /// its own pane (see `mcp::may_write`), and the control socket's bench
-    /// verbs never pick it. Set and cleared ONLY by a person: the terminal's
-    /// right-click menu, or a Yes on the rail to an agent's `request_access`
-    /// — no control-socket or MCP verb reaches it, because both answer
-    /// agents, and a lock an agent can lift is decoration. Persisted per leaf
-    /// in the state file.
-    pub off_limits: bool,
+    /// A person's position for this pane, for every agent: open, read-only
+    /// (agents may watch and ask, never write or type into its bench) or
+    /// off-limits (no agent reads it or writes to it through MCP, except the
+    /// one running inside it acting on its own pane — see
+    /// `warroom::may_write` — and the control socket's bench verbs never pick
+    /// it). Set and cleared ONLY by a person: the terminal's right-click menu,
+    /// or a Yes on the rail to an agent's `request_access` — no control-socket
+    /// or MCP verb reaches it, because both answer agents, and a lock an agent
+    /// can lift is decoration. Persisted per leaf in the state file.
+    pub agent_access: crate::warroom::AgentAccess,
+    /// This pane's seat in the War Room, once a person seats it. Saved with
+    /// the leaf so it outlives the pane's number (see `warroom::SeatId`).
+    pub seat: Option<crate::warroom::SeatId>,
     /// Whether this pane is in the tab being shown, written by the workspace
     /// on every draw (`Workspace::render`). An atomic so the workspace can set
     /// it while only reading the pane, and so it is never a frame stale.
@@ -4681,25 +4685,56 @@ impl TerminalView {
     }
 
     /// The person's right-click: mark this pane off-limits to agents, or let
-    /// agents see it again. The only writer of [`Self::off_limits`] outside a
-    /// restore, on purpose — see the field.
+    /// agents see it again. With [`Self::set_agent_access`], the only writer of
+    /// [`Self::agent_access`] outside a restore, on purpose — see the field.
     pub(crate) fn toggle_off_limits(&mut self, cx: &mut Context<Self>) {
-        self.off_limits = !self.off_limits;
-        if !self.off_limits {
+        let next = if self.agent_access.is_off_limits() {
+            crate::warroom::AgentAccess::Open
+        } else {
+            crate::warroom::AgentAccess::OffLimits
+        };
+        self.set_agent_access(next, cx);
+    }
+
+    /// The position, set to a value: a person's choice in the right-click menu
+    /// or a Yes on the rail (`Workspace::rail_answer`). A person's press either
+    /// way, which is the whole rule of the field. Emits nothing when the
+    /// position is already so; a position that takes writes again releases any
+    /// bench input held while it did not.
+    pub(crate) fn set_agent_access(
+        &mut self,
+        access: crate::warroom::AgentAccess,
+        cx: &mut Context<Self>,
+    ) {
+        if self.agent_access == access {
+            return;
+        }
+        self.agent_access = access;
+        if access.takes_writes() {
             self.bench_drain(cx);
         }
         cx.emit(OffLimitsChanged);
         cx.notify();
     }
 
-    /// The same mark, set to a value rather than flipped: a person's Yes on
-    /// the rail to an agent that asked for this pane to be opened or closed
-    /// (`Workspace::rail_answer`). A person's press either way, which is the
-    /// whole rule of the field. Emits nothing when the mark is already so.
-    pub(crate) fn set_off_limits(&mut self, on: bool, cx: &mut Context<Self>) {
-        if self.off_limits != on {
-            self.toggle_off_limits(cx);
+    /// This pane as the War Room's rules see it.
+    pub(crate) fn party(&self) -> crate::warroom::Party {
+        crate::warroom::Party {
+            seat: self.seat,
+            is_agent: self.mode.is_agent(),
+            access: self.agent_access,
         }
+    }
+
+    /// The off-limits mark alone, as a Yes to `open_pane` / `close_pane` sets
+    /// it: closing makes the pane off-limits, opening makes it fully open.
+    pub(crate) fn set_off_limits(&mut self, on: bool, cx: &mut Context<Self>) {
+        let access = if on {
+            crate::warroom::AgentAccess::OffLimits
+        } else {
+            crate::warroom::AgentAccess::Open
+        };
+        self.set_agent_access(access, cx);
     }
 
     /// Plain spawn (no restore context); kept for `cx.new(TerminalView::new)`.
@@ -5131,7 +5166,8 @@ impl TerminalView {
             pane_id,
             guard,
             superseded: false,
-            off_limits: false,
+            agent_access: crate::warroom::AgentAccess::Open,
+            seat: None,
             staged: restore.clone(),
             title: DEFAULT_TITLE.into(),
             name: None,
@@ -10500,7 +10536,7 @@ impl Render for TerminalView {
                 .child(div().my(px(3.)).h(px(1.)).bg(faint.alpha(0.35)))
                 .child(
                     row(
-                        if self.off_limits {
+                        if self.agent_access.is_off_limits() {
                             crate::lang::current()
                                 .strings()
                                 .parts
@@ -11703,7 +11739,7 @@ impl Render for TerminalView {
                     // Off-limits sits with the controls on the right, which a
                     // narrow pane keeps while its title clips: it is the one
                     // thing on this header that changes what an agent may do.
-                    .children(self.off_limits.then(|| {
+                    .children(self.agent_access.is_off_limits().then(|| {
                         div()
                             .flex_none()
                             .px(px(5. * scale))
