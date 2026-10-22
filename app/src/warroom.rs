@@ -284,6 +284,58 @@ impl Chart {
     }
 }
 
+/// Where a seat is drawn in the War Room: its row (how deep it sits under
+/// managers) and its place in that row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Placed {
+    pub seat: SeatId,
+    pub row: usize,
+    pub col: usize,
+}
+
+/// Lay seats out as an org chart. A seat sits one row under the seat it is
+/// drawn under ([`Chart::manager_of`], the oldest drawn line into it), so a
+/// seat with no manager on the chart is in the top row. Within a row, seats
+/// are ordered by project and then title, so one project's seats sit together
+/// (Gate 1, question 7). A loop of lines is cut where it is first met rather
+/// than followed forever.
+pub fn layout(seats: &[(SeatId, String, String)], chart: &Chart) -> Vec<Placed> {
+    use std::collections::{HashMap, HashSet};
+    let here: HashSet<SeatId> = seats.iter().map(|(s, _, _)| *s).collect();
+    let depth_of = |start: SeatId| -> usize {
+        let mut seen = HashSet::from([start]);
+        let mut at = start;
+        let mut depth = 0;
+        while let Some(up) = chart.manager_of(at).filter(|m| here.contains(m)) {
+            if !seen.insert(up) {
+                break;
+            }
+            depth += 1;
+            at = up;
+        }
+        depth
+    };
+    let mut rows: HashMap<usize, Vec<&(SeatId, String, String)>> = HashMap::new();
+    for s in seats {
+        rows.entry(depth_of(s.0)).or_default().push(s);
+    }
+    let mut out = Vec::new();
+    let mut depths: Vec<usize> = rows.keys().copied().collect();
+    depths.sort_unstable();
+    for (row, depth) in depths.iter().enumerate() {
+        let mut members = rows.remove(depth).unwrap_or_default();
+        members.sort_by(|a, b| (&a.1, &a.2, a.0).cmp(&(&b.1, &b.2, b.0)));
+        for (col, s) in members.iter().enumerate() {
+            out.push(Placed {
+                seat: s.0,
+                row,
+                col,
+            });
+        }
+    }
+    out
+}
+
 /// What one agent gets of one pane, after every ceiling. Ordered, so "at least
 /// read" is a comparison.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -700,6 +752,54 @@ mod tests {
             AgentAccess::OffLimits,
             "off_limits wins"
         );
+    }
+
+    #[test]
+    fn layout_puts_each_seat_a_row_under_its_manager_and_groups_projects() {
+        let mut chart = Chart::default();
+        line(&mut chart, 1, 2, Rung::Ask);
+        line(&mut chart, 1, 3, Rung::Ask);
+        line(&mut chart, 3, 4, Rung::Read);
+        let seats = vec![
+            (SeatId(4), "server".to_string(), "auth".to_string()),
+            (SeatId(3), "server".to_string(), "backend lead".to_string()),
+            (SeatId(2), "docsite".to_string(), "docs lead".to_string()),
+            (SeatId(1), "server".to_string(), "release lead".to_string()),
+            (SeatId(9), "aaa".to_string(), "alone".to_string()),
+        ];
+        let placed = layout(&seats, &chart);
+        let at = |s: u64| {
+            placed
+                .iter()
+                .find(|p| p.seat == SeatId(s))
+                .map(|p| (p.row, p.col))
+        };
+        assert_eq!(
+            at(9),
+            Some((0, 0)),
+            "a seat with no manager is in the top row, by project"
+        );
+        assert_eq!(at(1), Some((0, 1)));
+        assert_eq!(
+            at(2),
+            Some((1, 0)),
+            "docsite sorts before server in the second row"
+        );
+        assert_eq!(at(3), Some((1, 1)));
+        assert_eq!(at(4), Some((2, 0)));
+    }
+
+    #[test]
+    fn layout_cuts_a_loop_of_lines() {
+        let mut chart = Chart::default();
+        line(&mut chart, 1, 2, Rung::Ask);
+        line(&mut chart, 2, 1, Rung::Ask);
+        let seats = vec![
+            (SeatId(1), String::new(), "a".into()),
+            (SeatId(2), String::new(), "b".into()),
+        ];
+        let placed = layout(&seats, &chart);
+        assert_eq!(placed.len(), 2, "both seats are drawn");
     }
 
     #[test]

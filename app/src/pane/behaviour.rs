@@ -3408,10 +3408,14 @@ fn the_off_limits_toggle_marks_and_unmarks_the_pane_and_says_so(cx: &mut TestApp
         !pane.read(|v| v.agent_access.is_off_limits()),
         "a pane starts visible to agents"
     );
-    pane.view.update(pane.cx, |v, cx| v.toggle_off_limits(cx));
+    pane.view.update(pane.cx, |v, cx| {
+        v.set_agent_access(crate::warroom::AgentAccess::OffLimits, cx)
+    });
     pane.redraw();
     assert!(pane.read(|v| v.agent_access.is_off_limits()));
-    pane.view.update(pane.cx, |v, cx| v.toggle_off_limits(cx));
+    pane.view.update(pane.cx, |v, cx| {
+        v.set_agent_access(crate::warroom::AgentAccess::Open, cx)
+    });
     pane.redraw();
     assert!(!pane.read(|v| v.agent_access.is_off_limits()));
     assert_eq!(said.get(), 2, "each change is announced, for the save");

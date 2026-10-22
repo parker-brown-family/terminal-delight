@@ -1,0 +1,86 @@
+active = 0
+panes = 6
+lang = "en"
+left_bar = true
+
+[[projects]]
+id = 1
+name = "server"
+color = "#5c9ccc"
+
+[[projects]]
+id = 2
+name = "docsite"
+color = "#cc7e5c"
+
+[[lines]]
+from = 101
+to = 102
+rung = "ask"
+
+[[lines]]
+from = 102
+to = 103
+rung = "ask"
+
+[[lines]]
+from = 101
+to = 104
+rung = "read"
+
+[[lines]]
+from = 101
+to = 103
+rung = "ask"
+prompts_left = 2
+
+[[tabs]]
+name = "release lead"
+project = 1
+[tabs.node.Leaf]
+cwd = "$HOME/.cache/war-room-rig/seats/release"
+name = "release lead"
+resume = "SIZE=512340 MODEL=claude-opus-5-5 STATE=working TASK='cut the release notes' BRIEF='Release notes drafted; waiting on the auth fix before tagging.' $HOME/.cache/war-room-rig/bin/claude"
+seat = 101
+
+[[tabs]]
+name = "backend lead"
+project = 1
+[tabs.node.Leaf]
+cwd = "$HOME/.cache/war-room-rig/seats/backend"
+name = "backend lead"
+resume = "SIZE=290211 MODEL=claude-sonnet-5-5 STATE=idle BRIEF='Auth refactor assigned; reviewing the refresh change next.' $HOME/.cache/war-room-rig/bin/claude"
+seat = 102
+
+[[tabs]]
+name = "auth refactor"
+project = 1
+[tabs.node.Leaf]
+cwd = "$HOME/.cache/war-room-rig/seats/auth"
+name = "auth refactor"
+agents = "read-only"
+resume = "SIZE=360090 MODEL=claude-opus-5-5 STATE=working TASK='finish the expiry path' BRIEF='Token refresh now retries once on a 401. Two tests are left on the expiry path.' $HOME/.cache/war-room-rig/bin/claude"
+seat = 103
+
+[[tabs]]
+name = "docs pages"
+project = 2
+[tabs.node.Leaf]
+cwd = "$HOME/.cache/war-room-rig/seats/docs"
+name = "docs pages"
+resume = "SIZE=141022 MODEL=claude-sonnet-5-5 STATE=idle BRIEF='The MCP page is updated for the new census field.' $HOME/.cache/war-room-rig/bin/claude"
+seat = 104
+
+[[tabs]]
+name = "scratch"
+[tabs.node.Leaf]
+cwd = "$HOME/.cache/war-room-rig/seats/scratch"
+name = "scratch"
+resume = "SIZE=65587 STATE=idle $HOME/.cache/war-room-rig/bin/claude"
+
+[[tabs]]
+name = "lab"
+[tabs.node.Leaf]
+cwd = "$HOME/.cache/war-room-rig/seats/lab"
+name = "lab"
+resume = "SIZE=107511 STATE=working TASK='run the lab' $HOME/.cache/war-room-rig/bin/claude"

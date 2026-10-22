@@ -1,0 +1,23 @@
+#!/bin/bash
+# A stand-in Claude for the War Room photo rig. It holds a one-line transcript
+# open (so Terminal Delight reads its size and model the way it reads a real
+# agent's), posts a response card into its pane's surface folder, prints a
+# status line, and waits. Named `claude` because the pane's mode is read from
+# the process name.
+size=${SIZE:-100000}; model=${MODEL:-claude-opus-5-5}
+id=$(cat /proc/sys/kernel/random/uuid)
+slug=$(printf '%s' "$PWD" | sed 's/[^A-Za-z0-9]/-/g')
+dir=$HOME/.claude/projects/$slug; mkdir -p "$dir"; t="$dir/$id.jsonl"
+printf '{"type":"assistant","timestamp":"2026-10-22T19:00:00.000Z","sessionId":"%s","cwd":"%s","message":{"model":"%s","role":"assistant","usage":{"input_tokens":2,"cache_read_input_tokens":%s,"cache_creation_input_tokens":0,"output_tokens":12},"content":[{"type":"text","text":"ok"}]}}\n' "$id" "$PWD" "$model" "$size" > "$t"
+exec 3< "$t"
+sd=${XDG_STATE_HOME:-$HOME/.local/state}/terminal-delight/surfaces/$TD_SESSION/$TD_PANE_ID; mkdir -p "$sd"
+python3 -c 'import json,os; b=os.environ.get("BRIEF"); print(json.dumps({"td":"0.4","kind":"response","title":"latest","model":{"layman":os.environ.get("LAYMAN","Working on it."),**({"brief":b} if b else {})}}))' > "$sd/rig-$id.json"
+clear
+rows=$(tput lines 2>/dev/null || echo 24)
+printf '\033[%d;1H' $((rows-4))
+if [ "${STATE:-working}" = working ]; then
+  printf '\n> %s\n\n\342\234\273 Thinking\342\200\246 (14s \302\267 \342\206\223 2.1k tokens \302\267 esc to interrupt)\n' "${TASK:-the task}"
+else
+  printf '\n\342\235\257 \n  ? for shortcuts\n'
+fi
+while :; do sleep 3600; done

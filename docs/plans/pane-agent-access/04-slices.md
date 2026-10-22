@@ -12,7 +12,7 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
    - The saved leaf gains `seat` and `agents`, and the window gains `lines` and `ask_press_tokens`.
    - With no seats and no lines, behaviour is identical to today, and a test pins that.
    - Proof: the `warroom.rs` rule tests, `off_limits_wins_over_an_agents_word`, `a_state_file_without_lines_reads_as_no_chart`, `a_seat_survives_a_respawn`, and the planned break *let an unseated pane be asked*.
-2. **The War Room panel and its doors.**
+2. **[DONE 2026-10-22] The War Room panel and its doors.**
    - The counter and the `…` row open it, and the wall keeps only Ctrl+Shift+A.
    - The five switches move, drawn by one function.
    - A person can seat and unseat a pane and draw, change or erase a line, by click then click.
@@ -53,3 +53,17 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
   - Two things found on the way:
     - A test asking `get_pane_config` with the wrong target shape had passed its "hidden" half without testing anything. It was fixed before the commit.
     - `list_panes`' wire field `exposed` became `reach`; see docs/mcp.md.
+  - Owed: `a_seat_survives_a_respawn` is covered only by the saved-leaf round trip. Both restore paths (`build_node`, `build_node_attached`) copy the saved seat onto the view whatever the attach plan does, but a gpui-level respawn test is still to be written, in slice 2.
+- **Slice 2, done.**
+  - The counter and the `…` row (`more-mcp`, now labelled with the War Room's name) open the War Room. Ctrl+Shift+A alone opens the wall, and its help row is gone.
+  - The five switches are one function, `mcp_switch_buttons`, which both surfaces call.
+  - The panel is `war_room_view.rs`. It shows seats in rows by `warroom::layout`, with elbow lines on a canvas. Lines that skip a row run down the column gap, and a bypass is dashed. Label chips are clickable: a click cycles ask, see, read, then erase, and a click on a bypass erases it.
+  - A seat card shows the agent's latest summary (`Bench::latest_response`), state, model, size (from vitals), note, and lines in and out. Off-chart agents each get a Seat button.
+  - The right-click menu has three position rows, with the current one marked, and a READ-ONLY badge. All strings are in nine languages.
+  - `TD_WAR_ROOM_DEMO` opens the War Room for a rig. Agent sizes are refreshed while it is open.
+  - Tests: `only_ctrl_shift_a_opens_the_wall`, `the_switch_row_is_drawn_by_one_function`, `only_the_war_room_and_the_rail_draw_lines`, `latest_response_ignores_the_selected_card`, two layout tests, the rewritten door test, and the person-only setter scan moved to `set_agent_access`.
+  - Gates: fmt, clippy `-D warnings`, 2,737 tests passing, 15 ignored.
+  - Photographed in a hidden window with stand-in agents (`evidence/rig/`). Shots are in `reports/2026-10-22-war-room-evidence/`.
+  - Found by the photographs, fixed before commit:
+    - A line two rows down crossed the seat between and covered its label.
+    - The bypass label sat on a shorter line's label.

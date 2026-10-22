@@ -4411,6 +4411,16 @@ impl Bench {
     /// thing* — and the live turn is the newer of them. Returning the previous
     /// reply as well would draw both, which is the defect [`LiveTurn`] exists
     /// to end.
+    /// The newest response the agent posted, whatever the person has selected
+    /// or whichever shelf is up — what the War Room quotes as the agent's own
+    /// latest summary. [`Self::showing`] cannot serve: it answers for the screen.
+    pub fn latest_response(&self) -> Option<&crate::surface::Response> {
+        self.surfaces.iter().rev().find_map(|s| match &s.kind {
+            Kind::Response(r) => Some(r),
+            _ => None,
+        })
+    }
+
     pub fn showing(&self) -> Option<&Surface> {
         if self.live_standing().is_some() {
             return None;
@@ -4952,6 +4962,26 @@ mod tests {
                 "doubts": ["maybe"]
             }
         }))
+    }
+
+    /// The War Room quotes the agent's own newest summary, whichever card the
+    /// person has open: `showing` answers for the screen, this for the agent.
+    #[test]
+    fn latest_response_ignores_the_selected_card() {
+        let mut b = Bench::new();
+        assert!(
+            b.latest_response().is_none(),
+            "nothing posted is nothing, not an empty summary"
+        );
+        b.apply(response("r1", "first"));
+        b.apply(doc("d1", "a document"));
+        b.apply(response("r2", "second"));
+        b.apply(doc("d2", "another"));
+        b.select(&SurfaceId("d1".into()));
+        assert_eq!(
+            b.latest_response().map(|r| r.layman.as_str()),
+            Some("second")
+        );
     }
 
     #[test]

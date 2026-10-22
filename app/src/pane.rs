@@ -4684,21 +4684,10 @@ impl TerminalView {
         self.hdr_overflow.is_some() || self.ctx_menu.is_some()
     }
 
-    /// The person's right-click: mark this pane off-limits to agents, or let
-    /// agents see it again. With [`Self::set_agent_access`], the only writer of
-    /// [`Self::agent_access`] outside a restore, on purpose — see the field.
-    pub(crate) fn toggle_off_limits(&mut self, cx: &mut Context<Self>) {
-        let next = if self.agent_access.is_off_limits() {
-            crate::warroom::AgentAccess::Open
-        } else {
-            crate::warroom::AgentAccess::OffLimits
-        };
-        self.set_agent_access(next, cx);
-    }
-
     /// The position, set to a value: a person's choice in the right-click menu
-    /// or a Yes on the rail (`Workspace::rail_answer`). A person's press either
-    /// way, which is the whole rule of the field. Emits nothing when the
+    /// or a Yes on the rail (`Workspace::rail_answer`) — the only writer of
+    /// [`Self::agent_access`] outside a restore. A person's press either way,
+    /// which is the whole rule of the field. Emits nothing when the
     /// position is already so; a position that takes writes again releases any
     /// bench input held while it did not.
     pub(crate) fn set_agent_access(
@@ -4715,6 +4704,19 @@ impl TerminalView {
         }
         cx.emit(OffLimitsChanged);
         cx.notify();
+    }
+
+    /// Seat this pane in the War Room, or take it off. Called from the War
+    /// Room panel only — a person's click — and saved with the leaf.
+    pub(crate) fn set_seat(
+        &mut self,
+        seat: Option<crate::warroom::SeatId>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.seat != seat {
+            self.seat = seat;
+            cx.notify();
+        }
     }
 
     /// This pane as the War Room's rules see it.
@@ -10534,27 +10536,47 @@ impl Render for TerminalView {
                 // and MCP both answer agents, and a mark an agent could lift
                 // would be decoration.
                 .child(div().my(px(3.)).h(px(1.)).bg(faint.alpha(0.35)))
-                .child(
-                    row(
-                        if self.agent_access.is_off_limits() {
-                            crate::lang::current()
-                                .strings()
-                                .parts
-                                .pane_ctx_let_agents_see
+                // Three positions, the current one marked: open, read-only (agents
+                // may watch and ask, never write or type into the bench), and
+                // off-limits. Picking one is a person's choice of the position.
+                .children({
+                    use crate::warroom::AgentAccess;
+                    let parts = crate::lang::current().strings().parts;
+                    [
+                        (
+                            AgentAccess::Open,
+                            parts.pane_ctx_let_agents_see,
+                            "ctx-agents-open",
+                        ),
+                        (
+                            AgentAccess::ReadOnly,
+                            parts.pane_ctx_read_only,
+                            "ctx-agents-read-only",
+                        ),
+                        (
+                            AgentAccess::OffLimits,
+                            parts.pane_ctx_off_limits,
+                            "ctx-agents-off-limits",
+                        ),
+                    ]
+                    .into_iter()
+                    .map(|(access, label, id)| {
+                        let mark = if self.agent_access == access {
+                            "\u{25cf}"
                         } else {
-                            crate::lang::current().strings().parts.pane_ctx_off_limits
-                        },
-                        true,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|v, _, _, cx| {
-                            v.ctx_menu = None;
-                            cx.stop_propagation();
-                            v.toggle_off_limits(cx);
-                        }),
-                    ),
-                );
+                            "\u{25cb}"
+                        };
+                        row(&format!("{mark} {label}"), true).id(id).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |v, _, _, cx| {
+                                v.ctx_menu = None;
+                                cx.stop_propagation();
+                                v.set_agent_access(access, cx);
+                            }),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                });
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
         // PAINT mode — the wall-wide palette overlay (raised by `terminal-delight
@@ -11739,17 +11761,29 @@ impl Render for TerminalView {
                     // Off-limits sits with the controls on the right, which a
                     // narrow pane keeps while its title clips: it is the one
                     // thing on this header that changes what an agent may do.
-                    .children(self.agent_access.is_off_limits().then(|| {
-                        div()
-                            .flex_none()
-                            .px(px(5. * scale))
-                            .rounded(sk.rad(4.))
-                            .border_1()
-                            .border_color(bar_fg.alpha(0.75))
-                            .text_color(bar_fg)
-                            .text_size(sk.text_px(9.5 * scale))
-                            .child(crate::lang::current().strings().parts.pane_off_limits_badge)
-                    }))
+                    .children({
+                        let parts = crate::lang::current().strings().parts;
+                        match self.agent_access {
+                            crate::warroom::AgentAccess::Open => None,
+                            crate::warroom::AgentAccess::ReadOnly => {
+                                Some(parts.pane_read_only_badge)
+                            }
+                            crate::warroom::AgentAccess::OffLimits => {
+                                Some(parts.pane_off_limits_badge)
+                            }
+                        }
+                        .map(|badge| {
+                            div()
+                                .flex_none()
+                                .px(px(5. * scale))
+                                .rounded(sk.rad(4.))
+                                .border_1()
+                                .border_color(bar_fg.alpha(0.75))
+                                .text_color(bar_fg)
+                                .text_size(sk.text_px(9.5 * scale))
+                                .child(badge)
+                        })
+                    })
                     .child(status)
                     .when(ui_close, |d| {
                         d.child(

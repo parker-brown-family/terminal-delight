@@ -89,6 +89,7 @@ mod restricted;
 mod screenread;
 mod session;
 mod skin;
+mod war_room_view;
 use skin::parts::{color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn};
 mod slot;
 mod sticky;
@@ -349,7 +350,7 @@ enum RailAction {
 /// fails. A row may say the surface is deliberately flat — some things should be
 /// — but it has to say WHY, in the row, where the next person will read it.
 #[cfg(test)]
-const OVERLAYS_OVER_PANES: [(&str, Warped); 6] = [
+const OVERLAYS_OVER_PANES: [(&str, Warped); 7] = [
     (
         "render_rail",
         Warped::FlatByDesign {
@@ -385,6 +386,17 @@ const OVERLAYS_OVER_PANES: [(&str, Warped); 6] = [
         },
     ),
     ("mcp_menu panel", Warped::Tube("register_focus_tube")),
+    (
+        "war room panel",
+        Warped::FlatByDesign {
+            flag: "war_room",
+            why: "a chart of lines between seats, drawn as straight segments \
+                  between boxes: under a tube the segments would bow away from \
+                  the boxes they join, and every click would land beside the \
+                  seat it was aimed at. It floats flat over the glass like the \
+                  menus beside it.",
+        },
+    ),
     ("pane ghost", Warped::Tube("register_overlay_tube")),
     (
         "sticky note",
@@ -4524,6 +4536,12 @@ struct Workspace {
     ask_press_tokens: Option<u64>,
     /// The 🤖 MCP control panel is open. Outer-only (global), so a plain bool.
     mcp_menu: bool,
+    /// The War Room is open: the panel the agent counter and the `…` row
+    /// raise. The agent wall stays reachable only by Ctrl+Shift+A.
+    war_room: bool,
+    /// The seat a person clicked first in the War Room; a click on another
+    /// seat draws a line from this one to it.
+    war_room_pick: Option<warroom::SeatId>,
     /// The menu-bar SIZE popover, raised by the ▭ button in the mother bar. The
     /// scrub track used to live inline on that row; on a thin tile it was the
     /// widest thing there and had nowhere to go, so it moved behind a button.
@@ -5194,6 +5212,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     })
     .detach();
     cx.subscribe(pane, |ws, _pane, _ev: &OpenAgentPanel, cx| {
+        ws.war_room = false;
         ws.mcp_menu = true;
         cx.notify();
     })
@@ -6203,6 +6222,8 @@ impl Workspace {
             chart: warroom::Chart::from_saved(saved.lines.clone()),
             ask_press_tokens: saved.ask_press_tokens,
             mcp_menu: false,
+            war_room: false,
+            war_room_pick: None,
             scale_menu: false,
             more_menu: false,
             ui_cfg_panes: false,
@@ -6594,7 +6615,7 @@ impl Workspace {
                 // every ten seconds, permanently, to compute bars nobody could
                 // see. The wall is a glance surface; it costs nothing to keep
                 // one until it is looked at.
-                if !ws.mcp_menu || ws.vitals_refreshing {
+                if !(ws.mcp_menu || ws.war_room) || ws.vitals_refreshing {
                     return Vec::new(); // closed, or a pass is still out
                 }
                 let reqs = ws.vitals_requests(cx);
@@ -19017,6 +19038,7 @@ impl Workspace {
             || self.scale_menu
             || self.more_menu
             || self.mcp_menu
+            || self.war_room
             || self.dead_menu
             || self.plugins_menu
             || self.notif_menu
@@ -19177,6 +19199,11 @@ impl Workspace {
         }
         if self.more_menu {
             self.more_menu = false;
+            return true;
+        }
+        // The War Room sits over the panes like the wall, and closes first.
+        if self.war_room {
+            self.close_war_room();
             return true;
         }
         // The base layer: the agent wall itself.
@@ -21710,6 +21737,136 @@ impl Workspace {
         )
     }
 
+    /// The window's five MCP switches — server on, which panes agents may see,
+    /// pushed events, writes, card images — as the agent wall and the War Room
+    /// both draw them. One function, so the two can never disagree about what
+    /// a switch does; `prefix` keeps their element ids apart.
+    fn mcp_switch_buttons(
+        &self,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        prefix: &'static str,
+        cx: &mut Context<Self>,
+    ) -> [gpui::Stateful<gpui::Div>; 5] {
+        let t = self.lang.strings();
+        let enable_btn = Self::bezel_btn(
+            sk,
+            &if self.mcp.enabled {
+                format!("\u{25c9} {}", t.m_server_on)
+            } else {
+                format!("\u{25cb} {}", t.m_server_off)
+            },
+            self.mcp.enabled,
+        )
+        .id(SharedString::from(format!("{prefix}-btn-enable")))
+        .hover(|s| s.border_color(th.accent))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.mcp.enabled = !ws.mcp.enabled;
+                ws.save(cx);
+                cx.notify();
+            }),
+        );
+        let expose_btn = Self::bezel_btn(
+            sk,
+            format!(
+                "{} {}",
+                t.m_expose,
+                match self.mcp.expose {
+                    mcp::Expose::AgentsOnly => t.exp_agents,
+                    mcp::Expose::All => t.exp_all,
+                }
+            )
+            .as_str(),
+            false,
+        )
+        .id(SharedString::from(format!("{prefix}-btn-expose")))
+        .hover(|s| s.border_color(th.accent))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.mcp.expose = ws.mcp.expose.next();
+                ws.save(cx);
+                cx.notify();
+            }),
+        );
+        let events_btn = Self::bezel_btn(
+            sk,
+            &if self.mcp.events {
+                format!("\u{25c9} {}", t.m_events_on)
+            } else {
+                format!("\u{25cb} {}", t.m_events_off)
+            },
+            self.mcp.events,
+        )
+        .id(SharedString::from(format!("{prefix}-btn-events")))
+        .hover(|s| s.border_color(th.accent))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.mcp.events = !ws.mcp.events;
+                ws.save(cx);
+                cx.notify();
+            }),
+        );
+        // The 🎨 inherit toggle has no button: the wall wears its panes' own
+        // colours, and the switch cost a permanent slot in the row to say so.
+        // TD_WALL_THEME=1 still starts it themed (see mcp_theme_preview).
+
+        // Writes opt-in: promotes the read-only watch surface to a
+        // remote-control one (set_pane_config). A deliberate second switch —
+        // appearance only, never a PTY. Mirrors the TD_MCP_WRITE env var.
+        let writes_btn = Self::bezel_btn(
+            sk,
+            &if self.mcp.writable {
+                format!("\u{25c9} {}", t.m_writes_on)
+            } else {
+                format!("\u{25cb} {}", t.m_writes_off)
+            },
+            self.mcp.writable,
+        )
+        .id(SharedString::from(format!("{prefix}-btn-writes")))
+        .hover(|s| s.border_color(th.accent))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.mcp.writable = !ws.mcp.writable;
+                ws.save(cx);
+                cx.notify();
+            }),
+        );
+        // The IMAGES switch: the plain wall, for anyone who reads the cards
+        // for their words and numbers and finds the portraits noise. It takes
+        // the whole art window out (logo, robot and crest alike) rather than
+        // blanking the picture inside it, because an empty frame is not
+        // cleaner than a full one.
+        let show_art = wall_card_art(self.card_art);
+        let images_btn = Self::bezel_btn(
+            sk,
+            &if show_art {
+                format!("\u{25c9} {}", t.m_images_on)
+            } else {
+                format!("\u{25cb} {}", t.m_images_off)
+            },
+            show_art,
+        )
+        .id(SharedString::from(format!("{prefix}-btn-images")))
+        .hover(|s| s.border_color(th.accent))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.toggle_card_art(cx);
+            }),
+        );
+        [enable_btn, expose_btn, events_btn, writes_btn, images_btn]
+    }
+
     fn bezel_btn(sk: &skin::Skin, label: &str, active: bool) -> gpui::Div {
         Self::bezel_btn_s(sk, label, active, 1.0)
     }
@@ -23674,7 +23831,8 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    ws.mcp_menu = true;
+                    ws.mcp_menu = false;
+                    ws.war_room = true;
                     cx.notify();
                 }),
             )
@@ -27949,6 +28107,7 @@ impl Render for Workspace {
                 || self.theme_menu.is_some()
                 || self.osd_menu.is_some()
                 || self.mcp_menu
+                || self.war_room
                 || self.scale_menu
                 || self.more_menu
                 || self.plugins_menu
@@ -28081,6 +28240,15 @@ impl Render for Workspace {
         if std::env::var("TD_CONFIRM_DEMO").is_ok() && self.confirm_close.is_none() {
             self.confirm_close = Some(self.active);
             cx.notify();
+        }
+        // demo/capture hook (TD_WAR_ROOM_DEMO): open the War Room for a rig that
+        // cannot click the counter; a number picks that seat, so its card shows.
+        if let Ok(how) = std::env::var("TD_WAR_ROOM_DEMO") {
+            if !self.war_room {
+                self.war_room = true;
+                self.war_room_pick = how.parse().ok().map(warroom::SeatId);
+                cx.notify();
+            }
         }
         // demo/capture hook (TD_WALL_DEMO): open just the agent wall for screenshots.
         if std::env::var("TD_WALL_DEMO").is_ok() && !self.mcp_menu {
@@ -30766,6 +30934,7 @@ impl Render for Workspace {
             window.request_animation_frame();
         }
         let savings_overlay = self.render_savings_overlay(&th, chrome_vw, cx);
+        let war_room_overlay = self.render_war_room(&th, cx);
 
         // ---- MCP control: the read-only agent-watch surface (the 🤖 button) ----
         let mcp_overlay = self.mcp_menu.then(|| {
@@ -30810,121 +30979,11 @@ impl Render for Workspace {
                     )
                     .child(inner)
             };
-            let enable_btn = Self::bezel_btn(
-                &sk,
-                &if cfg.enabled {
-                    format!("\u{25c9} {}", t.m_server_on)
-                } else {
-                    format!("\u{25cb} {}", t.m_server_off)
-                },
-                cfg.enabled,
-            )
-            .id("mcp-btn-enable")
-            .hover(|s| s.border_color(th.accent))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.mcp.enabled = !ws.mcp.enabled;
-                    ws.save(cx);
-                    cx.notify();
-                }),
-            );
-            let expose_btn = Self::bezel_btn(
-                &sk,
-                format!(
-                    "{} {}",
-                    t.m_expose,
-                    match cfg.expose {
-                        mcp::Expose::AgentsOnly => t.exp_agents,
-                        mcp::Expose::All => t.exp_all,
-                    }
-                )
-                .as_str(),
-                false,
-            )
-            .id("mcp-btn-expose")
-            .hover(|s| s.border_color(th.accent))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.mcp.expose = ws.mcp.expose.next();
-                    ws.save(cx);
-                    cx.notify();
-                }),
-            );
-            let events_btn = Self::bezel_btn(
-                &sk,
-                &if cfg.events {
-                    format!("\u{25c9} {}", t.m_events_on)
-                } else {
-                    format!("\u{25cb} {}", t.m_events_off)
-                },
-                cfg.events,
-            )
-            .id("mcp-btn-events")
-            .hover(|s| s.border_color(th.accent))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.mcp.events = !ws.mcp.events;
-                    ws.save(cx);
-                    cx.notify();
-                }),
-            );
-            // The 🎨 inherit toggle has no button: the wall wears its panes' own
-            // colours, and the switch cost a permanent slot in the row to say so.
-            // TD_WALL_THEME=1 still starts it themed (see mcp_theme_preview).
-
-            // Writes opt-in: promotes the read-only watch surface to a
-            // remote-control one (set_pane_config). A deliberate second switch —
-            // appearance only, never a PTY. Mirrors the TD_MCP_WRITE env var.
-            let writes_btn = Self::bezel_btn(
-                &sk,
-                &if cfg.writable {
-                    format!("\u{25c9} {}", t.m_writes_on)
-                } else {
-                    format!("\u{25cb} {}", t.m_writes_off)
-                },
-                cfg.writable,
-            )
-            .id("mcp-btn-writes")
-            .hover(|s| s.border_color(th.accent))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.mcp.writable = !ws.mcp.writable;
-                    ws.save(cx);
-                    cx.notify();
-                }),
-            );
-            // The IMAGES switch: the plain wall, for anyone who reads the cards
-            // for their words and numbers and finds the portraits noise. It takes
-            // the whole art window out (logo, robot and crest alike) rather than
-            // blanking the picture inside it, because an empty frame is not
-            // cleaner than a full one.
+            // The window's five switches, drawn by the one function the War
+            // Room draws them with (`mcp_switch_buttons`).
+            let [enable_btn, expose_btn, events_btn, writes_btn, images_btn] =
+                self.mcp_switch_buttons(&sk, &th, "mcp", cx);
             let show_art = wall_card_art(self.card_art);
-            let images_btn = Self::bezel_btn(
-                &sk,
-                &if show_art {
-                    format!("\u{25c9} {}", t.m_images_on)
-                } else {
-                    format!("\u{25cb} {}", t.m_images_off)
-                },
-                show_art,
-            )
-            .id("mcp-btn-images")
-            .hover(|s| s.border_color(th.accent))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.toggle_card_art(cx);
-                }),
-            );
 
             // Live pane list — walk the REAL tree (not the wire snapshot) so each
             // row can carry the pane's own resolved colours and focus it on click.
@@ -33473,12 +33532,13 @@ impl Render for Workspace {
                 // of its glyph row, and a list of the window's surfaces that
                 // left out the one TD is steered from would be a list with a
                 // hole in it.
-                .child(entry("\u{f06a9}", s.s_amcp, "more-mcp").on_mouse_down(
+                .child(entry("\u{f06a9}", s.ui.wr_hdr, "more-mcp").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
                         ws.more_menu = false;
-                        ws.mcp_menu = true;
+                        ws.mcp_menu = false;
+                        ws.war_room = true;
                         cx.notify();
                     }),
                 ))
@@ -33837,8 +33897,7 @@ impl Render for Workspace {
                         row(s.k_input_colour, s.input_colour),
                         row("Ctrl+Shift+N", s.rail),
                         row("Ctrl+Shift+M", s.handed_over),
-                        row(&format!("🤖 {}", s.k_mother_bar), s.mcp),
-                        row("Ctrl+Shift+A", s.mcp),
+                        row(&format!("\u{f06a9} {}", s.ui.wr_counter_key), s.ui.wr_help),
                         row("Ctrl+Shift+U / Y", s.usage),
                     ],
                 ))
@@ -35346,6 +35405,7 @@ impl Render for Workspace {
                     .children(menu_overlay)
                     .children(osd_overlay)
                     .children(mcp_overlay)
+                    .children(war_room_overlay)
                     .children(dead_overlay)
                     .children(plugins_overlay)
                     .children(notif_overlay)
@@ -38463,8 +38523,120 @@ mod tests {
         }
     }
 
-    /// The agent wall opens from the counter that summarises it, and that
-    /// counter is in the top right.
+    /// The agent wall is an easter egg now: it still runs, and nothing on
+    /// screen leads to it. Ctrl+Shift+A is its one door outside the demo and
+    /// dev environment hooks, and the help screen no longer lists it.
+    #[test]
+    fn only_ctrl_shift_a_opens_the_wall() {
+        let src = shipped_src();
+        let opens: Vec<&str> = src
+            .lines()
+            .filter(|l| l.trim() == "ws.mcp_menu = true;" || l.trim() == "self.mcp_menu = true;")
+            .collect();
+        // Ctrl+Shift+A, plus the four TD_WALL_DEMO / TD_SAVINGS_DEMO /
+        // TD_USAGE_LIVE / TD_USAGE_DEMO hooks a rig sets before launch.
+        assert_eq!(opens.len(), 5, "{opens:?}");
+        let sub = src
+            .find("_ev: &OpenAgentPanel")
+            .expect("the hotkey's subscription");
+        assert!(src[sub..sub + 200].contains("ws.mcp_menu = true;"));
+        assert!(
+            !src.contains("row(\"Ctrl+Shift+A\", s.mcp)"),
+            "the help screen lists the wall"
+        );
+    }
+
+    /// The window's five MCP switches are drawn by one function, which the
+    /// wall and the War Room both call — so the two can never disagree about
+    /// what a switch does.
+    #[test]
+    fn the_switch_row_is_drawn_by_one_function() {
+        let src = shipped_src();
+        for flip in [
+            "ws.mcp.enabled = !ws.mcp.enabled;",
+            "ws.mcp.expose = ws.mcp.expose.next();",
+            "ws.mcp.events = !ws.mcp.events;",
+            "ws.mcp.writable = !ws.mcp.writable;",
+        ] {
+            assert_eq!(src.matches(flip).count(), 1, "{flip} is drawn twice");
+        }
+        let f = src
+            .find("fn mcp_switch_buttons(")
+            .expect("the switch function");
+        let end = src[f..].find("\n    }\n").expect("its end");
+        assert!(src[f..f + end].contains("ws.mcp.enabled = !ws.mcp.enabled;"));
+        assert!(
+            src.contains("self.mcp_switch_buttons(&sk, &th, \"mcp\", cx)"),
+            "the wall"
+        );
+        assert!(
+            include_str!("war_room_view.rs")
+                .contains("self.mcp_switch_buttons(&sk, th, \"war\", cx)"),
+            "the War Room"
+        );
+    }
+
+    /// Seats and lines are a person's: only the War Room panel seats a pane or
+    /// draws, changes and erases a line. The control socket and MCP answer
+    /// agents, and a chart an agent could redraw would be decoration.
+    #[test]
+    fn only_the_war_room_and_the_rail_draw_lines() {
+        let cut = |src: &'static str, marker: &str| -> &'static str {
+            &src[..src.find(marker).unwrap_or(src.len())]
+        };
+        let files = [
+            ("main.rs", shipped_src()),
+            ("war_room_view.rs", include_str!("war_room_view.rs")),
+            ("pane.rs", cut(include_str!("pane.rs"), "\n#[cfg(test)]")),
+            ("ctl.rs", cut(include_str!("ctl.rs"), "\n#[cfg(test)]")),
+            ("mcp.rs", cut(include_str!("mcp.rs"), "\n#[cfg(test)]")),
+            (
+                "mcp_transport.rs",
+                cut(include_str!("mcp_transport.rs"), "\n#[cfg(test)]"),
+            ),
+            (
+                "access.rs",
+                cut(include_str!("access.rs"), "\n#[cfg(test)]"),
+            ),
+        ];
+        let mut calls = Vec::new();
+        for (file, code) in files {
+            for line in code.lines().map(str::trim) {
+                if line.starts_with("//") {
+                    continue;
+                }
+                for verb in [
+                    ".chart.draw(",
+                    ".chart.erase(",
+                    ".chart.forget_seat(",
+                    ".chart.grant_bypass(",
+                    ".set_seat(",
+                ] {
+                    if line.contains(verb) {
+                        calls.push(format!("{file}: {verb}"));
+                    }
+                }
+            }
+        }
+        calls.sort();
+        calls.dedup();
+        assert_eq!(
+            calls,
+            vec![
+                "war_room_view.rs: .chart.draw(",
+                "war_room_view.rs: .chart.erase(",
+                "war_room_view.rs: .chart.forget_seat(",
+                "war_room_view.rs: .set_seat(",
+            ],
+            "something other than the War Room panel changes the chart"
+        );
+    }
+
+    /// The War Room opens from the counter that summarises the agents, and
+    /// that counter is in the top right. Parker, 2026-10-22: *"This will USE THE
+    /// EXISTING agent wall rail (don't change look - just change where it goes)
+    /// -- the agent wal will be an easter egg now"*. Before that the counter
+    /// opened the wall, for the reason below.
     ///
     /// The wall used to open from a robot glyph in the top right — three feet
     /// of screen from the counter saying the thing you were about to go and
@@ -38473,7 +38645,7 @@ mod tests {
     /// tree's bottom slot until Parker put it where the glyph had been:
     /// *"Agents counter is in the top right"*.
     #[test]
-    fn the_agent_wall_opens_from_the_counter_that_summarises_it() {
+    fn the_counter_opens_the_war_room() {
         let src = shipped_src();
         let body = |sig: &str| -> &str {
             let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
@@ -38482,8 +38654,10 @@ mod tests {
         };
         let counter = body("    fn render_agent_counter(");
         assert!(
-            counter.contains(".id(\"agent-rollup\")") && counter.contains("ws.mcp_menu = true"),
-            "the counter must be the wall's door"
+            counter.contains(".id(\"agent-rollup\")")
+                && counter.contains("ws.war_room = true")
+                && !counter.contains("ws.mcp_menu = true"),
+            "the counter must be the War Room's door, and no longer the wall's"
         );
         assert!(
             counter.contains("cx.stop_propagation();"),
@@ -38510,8 +38684,10 @@ mod tests {
             &src[at..at + end]
         };
         assert!(
-            more.contains("more-mcp") && more.contains("ws.mcp_menu = true"),
-            "the … menu must still list the agent wall, for a closed left bar"
+            more.contains("more-mcp")
+                && more.contains("ws.war_room = true")
+                && !more.contains("ws.mcp_menu = true"),
+            "the … menu lists the War Room, for a window whose counter is switched off"
         );
         assert!(
             more.contains("over_the_footer(div().id(\"more-panel\")"),
@@ -39651,7 +39827,7 @@ mod tests {
     }
 
     /// Only a person sets or lifts the mark. The one writer of a pane's
-    /// `off_limits` outside the two restores is `toggle_off_limits`, and the
+    /// position outside the two restores is `set_agent_access`, and the
     /// one caller of that is the right-click menu — no control-socket verb, no
     /// MCP verb and nothing in the workspace reaches it, because the control
     /// socket and MCP both answer agents, and a mark an agent could lift would
@@ -39736,17 +39912,12 @@ mod tests {
         assert_eq!(
             positions,
             vec![
+                "pane.rs render: v.set_agent_access(access, cx);",
                 "pane.rs set_off_limits: self.set_agent_access(access, cx);",
-                "pane.rs toggle_off_limits: self.set_agent_access(next, cx);",
             ],
-            "the position is set from somewhere other than the menu's toggle or the rail's answer"
+            "the position is set from somewhere other than the right-click menu or the rail's answer"
         );
-        toggles.sort();
-        assert_eq!(
-            toggles,
-            vec!["pane.rs render: v.toggle_off_limits(cx);"],
-            "the toggle is reached from somewhere other than the right-click menu"
-        );
+        assert!(toggles.is_empty(), "the old toggle is back: {toggles:?}");
     }
 
     /// An ask is answered from the rail's two person-facing handlers and from
