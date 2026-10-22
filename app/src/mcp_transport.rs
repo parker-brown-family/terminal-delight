@@ -63,7 +63,7 @@ enum UiReq {
     Open(mcp::OpenRequest, mpsc::Sender<String>),
     /// `ask_agent`: an agent's question for another, decided and answered by
     /// the window, which holds the War Room's chart and the seat facts.
-    Ask(mcp::AskRequest, mpsc::Sender<mcp::AskReply>),
+    Ask(mcp::AskCall, mpsc::Sender<mcp::AskReply>),
 }
 
 /// Build a uniform refusal for a whole batch (used when the UI is gone/wedged).
@@ -231,7 +231,8 @@ pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::
                                 let _ = reply.send(answer);
                             }
                             Err(_) => {
-                                let _ = reply.send(Err(crate::warroom::Refusal::Gone));
+                                let _ = reply
+                                    .send(mcp::AskReply::Refused(crate::warroom::Refusal::Gone));
                                 alive = false;
                             }
                         }
@@ -393,13 +394,24 @@ pub(crate) fn respond_as(
                     Err(_) => Err("terminal-delight UI not ready".to_string()),
                 }
             };
-            let ask = |request: &mcp::AskRequest| -> mcp::AskReply {
-                let (tx, rx) = mpsc::channel();
-                if !bridge_send(UiReq::Ask(request.clone(), tx)) {
-                    return Err(crate::warroom::Refusal::Gone);
+            let ask = |call: &mcp::AskCall| -> mcp::AskReply {
+                let gone = || mcp::AskReply::Refused(crate::warroom::Refusal::Gone);
+                // A copy is priced here, on this connection's thread: which
+                // conversation the pane holds is a fact about the whole
+                // window, and reading its size is file work the window's
+                // thread must not wait on.
+                let mut call = call.clone();
+                if let mcp::AskCall::Question(req) = &mut call {
+                    if req.copy {
+                        let bound = paneident::resolve(&fleet_facts(&snap.panes), &home);
+                        req.price = Some(crate::askcopy::price(&bound, req.target));
+                    }
                 }
-                rx.recv_timeout(SNAPSHOT_BUDGET)
-                    .unwrap_or(Err(crate::warroom::Refusal::Gone))
+                let (tx, rx) = mpsc::channel();
+                if !bridge_send(UiReq::Ask(call, tx)) {
+                    return gone();
+                }
+                rx.recv_timeout(SNAPSHOT_BUDGET).unwrap_or_else(|_| gone())
             };
             mcp::handle_line_asking(
                 line,

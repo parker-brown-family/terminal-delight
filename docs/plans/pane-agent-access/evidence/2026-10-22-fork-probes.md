@@ -30,6 +30,8 @@ claude -p --resume <uuid> --fork-session --model claude-haiku-5-5 --tools "Read,
 
 The init message lists the tools before any user message is processed, so a launcher using `--input-format stream-json` can read it and refuse to send the question if the list holds anything outside the grant. That ordering is inferred from the stream; it was not exercised.
 
+**Exercised the same afternoon, and the inference was wrong in one respect** (see "When Claude says what tools it has", below).
+
 ## codex-cli 0.162.1
 
 Seed (control):
@@ -106,3 +108,27 @@ claude -p --resume <seed> --fork-session --no-session-persistence --tools "Read"
 ```
 
 Init tools `['Read']`; answered `KUMQUAT-7`; the project folder held the same three entries before and after (no new transcript). Codex's equivalent is `--ephemeral`, used in every Codex probe above: none of the six fork threads left a rollout in `~/.codex/sessions` (checked by thread id).
+
+## When Claude says what tools it has
+
+Measured while building the copies (slice 5), Claude Code 2.1.296, a fresh scratch session on Haiku 5.5. Started with `--input-format stream-json` and sent nothing, it printed only its hooks for six seconds: **no `system/init` until a user message arrives.** The `initialize` control request answers with commands, models, account and agents, and no tool list. The `mcp_status` control request answers `{"mcpServers": []}` before any question.
+
+Sent a one-line question, the timeline was:
+
+| Seconds after the question | What arrived |
+|---|---|
+| 3.6 | `system/init`, tools `["Read"]`, servers `[]` (hooks ran first) |
+| 4.9 | the first assistant text |
+| 10.5 | `result` |
+
+So the copy checks the servers before the question, then checks the tool list the moment init lands. With 1.3 s between init and the first word of the answer, a copy with a wider list is killed before the model has said anything.
+
+**A copy reaches for the worker's tools from memory.** Asked to write a file, a read-only copy tried `Write`, then `Bash`, then `ToolSearch`. Each was answered with a `tool_result` error, "No such tool available: … is disabled for this session". It then answered in words. A check that killed on the attempt would kill almost every copy of a working agent. The copy is stopped only when a tool outside the grant returns a result that is not an error, which would mean it ran.
+
+**The live copies as tests** (`askcopy.rs`, `#[ignore]`, run by hand):
+
+- Claude: remembered `KUMQUAT-7`, refused Write and Bash, wrote nothing. 167,120 tokens read, $0.012.
+- Codex: remembered `MANGO-4`, wrote nothing and fetched nothing, 213,714 tokens read. It declined even to try, citing the framing, so this run did not exercise the sandbox; the probes above did.
+
+Output: `rig/copies/live-copies-2026-10-22.out`.
+

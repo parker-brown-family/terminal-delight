@@ -721,20 +721,44 @@ impl Workspace {
         )
     }
 
-    /// An agent's question for another (`ask_agent`), decided here because the
-    /// chart and the seat facts are the window's. A line from the asker's seat
-    /// must reach as far as ask (`warroom::reach`); the answer is what the
-    /// window can already show, and every ask — refused or answered — leaves
-    /// one line in the record, without its words.
+    /// An agent's question for another (`ask_agent`), or its read-back of a
+    /// copy (`ask_answer`), decided here because the chart, the seat facts
+    /// and the copies are the window's.
     pub(crate) fn ask_bridge(
         &mut self,
-        req: &mcp::AskRequest,
+        call: &mcp::AskCall,
         cx: &mut Context<Self>,
     ) -> mcp::AskReply {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+        match call {
+            mcp::AskCall::Question(req) => self.ask_question(req, cx),
+            mcp::AskCall::Answer {
+                caller_pane,
+                ask_id,
+            } => match self.asks.of_asker(*ask_id, *caller_pane) {
+                Some(a) => mcp::AskReply::Copy(warroom::CopyStatus {
+                    ask_id: *ask_id,
+                    reads: a.reads,
+                    press_limit: self.press_limit(),
+                    stage: a.stage.clone(),
+                }),
+                None => mcp::AskReply::Refused(warroom::Refusal::NoSuchAsk),
+            },
+        }
+    }
+
+    /// The person's press limit: a copy reading more waits for their Yes.
+    pub(crate) fn press_limit(&self) -> u64 {
+        self.ask_press_tokens.unwrap_or(warroom::ASK_PRESS_TOKENS)
+    }
+
+    /// A line from the asker's seat must reach as far as ask
+    /// (`warroom::decide_ask`). A cheap ask is answered from what the window
+    /// can already show; a copy is priced, and starts at once when it reads no
+    /// more than the person's press limit, or goes to the rail for their Yes.
+    /// Every ask — refused or answered — leaves one line in the record,
+    /// without its words.
+    fn ask_question(&mut self, req: &mcp::AskRequest, cx: &mut Context<Self>) -> mcp::AskReply {
+        let now_ms = now_ms();
         self.ask_seq = (self.ask_seq + 1).max(now_ms);
         let id = warroom::AskId(self.ask_seq);
         let caller = self.leaf_by_pane_id(req.caller_pane, cx);
@@ -765,68 +789,344 @@ impl Workspace {
             tokens_read: None,
             cost_usd: None,
         };
-        let refused = |entry: &mut askrecord::Entry, r: warroom::Refusal| {
-            entry.refusal = serde_json::to_value(&r)
-                .ok()
-                .and_then(|v| v.as_str().map(str::to_string));
-            Err(r)
+        let reply = match (caller.as_ref(), target.as_ref()) {
+            (Some(c), Some(t)) => self.decide_question(req, id, c, t, &mut entry, cx),
+            _ => mcp::AskReply::Refused(warroom::Refusal::Gone),
         };
-        let decided: mcp::AskReply = (|| {
-            let (Some(caller), Some(target)) = (caller.as_ref(), target.as_ref()) else {
-                return refused(&mut entry, warroom::Refusal::Gone);
-            };
-            let (c, t) = (caller.read(cx), target.read(cx));
-            let q = req.question.chars().count();
-            let same = caller.entity_id() == target.entity_id();
-            if let Err(r) =
-                warroom::decide_ask(&self.mcp, &self.chart, &c.party(), &t.party(), same, q)
-            {
-                return refused(&mut entry, r);
+        if let mcp::AskReply::Refused(r) = &reply {
+            entry.refusal = refusal_code(r);
+        }
+        self.record(&entry);
+        // A copy, once priced and recorded, goes on: to the rail for a press,
+        // or straight to work under the limit. A bypass spends its prompt
+        // here, once the copy is sure to be asked for.
+        if let mcp::AskReply::Copy(status) = &reply {
+            if let (Some(f), Some(t), "bypass") = (from, to, via) {
+                self.chart.spend(f, t);
+                self.save(cx);
             }
-            let vit = t.shell_pid().and_then(|pid| self.agent_vitals.get(&pid));
-            let project = self
-                .tab_index_of(target.entity_id())
-                .and_then(|ti| self.place_of(ti).project)
-                .and_then(|id| self.project_at(id))
-                .and_then(|p| p.name.clone());
-            let seat = warroom::SeatView {
-                title: t
-                    .name
-                    .clone()
-                    .filter(|n| !n.is_empty())
-                    .unwrap_or_else(|| t.shown_title()),
-                project,
-                role: t.seat.map(|s| self.chart.role_of(s)),
-                state: t.agent_status().state.label_in(self.lang).to_string(),
-                model: vit.and_then(|v| v.model.clone()),
-                size: vit.and_then(|v| v.tokens),
+            match status.stage {
+                warroom::CopyStage::AwaitingPress => self.raise_copy_card(id, cx),
+                warroom::CopyStage::Running => self.start_copy(id, "copy_started", cx),
+                _ => {}
+            }
+        }
+        reply
+    }
+
+    fn decide_question(
+        &mut self,
+        req: &mcp::AskRequest,
+        id: warroom::AskId,
+        caller: &Entity<TerminalView>,
+        target: &Entity<TerminalView>,
+        entry: &mut askrecord::Entry,
+        cx: &mut Context<Self>,
+    ) -> mcp::AskReply {
+        let (c, t) = (caller.read(cx), target.read(cx));
+        let q = req.question.chars().count();
+        let same = caller.entity_id() == target.entity_id();
+        let via = match warroom::decide_ask(&self.mcp, &self.chart, &c.party(), &t.party(), same, q)
+        {
+            Ok(via) => via,
+            Err(r) => return mcp::AskReply::Refused(r),
+        };
+        let vit = t.shell_pid().and_then(|pid| self.agent_vitals.get(&pid));
+        entry.program = Some(t.mode.label().to_string());
+        if req.copy {
+            let Some(program) = askcopy::Program::of_mode(t.mode.label()) else {
+                return mcp::AskReply::Refused(warroom::Refusal::CannotCopy);
             };
-            entry.model = seat.model.clone();
-            entry.program = Some(t.mode.label().to_string());
-            entry.stage = "cheap".into();
-            Ok(warroom::CheapAnswer {
+            // One at a time: a copy running or waiting, or any ask of this
+            // agent's still on the person's rail.
+            if self.asks.busy(req.caller_pane) || c.access_ask.is_some() {
+                return mcp::AskReply::Refused(warroom::Refusal::Busy);
+            }
+            // Priced by the transport, off this thread, from the transcript
+            // the copy would fork. No price is no copy.
+            let Some(price) = &req.price else {
+                return mcp::AskReply::Refused(warroom::Refusal::ConversationUnnamed);
+            };
+            let conversation = match &price.conversation {
+                Ok(c) => c.clone(),
+                Err(r) => return mcp::AskReply::Refused(r.clone()),
+            };
+            let (reads, model) = (price.reads, price.model.clone());
+            let limit = self.press_limit();
+            let stage = if warroom::copy_waits_for_press(reads, limit) {
+                warroom::CopyStage::AwaitingPress
+            } else {
+                warroom::CopyStage::Running
+            };
+            entry.program = Some(program.word().to_string());
+            entry.model = model.clone();
+            entry.reads_tokens = reads;
+            entry.stage = "priced".into();
+            self.asks.open(
+                id,
+                warroom::CopyAsk {
+                    asker_pane: req.caller_pane,
+                    from: entry.from,
+                    to: entry.to,
+                    target_pid: req.target,
+                    via,
+                    reads,
+                    model,
+                    question: req.question.clone(),
+                    question_len: entry.question_len,
+                    question_sha256: entry.question_sha256.clone(),
+                    program,
+                    conversation,
+                    stage: stage.clone(),
+                },
+            );
+            return mcp::AskReply::Copy(warroom::CopyStatus {
                 ask_id: id,
-                seat,
-                summary: t.bench.latest_response().map(|r| warroom::Summary {
-                    brief: r.brief.clone(),
-                    layman: r.layman.clone(),
-                }),
-                note: t.saved_note().map(|n| match n.title {
-                    Some(title) if !n.text.is_empty() => format!("{title} — {}", n.text),
-                    Some(title) => title,
-                    None => n.text,
-                }),
-                via: via.into(),
-            })
-        })();
+                reads,
+                press_limit: limit,
+                stage,
+            });
+        }
+        let project = self
+            .tab_index_of(target.entity_id())
+            .and_then(|ti| self.place_of(ti).project)
+            .and_then(|id| self.project_at(id))
+            .and_then(|p| p.name.clone());
+        let seat = warroom::SeatView {
+            title: seat_title(t),
+            project,
+            role: t.seat.map(|s| self.chart.role_of(s)),
+            state: t.agent_status().state.label_in(self.lang).to_string(),
+            model: vit.and_then(|v| v.model.clone()),
+            size: vit.and_then(|v| v.tokens),
+        };
+        entry.model = seat.model.clone();
+        entry.stage = "cheap".into();
+        mcp::AskReply::Cheap(warroom::CheapAnswer {
+            ask_id: id,
+            seat,
+            summary: t.bench.latest_response().map(|r| warroom::Summary {
+                brief: r.brief.clone(),
+                layman: r.layman.clone(),
+            }),
+            note: t.saved_note().map(|n| match n.title {
+                Some(title) if !n.text.is_empty() => format!("{title} — {}", n.text),
+                Some(title) => title,
+                None => n.text,
+            }),
+            via: via.into(),
+        })
+    }
+
+    /// Append one stage to this window's ask record, and read the numbers
+    /// back for the War Room.
+    fn record(&mut self, entry: &askrecord::Entry) {
         let record = askrecord::path_for(crate::instance::key());
-        if let Err(e) = askrecord::append(&record, &entry) {
+        if let Err(e) = askrecord::append(&record, entry) {
             eprintln!("[war-room] the ask record could not be written: {e}");
         }
         self.ask_numbers = askrecord::numbers(&record).ok();
-        decided
     }
 
+    /// One stage of a copy ask, for the record.
+    fn record_copy(
+        &mut self,
+        id: warroom::AskId,
+        stage: &str,
+        tweak: impl FnOnce(&mut askrecord::Entry),
+    ) {
+        let Some(a) = self.asks.get(id) else {
+            return;
+        };
+        let mut entry = askrecord::Entry {
+            id,
+            at_ms: now_ms(),
+            from: a.from,
+            to: a.to,
+            via: a.via.into(),
+            stage: stage.into(),
+            refusal: None,
+            question_len: a.question_len,
+            question_sha256: a.question_sha256.clone(),
+            program: Some(a.program.word().to_string()),
+            model: a.model.clone(),
+            reads_tokens: a.reads,
+            tokens_read: None,
+            cost_usd: None,
+        };
+        tweak(&mut entry);
+        self.record(&entry);
+    }
+
+    /// Put a priced copy on the asker's rail row, for a person's Yes or No.
+    fn raise_copy_card(&mut self, id: warroom::AskId, cx: &mut Context<Self>) {
+        let Some(a) = self.asks.get(id).cloned() else {
+            return;
+        };
+        let title = self
+            .leaf_by_shell_pid(a.target_pid, cx)
+            .map(|t| seat_title(t.read(cx)));
+        let ask = access::Ask {
+            change: access::Change::Copy,
+            pid: Some(a.target_pid),
+            title,
+            why: access::excerpt(&a.question),
+            at: std::time::Instant::now(),
+            risk: Some(warroom::risk(&warroom::RiskFacts::Copy {
+                reads: a.reads,
+                limit: self.press_limit(),
+            })),
+            prompts: access::BYPASS_PROMPTS,
+            reads: a.reads,
+            ask_id: Some(id),
+        };
+        if let Some(asker) = self.leaf_by_pane_id(a.asker_pane, cx) {
+            asker.update(cx, |v, cx| {
+                v.access_ask = Some(ask);
+                cx.notify();
+            });
+        }
+        cx.notify();
+    }
+
+    /// Start a copy ask's copy, on a thread of its own: resolve which
+    /// conversation the asked pane holds (named by its agent, and by no other
+    /// pane), read the agent's program, folder and environment, run the copy
+    /// and hand the answer back here. Called under the press limit by the ask
+    /// itself and over it by the rail's Yes — nowhere else.
+    fn start_copy(&mut self, id: warroom::AskId, stage: &str, cx: &mut Context<Self>) {
+        let Some(a) = self.asks.get(id).cloned() else {
+            return;
+        };
+        self.asks.set(id, warroom::CopyStage::Running);
+        self.record_copy(id, stage, |_| {});
+        let facts = self.pane_facts(cx);
+        let (tx, rx) = futures::channel::oneshot::channel();
+        let spawned = std::thread::Builder::new()
+            .name("td-ask-copy".into())
+            .spawn(move || {
+                let out = (|| {
+                    let home = crate::session::home_dir();
+                    let bound = paneident::resolve(&facts, &home);
+                    let conversation = askcopy::conversation_for(&bound, a.target_pid)?;
+                    if conversation != a.conversation {
+                        return Err(askcopy::End::Failed(
+                            "the agent is in another conversation than the one priced; ask again"
+                                .into(),
+                        ));
+                    }
+                    let plan = askcopy::prepare(
+                        a.program,
+                        a.target_pid,
+                        &conversation,
+                        a.model.as_deref(),
+                    )?;
+                    askcopy::run(&plan, &a.question)
+                })();
+                let _ = tx.send(out);
+            });
+        if spawned.is_err() {
+            self.copy_finished(
+                id,
+                Err(askcopy::End::Failed("no thread for the copy".into())),
+                cx,
+            );
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let out = rx
+                .await
+                .unwrap_or_else(|_| Err(askcopy::End::Failed("the copy's thread stopped".into())));
+            let _ = this.update(cx, |ws: &mut Workspace, cx| ws.copy_finished(id, out, cx));
+        })
+        .detach();
+    }
+
+    /// A copy's answer, or why there is none, into the book and the record.
+    /// The asker reads it with `ask_answer`; nothing is typed into its
+    /// terminal, because a line there is signed as its person's and a copy
+    /// finishing is not something a person did.
+    fn copy_finished(
+        &mut self,
+        id: warroom::AskId,
+        out: Result<askcopy::Answer, askcopy::End>,
+        cx: &mut Context<Self>,
+    ) {
+        let (stage, word) = match out {
+            Ok(a) => (
+                warroom::CopyStage::Answered {
+                    answer: a.text,
+                    tokens_read: a.tokens_read,
+                    cost_usd: a.cost_usd,
+                },
+                "answered",
+            ),
+            Err(askcopy::End::Refused(refusal)) => {
+                (warroom::CopyStage::Refused { refusal }, "refused")
+            }
+            Err(askcopy::End::Failed(why)) => (warroom::CopyStage::Failed { why }, "failed"),
+        };
+        let (tokens_read, cost_usd, refusal) = match &stage {
+            warroom::CopyStage::Answered {
+                tokens_read,
+                cost_usd,
+                ..
+            } => (*tokens_read, *cost_usd, None),
+            warroom::CopyStage::Refused { refusal } => (None, None, refusal_code(refusal)),
+            _ => (None, None, None),
+        };
+        if self.asks.set(id, stage).is_none() {
+            return;
+        }
+        self.record_copy(id, word, |e| {
+            e.tokens_read = tokens_read;
+            e.cost_usd = cost_usd;
+            e.refusal = refusal;
+        });
+        cx.notify();
+    }
+
+    /// A person's answer to a copy card: Yes starts it, No declines it.
+    /// Called by `rail_answer` only. Returns what came of it.
+    pub(crate) fn answer_copy(
+        &mut self,
+        id: Option<warroom::AskId>,
+        answer: access::Answer,
+        cx: &mut Context<Self>,
+    ) -> access::Outcome {
+        let Some(id) = id.filter(|id| {
+            self.asks
+                .get(*id)
+                .is_some_and(|a| a.stage == warroom::CopyStage::AwaitingPress)
+        }) else {
+            return access::Outcome::Gone;
+        };
+        match answer {
+            access::Answer::Yes => {
+                let alive = self
+                    .asks
+                    .get(id)
+                    .is_some_and(|a| self.leaf_by_shell_pid(a.target_pid, cx).is_some());
+                if !alive {
+                    self.asks.set(
+                        id,
+                        warroom::CopyStage::Failed {
+                            why: "the pane asked has closed".into(),
+                        },
+                    );
+                    self.record_copy(id, "failed", |_| {});
+                    return access::Outcome::Gone;
+                }
+                self.start_copy(id, "pressed", cx);
+                access::Outcome::Done
+            }
+            access::Answer::No => {
+                self.asks.set(id, warroom::CopyStage::Declined);
+                self.record_copy(id, "declined", |_| {});
+                access::Outcome::Kept
+            }
+        }
+    }
     /// Close the War Room and let go of any half-drawn line.
     pub(crate) fn close_war_room(&mut self) {
         self.war_room = false;
@@ -945,4 +1245,26 @@ fn grouped(n: u64) -> String {
         out.push(c);
     }
     out
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// A refusal's wire name, for the record.
+fn refusal_code(r: &warroom::Refusal) -> Option<String> {
+    serde_json::to_value(r)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+}
+
+/// What a seat is called: the name a person gave it, else its title.
+fn seat_title(t: &TerminalView) -> String {
+    t.name
+        .clone()
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| t.shown_title())
 }

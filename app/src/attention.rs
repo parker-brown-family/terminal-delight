@@ -431,6 +431,9 @@ pub struct AskRow {
     /// For a bypass: the prompts it will grant, which the person may change
     /// on the card before pressing Yes. `None` for every other ask.
     pub bypass: Option<u8>,
+    /// A read-only copy of another agent, asked through `ask_agent`: it
+    /// changes nobody's access, so the row says what it does instead.
+    pub copy: bool,
 }
 
 /// One thing seen about one pane. Slice 1 synthesises these; slice 2 observes
@@ -511,6 +514,7 @@ impl AttentionItem {
     pub fn reason(&self) -> &'static str {
         match (self.kind, self.pane_kind) {
             (AttentionKind::Unknown, PaneKind::Unknown) => "Not described by the host",
+            (AttentionKind::Access, _) if self.is_copy() => "Asks you to start a read-only copy",
             (kind, _) => kind.reason(),
         }
     }
@@ -524,8 +528,14 @@ impl AttentionItem {
     pub fn source(&self) -> &'static str {
         match (self.kind, self.pane_kind) {
             (AttentionKind::Unknown, PaneKind::Unknown) => "census",
+            (AttentionKind::Access, _) if self.is_copy() => "ask_agent",
             (kind, _) => kind.source(),
         }
+    }
+
+    /// The row is an agent's ask for a read-only copy of another agent.
+    fn is_copy(&self) -> bool {
+        self.ask.as_ref().is_some_and(|a| a.copy)
     }
 
     /// [`Self::reason`] in `l`, for the row a person reads.
@@ -534,16 +544,19 @@ impl AttentionItem {
             (AttentionKind::Unknown, PaneKind::Unknown) => {
                 l.strings().parts.attention_reason_undescribed
             }
+            (AttentionKind::Access, _) if self.is_copy() => l.strings().parts.attention_reason_copy,
             (kind, _) => kind.reason_in(l),
         }
     }
 
-    /// [`Self::source`] in `l`, for the row a person reads.
+    /// [`Self::source`] in `l`, for the row a person reads. The verb's name
+    /// is never translated.
     pub fn source_in(&self, l: crate::lang::Lang) -> &'static str {
         match (self.kind, self.pane_kind) {
             (AttentionKind::Unknown, PaneKind::Unknown) => {
                 l.strings().parts.attention_source_census
             }
+            (AttentionKind::Access, _) if self.is_copy() => "ask_agent",
             (kind, _) => kind.source_in(l),
         }
     }
@@ -1353,9 +1366,33 @@ mod tests {
                 why: "read the deploy log".into(),
                 risk: None,
                 bypass: None,
+                copy: false,
             }),
             ..obs(pane, None, Some(secs_ago))
         }
+    }
+
+    /// A copy card shares the access lane — it waits on the same Yes — but it
+    /// changes nobody's access, and it was asked through ask_agent. The row
+    /// says both, in every language, and the verb is never translated.
+    #[test]
+    fn a_copy_row_says_it_starts_a_copy_and_names_ask_agent() {
+        let mut o = asking(1, PaneKind::Agent, 3);
+        if let Some(a) = o.ask.as_mut() {
+            a.copy = true;
+        }
+        let items = project(&[o, asking(2, PaneKind::Agent, 4)]);
+        let copy = items.iter().find(|i| i.pane == 1).unwrap();
+        let access = items.iter().find(|i| i.pane == 2).unwrap();
+        assert_eq!(copy.reason(), "Asks you to start a read-only copy");
+        assert_eq!(copy.source(), "ask_agent");
+        assert_eq!(access.reason(), AttentionKind::Access.reason());
+        assert_eq!(access.source(), "request_access");
+        for l in crate::lang::Lang::ALL {
+            assert_eq!(copy.source_in(l), "ask_agent");
+            assert_ne!(copy.reason_in(l), access.reason_in(l), "{l:?}");
+        }
+        assert_eq!(copy.reason_in(crate::lang::Lang::En), copy.reason());
     }
 
     /// An ask comes first, whatever has waited longer: it is the one row the

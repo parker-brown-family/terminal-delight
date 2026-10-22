@@ -29,6 +29,7 @@
 
 mod access;
 mod art;
+mod askcopy;
 mod askrecord;
 mod attention;
 mod bell;
@@ -4549,6 +4550,10 @@ struct Workspace {
     /// The ask record read back: Gate 1's two numbers, shown in the War Room.
     /// `None` until the record is first read, which is not zero asks.
     ask_numbers: Option<askrecord::Numbers>,
+    /// Copy asks, from the ask to the answer: what `ask_answer` reads and the
+    /// rail's copy card presses. Held in memory only; the record keeps each
+    /// stage without the words.
+    asks: warroom::AskBook,
     /// The menu-bar SIZE popover, raised by the ▭ button in the mother bar. The
     /// scrub track used to live inline on that row; on a thin tile it was the
     /// widest thing there and had nowhere to go, so it moved behind a button.
@@ -6233,6 +6238,7 @@ impl Workspace {
             war_room_pick: None,
             ask_seq: 0,
             ask_numbers: None,
+            asks: warroom::AskBook::default(),
             scale_menu: false,
             more_menu: false,
             ui_cfg_panes: false,
@@ -24067,10 +24073,11 @@ impl Workspace {
                 // of the badge's signals either, and the badge stays the one
                 // ranking of those.
                 let ask = view.access_ask.as_ref().map(|a| attention::AskRow {
-                    what: a.change.ask_words(a.title.as_deref()),
+                    what: a.words(),
                     why: a.why.clone(),
                     risk: a.risk,
                     bypass: (a.change == access::Change::AskLine).then_some(a.prompts),
+                    copy: a.change == access::Change::Copy,
                 });
                 let kind = if ask.is_some() {
                     Some(attention::AttentionKind::Access)
@@ -24270,6 +24277,7 @@ impl Workspace {
                                 access::Change::OpenPane,
                             ))),
                             bypass: None,
+                            copy: false,
                         }),
                     }
                 },
@@ -24419,6 +24427,9 @@ impl Workspace {
             return false;
         };
         let outcome = match answer {
+            // A copy card: Yes starts the copy, No declines it, both in the
+            // window's book.
+            _ if ask.change == access::Change::Copy => self.answer_copy(ask.ask_id, answer, cx),
             access::Answer::No => access::Outcome::Kept,
             access::Answer::Yes if ask.change == access::Change::AskLine => {
                 // A bypass line from the asker's seat to the pane it named,
@@ -40026,7 +40037,9 @@ mod tests {
         let legacy: StateFile = toml::from_str("active = 0\ntabs = []\n").unwrap();
         assert!(legacy.lines.is_empty());
         assert_eq!(legacy.ask_press_tokens, None);
-        assert!(warroom::Chart::from_saved(legacy.lines.clone()).is_empty());
+        assert!(warroom::Chart::from_saved(legacy.lines.clone())
+            .saved()
+            .is_empty());
         let with = "active = 0\ntabs = []\nask_press_tokens = 250000\n\n\
                     [[lines]]\nfrom = 1\nto = 2\nrung = \"ask\"\n\n\
                     [[lines]]\nfrom = 2\nto = 3\nrung = \"assign\"\nprompts_left = 3\n";

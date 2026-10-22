@@ -29,7 +29,7 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
    - Add `AskLine` with the 1/3/10 count picker and `grant_bypass`.
    - Enforce one pending ask per pane.
    - Proof: `risk_matches_the_rail_table`, `rail_ink_follows_risk_for_access_asks`, `copy_is_not_a_wire_change`, and `one_pending_ask_per_asking_pane`.
-5. **Copies.**
+5. **[DONE 2026-10-22] Copies.**
    - Promote `Transport`, then add `askcopy.rs`: plan, `keep_env`, `check_init`, and the Codex pin.
    - Resolve the conversation as Declared and unique.
    - Price the copy and ask for your press over the limit.
@@ -87,3 +87,50 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
   - request_access's description and schema list `ask_line`, and now say a second ask is refused rather than replacing the first.
   - Gates: fmt, clippy `-D warnings`, 2,749 tests passing, 15 ignored.
   - Planned break *drop the pending check*: `one_pending_ask_per_asking_pane` went red. The first attempt at this break matched the test's own copy of the line and changed nothing. It was redone on the production line only, as the gates hub warns.
+- **Slice 5, done.**
+  - `askcopy.rs` plans and runs one read-only copy:
+    - the measured switches;
+    - an environment allowlist (never `TD_*`);
+    - the conversation, which must be named by its own agent (`Bond::Declared`) and by no other pane;
+    - Claude's server and tool-list checks;
+    - the Codex version pin.
+  - The model list's `Transport` is shared: `start_with` takes a deadline, an output cap and the noun its errors use, so the model list's own messages are unchanged.
+  - `ask_agent` with `copy: true` returns an ask id and a stage. The new verb `ask_answer` reads it back for the asking pane only, labelled untrusted.
+  - A copy at or under the press limit starts at once. One over it, or of unknown size, puts a Copy card on the asker's rail row, coloured by `warroom::risk`. Yes starts the copy; No declines it.
+  - `Change::Copy` has no wire name, so no agent can raise one.
+  - The record keeps every stage: priced, copy_started or pressed, answered, declined, refused, failed. Each stage carries the question's length and fingerprint, never its words. The book drops the words once the copy is done.
+  - The vitals keep the raw model id (`claude-opus-5-5[1m]` from the cost record when the session is on the 1M tier). They now read a Codex rollout's last call size and model. Fatigue and relevance stay unmeasured for Codex, and its call is NO READING.
+  - `warroom.rs` lost its dead-code allowance; the one method nothing called (`Chart::is_empty`) is gone.
+  - Gates: fmt, clippy `-D warnings`, 2,776 tests passing, 17 ignored. The 17 are the earlier 15 plus the two live copies. Earlier slices reported 15 here, which matched, because a grep dropped test groups with no passes.
+  - **Departures from the program design, each measured or argued:**
+    1. *Claude's tool list is checked after the question is sent, not before.* Claude prints `system/init` only once a user message arrives. Measured: init came 1.3 s before the first word of the answer, after hooks. Servers are checked before the question through the `mcp_status` control request. The tool list is checked the moment init lands, and the copy is killed ahead of any model output. A stand-in that comes up with Write and then leaves a mark two seconds later is killed before the mark appears: `a_copy_that_comes_up_wider_is_killed_before_it_can_act`.
+    2. *The second Claude check watches results, not attempts.* A copy remembers the worker's tools and reaches for them. Measured: Write, then Bash, then ToolSearch, each answered "No such tool available" as an error. Killing on the attempt failed the first live run, and would fail almost every copy of a working agent. A tool outside the grant that returns a non-error result stops the copy. A server-side tool use stops it on sight.
+    3. *Pricing moved from the War Room's readings to the MCP connection thread.* The vitals sweep runs only while the War Room or the MCP menu is open, which is a cost decision recorded in the sweep's own comment. So most asks would have priced as unknown, and the rest at a reading minutes old. The connection thread resolves which conversation the pane holds, as `pane_events` already does, and reads the size and model of the transcript the copy would fork. An unprovable conversation is refused at the ask, not after a press. When the copy runs, its conversation must still be the one priced.
+    4. *Nothing is typed into the asker when a copy finishes, and nothing is pushed.* A line typed there is signed with the session's tag as its person's, and a copy finishing is not something a person did. The asker reads the answer with `ask_answer`. After a press, the rail's own signed answer line names `ask_answer` and the ask id. A pushed notification is still owed.
+    5. *One copy at a time per asking pane* (`busy`). An agent with a drawn ask line could otherwise start copies in parallel, each reading the whole of another agent's context.
+    6. *The question's first 40 words are shown on the copy card,* because the person is deciding what to pay for.
+  - Proof:
+    - `askcopy.rs`: both plans carry every measured switch; the environment tests; the init, servers and no-list refusals; tools that run outside the grant; the unproven Codex version; guessed and shared conversations; the price read from the transcript; answers keep "not reported" apart from zero; the wire-level kill.
+    - `warroom.rs`: the press rule, `ask_answer_only_answers_the_asker`, one copy at a time, the book keeping open asks.
+    - `mcp.rs`: `ask_agent_copy_over_the_limit_waits_for_a_press_and_ask_answer_reads_it`.
+    - `access.rs`: `copy_is_not_a_wire_change`, the card's words and answer line, `a_copy_starts_only_under_the_limit_or_on_a_press`, and the agent-facing scan extended to `answer_copy`, `start_copy` and `grant_bypass`.
+    - `attention.rs`: `a_copy_row_says_it_starts_a_copy_and_names_ask_agent`.
+    - `vitals.rs`: `a_codex_rollout_gives_its_last_call_size_and_model`.
+  - Planned breaks, each made on the production line, caught, and restored byte for byte:
+    - *`keep_env` keeps everything*: both environment tests went red.
+    - *`TD_TAG` added to the allowlist, with the `TD_` belt removed*: `the_copy_environment_never_carries_td_variables` went red.
+    - *`check_init` skips servers*: `an_init_with_any_mcp_server_is_refused` went red.
+    - *a copy accepts `Bond::Sole`*: `a_guessed_conversation_is_refused_for_a_copy` went red.
+    - The first attempt at the `TD_` break only disabled the belt. It changed nothing, because no allowlist entry starts with `TD_`.
+  - Live copies, run by hand (`evidence/rig/copies/live-copies-2026-10-22.out`):
+    - Claude on Haiku remembered its seed's code word, tried Write and Bash, was refused both, and wrote nothing. It read 167,120 tokens for $0.012.
+    - Codex 0.162.1 remembered its seed's code word and read 213,714 tokens. It wrote nothing and did not reach the web. It also declined to try, citing the read-only framing, so its sandbox was exercised by the morning probes and not by this run.
+  - End to end, in a hidden window (`evidence/rig/copies/`, shots `war-room-copy-card.png` and `war-room-copy-after-press.png`):
+    - A compiled stand-in `claude` holds its transcript open and answers the copy protocol, because a copy is started from the agent's own `/proc/<pid>/exe`.
+    - With the press limit at 300k, the release lead asked two seats for copies through `ctl mcp from`, the relay a real agent's MCP calls go through.
+    - Backend lead: priced at 290,213 tokens, started at once, answered.
+    - Auth refactor: priced at 360,092, waited on the rail as a caution card. The rig pressed `y`, and it answered.
+    - Both copies got the measured switches and the worker's model, and no `TD_` variables. The record holds six lines with no words.
+  - Found by the photograph and fixed: the card first read "Asks you to change its access" and named `request_access`. It now reads "Asks you to start a read-only copy" and names `ask_agent`, in all nine languages.
+  - Found on the way, my own: the rig first waited for the word "done", and the stand-in copy's answer contains "done". The rig tore down the window under the second copy, which looked for a while like the window closing a pipe it did not own.
+

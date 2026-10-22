@@ -276,6 +276,11 @@ pub struct Vitals {
     /// One line of evidence for the call, for the tooltip and the CLI.
     pub why: String,
     pub model: Option<String>,
+    /// The model's own id as the transcript names it (`claude-opus-5-5`,
+    /// `gpt-6.1-sol`): what a read-only copy is started on, so it reads the
+    /// worker's cache rather than writing a new one. [`Self::model`] is the
+    /// short label drawn on the card.
+    pub model_id: Option<String>,
     /// `HIGH`, `MAX` — verbatim from the transcript, never invented.
     pub effort: Option<String>,
     /// The current context, or `None` when nothing measured it. See
@@ -1419,6 +1424,15 @@ pub fn from_body(body: &str, stamp: (u64, u64)) -> Option<Vitals> {
         call,
         why,
         model: t.model.as_deref().and_then(model_name),
+        // The cost record names the 1M tier (`claude-opus-5-5[1m]`) where the
+        // message does not, and a copy of a 700k context needs that tier.
+        model_id: t.model.as_ref().map(|m| {
+            t.cost_models
+                .iter()
+                .find(|k| k.starts_with(m.as_str()) && k.contains("[1m]"))
+                .cloned()
+                .unwrap_or_else(|| m.clone())
+        }),
         effort: t.effort.as_deref().map(|e| e.to_uppercase()),
         tokens: win.tokens,
         limit: win.limit,
@@ -1442,7 +1456,117 @@ pub fn read(path: &Path) -> Option<Vitals> {
             .unwrap_or(0),
     );
     let body = std::fs::read_to_string(path).ok()?;
-    from_body(&body, stamp)
+    from_body(&body, stamp).or_else(|| from_codex(&body, stamp))
+}
+
+/// What a Codex rollout says about its size: the input of its last model call
+/// (cached input included, because a copy reads it all the same), the context
+/// window Codex reported beside it, and the model and effort of its last turn.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CodexWindow {
+    pub tokens: u64,
+    pub window: u64,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
+/// Read a Codex rollout's last `token_count` and `turn_context`. `None` until
+/// Codex has reported both a size and a window: a rollout with no model call
+/// yet has no size, which is not a size of zero.
+pub(crate) fn codex_window(body: &str) -> Option<CodexWindow> {
+    let mut last: Option<(u64, u64)> = None;
+    let (mut model, mut effort) = (None, None);
+    for line in body.lines() {
+        if !line.contains("\"token_count\"") && !line.contains("\"turn_context\"") {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(payload) = v.get("payload") else {
+            continue;
+        };
+        match v.get("type").and_then(Value::as_str) {
+            Some("turn_context") => {
+                model = payload
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                effort = payload
+                    .get("effort")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+            }
+            Some("event_msg")
+                if payload.get("type").and_then(Value::as_str) == Some("token_count") =>
+            {
+                let info = payload.get("info");
+                let tokens = info
+                    .and_then(|i| i.pointer("/last_token_usage/input_tokens"))
+                    .and_then(Value::as_u64);
+                let window = info
+                    .and_then(|i| i.get("model_context_window"))
+                    .and_then(Value::as_u64);
+                if let Some(pair) = tokens.zip(window) {
+                    last = Some(pair);
+                }
+            }
+            _ => {}
+        }
+    }
+    let (tokens, window) = last?;
+    Some(CodexWindow {
+        tokens,
+        window,
+        model,
+        effort,
+    })
+}
+
+/// A Codex pane's reading: its context and model, and nothing else. Fatigue
+/// and relevance are read from Claude's transcript shape only, so for Codex
+/// they are drawn unmeasured and the call is NO READING — never a guess that
+/// the agent is fine.
+fn from_codex(body: &str, stamp: (u64, u64)) -> Option<Vitals> {
+    let c = codex_window(body)?;
+    let fill = (c.window > 0).then(|| (c.tokens as f64 / c.window as f64).min(1.0));
+    let unmeasured = |label: &'static str, tone: Tone| Bar {
+        label,
+        fill: None,
+        tone,
+        charge: 0.0,
+        caption: UNKNOWN.to_string(),
+    };
+    Some(Vitals {
+        window: Bar {
+            label: "CTX WINDOW",
+            fill: fill.map(|f| f as f32),
+            tone: Tone::Bad,
+            charge: fill.map_or(0.0, |f| smoothstep(WINDOW_CALM, WINDOW_ALARM, f as f32)),
+            caption: fill.map_or_else(
+                || UNKNOWN.to_string(),
+                |f| format!("{}%", (f * 100.0).round()),
+            ),
+        },
+        fatigue: unmeasured("FATIGUE", Tone::Bad),
+        relevance: unmeasured("RELEVANCE", Tone::Good),
+        call: Call::Unknown,
+        why: "Codex: the context of its last model call; fatigue and relevance are read \
+              from Claude transcripts only"
+            .to_string(),
+        model: c
+            .model
+            .as_deref()
+            .and_then(model_name)
+            .or_else(|| c.model.clone()),
+        model_id: c.model,
+        effort: c.effort.map(|e| e.to_uppercase()),
+        tokens: Some(c.tokens),
+        limit: c.window,
+        turns_left: None,
+        ballast: None,
+        stamp,
+    })
 }
 
 // ─── binding a pane to its OWN transcript ──────────────────────────────────
@@ -2182,6 +2306,51 @@ mod tests {
 
     fn v(body: &str) -> Vitals {
         from_body(body, (0, 0)).expect("a transcript with turns yields vitals")
+    }
+
+    /// A Codex rollout's size is its last call's input, cached input
+    /// included, and its model is the last turn's — the War Room prices a
+    /// copy from these. Before any call there is no size, not a size of zero.
+    #[test]
+    fn a_codex_rollout_gives_its_last_call_size_and_model() {
+        let ctx = |model: &str| {
+            format!(
+                r#"{{"type":"turn_context","payload":{{"model":"{model}","effort":"xhigh","cwd":"/x"}}}}"#
+            )
+        };
+        let count = |input: u64| {
+            format!(
+                r#"{{"type":"event_msg","payload":{{"type":"token_count","info":{{"last_token_usage":{{"input_tokens":{input},"cached_input_tokens":{c},"output_tokens":5}},"model_context_window":475000}}}}}}"#,
+                c = input - 100
+            )
+        };
+        let empty_info = r#"{"type":"event_msg","payload":{"type":"token_count","info":null}}"#;
+        assert_eq!(
+            codex_window(&[ctx("gpt-6.1-sol"), empty_info.to_string()].join("\n")),
+            None,
+            "no call yet: unknown"
+        );
+        let body = [
+            ctx("gpt-6.1-sol"),
+            count(41_800),
+            ctx("gpt-6.1-luna"),
+            count(181_040),
+            empty_info.to_string(),
+        ]
+        .join("\n");
+        let w = codex_window(&body).expect("a call was made");
+        assert_eq!(w.tokens, 181_040, "the last call, cached input included");
+        assert_eq!(w.window, 475_000);
+        assert_eq!(w.model.as_deref(), Some("gpt-6.1-luna"));
+        let vit = from_codex(&body, (1, 2)).unwrap();
+        assert_eq!(vit.tokens, Some(181_040));
+        assert_eq!(vit.model_id.as_deref(), Some("gpt-6.1-luna"));
+        assert!(vit.fatigue.unknown() && vit.relevance.unknown());
+        assert_eq!(vit.call, Call::Unknown, "never a guess that it is fine");
+        assert!(
+            from_body(&body, (1, 2)).is_none(),
+            "not read as a Claude transcript"
+        );
     }
 
     // ── the bar's own maths ────────────────────────────────────────────────

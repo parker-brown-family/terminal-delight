@@ -25,12 +25,6 @@
 //!   against a number could wake up pointing at a stranger. A seat id is minted
 //!   when a person seats the pane and is saved with that pane.
 
-// Seating, drawing lines, roles and the press limit are called by the War Room
-// panel and by asks, which land in later slices of the same pull request
-// (docs/plans/pane-agent-access/04-slices.md). This allowance goes with them;
-// the slice that wires the last caller deletes it.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use serde::{Deserialize, Serialize};
 
 use crate::mcp::{Expose, McpConfig};
@@ -192,10 +186,6 @@ impl Chart {
 
     pub fn saved(&self) -> &[Line] {
         &self.lines
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.lines.is_empty()
     }
 
     pub fn line(&self, from: SeatId, to: SeatId) -> Option<&Line> {
@@ -444,6 +434,9 @@ pub fn risk(facts: &RiskFacts) -> crate::coordination::Severity {
             Change::EventsOn | Change::AskLine => Caution,
             Change::OpenPane | Change::ExposeShells => Warning,
             Change::WritesOn => Alert,
+            // A copy is weighed by what it reads (`RiskFacts::Copy`); named
+            // without a size it is never cheaper than an unknown one.
+            Change::Copy => Warning,
         },
         RiskFacts::Bypass {
             across_projects,
@@ -490,6 +483,23 @@ pub enum Refusal {
     BadQuestion,
     /// The asker or the target is not in this window.
     Gone,
+    /// A copy was asked of a pane whose agent is not Claude or Codex.
+    CannotCopy,
+    /// The asker's earlier copy is still running or waiting for a person.
+    Busy,
+    /// The pane's agent has not named its conversation, so which one a copy
+    /// would fork is a guess, and no copy is made of a guess.
+    ConversationUnnamed,
+    /// Another pane names the same conversation.
+    ConversationShared,
+    /// The copy came up with a tool beyond reading, or a tool server, or
+    /// called one, and was stopped.
+    ToolsWider,
+    /// This version of the agent program has not been checked for read-only
+    /// copies.
+    UnprovenProgram,
+    /// `ask_answer` named no copy ask this pane made.
+    NoSuchAsk,
 }
 
 impl Refusal {
@@ -503,6 +513,13 @@ impl Refusal {
             Self::OwnPane => "that is your own pane",
             Self::BadQuestion => "the question is empty or longer than 4,000 characters",
             Self::Gone => "the asking pane or the pane asked is not in this window",
+            Self::CannotCopy => "a read-only copy can be made of a Claude or Codex agent only",
+            Self::Busy => "your earlier copy is still running or waiting for a person; read it with ask_answer first",
+            Self::ConversationUnnamed => "the agent in that pane has not named its conversation, so a copy would be of a guess",
+            Self::ConversationShared => "another pane names the same conversation, so a copy could be of the wrong agent",
+            Self::ToolsWider => "the copy came up able to do more than read, and was stopped before it answered",
+            Self::UnprovenProgram => "this version of the agent program has not been checked for read-only copies",
+            Self::NoSuchAsk => "no copy ask by that id was made from your pane",
         }
     }
 }
@@ -616,6 +633,134 @@ pub fn may_write(cfg: &McpConfig, reach: Reach, target: &Party, own: bool) -> bo
         return policy_admits(cfg, target.is_agent);
     }
     reach >= Reach::Read && target.access.takes_writes()
+}
+
+/// Whether a copy waits for a person's press on the rail: when it would read
+/// more than their limit, or nobody knows how much it would read.
+pub fn copy_waits_for_press(reads: Option<u64>, limit: u64) -> bool {
+    !matches!(reads, Some(n) if n <= limit)
+}
+
+/// How far a copy ask has got, on the wire as `stage` with what each stage
+/// carries beside it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "stage", rename_all = "snake_case")]
+pub enum CopyStage {
+    /// Over the press limit, or of unknown size: waiting on the rail.
+    AwaitingPress,
+    Running,
+    /// The copy's last word, and what answering read and cost as the agent
+    /// program reported them (`None`: not reported, not zero).
+    Answered {
+        answer: String,
+        tokens_read: Option<u64>,
+        cost_usd: Option<f64>,
+    },
+    /// A person said no on the rail.
+    Declined,
+    /// Stopped by a check, before the copy could act.
+    Refused {
+        refusal: Refusal,
+    },
+    /// The program failed or ran out of time.
+    Failed {
+        why: String,
+    },
+}
+
+impl CopyStage {
+    /// Still waiting on a press or a copy.
+    pub fn is_open(&self) -> bool {
+        matches!(self, Self::AwaitingPress | Self::Running)
+    }
+}
+
+/// What `ask_agent` with `copy` and `ask_answer` hand back.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CopyStatus {
+    pub ask_id: AskId,
+    /// What one copy of the agent reads per model call, in tokens: its
+    /// current context. `None` is unknown.
+    pub reads: Option<u64>,
+    /// The person's press limit: a copy reading more, or an unknown amount,
+    /// waits for their Yes.
+    pub press_limit: u64,
+    #[serde(flatten)]
+    pub stage: CopyStage,
+}
+
+/// One copy ask, held by the window from the ask to its answer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CopyAsk {
+    /// The asking pane's host pane id: the only caller `ask_answer` answers.
+    pub asker_pane: u64,
+    pub from: Option<SeatId>,
+    pub to: Option<SeatId>,
+    pub target_pid: u32,
+    /// `line` or `bypass`.
+    pub via: &'static str,
+    pub reads: Option<u64>,
+    pub model: Option<String>,
+    /// Kept in memory until the copy is done with it, then dropped. Never
+    /// written anywhere: the record keeps its length and fingerprint.
+    pub question: String,
+    pub question_len: usize,
+    pub question_sha256: String,
+    pub program: crate::askcopy::Program,
+    /// The conversation it was priced on. A copy forks this one or none: if
+    /// the pane holds another by the time it runs, it fails rather than read
+    /// something nobody priced.
+    pub conversation: String,
+    pub stage: CopyStage,
+}
+
+/// How many copy asks the window remembers. Open ones are never let go.
+pub const BOOK_KEEPS: usize = 32;
+
+/// The window's copy asks, by id.
+#[derive(Clone, Debug, Default)]
+pub struct AskBook {
+    asks: Vec<(AskId, CopyAsk)>,
+}
+
+impl AskBook {
+    pub fn open(&mut self, id: AskId, ask: CopyAsk) {
+        self.asks.push((id, ask));
+        while self.asks.len() > BOOK_KEEPS {
+            match self.asks.iter().position(|(_, a)| !a.stage.is_open()) {
+                Some(i) => {
+                    self.asks.remove(i);
+                }
+                None => break,
+            }
+        }
+    }
+
+    /// Whether `asker_pane` already has a copy running or waiting.
+    pub fn busy(&self, asker_pane: u64) -> bool {
+        self.asks
+            .iter()
+            .any(|(_, a)| a.asker_pane == asker_pane && a.stage.is_open())
+    }
+
+    pub fn get(&self, id: AskId) -> Option<&CopyAsk> {
+        self.asks.iter().find(|(i, _)| *i == id).map(|(_, a)| a)
+    }
+
+    /// The ask `id`, for the pane that made it and nobody else.
+    pub fn of_asker(&self, id: AskId, asker_pane: u64) -> Option<&CopyAsk> {
+        self.get(id).filter(|a| a.asker_pane == asker_pane)
+    }
+
+    /// Move an ask to `stage`. Once it is done the question is let go.
+    pub fn set(&mut self, id: AskId, stage: CopyStage) -> Option<&CopyAsk> {
+        let (_, a) = self.asks.iter_mut().find(|(i, _)| *i == id)?;
+        if !stage.is_open() {
+            a.question = String::new();
+        }
+        a.stage = stage;
+        Some(a)
+    }
 }
 
 /// The position-only half of [`may_write`], for the window's apply path, which
@@ -897,7 +1042,7 @@ mod tests {
     fn a_seat_cannot_draw_a_line_to_itself() {
         let mut chart = Chart::default();
         line(&mut chart, 5, 5, Rung::Ask);
-        assert!(chart.is_empty());
+        assert!(chart.saved().is_empty());
     }
 
     #[test]
@@ -1131,5 +1276,90 @@ mod tests {
             assert_eq!(back.seat, seat);
         }
         assert_ne!(SeatId::mint(), SeatId::mint());
+    }
+
+    fn copy_ask(asker_pane: u64, stage: CopyStage) -> CopyAsk {
+        CopyAsk {
+            asker_pane,
+            from: Some(SeatId(1)),
+            to: Some(SeatId(2)),
+            target_pid: 200,
+            via: "line",
+            reads: Some(1),
+            model: None,
+            question: "what is left?".into(),
+            question_len: 13,
+            question_sha256: "f".into(),
+            program: crate::askcopy::Program::Claude,
+            conversation: "a".into(),
+            stage,
+        }
+    }
+
+    #[test]
+    fn a_copy_over_the_limit_or_of_unknown_size_waits_for_a_press() {
+        assert!(
+            !copy_waits_for_press(Some(400_000), 400_000),
+            "at the limit runs"
+        );
+        assert!(copy_waits_for_press(Some(400_001), 400_000));
+        assert!(
+            copy_waits_for_press(None, 400_000),
+            "unknown never runs unpressed"
+        );
+        assert!(copy_waits_for_press(None, u64::MAX));
+    }
+
+    #[test]
+    fn ask_answer_only_answers_the_asker() {
+        let mut book = AskBook::default();
+        book.open(AskId(1), copy_ask(10, CopyStage::Running));
+        assert!(book.of_asker(AskId(1), 10).is_some());
+        assert!(book.of_asker(AskId(1), 11).is_none(), "another pane's ask");
+        assert!(book.of_asker(AskId(2), 10).is_none(), "no such ask");
+    }
+
+    #[test]
+    fn one_copy_at_a_time_per_asker_and_the_question_goes_when_done() {
+        let mut book = AskBook::default();
+        book.open(AskId(1), copy_ask(10, CopyStage::AwaitingPress));
+        assert!(book.busy(10) && !book.busy(11));
+        book.set(AskId(1), CopyStage::Running);
+        assert!(book.busy(10));
+        assert_eq!(book.get(AskId(1)).unwrap().question, "what is left?");
+        book.set(AskId(1), CopyStage::Declined);
+        assert!(!book.busy(10));
+        assert!(
+            book.get(AskId(1)).unwrap().question.is_empty(),
+            "the words are let go"
+        );
+    }
+
+    #[test]
+    fn the_book_forgets_old_answers_but_never_an_open_ask() {
+        let mut book = AskBook::default();
+        book.open(AskId(0), copy_ask(1, CopyStage::Running));
+        for i in 1..=(BOOK_KEEPS as u64 + 5) {
+            book.open(AskId(i), copy_ask(2, CopyStage::Declined));
+        }
+        assert!(book.get(AskId(0)).is_some(), "the open ask is kept");
+        assert!(book.get(AskId(1)).is_none(), "the oldest answer went");
+        assert!(book.asks.len() <= BOOK_KEEPS);
+    }
+
+    #[test]
+    fn a_copy_status_says_its_stage_by_name_with_what_it_carries() {
+        let s = CopyStatus {
+            ask_id: AskId(9),
+            reads: None,
+            press_limit: ASK_PRESS_TOKENS,
+            stage: CopyStage::Refused {
+                refusal: Refusal::ConversationUnnamed,
+            },
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["stage"], "refused");
+        assert_eq!(v["refusal"], "conversation_unnamed");
+        assert_eq!(v["reads"], serde_json::Value::Null, "unknown, not 0");
     }
 }
