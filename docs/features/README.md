@@ -7,7 +7,7 @@
 This catalog is the canonical, evidence-backed inventory of what Terminal Delight
 does, organised so we can draw from it for the site, the README, release notes,
 and GTM. Every entry cites the source (`file:line`), any `TD_*` flag or keybinding,
-and ship status. **110+ features across 12 capability areas.**
+and ship status. **110+ features across 13 capability areas.**
 
 ## The one-line pitch
 
@@ -48,6 +48,8 @@ in a genuinely beautiful CRT aesthetic with per-pane themes and barrel-warp glas
     sat here was withdrawn in #317; the panel records why.
 12. **[ctl / scripting](12-ctl-scripting.md)** — the control socket: PAINT mode, a
     scriptable tab strip, MCP policy toggles, all against a *running* window.
+
+13. **[Restricted commands](13-restricted-commands.md)** — development: an offline command with one project directory, plain-text streams and a bounded own-note gateway.
 
 Plus: **[ENV-FLAGS.md](ENV-FLAGS.md)** — every `TD_*` environment flag in one table.
 

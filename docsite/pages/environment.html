@@ -2,8 +2,8 @@
 {
   "title": "Environment flags",
   "description": "Every TD_ variable Terminal Delight reads: the ones you set to change how it starts, the ones it sets inside each pane, and the debugging and capture switches.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "updated": "2026-10-21",
+  "trueOf": "main at d7cf383, plus TD_MCP_SCRIPTED from dev/0.5.0 at 478b49f2",
   "summary": "Every TD_ variable it reads"
 }
 </script>
@@ -36,6 +36,7 @@
     <tr><td><code>TD_NOCANVAS</code></td><td>No CRT canvas effects.</td><td>off; set means on</td></tr>
     <tr><td><code>TD_MCP</code></td><td>Also serve MCP on the window's own stdin and stdout. This starts the transport; whether panes are visible is still the <a href="/mcp">MCP switch</a>.</td><td>off; set means on</td></tr>
     <tr><td><code>TD_MCP_WRITE</code></td><td>Writes on for that transport. Read only when <code>TD_MCP</code> is set.</td><td>off</td></tr>
+    <tr><td><code>TD_MCP_SCRIPTED</code></td><td>Lets this window's control socket change the MCP switches (server, writes, expose) in either direction, for a script that launches a window of its own. Without it, <code>ctl mcp on|off</code>, <code>writes on|off</code> and <code>expose agents|all</code> answer <code>err</code> and a person changes them in the MCP panel. Read once when the window starts.</td><td>off; only <code>1</code> counts</td></tr>
   </tbody>
 </table>
 

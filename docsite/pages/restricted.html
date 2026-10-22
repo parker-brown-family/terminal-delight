@@ -1,0 +1,51 @@
+<script type="application/json" data-page>
+{
+  "title": "Restricted commands",
+  "description": "Run an offline command with one chosen project directory, temporary home and plain text output. Standard terminals retain normal account access.",
+  "updated": "2026-10-21",
+  "trueOf": "dev/0.5.0; development feature",
+  "summary": "A smaller scope for an offline command"
+}
+</script>
+
+<section data-register="brief">
+<h2>Give an unfamiliar command one project</h2>
+<p class="lede">A build script can do anything your account can do in a Standard terminal. A Restricted command gives it a smaller scope before its code starts: one project directory, installed system tools and temporary scratch space. It has no network or host services.</p>
+<p>Choose a project below your account home. The selected path must contain no dot-directory, so hidden credential roots and external volumes are refused. Copy outside work into a dedicated project first. Everything already inside that project, including hidden files and secrets, is granted content.</p>
+<pre><code>terminal-delight restricted run --workdir "$HOME/Projects/example" -- sh -c 'make test'</code></pre>
+<p>Inside the command, that project is <code>/work</code>. Add <code>--read-only</code> before <code>--</code> to refuse changes there. Home and <code>/tmp</code> are temporary. Arguments and input you supply are also disclosed to the command.</p>
+<p>The command needs an installed sandbox helper called bubblewrap, which sets up Linux isolation before starting the program. Terminal Delight requires <code>/usr/bin/bwrap</code> version 0.12.0 or newer, Linux 5.11 or newer, and x86_64 or aarch64. Required namespaces and syscall filtering must work. An unavailable requirement refuses the launch; there is no fallback to Standard.</p>
+<p class="invite">Technical explains the allowed files, the optional note grant and how to dismiss an access proposal.</p>
+</section>
+
+<section data-register="technical" data-headline="What the command can reach">
+<h2>The selected directory is the file grant</h2>
+<p>Terminal Delight pins the directory, walks it through file descriptors and checks each entry's device and mount identity. A changed root, nested mount, hard-linked regular file, socket, pipe or device refuses launch. Validation stops at 200,000 entries or 128 directory levels. A symlink remains a symlink; it cannot reveal a host path that was never mounted.</p>
+<p>The canonical selected path must be strictly below the OS account home, with no dot-directory in that path. Changing <code>HOME</code> does not change the rule. Configured XDG config/state roots and runtime state cannot overlap the grant. A normal project can contain <code>.git</code> or other hidden content; inspect it before granting it.</p>
+<p>The command sees read-only <code>/usr</code>, existing system bin/library paths, the linker cache and system alternatives, plus fresh process/device views. It inherits no provider keys, desktop endpoints or host environment. Linux namespaces isolate its processes, network, IPC, hostname and cgroup view. It cannot create another user namespace. The syscall filter blocks host connections, addressed sends, descriptor transfer and the key, performance, userfaultfd and BPF interfaces.</p>
+
+<h2>Terminal output and TD access are deliberately small</h2>
+<p>All three standard streams are pipes. Output becomes UTF-8 text with terminal controls and bidirectional display controls removed. This supports line-oriented offline commands and builds. Interactive terminal programs, GUI applications, online agents and automatic handoffs are unavailable in this profile.</p>
+<p>By default the command has no TD write grant. <code>--td-note</code> adds a note on its launch pane only, subject to the existing MCP switches. The grant fixes that pane and its process generation at launch. Notes have 1–10 words, at most 512 bytes, and at most one attempt per second.</p>
+<pre><code>terminal-delight restricted call '{"op":"note","text":"Build complete"}'
+terminal-delight restricted call '{"op":"status"}'
+terminal-delight restricted call '{"op":"request_access","reason":"Need external packages"}'</code></pre>
+<p>These commands run inside the Restricted command. The gateway accepts only those typed operations. It cannot target another pane, approve a request, change policy, open a document or delegate work.</p>
+
+<h2>A request is visible, and grants nothing</h2>
+<p>The supervisor prints the run's one access proposal in its terminal. It labels the request as supplied by the workload, names the current directory and access, and says that wider access requires a separately chosen new run. There is no approval action. The attention rail does not display Restricted proposals in this release.</p>
+<p>The launch prints a run ID. From a Standard terminal, use that exact ID with these operator commands:</p>
+<pre><code>terminal-delight restricted status RUN
+terminal-delight restricted dismiss RUN
+terminal-delight restricted revoke RUN</code></pre>
+<p>Dismiss clears the pending proposal without changing access. That run cannot create another proposal afterward. Revoke blocks future TD note effects after any already accepted note completes. File work continues. The workload cannot dismiss its own proposal or revoke or enlarge its grant. Finishing the run removes its sockets and authority; a new run inherits nothing.</p>
+
+<h2>Use the scope with its limits</h2>
+<p>Restricted protects the host from the command. It does not protect against a hostile host user, administrator or kernel exploit, and does not impose complete CPU, memory, process or disk quotas. Root and set-ID launches are refused.</p>
+<p>A note, printed instruction or shared output file can still mislead a later unrestricted reader. Executing that output with broader authority is a separate decision. Standard terminals retain ordinary account access; an off-limits pane mark controls TD disclosure and does not sandbox its programs.</p>
+</section>
+
+<ol data-sources>
+<li id="s1">The implemented launch, gateway and tests: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/restricted.rs">restricted.rs</a> and its <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/tests/restricted.rs">real Linux probes</a>.</li>
+<li id="s2">The helper's isolation options: <a href="https://github.com/containers/bubblewrap/blob/main/bwrap.xml">bubblewrap manual</a>. Descriptor mount identity: <a href="https://man7.org/linux/man-pages/man2/statx.2.html">Linux statx manual</a>.</li>
+</ol>

@@ -305,7 +305,7 @@ fn here() -> mcp::Instance {
 /// Blocks up to [`SNAPSHOT_BUDGET`], so callers must not run it on a thread that
 /// owns an accept loop.
 pub(crate) fn respond(line: &str) -> Option<String> {
-    respond_as(line, None)
+    respond_as(line, None, None)
 }
 
 /// [`respond`], with the caller named.
@@ -315,7 +315,11 @@ pub(crate) fn respond(line: &str) -> Option<String> {
 /// the transport because it is per-request data the protocol layer needs: a
 /// pane-scoped verb can then default to the pane that called it instead of
 /// making the agent guess its own pid out of a listing.
-pub(crate) fn respond_as(line: &str, caller: Option<crate::ctl::Caller>) -> Option<String> {
+pub(crate) fn respond_as(
+    line: &str,
+    caller: Option<crate::ctl::Caller>,
+    peer_pid: Option<u32>,
+) -> Option<String> {
     if !mcp::requires_snapshot(line) {
         return mcp::handle_line(line, &mcp::Snapshot::empty(), |_, _| vec![]);
     }
@@ -325,9 +329,17 @@ pub(crate) fn respond_as(line: &str, caller: Option<crate::ctl::Caller>) -> Opti
     }
     match reply_rx.recv_timeout(SNAPSHOT_BUDGET) {
         Ok(mut snap) => {
-            snap.caller = caller.map(|c| mcp::Caller {
-                session: c.session,
-                pane: c.pane,
+            snap.caller = caller.map(|c| {
+                let verified = crate::ctl::verify_caller(c, peer_pid, |pane| {
+                    snap.panes
+                        .iter()
+                        .find(|p| p.pane_id == Some(pane))
+                        .map(|p| p.pid)
+                });
+                mcp::Caller {
+                    session: verified.session,
+                    pane: verified.pane,
+                }
             });
             let home = session::home_dir();
             // The write capability: a set_pane_config batch is applied on the

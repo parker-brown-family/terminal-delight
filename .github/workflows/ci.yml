@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "dev/**"]
     tags: ['v*']
 
 # A new push to a pull request cancels that pull request's older run, which

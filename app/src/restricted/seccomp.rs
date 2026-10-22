@@ -36,6 +36,15 @@ fn arch() -> io::Result<u32> {
     }
 }
 
+const KERNEL_INTERFACES: [libc::c_long; 6] = [
+    libc::SYS_keyctl,
+    libc::SYS_add_key,
+    libc::SYS_request_key,
+    libc::SYS_perf_event_open,
+    libc::SYS_userfaultfd,
+    libc::SYS_bpf,
+];
+
 fn program() -> io::Result<Vec<Insn>> {
     // seccomp_data: nr at 0, arch at 4, args[4] at 48 (64-bit address).
     let mut p = vec![
@@ -61,6 +70,14 @@ fn program() -> io::Result<Vec<Insn>> {
         libc::SYS_io_uring_enter,
         libc::SYS_io_uring_register,
     ] {
+        p.extend([insn(0x15, 0, 1, nr as u32), insn(0x06, 0, 0, DENY)]);
+    }
+    // Kernel interfaces an unprivileged process can still reach, that no
+    // offline build needs: the key retention service (the caller's session
+    // keyring is inherited, so its keys would be readable), performance
+    // counters, userfaultfd and BPF. Each is a common exploit primitive or a
+    // side channel; Flatpak's default filter refuses the same set.
+    for nr in KERNEL_INTERFACES {
         p.extend([insn(0x15, 0, 1, nr as u32), insn(0x06, 0, 0, DENY)]);
     }
     // Local unnamed Unix pairs remain available for internal IPC. No other
@@ -168,6 +185,29 @@ mod tests {
             libc::SYS_recvmmsg,
         ] {
             assert_eq!(evaluate(a, nr as u32, 0), DENY);
+        }
+    }
+    #[test]
+    fn kernel_interfaces_no_offline_build_needs_are_refused() {
+        let a = arch().unwrap();
+        for nr in [
+            libc::SYS_keyctl,
+            libc::SYS_add_key,
+            libc::SYS_request_key,
+            libc::SYS_perf_event_open,
+            libc::SYS_userfaultfd,
+            libc::SYS_bpf,
+        ] {
+            assert_eq!(evaluate(a, nr as u32, 0), DENY, "syscall {nr}");
+        }
+        // Ordinary process and file work stays available.
+        for nr in [
+            libc::SYS_clone,
+            libc::SYS_execve,
+            libc::SYS_openat,
+            libc::SYS_mmap,
+        ] {
+            assert_eq!(evaluate(a, nr as u32, 0), ALLOW, "syscall {nr}");
         }
     }
     #[test]

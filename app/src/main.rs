@@ -7870,6 +7870,7 @@ impl Workspace {
                         tab: ti,
                         pane: pid,
                         place,
+                        off_limits: p.off_limits,
                         opened_by: match place {
                             mcp::DocPlace::Split => p.doc_opened_by(),
                             mcp::DocPlace::Float => None,
@@ -8079,6 +8080,10 @@ impl Workspace {
         let mut out = Vec::with_capacity(updates.len());
         let mut changed = false;
         for (target, patch) in updates {
+            if let Err(reason) = mcp::apply_permission(&self.mcp, patch) {
+                out.push((target.clone(), Err(reason.into())));
+                continue;
+            }
             match target {
                 mcp::Target::Outer => {
                     let mut choice = theme::outer_choice(cx);
@@ -8157,7 +8162,13 @@ impl Workspace {
                             let ask_change: Result<Option<access::Ask>, String> = match &patch.ask {
                                 None => Ok(None),
                                 Some(ask) => {
-                                    let named = ask.pid.and_then(|p| self.leaf_by_shell_pid(p, cx));
+                                    let named = ask
+                                        .pid
+                                        .and_then(|p| self.leaf_by_shell_pid(p, cx))
+                                        .filter(|target| {
+                                            let v = target.read(cx);
+                                            !v.off_limits || v.shell_pid() == Some(*pid)
+                                        });
                                     let (off, title) = match &named {
                                         Some(t) => {
                                             let v = t.read(cx);
@@ -8267,12 +8278,9 @@ impl Workspace {
                                 }
                             }
                         }
-                        Some((_, false)) => out.push((
-                            target.clone(),
-                            Err(format!(
-                                "pane {pid} is not exposed under the current policy"
-                            )),
-                        )),
+                        Some((_, false)) => {
+                            out.push((target.clone(), Err(format!("no pane with pid {pid}"))))
+                        }
                         None => out.push((target.clone(), Err(format!("no pane with pid {pid}")))),
                     }
                 }
@@ -8803,14 +8811,17 @@ impl Workspace {
         let said = self.act_on_picked_pane(
             cx,
             // The square floats over the bench as well as the terminal, so
-            // the verb that proves it reaches both faces.
+            // the verb that proves it reaches both faces. An off-limits pane
+            // takes no document from the socket: replacing the brief over it
+            // would discard the person's unsaved notes.
             |v| {
-                matches!(
-                    v.bench.face(),
-                    workbench::Face::Terminal | workbench::Face::Workbench
-                )
+                !v.off_limits
+                    && matches!(
+                        v.bench.face(),
+                        workbench::Face::Terminal | workbench::Face::Workbench
+                    )
             },
-            "no pane is showing its terminal or its bench",
+            "no pane is showing its terminal or its bench (an off-limits pane takes no document from here)",
             |view, cx| refused = view.open_float(target, None, cx).err(),
         );
         // An HTML file with no engine to draw it went to the desktop instead,
@@ -8828,8 +8839,8 @@ impl Workspace {
     pub(crate) fn doc_scroll(&mut self, dy: f32, cx: &mut Context<Self>) -> String {
         self.act_on_picked_pane(
             cx,
-            |v| v.has_float(),
-            "no pane has a floating document open",
+            |v| !v.off_limits && v.has_float(),
+            "no pane has a floating document open (an off-limits pane takes none from here)",
             |view, cx| view.scroll_float(dy, cx),
         )
     }
@@ -8844,8 +8855,10 @@ impl Workspace {
         let mut got = None;
         let said = self.act_on_picked_pane(
             cx,
-            |v| v.has_document(),
-            "no pane has a document open",
+            // The notes are the person's: an off-limits pane's are not read
+            // out to whoever reached the socket.
+            |v| !v.off_limits && v.has_document(),
+            "no pane has a document open (an off-limits pane takes none from here)",
             |view, cx| got = Some(view.doc_notes(cx)),
         );
         match got {
@@ -8866,8 +8879,10 @@ impl Workspace {
         let mut got = None;
         let said = self.act_on_picked_pane(
             cx,
-            |v| v.has_document(),
-            "no pane has a document open",
+            // A note or stamp added here carries no author mark, so on an
+            // off-limits pane it would pass for the person's own.
+            |v| !v.off_limits && v.has_document(),
+            "no pane has a document open (an off-limits pane takes none from here)",
             |view, cx| got = Some(view.doc_note(cmd, cx)),
         );
         match got {
@@ -8886,8 +8901,8 @@ impl Workspace {
         let closed = std::cell::Cell::new(true);
         let said = self.act_on_picked_pane(
             cx,
-            |v| v.has_float(),
-            "no pane has a floating document open",
+            |v| !v.off_limits && v.has_float(),
+            "no pane has a floating document open (an off-limits pane takes none from here)",
             |view, cx| closed.set(view.request_close_float(cx)),
         );
         if closed.get() || said.starts_with("err") {
@@ -11218,6 +11233,10 @@ impl Workspace {
         reply: std::sync::mpsc::Sender<String>,
         cx: &mut Context<Self>,
     ) {
+        if !self.mcp.writable {
+            let _ = reply.send("err MCP writes are disabled".into());
+            return;
+        }
         let mut leaves = vec![];
         for tab in &self.tabs {
             tab.root.leaves(&mut leaves);
@@ -11274,10 +11293,16 @@ impl Workspace {
         let (_, leaves, focused) = self.bench_targets();
         let flags: Vec<bool> = leaves
             .iter()
-            .map(|l| l.read(cx).bench.face() == workbench::Face::Terminal)
+            .map(|l| {
+                let v = l.read(cx);
+                !v.off_limits && v.bench.face() == workbench::Face::Terminal
+            })
             .collect();
         let Some(i) = workbench::bench_target(&flags, focused) else {
-            let _ = reply.send("err no pane is showing its terminal face".into());
+            let _ = reply.send(
+                "err no pane is showing its terminal face (an off-limits pane takes no document from here)"
+                    .into(),
+            );
             return;
         };
         leaves[i].update(cx, |v, cx| {
@@ -14167,13 +14192,21 @@ impl Workspace {
             .map(|op| {
                 // Shape was validated at parse time; a target error here would
                 // already have been reported, so treat it as "no tab".
-                let key = match op.target() {
-                    Ok(Some(TabRef::Index(i))) => self.tab_key(i),
-                    Ok(Some(TabRef::Pane(pid))) => {
-                        self.tab_holding_pane(pid, cx).and_then(|i| self.tab_key(i))
-                    }
+                let index = match op.target() {
+                    Ok(Some(TabRef::Index(i))) => Some(i),
+                    Ok(Some(TabRef::Pane(pid))) => self.tab_holding_pane(pid, cx),
                     Ok(None) | Err(_) => None,
                 };
+                let key = index
+                    .filter(|i| {
+                        let Some(tab) = self.tabs.get(*i) else {
+                            return false;
+                        };
+                        let mut leaves = vec![];
+                        tab.root.leaves(&mut leaves);
+                        leaves.iter().all(|leaf| !leaf.read(cx).off_limits)
+                    })
+                    .and_then(|i| self.tab_key(i));
                 (key, op.action)
             })
             .collect();
@@ -38476,12 +38509,14 @@ mod tests {
     }
 
     /// The control socket's bench verbs reach a running agent's terminal (`say`,
-    /// `choose`, `submit`) or its composer (`type`), and the socket answers any
-    /// process running as you, agents included — so none of the four may pick
-    /// an off-limits pane, and each says why when that leaves nothing to pick.
+    /// `choose`, `submit`) or its composer (`type`), and its document verbs read
+    /// and change the person's notes on a brief (`doc notes`, `doc note`, `doc
+    /// close`, `doc here`). The socket answers any process running as you,
+    /// agents included, so none of them may pick an off-limits pane, and each
+    /// says why when that leaves nothing to pick.
     ///
     /// Mutation-tested: dropping `!v.off_limits` from `bench_say`'s picker
-    /// fails this.
+    /// fails this, and so does dropping it from `doc_notes`'.
     #[test]
     fn the_sockets_bench_verbs_never_pick_an_off_limits_pane() {
         for verb in [
@@ -38491,6 +38526,12 @@ mod tests {
             "pub(crate) fn bench_submit(",
             "pub(crate) fn bench_probe(",
             "fn drain_pending_pointer(",
+            "pub(crate) fn doc_here(",
+            "pub(crate) fn doc_scroll(",
+            "pub(crate) fn doc_notes(",
+            "pub(crate) fn doc_note(",
+            "pub(crate) fn doc_close(",
+            "pub(crate) fn doc_beside(",
         ] {
             let body: String = live_fn(verb)
                 .lines()

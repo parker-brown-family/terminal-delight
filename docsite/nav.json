@@ -133,6 +133,10 @@
           "title": "MCP server"
         },
         {
+          "slug": "restricted",
+          "title": "Restricted commands"
+        },
+        {
           "slug": "agent-to-agent",
           "title": "Agent to agent"
         },
@@ -194,17 +198,17 @@
     {
       "title": "lean-ctx",
       "href": "https://leanctx.com",
-      "note": "context runtime ↗"
+      "note": "context runtime \u2197"
     },
     {
       "title": "Omarchy",
       "href": "https://omarchy.org",
-      "note": "the desktop ↗"
+      "note": "the desktop \u2197"
     },
     {
       "title": "Rio",
       "href": "https://rioterm.com",
-      "note": "the terminal core ↗"
+      "note": "the terminal core \u2197"
     },
     {
       "title": "Version",

@@ -139,11 +139,11 @@ fn bench_outcome(rx: mpsc::Receiver<String>) -> String {
         .unwrap_or_else(|_| "err the window did not answer".into())
 }
 
-/// One field of the MCP control-surface policy — the robot panel's toggles,
-/// reachable from the socket in ONE direction. Narrowing (off, writes off,
-/// agents only) is applied like the panel's press: it writes `ws.mcp` and
-/// `save()`s, so it shows in the panel and survives a restart. Socket mutation is
-/// refused unless the window was launched to be scripted — see [`PolicyControl`].
+/// One field of the MCP control-surface policy — the robot panel's toggles.
+/// The socket refuses every one of them, in either direction, unless the window
+/// was launched to be scripted — see [`PolicyControl`]. A scripted window applies
+/// them like the panel's press: it writes `ws.mcp` and `save()`s, so the change
+/// shows in the panel and survives a restart.
 /// Kept as one-field-at-a-time so a script can grant reads without silently
 /// also granting writes.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -180,6 +180,10 @@ enum PolicyControl {
     Scripted,
 }
 impl PolicyControl {
+    fn from_env() -> Self {
+        Self::from_launch(std::env::var("TD_MCP_SCRIPTED").ok().as_deref())
+    }
+
     fn from_launch(value: Option<&str>) -> Self {
         if value == Some("1") {
             Self::Scripted
@@ -512,11 +516,12 @@ pub fn socket_path(pid: u32) -> PathBuf {
 /// unknown-command error both quote it, so they can't drift from the match.
 const USAGE: &str = "ping | whoami | paint on|off|toggle|status | \
      skin <name>|theme|status|snapshot | \
-     bench on|off|toggle|choose <n>|submit|say <text>|type <text> | \
+     bench on|off|toggle|choose <n>|submit|say <text>|type <text>|probe | \
+     bench click|hover <x> <y> [alt|ctrl|ctrl-alt] | \
      doc here <absolute path> | doc beside <absolute path> | doc close | \
      doc scroll <pixels> | doc notes | doc note add <nid> <text> | \
      doc note delete <nid> <text> | doc concur <nid> | doc save | \
-     mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
+     mcp status | mcp on|off, mcp writes on|off, mcp expose agents|all (err unless the window started with TD_MCP_SCRIPTED=1) | \
      mcp rpc <json> | mcp from <session> <pane|-> rpc <json> | \
      adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
      tabs [{\"op\":\"name\",\"pane\":1234,\"name\":\"DEV\"}, …] | \
@@ -831,20 +836,10 @@ fn handle_conn(
             // impossible to spot. Refusing costs one comparison and turns that
             // into a sentence naming both sessions.
             //
-            // THIS GUARDS MISROUTING, NOT IMPERSONATION, and the difference
-            // matters to whoever arrives here cold. `c.session` is whatever the
-            // caller wrote on the wire; nothing checks it against the process on
-            // the other end of the connection, and `c.pane` is not checked
-            // against anything at all. A caller that names the right session on
-            // purpose is served, and that is deliberate: every caller able to
-            // reach this socket is already the same person, and an agent acting
-            // for them is them. `docs/decisions/0002` carries the argument and,
-            // more usefully, says what ends it — the first caller able to arrive
-            // from outside this user's runtime directory.
-            //
-            // `host.rs` does check, with `SO_PEERCRED`, because it is answering
-            // a different question. If this socket ever needs to, the technique
-            // is already in the tree rather than to be invented.
+            // The session claim prevents misrouting. The socket's kernel peer
+            // PID, checked against the current pane snapshot in respond_as,
+            // establishes whether the own-pane exception belongs to this caller.
+            let peer_pid = crate::host::peer_pid(&stream);
             if let Some(c) = &caller {
                 let mine = crate::instance::key();
                 if c.session != mine {
@@ -865,7 +860,7 @@ fn handle_conn(
             let spawned = thread::Builder::new()
                 .name("td-ctl-mcp".into())
                 .spawn(move || {
-                    let reply = mcp_transport::respond_as(&payload, caller)
+                    let reply = mcp_transport::respond_as(&payload, caller, peer_pid)
                         .unwrap_or_else(|| MCP_NONE.to_string());
                     let mut stream = stream;
                     let _ = stream.set_write_timeout(Some(Duration::from_secs(8)));
@@ -1107,8 +1102,7 @@ pub fn start(cx: &mut Context<Workspace>) {
     // per socket connection rather than per frame.
     let skin_mirror = Arc::new(Mutex::new(SkinMirror::default()));
     // Read once, here, so nothing that runs later can change the answer.
-    let policy_control =
-        PolicyControl::from_launch(std::env::var("TD_MCP_SCRIPTED").ok().as_deref());
+    let policy_control = PolicyControl::from_env();
 
     {
         let mirror = Arc::clone(&mirror);
@@ -1770,6 +1764,20 @@ pub(crate) fn descends_from(pid: u32, ancestor: u32) -> bool {
     false
 }
 
+/// Keep claimed own-pane authority only for a kernel-identified descendant of
+/// the current pane shell. Unknown identity never becomes a guessed pane.
+pub(crate) fn verify_caller(
+    mut caller: Caller,
+    peer: Option<u32>,
+    shell_for: impl Fn(u64) -> Option<u32>,
+) -> Caller {
+    caller.pane = caller.pane.filter(|pane| {
+        peer.zip(shell_for(*pane))
+            .is_some_and(|(pid, shell)| shell > 1 && descends_from(pid, shell))
+    });
+    caller
+}
+
 /// The terminal-delight window hosting THIS process, by walking our own parent
 /// chain until a pid turns out to own a control socket.
 ///
@@ -2321,6 +2329,76 @@ pub fn run_mcp_cli(args: &[String]) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_claimed_pane_is_downgraded_unless_the_socket_peer_descends_from_its_shell() {
+        let (stream, _other) = UnixStream::pair().unwrap();
+        let peer = crate::host::peer_pid(&stream);
+        assert_eq!(peer, Some(std::process::id()));
+        let claim = || Caller {
+            session: "test".into(),
+            pane: Some(9),
+        };
+        assert_eq!(
+            verify_caller(claim(), peer, |_| Some(std::process::id())).pane,
+            Some(9)
+        );
+        assert_eq!(
+            verify_caller(claim(), peer, |_| ppid_of(std::process::id())).pane,
+            Some(9)
+        );
+        assert_eq!(verify_caller(claim(), peer, |_| Some(u32::MAX)).pane, None);
+        assert_eq!(verify_caller(claim(), peer, |_| None).pane, None);
+        assert_eq!(
+            verify_caller(claim(), None, |_| Some(std::process::id())).pane,
+            None
+        );
+    }
+
+    #[test]
+    fn policy_control_reads_the_actual_launch_environment() {
+        if let Ok(expected) = std::env::var("TD_POLICY_ENV_TEST_CHILD") {
+            let want = if expected == "scripted" {
+                PolicyControl::Scripted
+            } else {
+                PolicyControl::Refused
+            };
+            assert_eq!(PolicyControl::from_env(), want);
+            return;
+        }
+        for value in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("true"),
+            Some("1"),
+            Some(" 1"),
+        ] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child
+                .args([
+                    "ctl::tests::policy_control_reads_the_actual_launch_environment",
+                    "--exact",
+                ])
+                .env(
+                    "TD_POLICY_ENV_TEST_CHILD",
+                    if value == Some("1") {
+                        "scripted"
+                    } else {
+                        "refused"
+                    },
+                )
+                .env_remove("TD_MCP_SCRIPTED");
+            if let Some(value) = value {
+                child.env("TD_MCP_SCRIPTED", value);
+            }
+            let result = child.output().unwrap();
+            assert!(
+                result.status.success(),
+                "{value:?}: {}",
+                String::from_utf8_lossy(&result.stdout)
+            );
+        }
+    }
     use super::*;
 
     #[test]

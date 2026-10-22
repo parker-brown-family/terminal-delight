@@ -55,7 +55,9 @@ Exposure ships **disabled** and the policy is operator-controlled from the
   (powers `pane_events` and the push feed).
 - **Writes** — a *second* opt-in (off by default) that promotes the read-only
   watch surface to a remote-control one: with it on, `set_pane_config` may change
-  a pane's (or the window-level `outer`) appearance. A read→write escalation, so
+  a pane's (or the window-level `outer`) appearance, and agents may leave notes,
+  declare deliverables, present surfaces and open documents. None of it reaches a
+  terminal's input. A read→write escalation, so
   it's its own switch. The `TD_MCP_WRITE=1` env var forces it on for a headless /
   orchestrated launch.
 
@@ -71,13 +73,13 @@ header, and no agent reads it or writes to it under any policy — it is gone fr
 and a note, deliverable or surface aimed at it from another pane is refused. The
 agent running *inside* it keeps its own-pane verbs: it can still present its own
 work, declare its own deliverable and post its own note, because the mark hides
-a pane from other agents rather than silencing the one inside it. The same menu
+a pane from other agents rather than silencing the one inside it. Own-document open/read also remain available. The ctl connection obtains the peer PID through `SO_PEERCRED`; its claimed pane survives only when the current pane shell is that process or its ancestor. Forged or unavailable ancestry removes own-pane authority. The same menu
 row lifts it (**Let agents see this pane**). It is saved with the layout.
 
 Only a person sets or lifts it. There is no `ctl` verb and no MCP verb for it.
 The control socket's bench-input verbs, synthetic click/hover, probe and scripted
 face selection refuse off-limits panes. This is enforced on selection and again
-at synthetic pointer dispatch. The MCP gate is
+at synthetic pointer dispatch. Document ctl verbs and tab edits also refuse hidden targets; queued bench input waits while its pane is off-limits. Hidden and absent write targets answer alike. The MCP gate is
 `mcp::should_expose(cfg, is_agent, off_limits)` and its write half
 `mcp::may_write`; the idea is Splinterm's per-pane grant, with TD's own shape.
 
@@ -87,8 +89,10 @@ Standard terminals keep ordinary account access. For code you want confined,
 explicitly start a Restricted command before its code or startup files run:
 
 ```sh
-terminal-delight restricted run --workdir /path/to/project -- sh -c 'make test'
+terminal-delight restricted run --workdir "$HOME/Projects/example" -- sh -c 'make test'
 ```
+
+See the dedicated [Restricted commands page](../docsite/pages/restricted.html) for the complete user guide. The canonical selected path must be strictly below the OS account home, with no dot-directory in that path. Hidden files already inside a selected project remain granted content; system trees, hidden roots and external volumes need a dedicated project copy.
 
 The installed `/usr/bin/bwrap` must be version 0.12.0 or newer and support `--bind-fd`, `--ro-bind-fd` and
 `--seccomp`; Linux 5.11+ descriptor cleanup and required namespaces must work and a private `/run/user/UID` runtime must exist or the
@@ -123,14 +127,13 @@ terminal-delight restricted call '{"op":"status"}'
 terminal-delight restricted call '{"op":"request_access","reason":"Need external packages"}'
 ```
 
-An access request is one pending proposal in status; it never changes access or
-creates approval authority. From an outside Standard terminal, use the printed
+One lifetime access proposal is printed in the run terminal and available in status; it never changes access or creates approval authority. It names the current directory and access, labels the reason as workload-supplied, and explains that changed scope needs a new run. `terminal-delight restricted dismiss RUN` clears it from outside without resetting the proposal budget. The workload cannot dismiss or approve it. This release does not put Restricted proposals on the attention rail. From an outside Standard terminal, use the printed
 run ID with `terminal-delight restricted status RUN` or
 `terminal-delight restricted revoke RUN`. Revoke acknowledges after an already
 accepted note finishes and denies subsequent notes. It does not stop file work
 or recall earlier effects. Wider or tighter filesystem/network scope needs an
 explicit new run. Exiting ends grants; a restart or replacement pane cannot
-inherit them. No pane is relabelled Restricted after it has run Standard code.
+inherit them. Restricted is a property of a run, not of a pane: an existing pane never becomes Restricted.
 
 The minimum helper version includes the safe setup-path resolution fix. CI builds the pinned upstream release from its verified SHA-256; TD never downloads helpers during a launch.
 
@@ -331,8 +334,9 @@ silence it.
 ## Security posture
 
 - **Never a PTY.** No tool writes bytes to a terminal. Sending input into a shell
-  would be arbitrary code execution; that path does not exist here. The only
-  writes are *appearance* (the monitor grade) via `set_pane_config`.
+  would be arbitrary code execution; that path does not exist here. Writes cover
+  appearance (`set_pane_config`), notes, deliverables, surfaces and opened
+  documents, and none of them reaches a terminal's input.
 - **Writes are a separate opt-in.** The server is a read-only watch surface until
   you flip **Writes** (or set `TD_MCP_WRITE`). Reads never need it.
 - **stdio only, never TCP.** The trust boundary is whoever launched the process.

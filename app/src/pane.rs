@@ -4667,6 +4667,9 @@ impl TerminalView {
     /// restore, on purpose — see the field.
     pub(crate) fn toggle_off_limits(&mut self, cx: &mut Context<Self>) {
         self.off_limits = !self.off_limits;
+        if !self.off_limits {
+            self.bench_drain(cx);
+        }
         cx.emit(OffLimitsChanged);
         cx.notify();
     }
