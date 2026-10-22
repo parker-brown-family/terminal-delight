@@ -24,6 +24,7 @@ spine           = true    # the attention pill and its queue
 split_buttons   = true    # split right, split down
 counts          = true    # "28 tabs · 31 panes"
 scale           = true    # the ▭ 100% button
+artifacts       = true    # 📜 — the artifact rail
 surfaces        = true    # 🎨 — the painter palette
 sliders         = true    # the bar chart — display sliders
 graveyard       = true    # 🪦

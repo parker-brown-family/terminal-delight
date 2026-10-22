@@ -29,6 +29,7 @@
 
 mod access;
 mod art;
+mod artifact_rail;
 mod attention;
 mod bell;
 mod benchdraw;
@@ -4493,6 +4494,21 @@ struct Workspace {
     /// The overflow popover behind the header's `…` — on a narrow window the six
     /// header glyphs collapse to the agent wall plus this, and the rest live here.
     more_menu: bool,
+    /// The artifact rail, open: one card per pane whose agent has handed
+    /// something over, raised by the 📜 in the corner (`artifact_rail.rs`).
+    art_rail: bool,
+    /// How many of an agent's opens this window has held — kept as a
+    /// handover because a square was up (`TerminalView::open_here`). It keys
+    /// the 📜's one-shot bump, so each hold plays it once.
+    art_bumps: u32,
+    /// A hold nobody has looked at yet: the 📜's dot, cleared when the rail
+    /// opens.
+    art_unseen: bool,
+    /// The cards' order as it stood when the rail opened (row keys), so a
+    /// card never moves under the pointer while the rail is up.
+    art_order: Vec<u64>,
+    /// The card the arrow keys are on.
+    art_cursor: usize,
     /// UI CONFIG's page in the painter palette: OUTER (false) or PANES.
     ui_cfg_panes: bool,
     /// Folding rows (UI CONFIG's `option_rows` off): the row opened by a
@@ -6157,6 +6173,11 @@ impl Workspace {
             mcp_menu: false,
             scale_menu: false,
             more_menu: false,
+            art_rail: false,
+            art_bumps: 0,
+            art_unseen: false,
+            art_order: Vec::new(),
+            art_cursor: 0,
             ui_cfg_panes: false,
             fold_open: None,
             fold_hover: None,
@@ -11365,6 +11386,9 @@ impl Workspace {
             }),
             mcp::Placement::Here => {
                 let said = leaf.update(cx, |v, cx| v.open_here(request.target, cx));
+                if said.starts_with("held ") {
+                    self.art_held(cx);
+                }
                 let _ = reply.send(said);
             }
         }
@@ -18951,6 +18975,7 @@ impl Workspace {
             || self.help_open
             || self.scale_menu
             || self.more_menu
+            || self.art_rail
             || self.mcp_menu
             || self.dead_menu
             || self.plugins_menu
@@ -19112,6 +19137,10 @@ impl Workspace {
         }
         if self.more_menu {
             self.more_menu = false;
+            return true;
+        }
+        if self.art_rail {
+            self.art_close();
             return true;
         }
         // The base layer: the agent wall itself.
@@ -27885,6 +27914,7 @@ impl Render for Workspace {
                 || self.mcp_menu
                 || self.scale_menu
                 || self.more_menu
+                || self.art_rail
                 || self.plugins_menu
                 || self.notif_menu
                 || self.bug_menu
@@ -27936,6 +27966,9 @@ impl Render for Workspace {
                     "find" => self.open_find(first.entity_id(), true, window, cx),
                     "lookup" => self.open_lookup(window, cx),
                     "plugins" => self.plugins_menu = true,
+                    // The rail fills in live as the panes hand things over, so
+                    // raised on the first frame it is first photographed empty.
+                    "artifacts" => self.art_open(cx),
                     "notifications" => self.notif_menu = true,
                     "bug" => self.bug_menu = true,
                     "language" => {
@@ -28705,13 +28738,14 @@ impl Render for Workspace {
         // them hidden and CONFIG takes the corner — the `…` menu a narrow
         // window already folds its glyphs into, named, and opened by choice.
         let ui_on = |k: uiconfig::Key| uiconfig::shown(cx, k);
-        let ui_glyph: [bool; 6] = [
+        let ui_glyph: [bool; 7] = [
             ui_on(uiconfig::Key::Surfaces),
             ui_on(uiconfig::Key::Sliders),
             ui_on(uiconfig::Key::Graveyard),
             ui_on(uiconfig::Key::Notifications),
             ui_on(uiconfig::Key::BugReport),
             ui_on(uiconfig::Key::Plugins),
+            ui_on(uiconfig::Key::Artifacts),
         ];
         let ui_counts = ui_on(uiconfig::Key::Counts);
         let ui_scale = ui_on(uiconfig::Key::Scale);
@@ -28828,7 +28862,30 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
+        // 📜 the artifact rail: every agent in this window that has handed
+        // something over, one card each. Parker, 2026-10-22: *"we will make a
+        // NEW glyph in the bottome right tray … SIMPLE SCroll (documents)"*.
+        // It carries news the others do not: an agent's open that was held
+        // because a square was up bumps it once and leaves a dot until the
+        // rail is opened. Whichever door to the rail is drawn carries that
+        // news — this glyph, else CONFIG, else the narrow window's `…` — so
+        // hiding the glyph never hides a hold.
+        let ic_art = Self::hicon_s(&sk, self.art_rail, scale)
+            .relative()
+            .text_size(sk.text_px(CHROME_GLYPH * scale))
+            .line_height(px(CHROME_GLYPH * scale))
+            .child("\u{1f4dc}")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.art_toggle(cx);
+                }),
+            );
+        let art_door_is_glyph = ui_glyph[6] && !chrome_narrow;
+        let (art_dot, art_bumps) = (self.art_unseen, self.art_bumps);
         let ic_more = Self::hicon_s(&sk, self.more_menu, scale)
+            .relative()
             .text_size(sk.text_px(CHROME_GLYPH * scale))
             .line_height(px(CHROME_GLYPH * scale))
             .child("\u{2026}")
@@ -28889,19 +28946,32 @@ impl Render for Workspace {
             .gap(px(12. * scale))
             .map(|d| {
                 if chrome_narrow && config_corner {
-                    d.child(ic_config)
+                    d.child(artifact_rail::art_news(
+                        ic_config, art_dot, art_bumps, scale,
+                    ))
                 } else if chrome_narrow {
-                    d.child(ic_more)
+                    d.child(artifact_rail::art_news(ic_more, art_dot, art_bumps, scale))
                 } else {
                     // CONFIG leads whatever glyphs are left, in the corner the
-                    // menus already live in.
-                    d.when(config_corner, |d| d.child(ic_config))
-                        .when(ui_glyph[0], |d| d.child(ic_theme))
-                        .when(ui_glyph[1], |d| d.child(ic_osd))
-                        .when(ui_glyph[2], |d| d.child(ic_dead))
-                        .when(ui_glyph[3], |d| d.child(ic_notif))
-                        .when(ui_glyph[4], |d| d.child(ic_bug))
-                        .when(ui_glyph[5], |d| d.child(ic_plugins))
+                    // menus already live in. The 📜 comes first of the glyphs:
+                    // it is the agents' work, and the rest are the window's
+                    // own settings.
+                    d.when(config_corner, |d| {
+                        d.child(if art_door_is_glyph {
+                            ic_config.into_any_element()
+                        } else {
+                            artifact_rail::art_news(ic_config, art_dot, art_bumps, scale)
+                        })
+                    })
+                    .when(ui_glyph[6], |d| {
+                        d.child(artifact_rail::art_news(ic_art, art_dot, art_bumps, scale))
+                    })
+                    .when(ui_glyph[0], |d| d.child(ic_theme))
+                    .when(ui_glyph[1], |d| d.child(ic_osd))
+                    .when(ui_glyph[2], |d| d.child(ic_dead))
+                    .when(ui_glyph[3], |d| d.child(ic_notif))
+                    .when(ui_glyph[4], |d| d.child(ic_bug))
+                    .when(ui_glyph[5], |d| d.child(ic_plugins))
                 }
             });
 
@@ -30043,9 +30113,10 @@ impl Render for Workspace {
                         .child(switch(t.ui.ui_close, &[K::PaneClose], "ui-p-close", cx))
                         .child(switch(t.ui.ui_notes, &[K::PaneNotes], "ui-p-notes", cx))
                 } else {
-                    // The six corner glyphs: as a group, or one at a time.
+                    // The seven corner glyphs: as a group, or one at a time.
                     let mut chips = div().flex().flex_row().flex_wrap().gap_1().pb_1();
                     for (glyph, key, id) in [
+                        ("\u{1f4dc}", K::Artifacts, "ui-g-artifacts"),
                         ("\u{1f3a8}", K::Surfaces, "ui-g-surfaces"),
                         ("\u{1f4ca}", K::Sliders, "ui-g-sliders"),
                         ("\u{1faa6}", K::Graveyard, "ui-g-graveyard"),
@@ -33501,6 +33572,21 @@ impl Render for Workspace {
                         cx.notify();
                     }),
                 ))
+                .child(
+                    entry("\u{1f4dc}", s.ui.cfg_artifacts, "more-artifacts")
+                        .relative()
+                        .when(self.art_unseen, |d| {
+                            d.child(artifact_rail::art_dot(1.).top(px(6.)).right(px(8.)))
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.more_menu = false;
+                                ws.art_open(cx);
+                            }),
+                        ),
+                )
                 // UI CONFIG: what the corner and the top band put away is still
                 // here, one row each, so hiding an element never takes away the
                 // way to it.
@@ -35208,7 +35294,7 @@ impl Render for Workspace {
                 let m = &ev.keystroke.modifiers;
                 if !m.control && !m.alt && !m.platform {
                     let key = ev.keystroke.key.as_str();
-                    if ws.rail_key(key, cx) {
+                    if ws.rail_key(key, cx) || ws.art_key(key, cx) {
                         cx.stop_propagation();
                         cx.notify();
                     }
@@ -35300,6 +35386,7 @@ impl Render for Workspace {
                     .children(self.render_rail(cx))
                     .children(scale_overlay)
                     .children(more_overlay)
+                    .children(self.render_artifact_rail(&th, scale, cx))
                     .children(help_overlay)
                     .children(tab_menu_overlay)
                     .children(group_menu_overlay)
@@ -39871,6 +39958,14 @@ mod tests {
             "beside goes through the pane's own request: {open}"
         );
         assert!(open.contains(".open_here(request.target, cx)"), "{open}");
+        // A held open is news on the window: the 📜 bumps and keeps a dot.
+        // Mutation-tested: the `art_held` call taken out fails this.
+        assert!(
+            open.contains(
+                "if said.starts_with(\"held \") {\n                    self.art_held(cx);"
+            ),
+            "a held open bumps the rail's door: {open}"
+        );
         assert!(
             open.contains("mcp::should_expose("),
             "the policy is asked again: {open}"

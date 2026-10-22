@@ -9,6 +9,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Upgrading from 0.4.0 (0.5.0 development)
 
+- **`open_document` with placement `here` can answer `held`.** When a square
+  is already open over the calling pane, nothing opens, the file becomes the
+  pane's handover, and the answer begins `held` (MCP: a success with
+  `"held": true`). It used to replace the square, or answer `err` when the
+  square held unsaved notes. A click, the rail and `ctl doc here` still
+  replace the square, since a person asked.
 - **`ctl mcp …` no longer changes MCP policy from a script.** `ctl mcp on|off`,
   `ctl mcp writes on|off` and `ctl mcp expose agents|all` now answer `err` and
   change nothing, unless the window was started with `TD_MCP_SCRIPTED=1`. A
@@ -57,6 +63,17 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   groupings reveal the desktop through the compositor's blur. The left spine
   diffuses its own grid beneath sharp labels. Fullscreen, 100% opacity and an
   unavailable compositor opacity reading keep the grouping faces solid.
+- **An agent never replaces a floating square you have open, and 📜 lists
+  what every agent handed over.** An agent's `open_document` over a square
+  that is already up, whatever it shows, is held: the square stays, the file
+  is kept as that pane's handover, the agent is answered `held`, and the 📜
+  in the bottom-right corner bumps once and keeps a dot. Clicking 📜 opens the
+  artifact rail: one card per pane whose agent has handed something over,
+  newest first, named by its project and left-bar tab, edged in the agent's
+  state and showing its newest artifact. A card's artifact takes you to that
+  pane and opens it there; the card stays. Arrows and Enter work while it is
+  up. 📜 is a UI CONFIG glyph like the other six: Clean folds it into
+  CONFIG, which then lists Artifacts and carries the dot.
 - **A Clean design, and UI CONFIG to hide any chrome.** Clean turns the light
   and tube off everywhere — letters, cards, frame, borders, menus, afterglow —
   and squares the corners; it holds the tube off and overrides Quiet. New
