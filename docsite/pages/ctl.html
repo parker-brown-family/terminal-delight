@@ -1,9 +1,9 @@
 <script type="application/json" data-page>
 {
   "title": "ctl",
-  "description": "terminal-delight ctl sends one-line commands to a running window over its control socket: name and group tabs, flip faces, open documents, turn the MCP server's switches off, choose a skin. Bench commands act on a pane's bench as a person would, so they can reach its agent, and adopt can open a pane running a command.",
+  "description": "terminal-delight ctl sends one-line commands to a running window over its control socket: name and group tabs, flip faces, open documents, report the MCP server's switches, choose a skin. Bench commands act on a pane's bench as a person would, so they can reach its agent, and adopt can open a pane running a command.",
   "updated": "2026-10-21",
-  "trueOf": "main at d7cf383, plus the socket refusing to widen the MCP switches",
+  "trueOf": "dev/0.5.0 at 478b49f2: the socket refuses all six MCP policy changes unless the window was launched scripted, and off-limits panes refuse the bench verbs",
   "summary": "Script a running window"
 }
 </script>
@@ -11,9 +11,9 @@
 <section data-register="brief">
 <p class="lede">Every Terminal Delight window listens on its own control socket, and the same binary is the client. <code>terminal-delight ctl</code> lets a script, a keybinding, a status bar or an agent's own shell change a running window. Its bench commands act on a pane's bench as a person's typing and clicks would, so they can reach the agent in it, and <code>adopt</code> can open a new pane running a command.</p>
 <pre class="cmd"><code>terminal-delight ctl tab name "deploy"
-terminal-delight ctl mcp writes off
+terminal-delight ctl mcp status
 terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
-<p>It names and groups tabs, turns panes to their workbench, opens documents, turns the <a href="/mcp">MCP server</a>'s switches off, picks a skin, and hands a new terminal to a window. Each command gets one line back, <code>ok</code> or <code>err</code> with the reason. By default it talks to the windows on your active Hyprland workspace, or the window you're running in for tab commands; <code>--all</code> or <code>--pid</code> choose others.</p>
+<p>It names and groups tabs, turns panes to their workbench, opens documents, reports the <a href="/mcp">MCP server</a>'s switches (a person changes them in the MCP panel), picks a skin, and hands a new terminal to a window. Each command gets one line back, <code>ok</code> or <code>err</code> with the reason. By default it talks to the windows on your active Hyprland workspace, or the window you're running in for tab commands; <code>--all</code> or <code>--pid</code> choose others.</p>
 <p class="invite">Technical lists every command and its reply.</p>
 </section>
 

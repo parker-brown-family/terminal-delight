@@ -1,7 +1,8 @@
-# 0003 — A running window is widened by a person
+# 0003 — A running window's MCP policy is changed by a person
 
 Date: 2026-10-21
-Status: accepted
+Status: accepted; amended the same day, when narrowing was refused too (the file keeps
+its first name, "a running window is widened by a person")
 Evidence: the control socket's `mcp writes on` answering `ok` from inside a
 pane on 2026-10-21; `access.rs`, which made agents ask for access on the
 attention rail (pull requests 956 and 957)
@@ -14,9 +15,10 @@ and whether plain shells are shown to them. Writes are UI changes: with them an
 agent can restyle panes, leave notes on them, and present or open documents,
 but not type into a terminal. If writes ever gate typing into another agent, as
 the native agent-to-agent handoff branch proposes, the stakes here change with
-them. Since pull request 957 an agent that
-wants one of them turned on asks with `request_access`, the ask waits on the
-attention rail, and only a person's Yes answers it. A test keeps the MCP server
+them. Since pull request 957 an agent that wants writes or plain shells turned on
+asks with `request_access`, the ask waits on the attention rail, and only a
+person's Yes answers it. The server itself can only be turned on in the panel:
+`request_access` needs it running. A test keeps the MCP server
 and the control socket from naming the functions that answer an ask.
 
 The control socket did not need them. `terminal-delight ctl mcp writes on`,
@@ -38,7 +40,7 @@ Decision 0002 still holds: every process that can reach the socket is the same
 user, and a peer-credential or pane-ancestry check would distinguish between
 processes that are all equally you. Nothing on the socket can tell a person's
 script from an agent's shell command, so nothing on the socket can carry the
-authority to widen.
+authority to change global policy, in either direction.
 
 The launch can. A process inside a pane cannot change the environment of a
 window that is already running, so `TD_MCP_SCRIPTED` is read once, when the
@@ -67,8 +69,8 @@ window launched afterwards. Neither can be closed from inside the program while
 every caller is the same user, because the file and the launch are the user's
 own.
 
-Two neighbours stay as 0002 left them. The bench commands act on an agent
-pane's bench without asking anybody: `ctl bench say` sends a line through its
+Two neighbours stay much as 0002 left them. The bench commands act on an agent
+pane's bench without asking anybody, except on a pane marked off-limits: `ctl bench say` sends a line through its
 composer, `ctl bench choose` and `ctl bench submit` press its answers, and
 `ctl bench click` presses whatever is under the point, pause and end agent
 included. A press reaches the agent as keys into a live picker or as a

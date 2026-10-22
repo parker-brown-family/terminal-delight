@@ -55,7 +55,9 @@ Exposure ships **disabled** and the policy is operator-controlled from the
   (powers `pane_events` and the push feed).
 - **Writes** — a *second* opt-in (off by default) that promotes the read-only
   watch surface to a remote-control one: with it on, `set_pane_config` may change
-  a pane's (or the window-level `outer`) appearance. A read→write escalation, so
+  a pane's (or the window-level `outer`) appearance, and agents may leave notes,
+  declare deliverables, present surfaces and open documents. None of it reaches a
+  terminal's input. A read→write escalation, so
   it's its own switch. The `TD_MCP_WRITE=1` env var forces it on for a headless /
   orchestrated launch.
 
@@ -130,7 +132,7 @@ run ID with `terminal-delight restricted status RUN` or
 accepted note finishes and denies subsequent notes. It does not stop file work
 or recall earlier effects. Wider or tighter filesystem/network scope needs an
 explicit new run. Exiting ends grants; a restart or replacement pane cannot
-inherit them. No pane is relabelled Restricted after it has run Standard code.
+inherit them. Restricted is a property of a run, not of a pane: an existing pane never becomes Restricted.
 
 The minimum helper version includes the safe setup-path resolution fix. CI builds the pinned upstream release from its verified SHA-256; TD never downloads helpers during a launch.
 
@@ -331,8 +333,9 @@ silence it.
 ## Security posture
 
 - **Never a PTY.** No tool writes bytes to a terminal. Sending input into a shell
-  would be arbitrary code execution; that path does not exist here. The only
-  writes are *appearance* (the monitor grade) via `set_pane_config`.
+  would be arbitrary code execution; that path does not exist here. Writes cover
+  appearance (`set_pane_config`), notes, deliverables, surfaces and opened
+  documents, and none of them reaches a terminal's input.
 - **Writes are a separate opt-in.** The server is a read-only watch surface until
   you flip **Writes** (or set `TD_MCP_WRITE`). Reads never need it.
 - **stdio only, never TCP.** The trust boundary is whoever launched the process.

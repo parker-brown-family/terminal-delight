@@ -2,8 +2,8 @@
 
 Every terminal-delight process listens on its own unix socket for one-line
 commands, and the same binary is also the client. A live window is therefore
-scriptable — from the desktop, a keybinding, a bar widget, or an agent's own shell
-— without touching any PTY.
+scriptable — from the desktop, a keybinding, a bar widget, or an agent's own shell.
+Only the bench verbs and `adopt --run` reach a terminal's input (see Boundary).
 
 ## Why it matters
 
@@ -27,10 +27,16 @@ names every pane in it.
 
 ## Boundary
 
-`ctl` changes **appearance, tabs, notes and policy**. It does not write bytes to a
-PTY — the same read-only boundary the [MCP surface](01-agentic-mcp.md) holds. The
-one deliberate exception is opt-in and lives elsewhere:
-[keepalive](11-usage-vitals-keepalive.md) types into an idle prompt.
+`ctl` changes **appearance, tabs, notes and documents**, and **MCP policy only in a
+window launched with `TD_MCP_SCRIPTED=1`**. Two kinds of command reach a terminal's
+input, both on purpose:
+
+- **The bench verbs.** `bench say`, `choose`, `submit` and `click` act on an agent
+  pane's bench as a person would. `bench type` only fills the composer.
+- **`adopt --run`.** It opens a new pane and types its command there.
+
+None of them reaches a pane marked off-limits to agents. The full list of terminal-input
+routes is [the security manifest](../security/terminal-input.md).
 
 ## Status
 
