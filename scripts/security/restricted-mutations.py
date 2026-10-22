@@ -34,7 +34,7 @@ cases=[
 ('terminal-control-output','module',"!c.is_control() || matches!(c, '\\n' | '\\r' | '\\t')",'true','output_cannot_invoke_terminal_protocol_even_when_utf8_is_split',False),
 ('connect-filter','filter','libc::SYS_connect,','', 'a_later_host_socket_in_the_work_tree_cannot_bypass_the_gateway',True),
 ('addressed-send','filter','libc::SYS_sendto as u32','libc::SYS_getpid as u32','no_new_connection_or_addressed_send_can_bypass_the_preconnected_channel',False),
-('kernel-interfaces','filter','libc::SYS_keyctl,','', 'kernel_interfaces_no_offline_build_needs_are_refused',False),
+('kernel-interfaces','filter','libc::SYS_keyctl,','libc::SYS_getpid,', 'kernel_interfaces_no_offline_build_needs_are_refused',False),
  ('inherited-descriptor','module','libc::syscall(libc::SYS_close_range, 3u32, u32::MAX, 4u32)','0','offline_work_completes_without_host_files_services_processes_credentials_or_control',True),
 ]
 results=[]
