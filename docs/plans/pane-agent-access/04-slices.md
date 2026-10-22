@@ -6,7 +6,7 @@ Branch `feat/war-room` off `dev/0.5.0` at `d17d0661`. Worktree `~/Work/td-author
 
 Every slice runs the CI gates from `app/` and leaves the suite green. The gates are `cargo fmt -- --check`, `cargo check --locked`, `cargo clippy --locked -- -D warnings`, and `cargo test --locked --no-fail-fast`. Each slice that adds a security rule also makes its planned break and watches the named test go red.
 
-1. **Tracer bullet: the rules, and every exposure site choosing.**
+1. **[DONE 2026-10-22, 9f088c6a] Tracer bullet: the rules, and every exposure site choosing.**
    - Add `warroom.rs`: `SeatId`, `AgentAccess`, `Rung`/`RungWord`, `Line`, `Chart`, `Reach`, `reach`, `may_write`, roles, risk, `Refusal`.
    - `PaneInfo.exposed` is deleted. Every site says which reach it means.
    - The saved leaf gains `seat` and `agents`, and the window gains `lines` and `ask_press_tokens`.
@@ -40,3 +40,16 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
    - Update `docs/mcp.md`, the docsite MCP page and `docs/security/terminal-input.md`.
    - Change the ctl refusal text.
    - Write a readable review page for Parker.
+
+## Progress
+
+- **Slice 1, done (9f088c6a).** `warroom.rs` is in. `TerminalView.agent_access` replaces the off-limits flag. `PaneInfo.exposed` and `mcp::should_expose`/`may_write` are deleted, and every site states its reach. Seats, lines and the press limit are saved.
+  - Gates: fmt, clippy `-D warnings`, and 2,731 tests passing (baseline 2,712), 15 ignored as before.
+  - Planned breaks, each made, caught and undone:
+    - *unseated pane asked*: `an_unseated_pane_is_read_and_never_asked`, `a_plain_shell_follows_the_window_switch` and the mcp seated test went red.
+    - *seated without a line read*: four tests went red.
+    - *off-limits ignored*: `an_off_limits_pane_is_hidden_from_every_line` went red.
+    - *read-only takes writes*: `may_write_refuses_a_read_only_pane_for_every_write_verb` went red.
+  - Two things found on the way:
+    - A test asking `get_pane_config` with the wrong target shape had passed its "hidden" half without testing anything. It was fixed before the commit.
+    - `list_panes`' wire field `exposed` became `reach`; see docs/mcp.md.
