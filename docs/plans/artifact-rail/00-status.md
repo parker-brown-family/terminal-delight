@@ -54,4 +54,6 @@ Cards for closed panes, other windows' agents, `beside` splits an agent asks for
 
 Both slices on `feat/artifact-rail`, one pull request into `dev/0.5.0`. Proved in a hidden rig window with stand-in agents (`reports/2026-10-22-artifact-rail-build.html` has the pictures): five cards, newest first; a real `open_document` from inside a pane answered `held` with the person's square left up; the bump and the dot on 📜; Down and Enter going to the second card's pane and opening its artifact; under Clean, CONFIG listing Artifacts and carrying the dot.
 
+Parker concurred all four build-time calls on the build page (Clean hides 📜; an exited agent's pane keeps its card; an agent's clip still plays over a square; a new card lands on top while the rail is open) and said *"Great - smashh it <3"*. Merged into dev/0.5.0 as 692c49e1 (PR 1109) and installed on session 1 the same afternoon as `td-692c49e1-0.5-dev`, session host kept (receipt: `~/Work/td-authority-lab/deploy-dev-692c49e1/RECEIPT.md`).
+
 Post-hoc difficulty: **6/10 held.** The one approval was not a rubber stamp: it moved the door to a new glyph and brought CLEAN's pattern with it, and it dropped a slice.
