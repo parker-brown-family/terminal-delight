@@ -22,7 +22,8 @@
     },
     "format": "passed",
     "mutations": "11 killed; baseline and restored application checks pass",
-    "native": "real optimized binary before final helper-version preflight; final binary rerun pending"
+    "native": "final optimized binary: exact own-pane note, existing policy, forged target, delegation, proposal and revocation passed",
+    "release": "passed"
   },
   "source_sha256": {
     "app/src/restricted.rs": "6e48c78aaa17a689a9ad8717c2932a92e00a7d3285978677632fac38457d7eae",
@@ -33,8 +34,15 @@
     "app/src/pane/behaviour.rs": "d081b13133763c26cdac2b2241309881acaaa79d3828bb4f7a84673f5cfe4bf5",
     "app/tests/restricted.rs": "670dfb21c43d7602397119fffe9776269a9e39f1c3be1d0d2325f915e93ea290"
   },
-  "ci": "pending push",
-  "integration": "pending dev/0.5.0",
+  "ci": {
+    "state_at_recording": "running",
+    "url": "https://github.com/parker-brown-family/terminal-delight/pull/1088/checks"
+  },
+  "integration": {
+    "target": "dev/0.5.0",
+    "actual_state": "see pull request merge receipt",
+    "url": "https://github.com/parker-brown-family/terminal-delight/pull/1088"
+  },
   "release_0_4": "unchanged",
   "live_deployment": "not yet applied",
   "helper": {
@@ -53,5 +61,6 @@
   ],
   "mutation_reproducer": "/home/parker/BROWN-FAMILY-SPORTS/Software/apes/projects/terminal-delight/scripts/restricted-boundary-mutations/restricted-boundary-mutations.py",
   "application_mutation_reproducer": "/tmp/td-authority-routing-mutations.py",
-  "native_reproducer": "/tmp/td-authority-native.sh"
+  "native_reproducer": "/tmp/td-authority-native.sh",
+  "binary_sha256": "eb2b1806dc765016beb798b634af434143af2e664d1f2bf8b3677c014f91c173"
 }
