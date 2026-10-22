@@ -122,7 +122,7 @@ def main():
     saved.write_text(head)
     desktop_keys = {"HOME", "USER", "LOGNAME", "PATH", "LANG", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "HYPRLAND_INSTANCE_SIGNATURE", "WGPU_BACKEND", "VK_ICD_FILENAMES", "LIBGL_ALWAYS_SOFTWARE"}
     env = {key: value for key, value in os.environ.items() if key in desktop_keys or key.startswith("LC_")}
-    env.update(TD_SESSION=session, TD_SKIN_ATLAS_HOME=str(out / "home"), TD_HOST_SHELL=str(fixture_shell), XDG_CONFIG_HOME=str(out / "config"), XDG_CACHE_HOME=str(out / "cache"), XDG_STATE_HOME=str(out / "state"), TMPDIR=str(out / "tmp"), SHELL=str(fixture_shell))
+    env.update(TD_SESSION=session, TD_MCP_SCRIPTED="1", TD_SKIN_ATLAS_HOME=str(out / "home"), TD_HOST_SHELL=str(fixture_shell), XDG_CONFIG_HOME=str(out / "config"), XDG_CACHE_HOME=str(out / "cache"), XDG_STATE_HOME=str(out / "state"), TMPDIR=str(out / "tmp"), SHELL=str(fixture_shell))
     env["PATH"] = str(out / "bin") + os.pathsep + env.get("PATH", os.defpath)
     env.update(fixture["environment"])
     launch = out / "launch.sh"

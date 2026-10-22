@@ -82,7 +82,7 @@ launch() {
   local session="docnotes$$$name" ws="special:tdnotes$$"
   local log="$OUT/$name.log" script="$OUT/launch-$name.sh"
   {
-    echo "export TD_SESSION=$session TD_DOCDEBUG=1 PATH=$OUT/bin:\$PATH XDG_CACHE_HOME=$OUT/cache XDG_STATE_HOME=$OUT/state"
+    echo "export TD_SESSION=$session TD_MCP_SCRIPTED=1 TD_DOCDEBUG=1 PATH=$OUT/bin:\$PATH XDG_CACHE_HOME=$OUT/cache XDG_STATE_HOME=$OUT/state"
     echo "exec $TD > $log 2>&1"
   } > "$script"
   hidden_launch "$session" "$ws" "$log" "sh $script"

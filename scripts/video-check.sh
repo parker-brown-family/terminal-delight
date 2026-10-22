@@ -74,7 +74,7 @@ WS="special:tdvideo$$"
 trap 'pkill -f "$OUT/bin/claude" 2>/dev/null; hidden_cleanup' EXIT
 LOG="$OUT/window.log"
 {
-  echo "export TD_SESSION=$SESSION PATH=$OUT/bin:\$PATH XDG_CACHE_HOME=$OUT/cache XDG_STATE_HOME=$OUT/state TD_DOCDEBUG=1"
+  echo "export TD_SESSION=$SESSION TD_MCP_SCRIPTED=1 PATH=$OUT/bin:\$PATH XDG_CACHE_HOME=$OUT/cache XDG_STATE_HOME=$OUT/state TD_DOCDEBUG=1"
   echo "export TD_MPV_AO=null PULSE_SERVER=unix:/nonexistent PIPEWIRE_REMOTE=/nonexistent ALSA_CONFIG_PATH=$OUT/empty-alsa.conf"
   echo "exec $TD > $LOG 2>&1"
 } > "$OUT/launch.sh"

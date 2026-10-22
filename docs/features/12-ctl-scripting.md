@@ -22,7 +22,7 @@ names every pane in it.
 | **Self-addressing** | A tab edit aims at the window it is *running in*, not whichever is on screen — an agent scripting its own tab hits its own window | #305 | — |
 | **Naming your own tab costs no arguments** | The zero-argument form targets the caller's own tab, and an op list survives being run twice | `ctl.rs` tab verbs | `terminal-delight ctl tab name <text>` |
 | **Verb parsed before pane resolution** | A typo in the verb is reported as a typo, not diagnosed as an environment problem | `ctl.rs` verb-parse ordering | — |
-| **MCP policy toggles + `mcp rpc`** | Flip the MCP read/write policy live, or hand a whole JSON-RPC line to the protocol handler | `ctl.rs` | `terminal-delight ctl mcp rpc '<json>'` |
+| **MCP policy toggles + `mcp rpc`** | Hand a JSON-RPC line to the handler. All six global MCP policy changes are refused unless the window was launched with `TD_MCP_SCRIPTED=1` (decision 0003) | `ctl.rs` | `terminal-delight ctl mcp rpc '<json>'` |
 | **`ping` / `paint status`** | Liveness and current overlay state, for bar widgets and scripts | `ctl.rs` | `terminal-delight ctl ping` |
 
 ## Boundary

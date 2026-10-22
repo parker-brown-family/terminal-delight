@@ -7,10 +7,12 @@ tools they call — and reacts, **without ever touching a keyboard**. It can als
 behind a second opt-in, **configure a pane's appearance** — dim the brightness,
 flatten the warp, restyle the whole wall at once.
 
-The hard line never moves: **no tool can write bytes to a terminal/PTY.**
-Sending input into a shell would be arbitrary code execution; that path does not
-exist. "Writes" here mean *appearance only* (the monitor grade), and they are
-disabled until you deliberately turn them on.
+The MCP tools in this build do not offer arbitrary shell input. "Writes" permit
+UI changes: appearance, notes, work objects and documents. They are disabled
+until you turn them on. Standard processes retain your account's authority:
+the separate control socket has scripted bench-input and command-launch routes,
+and the session host accepts terminal input from same-user clients. MCP switches
+and off-limits marks alone do not contain hostile Standard processes.
 
 ## Wiring it up
 
@@ -72,14 +74,65 @@ work, declare its own deliverable and post its own note, because the mark hides
 a pane from other agents rather than silencing the one inside it. The same menu
 row lifts it (**Let agents see this pane**). It is saved with the layout.
 
-Only a person sets or lifts it. There is no `ctl` verb and no MCP verb for it,
-because both answer agents. For the same reason the control socket's bench verbs
-— `ctl bench say`, `choose`, `submit` and `type`, which reach an agent's prompt
-from outside — never pick an off-limits pane. One socket path stays open and is
-named rather than pretended away: `ctl bench click|hover` drives the window's
-own pointer, and a pointer cannot be told from a hand. The gate is
+Only a person sets or lifts it. There is no `ctl` verb and no MCP verb for it.
+The control socket's bench-input verbs, synthetic click/hover, probe and scripted
+face selection refuse off-limits panes. This is enforced on selection and again
+at synthetic pointer dispatch. The MCP gate is
 `mcp::should_expose(cfg, is_agent, off_limits)` and its write half
 `mcp::may_write`; the idea is Splinterm's per-pane grant, with TD's own shape.
+
+### An offline command with less authority (0.5 development)
+
+Standard terminals keep ordinary account access. For code you want confined,
+explicitly start a Restricted command before its code or startup files run:
+
+```sh
+terminal-delight restricted run --workdir /path/to/project -- sh -c 'make test'
+```
+
+The installed `/usr/bin/bwrap` must be version 0.12.0 or newer and support `--bind-fd`, `--ro-bind-fd` and
+`--seccomp`; Linux 5.11+ descriptor cleanup and required namespaces must work and a private `/run/user/UID` runtime must exist or the
+command fails to start. Runtime overrides must stay inside that protected root. There is no Standard fallback. The command sees the
+chosen directory at `/work`, read-only system tools/libraries, temporary home
+and tmp, and its own process/network views. It receives no host home, saved TD
+state, credentials outside the chosen directory, desktop/native-agent services
+or host control sockets. New
+connections and addressed sends are blocked too, so a host socket added to the
+chosen directory after launch cannot bypass the policy. Only the preconnected TD
+channel is available. Programs that close inherited descriptors lose that channel
+and cannot reconnect; their ordinary offline work can continue.
+`--read-only` grants the project read-only. The directory must contain ordinary
+files, directories or symlinks, with no sockets, devices, pipes or nested mounts.
+Hard-linked work files and overlaps with protected account or configured state/config roots are refused. Root and set-ID invocation are unavailable in this qualified profile. Validate a dedicated
+copy when you do not want to share writable output with privileged consumers.
+
+This first profile supports offline, line-oriented shell/build commands. Child
+standard streams are pipes and output is filtered into plain UTF-8 text, so it
+cannot invoke terminal clipboard or graphics protocols. TUIs, GUI apps, online
+provider credentials and automatic agent handoffs are unavailable. The profile
+does not promise semantic safety, complete resource quotas or protection against
+malware outside it running with the host user's authority.
+
+`--td-note` optionally grants text notes on the calling pane, proven from host
+ancestry. It grants no other target or operation, and the existing MCP switches
+still apply. Inside the run:
+
+```sh
+terminal-delight restricted call '{"op":"note","text":"Build complete"}'
+terminal-delight restricted call '{"op":"status"}'
+terminal-delight restricted call '{"op":"request_access","reason":"Need external packages"}'
+```
+
+An access request is one pending proposal in status; it never changes access or
+creates approval authority. From an outside Standard terminal, use the printed
+run ID with `terminal-delight restricted status RUN` or
+`terminal-delight restricted revoke RUN`. Revoke acknowledges after an already
+accepted note finishes and denies subsequent notes. It does not stop file work
+or recall earlier effects. Wider or tighter filesystem/network scope needs an
+explicit new run. Exiting ends grants; a restart or replacement pane cannot
+inherit them. No pane is relabelled Restricted after it has run Standard code.
+
+The minimum helper version includes the safe setup-path resolution fix. CI builds the pinned upstream release from its verified SHA-256; TD never downloads helpers during a launch.
 
 ### An agent asks, a person answers
 
@@ -299,3 +352,9 @@ silence it.
   a person's `document_notes` carry no label. Every tool is classified in
   `mcp.rs::provenance`, and a tool without a line there fails a test. The field
   name follows Splinterm, whose MCP adapter labels terminal cells the same way.
+
+Publication is an authorized output channel, not a semantic safety guarantee.
+A note, terminal output or shared file can mislead an unrestricted reader that
+chooses to act on it. The profile has no automatic handoff operation; it cannot
+constrain the later actions of a Standard program reading its authorized output.
+Secrets already inside the chosen directory are granted content too.

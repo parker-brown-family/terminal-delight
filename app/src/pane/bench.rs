@@ -53,6 +53,11 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
+        // Defence at dispatch as well as selection: a queued pointer must not
+        // turn an off-limits pane's controls into operator input.
+        if self.off_limits {
+            return "err an off-limits pane takes no scripted pointer".into();
+        }
         // `p` is FLAT, as `bench probe` prints zones. The pane un-bends every
         // pointer through its tube, so the event has to arrive where the
         // glass SHOWS that flat point: invert `unwarp` by walking the error

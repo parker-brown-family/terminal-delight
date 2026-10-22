@@ -1,0 +1,57 @@
+{
+  "checks": {
+    "full": {
+      "passed": 2655,
+      "ignored": 13
+    },
+    "fallback": {
+      "passed": 2602,
+      "ignored": 13
+    },
+    "clippy": {
+      "finished": true,
+      "errors": false
+    },
+    "clippy-fallback": {
+      "finished": true,
+      "errors": false
+    },
+    "os-final": {
+      "passed": 3,
+      "ignored": 0
+    },
+    "format": "passed",
+    "mutations": "11 killed; baseline and restored application checks pass",
+    "native": "real optimized binary before final helper-version preflight; final binary rerun pending"
+  },
+  "source_sha256": {
+    "app/src/restricted.rs": "6e48c78aaa17a689a9ad8717c2932a92e00a7d3285978677632fac38457d7eae",
+    "app/src/restricted/seccomp.rs": "32009aa93869604724d98b54a0b7a68c27952c36e7a89a7f9ea03715f5f79bda",
+    "app/src/ctl.rs": "ac94b90e7a429b230428401505fbab8c38a5a74e0cd6b845db443cfd56ffaeed",
+    "app/src/main.rs": "bc63f66a30c1a1e2b01a6a7a517f552743bf5bd1dfd61fe23cd4621f1a8cb9e2",
+    "app/src/pane/bench.rs": "c4299656d67a5b1d0d68416028b74eaab3adaf3c1016a694ba02de04ae622bf5",
+    "app/src/pane/behaviour.rs": "d081b13133763c26cdac2b2241309881acaaa79d3828bb4f7a84673f5cfe4bf5",
+    "app/tests/restricted.rs": "670dfb21c43d7602397119fffe9776269a9e39f1c3be1d0d2325f915e93ea290"
+  },
+  "ci": "pending push",
+  "integration": "pending dev/0.5.0",
+  "release_0_4": "unchanged",
+  "live_deployment": "not yet applied",
+  "helper": {
+    "version": "0.12.0",
+    "upstream": "https://github.com/containers/bubblewrap/releases/tag/v0.12.0",
+    "tar_sha256": "9760d007363e3abba7c747489910f9f82d9fca53ba3bd3282e396fa3c97a3314"
+  },
+  "commands": [
+    "cargo fmt -- --check",
+    "cargo clippy --locked -- -D warnings",
+    "cargo clippy --locked --features core-alacritty -- -D warnings",
+    "cargo test --locked --no-fail-fast -- --test-threads=1",
+    "cargo test --locked --features core-alacritty --no-fail-fast -- --test-threads=1",
+    "cargo test --locked --test restricted -- --ignored --test-threads=1",
+    "cargo build --locked --release"
+  ],
+  "mutation_reproducer": "/home/parker/BROWN-FAMILY-SPORTS/Software/apes/projects/terminal-delight/scripts/restricted-boundary-mutations/restricted-boundary-mutations.py",
+  "application_mutation_reproducer": "/tmp/td-authority-routing-mutations.py",
+  "native_reproducer": "/tmp/td-authority-native.sh"
+}

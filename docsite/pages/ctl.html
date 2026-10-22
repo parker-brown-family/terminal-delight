@@ -1,19 +1,19 @@
 <script type="application/json" data-page>
 {
   "title": "ctl",
-  "description": "terminal-delight ctl sends one-line commands to a running window over its control socket: name and group tabs, flip faces, open documents, switch the MCP server, choose a skin. It never writes to a terminal.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "description": "terminal-delight ctl sends one-line commands to a running window over its control socket: name and group tabs, flip faces, open documents, turn the MCP server's switches off, choose a skin. Bench commands act on a pane's bench as a person would, so they can reach its agent, and adopt can open a pane running a command.",
+  "updated": "2026-10-21",
+  "trueOf": "main at d7cf383, plus the socket refusing to widen the MCP switches",
   "summary": "Script a running window"
 }
 </script>
 
 <section data-register="brief">
-<p class="lede">Every Terminal Delight window listens on its own control socket, and the same binary is the client. <code>terminal-delight ctl</code> lets a script, a keybinding, a status bar or an agent's own shell change a running window without touching any terminal in it.</p>
+<p class="lede">Every Terminal Delight window listens on its own control socket, and the same binary is the client. <code>terminal-delight ctl</code> lets a script, a keybinding, a status bar or an agent's own shell change a running window. Its bench commands act on a pane's bench as a person's typing and clicks would, so they can reach the agent in it, and <code>adopt</code> can open a new pane running a command.</p>
 <pre class="cmd"><code>terminal-delight ctl tab name "deploy"
-terminal-delight ctl mcp on
+terminal-delight ctl mcp writes off
 terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
-<p>It names and groups tabs, turns panes to their workbench, opens documents, switches the <a href="/mcp">MCP server</a>, picks a skin, and hands a new terminal to a window. Each command gets one line back, <code>ok</code> or <code>err</code> with the reason. By default it talks to the windows on your active Hyprland workspace, or the window you're running in for tab commands; <code>--all</code> or <code>--pid</code> choose others.</p>
+<p>It names and groups tabs, turns panes to their workbench, opens documents, turns the <a href="/mcp">MCP server</a>'s switches off, picks a skin, and hands a new terminal to a window. Each command gets one line back, <code>ok</code> or <code>err</code> with the reason. By default it talks to the windows on your active Hyprland workspace, or the window you're running in for tab commands; <code>--all</code> or <code>--pid</code> choose others.</p>
 <p class="invite">Technical lists every command and its reply.</p>
 </section>
 
@@ -53,7 +53,7 @@ terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
     <tr><td><code>doc beside &lt;path&gt;</code></td><td></td><td>Open it in a pane beside the focused one.</td></tr>
     <tr><td><code>doc close</code>, <code>doc scroll &lt;pixels&gt;</code></td><td></td><td>Close the floating document; scroll a document pane.</td></tr>
     <tr><td><code>mcp status</code></td><td><code>enabled=on writes=off expose=agents events=on</code></td><td></td></tr>
-    <tr><td><code>mcp on|off</code>, <code>mcp writes on|off</code>, <code>mcp expose agents|all</code></td><td><code>ok</code></td><td>The MCP switches, saved with the session.</td></tr>
+    <tr><td><code>mcp on|off</code>, <code>mcp writes on|off</code>, <code>mcp expose all|agents</code></td><td><code>err</code> unless scripted</td><td>In 0.5 development all global mutations require the MCP control panel or a window launched with <code>TD_MCP_SCRIPTED=1</code>. Disabling other workloads also requires that operator authority. Agents propose wider access through <code>request_access</code>.</td></tr>
     <tr><td><code>mcp rpc &lt;json&gt;</code></td><td>the JSON-RPC answer</td><td>One MCP call. <code>mcp-none</code> for a notification.</td></tr>
     <tr><td><code>adopt --cwd &lt;dir&gt; [--run &lt;cmd&gt;]</code></td><td><code>ok</code></td><td>Open a new pane in a directory, running a command. Used by <code>td-send</code>, which moves an Omarchy terminal tile into a pane.</td></tr>
     <tr><td><code>tab name [&lt;text&gt;]</code></td><td><code>ok 1</code></td><td>Name your own tab; no text clears it.</td></tr>
@@ -79,7 +79,7 @@ terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
 <pre><code>terminal-delight ctl tabs '[{"op":"name","pane":4121,"name":"api"},{"op":"group","pane":4121,"group":"backend","color":"#3ec6d1"}]'</code></pre>
 
 <h3>What would prove this wrong</h3>
-<p>No <code>ctl</code> command writes bytes into a terminal's input except <code>bench say</code> and <code>bench type</code>, which go to the agent through the bench on purpose. Any other command that does is a bug.</p>
+<p>Two kinds of <code>ctl</code> command reach a terminal's input, both on purpose. The bench commands act on a pane's bench as a person would: <code>bench say</code> sends a line to its agent, <code>bench choose</code> and <code>bench submit</code> press its answers, and <code>bench click</code> presses whatever is under the point, which can answer, pause or end the agent. <code>adopt</code> with <code>--run</code> opens a new pane running a command. <code>bench type</code> only fills the bench's composer. Any other route into a terminal is a bug, and so is any of these reaching a pane marked off-limits to agents.</p>
 </section>
 
 <ol data-sources>
