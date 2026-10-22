@@ -482,6 +482,23 @@ impl Workspace {
                     .text_color(th.accent.alpha(0.85))
                     .child(SharedString::from(ui.wr_hint.to_string())),
             )
+            .children(self.ask_numbers.as_ref().map(|n| {
+                div()
+                    .text_size(sk.text_px(8.5))
+                    .text_color(if n.unlined_answered > 0 {
+                        th.ansi[1]
+                    } else {
+                        th.text.alpha(0.6)
+                    })
+                    .child(SharedString::from(lang::fill(
+                        ui.wr_asks,
+                        &[
+                            ("cheap", &n.cheap_answers.to_string()),
+                            ("copies", &n.copy_answers.to_string()),
+                            ("unlined", &n.unlined_answered.to_string()),
+                        ],
+                    )))
+            }))
             .child(
                 div()
                     .flex()
@@ -702,6 +719,112 @@ impl Workspace {
                     }),
                 ),
         )
+    }
+
+    /// An agent's question for another (`ask_agent`), decided here because the
+    /// chart and the seat facts are the window's. A line from the asker's seat
+    /// must reach as far as ask (`warroom::reach`); the answer is what the
+    /// window can already show, and every ask — refused or answered — leaves
+    /// one line in the record, without its words.
+    pub(crate) fn ask_bridge(
+        &mut self,
+        req: &mcp::AskRequest,
+        cx: &mut Context<Self>,
+    ) -> mcp::AskReply {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        self.ask_seq = (self.ask_seq + 1).max(now_ms);
+        let id = warroom::AskId(self.ask_seq);
+        let caller = self.leaf_by_pane_id(req.caller_pane, cx);
+        let target = self.leaf_by_shell_pid(req.target, cx);
+        let from = caller.as_ref().and_then(|l| l.read(cx).seat);
+        let to = target.as_ref().and_then(|l| l.read(cx).seat);
+        let line = from
+            .zip(to)
+            .and_then(|(f, t)| self.chart.line(f, t).cloned());
+        let via = match &line {
+            Some(l) if l.is_bypass() => "bypass",
+            Some(_) => "line",
+            None => "none",
+        };
+        let mut entry = askrecord::Entry {
+            id,
+            at_ms: now_ms,
+            from,
+            to,
+            via: via.into(),
+            stage: "refused".into(),
+            refusal: None,
+            question_len: req.question.chars().count(),
+            question_sha256: askrecord::fingerprint(&req.question),
+            program: None,
+            model: None,
+            reads_tokens: None,
+            tokens_read: None,
+            cost_usd: None,
+        };
+        let refused = |entry: &mut askrecord::Entry, r: warroom::Refusal| {
+            entry.refusal = serde_json::to_value(&r)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string));
+            Err(r)
+        };
+        let decided: mcp::AskReply = (|| {
+            let (Some(caller), Some(target)) = (caller.as_ref(), target.as_ref()) else {
+                return refused(&mut entry, warroom::Refusal::Gone);
+            };
+            let (c, t) = (caller.read(cx), target.read(cx));
+            let q = req.question.chars().count();
+            let same = caller.entity_id() == target.entity_id();
+            if let Err(r) =
+                warroom::decide_ask(&self.mcp, &self.chart, &c.party(), &t.party(), same, q)
+            {
+                return refused(&mut entry, r);
+            }
+            let vit = t.shell_pid().and_then(|pid| self.agent_vitals.get(&pid));
+            let project = self
+                .tab_index_of(target.entity_id())
+                .and_then(|ti| self.place_of(ti).project)
+                .and_then(|id| self.project_at(id))
+                .and_then(|p| p.name.clone());
+            let seat = warroom::SeatView {
+                title: t
+                    .name
+                    .clone()
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| t.shown_title()),
+                project,
+                role: t.seat.map(|s| self.chart.role_of(s)),
+                state: t.agent_status().state.label_in(self.lang).to_string(),
+                model: vit.and_then(|v| v.model.clone()),
+                size: vit.and_then(|v| v.tokens),
+            };
+            entry.model = seat.model.clone();
+            entry.program = Some(t.mode.label().to_string());
+            entry.stage = "cheap".into();
+            Ok(warroom::CheapAnswer {
+                ask_id: id,
+                seat,
+                summary: t.bench.latest_response().map(|r| warroom::Summary {
+                    brief: r.brief.clone(),
+                    layman: r.layman.clone(),
+                }),
+                note: t.saved_note().map(|n| match n.title {
+                    Some(title) if !n.text.is_empty() => format!("{title} — {}", n.text),
+                    Some(title) => title,
+                    None => n.text,
+                }),
+                via: via.into(),
+            })
+        })();
+        let record = askrecord::path_for(crate::instance::key());
+        if let Err(e) = askrecord::append(&record, &entry) {
+            eprintln!("[war-room] the ask record could not be written: {e}");
+        }
+        self.ask_numbers = askrecord::numbers(&record).ok();
+        decided
     }
 
     /// Close the War Room and let go of any half-drawn line.

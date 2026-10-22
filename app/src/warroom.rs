@@ -414,6 +414,132 @@ pub fn reach(
     }
 }
 
+/// One ask's name in the record and, for a copy, in `ask_answer`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AskId(pub u64);
+
+/// Every way an ask is turned down, by name, so the asking agent and the
+/// record both say why rather than "failed".
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Refusal {
+    /// The window's MCP switch is off.
+    McpOff,
+    /// No line from the asker's seat reaches as far as ask — including an
+    /// asker or a target nobody seated (no prompt without a line).
+    NoLine,
+    /// The target pane is off-limits to every agent.
+    OffLimits,
+    /// The target is not an agent: there is nothing to ask.
+    NotAnAgent,
+    /// The asker named itself.
+    OwnPane,
+    /// The question is empty or longer than [`QUESTION_MAX_CHARS`].
+    BadQuestion,
+    /// The asker or the target is not in this window.
+    Gone,
+}
+
+impl Refusal {
+    /// The sentence the asking agent reads.
+    pub fn why(&self) -> &'static str {
+        match self {
+            Self::McpOff => "MCP is switched off in this window",
+            Self::NoLine => "no line from your seat reaches this pane as far as ask; only a person draws one, in the War Room, or grants a bypass on the rail",
+            Self::OffLimits => "that pane is off-limits to agents",
+            Self::NotAnAgent => "that pane is not running an agent",
+            Self::OwnPane => "that is your own pane",
+            Self::BadQuestion => "the question is empty or longer than 4,000 characters",
+            Self::Gone => "the asking pane or the pane asked is not in this window",
+        }
+    }
+}
+
+/// Whether an ask goes through, and along what — `"line"` or `"bypass"` —
+/// or which refusal stops it, checked in this order: the asker named itself,
+/// a question that is empty or too long, MCP off, an off-limits pane, a pane
+/// that is not an agent, and no line from the asker's seat reaching ask.
+pub fn decide_ask(
+    cfg: &McpConfig,
+    chart: &Chart,
+    caller: &Party,
+    target: &Party,
+    same_pane: bool,
+    question_chars: usize,
+) -> Result<&'static str, Refusal> {
+    if same_pane {
+        return Err(Refusal::OwnPane);
+    }
+    if question_chars == 0 || question_chars > QUESTION_MAX_CHARS {
+        return Err(Refusal::BadQuestion);
+    }
+    if !cfg.enabled {
+        return Err(Refusal::McpOff);
+    }
+    if target.access.is_off_limits() {
+        return Err(Refusal::OffLimits);
+    }
+    if !target.is_agent {
+        return Err(Refusal::NotAnAgent);
+    }
+    if reach(cfg, chart, Some(caller), target, false) < Reach::Ask {
+        return Err(Refusal::NoLine);
+    }
+    let line = caller
+        .seat
+        .zip(target.seat)
+        .and_then(|(f, t)| chart.line(f, t));
+    Ok(if line.is_some_and(Line::is_bypass) {
+        "bypass"
+    } else {
+        "line"
+    })
+}
+
+/// The longest question an ask carries.
+pub const QUESTION_MAX_CHARS: usize = 4_000;
+
+/// What a seat shows, and what the cheap answer carries about it. Unknown is
+/// `None` all the way to the wire — never a 0 size or an empty model.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SeatView {
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<Role>,
+    /// The agent counter's word for it: working, needs you, done, idle, or
+    /// unreadable.
+    pub state: String,
+    pub model: Option<String>,
+    /// The agent's current context in tokens: also what one copy of it would
+    /// read on every model call.
+    pub size: Option<u64>,
+}
+
+/// The agent's own latest summary for a person: its plain reading, and the
+/// two-sentence brief when it wrote one.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Summary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brief: Option<String>,
+    pub layman: String,
+}
+
+/// The cheap answer: what the window can already show about the agent asked,
+/// before anyone starts a copy of it (Gate 1, question 2). The protocol layer
+/// adds the recent tool calls.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CheapAnswer {
+    pub ask_id: AskId,
+    pub seat: SeatView,
+    pub summary: Option<Summary>,
+    pub note: Option<String>,
+    /// `line` or `bypass`: what let the ask through.
+    pub via: String,
+}
+
 /// The window-side filter for a walk that cannot know who is asking (the
 /// grep walk, the agent wall's count): the pane's position and the window's
 /// switches only. The protocol layer narrows it further by the caller's lines.
@@ -800,6 +926,63 @@ mod tests {
         ];
         let placed = layout(&seats, &chart);
         assert_eq!(placed.len(), 2, "both seats are drawn");
+    }
+
+    #[test]
+    fn an_ask_is_refused_by_name_in_order() {
+        let mut chart = Chart::default();
+        line(&mut chart, 1, 2, Rung::Ask);
+        line(&mut chart, 1, 3, Rung::Read);
+        chart.grant_bypass(SeatId(1), SeatId(4), 3);
+        let me = agent(Some(1), AgentAccess::Open);
+        let worker = agent(Some(2), AgentAccess::Open);
+        let decide = |cfg: &McpConfig, t: &Party, same: bool, q: usize| {
+            decide_ask(cfg, &chart, &me, t, same, q)
+        };
+        assert_eq!(decide(&on(), &worker, false, 12), Ok("line"));
+        assert_eq!(
+            decide(&on(), &agent(Some(4), AgentAccess::Open), false, 12),
+            Ok("bypass")
+        );
+        assert_eq!(decide(&on(), &worker, true, 12), Err(Refusal::OwnPane));
+        assert_eq!(decide(&on(), &worker, false, 0), Err(Refusal::BadQuestion));
+        assert_eq!(
+            decide(&on(), &worker, false, QUESTION_MAX_CHARS + 1),
+            Err(Refusal::BadQuestion)
+        );
+        assert_eq!(
+            decide(&McpConfig::default(), &worker, false, 12),
+            Err(Refusal::McpOff)
+        );
+        assert_eq!(
+            decide(&on(), &agent(Some(2), AgentAccess::OffLimits), false, 12),
+            Err(Refusal::OffLimits)
+        );
+        let shell = Party {
+            seat: Some(SeatId(2)),
+            is_agent: false,
+            access: AgentAccess::Open,
+        };
+        assert_eq!(decide(&on(), &shell, false, 12), Err(Refusal::NotAnAgent));
+        assert_eq!(
+            decide(&on(), &agent(Some(3), AgentAccess::Open), false, 12),
+            Err(Refusal::NoLine),
+            "a read line does not reach ask"
+        );
+        assert_eq!(
+            decide(&on(), &agent(None, AgentAccess::Open), false, 12),
+            Err(Refusal::NoLine),
+            "no prompt without a line"
+        );
+        assert_eq!(
+            decide(&on(), &agent(Some(9), AgentAccess::Open), false, 12),
+            Err(Refusal::NoLine)
+        );
+        assert_eq!(
+            decide(&on(), &agent(Some(2), AgentAccess::ReadOnly), false, 12),
+            Ok("line"),
+            "read-only caps at ask"
+        );
     }
 
     #[test]

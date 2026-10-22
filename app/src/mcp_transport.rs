@@ -61,6 +61,9 @@ enum UiReq {
     /// workspace has handled the pane's request — after this tick — so the
     /// sender travels with the request rather than being answered here.
     Open(mcp::OpenRequest, mpsc::Sender<String>),
+    /// `ask_agent`: an agent's question for another, decided and answered by
+    /// the window, which holds the War Room's chart and the seat facts.
+    Ask(mcp::AskRequest, mpsc::Sender<mcp::AskReply>),
 }
 
 /// Build a uniform refusal for a whole batch (used when the UI is gone/wedged).
@@ -222,6 +225,17 @@ pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::
                             alive = false;
                         }
                     }
+                    Ok(UiReq::Ask(request, reply)) => {
+                        match this.update(cx, |ws, cx| ws.ask_bridge(&request, cx)) {
+                            Ok(answer) => {
+                                let _ = reply.send(answer);
+                            }
+                            Err(_) => {
+                                let _ = reply.send(Err(crate::warroom::Refusal::Gone));
+                                alive = false;
+                            }
+                        }
+                    }
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => return, // reader gone
                 }
@@ -379,13 +393,22 @@ pub(crate) fn respond_as(
                     Err(_) => Err("terminal-delight UI not ready".to_string()),
                 }
             };
-            mcp::handle_line_full(
+            let ask = |request: &mcp::AskRequest| -> mcp::AskReply {
+                let (tx, rx) = mpsc::channel();
+                if !bridge_send(UiReq::Ask(request.clone(), tx)) {
+                    return Err(crate::warroom::Refusal::Gone);
+                }
+                rx.recv_timeout(SNAPSHOT_BUDGET)
+                    .unwrap_or(Err(crate::warroom::Refusal::Gone))
+            };
+            mcp::handle_line_asking(
                 line,
                 &snap,
                 |p, n| tail_for(p, &snap.panes, n, &home),
                 apply,
                 search,
                 open,
+                ask,
             )
         }
         Err(RecvTimeoutError::Disconnected) | Err(RecvTimeoutError::Timeout) => {

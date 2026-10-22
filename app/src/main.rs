@@ -29,6 +29,7 @@
 
 mod access;
 mod art;
+mod askrecord;
 mod attention;
 mod bell;
 mod benchdraw;
@@ -4542,6 +4543,12 @@ struct Workspace {
     /// The seat a person clicked first in the War Room; a click on another
     /// seat draws a line from this one to it.
     war_room_pick: Option<warroom::SeatId>,
+    /// The last ask id handed out; each ask's id is later than the last and
+    /// than the clock, so ids stay unique across window restarts.
+    ask_seq: u64,
+    /// The ask record read back: Gate 1's two numbers, shown in the War Room.
+    /// `None` until the record is first read, which is not zero asks.
+    ask_numbers: Option<askrecord::Numbers>,
     /// The menu-bar SIZE popover, raised by the ▭ button in the mother bar. The
     /// scrub track used to live inline on that row; on a thin tile it was the
     /// widest thing there and had nowhere to go, so it moved behind a button.
@@ -6224,6 +6231,8 @@ impl Workspace {
             mcp_menu: false,
             war_room: false,
             war_room_pick: None,
+            ask_seq: 0,
+            ask_numbers: None,
             scale_menu: false,
             more_menu: false,
             ui_cfg_panes: false,
@@ -23833,6 +23842,8 @@ impl Workspace {
                     cx.stop_propagation();
                     ws.mcp_menu = false;
                     ws.war_room = true;
+                    ws.ask_numbers =
+                        askrecord::numbers(&askrecord::path_for(crate::instance::key())).ok();
                     cx.notify();
                 }),
             )
@@ -24417,6 +24428,21 @@ impl Workspace {
     }
 
     /// The live pane whose shell has this pid — the number agents name panes by.
+    /// The leaf showing host pane `pane`, the id an MCP caller is verified by.
+    fn leaf_by_pane_id(&self, pane: u64, cx: &App) -> Option<Entity<TerminalView>> {
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            if let Some(l) = leaves
+                .into_iter()
+                .find(|l| l.read(cx).pane_id() == Some(pane))
+            {
+                return Some(l.clone());
+            }
+        }
+        None
+    }
+
     fn leaf_by_shell_pid(&self, pid: u32, cx: &App) -> Option<Entity<TerminalView>> {
         for tab in &self.tabs {
             let mut leaves = vec![];
@@ -33539,6 +33565,8 @@ impl Render for Workspace {
                         ws.more_menu = false;
                         ws.mcp_menu = false;
                         ws.war_room = true;
+                        ws.ask_numbers =
+                            askrecord::numbers(&askrecord::path_for(crate::instance::key())).ok();
                         cx.notify();
                     }),
                 ))

@@ -5785,6 +5785,7 @@ dependencies = [
  "rustix-openpty",
  "serde",
  "serde_json",
+ "sha2",
  "toml 0.8.23",
  "unicode-segmentation",
  "unicode-width",
