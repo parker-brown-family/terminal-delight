@@ -367,6 +367,26 @@ impl Workspace {
     }
 
     fn build_coordination_rows(&self) -> Vec<Row> {
+        if skin_atlas_home().is_some()
+            && std::env::var("TD_SKIN_SCENE").as_deref() == Ok("coordination")
+        {
+            return [
+                ("Native fixture: merge conflict", Some(Severity::Alert)),
+                (
+                    "Native fixture: shared working folder",
+                    Some(Severity::Caution),
+                ),
+                ("Native fixture: unchecked project", None),
+            ]
+            .into_iter()
+            .map(|(title, severity)| {
+                let mut row = Row::new(RowKind::Card, title)
+                    .detail("Fictional data for checking the native material.");
+                row.severity = severity;
+                row
+            })
+            .collect();
+        }
         let l = self.lang;
         let t = l.strings().gc;
         let mut rows = vec![];
@@ -1347,6 +1367,9 @@ pub(crate) fn card_chrome(
         .border_l(px(if selected { 4. * s } else { 3. * s }))
         .bg(face.alpha(if selected { 0.15 } else { 0.055 }))
         .hover(move |st| st.bg(face.alpha(0.13)))
+        .when(sk.m.frost > 0., |el| {
+            sk.finish_group_edged(el, ink.alpha(if selected { 1. } else { 0.45 }))
+        })
         .px(px(10. * s))
         .py(px(7. * s))
         .flex()

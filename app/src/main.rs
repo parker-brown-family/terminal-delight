@@ -12618,7 +12618,7 @@ impl Workspace {
                     }),
                 )
                 .child(
-                    sk.panel()
+                    sk.spine_panel()
                         .id("bar-menu-panel")
                         .absolute()
                         .left(at.x)
@@ -16317,6 +16317,7 @@ impl Workspace {
                     .rounded(sk.radius())
                     .border_1()
                     .border_color(th.text.alpha(0.12))
+                    .when(sk.m.frost > 0., |d| sk.finish_group(d))
                     .child(
                         div()
                             .flex()
@@ -16730,6 +16731,7 @@ impl Workspace {
                 } else {
                     th.text.alpha(0.12)
                 })
+                .when(sk.m.frost > 0., |d| sk.action(d, on))
                 .child(
                     div()
                         .text_size(sk.text_px(15.))
@@ -25053,6 +25055,7 @@ impl Workspace {
                 })
                 .cursor_pointer()
                 .hover(move |st| st.bg(sk.ink.ink.alpha(0.12)))
+                .when(sk.m.frost > 0., |d| sk.finish_group_edged(d, ink))
                 .child(head)
                 .child(
                     div()
@@ -25375,7 +25378,7 @@ impl Workspace {
             );
         }
 
-        sk.panel()
+        sk.spine_panel()
             .child(list)
             // One click for the whole queue, resolved against the
             // flat boxes after the curve is undone.
@@ -27969,6 +27972,7 @@ impl Render for Workspace {
                     // The rail fills in live as the panes hand things over, so
                     // raised on the first frame it is first photographed empty.
                     "artifacts" => self.art_open(cx),
+                    "coordination" => self.eng_table = true,
                     "notifications" => self.notif_menu = true,
                     "bug" => self.bug_menu = true,
                     "language" => {
@@ -31840,7 +31844,10 @@ impl Render for Workspace {
                             }),
                         )
                         .map(|d| {
-                            sk.finish_edged(d, kind_col.alpha(if live_glow { 0.42 } else { 0.32 }))
+                            sk.finish_group_edged(
+                                d,
+                                kind_col.alpha(if live_glow { 0.42 } else { 0.32 }),
+                            )
                         })
                         .child(
                             div()
@@ -31854,7 +31861,8 @@ impl Render for Workspace {
                                 .border_1()
                                 .border_color(kind_col.alpha(0.3))
                                 .bg(sk.region_face(card_bg))
-                                .children(sk.grain())
+                                .when(sk.m.frost > 0., |d| d.bg(gpui::transparent_black()))
+                                .children((sk.m.frost <= 0.).then(|| sk.grain()).flatten())
                                 // TITLE BAND: crest · name · status pip · type tag
                                 .child(
                                     div()
@@ -32915,6 +32923,7 @@ impl Render for Workspace {
                         .shadow(agent_card_shadows(dead_glow, false, th.grade.phosphor))
                         .cursor_pointer()
                         .hover(move |s| s.border_color(dead_hover))
+                        .when(sk.m.frost > 0., |d| sk.finish_group_edged(d, dead_border))
                         // ---- content column: a dim dead-dot, the kind chip, the
                         // title, then the meta line. No full-height pill and no
                         // stretched chrome — it reads as the same family as the

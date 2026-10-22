@@ -1,0 +1,101 @@
+{
+  "binary_sha256": "06136ed5a757aee3e352123a6fb8601c9ce7bbd31f9716adffc622ee8f0cecf8",
+  "method": "ImageMagick alpha reads from unmodified native PNGs; samples are physical capture pixels",
+  "samples": [
+    {
+      "scene": "artifacts",
+      "foreground_pixel": [
+        2080,
+        1386
+      ],
+      "base_pixel": [
+        2080,
+        1323
+      ],
+      "alpha": "foreground=0.737255 base=1"
+    },
+    {
+      "scene": "coordination",
+      "foreground_pixel": [
+        1280,
+        320
+      ],
+      "base_pixel": [
+        1040,
+        240
+      ],
+      "alpha": "foreground=0.764706 base=1"
+    },
+    {
+      "scene": "plugins",
+      "foreground_pixel": [
+        1120,
+        824
+      ],
+      "base_pixel": [
+        1120,
+        736
+      ],
+      "alpha": "foreground=0.721569 base=1"
+    },
+    {
+      "scene": "rail",
+      "foreground_pixel": [
+        1400,
+        200
+      ],
+      "base_pixel": [
+        1420,
+        100
+      ],
+      "alpha": "foreground=0.760784 base=1"
+    },
+    {
+      "scene": "recover",
+      "foreground_pixel": [
+        500,
+        250
+      ],
+      "base_pixel": [
+        1000,
+        700
+      ],
+      "alpha": "foreground=0.737255 base=1"
+    },
+    {
+      "scene": "bug",
+      "foreground_pixel": [
+        900,
+        510
+      ],
+      "base_pixel": [
+        940,
+        445
+      ],
+      "alpha": "foreground=0.764706 base=1"
+    },
+    {
+      "scene": "tray",
+      "foreground_pixel": [
+        1100,
+        870
+      ],
+      "base_pixel": [
+        1013,
+        870
+      ],
+      "alpha": "foreground=0.756863 base=1"
+    }
+  ],
+  "visual_reviewed": [
+    "artifacts",
+    "coordination",
+    "plugins",
+    "rail",
+    "recover",
+    "bug",
+    "tray",
+    "wall",
+    "notifications"
+  ]
+}
