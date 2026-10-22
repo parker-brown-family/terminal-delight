@@ -1198,7 +1198,13 @@ impl Skin {
     /// A grouping inside an overlay. Its backing stays independent of the
     /// overlay's opaque frame, so the glass never changes the frame's material.
     pub fn finish_group<E: Styled + ParentElement>(&self, d: E) -> E {
-        if let Some(glass) = self.smoked_backing(self.ink.edge_strong, false) {
+        self.finish_group_edged(d, self.ink.edge_strong)
+    }
+
+    /// A foreground grouping whose edge carries selection, severity or identity.
+    /// Apply before adding content, as with `finish_group`.
+    pub fn finish_group_edged<E: Styled + ParentElement>(&self, d: E, edge: Hsla) -> E {
+        if let Some(glass) = self.smoked_backing(edge, false) {
             self.chrome(d)
                 .relative()
                 .bg(gpui::transparent_black())
@@ -1206,7 +1212,7 @@ impl Skin {
                 .shadow(Vec::new())
                 .child(glass)
         } else {
-            self.finish(d)
+            self.finish_edged(d, edge)
         }
     }
 
@@ -1227,6 +1233,13 @@ impl Skin {
     /// its edge in `edge`; every other strategy behaves exactly as `finish`.
     pub fn finish_edged<E: Styled + ParentElement>(&self, d: E, edge: Hsla) -> E {
         let d = self.chrome(d);
+        if let Some(glass) = self.smoked_backing(edge, true) {
+            return d
+                .bg(gpui::transparent_black())
+                .border_color(gpui::transparent_black())
+                .shadow(Vec::new())
+                .child(glass);
+        }
         if self.is_cut() {
             // A floating region: the caller's fill, border and rectangular
             // shadow give way to one cut plate with a hard shadow of the same

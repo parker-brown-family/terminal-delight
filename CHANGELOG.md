@@ -59,10 +59,11 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added for 0.5.0 development
 
-- **Ops groupings use smoked glass.** Overlay frames stay solid while their
-  groupings reveal the desktop through the compositor's blur. The left spine
-  diffuses its own grid beneath sharp labels. Fullscreen, 100% opacity and an
-  unavailable compositor opacity reading keep the grouping faces solid.
+- **Ops uses two glass layers.** Overlay backings soften their own grid with
+  the same smoked treatment as the left spine. Foreground groupings and cards,
+  including artifacts, coordination findings, plugins and agents, reveal the
+  desktop through the compositor's blur. Fullscreen, 100% opacity and an
+  unavailable compositor opacity reading keep those foreground faces solid.
 - **An agent never replaces a floating square you have open, and 📜 lists
   what every agent handed over.** An agent's `open_document` over a square
   that is already up, whatever it shows, is held: the square stays, the file
