@@ -10,7 +10,11 @@ authenticate clients, or is it local-socket trust only? curious whether a rogue
 process in a pane could reach the relay and flip the write-exposure toggle"*
 
 Three of the MCP switches decide what agents may do: the server itself, writes,
-and whether plain shells are shown to them. Since pull request 957 an agent that
+and whether plain shells are shown to them. Writes are UI changes: with them an
+agent can restyle panes, leave notes on them, and present or open documents,
+but not type into a terminal. If writes ever gate typing into another agent, as
+the native agent-to-agent handoff branch proposes, the stakes here change with
+them. Since pull request 957 an agent that
 wants one of them turned on asks with `request_access`, the ask waits on the
 attention rail, and only a person's Yes answers it. A test keeps the MCP server
 and the control socket from naming the functions that answer an ask.
@@ -69,13 +73,15 @@ window launched afterwards. Neither can be closed from inside the program while
 every caller is the same user, because the file and the launch are the user's
 own.
 
-Two neighbours stay as 0002 left them. Three bench verbs reach an agent pane
-showing its workbench without asking anybody: `ctl bench say` sends a line
-through its composer, and `ctl bench choose` and `ctl bench submit` send an
-answer to the question on its bench, as keys into a live picker or as a
-`[workbench]` line. Each delivers only while that pane is on screen, and
-flashes when it does. And the pane a caller names in `mcp from` is still taken
-on its word.
+Two neighbours stay as 0002 left them. The bench commands act on an agent
+pane's bench without asking anybody: `ctl bench say` sends a line through its
+composer, `ctl bench choose` and `ctl bench submit` press its answers, and
+`ctl bench click` presses whatever is under the point, pause and end agent
+included. A press reaches the agent as keys into a live picker or as a
+`[workbench]` line, only while that pane is on screen, and flashes when it
+does. All of them but `bench click` refuse a pane marked off-limits; that gap is
+issue 1090 — ctl bench click can press an off-limits pane's bench. And the pane
+a caller names in `mcp from` is still taken on its word.
 
 ## When this expires
 
