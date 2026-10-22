@@ -33,6 +33,7 @@ mod attention;
 mod bell;
 mod benchdraw;
 mod benchstore;
+mod briefhook;
 mod briefkit;
 mod channel;
 mod coordination;
@@ -43668,6 +43669,10 @@ Usage:
                                  (a TDSP document, or prose with a ```td block;
                                  reads stdin when no file is given; --catalogue
                                  prints the kinds this build renders)
+  terminal-delight briefing      print the briefing a LAUNCH AGENT pane gets, for this pane
+  terminal-delight briefing hook [status|on|off]
+                                 have Claude Code run that at the start of every session,
+                                 so an agent you start by typing is told too
   terminal-delight serve --session <key>
                                  run the session host that owns this session's terminals
 
@@ -43894,6 +43899,10 @@ enum Verb {
     /// back exactly what was there before (see [`defaultterm`]).
     DefaultTerminal,
     Restricted,
+    /// Print the briefing a LAUNCH AGENT pane gets, for an agent the person
+    /// started by typing — what Claude Code's `SessionStart` hook runs — and
+    /// put that hook in or take it out (see [`briefhook`]).
+    Briefing,
 }
 
 /// Whether the broken-pipe gate in `tests/broken_pipe.rs` can run a verb — and
@@ -44016,6 +44025,14 @@ const VERBS: &[VerbSpec] = &[
         typed: true,
         piping: Piping::Ungated(
             "on and off write the person's ~/.config/xdg-terminals.list, and status reads it — a suite must not depend on that file",
+        ),
+    },
+    VerbSpec {
+        word: "briefing",
+        verb: Verb::Briefing,
+        typed: true,
+        piping: Piping::Ungated(
+            "prints only inside a Terminal Delight pane, which a suite is not, and its hook verbs read and write the person's ~/.claude/settings.json",
         ),
     },
 ];
@@ -44177,6 +44194,7 @@ fn main() {
                 Verb::Surface => surfacefeed::run_cli(&argv[2..]),
                 Verb::Conversation => benchstore::run_cli(&argv[2..]),
                 Verb::DefaultTerminal => defaultterm::run_cli(&argv[2..]),
+                Verb::Briefing => briefhook::run_cli(&argv[2..]),
             };
             std::process::exit(code);
         }

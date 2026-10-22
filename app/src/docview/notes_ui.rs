@@ -235,6 +235,9 @@ pub enum Zone {
     Gone,
     /// Anywhere on the bar that is not a button.
     Bar,
+    /// The first-time line drawn above an empty bar. A press on it is the
+    /// bar's: taken, and never passed to the page underneath.
+    Cue,
     /// Anywhere inside the note box.
     Box,
     /// The draft being written, inside the box. Pressing it does what
@@ -1109,6 +1112,42 @@ impl NotesLayer {
         !self.pending.is_empty() && self.can_save().is_ok()
     }
 
+    /// The first-time line drawn above the bar, in `l`: how to note, how to
+    /// see what takes a note, how to stamp and how to send, for somebody
+    /// opening their first brief. `None` once there is anything on the page
+    /// (a note, orphans included, a concur, a picture or an edit waiting),
+    /// on a page that takes no notes or cannot be edited, and while the
+    /// pictures are not yet read: unread is not none, and a line that
+    /// appears late is better than one that tells a person with pictures
+    /// on the page how to begin. The stamp clause needs a page that takes
+    /// concurs; the send clause needs somebody beside the document, named
+    /// as ↪ names them.
+    pub fn first_time_line_in(&self, beside: Option<&str>, l: crate::lang::Lang) -> Option<String> {
+        let notes = self.notes()?;
+        if self.read_only_in(l).is_some() || self.can_edit_in(l).is_err() {
+            return None;
+        }
+        let concurs = self.concurs().map_or(0, ConcurMap::count);
+        if notes.count() + concurs > 0 || !self.pending.is_empty() {
+            return None;
+        }
+        if self.picture_count() != Some(0) {
+            return None;
+        }
+        let t = &l.strings().parts;
+        let mut clauses = vec![
+            t.notes_first_note.to_string(),
+            t.notes_first_alt.to_string(),
+        ];
+        if self.concurs().is_some() {
+            clauses.push(t.notes_first_stamp.to_string());
+        }
+        if let Some(who) = beside {
+            clauses.push(fill(t.notes_first_send, &[("who", who)]));
+        }
+        Some(clauses.join(" · "))
+    }
+
     /// What ↪ does: the map exactly as copy map would give it, notes not yet
     /// saved included, and whether the press saves them. `None` with nothing
     /// to send.
@@ -1655,7 +1694,9 @@ impl NotesLayer {
         let hit = zones
             .iter()
             .rev()
-            .find(|(b, z)| b.contains(&at) && !matches!(z, Zone::Box | Zone::Draft | Zone::Bar))
+            .find(|(b, z)| {
+                b.contains(&at) && !matches!(z, Zone::Box | Zone::Draft | Zone::Bar | Zone::Cue)
+            })
             .map(|(_, z)| *z);
         if self.note_box.is_some() {
             match hit {
@@ -1690,7 +1731,7 @@ impl NotesLayer {
                 }
                 LayerPress::Took
             }
-            _ if under(Zone::Bar) => LayerPress::Took,
+            _ if under(Zone::Bar) || under(Zone::Cue) => LayerPress::Took,
             _ => LayerPress::Pass,
         }
     }
@@ -1771,6 +1812,9 @@ impl NotesLayer {
             // Whether the last paint drew the bar: a script can see the way
             // in is on screen without anybody looking.
             "bar": self.zones.borrow().iter().any(|(_, z)| *z == Zone::Bar),
+            // And whether it drew the first-time line above the bar, which a
+            // newcomer reads before anything else in the square.
+            "cue": self.zones.borrow().iter().any(|(_, z)| *z == Zone::Cue),
             // And how many elements it outlined, which only Alt does, and
             // how many 💬 it drew.
             "boxes": self.drawn.get().0,
@@ -1950,6 +1994,7 @@ impl NotesLayer {
             .font_family(SharedString::from(sk.font_family.clone()))
             .text_size(px(text))
             .text_color(th.text.alpha(0.8))
+            .max_w(px(900.))
             .child(self.record(Zone::Bar));
         match self.read_only_in(l) {
             Some(why) => row = row.child(div().child(why)),
@@ -2017,14 +2062,41 @@ impl NotesLayer {
                     .child(said.text().to_string()),
             );
         }
-        // Clear of the reading rail down the right edge.
-        div()
+        // Clear of the reading rail down the right edge, with the first-time
+        // line, when there is one, stacked above the bar rather than inside
+        // it, so the bar keeps its own width. The stack spans the view from
+        // a 10 px margin on the left, so the line wraps inside a narrow
+        // square instead of running off its left edge (a square floating
+        // over a bench is about 480 px wide); each child keeps its own width
+        // and sits on the right.
+        let mut stack = div()
             .absolute()
+            .left(px(10.))
             .right(px(super::progress::GUTTER))
             .bottom(px(10.))
-            .max_w(px(900.))
-            .child(row)
-            .into_any_element()
+            .flex()
+            .flex_col()
+            .items_end()
+            .gap(px(4.));
+        if let Some(line) = self.first_time_line_in(beside, l) {
+            stack = stack.child(
+                sk.chrome(sk.sheet())
+                    .relative()
+                    .max_w(px(620.))
+                    .px(px(10.))
+                    .py(px(4.))
+                    .rounded(sk.rad_raw(6.))
+                    .bg(th.surface.alpha(0.96))
+                    .border_1()
+                    .border_color(th.accent.alpha(0.3))
+                    .font_family(SharedString::from(sk.font_family.clone()))
+                    .text_size(px(text))
+                    .text_color(th.accent)
+                    .child(self.record(Zone::Cue))
+                    .child(line),
+            );
+        }
+        stack.child(row).into_any_element()
     }
 
     /// The draft, a run of text for each line the note has, split where it
@@ -3224,6 +3296,151 @@ mod tests {
             Path::new("/r/page.html"),
         );
         assert_eq!(read_only.send_button(&anchors, Some("agent")), None);
+    }
+
+    /// Somebody opening their first brief is told, above the bar, how to
+    /// note, how to see what takes a note, how to stamp and how to send. The
+    /// line goes at the first mark of any kind, is never drawn on a page that
+    /// takes no notes, waits for the pictures to be read, and says only what
+    /// the page and the pane can do: no stamp on a page without concurs, no
+    /// send with nobody beside. Every language draws all four clauses and
+    /// keeps the name ↪ sends to.
+    ///
+    /// Mutation-tested: dropping the concur, picture or pending checks, or
+    /// adding the stamp clause unconditionally, fails this.
+    #[test]
+    fn the_first_time_line_is_drawn_on_an_empty_brief_until_its_first_mark() {
+        use crate::lang::Lang;
+        let read = |l: &mut NotesLayer| {
+            l.pictures_read(
+                "/state/pictures/b".into(),
+                Ok(DocImages::empty(Path::new("/r/b.html"))),
+            )
+        };
+        let full = "click anything to note it · hold Alt to see what takes one \
+                    · ✓ stamps a decision · ↪ sends your notes to agent";
+
+        let mut l = layer("{}", "{}", ConcurSupport::Supported);
+        assert_eq!(
+            l.first_time_line_in(Some("agent"), Lang::En),
+            None,
+            "pictures unread: unread is not none"
+        );
+        read(&mut l);
+        assert_eq!(
+            l.first_time_line_in(Some("agent"), Lang::En).as_deref(),
+            Some(full)
+        );
+        assert_eq!(
+            l.first_time_line_in(None, Lang::En).as_deref(),
+            Some(
+                "click anything to note it · hold Alt to see what takes one · ✓ stamps a decision"
+            ),
+            "nobody beside: no send clause"
+        );
+        l.add_note(
+            "a".into(),
+            "a title".into(),
+            "mine".into(),
+            "2026-10-21 18:00".into(),
+        );
+        assert_eq!(
+            l.first_time_line_in(Some("agent"), Lang::En),
+            None,
+            "gone at the first note"
+        );
+
+        let mut stamped = layer("{}", "{}", ConcurSupport::Supported);
+        read(&mut stamped);
+        stamped.toggle_concur("ask-b", SystemTime::now()).unwrap();
+        assert_eq!(
+            stamped.first_time_line_in(Some("agent"), Lang::En),
+            None,
+            "gone at the first stamp"
+        );
+        let mut kept = layer(
+            "{}",
+            r#"{"ask-b":"2026-10-21 18:00"}"#,
+            ConcurSupport::Supported,
+        );
+        read(&mut kept);
+        assert_eq!(
+            kept.first_time_line_in(Some("agent"), Lang::En),
+            None,
+            "a stamp in the file"
+        );
+        let mut noted = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
+        read(&mut noted);
+        assert_eq!(
+            noted.first_time_line_in(Some("agent"), Lang::En),
+            None,
+            "a note in the file"
+        );
+        noted.open("a".into(), "a title".into());
+        noted.delete_shown(0);
+        assert_eq!(noted.count_on("a"), 0);
+        assert_eq!(
+            noted.first_time_line_in(Some("agent"), Lang::En),
+            None,
+            "nothing left on the page, but a deletion waiting to be saved"
+        );
+
+        let mut pictured = layer("{}", "{}", ConcurSupport::Supported);
+        let root = std::env::temp_dir().join(format!("td-first-line-{}", std::process::id()));
+        let doc = Path::new("/r/b.html");
+        let folder = doc_images::folder(&root, doc);
+        pictured.pictures_read(folder.clone(), doc_images::read(&folder, doc));
+        assert!(
+            pictured.first_time_line_in(None, Lang::En).is_some(),
+            "an empty folder is none"
+        );
+        let kept = doc_images::attach(&folder, doc, "b", b"shot", "png", "2026-10-21 18:00")
+            .map(|(list, one)| (list, vec![one]));
+        pictured.attached(kept);
+        assert_eq!(
+            pictured.first_time_line_in(None, Lang::En),
+            None,
+            "gone at the first picture"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+
+        let mut old = layer("{}", "{}", ConcurSupport::NotSupported);
+        read(&mut old);
+        assert_eq!(
+            old.first_time_line_in(Some("agent"), Lang::En).as_deref(),
+            Some("click anything to note it · hold Alt to see what takes one · ↪ sends your notes to agent"),
+            "a page that takes no concurs is not told to stamp"
+        );
+
+        let mut read_only = NotesLayer::new(
+            notes::read(b"<html><body><p>just a page</p></body></html>"),
+            None,
+            ConcurSupport::Unknown,
+            0,
+            Path::new("/r/page.html"),
+        );
+        read(&mut read_only);
+        assert_eq!(read_only.first_time_line_in(Some("agent"), Lang::En), None);
+
+        let mut fresh = layer("{}", "{}", ConcurSupport::Supported);
+        read(&mut fresh);
+        for lang in Lang::ALL {
+            let line = fresh.first_time_line_in(Some("CLAUDE"), lang).unwrap();
+            assert_eq!(
+                line.matches(" · ").count(),
+                3,
+                "{lang:?}: four clauses in {line}"
+            );
+            assert!(line.contains("CLAUDE"), "{lang:?} keeps the name: {line}");
+            assert!(line.contains('✓') && line.contains('↪'), "{lang:?}: {line}");
+            if lang != Lang::En {
+                assert_ne!(
+                    line,
+                    full.replace("agent", "CLAUDE"),
+                    "{lang:?} is translated"
+                );
+            }
+        }
     }
 
     /// What the report and the control socket carry is the English; the bar

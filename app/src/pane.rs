@@ -3448,6 +3448,16 @@ pub struct TerminalView {
     /// Set on the agent→pane arrival edge and never cleared, because it is a
     /// fact about the pane's history rather than about its present.
     wb_had_agent: bool,
+    /// Whether the Claude agent in this pane was briefed by the launcher,
+    /// read once from its environment when it arrives
+    /// ([`crate::launcher::BRIEFED_ENV`]). `None` is *could not tell*, and
+    /// the bench offers nothing on a guess: only `Some(false)` — an agent the
+    /// person started by typing — is offered the typed-agent hook.
+    wb_briefed: Option<bool>,
+    /// What came of the person's answer to that offer on this pane, kept so
+    /// the card can say so after the offer itself stops being due: `Ok(yes)`
+    /// for the answer carried out, `Err` for a yes that failed.
+    wb_typed_said: Option<Result<bool, String>>,
     /// This pane's agent channel: the rounds a hook has carried, what has been
     /// pressed on them, and whether the harness has spoken through it at all.
     /// See [`crate::channel`].
@@ -4505,9 +4515,17 @@ impl TerminalView {
         self.mode = mode;
         if arrived {
             self.wb_had_agent = true;
+            self.wb_briefed = (self.mode == PaneMode::Claude)
+                .then(|| self.shell_pid())
+                .flatten()
+                .and_then(crate::vitals::agent_under)
+                .and_then(|agent| std::fs::read(format!("/proc/{agent}/environ")).ok())
+                .map(|env| crate::launcher::briefed_environment(&env));
             self.bench_drain(cx);
         }
         if departed {
+            self.wb_briefed = None;
+            self.wb_typed_said = None;
             // The dials describe an agent that has gone. Keeping the words
             // would make the strip assert that the NEXT agent — which does not
             // exist yet — is on opus at high, and the whole rule for these two
@@ -5257,6 +5275,8 @@ impl TerminalView {
             wb_running_model: None,
             wb_effort: None,
             wb_had_agent: false,
+            wb_briefed: None,
+            wb_typed_said: None,
             wb_channel: crate::channel::State::new(),
             wb_asked_by_hook: false,
             wb_woken: None,

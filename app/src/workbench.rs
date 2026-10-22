@@ -1212,6 +1212,10 @@ pub enum Hit {
     CloseCard,
     /// The launcher, on a shell pane's empty bench.
     Launch,
+    /// The person's answer to the offer on an agent nobody briefed: tell
+    /// agents started by typing from now on (`true`), or leave things as
+    /// they are (`false`). See [`crate::briefhook`].
+    TypedBriefing(bool),
     /// End the agent running in this pane, from the strip.
     EndAgent,
     /// Stop the running turn without ending the session, from the strip.

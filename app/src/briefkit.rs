@@ -16,9 +16,10 @@
 //!
 //! The assets, references and `brief-wall` are the decision-brief skill's own,
 //! vendored byte for byte by `scripts/sync-brief-skill` (its `SOURCE` names the
-//! commit). `SKILL.md` is Terminal Delight's Workbench edition. Nothing here
-//! is told to an agent started by hand in a terminal: only the launcher's
-//! briefing names the kit.
+//! commit). `SKILL.md` is Terminal Delight's Workbench edition. The launcher's
+//! briefing names the kit, and so does `terminal-delight briefing`, which a
+//! Claude agent started by hand in a pane runs from its `SessionStart` hook
+//! once the person has said yes to it ([`crate::briefhook`]).
 
 use std::path::{Path, PathBuf};
 
