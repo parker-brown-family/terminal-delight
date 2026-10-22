@@ -18,6 +18,21 @@ The first OS test refused the parent-/proc directory mount under ptrace policy; 
 
 The final scope audit also rejects hard-linked work files and overlaps with configured state/config roots, and resolves the protected account home through getpwuid_r instead of trusting HOME. This prevents aliases and environment overrides bypassing the work-root checks. Root, set-ID execution and an unavailable account home fail closed. The earlier research considered hard links granted content; this first profile deliberately narrows that proposal.
 
-The syscall ceiling also refuses new sockets in every address family, listeners and ancillary FD transfer. Unnamed AF_UNIX pairs remain for internal IPC. This excludes transport families outside ordinary network namespaces and keeps the inherited TD packet channel usable. All run/setup authority stays in the fixed protected user runtime, never a workload-controlled override.
+The syscall ceiling also refuses new sockets in every address family, listeners and ancillary FD transfer. Unnamed AF_UNIX pairs remain for internal IPC. This excludes transport families outside ordinary network namespaces and keeps the inherited TD packet channel usable. All run/setup authority stays in the fixed protected user runtime, never a workload-controlled override. It also refuses the kernel interfaces an unprivileged process can still reach and no offline build needs: the key retention service (the caller's session keyring is otherwise inherited and readable), performance counters, userfaultfd and BPF.
 
 Ubuntu CI caught the allowed-work regression: cc resolves through /etc/alternatives, which was absent. The launch now mounts that system alias directory read-only when present, alongside the linker cache. It does not expose the rest of /etc. The existing compile-and-execute OS probe is the regression gate; denial-only tests would have missed this portability failure.
+
+## Hardening after review (2026-10-21)
+
+A review of the merged profile ran its checks against the installed build and found six routes the first profile left open:
+- A nested user namespace could be created.
+- The host cgroup path was readable.
+- `keyctl` returned the caller's session keyring ID.
+- `userfaultfd` returned a descriptor.
+- `perf_event_open` and `bpf` both reached the kernel.
+
+bubblewrap now runs with `--disable-userns` and `--unshare-cgroup`, and the syscall filter refuses those four interface families with EPERM. The OS probe asserts each one. On the earlier build every assertion fails, and on this one every assertion passes.
+
+The same review closed one smaller route. The output filter also drops bidirectional controls and the line and paragraph separators, so relayed text cannot display a different command from the one a reader copies.
+
+One review finding did not hold. It reported that an operator client hanging up could kill the supervisor through SIGPIPE, but Rust's standard library already writes Unix stream sockets with MSG_NOSIGNAL. A test that blocks SIGPIPE on its thread and reads it back showed that a plain `write_all` to a hung-up peer raises nothing, so no change was made.

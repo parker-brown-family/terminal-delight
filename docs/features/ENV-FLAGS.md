@@ -19,8 +19,9 @@ Every environment flag Terminal Delight reads, grouped by purpose. Demo flags st
 | Flag | Effect | Default |
 |---|---|---|
 | `TD_MCP` | Enable the read-only MCP server (agent-watch surface) | off |
-| `TD_MCP_WRITE` | Allow writable MCP (remote **appearance** mutation only — never a PTY) | off |
-| `TD_MCP_SCRIPTED` | Let this window's control socket change all global MCP switches in either direction, for operator rigs that launch a window of their own. Only `1` counts | off |
+| `TD_MCP_WRITE` | Turn MCP writes on at launch: appearance, notes, deliverables, surfaces and opened documents — never a terminal's input. Only with `TD_MCP` | off |
+| `TD_MCP_SCRIPTED` | Let this window's control socket change the three socket-settable MCP switches (server, writes, expose) in either direction, for operator rigs that launch a window of their own. Without it `ctl mcp on/off`, `writes on/off` and `expose agents/all` answer `err`. Only `1` counts | off |
+| `TD_GATEWAY_FD` | Set by `terminal-delight restricted run` inside the sandbox: the descriptor `restricted call` sends its typed requests on. Not for setting by hand | unset |
 
 ## Visual kill-switches / debug
 

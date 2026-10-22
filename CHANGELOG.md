@@ -7,22 +7,47 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Upgrading from 0.4.0 (0.5.0 development)
+
+- **`ctl mcp …` no longer changes MCP policy from a script.** `ctl mcp on|off`,
+  `ctl mcp writes on|off` and `ctl mcp expose agents|all` now answer `err` and
+  change nothing, unless the window was started with `TD_MCP_SCRIPTED=1`. A
+  keybinding or bar widget that used them should open the MCP panel
+  (Ctrl+Shift+A) instead; a script that launches its own window sets the
+  variable where it launches it. `ctl mcp status` still answers.
+
 ### Security for 0.5.0 development
 
-- **Global MCP policy belongs to the operator.** All six control-socket policy
-  changes require a window launched with `TD_MCP_SCRIPTED=1`; otherwise they
-  refuse without changing state. Agents cannot self-enable access or disable
-  unrelated workloads. The MCP panel and access-request flow remain available.
-- **Offline Restricted commands have an enforced scope.** Explicit launch grants
-  one work directory, clean temporary home and optional own-pane text notes.
-  Required namespaces, filtered text I/O and a per-run gateway exclude host TD
-  controls, credentials, desktop/native services and network. Revocation blocks
-  future notes; grants are never restored into a replacement run. Online agents,
-  TUIs and automatic delegation are unavailable in this first profile. Standard
-  terminals retain account access. Shared writable output remains an influence
-  channel and complete resource-exhaustion prevention is not claimed.
-- **Synthetic bench pointers respect off-limits panes.** Click, hover, probe and
-  scripted face selection no longer reach a protected pane. (#1090)
+- **Your shell can no longer change MCP policy over the control socket.** Any
+  program running as you, an agent included, could turn MCP writes on in one
+  command and skip the Yes or No an agent's `request_access` waits for. All six
+  policy commands now refuse unless the window was started with
+  `TD_MCP_SCRIPTED=1`; a person changes policy in the MCP panel. This closes the
+  route through a running window; a program running as you can still relaunch a
+  window with that variable or edit the saved session (decision 0003). (#1088)
+- **New: `terminal-delight restricted run` runs an offline command with less
+  authority.** `terminal-delight restricted run --workdir DIR [--read-only]
+  [--td-note] -- CMD` runs a line-oriented command that sees only DIR (at
+  `/work`), read-only system programs, and its own temporary home and `/tmp`. It
+  has no network, no other files, no other processes and no Terminal Delight
+  controls; with `--td-note` it may post a short note on its own pane. Its
+  output reaches you as plain text, with terminal control sequences removed.
+  `restricted status RUN` and `restricted revoke RUN` inspect and revoke it from
+  outside. It needs `/usr/bin/bwrap` 0.12.0 or newer and Linux 5.11 or newer on
+  x86_64 or aarch64, and refuses to start rather than run without its
+  protections. Anything inside DIR is granted to it, credentials included.
+  Interactive programs, agents that need a network and automatic handoffs do not
+  run there yet; ordinary panes keep your account's access. (#1088)
+- **A scripted click or hover no longer reaches an off-limits pane.**
+  `ctl bench click`, `bench hover`, `bench probe` and `bench on|off|toggle` skip
+  a pane marked off-limits to agents, as the other bench commands already did.
+  (#1090)
+- **Nor do the document commands, or a refused surface.** `ctl doc notes` read
+  out your notes on a brief floating over an off-limits pane, and `ctl doc note`,
+  `doc concur`, `doc close` and `doc here` could add notes that looked like yours
+  or discard unsaved ones; all the `ctl doc` commands now skip such a pane. A
+  surface an agent was refused for an off-limits pane was still saved to disk
+  and shown there a few seconds later; it is no longer saved.
 
 ### Added for 0.5.0 development
 

@@ -24,10 +24,13 @@ const HELP: &str =
     "terminal-delight restricted run --workdir PATH [--read-only] [--td-note] -- PROGRAM ARGS...\n\
 terminal-delight restricted status RUN\n\
 terminal-delight restricted revoke RUN\n\
-Inside the command: terminal-delight restricted call '{\"op\":\"status\"}'\n\n\
+Inside the command: terminal-delight restricted call '{\"op\":\"status\"}'\n\
+  also {\"op\":\"note\",\"text\":\"...\"} (with --td-note; 1-10 words, one a second)\n\
+  and {\"op\":\"request_access\",\"reason\":\"...\"} (a proposal; it grants nothing)\n\n\
+Needs /usr/bin/bwrap 0.12.0+, Linux 5.11+, x86_64 or aarch64; otherwise no command starts.\n\
 Offline, line-oriented commands only. /work is the chosen directory; home and\n\
-tmp are temporary. No network, host services, host-home credentials, TUIs or automatic\n\
-agent handoffs. Output is plain text. --td-note grants only an own-pane note,\n\
+tmp are temporary. No network, host services, credentials outside the chosen\n\
+directory (anything inside it is granted), TUIs or automatic agent handoffs. Output is plain text. --td-note grants only an own-pane note,\n\
 subject to the existing MCP switches. Status shows one pending access request;\n\
 wider access needs an explicit new run. Standard terminals keep account access.\n\
 Shared writable output can influence a later privileged consumer. This is not\n\
@@ -278,6 +281,12 @@ fn sandbox(
     cmd.env_clear().current_dir("/");
     cmd.args([
         "--unshare-user",
+        // No user namespace inside this one: a nested namespace would hand the
+        // workload a full capability set against the kernel's namespaced code,
+        // the usual first step of an exploit, and no offline build needs it.
+        "--disable-userns",
+        // The host's cgroup path names the desktop session and its scopes.
+        "--unshare-cgroup",
         "--unshare-pid",
         "--unshare-net",
         "--unshare-ipc",
@@ -668,10 +677,21 @@ fn text_stream(mut input: impl Read, mut output: impl Write) -> io::Result<()> {
     }
 }
 
+/// Bidirectional controls and the line/paragraph separators reorder or break
+/// what a reader sees without being terminal protocol: a line could display a
+/// different command than the one a person copies from it.
+fn reorders_display(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+            | '\u{2028}' | '\u{2029}'
+    )
+}
+
 fn write_text(s: &str, out: &mut impl Write) -> io::Result<()> {
     for ch in s
         .chars()
-        .filter(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
+        .filter(|c| (!c.is_control() || matches!(c, '\n' | '\r' | '\t')) && !reorders_display(*c))
     {
         out.write_all(ch.encode_utf8(&mut [0; 4]).as_bytes())?;
     }
@@ -1260,5 +1280,18 @@ mod tests {
         text_stream(&b"\xff\x1b[31m\xc3"[..], &mut out).unwrap();
         assert_eq!(String::from_utf8(out).unwrap(), "�[31m�");
         assert!(!text_ok("a\u{1b}b", 10));
+    }
+
+    #[test]
+    fn output_cannot_reorder_what_a_reader_sees() {
+        // "rm -rf ~ #" displayed backwards behind a right-to-left override is
+        // the Trojan Source shape; the joiner inside the emoji is ordinary text.
+        let input = "safe \u{202e}~ fr- mr\u{202c} \u{2066}x\u{2069}\u{200f}\u{2028}👩\u{200d}💻\n";
+        let mut out = Vec::new();
+        text_stream(input.as_bytes(), &mut out).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "safe ~ fr- mr x👩\u{200d}💻\n"
+        );
     }
 }

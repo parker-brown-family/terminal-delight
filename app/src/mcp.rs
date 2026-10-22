@@ -2391,10 +2391,17 @@ where
     //
     // `pane_id: None` is a window-owned pane with no host — it has no
     // directory, and inventing one would write into a path nothing watches.
+    //
+    // Only for a pane this caller may write to, though. The window's periodic
+    // sweep re-delivers whatever sits in that directory without asking the
+    // write gate again, so a surface refused by `apply` below but already on
+    // disk would land on an off-limits pane a few seconds later anyway. Same
+    // rule as `may_write`: exposed under the policy, or the caller's own pane.
     let pane_dir = snap
         .panes
         .iter()
         .find(|p| p.pid == pid)
+        .filter(|p| p.exposed || snap.is_callers(pid))
         .and_then(|p| p.pane_id)
         .zip(snap.instance.as_ref())
         .map(|(pane, inst)| crate::surfacefeed::pane_dir(&inst.session, pane));
@@ -3122,6 +3129,42 @@ mod tests {
                 (Target::Pane(100), true),
                 (Target::Pane(200), false),
             ]
+        );
+    }
+
+    /// A surface the write gate refuses is not left on disk either. The
+    /// window re-delivers whatever sits in a pane's surfaces directory without
+    /// asking the gate again, so a surface persisted "on the way past" and then
+    /// refused would still reach an off-limits pane a few seconds later.
+    ///
+    /// Mutation-tested: dropping the `.filter(...)` on the persistence path
+    /// fails this.
+    #[test]
+    fn a_refused_surface_is_not_persisted_for_the_sweep_to_deliver() {
+        let session = format!("td-test-refused-surface-{}", std::process::id());
+        let mut s = snap_writable(vec![agent_pane(300, false)]);
+        if let Some(inst) = s.instance.as_mut() {
+            inst.session = session.clone();
+        }
+        let dir = crate::surfacefeed::pane_dir(&session, u64::from(300u32 % 97));
+        let line = json!({ "id": 3, "method": "tools/call", "params": {
+            "name": "present_surface", "arguments": { "pid": 300,
+            "surface": { "td": "0.4", "kind": "response", "title": "t",
+                "id": "pushed", "model": { "layman": "x" } } } } })
+        .to_string();
+        let refuse = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            vec![(ups[0].0.clone(), Err("pane 300 is not exposed".into()))]
+        };
+        let reply = handle_line_with(&line, &s, no_tail, &refuse, no_search).unwrap();
+        let landed = dir.exists();
+        if let Some(root) = dir.parent() {
+            let _ = std::fs::remove_dir_all(root);
+        }
+        assert!(reply.contains("isError"), "{reply}");
+        assert!(
+            !landed,
+            "a refused surface was written to {}",
+            dir.display()
         );
     }
 

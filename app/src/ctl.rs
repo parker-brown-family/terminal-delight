@@ -139,11 +139,11 @@ fn bench_outcome(rx: mpsc::Receiver<String>) -> String {
         .unwrap_or_else(|_| "err the window did not answer".into())
 }
 
-/// One field of the MCP control-surface policy — the robot panel's toggles,
-/// reachable from the socket in ONE direction. Narrowing (off, writes off,
-/// agents only) is applied like the panel's press: it writes `ws.mcp` and
-/// `save()`s, so it shows in the panel and survives a restart. Socket mutation is
-/// refused unless the window was launched to be scripted — see [`PolicyControl`].
+/// One field of the MCP control-surface policy — the robot panel's toggles.
+/// The socket refuses every one of them, in either direction, unless the window
+/// was launched to be scripted — see [`PolicyControl`]. A scripted window applies
+/// them like the panel's press: it writes `ws.mcp` and `save()`s, so the change
+/// shows in the panel and survives a restart.
 /// Kept as one-field-at-a-time so a script can grant reads without silently
 /// also granting writes.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -512,11 +512,12 @@ pub fn socket_path(pid: u32) -> PathBuf {
 /// unknown-command error both quote it, so they can't drift from the match.
 const USAGE: &str = "ping | whoami | paint on|off|toggle|status | \
      skin <name>|theme|status|snapshot | \
-     bench on|off|toggle|choose <n>|submit|say <text>|type <text> | \
+     bench on|off|toggle|choose <n>|submit|say <text>|type <text>|probe | \
+     bench click|hover <x> <y> [alt|ctrl|ctrl-alt] | \
      doc here <absolute path> | doc beside <absolute path> | doc close | \
      doc scroll <pixels> | doc notes | doc note add <nid> <text> | \
      doc note delete <nid> <text> | doc concur <nid> | doc save | \
-     mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
+     mcp status | mcp on|off, mcp writes on|off, mcp expose agents|all (err unless the window started with TD_MCP_SCRIPTED=1) | \
      mcp rpc <json> | mcp from <session> <pane|-> rpc <json> | \
      adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
      tabs [{\"op\":\"name\",\"pane\":1234,\"name\":\"DEV\"}, …] | \

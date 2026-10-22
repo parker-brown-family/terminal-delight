@@ -198,6 +198,18 @@ for family,address in [(socket.AF_UNIX,host_socket),(socket.AF_UNIX,'\0'+abstrac
 try: os.open('/dev/tty',os.O_RDWR)
 except OSError: pass
 else: raise AssertionError('unfiltered terminal descriptor')
+try: os.unshare(os.CLONE_NEWUSER)
+except OSError: pass
+else: raise AssertionError('nested user namespace created')
+cgroup=pathlib.Path('/proc/self/cgroup').read_text().strip()
+assert cgroup=='0::/',cgroup
+import ctypes,platform
+libc=ctypes.CDLL(None,use_errno=True)
+# keyctl(GET_KEYRING_ID, session), perf_event_open(NULL), userfaultfd(USER_MODE_ONLY), bpf(bad cmd)
+nrs={'x86_64':(250,298,323,321),'aarch64':(219,241,282,280)}[platform.machine()]
+for nr,args in zip(nrs,[(0,-3,0),(0,0,-1,-1,0),(1,),(9999,0,0)]):
+    ctypes.set_errno(0)
+    assert libc.syscall(nr,*args)==-1 and ctypes.get_errno()==1,(nr,ctypes.get_errno())
 def rpc(data):
     s=socket.socket(fileno=os.dup(int(os.environ['TD_GATEWAY_FD'])))
     s.send(json.dumps(data).encode());result=json.loads(s.recv(8192));s.close();return result
