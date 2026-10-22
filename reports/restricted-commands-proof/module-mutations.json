@@ -1,0 +1,57 @@
+{
+  "method": "Actual module and seccomp source in a small harness. Host-pane target is unavailable here and tested separately through the real native window.",
+  "source_sha256": "6e48c78aaa17a689a9ad8717c2932a92e00a7d3285978677632fac38457d7eae",
+  "filter_sha256": "32009aa93869604724d98b54a0b7a68c27952c36e7a89a7f9ea03715f5f79bda",
+  "baseline_unit": "pass",
+  "baseline_os": "3 passed",
+  "mutations": [
+    {
+      "mutation": "unknown-target-field",
+      "test": "a_text_only_gateway_cannot_select_a_target_grant_or_delegate",
+      "result": "killed",
+      "exit": 101
+    },
+    {
+      "mutation": "ungranted-note",
+      "test": "access_requests_are_bounded_proposals_and_never_change_grants",
+      "result": "killed",
+      "exit": 101
+    },
+    {
+      "mutation": "revoked-note",
+      "test": "a_text_only_gateway_cannot_select_a_target_grant_or_delegate",
+      "result": "killed",
+      "exit": 101
+    },
+    {
+      "mutation": "self-revoke",
+      "test": "a_text_only_gateway_cannot_select_a_target_grant_or_delegate",
+      "result": "killed",
+      "exit": 101
+    },
+    {
+      "mutation": "terminal-control-output",
+      "test": "output_cannot_invoke_terminal_protocol_even_when_utf8_is_split",
+      "result": "killed",
+      "exit": 101
+    },
+    {
+      "mutation": "connect-filter",
+      "test": "a_later_host_socket_in_the_work_tree_cannot_bypass_the_gateway",
+      "result": "killed",
+      "exit": 101
+    },
+    {
+      "mutation": "addressed-send",
+      "test": "no_new_connection_or_addressed_send_can_bypass_the_preconnected_channel",
+      "result": "killed",
+      "exit": 101
+    },
+    {
+      "mutation": "inherited-descriptor",
+      "test": "offline_work_completes_without_host_files_services_processes_credentials_or_control",
+      "result": "killed",
+      "exit": 101
+    }
+  ]
+}

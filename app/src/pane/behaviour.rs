@@ -15,6 +15,46 @@ use super::harness::{
 use crate::docopen::{Asker, DocSeat, FloatHit};
 use crate::workbench::Face;
 
+#[gpui::test]
+fn synthetic_bench_pointer_refuses_off_limits_but_reaches_an_allowed_pane(cx: &mut TestAppContext) {
+    let pane = Pane::running(cx, "exec cat");
+    let view = pane.view.clone();
+    pane.view.update(pane.cx, |v, _| v.off_limits = true);
+    for click in [false, true] {
+        let request = crate::ctl::PointerReq {
+            click,
+            x: 20.0,
+            y: 30.0,
+            alt: false,
+            control: false,
+        };
+        let said = pane
+            .cx
+            .update(|window, cx| view.update(cx, |v, cx| v.synthetic_pointer(request, window, cx)));
+        assert!(
+            said.starts_with("err") && said.contains("off-limits"),
+            "{said}"
+        );
+    }
+    pane.view.update(pane.cx, |v, _| v.off_limits = false);
+    let said = pane.cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.synthetic_pointer(
+                crate::ctl::PointerReq {
+                    click: false,
+                    x: 20.0,
+                    y: 30.0,
+                    alt: false,
+                    control: false,
+                },
+                window,
+                cx,
+            )
+        })
+    });
+    assert!(!said.starts_with("err"), "allowed positive control: {said}");
+}
+
 /// Observe bytes at the host socket, after real GPUI key dispatch. A final
 /// letter fences the claimed chords: if they leaked, it would not arrive first.
 #[gpui::test]

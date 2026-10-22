@@ -7,6 +7,23 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Security for 0.5.0 development
+
+- **Global MCP policy belongs to the operator.** All six control-socket policy
+  changes require a window launched with `TD_MCP_SCRIPTED=1`; otherwise they
+  refuse without changing state. Agents cannot self-enable access or disable
+  unrelated workloads. The MCP panel and access-request flow remain available.
+- **Offline Restricted commands have an enforced scope.** Explicit launch grants
+  one work directory, clean temporary home and optional own-pane text notes.
+  Required namespaces, filtered text I/O and a per-run gateway exclude host TD
+  controls, credentials, desktop/native services and network. Revocation blocks
+  future notes; grants are never restored into a replacement run. Online agents,
+  TUIs and automatic delegation are unavailable in this first profile. Standard
+  terminals retain account access. Shared writable output remains an influence
+  channel and complete resource-exhaustion prevention is not claimed.
+- **Synthetic bench pointers respect off-limits panes.** Click, hover, probe and
+  scripted face selection no longer reach a protected pane. (#1090)
+
 ### Added for 0.5.0 development
 
 - **Terminal lighting follows focus in every skin.** Active and inactive panes
@@ -842,14 +859,6 @@ the changes you may notice in the first hour.
 - **Agents can be kept out of a pane.** Only a person can mark a pane off-limits
   or lift the mark, and an agent's request for more access waits for a person's
   Yes or No. (#956, #957)
-- **The control socket no longer turns on what an agent has to ask for.**
-  `ctl mcp on`, `ctl mcp writes on` and `ctl mcp expose all` set those switches
-  directly, so an agent refused on the attention rail could run one in its own
-  shell and have the access anyway. They now answer `err` and change nothing: a
-  person turns these on in the MCP control panel, and an agent asks with
-  `request_access`. Turning the switches off over the socket works as before. A
-  script that launches its own window and drives it over the socket starts it
-  with `TD_MCP_SCRIPTED=1`. (#1088)
 
 ## [0.3.0] — 2026-09-18
 

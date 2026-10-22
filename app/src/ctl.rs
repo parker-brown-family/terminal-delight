@@ -142,8 +142,8 @@ fn bench_outcome(rx: mpsc::Receiver<String>) -> String {
 /// One field of the MCP control-surface policy — the robot panel's toggles,
 /// reachable from the socket in ONE direction. Narrowing (off, writes off,
 /// agents only) is applied like the panel's press: it writes `ws.mcp` and
-/// `save()`s, so it shows in the panel and survives a restart. Widening is
-/// refused unless the window was launched to be scripted — see [`Widening`].
+/// `save()`s, so it shows in the panel and survives a restart. Socket mutation is
+/// refused unless the window was launched to be scripted — see [`PolicyControl`].
 /// Kept as one-field-at-a-time so a script can grant reads without silently
 /// also granting writes.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -157,73 +157,34 @@ pub(crate) enum McpPolicy {
 }
 
 impl McpPolicy {
-    /// Whether this gives agents more than they had: the server on, writes on,
-    /// or plain shells shown to them.
-    fn widens(self) -> bool {
-        matches!(
-            self,
-            McpPolicy::Enabled(true) | McpPolicy::Writes(true) | McpPolicy::ExposeAll(true)
-        )
-    }
-
-    /// The `err` line a widening verb gets from a window nobody launched to be
-    /// scripted. ONE line, because the wire is one line, and it says what to do
-    /// instead: who turns this on, and how an agent asks them to.
+    /// Every global policy mutation needs the same independent operator choice.
     fn refusal(self) -> String {
-        let (verb, what, ask) = match self {
-            McpPolicy::Enabled(_) => (
-                "mcp on",
-                "Turning the MCP server on",
-                "An agent cannot ask for this one: request_access needs the server on.",
-            ),
-            McpPolicy::Writes(_) => (
-                "mcp writes on",
-                "Turning MCP writes on",
-                "An agent asks them with the request_access tool, change writes_on.",
-            ),
-            McpPolicy::ExposeAll(_) => (
-                "mcp expose all",
-                "Showing plain shells to agents",
-                "An agent asks them with the request_access tool, change expose_shells.",
-            ),
+        let verb = match self {
+            Self::Enabled(true) => "mcp on",
+            Self::Enabled(false) => "mcp off",
+            Self::Writes(true) => "mcp writes on",
+            Self::Writes(false) => "mcp writes off",
+            Self::ExposeAll(true) => "mcp expose all",
+            Self::ExposeAll(false) => "mcp expose agents",
         };
-        format!(
-            "err {verb}: nothing changed. {what} is a person's choice, made in the MCP \
-             control panel (Ctrl+Shift+A). {ask} A script that launches its own window \
-             can start it with TD_MCP_SCRIPTED=1."
-        )
+        format!("err {verb}: nothing changed. Global MCP policy is a person's choice in the MCP control panel (Ctrl+Shift+A). An agent can propose wider access with request_access when MCP is on; it cannot change global switches, including disabling other workloads. Operator scripts must launch their own window with TD_MCP_SCRIPTED=1.")
     }
 }
 
-/// Whether this window's control socket may WIDEN the MCP switches, settled
-/// once, from the environment the window was launched with.
-///
-/// Any process running as you can reach the socket, and an agent is one, so a
-/// socket that widened on request would let an agent turn on the very access
-/// `request_access` makes it ask a person for — one shell command around the
-/// rail's Yes. Narrowing stays open to everyone, because giving up access
-/// never needs permission. What the socket cannot tell apart, the launch can:
-/// a process in a pane cannot change the environment of a window that is
-/// already running. The test rigs launch a window of their own on a session of
-/// their own, so they opt in where they launch. `docs/decisions/0003` carries the argument and
-/// what is still open.
+/// Launch-selected operator automation, never an authorization asserted by a
+/// socket request. Standard host-user processes remain fully trusted by the OS;
+/// this guard prevents cooperative bypass and nuisance, not hostile-host access.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum Widening {
-    /// The default. Widening verbs are answered with [`McpPolicy::refusal`].
+enum PolicyControl {
     Refused,
-    /// Launched with `TD_MCP_SCRIPTED=1`: the socket widens as the panel does.
     Scripted,
 }
-
-impl Widening {
-    /// `TD_MCP_SCRIPTED`'s value, read. Exactly `1` opts in; anything else,
-    /// including `0`, empty and unset, does not — an authority switch should
-    /// not turn on for a value somebody meant as "off".
+impl PolicyControl {
     fn from_launch(value: Option<&str>) -> Self {
         if value == Some("1") {
-            Widening::Scripted
+            Self::Scripted
         } else {
-            Widening::Refused
+            Self::Refused
         }
     }
 }
@@ -844,7 +805,7 @@ fn handle_conn(
     mcp_mirror: &AtomicU8,
     skin_mirror: &Mutex<SkinMirror>,
     tx: &mpsc::Sender<Req>,
-    widening: Widening,
+    policy_control: PolicyControl,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
@@ -977,8 +938,8 @@ fn handle_conn(
             }
         }
         // Refused before the queue: the ticker applies whatever reaches it, so
-        // this is the only place a widening can be stopped.
-        Ok(Cmd::McpPolicy(p)) if p.widens() && widening == Widening::Refused => p.refusal(),
+        // this is where an unauthorized policy mutation must be stopped.
+        Ok(Cmd::McpPolicy(p)) if policy_control == PolicyControl::Refused => p.refusal(),
         Ok(Cmd::McpPolicy(p)) => {
             if tx.send(Req::McpPolicy(p)).is_ok() {
                 "ok".into()
@@ -1146,7 +1107,8 @@ pub fn start(cx: &mut Context<Workspace>) {
     // per socket connection rather than per frame.
     let skin_mirror = Arc::new(Mutex::new(SkinMirror::default()));
     // Read once, here, so nothing that runs later can change the answer.
-    let widening = Widening::from_launch(std::env::var("TD_MCP_SCRIPTED").ok().as_deref());
+    let policy_control =
+        PolicyControl::from_launch(std::env::var("TD_MCP_SCRIPTED").ok().as_deref());
 
     {
         let mirror = Arc::clone(&mirror);
@@ -1155,7 +1117,14 @@ pub fn start(cx: &mut Context<Workspace>) {
         let _ = thread::Builder::new().name("td-ctl".into()).spawn(move || {
             for conn in listener.incoming() {
                 let Ok(stream) = conn else { continue };
-                handle_conn(stream, &mirror, &mcp_mirror, &skin_mirror, &tx, widening);
+                handle_conn(
+                    stream,
+                    &mirror,
+                    &mcp_mirror,
+                    &skin_mirror,
+                    &tx,
+                    policy_control,
+                );
             }
         });
     }
@@ -2012,6 +1981,69 @@ pub(crate) fn locate() -> Option<Located> {
     })
 }
 
+/// A grant captured outside a Restricted workload. The protocol accepts text
+/// only; it cannot override this session, pane, shell or window generation.
+pub(crate) fn restricted_note_target() -> Result<crate::restricted::Note, String> {
+    fn generation(pid: u32) -> Option<u64> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        stat.rsplit_once(')')?
+            .1
+            .split_whitespace()
+            .nth(19)?
+            .parse()
+            .ok()
+    }
+    let at = locate().ok_or("--td-note needs a proven hosted TD pane; no environment fallback")?;
+    let pane = at.pane.ok_or("cannot prove the calling pane")?;
+    let window = at
+        .window
+        .ok_or("no proven window is serving the calling session")?;
+    let original = crate::hostctl::panes_of(&at.session)
+        .into_iter()
+        .find(|p| p.pane.0 == pane && !p.ended)
+        .ok_or("calling pane is no longer running")?;
+    let shell_start =
+        generation(original.shell_pid).ok_or("cannot measure pane process generation")?;
+    let window_start = generation(window).ok_or("cannot measure window process generation")?;
+    let path = socket_path(window);
+    Ok(Arc::new(move |text| {
+        if generation(window) != Some(window_start)
+            || generation(original.shell_pid) != Some(shell_start)
+            || window_identity(&path) != Some((at.session.clone(), window))
+            || !crate::hostctl::panes_of(&at.session)
+                .iter()
+                .any(|p| p.pane.0 == pane && p.shell_pid == original.shell_pid && !p.ended)
+        {
+            return Err("the granted pane/window generation ended; a new run is required".into());
+        }
+        let request = serde_json::json!({"jsonrpc":"2.0", "id":1, "method":"tools/call",
+            "params":{"name":"leave_note", "arguments":{"text":text, "title":"RESTRICTED", "pin":false}}});
+        let reply = send_within(
+            &path,
+            &format!("mcp from {} {pane} rpc {request}", at.session),
+            Duration::from_secs(2),
+        )
+        .map_err(|e| e.to_string())?;
+        let value: serde_json::Value = serde_json::from_str(&reply).map_err(|e| e.to_string())?;
+        if !confirmed_scoped_note(&value, original.shell_pid) {
+            return Err(format!("TD did not confirm the scoped note: {value}"));
+        }
+        Ok(())
+    }))
+}
+
+fn confirmed_scoped_note(value: &serde_json::Value, pid: u32) -> bool {
+    value["jsonrpc"] == "2.0"
+        && value["id"] == 1
+        && value.get("error").is_none()
+        && matches!(
+            value["result"].get("isError"),
+            None | Some(serde_json::Value::Bool(false))
+        )
+        && value["result"]["structuredContent"]["posted"] == true
+        && value["result"]["structuredContent"]["pid"].as_u64() == Some(u64::from(pid))
+}
+
 /// The window a session's `session-<key>.window` record names — proven by
 /// ASKING it, never by the presence of its socket file.
 ///
@@ -2290,6 +2322,39 @@ pub fn run_mcp_cli(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scoped_note_needs_explicit_success_for_the_pinned_recipient() {
+        let good = serde_json::json!({"jsonrpc":"2.0","id":1,"result":{"structuredContent":{"pid":7,"posted":true}}});
+        assert!(confirmed_scoped_note(&good, 7));
+        for bad in [
+            serde_json::json!({}),
+            serde_json::json!({"result":null}),
+            serde_json::json!({"jsonrpc":"2.0","id":1,"result":{"structuredContent":{"pid":8,"posted":true}}}),
+        ] {
+            assert!(!confirmed_scoped_note(&bad, 7));
+        }
+        for (path, value) in [
+            ("/result/structuredContent/posted", serde_json::Value::Null),
+            ("/result/structuredContent/posted", serde_json::json!(false)),
+            ("/result/structuredContent/pid", serde_json::Value::Null),
+            ("/id", serde_json::json!(2)),
+            ("/jsonrpc", serde_json::json!("1.0")),
+        ] {
+            let mut bad = good.clone();
+            *bad.pointer_mut(path).unwrap() = value;
+            assert!(!confirmed_scoped_note(&bad, 7), "{bad}");
+        }
+        for value in [
+            serde_json::json!(true),
+            serde_json::Value::Null,
+            serde_json::json!("false"),
+        ] {
+            let mut bad = good.clone();
+            bad["result"]["isError"] = value;
+            assert!(!confirmed_scoped_note(&bad, 7));
+        }
+    }
 
     fn tmp(tag: &str) -> crate::testsync::Scratch {
         crate::testsync::Scratch::new(&format!("ctl-{tag}"))
@@ -2784,7 +2849,7 @@ mod tests {
                     &mm2,
                     &Mutex::new(SkinMirror::default()),
                     &tx,
-                    Widening::Refused,
+                    PolicyControl::Refused,
                 );
             }
         });
@@ -2836,7 +2901,7 @@ mod tests {
                     &mm2,
                     &Mutex::new(SkinMirror::default()),
                     &tx,
-                    Widening::Refused,
+                    PolicyControl::Refused,
                 );
             }
         });
@@ -2883,7 +2948,7 @@ mod tests {
                 &mcp_mirror,
                 &Mutex::new(SkinMirror::default()),
                 &tx,
-                Widening::Refused,
+                PolicyControl::Refused,
             );
         });
         assert!(send(&sock, "sudo make me a sandwich")
@@ -2905,7 +2970,7 @@ mod tests {
         let mcp_mirror = Arc::new(AtomicU8::new(MCP_ON | MCP_EVENTS));
         let (m2, mm2) = (Arc::clone(&mirror), Arc::clone(&mcp_mirror));
         let server = thread::spawn(move || {
-            for _ in 0..4 {
+            for _ in 0..7 {
                 let (stream, _) = listener.accept().unwrap();
                 handle_conn(
                     stream,
@@ -2913,7 +2978,7 @@ mod tests {
                     &mm2,
                     &Mutex::new(SkinMirror::default()),
                     &tx,
-                    Widening::Scripted,
+                    PolicyControl::Scripted,
                 );
             }
         });
@@ -2935,89 +3000,67 @@ mod tests {
         // Reads and writes are separate grants: enabling one must never be
         // spelled in a way that quietly enables the other.
         assert!(send(&sock, "mcp writes").unwrap().starts_with("err"));
-        server.join().unwrap();
-    }
-
-    /// The bypass this closes, over the real socket: an agent refused on the
-    /// rail used to run `terminal-delight ctl mcp writes on` and get exactly
-    /// what it had been refused. In a window nobody launched to be scripted,
-    /// every widening verb is answered `err`, says what to do instead, and
-    /// puts NOTHING on the queue — while every narrowing verb still applies.
-    #[test]
-    fn a_window_nobody_scripted_narrows_its_mcp_switches_but_will_not_widen_them() {
-        let dir = tmp("mcp-refused");
-        let sock = dir.join("ctl-5.sock");
-        let listener = UnixListener::bind(&sock).unwrap();
-        let (tx, rx) = mpsc::channel::<Req>();
-        let mirror = Arc::new(AtomicBool::new(false));
-        let mcp_mirror = Arc::new(AtomicU8::new(0));
-        let (m2, mm2) = (Arc::clone(&mirror), Arc::clone(&mcp_mirror));
-        let server = thread::spawn(move || {
-            for _ in 0..6 {
-                let (stream, _) = listener.accept().unwrap();
-                handle_conn(
-                    stream,
-                    &m2,
-                    &mm2,
-                    &Mutex::new(SkinMirror::default()),
-                    &tx,
-                    Widening::Refused,
-                );
-            }
-        });
-
-        for (verb, ask) in [
-            ("mcp on", "needs the server on"),
-            ("mcp writes on", "change writes_on"),
-            ("mcp expose all", "change expose_shells"),
-        ] {
-            let reply = send(&sock, verb).unwrap();
-            assert!(reply.starts_with("err"), "{verb} was not refused: {reply}");
-            for said in ["nothing changed", "Ctrl+Shift+A", ask, "TD_MCP_SCRIPTED=1"] {
-                assert!(
-                    reply.contains(said),
-                    "{verb}'s refusal lacks {said:?}: {reply}"
-                );
-            }
-            assert!(!reply.contains('\n'), "the wire is one line: {reply:?}");
-            assert!(
-                rx.try_recv().is_err(),
-                "{verb} was refused but still reached the window's queue"
-            );
-        }
         for (verb, want) in [
             ("mcp off", McpPolicy::Enabled(false)),
             ("mcp writes off", McpPolicy::Writes(false)),
             ("mcp expose agents", McpPolicy::ExposeAll(false)),
         ] {
-            assert_eq!(send(&sock, verb).unwrap(), "ok", "{verb}");
-            match rx.try_recv() {
-                Ok(Req::McpPolicy(got)) => assert_eq!(got, want, "{verb}"),
-                other => panic!("{verb} did not queue its narrowing: {other:?}"),
-            }
+            assert_eq!(send(&sock, verb).unwrap(), "ok");
+            assert!(matches!(rx.try_recv(), Ok(Req::McpPolicy(got)) if got == want));
         }
         server.join().unwrap();
     }
 
-    /// Every policy verb, sorted by hand into the two directions. Written out
-    /// rather than derived, so a new switch has to be placed on purpose.
+    /// Neither escalation nor disabling other workloads is a caller's right.
     #[test]
-    fn exactly_the_three_switches_turning_on_count_as_widening() {
-        for (p, widens) in [
-            (McpPolicy::Enabled(true), true),
-            (McpPolicy::Writes(true), true),
-            (McpPolicy::ExposeAll(true), true),
-            (McpPolicy::Enabled(false), false),
-            (McpPolicy::Writes(false), false),
-            (McpPolicy::ExposeAll(false), false),
+    fn an_unscripted_window_refuses_all_global_policy_mutations() {
+        let dir = tmp("mcp-refused");
+        let sock = dir.join("ctl-5.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let (tx, rx) = mpsc::channel::<Req>();
+        let server = thread::spawn(move || {
+            for _ in 0..6 {
+                let (stream, _) = listener.accept().unwrap();
+                handle_conn(
+                    stream,
+                    &AtomicBool::new(false),
+                    &AtomicU8::new(0),
+                    &Mutex::new(SkinMirror::default()),
+                    &tx,
+                    PolicyControl::Refused,
+                );
+            }
+        });
+        for verb in [
+            "mcp on",
+            "mcp writes on",
+            "mcp expose all",
+            "mcp off",
+            "mcp writes off",
+            "mcp expose agents",
         ] {
-            assert_eq!(p.widens(), widens, "{p:?}");
+            let reply = send(&sock, verb).unwrap();
+            assert!(reply.starts_with("err"), "{verb}: {reply}");
+            for word in [
+                "nothing changed",
+                "Ctrl+Shift+A",
+                "request_access",
+                "TD_MCP_SCRIPTED=1",
+            ] {
+                assert!(reply.contains(word), "{verb}: {reply}");
+            }
+            assert!(!reply.contains('\n'));
+            assert!(rx.try_recv().is_err(), "{verb} must not reach the queue");
         }
+        server.join().unwrap();
     }
 
     #[test]
-    fn only_td_mcp_scripted_set_to_1_opens_the_socket_to_widening() {
-        assert_eq!(Widening::from_launch(Some("1")), Widening::Scripted);
+    fn only_exact_scripted_launch_authorizes_global_policy_changes() {
+        assert_eq!(
+            PolicyControl::from_launch(Some("1")),
+            PolicyControl::Scripted
+        );
         for value in [
             None,
             Some(""),
@@ -3026,7 +3069,11 @@ mod tests {
             Some("true"),
             Some(" 1"),
         ] {
-            assert_eq!(Widening::from_launch(value), Widening::Refused, "{value:?}");
+            assert_eq!(
+                PolicyControl::from_launch(value),
+                PolicyControl::Refused,
+                "{value:?}"
+            );
         }
     }
 

@@ -26,17 +26,11 @@ The answer to the question above was yes, in one shell command.
 
 ## What changed
 
-**The socket narrows the switches and refuses to widen them.** `mcp off`, `mcp
-writes off` and `mcp expose agents` apply at once, as they always did: giving
-up access never needs permission. The three that widen are answered with one
-`err` line that changes nothing and says what to do instead — the person turns
-it on in the MCP control panel (Ctrl+Shift+A), and an agent asks them through
-`request_access`.
+The initial patch refused widening and permitted reductions. The complete 0.5 design supersedes that choice: an unscripted socket refuses all six global mutations. Disabling other workloads' access is also an exercise of authority, not a caller merely giving up its own grant. The person changes policy in the MCP panel; existing `request_access` remains a proposal route for wider MCP access.
 
-**A window launched with `TD_MCP_SCRIPTED=1` widens as before.** The test rigs
-under `scripts/` launch a window of their own, on a session of their own, and
-drive it over the socket with nobody at it; they now set the variable where they
-launch. Exactly `1` opts in.
+A window explicitly launched with `TD_MCP_SCRIPTED=1` retains all six mutations for operator automation. Exactly `1` opts in. This is cooperative Standard automation, not a hostile-host boundary.
+
+The optional offline Restricted command profile places workload code and children behind OS-enforced namespaces with one work directory and a narrow per-run gateway. It cannot reach the host control socket, saved state, desktop automation or native endpoints. Its initial TD grant is only an own-pane text note; automatic handoffs and online providers are unavailable. See [the selected architecture](../plans/process-authority/02-architecture.md).
 
 ## Why the launch, and not the socket
 
@@ -79,9 +73,7 @@ composer, `ctl bench choose` and `ctl bench submit` press its answers, and
 `ctl bench click` presses whatever is under the point, pause and end agent
 included. A press reaches the agent as keys into a live picker or as a
 `[workbench]` line, only while that pane is on screen, and flashes when it
-does. All of them but `bench click` refuse a pane marked off-limits; that gap is
-issue 1090 — ctl bench click can press an off-limits pane's bench. And the pane
-a caller names in `mcp from` is still taken on its word.
+does. The 0.5 change also refuses off-limits panes for synthetic pointer, probe and scripted face selection, closing issue 1090. The pane a Standard caller names in `mcp from` remains cooperative routing metadata; a Restricted gateway never accepts that assertion.
 
 ## When this expires
 
