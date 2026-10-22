@@ -7,6 +7,92 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Upgrading from 0.4.0 (0.5.0 development)
+
+- **`ctl mcp …` no longer changes MCP policy from a script.** `ctl mcp on|off`,
+  `ctl mcp writes on|off` and `ctl mcp expose agents|all` now answer `err` and
+  change nothing, unless the window was started with `TD_MCP_SCRIPTED=1`. A
+  keybinding or bar widget that used them should open the MCP panel
+  (Ctrl+Shift+A) instead; a script that launches its own window sets the
+  variable where it launches it. `ctl mcp status` still answers.
+
+### Security for 0.5.0 development
+
+- **Your shell can no longer change MCP policy over the control socket.** Any
+  program running as you, an agent included, could turn MCP writes on in one
+  command and skip the Yes or No an agent's `request_access` waits for. All six
+  policy commands now refuse unless the window was started with
+  `TD_MCP_SCRIPTED=1`; a person changes policy in the MCP panel. This closes the
+  route through a running window; a program running as you can still relaunch a
+  window with that variable or edit the saved session (decision 0003). (#1088)
+- **Restricted validates the pinned directory and its mount identity.** The selected path must be below the OS account home without a dot-directory in that path. External volumes, system trees and hidden roots are refused; project contents remain granted. One lifetime access proposal appears in the run terminal and can be dismissed only from outside.
+- **Own-pane authority follows the connecting process.** The control socket checks kernel peer credentials against the current pane shell. Forged pane claims lose their own-pane exception. Hidden document notes, tab edits and queued bench input respect off-limits; appearance JSON cannot bypass note or deliverable validation.
+- **New: `terminal-delight restricted run` runs an offline command with less
+  authority.** `terminal-delight restricted run --workdir DIR [--read-only]
+  [--td-note] -- CMD` runs a line-oriented command that sees only DIR (at
+  `/work`), read-only system programs, and its own temporary home and `/tmp`. It
+  has no network, no other files, no other processes and no Terminal Delight
+  controls; with `--td-note` it may post a short note on its own pane. Its
+  output reaches you as plain text, with terminal control sequences removed.
+  `restricted status RUN`, `restricted dismiss RUN` and `restricted revoke RUN` inspect or reduce it from
+  outside. It needs `/usr/bin/bwrap` 0.12.0 or newer and Linux 5.11 or newer on
+  x86_64 or aarch64, and refuses to start rather than run without its
+  protections. Anything inside DIR is granted to it, credentials included.
+  Interactive programs, agents that need a network and automatic handoffs do not
+  run there yet; ordinary panes keep your account's access. (#1088)
+- **A scripted click or hover no longer reaches an off-limits pane.**
+  `ctl bench click`, `bench hover`, `bench probe` and `bench on|off|toggle` skip
+  a pane marked off-limits to agents, as the other bench commands already did.
+  (#1090)
+- **Nor do the document commands, or a refused surface.** `ctl doc notes` read
+  out your notes on a brief floating over an off-limits pane, and `ctl doc note`,
+  `doc concur`, `doc close` and `doc here` could add notes that looked like yours
+  or discard unsaved ones; all the `ctl doc` commands now skip such a pane. A
+  surface an agent was refused for an off-limits pane was still saved to disk
+  and shown there a few seconds later; it is no longer saved.
+
+### Added for 0.5.0 development
+
+- **A Clean design, and UI CONFIG to hide any chrome.** Clean turns the light
+  and tube off everywhere — letters, cards, frame, borders, menus, afterglow —
+  and squares the corners; it holds the tube off and overrides Quiet. New
+  windows open Clean, and that default is changeable. A UI CONFIG section in the
+  painter hides any piece of chrome, at the window (OUTER) layer and at one
+  global PANE layer shared by every pane, with the hidden menu glyphs giving way
+  to a classic CONFIG dropdown. Each design remembers the look you set while
+  wearing it, and a folded option row shows only its selection. (#1098)
+- **The top bar collapses when it holds nothing.** With the app mark, Git notice
+  and agent counter hidden by Clean's UI set and no window buttons, that row
+  folds to a hairline, so the panes sit under the frame by the same margin as
+  the sides instead of below an empty band. (#1103)
+- **A folded option row opens on hover or a click.** A row collapsed to its
+  selection opens after about three-quarters of a second of hover, or at once on
+  a click anywhere on it. (#1104)
+- **The palette marks the running theme.** The worn theme gets a thicker border
+  and a subtle phosphor glow, and Chalk gives the selected tile more depth; the
+  marker follows the actual pane or outer-window theme, including inherited
+  Omarchy colours. (#1077)
+
+- **Terminal lighting follows focus in every skin.** Active and inactive panes
+  have separate letter-glow controls, and inactive text can dim relative to the
+  active setting. GAUGES groups type, picture, active terminals and inactive
+  terminals. Standard starts at 20% active glow and 45% inactive
+  text; Intrusive uses 37% and 52%. Both use 100% inactive glow. Explicit settings
+  take priority, including zero. These effects also work with CRT glass off.
+- **Erased passages fade where they were drawn.** New text appears immediately;
+  old letters retain their original colour before selection/cursor decoration.
+  Active and inactive terminals each have cursor-linger and off-cursor-linger
+  sliders: text changes range from 0–220ms and erased passages from 0–650ms.
+  The existing 220/650ms appearance is the maximum and default; zero disables
+  each trail independently. Shorter settings have no hidden minimum. Old saved
+  afterglow zero stays off. The retained history is bounded per pane.
+- **Backspace deletes selections across wrapped input.** Shift+Backspace deletes
+  the previous word, Ctrl+Shift+Backspace the entire current logical line, and
+  Ctrl+Shift+Alt+Backspace all editable input, including literal newlines. The
+  terminal gestures use Readline-compatible editing; full-screen editors keep
+  their own keys. The workbench composer has the same edits with undo. F1 Help
+  lists all three shortcuts in all nine languages.
+
 ### Upgrading from 0.3.0
 
 Nothing you saved is renamed or moved. No config or state file was renamed or
@@ -417,6 +503,15 @@ the changes you may notice in the first hour.
 
 ### Changed
 
+- **Ctrl+↑/↓ steps a floating document; Ctrl+Shift+↑/↓ pages it.** With its
+  note box open the same chords, and plain PageUp/PageDown, turn the notes. The
+  Document face takes them too. Ctrl+PageUp/PageDown still switch tabs, and
+  with no document floating the chords reach the shell as before.
+- **Ctrl+W closes the document on top; Ctrl+Shift+W closes the tab.** A
+  picture, page or clip opened in a box over a pane now goes away with Ctrl+W,
+  one box per press, as Escape and its ✕ already did. Closing the whole tab
+  moved to Ctrl+Shift+W and still asks first. With no box open, Ctrl+W reaches
+  the shell or agent again as delete-word.
 - **Model menus name the models your agents actually offer.** The launcher,
   the saved launch defaults and the workbench's live model dial read their
   choices and reasoning levels from the installed Codex or Claude, and cards and
@@ -595,10 +690,6 @@ the changes you may notice in the first hour.
 
 ### Fixed
 
-- The palette marks the running theme with a thicker border and a subtle
-  phosphor glow; Chalk gives the selected tile more depth. The marker follows
-  the actual pane or outer-window theme, including inherited Omarchy colours.
-
 - **The OPS skin no longer crashes the window.** A cut-cornered panel that was
   laid out at no size for a frame, as one is while it opens or collapses, made
   the window panic while drawing it. Clicking a tab in the left bar was one way
@@ -613,6 +704,11 @@ the changes you may notice in the first hour.
   the pane and Super+V typed `^V`. A pane now takes Ctrl+Insert as copy and
   Shift+Insert as paste, the chords every other terminal takes, and the README
   gives the one-line Hyprland rule that tags Terminal Delight a terminal. (#892)
+- **A note box holds any number of notes.** Notes past the box's height were
+  saved but clipped out of sight with no way to scroll to them. The box now
+  opens on the newest, the wheel turns back to the oldest, and a note just
+  added is always in view. A hidden note's delete no longer takes a press
+  under the draft.
 - **Launching Codex no longer picks a retired model.** The launcher's Codex
   menu offered `gpt-5-codex` and `gpt-5` and passed one with `--model`, which a
   current Codex account rejects with HTTP 400. Codex now starts on the model in

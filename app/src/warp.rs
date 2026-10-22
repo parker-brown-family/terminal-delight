@@ -20,7 +20,8 @@ use std::sync::Mutex;
 /// — see `theme::crawl_coeffs` and `fs_crt` in `crt_pass.wgsl`. Last, the
 /// bezel round the glass, `[0xRRGGBB as f32, strength]` ([`bezel`]); only a
 /// pane's own tube has one, and [`NO_BEZEL`] leaves the glass edge alone.
-type Tube = ([f32; 4], f32, f32, f32, [f32; 3], [f32; 2]);
+/// The final scalar is terminal-image glow, bounded to `0..=1`.
+type Tube = ([f32; 4], f32, f32, f32, [f32; 3], [f32; 2], f32);
 
 /// A tube with no bezel drawn round its glass.
 pub const NO_BEZEL: [f32; 2] = [0.0, 0.0];
@@ -112,7 +113,7 @@ pub fn clear_focus_blur() {
 pub fn register_focus_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: [f32; 3]) {
     let mut rects = RECTS.lock().unwrap();
     rects.clear();
-    rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl, NO_BEZEL));
+    rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl, NO_BEZEL, 0.0));
     push(&rects);
 }
 
@@ -127,13 +128,22 @@ pub fn register_tube(
     k2: f32,
     crawl: [f32; 3],
     bezel: [f32; 2],
+    image_glow: f32,
 ) {
     if is_suppressed() {
         return;
     }
     let mut rects = RECTS.lock().unwrap();
     if rects.len() < MAX_TUBES {
-        rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl, bezel));
+        rects.push((
+            rect,
+            glare.clamp(0.0, 1.0),
+            k1,
+            k2,
+            crawl,
+            bezel,
+            image_glow.clamp(0.0, 1.0),
+        ));
     }
     push(&rects);
 }
@@ -158,7 +168,7 @@ pub fn is_suppressed() -> bool {
 pub fn register_overlay_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl: [f32; 3]) {
     let mut rects = RECTS.lock().unwrap();
     if rects.len() < MAX_TUBES {
-        rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl, NO_BEZEL));
+        rects.push((rect, glare.clamp(0.0, 1.0), k1, k2, crawl, NO_BEZEL, 0.0));
     }
     push(&rects);
 }
@@ -166,7 +176,7 @@ pub fn register_overlay_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32, crawl
 #[allow(unused_variables)]
 fn push(rects: &[Tube]) {
     #[cfg(target_os = "linux")]
-    gpui_wgpu::set_crt_rects_tubes_bezel(rects);
+    gpui_wgpu::set_crt_rects_tubes_glow(rects);
 }
 
 #[cfg(test)]
@@ -177,7 +187,7 @@ fn rect_count() -> usize {
 #[cfg(test)]
 fn rect_curvature(i: usize) -> (f32, f32) {
     let rects = RECTS.lock().unwrap();
-    let (_, _, k1, k2, _, _) = rects[i];
+    let (_, _, k1, k2, _, _, _) = rects[i];
     (k1, k2)
 }
 
@@ -185,6 +195,12 @@ fn rect_curvature(i: usize) -> (f32, f32) {
 fn rect_crawl(i: usize) -> [f32; 3] {
     let rects = RECTS.lock().unwrap();
     rects[i].4
+}
+
+/// Observe the values actually sent by pane painting, not a second resolver.
+#[cfg(test)]
+pub(crate) fn rect_glows() -> Vec<f32> {
+    RECTS.lock().unwrap().iter().map(|tube| tube.6).collect()
 }
 
 /// Taken by every test that touches the tube set or its flags. `RECTS`,
@@ -206,6 +222,23 @@ mod tests {
     /// A crawl triad with crawl disabled (identity: off, no taper, flat depth).
     const CRAWL_OFF: [f32; 3] = [0.0, 1.0, 1.0];
 
+    #[test]
+    fn image_glow_is_bounded_and_belongs_to_its_own_tube() {
+        let _serial = WARP_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        begin_frame();
+        set_suppressed(false);
+        register_tube([0., 0., 100., 100.], 0., 0., 0., CRAWL_OFF, NO_BEZEL, 0.4);
+        register_tube([100., 0., 100., 100.], 0., 0., 0., CRAWL_OFF, NO_BEZEL, 0.0);
+        register_tube([200., 0., 100., 100.], 0., 0., 0., CRAWL_OFF, NO_BEZEL, 9.0);
+        let rects = RECTS.lock().unwrap();
+        assert_eq!(
+            rects.iter().map(|r| r.6).collect::<Vec<_>>(),
+            [0.4, 0.0, 1.0]
+        );
+        drop(rects);
+        begin_frame();
+    }
+
     /// `flatten()` is what a scrim built over the glass calls for itself: it
     /// holds for the frame whatever the workspace's own list said, and the
     /// next frame is bent again unless something flattens it again.
@@ -216,7 +249,7 @@ mod tests {
         begin_frame();
         set_suppressed(false);
         flatten();
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0);
         assert_eq!(
             rect_count(),
             0,
@@ -229,7 +262,7 @@ mod tests {
 
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0);
         assert_eq!(rect_count(), 1, "the next frame is bent again");
         assert!(!is_suppressed());
     }
@@ -248,8 +281,8 @@ mod tests {
         let r = [0.0, 0.0, 100.0, 100.0];
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0);
         assert_eq!(rect_count(), 2, "the panes bank their tubes first");
 
         flatten();
@@ -259,7 +292,7 @@ mod tests {
             "a surface drawn over the glass flattens it even from the far side of prepaint"
         );
         assert!(is_suppressed(), "and nothing re-registers behind it");
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0);
         assert_eq!(rect_count(), 0);
 
         begin_frame();
@@ -272,27 +305,27 @@ mod tests {
         let r = [0.0, 0.0, 100.0, 100.0];
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0);
         assert_eq!(rect_count(), 2, "tubes register while the glass is live");
 
         // an open menu suppresses: begin_frame clears, and nothing re-registers
         begin_frame();
         set_suppressed(true);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0);
         assert_eq!(rect_count(), 0, "an open overlay flattens the whole screen");
 
         // closing the menu restores warping on the next frame
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0);
         assert_eq!(rect_count(), 1, "warp resumes once the overlay closes");
 
         // never bank more than MAX_TUBES the renderer reads
         begin_frame();
         for _ in 0..(MAX_TUBES + 8) {
-            register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL);
+            register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0);
         }
         assert_eq!(
             rect_count(),
@@ -305,8 +338,8 @@ mod tests {
         // bend its neighbours. This is what makes the sub-tab theme an override.
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.4, 0.0, 0.0, CRAWL_OFF, NO_BEZEL); // a no-bend pane
-        register_tube(r, 0.4, 0.14, 0.06, CRAWL_OFF, NO_BEZEL); // a bent pane
+        register_tube(r, 0.4, 0.0, 0.0, CRAWL_OFF, NO_BEZEL, 0.0); // a no-bend pane
+        register_tube(r, 0.4, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0); // a bent pane
         assert_eq!(rect_count(), 2);
         assert_eq!(rect_curvature(0), (0.0, 0.0), "flat pane stays flat");
         assert_eq!(rect_curvature(1), (0.14, 0.06), "bent pane keeps its bend");
@@ -317,7 +350,7 @@ mod tests {
         // no rect-ordering ambiguity over the panel pixels.
         begin_frame();
         set_suppressed(true); // a reader open flattens the panes behind
-        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL); // no-op while suppressed
+        register_tube(r, 0.5, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0); // no-op while suppressed
         assert_eq!(rect_count(), 0, "panes don't register under the reader");
         register_focus_tube(r, 0.4, 0.20, 0.08, CRAWL_OFF);
         assert_eq!(
@@ -342,8 +375,8 @@ mod tests {
         let r = [0.0, 0.0, 100.0, 100.0];
         begin_frame();
         set_suppressed(false);
-        register_tube(r, 0.4, 0.14, 0.06, CRAWL_OFF, NO_BEZEL); // plain pane
-        register_tube(r, 0.4, 0.14, 0.06, [1.0, 0.6, 2.5], NO_BEZEL); // a crawling pane
+        register_tube(r, 0.4, 0.14, 0.06, CRAWL_OFF, NO_BEZEL, 0.0); // plain pane
+        register_tube(r, 0.4, 0.14, 0.06, [1.0, 0.6, 2.5], NO_BEZEL, 0.0); // a crawling pane
         assert_eq!(rect_count(), 2);
         assert_eq!(rect_crawl(0), CRAWL_OFF, "plain pane carries no crawl");
         assert_eq!(

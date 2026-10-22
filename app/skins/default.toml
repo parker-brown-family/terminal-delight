@@ -99,6 +99,7 @@ icon = "▢"
 [metric]
 # radius     = 4.0    # a small element (what gpui spells rounded_sm)
 # radius_lg  = 10.0   # a whole region — the left bar's own frame
+# corner_cap = 9999.0 # the largest corner anything draws; Clean caps it at 3
 # hairline   = 1.0
 # border     = 1.0
 # rule_gap   = 2.0    # between the two lines of a double rule

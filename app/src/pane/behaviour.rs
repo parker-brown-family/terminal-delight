@@ -15,6 +15,86 @@ use super::harness::{
 use crate::docopen::{Asker, DocSeat, FloatHit};
 use crate::workbench::Face;
 
+#[gpui::test]
+fn queued_input_waits_while_the_pane_is_off_limits(cx: &mut TestAppContext) {
+    use std::io::Read;
+    let mut attached = Pane::attached(cx);
+    attached.pane.running_as(super::PaneMode::Codex);
+    attached.pane.view.update(attached.pane.cx, |v, cx| {
+        v.set_on_screen(false, cx);
+        v.bench_deliver(b"queued-canary".to_vec(), cx);
+        assert_eq!(v.bench_queued(), 1);
+        v.off_limits = true;
+        v.set_on_screen(true, cx);
+        assert_eq!(
+            v.bench_queued(),
+            1,
+            "showing a hidden pane must not drain the instruction"
+        );
+    });
+    attached
+        .host
+        .set_read_timeout(Some(std::time::Duration::from_millis(30)))
+        .unwrap();
+    let mut bytes = [0; 128];
+    assert!(
+        attached.host.read(&mut bytes).is_err(),
+        "queued input reached the host"
+    );
+    attached.pane.view.update(attached.pane.cx, |v, cx| {
+        v.off_limits = false;
+        v.bench_drain(cx);
+        assert_eq!(v.bench_queued(), 0);
+    });
+    attached
+        .host
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    let mut received = [0; 13];
+    attached.host.read_exact(&mut received).unwrap();
+    assert_eq!(&received, b"queued-canary");
+}
+
+#[gpui::test]
+fn synthetic_bench_pointer_refuses_off_limits_but_reaches_an_allowed_pane(cx: &mut TestAppContext) {
+    let pane = Pane::running(cx, "exec cat");
+    let view = pane.view.clone();
+    pane.view.update(pane.cx, |v, _| v.off_limits = true);
+    for click in [false, true] {
+        let request = crate::ctl::PointerReq {
+            click,
+            x: 20.0,
+            y: 30.0,
+            alt: false,
+            control: false,
+        };
+        let said = pane
+            .cx
+            .update(|window, cx| view.update(cx, |v, cx| v.synthetic_pointer(request, window, cx)));
+        assert!(
+            said.starts_with("err") && said.contains("off-limits"),
+            "{said}"
+        );
+    }
+    pane.view.update(pane.cx, |v, _| v.off_limits = false);
+    let said = pane.cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.synthetic_pointer(
+                crate::ctl::PointerReq {
+                    click: false,
+                    x: 20.0,
+                    y: 30.0,
+                    alt: false,
+                    control: false,
+                },
+                window,
+                cx,
+            )
+        })
+    });
+    assert!(!said.starts_with("err"), "allowed positive control: {said}");
+}
+
 /// Observe bytes at the host socket, after real GPUI key dispatch. A final
 /// letter fences the claimed chords: if they leaked, it would not arrive first.
 #[gpui::test]
@@ -170,6 +250,45 @@ fn alt_click_on_a_printed_picture_opens_a_square_and_escape_closes_it(cx: &mut T
 
     pane.keys("escape");
     assert_eq!(pane.float_path(), None, "Escape closes the square");
+}
+
+/// Ctrl+W puts the square away and leaves the tab alone; with no square up it
+/// is the shell's werase again. Closing the tab is Ctrl+Shift+W. Parker,
+/// 2026-10-21: *"Alt+w closes the ENTIRE pane, ctrl+w closes the tab ...
+/// Ctrl-W closes one glow pane at a time."*
+#[gpui::test]
+fn ctrl_w_closes_the_square_not_the_tab(cx: &mut TestAppContext) {
+    let (mut pane, _dir, png) = pane_showing_a_picture(cx, "ctrl-w");
+    pane.settle();
+    let tab_closes = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = tab_closes.clone();
+    let view = pane.view.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, _: &super::RequestCloseTab, _| {
+            seen.set(seen.get() + 1)
+        })
+        .detach();
+    });
+
+    let at = pane.point_at(&png);
+    pane.click(at, Pane::alt());
+    assert!(pane.float_path().is_some(), "the square is up");
+    pane.keys("ctrl-w");
+    assert_eq!(pane.float_path(), None, "Ctrl+W closes the square");
+    assert_eq!(tab_closes.get(), 0, "and not the tab");
+
+    // No square: the chord is ^W, and the word before it goes.
+    pane.keys("z z z q ctrl-w d o n e enter");
+    pane.wait_for_row("done");
+    assert!(
+        !pane.rows().iter().any(|r| r.contains("zzzqdone")),
+        "^W reached the shell and erased the word: {:?}",
+        pane.rows()
+    );
+    assert_eq!(tab_closes.get(), 0);
+
+    pane.keys("ctrl-shift-w");
+    assert_eq!(tab_closes.get(), 1, "Ctrl+Shift+W asks to close the tab");
 }
 
 /// Codex's file reference shape: a parenthesized path split across indented
@@ -952,6 +1071,38 @@ fn pane_with_history_and_a_document(cx: &mut TestAppContext, tag: &str) -> (Pane
         "the document is laid out, at its top"
     );
     (pane, dir)
+}
+
+/// ctrl+↓ steps the document in a floating square and ctrl+shift+↓ pages
+/// it; ctrl+↑ and ctrl+shift+↑ go back. The square stays open through all of
+/// it: a key the square claims and its document declines closes the square,
+/// which is what Escape is, and these must not.
+///
+/// Parker, 2026-10-21: *"ctrl seems like it will apply to glow pane, alt applies
+/// to the main pane"*, with paging on shift so ctrl+PageUp/PageDown keep
+/// switching tabs.
+#[gpui::test]
+fn ctrl_arrows_turn_the_floating_square(cx: &mut TestAppContext) {
+    let (mut pane, _dir) = pane_with_history_and_a_document(cx, "glow-keys");
+    let view = pane.float_view().expect("a square");
+    let at = |pane: &mut Pane| pane.scroll_of(&view).expect("laid out");
+    pane.keys("ctrl-down");
+    pane.redraw();
+    let stepped = at(&mut pane);
+    assert!(stepped > 0.0, "ctrl+down steps the document: {stepped}");
+    assert!(pane.float_view().is_some(), "and the square stays open");
+    pane.keys("ctrl-shift-down");
+    pane.redraw();
+    let paged = at(&mut pane);
+    assert!(
+        paged > stepped * 2.0,
+        "ctrl+shift+down pages it: {stepped} then {paged}"
+    );
+    pane.keys("ctrl-shift-up");
+    pane.keys("ctrl-up");
+    pane.redraw();
+    assert_eq!(at(&mut pane), 0.0, "and the two go back to the top");
+    assert!(pane.float_view().is_some());
 }
 
 /// The wheel over the square moves the document in it, and never the
@@ -4021,7 +4172,7 @@ fn pane_at_a_prompt(cx: &mut TestAppContext, alt: bool) -> Pane {
     let mut pane = Pane::running(
         cx,
         &format!(
-            "{screen}INPUTRC=/dev/null HISTFILE= PS1='ready> ' exec bash --norc --noprofile -i"
+            "{screen}TERM=xterm-256color INPUTRC=/dev/null HISTFILE= PS1='ready> ' exec bash --norc --noprofile -i"
         ),
     );
     pane.wait_for("ready>");
@@ -4109,4 +4260,114 @@ fn the_alternate_screen_erases_a_selection_only_in_an_agent_pane(cx: &mut TestAp
     other.keys("ctrl-shift-left backspace z enter");
     other.wait_for("ready> echo abc dez");
     other.wait_for_row("abc dez");
+}
+
+#[gpui::test]
+fn backspace_erases_a_mouse_selection_across_a_soft_wrap(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    let cols = pane.read(|v| v.session.term.lock().columns());
+    let prefix = "x".repeat(cols - 35);
+    let selected = format!("BEGIN{}END", "y".repeat(30));
+    let line = format!("echo {prefix} {selected} tail");
+    pane.read(|v| v.paste_text(&line));
+    pane.wait_for("END tail");
+    pane.settle();
+    let cell_w = pane.read(|v| v.cell_w);
+    let begin = pane.point_at("BEGIN");
+    let end = pane.point_at("END tail");
+    assert_ne!(begin.y, end.y, "fixture must cross a real grid wrap");
+    pane.press(point(begin.x - px(cell_w * 2.25), begin.y));
+    let last = point(end.x - px(cell_w * 1.75), end.y);
+    pane.drag_to(last);
+    pane.release(last);
+    assert_eq!(pane.read(|v| v.selection_clipboard_text()), Some(selected));
+    pane.keys("backspace");
+    pane.keys("enter");
+    pane.wait_for_row(&format!("{prefix} tail"));
+}
+
+#[gpui::test]
+fn keyboard_selection_and_backspace_cross_every_soft_wrap(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    let word = "WRAPPED".repeat(30);
+    pane.read(|v| v.paste_text(&format!("keep {word}")));
+    pane.wait_for("WRAPPED");
+    pane.settle();
+    pane.keys(&vec!["shift-left"; word.len()].join(" "));
+    assert_eq!(
+        pane.read(|v| v.selection_clipboard_text())
+            .unwrap()
+            .trim_end(),
+        word
+    );
+    pane.keys("backspace");
+    pane.wait_for_row("ready> keep");
+    assert!(!pane.rows().iter().any(|r| r.contains("WRAPPED")));
+}
+
+#[gpui::test]
+fn shift_backspace_deletes_the_previous_word_at_a_real_prompt(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    type_line(&mut pane, "echo first second");
+    pane.keys("shift-backspace z enter");
+    pane.wait_for_row("first z");
+}
+
+#[gpui::test]
+fn control_shift_backspace_erases_both_sides_of_a_wrapped_line(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    let text = format!("echo {} END", "word ".repeat(30));
+    pane.read(|v| v.paste_text(&text));
+    pane.wait_for("END");
+    pane.keys("left left ctrl-shift-backspace");
+    pane.wait_for_row("ready>");
+    assert!(!pane.rows().iter().any(|r| r.contains("word")));
+    type_line(&mut pane, "echo kept");
+    pane.keys("enter");
+    pane.wait_for_row("kept");
+}
+
+#[gpui::test]
+fn the_new_shortcuts_distinguish_a_line_from_the_entire_multiline_input(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    pane.read(|v| v.paste_text("first ONE\nsecond TWO\nthird THREE"));
+    pane.wait_for("third THREE");
+    pane.keys("ctrl-shift-backspace");
+    pane.keys("z");
+    pane.wait_for_row("z");
+    let rows = pane.rows().join("\n");
+    assert!(
+        rows.contains("first ONE") && rows.contains("second TWO"),
+        "{rows}"
+    );
+    assert!(!rows.contains("third THREE"), "{rows}");
+    pane.keys("ctrl-alt-shift-backspace");
+    pane.wait_for_row("ready>");
+    let rows = pane.rows().join("\n");
+    assert!(!rows.contains("ONE") && !rows.contains("TWO"), "{rows}");
+}
+
+#[gpui::test]
+fn backspace_erases_selected_literal_newlines_and_keeps_the_suffix(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    pane.read(|v| v.paste_text("prefix\nSELECTONE\nSELECTTWO suffix"));
+    pane.wait_for("SELECTTWO suffix");
+    pane.settle();
+    let cell_w = pane.read(|v| v.cell_w);
+    let start = pane.point_at("SELECTONE");
+    let end = pane.point_at("SELECTTWO");
+    let start = point(start.x - px(cell_w * 4.25), start.y);
+    let end = point(end.x + px(cell_w * 4.25), end.y);
+    pane.press(start);
+    pane.drag_to(end);
+    pane.release(end);
+    assert_eq!(
+        pane.read(|v| v.selection_clipboard_text()).as_deref(),
+        Some("SELECTONE\nSELECTTWO")
+    );
+    pane.keys("backspace");
+    pane.wait_for_row(" suffix");
+    let rows = pane.rows().join("\n");
+    assert!(rows.contains("ready> prefix"), "{rows}");
+    assert!(!rows.contains("SELECT"), "{rows}");
 }

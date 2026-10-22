@@ -133,6 +133,10 @@
           "title": "MCP server"
         },
         {
+          "slug": "restricted",
+          "title": "Restricted commands"
+        },
+        {
           "slug": "agent-to-agent",
           "title": "Agent to agent"
         },
@@ -194,17 +198,17 @@
     {
       "title": "lean-ctx",
       "href": "https://leanctx.com",
-      "note": "context runtime ↗"
+      "note": "context runtime \u2197"
     },
     {
       "title": "Omarchy",
       "href": "https://omarchy.org",
-      "note": "the desktop ↗"
+      "note": "the desktop \u2197"
     },
     {
       "title": "Rio",
       "href": "https://rioterm.com",
-      "note": "the terminal core ↗"
+      "note": "the terminal core \u2197"
     },
     {
       "title": "Version",
@@ -213,8 +217,8 @@
     },
     {
       "title": "Preview",
-      "href": "https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.4.0-rc.2",
-      "note": "v0.4.0-rc.2"
+      "href": "https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.4.0-rc.3",
+      "note": "v0.4.0-rc.3"
     }
   ]
 }

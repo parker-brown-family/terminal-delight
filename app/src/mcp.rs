@@ -169,16 +169,16 @@ pub struct PaneInfo {
     /// Whether this pane would be exposed under the current policy.
     pub exposed: bool,
     /// The pane's *effective* grade — what it actually renders with (its own
-    /// override, else the inherited outer) — in the config API's uniform
-    /// `0..100` percents. `#[serde(skip)]` so `list_panes` stays an
+    /// override, else the inherited outer) — in the config API's percentages
+    /// and explicit milliseconds. `#[serde(skip)]` so `list_panes` stays an
     /// identity-only listing; `get_pane_config` serialises it explicitly.
     #[serde(skip)]
     pub grade: GradeReport,
 }
 
-/// The grade group exactly as the config API reads and writes it: every channel
-/// a `0..=100` percent (see [`crate::theme::GradeKey::to_percent`]), uniform
-/// across channels so an agent never reasons about a channel's stored range.
+/// The grade group exactly as the config API reads and writes it: numeric dials
+/// use `0..=100` percent (see [`crate::theme::GradeKey::to_percent`]), except
+/// `afterglow_ms`, which carries milliseconds. Switches remain booleans.
 /// This is the **GET** shape — a full report of a scope's current grade.
 ///
 /// `tracking` is deliberately absent: it is a theme-authored roll-bar dial, not
@@ -211,12 +211,31 @@ pub struct GradeReport {
     /// Border phosphor: how much light the lit borders cast. `0` is none, and
     /// the house glow sits at `25` — the range runs to four times it.
     pub phosphor: f32,
+    /// Terminal-image glow percentage. None means the dial has never been set;
+    /// drawing defaults to 20% on Standard and 37% on Intrusive.
+    pub image_glow: Option<f32>,
+    /// Inactive letter glow percentage; undeclared draws at 100%.
+    pub inactive_image_glow: Option<f32>,
+    /// Percent of active text intensity; undeclared draws at 45% on Standard or 52% on Intrusive.
+    pub inactive_text: Option<f32>,
+    /// Legacy unified setting, 0..1200ms. New controls override it at drawing time.
+    pub afterglow_ms: Option<f32>,
+    /// Active text-change trail, 0..220 milliseconds; zero disables it.
+    pub cursor_linger_ms: Option<f32>,
+    /// Active erased-text trail, 0..650 milliseconds; zero disables it.
+    pub off_cursor_linger_ms: Option<f32>,
+    /// Inactive text-change trail, 0..220 milliseconds; zero disables it.
+    pub inactive_cursor_linger_ms: Option<f32>,
+    /// Inactive erased-text trail, 0..650 milliseconds; zero disables it.
+    pub inactive_off_cursor_linger_ms: Option<f32>,
 }
 
 /// The **POST** shape: a *partial* grade. Every field is optional and an absent
 /// field is left **unchanged** (PATCH, not PUT) — so "dim the brightness" never
 /// silently resets the theme, the warp, or any other channel. Percents are
-/// `0..=100`; out-of-range values clamp (the API is "dumb" — it stores the
+/// `0..=100`; linger fields use milliseconds (cursor 0..220, off-cursor 0..650).
+/// Legacy `afterglow_ms` accepts 0..1200. Out-of-range values
+/// clamp (the API is "dumb" — it stores the
 /// number it is given, it does not interpret "20% lower"; the agent does that
 /// math and posts the resulting absolute value). `deny_unknown_fields` makes a
 /// typo'd channel a loud error rather than a silent no-op.
@@ -239,6 +258,22 @@ pub struct ConfigPatch {
     pub crt: Option<bool>,
     /// Border phosphor, `0..=100` (`25` is the house glow, `0` none).
     pub phosphor: Option<f32>,
+    /// Terminal-image glow, 0..100. Omission leaves the setting unchanged.
+    pub image_glow: Option<f32>,
+    /// Inactive letter glow percentage; undeclared draws at 100%.
+    pub inactive_image_glow: Option<f32>,
+    /// Percent of active text intensity; undeclared draws at 45% on Standard or 52% on Intrusive.
+    pub inactive_text: Option<f32>,
+    /// Legacy unified setting, 0..1200ms. New controls override it at drawing time.
+    pub afterglow_ms: Option<f32>,
+    /// Active text-change trail, 0..220 milliseconds; zero disables it.
+    pub cursor_linger_ms: Option<f32>,
+    /// Active erased-text trail, 0..650 milliseconds; zero disables it.
+    pub off_cursor_linger_ms: Option<f32>,
+    /// Inactive text-change trail, 0..220 milliseconds; zero disables it.
+    pub inactive_cursor_linger_ms: Option<f32>,
+    /// Inactive erased-text trail, 0..650 milliseconds; zero disables it.
+    pub inactive_off_cursor_linger_ms: Option<f32>,
     /// Attach (or clear) the pane's card LOGO: an absolute path to an image file
     /// (png/jpg/jpeg/svg/webp). An empty string clears it. Lets an agent brand the
     /// terminal it's working in — shown as the card portrait on the agent wall.
@@ -247,11 +282,13 @@ pub struct ConfigPatch {
     /// `leave_note` tool (already validated); rides the config pipeline so a
     /// note write shares the one writes gate, the one pane lookup, and the one
     /// GUI-thread apply with every other pane mutation. Pane targets only.
+    #[serde(skip)]
     pub note: Option<NoteChange>,
     /// Declare (or withdraw) what this turn produced — the one artifact a person
     /// is meant to open. Filled in by `declare_deliverable`, already validated;
     /// rides the same pipeline as the note for the same reasons. Pane targets
     /// only.
+    #[serde(skip)]
     pub deliverable: Option<DeliverableChange>,
     /// A work object for the pane's WORKBENCH, already parsed and validated by
     /// [`crate::surface::parse`]. Filled in by `present_surface`; rides the
@@ -544,6 +581,18 @@ pub fn may_write(cfg: &McpConfig, is_agent: bool, off_limits: bool, own_pane: bo
     should_expose(cfg, is_agent, off_limits && !own_pane)
 }
 
+/// Recheck policy at the actual UI effect, after a request's snapshot may have
+/// gone stale. An access proposal is the sole write allowed with Writes off.
+pub fn apply_permission(cfg: &McpConfig, patch: &ConfigPatch) -> Result<(), &'static str> {
+    if !cfg.enabled {
+        Err("MCP exposure is disabled")
+    } else if !cfg.writable && patch.ask.is_none() {
+        Err("MCP writes are disabled")
+    } else {
+        Ok(())
+    }
+}
+
 // ===========================================================================
 // JSON-RPC 2.0 — the read-only MCP server's wire protocol.
 //
@@ -646,6 +695,8 @@ pub struct DocInfo {
     /// floats over, or the split's own pane.
     pub pane: u32,
     pub place: DocPlace,
+    /// A hidden document is readable only when it belongs to the caller.
+    pub off_limits: bool,
     /// For a split, the host id of the pane it was opened beside. `None` for a
     /// float, whose pane is [`Self::pane`], and for a split whose opening this
     /// window did not see — one restored from a saved layout — which is still
@@ -684,7 +735,7 @@ pub fn document_beside<'a>(
     docs: &'a [DocInfo],
     caller: &PaneInfo,
 ) -> Option<(&'a DocInfo, Beside)> {
-    let here = |d: &&DocInfo| d.tab == caller.tab;
+    let here = |d: &&DocInfo| d.tab == caller.tab && (!d.off_limits || d.pane == caller.pid);
     if let Some(d) = docs
         .iter()
         .filter(here)
@@ -806,10 +857,8 @@ impl Snapshot {
     }
 
     /// Whether `pid` is the pane the caller is sitting in — what makes an
-    /// update [`ConfigPatch::own_pane`]. As trustworthy as the caller's pane
-    /// id, which the host puts in the pane's environment: a process that
-    /// forges it is pretending to be another pane, and the most it reaches
-    /// that way is that pane's note, deliverable and bench, never a read.
+    /// update [`ConfigPatch::own_pane`]. The ctl transport verifies its peer PID
+    /// against this pane's shell ancestry before installing the caller claim.
     fn is_callers(&self, pid: u32) -> bool {
         self.caller
             .as_ref()
@@ -1077,8 +1126,8 @@ fn initialize_result(params: &Value) -> Value {
              appear, vanish, and call tools, so you can react without polling. \
              `get_pane_config` / `set_pane_config` read and change a pane's (or \
              the window-level `outer`) appearance — brightness, contrast, colour, \
-             warp, text size, crawl, the CRT switch — in uniform 0..100 percents \
-             and two booleans; writes need the \
+             warp, text size, crawl, the CRT switch — in 0..100 percents, \
+             booleans and explicit afterglow milliseconds; writes need the \
              server's opt-in writes toggle. The config API is dumb: it stores the \
              absolute number you give it, so compute relative changes (\"20% \
              lower\") yourself from a get_pane_config read. `document_notes` \
@@ -1126,11 +1175,19 @@ fn tool_defs() -> Value {
             "name": "get_pane_config",
             "description":
                 "Read the appearance (monitor grade) of one or more panes, or the \
-                 window-level `outer` scope. Every channel is reported as a \
-                 0..100 percent (brightness, contrast, colour, text, background, \
+                 window-level `outer` scope. Numeric dials use 0..100 percent \
+                 (brightness, contrast, colour, text, background, \
                  gamma, menu_bar, text_size, bench_size, warp, crawl_angle, crawl_depth, \
-                 phosphor — the glow of the lit borders, 25 the house look, 0 none) plus \
-                 a `crawl` boolean and a `crt` boolean (off = a flat screen; \
+                 phosphor — the glow of the lit borders, 25 the house look, 0 none; \
+                 image_glow — active letter glow, default 20 (Standard) / 37 (Intrusive); inactive_image_glow \
+                 — inactive glow, default 100; inactive_text — percent of active \
+                 text, default 45 (Standard) / 52 (Intrusive)). The four linger fields use milliseconds: \
+                 cursor_linger_ms and inactive_cursor_linger_ms range 0..220; off_cursor_linger_ms \
+                 and inactive_off_cursor_linger_ms range 0..650. Defaults are the maxima; zero \
+                 disables that trail. Cursor means text changes; off-cursor means erased passages. \
+                 Legacy afterglow_ms accepts 0..1200 and supplies fallback timings capped to the \
+                 new maxima; legacy zero disables undeclared trails. Optional lighting fields remain null \
+                 in GET while unset. `crawl` and `crt` are booleans (CRT off = a flat screen; \
                  warp and the roll bar keep their values but draw nothing). \
                  Omit `targets` to report every exposed pane \
                  plus `outer`. Read-only. To change a value, GET it, compute the \
@@ -1152,7 +1209,11 @@ fn tool_defs() -> Value {
             "description":
                 "Set the appearance of one or more panes (by pid) or the `outer` \
                  scope. Each update carries a partial `config`: only the channels \
-                 you include change (0..100 percents; out-of-range values clamp), \
+                  you include change (0..100 percents, except linger fields in milliseconds: \
+                  cursor_linger_ms/inactive_cursor_linger_ms 0..220, \
+                  off_cursor_linger_ms/inactive_off_cursor_linger_ms 0..650; \
+                  legacy afterglow_ms 0..1200 resets the four overrides, with explicit \
+                  new fields in the same patch winning; out-of-range values clamp), \
                  everything else is left untouched. The API is deliberately dumb \
                  — it stores the absolute number you give it and does NOT \
                  interpret relative asks like \"20% lower\"; read the current \
@@ -1179,7 +1240,7 @@ fn tool_defs() -> Value {
                                 },
                                 "config": {
                                     "type": "object",
-                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth/phosphor (0..100; phosphor 25 = the house border glow, 0 = none) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
+                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth/phosphor/image_glow/inactive_image_glow/inactive_text (0..100; image_glow is active letter glow, 0 off; cursor_linger_ms/inactive_cursor_linger_ms are 0..220ms, off_cursor_linger_ms/inactive_off_cursor_linger_ms are 0..650ms, zero disables each; legacy afterglow_ms is 0..1200ms and resets the four overrides; phosphor 25 = the house border glow, 0 = none) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
                                 }
                             },
                             "required": ["target", "config"],
@@ -2212,6 +2273,15 @@ where
         Ok(p) => p.pid,
         Err(e) => return tool_err(&e),
     };
+    if let Some(pid) = pid {
+        if !snap
+            .panes
+            .iter()
+            .any(|p| p.pid == pid && (p.exposed || snap.is_callers(pid)))
+        {
+            return tool_err(&format!("no pane with pid {pid}"));
+        }
+    }
     let patch = ConfigPatch {
         ask: Some(Ask {
             change,
@@ -2344,43 +2414,54 @@ where
     //
     // `pane_id: None` is a window-owned pane with no host — it has no
     // directory, and inventing one would write into a path nothing watches.
+    //
+    // Only for a pane this caller may write to, though. The window's periodic
+    // sweep re-delivers whatever sits in that directory without asking the
+    // write gate again, so a surface refused by `apply` below but already on
+    // disk would land on an off-limits pane a few seconds later anyway. Same
+    // rule as `may_write`: exposed under the policy, or the caller's own pane.
     let pane_dir = snap
         .panes
         .iter()
         .find(|p| p.pid == pid)
+        .filter(|p| p.exposed || snap.is_callers(pid))
         .and_then(|p| p.pane_id)
         .zip(snap.instance.as_ref())
         .map(|(pane, inst)| crate::surfacefeed::pane_dir(&inst.session, pane));
-    if let Some(dir) = pane_dir.as_ref() {
-        match post.op {
-            crate::surface::Op::Retire => {
-                crate::surfacefeed::retire_surface(dir, post.id.as_str());
-            }
-            // A failure here is not worth refusing the call over: the surface
-            // still reaches the bench, and the person sees it. It costs the
-            // restart, which is what the log line is for.
-            _ => {
-                if let Err(err) = crate::surfacefeed::drop_surface(dir, post.id.as_str(), &doc) {
-                    eprintln!(
-                        "terminal-delight mcp: presented {:?} but could not persist it into {}: {err}",
-                        post.id.as_str(),
-                        dir.display()
-                    );
-                }
-            }
-        }
-    }
 
     let patch = ConfigPatch {
-        surface: Some(post),
+        surface: Some(post.clone()),
         own_pane: snap.is_callers(pid),
         ..Default::default()
     };
     match apply(&[(Target::Pane(pid), patch)]).into_iter().next() {
-        Some((_, Ok(_))) => tool_ok(
-            said,
-            json!({ "pid": pid, "surface": id, "kind": kind, "op": op }),
-        ),
+        Some((_, Ok(_))) => {
+            if let Some(dir) = pane_dir.as_ref() {
+                match post.op {
+                    crate::surface::Op::Retire => {
+                        crate::surfacefeed::retire_surface(dir, post.id.as_str());
+                    }
+                    // A failure here is not worth refusing the call over: the surface
+                    // still reaches the bench, and the person sees it. It costs the
+                    // restart, which is what the log line is for.
+                    _ => {
+                        if let Err(err) =
+                            crate::surfacefeed::drop_surface(dir, post.id.as_str(), &doc)
+                        {
+                            eprintln!(
+                            "terminal-delight mcp: presented {:?} but could not persist it into {}: {err}",
+                            post.id.as_str(),
+                            dir.display()
+                        );
+                        }
+                    }
+                }
+            }
+            tool_ok(
+                said,
+                json!({ "pid": pid, "surface": id, "kind": kind, "op": op }),
+            )
+        }
         Some((_, Err(e))) => tool_err(&e),
         None => tool_err("the window did not answer the surface write"),
     }
@@ -2430,7 +2511,7 @@ fn document_notes(args: &Value, snap: &Snapshot) -> Value {
         Ok(p) => p,
         Err(why) => return tool_err(&why),
     };
-    if !me.exposed {
+    if !should_expose(&snap.config, me.is_agent, false) {
         return tool_err(&format!(
             "the pane you are calling from ({}) is not exposed under the current \
              policy, so nothing about it is answered",
@@ -2674,7 +2755,7 @@ where
         Ok(p) => p,
         Err(why) => return tool_err(&why),
     };
-    if !me.exposed {
+    if !should_expose(&snap.config, me.is_agent, false) {
         return tool_err(&format!(
             "the pane you are calling from ({}) is not exposed under the current \
              policy, so nothing opens in it",
@@ -2938,6 +3019,107 @@ pub fn encode_notification(n: &Notification) -> String {
 #[cfg(test)]
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stale_snapshots_do_not_override_the_current_write_policy() {
+        let mut live = McpConfig {
+            enabled: true,
+            writable: true,
+            ..Default::default()
+        };
+        let note = ConfigPatch {
+            note: Some(NoteChange::Clear),
+            ..Default::default()
+        };
+        assert!(apply_permission(&live, &note).is_ok());
+        live.writable = false;
+        assert_eq!(
+            apply_permission(&live, &note),
+            Err("MCP writes are disabled")
+        );
+        let ask = ConfigPatch {
+            ask: Some(crate::access::Ask {
+                change: crate::access::Change::WritesOn,
+                pid: None,
+                title: None,
+                why: "Need a note".into(),
+                at: std::time::Instant::now(),
+            }),
+            ..Default::default()
+        };
+        assert!(
+            apply_permission(&live, &ask).is_ok(),
+            "asking must still work with writes off"
+        );
+        live.enabled = false;
+        assert_eq!(
+            apply_permission(&live, &ask),
+            Err("MCP exposure is disabled")
+        );
+    }
+    #[test]
+    fn config_json_cannot_inject_validated_notes_or_deliverables() {
+        for value in [
+            json!({"note":{"post":{"text":"x".repeat(9000),"title":"bad","pin":false}}}),
+            json!({"deliverable":{"declare":{"label":"bad","href":"javascript:alert(1)"}}}),
+            json!({"deliverable":{"declare":{"label":"bad","href":"data:text/html,unsafe"}}}),
+        ] {
+            assert!(
+                serde_json::from_value::<ConfigPatch>(value.clone()).is_err(),
+                "{value}"
+            );
+            let result = call(
+                &snap(true, true, vec![agent_pane(100, true)]),
+                "set_pane_config",
+                {
+                    let mut value = value;
+                    value["pid"] = json!(100);
+                    value
+                },
+            );
+            assert_eq!(result["isError"], true);
+        }
+        assert!(serde_json::from_value::<ConfigPatch>(json!({"brightness":42})).is_ok());
+    }
+
+    #[test]
+    fn hidden_document_notes_are_private_but_the_callers_own_float_still_works() {
+        let mut hidden = doc(0, 300, DocPlace::Split, Some(9), "/private/notes.html");
+        hidden.off_limits = true;
+        let mut s = window_with(vec![hidden]);
+        assert!(notes_of(&s)["structuredContent"]["path"].is_null());
+        let mut own = doc(0, 100, DocPlace::Float, None, "/own/notes.html");
+        own.off_limits = true;
+        s.documents.push(own);
+        s.panes.iter_mut().find(|p| p.pid == 100).unwrap().exposed = false;
+        assert_eq!(notes_of(&s)["structuredContent"]["path"], "/own/notes.html");
+        s.config.writable = true;
+        let md = TempDoc::new("own-hidden.md", "# Own document\n");
+        let opened = std::cell::Cell::new(false);
+        let result = open_document(&json!({"path":md.0}), &s, &|request| {
+            assert_eq!(request.pid, 100);
+            opened.set(true);
+            Ok("opened".into())
+        });
+        assert_ne!(result["isError"], true);
+        assert!(opened.get());
+        s.caller.as_mut().unwrap().pane = None;
+        assert_eq!(notes_of(&s)["isError"], true);
+    }
+
+    #[test]
+    fn access_requests_do_not_disclose_hidden_panes() {
+        let mut s = window_with(vec![]);
+        s.panes.iter_mut().find(|p| p.pid == 200).unwrap().exposed = false;
+        for pid in [200, 9999] {
+            let result = call(
+                &s,
+                "request_access",
+                json!({"change":"close_pane","pid":pid,"why":"please hide"}),
+            );
+            assert_eq!(result["isError"], true);
+            assert!(text_of(&result).contains(&format!("no pane with pid {pid}")));
+        }
+    }
     use super::*;
 
     #[test]
@@ -3076,6 +3258,45 @@ mod tests {
                 (Target::Pane(200), false),
             ]
         );
+    }
+
+    /// A surface the write gate refuses is not left on disk either. The
+    /// window re-delivers whatever sits in a pane's surfaces directory without
+    /// asking the gate again, so a surface persisted "on the way past" and then
+    /// refused would still reach an off-limits pane a few seconds later.
+    ///
+    /// The snapshot can allow a pane that the live UI refuses by the time it
+    /// handles Apply. Both that race and an already-hidden snapshot must leave
+    /// no persisted card for the next sweep.
+    #[test]
+    fn a_refused_surface_is_not_persisted_for_the_sweep_to_deliver() {
+        for exposed in [false, true] {
+            let session = format!("td-test-refused-surface-{}-{exposed}", std::process::id());
+            let mut s = snap_writable(vec![agent_pane(300, exposed)]);
+            if let Some(inst) = s.instance.as_mut() {
+                inst.session = session.clone();
+            }
+            let dir = crate::surfacefeed::pane_dir(&session, u64::from(300u32 % 97));
+            let line = json!({ "id": 3, "method": "tools/call", "params": {
+                "name": "present_surface", "arguments": { "pid": 300,
+                "surface": { "td": "0.4", "kind": "response", "title": "t",
+                    "id": "pushed", "model": { "layman": "x" } } } } })
+            .to_string();
+            let refuse = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+                vec![(ups[0].0.clone(), Err("pane 300 is not exposed".into()))]
+            };
+            let reply = handle_line_with(&line, &s, no_tail, &refuse, no_search).unwrap();
+            let landed = dir.exists();
+            if let Some(root) = dir.parent() {
+                let _ = std::fs::remove_dir_all(root);
+            }
+            assert!(reply.contains("isError"), "{reply}");
+            assert!(
+                !landed,
+                "a refused surface was written to {}",
+                dir.display()
+            );
+        }
     }
 
     /// An agent cannot claim the exception for itself: `own_pane` is not a
@@ -4083,6 +4304,7 @@ mod tests {
             tab,
             pane,
             place,
+            off_limits: false,
             opened_by,
             path: path.into(),
             notes: Ok(report(&format!("NOTES — {path}\n"), 1, 0)),

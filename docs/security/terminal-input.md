@@ -37,6 +37,15 @@ audited 2026-09-08:
 | 8 | `pane.rs:2471` | `new_restored` | a **freshly spawned** shell is handed its recorded command line — session restore, the dead-agent *resurrect* menu, `ctl adopt --run`, or `TD_SEED_RESUME` at launch | see below |
 | 9 | `pane.rs` | `send_notes` | a press on **↪** in a brief's notes bar, or its chord **ctrl+shift+enter** over the square while the button is drawn — the brief's notes map, pasted into the prompt of the agent pane the brief sits beside, bracketed and **never followed by Enter**; on the bench face it goes into the composer instead and writes nothing here; see below | pointer + keystroke |
 
+The editing keys share site #1. Shift+Backspace sends backward-word deletion;
+Ctrl+Shift+Backspace computes the entire current logical line, including soft wraps, and walks
+the caret before sending DELs. Ctrl+Shift+Alt+Backspace sends beginning-of-input then kill-to-end
+for a Readline-compatible shell or agent input. The workbench composer applies these edits to
+its local draft, with undo. None submits input, sends an interrupt or clears terminal history.
+Mouse selections and Shift+Arrow selections can cross soft wraps. A selected range crossing
+literal newlines must include the caret's row; a range entirely in unrelated history is not
+expanded into an edit. The existing scrolled-view and non-agent alternate-screen guards remain.
+
 `send` is the only site that composes bytes from a keystroke, and it is reachable only from the key
 handler, the cut keybinding and the launch panel's `run_line`. That is the invariant. Everything
 else is the terminal answering its own program (#2, #3), a pointer gesture the person made (#4, #6,
@@ -67,16 +76,19 @@ expressible request that writes into a session already running. The socket itsel
 as this user can execute commands without asking a terminal emulator to do it.
 
 **Corrected 2026-10-15: the socket also reaches an agent that is already running — through its
-bench.** `ctl bench say`, `ctl bench choose` and `ctl bench submit` are the workbench's own
-gestures driven from outside, and they land in `pane/bench.rs` (`bench_deliver`, `bench_keystroke`,
+bench.** `ctl bench say`, `ctl bench choose`, `ctl bench submit` and `ctl bench click` are the
+workbench's own gestures driven from outside (`click` presses whatever is under the point, pause and
+end agent included), and they land in `pane/bench.rs` (`bench_deliver`, `bench_keystroke`,
 `dial_answer`), which this file's audit does not count because it scans `pane.rs` and `pane/doc.rs`.
 Those writes have their own scan, `every_bench_write_goes_through_the_gate`, and their own bounds:
 the pane must be on screen with an agent in it, a picker the dial raised holds them back, and a
 line arrives prefixed `[workbench:<tag>]`, so the agent can tell its own person's line from anyone
 else's. (`ctl bench type` only fills the composer and writes nothing to the terminal.) So the
 sentence above is true of `adopt` and not of the socket: any process running as you can put a line
-in front of an agent on screen, the bench's way. Marking a pane **off-limits** (`docs/mcp.md`) does
-not change that: the mark hides a pane from MCP, and this path is the control socket, not MCP.
+in front of an agent on screen, the bench's way. **Since 0.5 development a pane marked off-limits
+(`docs/mcp.md`) takes none of them:** the bench verbs skip it when they pick a pane (`main.rs`, with
+`!v.off_limits` in each picker), and a synthetic click or hover is refused again at dispatch
+(`pane/bench.rs`), so a pane that became off-limits after the pick still takes nothing.
 
 **And a plugin this repository ships puts that verb in front of agents.** `plugins/td-send/`
 declares `pull_workspace` and describes itself as "the ⇄ desk-consolidation verbs td-send

@@ -73,7 +73,7 @@ SESSION="docopen$$"
 WS="special:tdopen$$"
 LOG="$OUT/window.log"
 {
-  echo "export TD_SESSION=$SESSION PATH=$OUT/bin:\$PATH XDG_CACHE_HOME=$OUT/cache XDG_STATE_HOME=$OUT/state"
+  echo "export TD_SESSION=$SESSION TD_MCP_SCRIPTED=1 PATH=$OUT/bin:\$PATH XDG_CACHE_HOME=$OUT/cache XDG_STATE_HOME=$OUT/state"
   echo "exec $TD > $LOG 2>&1"
 } > "$OUT/launch.sh"
 

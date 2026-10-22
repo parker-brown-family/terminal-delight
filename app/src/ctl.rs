@@ -139,11 +139,13 @@ fn bench_outcome(rx: mpsc::Receiver<String>) -> String {
         .unwrap_or_else(|_| "err the window did not answer".into())
 }
 
-/// One field of the MCP control-surface policy — the robot panel's toggles,
-/// reachable from the socket. Same escalation, same persistence: the panel and
-/// this path both write `ws.mcp` and `save()`, so a grant made from the CLI is
-/// visible in the panel and survives a restart. Kept as one-field-at-a-time so a
-/// script can grant reads without silently also granting writes.
+/// One field of the MCP control-surface policy — the robot panel's toggles.
+/// The socket refuses every one of them, in either direction, unless the window
+/// was launched to be scripted — see [`PolicyControl`]. A scripted window applies
+/// them like the panel's press: it writes `ws.mcp` and `save()`s, so the change
+/// shows in the panel and survives a restart.
+/// Kept as one-field-at-a-time so a script can grant reads without silently
+/// also granting writes.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum McpPolicy {
     /// The master switch (`mcp.enabled`).
@@ -152,6 +154,43 @@ pub(crate) enum McpPolicy {
     Writes(bool),
     /// `true` = expose every pane, `false` = agent panes only (the safe default).
     ExposeAll(bool),
+}
+
+impl McpPolicy {
+    /// Every global policy mutation needs the same independent operator choice.
+    fn refusal(self) -> String {
+        let verb = match self {
+            Self::Enabled(true) => "mcp on",
+            Self::Enabled(false) => "mcp off",
+            Self::Writes(true) => "mcp writes on",
+            Self::Writes(false) => "mcp writes off",
+            Self::ExposeAll(true) => "mcp expose all",
+            Self::ExposeAll(false) => "mcp expose agents",
+        };
+        format!("err {verb}: nothing changed. Global MCP policy is a person's choice in the MCP control panel (Ctrl+Shift+A). An agent can propose wider access with request_access when MCP is on; it cannot change global switches, including disabling other workloads. Operator scripts must launch their own window with TD_MCP_SCRIPTED=1.")
+    }
+}
+
+/// Launch-selected operator automation, never an authorization asserted by a
+/// socket request. Standard host-user processes remain fully trusted by the OS;
+/// this guard prevents cooperative bypass and nuisance, not hostile-host access.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum PolicyControl {
+    Refused,
+    Scripted,
+}
+impl PolicyControl {
+    fn from_env() -> Self {
+        Self::from_launch(std::env::var("TD_MCP_SCRIPTED").ok().as_deref())
+    }
+
+    fn from_launch(value: Option<&str>) -> Self {
+        if value == Some("1") {
+            Self::Scripted
+        } else {
+            Self::Refused
+        }
+    }
 }
 
 /// WHICH tab an op acts on.
@@ -477,11 +516,12 @@ pub fn socket_path(pid: u32) -> PathBuf {
 /// unknown-command error both quote it, so they can't drift from the match.
 const USAGE: &str = "ping | whoami | paint on|off|toggle|status | \
      skin <name>|theme|status|snapshot | \
-     bench on|off|toggle|choose <n>|submit|say <text>|type <text> | \
+     bench on|off|toggle|choose <n>|submit|say <text>|type <text>|probe | \
+     bench click|hover <x> <y> [alt|ctrl|ctrl-alt] | \
      doc here <absolute path> | doc beside <absolute path> | doc close | \
      doc scroll <pixels> | doc notes | doc note add <nid> <text> | \
      doc note delete <nid> <text> | doc concur <nid> | doc save | \
-     mcp status|on|off | mcp writes on|off | mcp expose agents|all | \
+     mcp status | mcp on|off, mcp writes on|off, mcp expose agents|all (err unless the window started with TD_MCP_SCRIPTED=1) | \
      mcp rpc <json> | mcp from <session> <pane|-> rpc <json> | \
      adopt {\"cwd\":\"/…\",\"run\":\"…\"} | \
      tabs [{\"op\":\"name\",\"pane\":1234,\"name\":\"DEV\"}, …] | \
@@ -770,6 +810,7 @@ fn handle_conn(
     mcp_mirror: &AtomicU8,
     skin_mirror: &Mutex<SkinMirror>,
     tx: &mpsc::Sender<Req>,
+    policy_control: PolicyControl,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
@@ -795,20 +836,10 @@ fn handle_conn(
             // impossible to spot. Refusing costs one comparison and turns that
             // into a sentence naming both sessions.
             //
-            // THIS GUARDS MISROUTING, NOT IMPERSONATION, and the difference
-            // matters to whoever arrives here cold. `c.session` is whatever the
-            // caller wrote on the wire; nothing checks it against the process on
-            // the other end of the connection, and `c.pane` is not checked
-            // against anything at all. A caller that names the right session on
-            // purpose is served, and that is deliberate: every caller able to
-            // reach this socket is already the same person, and an agent acting
-            // for them is them. `docs/decisions/0002` carries the argument and,
-            // more usefully, says what ends it — the first caller able to arrive
-            // from outside this user's runtime directory.
-            //
-            // `host.rs` does check, with `SO_PEERCRED`, because it is answering
-            // a different question. If this socket ever needs to, the technique
-            // is already in the tree rather than to be invented.
+            // The session claim prevents misrouting. The socket's kernel peer
+            // PID, checked against the current pane snapshot in respond_as,
+            // establishes whether the own-pane exception belongs to this caller.
+            let peer_pid = crate::host::peer_pid(&stream);
             if let Some(c) = &caller {
                 let mine = crate::instance::key();
                 if c.session != mine {
@@ -829,7 +860,7 @@ fn handle_conn(
             let spawned = thread::Builder::new()
                 .name("td-ctl-mcp".into())
                 .spawn(move || {
-                    let reply = mcp_transport::respond_as(&payload, caller)
+                    let reply = mcp_transport::respond_as(&payload, caller, peer_pid)
                         .unwrap_or_else(|| MCP_NONE.to_string());
                     let mut stream = stream;
                     let _ = stream.set_write_timeout(Some(Duration::from_secs(8)));
@@ -901,6 +932,9 @@ fn handle_conn(
                 )
             }
         }
+        // Refused before the queue: the ticker applies whatever reaches it, so
+        // this is where an unauthorized policy mutation must be stopped.
+        Ok(Cmd::McpPolicy(p)) if policy_control == PolicyControl::Refused => p.refusal(),
         Ok(Cmd::McpPolicy(p)) => {
             if tx.send(Req::McpPolicy(p)).is_ok() {
                 "ok".into()
@@ -1067,6 +1101,8 @@ pub fn start(cx: &mut Context<Workspace>) {
     // Not an atomic: the skin mirror is a name plus a list, and it is read once
     // per socket connection rather than per frame.
     let skin_mirror = Arc::new(Mutex::new(SkinMirror::default()));
+    // Read once, here, so nothing that runs later can change the answer.
+    let policy_control = PolicyControl::from_env();
 
     {
         let mirror = Arc::clone(&mirror);
@@ -1075,7 +1111,14 @@ pub fn start(cx: &mut Context<Workspace>) {
         let _ = thread::Builder::new().name("td-ctl".into()).spawn(move || {
             for conn in listener.incoming() {
                 let Ok(stream) = conn else { continue };
-                handle_conn(stream, &mirror, &mcp_mirror, &skin_mirror, &tx);
+                handle_conn(
+                    stream,
+                    &mirror,
+                    &mcp_mirror,
+                    &skin_mirror,
+                    &tx,
+                    policy_control,
+                );
             }
         });
     }
@@ -1721,6 +1764,20 @@ pub(crate) fn descends_from(pid: u32, ancestor: u32) -> bool {
     false
 }
 
+/// Keep claimed own-pane authority only for a kernel-identified descendant of
+/// the current pane shell. Unknown identity never becomes a guessed pane.
+pub(crate) fn verify_caller(
+    mut caller: Caller,
+    peer: Option<u32>,
+    shell_for: impl Fn(u64) -> Option<u32>,
+) -> Caller {
+    caller.pane = caller.pane.filter(|pane| {
+        peer.zip(shell_for(*pane))
+            .is_some_and(|(pid, shell)| shell > 1 && descends_from(pid, shell))
+    });
+    caller
+}
+
 /// The terminal-delight window hosting THIS process, by walking our own parent
 /// chain until a pid turns out to own a control socket.
 ///
@@ -1930,6 +1987,69 @@ pub(crate) fn locate() -> Option<Located> {
         pane,
         window,
     })
+}
+
+/// A grant captured outside a Restricted workload. The protocol accepts text
+/// only; it cannot override this session, pane, shell or window generation.
+pub(crate) fn restricted_note_target() -> Result<crate::restricted::Note, String> {
+    fn generation(pid: u32) -> Option<u64> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        stat.rsplit_once(')')?
+            .1
+            .split_whitespace()
+            .nth(19)?
+            .parse()
+            .ok()
+    }
+    let at = locate().ok_or("--td-note needs a proven hosted TD pane; no environment fallback")?;
+    let pane = at.pane.ok_or("cannot prove the calling pane")?;
+    let window = at
+        .window
+        .ok_or("no proven window is serving the calling session")?;
+    let original = crate::hostctl::panes_of(&at.session)
+        .into_iter()
+        .find(|p| p.pane.0 == pane && !p.ended)
+        .ok_or("calling pane is no longer running")?;
+    let shell_start =
+        generation(original.shell_pid).ok_or("cannot measure pane process generation")?;
+    let window_start = generation(window).ok_or("cannot measure window process generation")?;
+    let path = socket_path(window);
+    Ok(Arc::new(move |text| {
+        if generation(window) != Some(window_start)
+            || generation(original.shell_pid) != Some(shell_start)
+            || window_identity(&path) != Some((at.session.clone(), window))
+            || !crate::hostctl::panes_of(&at.session)
+                .iter()
+                .any(|p| p.pane.0 == pane && p.shell_pid == original.shell_pid && !p.ended)
+        {
+            return Err("the granted pane/window generation ended; a new run is required".into());
+        }
+        let request = serde_json::json!({"jsonrpc":"2.0", "id":1, "method":"tools/call",
+            "params":{"name":"leave_note", "arguments":{"text":text, "title":"RESTRICTED", "pin":false}}});
+        let reply = send_within(
+            &path,
+            &format!("mcp from {} {pane} rpc {request}", at.session),
+            Duration::from_secs(2),
+        )
+        .map_err(|e| e.to_string())?;
+        let value: serde_json::Value = serde_json::from_str(&reply).map_err(|e| e.to_string())?;
+        if !confirmed_scoped_note(&value, original.shell_pid) {
+            return Err(format!("TD did not confirm the scoped note: {value}"));
+        }
+        Ok(())
+    }))
+}
+
+fn confirmed_scoped_note(value: &serde_json::Value, pid: u32) -> bool {
+    value["jsonrpc"] == "2.0"
+        && value["id"] == 1
+        && value.get("error").is_none()
+        && matches!(
+            value["result"].get("isError"),
+            None | Some(serde_json::Value::Bool(false))
+        )
+        && value["result"]["structuredContent"]["posted"] == true
+        && value["result"]["structuredContent"]["pid"].as_u64() == Some(u64::from(pid))
 }
 
 /// The window a session's `session-<key>.window` record names — proven by
@@ -2209,7 +2329,110 @@ pub fn run_mcp_cli(args: &[String]) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_claimed_pane_is_downgraded_unless_the_socket_peer_descends_from_its_shell() {
+        let (stream, _other) = UnixStream::pair().unwrap();
+        let peer = crate::host::peer_pid(&stream);
+        assert_eq!(peer, Some(std::process::id()));
+        let claim = || Caller {
+            session: "test".into(),
+            pane: Some(9),
+        };
+        assert_eq!(
+            verify_caller(claim(), peer, |_| Some(std::process::id())).pane,
+            Some(9)
+        );
+        assert_eq!(
+            verify_caller(claim(), peer, |_| ppid_of(std::process::id())).pane,
+            Some(9)
+        );
+        assert_eq!(verify_caller(claim(), peer, |_| Some(u32::MAX)).pane, None);
+        assert_eq!(verify_caller(claim(), peer, |_| None).pane, None);
+        assert_eq!(
+            verify_caller(claim(), None, |_| Some(std::process::id())).pane,
+            None
+        );
+    }
+
+    #[test]
+    fn policy_control_reads_the_actual_launch_environment() {
+        if let Ok(expected) = std::env::var("TD_POLICY_ENV_TEST_CHILD") {
+            let want = if expected == "scripted" {
+                PolicyControl::Scripted
+            } else {
+                PolicyControl::Refused
+            };
+            assert_eq!(PolicyControl::from_env(), want);
+            return;
+        }
+        for value in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("true"),
+            Some("1"),
+            Some(" 1"),
+        ] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child
+                .args([
+                    "ctl::tests::policy_control_reads_the_actual_launch_environment",
+                    "--exact",
+                ])
+                .env(
+                    "TD_POLICY_ENV_TEST_CHILD",
+                    if value == Some("1") {
+                        "scripted"
+                    } else {
+                        "refused"
+                    },
+                )
+                .env_remove("TD_MCP_SCRIPTED");
+            if let Some(value) = value {
+                child.env("TD_MCP_SCRIPTED", value);
+            }
+            let result = child.output().unwrap();
+            assert!(
+                result.status.success(),
+                "{value:?}: {}",
+                String::from_utf8_lossy(&result.stdout)
+            );
+        }
+    }
     use super::*;
+
+    #[test]
+    fn a_scoped_note_needs_explicit_success_for_the_pinned_recipient() {
+        let good = serde_json::json!({"jsonrpc":"2.0","id":1,"result":{"structuredContent":{"pid":7,"posted":true}}});
+        assert!(confirmed_scoped_note(&good, 7));
+        for bad in [
+            serde_json::json!({}),
+            serde_json::json!({"result":null}),
+            serde_json::json!({"jsonrpc":"2.0","id":1,"result":{"structuredContent":{"pid":8,"posted":true}}}),
+        ] {
+            assert!(!confirmed_scoped_note(&bad, 7));
+        }
+        for (path, value) in [
+            ("/result/structuredContent/posted", serde_json::Value::Null),
+            ("/result/structuredContent/posted", serde_json::json!(false)),
+            ("/result/structuredContent/pid", serde_json::Value::Null),
+            ("/id", serde_json::json!(2)),
+            ("/jsonrpc", serde_json::json!("1.0")),
+        ] {
+            let mut bad = good.clone();
+            *bad.pointer_mut(path).unwrap() = value;
+            assert!(!confirmed_scoped_note(&bad, 7), "{bad}");
+        }
+        for value in [
+            serde_json::json!(true),
+            serde_json::Value::Null,
+            serde_json::json!("false"),
+        ] {
+            let mut bad = good.clone();
+            bad["result"]["isError"] = value;
+            assert!(!confirmed_scoped_note(&bad, 7));
+        }
+    }
 
     fn tmp(tag: &str) -> crate::testsync::Scratch {
         crate::testsync::Scratch::new(&format!("ctl-{tag}"))
@@ -2698,7 +2921,14 @@ mod tests {
             // exactly five connections, in test order
             for _ in 0..5 {
                 let (stream, _) = listener.accept().unwrap();
-                handle_conn(stream, &m2, &mm2, &Mutex::new(SkinMirror::default()), &tx);
+                handle_conn(
+                    stream,
+                    &m2,
+                    &mm2,
+                    &Mutex::new(SkinMirror::default()),
+                    &tx,
+                    PolicyControl::Refused,
+                );
             }
         });
         assert_eq!(send(&sock, "ping").unwrap(), "pong");
@@ -2743,7 +2973,14 @@ mod tests {
         let server = thread::spawn(move || {
             for _ in 0..2 {
                 let (stream, _) = listener.accept().unwrap();
-                handle_conn(stream, &m2, &mm2, &Mutex::new(SkinMirror::default()), &tx);
+                handle_conn(
+                    stream,
+                    &m2,
+                    &mm2,
+                    &Mutex::new(SkinMirror::default()),
+                    &tx,
+                    PolicyControl::Refused,
+                );
             }
         });
 
@@ -2789,6 +3026,7 @@ mod tests {
                 &mcp_mirror,
                 &Mutex::new(SkinMirror::default()),
                 &tx,
+                PolicyControl::Refused,
             );
         });
         assert!(send(&sock, "sudo make me a sandwich")
@@ -2797,6 +3035,8 @@ mod tests {
         server.join().unwrap();
     }
 
+    /// A scripted window — one launched with `TD_MCP_SCRIPTED=1`, as the test
+    /// rigs launch theirs — takes the widening verbs the way the panel would.
     #[test]
     fn mcp_policy_verbs_queue_and_status_reads_the_mirror() {
         let dir = tmp("mcp");
@@ -2808,9 +3048,16 @@ mod tests {
         let mcp_mirror = Arc::new(AtomicU8::new(MCP_ON | MCP_EVENTS));
         let (m2, mm2) = (Arc::clone(&mirror), Arc::clone(&mcp_mirror));
         let server = thread::spawn(move || {
-            for _ in 0..4 {
+            for _ in 0..7 {
                 let (stream, _) = listener.accept().unwrap();
-                handle_conn(stream, &m2, &mm2, &Mutex::new(SkinMirror::default()), &tx);
+                handle_conn(
+                    stream,
+                    &m2,
+                    &mm2,
+                    &Mutex::new(SkinMirror::default()),
+                    &tx,
+                    PolicyControl::Scripted,
+                );
             }
         });
 
@@ -2831,7 +3078,81 @@ mod tests {
         // Reads and writes are separate grants: enabling one must never be
         // spelled in a way that quietly enables the other.
         assert!(send(&sock, "mcp writes").unwrap().starts_with("err"));
+        for (verb, want) in [
+            ("mcp off", McpPolicy::Enabled(false)),
+            ("mcp writes off", McpPolicy::Writes(false)),
+            ("mcp expose agents", McpPolicy::ExposeAll(false)),
+        ] {
+            assert_eq!(send(&sock, verb).unwrap(), "ok");
+            assert!(matches!(rx.try_recv(), Ok(Req::McpPolicy(got)) if got == want));
+        }
         server.join().unwrap();
+    }
+
+    /// Neither escalation nor disabling other workloads is a caller's right.
+    #[test]
+    fn an_unscripted_window_refuses_all_global_policy_mutations() {
+        let dir = tmp("mcp-refused");
+        let sock = dir.join("ctl-5.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let (tx, rx) = mpsc::channel::<Req>();
+        let server = thread::spawn(move || {
+            for _ in 0..6 {
+                let (stream, _) = listener.accept().unwrap();
+                handle_conn(
+                    stream,
+                    &AtomicBool::new(false),
+                    &AtomicU8::new(0),
+                    &Mutex::new(SkinMirror::default()),
+                    &tx,
+                    PolicyControl::Refused,
+                );
+            }
+        });
+        for verb in [
+            "mcp on",
+            "mcp writes on",
+            "mcp expose all",
+            "mcp off",
+            "mcp writes off",
+            "mcp expose agents",
+        ] {
+            let reply = send(&sock, verb).unwrap();
+            assert!(reply.starts_with("err"), "{verb}: {reply}");
+            for word in [
+                "nothing changed",
+                "Ctrl+Shift+A",
+                "request_access",
+                "TD_MCP_SCRIPTED=1",
+            ] {
+                assert!(reply.contains(word), "{verb}: {reply}");
+            }
+            assert!(!reply.contains('\n'));
+            assert!(rx.try_recv().is_err(), "{verb} must not reach the queue");
+        }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn only_exact_scripted_launch_authorizes_global_policy_changes() {
+        assert_eq!(
+            PolicyControl::from_launch(Some("1")),
+            PolicyControl::Scripted
+        );
+        for value in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("yes"),
+            Some("true"),
+            Some(" 1"),
+        ] {
+            assert_eq!(
+                PolicyControl::from_launch(value),
+                PolicyControl::Refused,
+                "{value:?}"
+            );
+        }
     }
 
     #[test]

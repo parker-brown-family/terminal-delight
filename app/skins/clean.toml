@@ -1,0 +1,34 @@
+# terminal-delight skin — clean
+#
+# The trim the Clean design asks for. Parker, choosing it on 2026-10-21: "the
+# border radius is reduced A BUNCH, not perfectly square, but close".
+#
+# Everything here is today's chrome with three changes, and nothing else:
+#
+#   corner_cap = 3   no corner anywhere is rounder than 3 px — not the menus
+#                    (8), not the trays (6), not the window's own frame (14),
+#                    which spell their radii by hand and are held under the cap
+#                    through Skin::capped. Square would be "perfectly square",
+#                    which is the one thing ruled out.
+#   radius = 2       a small element: a chip, a button, a field.
+#   glow = 0         no phosphor ring blooming past a lit border. Clean holds
+#                    the light off anyway (theme.rs, hold_clean); this keeps the
+#                    trim honest when it is worn under another design.
+#
+# A selection stays one border in the house colour, with nothing around it:
+# "The double border for selected items is a NO. simpler than that."
+#
+# Like every skin here, it declares no colour. Shape is the axis.
+name = "clean"
+icon = "▫"
+
+[shape]
+corner = "round"
+shine  = "flat"
+
+[metric]
+radius     = 2.0
+radius_lg  = 3.0
+corner_cap = 3.0
+glow       = 0.0
+glow_a     = 0.0

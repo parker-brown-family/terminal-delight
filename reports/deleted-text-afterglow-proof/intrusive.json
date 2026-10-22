@@ -1,0 +1,129 @@
+{
+  "pid": 4057339,
+  "mode": "intrusive",
+  "session": "deleted-text-intrusive",
+  "binary_sha256": "81eb231005af6354ed33645988a517ef646549f4ebdad566ed22cd245e9a4a06",
+  "panes": [
+    {
+      "tab": 0,
+      "title": "Selected terminal",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 4057397,
+      "pane_id": null,
+      "cwd": "/tmp",
+      "exposed": true
+    },
+    {
+      "tab": 0,
+      "title": "Untouched neighbor",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 4057404,
+      "pane_id": null,
+      "cwd": "/tmp",
+      "exposed": true
+    }
+  ],
+  "captures": {
+    "gauges": {
+      "at": 683500.489500724,
+      "end": 683500.659408754,
+      "logical_size": [
+        1400,
+        920
+      ]
+    }
+  },
+  "mutations": {},
+  "config": {
+    "configs": [
+      {
+        "target": 4057397,
+        "scope": "pane",
+        "tab": 0,
+        "title": "Selected terminal",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 13.0,
+          "contrast": 71.0,
+          "colour": 70.0,
+          "text": 88.0,
+          "background": 27.000001907348633,
+          "gamma": 92.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 33.57143020629883,
+          "bench_size": 11.428568840026855,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 49.5,
+          "image_glow": null,
+          "inactive_image_glow": null,
+          "inactive_text": null,
+          "afterglow_ms": null
+        }
+      },
+      {
+        "target": 4057404,
+        "scope": "pane",
+        "tab": 0,
+        "title": "Untouched neighbor",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 13.0,
+          "contrast": 71.0,
+          "colour": 70.0,
+          "text": 88.0,
+          "background": 27.000001907348633,
+          "gamma": 92.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 33.57143020629883,
+          "bench_size": 11.428568840026855,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 49.5,
+          "image_glow": null,
+          "inactive_image_glow": null,
+          "inactive_text": null,
+          "afterglow_ms": null
+        }
+      },
+      {
+        "target": "outer",
+        "scope": "outer",
+        "grade": {
+          "brightness": 13.0,
+          "contrast": 71.0,
+          "colour": 70.0,
+          "text": 88.0,
+          "background": 27.000001907348633,
+          "gamma": 92.0,
+          "menu_bar": 33.333335876464844,
+          "text_size": 33.57143020629883,
+          "bench_size": 11.428568840026855,
+          "warp": 0.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 49.5,
+          "image_glow": null,
+          "inactive_image_glow": null,
+          "inactive_text": null,
+          "afterglow_ms": null
+        }
+      }
+    ],
+    "instance": {
+      "session": "deleted-text-intrusive",
+      "window": 4057339,
+      "build": "terminal-delight"
+    }
+  }
+}

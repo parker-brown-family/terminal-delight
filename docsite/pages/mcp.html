@@ -2,8 +2,8 @@
 {
   "title": "MCP server",
   "description": "Terminal Delight is an MCP server: an agent can list the panes of the window it runs in, grep their scrollback, tail another agent's tool calls, leave notes, put work on a workbench, and ask you for more access. Reads are off until you turn the server on; writes need a second switch; access is yours to grant with a Yes on the attention rail; no tool can type into a terminal.",
-  "updated": "2026-10-15",
-  "trueOf": "main at d7cf383, plus request_access",
+  "updated": "2026-10-21",
+  "trueOf": "dev/0.5.0 at 478b49f2: request_access, and the socket refusing all six MCP policy changes unless the window was launched scripted",
   "summary": "Thirteen tools for agents, off by default"
 }
 </script>
@@ -42,7 +42,7 @@
     <tr><td><code>Off-limits to agents</code> (right-click in a pane)</td><td>off</td><td>That one pane is gone from every tool and every pushed event, whatever the switches above say, and wears <code>OFF-LIMITS</code> in its header. The agent running inside it can still present its own work. Only a person sets or lifts it: no <code>ctl</code> or MCP verb reaches it.</td></tr>
   </tbody>
 </table>
-<p>They live in the MCP control panel: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> in a pane, or <code>AGENTS · MCP</code> in the footer's <code>…</code> menu. From a script: <code>ctl mcp on|off</code>, <code>ctl mcp writes on|off</code>, <code>ctl mcp expose agents|all</code>. Each change is saved with the session. <code>TD_MCP</code> starts the in-process transport but does not turn the server on, and <code>TD_MCP_WRITE</code> turns writes on only alongside <code>TD_MCP</code>.</p>
+<p>They live in the MCP control panel: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> in a pane, or <code>AGENTS · MCP</code> in the footer's <code>…</code> menu. In 0.5 development, all six <code>ctl mcp</code> policy changes are refused unless the operator launched that window with <code>TD_MCP_SCRIPTED=1</code>. This includes disabling access used by other workloads. An agent can propose wider access with <code>request_access</code>; it cannot grant the proposal to itself. Standard processes still have account access. The optional <a href="/restricted">offline Restricted command profile</a> enforces a smaller scope before workload code starts; online agents and automatic delegation are unavailable in that profile. Each change is saved with the session. <code>TD_MCP</code> starts the in-process transport but does not turn the server on, and <code>TD_MCP_WRITE</code> turns writes on only alongside <code>TD_MCP</code>.</p>
 
 <h3>Tools</h3>
 <table>
@@ -55,7 +55,7 @@
     <tr><td><code>set_pane_config</code></td><td>on, writes</td><td><code>updates</code>: <code>[{target, config}]</code></td><td>Restyle panes or the window.</td></tr>
     <tr><td><code>leave_note</code></td><td>on, writes</td><td><code>pid</code>, <code>title</code>, <code>text</code>, <code>pin</code>, <code>clear</code></td><td>Put a <a href="/sticky-notes">sticky note</a> on a pane's glass.</td></tr>
     <tr><td><code>declare_deliverable</code></td><td>on, writes</td><td><code>pid</code>, <code>label</code> (48 characters), <code>href</code>, <code>clear</code></td><td>Name the thing this pane produced, on its row in the attention rail.</td></tr>
-    <tr><td><code>present_surface</code></td><td>on, writes</td><td><code>pid</code>, <code>surface</code></td><td>Put a work object on a pane's <a href="/workbench">workbench</a>. It is saved to disk first.</td></tr>
+    <tr><td><code>present_surface</code></td><td>on, writes</td><td><code>pid</code>, <code>surface</code></td><td>Put a work object on a pane's <a href="/workbench">workbench</a>. It is saved only after the window accepts the write.</td></tr>
     <tr><td><code>surface_catalogue</code></td><td>nothing</td><td>none</td><td>What the running build can draw: the <a href="/surface-protocol">surface</a> kinds, actions and weights.</td></tr>
     <tr><td><code>request_access</code></td><td>on</td><td><code>change</code>, <code>pid</code> (for a pane), <code>why</code> (40 words)</td><td>Ask the person to change who agents can see or what they may do: <code>open_pane</code>, <code>close_pane</code>, <code>writes_on</code>, <code>expose_shells</code>, <code>events_on</code>. The ask waits on the attention rail with Yes and No. Nothing changes until a person presses Yes.</td></tr>
     <tr><td><code>open_document</code></td><td>on, writes</td><td><code>path</code>, <code>placement</code>: <code>beside</code> or <code>here</code></td><td>Open a Markdown, HTML or image file next to your pane, or over it.</td></tr>

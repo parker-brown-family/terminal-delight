@@ -1,0 +1,20 @@
+
+running 1 test
+test pane::behaviour::queued_input_waits_while_the_pane_is_off_limits ... FAILED
+
+failures:
+
+---- pane::behaviour::queued_input_waits_while_the_pane_is_off_limits stdout ----
+
+thread 'pane::behaviour::queued_input_waits_while_the_pane_is_off_limits' (2934491) panicked at src/pane/behaviour.rs:29:9:
+assertion `left == right` failed: showing a hidden pane must not drain the instruction
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    pane::behaviour::queued_input_waits_while_the_pane_is_off_limits
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2562 filtered out; finished in 0.04s
+

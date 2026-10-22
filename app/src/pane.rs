@@ -12,6 +12,7 @@ use crate::screenread::{
     rows_fingerprint, wants_human_row, wants_human_unless_answered, PROMPT_TAIL_ROWS,
 };
 
+mod afterglow;
 /// The workbench half of this view — every method that draws or drives the
 /// bench. A child module so it keeps private access; see `pane/bench.rs`.
 mod bench;
@@ -24,6 +25,7 @@ mod grid_paint;
 mod handed;
 /// Visibility-aware housekeeping deadlines and wakeups.
 mod housekeeping;
+mod input_edit;
 /// Bounded reuse of the viewport's styled text.
 mod styling;
 use crate::term;
@@ -3446,6 +3448,16 @@ pub struct TerminalView {
     /// Set on the agent→pane arrival edge and never cleared, because it is a
     /// fact about the pane's history rather than about its present.
     wb_had_agent: bool,
+    /// Whether the Claude agent in this pane was briefed by the launcher,
+    /// read once from its environment when it arrives
+    /// ([`crate::launcher::BRIEFED_ENV`]). `None` is *could not tell*, and
+    /// the bench offers nothing on a guess: only `Some(false)` — an agent the
+    /// person started by typing — is offered the typed-agent hook.
+    wb_briefed: Option<bool>,
+    /// What came of the person's answer to that offer on this pane, kept so
+    /// the card can say so after the offer itself stops being due: `Ok(yes)`
+    /// for the answer carried out, `Err` for a yes that failed.
+    wb_typed_said: Option<Result<bool, String>>,
     /// This pane's agent channel: the rounds a hook has carried, what has been
     /// pressed on them, and whether the harness has spoken through it at all.
     /// See [`crate::channel`].
@@ -3522,7 +3534,7 @@ impl gpui::EventEmitter<DragPaneStart> for TerminalView {}
 pub struct ClosePane;
 impl gpui::EventEmitter<ClosePane> for TerminalView {}
 
-/// Ctrl+W in this pane — the workspace closes the whole active tab, always via
+/// Ctrl+Shift+W in this pane — the workspace closes the whole active tab, always via
 /// the serious confirmation dialog (never a silent close).
 pub struct RequestCloseTab;
 impl gpui::EventEmitter<RequestCloseTab> for TerminalView {}
@@ -4503,9 +4515,17 @@ impl TerminalView {
         self.mode = mode;
         if arrived {
             self.wb_had_agent = true;
+            self.wb_briefed = (self.mode == PaneMode::Claude)
+                .then(|| self.shell_pid())
+                .flatten()
+                .and_then(crate::vitals::agent_under)
+                .and_then(|agent| std::fs::read(format!("/proc/{agent}/environ")).ok())
+                .map(|env| crate::launcher::briefed_environment(&env));
             self.bench_drain(cx);
         }
         if departed {
+            self.wb_briefed = None;
+            self.wb_typed_said = None;
             // The dials describe an agent that has gone. Keeping the words
             // would make the strip assert that the NEXT agent — which does not
             // exist yet — is on opus at high, and the whole rule for these two
@@ -4665,6 +4685,9 @@ impl TerminalView {
     /// restore, on purpose — see the field.
     pub(crate) fn toggle_off_limits(&mut self, cx: &mut Context<Self>) {
         self.off_limits = !self.off_limits;
+        if !self.off_limits {
+            self.bench_drain(cx);
+        }
         cx.emit(OffLimitsChanged);
         cx.notify();
     }
@@ -5252,6 +5275,8 @@ impl TerminalView {
             wb_running_model: None,
             wb_effort: None,
             wb_had_agent: false,
+            wb_briefed: None,
+            wb_typed_said: None,
             wb_channel: crate::channel::State::new(),
             wb_asked_by_hook: false,
             wb_woken: None,
@@ -5675,6 +5700,7 @@ impl TerminalView {
     /// Forget every picture this pane holds — the textures here and the images
     /// in the core. Called when its tab stops being shown.
     pub fn forget_pictures(&mut self, cx: &mut Context<Self>) {
+        self.grid_paint.update(cx, |v, _| v.clear_afterglow());
         let held = {
             let mut term = self.session.term.lock();
             let held = term.pictures().len();
@@ -7048,8 +7074,8 @@ impl TerminalView {
             }
             // alt+k flips this pane between its two faces, from either side. It
             // was alt+w for one day, and alt+w was already taken: it is the
-            // middle rung of the close ladder (ctrl+w the tab, super+w the tile,
-            // alt+w the focused PANE). `keystroke_bytes` is told about `k` too,
+            // middle rung of the close ladder (ctrl+w the document box,
+            // ctrl+shift+w the tab, super+w the tile, alt+w the focused PANE). `keystroke_bytes` is told about `k` too,
             // so the letter cannot reach a shell as ESC k on the way past.
             crate::keylayer::Layer::Face => {
                 self.toggle_face(cx);
@@ -7093,22 +7119,13 @@ impl TerminalView {
                 Handled::Consumed
             }
             crate::keylayer::Layer::Rename => self.rename_key(&k, ks, cx),
-            // Escape over a floating document closes it, and nothing else about
-            // the key is the square's — unless a note is being written in it,
-            // when `keylayer` routes every key here for the note box to take.
-            // The document is asked first: the note box, then a brief's own
-            // dialog, is what Escape puts away before the square itself.
-            crate::keylayer::Layer::Float => {
-                let took = self
-                    .float
-                    .as_ref()
-                    .map(|f| f.view.clone())
-                    .is_some_and(|view| view.update(cx, |doc, cx| doc.key(ks, cx)));
-                if !took {
-                    self.request_close_float(cx);
-                }
-                Handled::Consumed
-            }
+            // Escape over a floating document closes it, and ctrl+↑/↓ turns it;
+            // nothing else about the key is the square's — unless a note is
+            // being written in it, when `keylayer` routes every key here for the
+            // note box to take. The document is asked first: the note box, then
+            // a brief's own dialog, is what Escape puts away before the square
+            // itself, and an open note box turns its notes on the same chords.
+            crate::keylayer::Layer::Float => self.float_key(ks, cx),
             // The Document face: its own keys move the document, and every
             // other key it was handed stops there — the shell is hidden.
             crate::keylayer::Layer::Document => self.doc_key(ks, cx),
@@ -7372,6 +7389,10 @@ impl TerminalView {
                 "m" => self.toggle_handover_page(cx),
                 // The most recently closed thing comes back.
                 "z" => cx.emit(ReopenClosed),
+                // Ctrl+Shift+W closes the whole tab (always confirmed by the
+                // workspace). It was plain Ctrl+W until that chord went to the
+                // document box, the smallest thing a close can take.
+                "w" => cx.emit(RequestCloseTab),
                 // Two keys for one panel, and the second is not redundant.
                 // fcitx5's Unicode addon binds Ctrl+Shift+U — `libunicode.so`
                 // carries both `Control+Shift+U` and `Control+Alt+Shift+U` — and
@@ -7393,9 +7414,13 @@ impl TerminalView {
             return Handled::Declined;
         }
         match k.key {
-            // Ctrl+W closes the whole tab (always confirmed by the workspace).
-            // Intercepted here so it never reaches the PTY as werase (^W).
-            "w" => cx.emit(RequestCloseTab),
+            // Ctrl+W puts away the document box on top — a clip, then the
+            // square it was covering — the way its ✕ and Escape do, notes and
+            // all guarded. The table claims it only while a box is up, so with
+            // none it reaches the PTY as werase (^W).
+            "w" => {
+                self.request_close_float(cx);
+            }
             "f" => cx.emit(OpenFind { global: false }),
             // Ctrl+X = CUT the selection: copy it, and when it is the trailing
             // run on the live input line, erase it there too (see
@@ -7454,16 +7479,38 @@ impl TerminalView {
         // itself, so it types the edit (see `erase_selection_keys`). A selection
         // anywhere else is not text being typed, and the key goes through as it
         // always has.
-        if !k.control
+        let deletion_chord = k.key == "backspace" && k.shift && !k.platform && !k.function;
+        let edit_keys = if deletion_chord {
+            let term = self.session.term.lock();
+            let editable = (self.mode == PaneMode::Shell || self.mode.is_agent())
+                && (!term.mode().contains(TermMode::ALT_SCREEN) || self.mode.is_agent())
+                && term.display_offset() == 0;
+            if !editable {
+                None
+            } else if k.control && k.alt {
+                // Readline's whole edit buffer, including literal newlines.
+                // No Enter, interrupt or terminal-history clearing.
+                Some(b"\x01\x0b".to_vec())
+            } else if k.control {
+                input_edit::line_keys(&term)
+            } else if !k.alt {
+                Some(b"\x1b\x7f".to_vec())
+            } else {
+                None
+            }
+        } else if !k.control
             && !k.alt
             && !k.shift
             && !k.platform
             && matches!(k.key, "backspace" | "delete")
         {
-            if let Some(keys) = self.erase_selection_keys() {
-                self.send(keys, cx);
-                return Handled::Declined;
-            }
+            self.erase_selection_keys()
+        } else {
+            None
+        };
+        if let Some(keys) = edit_keys {
+            self.send(keys, cx);
+            return Handled::Declined;
         }
         // Paging the pane itself. PageUp/PageDown page the scrollback in AGENT
         // panes — a Claude/Codex session keeps its whole convo in our history and
@@ -7519,23 +7566,37 @@ impl TerminalView {
     /// both the live pane and the FOCUS mirror.
     fn extend_kbd_selection(&mut self, right: bool, word: bool, cx: &mut Context<Self>) {
         let last_col = self.grid.cols.saturating_sub(1);
-        // one cell in the requested direction, clamped to the row (no line-wrap:
-        // command-line selection is single-row; mouse handles multi-line spans).
-        let step = |p: TermPoint| -> TermPoint {
-            if right {
-                if p.column.0 < last_col {
-                    TermPoint::new(p.line, Column(p.column.0 + 1))
+        let next = {
+            let mut term = self.session.term.lock();
+            // A soft wrap is still the same editable line. Keep hard row
+            // boundaries as boundaries so shift-arrows do not enter history.
+            let step = |p: TermPoint| -> TermPoint {
+                if right {
+                    if p.column.0 < last_col {
+                        TermPoint::new(p.line, Column(p.column.0 + 1))
+                    } else if p.line < term.bottommost_line()
+                        && term
+                            .row(p.line)
+                            .iter()
+                            .any(|c| c.flags.contains(Flags::WRAPLINE))
+                    {
+                        TermPoint::new(Line(p.line.0 + 1), Column(0))
+                    } else {
+                        p
+                    }
+                } else if p.column.0 > 0 {
+                    TermPoint::new(p.line, Column(p.column.0 - 1))
+                } else if p.line > term.topmost_line()
+                    && term
+                        .row(Line(p.line.0 - 1))
+                        .iter()
+                        .any(|c| c.flags.contains(Flags::WRAPLINE))
+                {
+                    TermPoint::new(Line(p.line.0 - 1), Column(last_col))
                 } else {
                     p
                 }
-            } else if p.column.0 > 0 {
-                TermPoint::new(p.line, Column(p.column.0 - 1))
-            } else {
-                p
-            }
-        };
-        let next = {
-            let mut term = self.session.term.lock();
+            };
             let (anchor, active) = match self.kbd_sel {
                 Some(ae) => ae,
                 None => {
@@ -8286,8 +8347,9 @@ impl TerminalView {
     /// The keys that erase the selection from the line being typed, or `None`
     /// when the selection is not on that line.
     ///
-    /// On it means: one row, the cursor's row, with the view at the bottom —
-    /// scrollback is history, and a selection there is something to copy. And
+    /// Soft-wrapped rows form one editable line. A selection crossing explicit
+    /// newlines must span the cursor's row; unrelated history is only copied.
+    /// The view must be at the bottom. And
     /// not a full-screen program unless it is an agent: in `less` or `vim` the
     /// arrow keys scroll or move rather than walk a caret through a line, but
     /// Claude Code draws its prompt on the alternate screen too, with the
@@ -8295,25 +8357,13 @@ impl TerminalView {
     /// selects and deletes.
     fn erase_selection_keys(&self) -> Option<Vec<u8>> {
         let term = self.session.term.lock();
-        let range = term.selection_range()?;
         let mode = term.mode();
         if term.display_offset() != 0
             || (mode.contains(TermMode::ALT_SCREEN) && !self.mode.is_agent())
         {
             return None;
         }
-        let caret = term.cursor().point;
-        if range.start.line != caret.line || range.end.line != caret.line {
-            return None;
-        }
-        let row = term.row(caret.line).0;
-        erase_run_keys(
-            &row,
-            range.start.column.0,
-            range.end.column.0,
-            caret.column.0,
-            mode.contains(TermMode::APP_CURSOR),
-        )
+        input_edit::selection_keys(&term)
     }
     /// Paste the clipboard into the PTY, honouring bracketed-paste mode.
     ///
@@ -8927,6 +8977,9 @@ impl TerminalView {
         let mut lines: Vec<(String, Vec<TextRun>)> = (0..self.grid.rows)
             .map(|_| (String::with_capacity(cols), Vec::with_capacity(cols)))
             .collect();
+        let mut glyphs: styling::Lines = (0..self.grid.rows)
+            .map(|_| (String::with_capacity(cols), Vec::new()))
+            .collect();
 
         // The `syntax` overlay tokenises the literal text, so it needs each full
         // row up front. Collect the cells once, build per-row colour palettes,
@@ -9017,6 +9070,17 @@ impl TerminalView {
                 other => Some(ansi_to_hsla(other, th, th.bg)),
             };
             let mut flags = cell.flags;
+            // Retain the program's text colour, including its own inverse/DIM,
+            // before TD draws a selection or its block cursor over the glyph.
+            let mut glyph_fg = if flags.contains(Flags::INVERSE) {
+                bg.unwrap_or(th.bg)
+            } else {
+                fg
+            };
+            if flags.contains(Flags::DIM) {
+                glyph_fg.a *= 0.6;
+            }
+            let glyph_fg = grade.apply(glyph_fg, Channel::Text);
             if !sel_visual && selection.is_some_and(|s| s.contains(indexed.point)) {
                 flags.insert(Flags::INVERSE);
             }
@@ -9059,6 +9123,24 @@ impl TerminalView {
             let ch_len = ch.len_utf8();
             text.push(ch);
 
+            let (glyph_text, glyph_runs) = &mut glyphs[row as usize];
+            glyph_text.push(ch);
+            if let Some(last) = glyph_runs
+                .last_mut()
+                .filter(|r| r.color == glyph_fg && r.font.weight == weight)
+            {
+                last.len += ch_len;
+            } else {
+                glyph_runs.push(TextRun {
+                    len: ch_len,
+                    font: grid_font(th, weight),
+                    color: glyph_fg,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                });
+            }
+
             let matches_last = runs.last().is_some_and(|r: &TextRun| {
                 r.color == fg
                     && r.background_color == bg
@@ -9081,6 +9163,7 @@ impl TerminalView {
         *self.styled_memo.borrow_mut() = Some(styling::Memo {
             key,
             lines: std::rc::Rc::new(lines.clone()),
+            glyphs: std::rc::Rc::new(glyphs),
         });
         lines
     }
@@ -10075,8 +10158,8 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         // absent from the table is one deleted `return` away from arriving as
         // ESC k. Taking alt+r costs readline's revert-line, alt+v its
         // page-scroll, alt+h its mark-paragraph, alt+w its copy-region-as-kill
-        // and alt+k its (unbound-by-default) slot (the DESTRUCTIVE ^W werase is
-        // ctrl+w, intercepted a layer up in `on_key` as close-tab, and is
+        // and alt+k its (unbound-by-default) slot (^W werase is ctrl+w, taken a
+        // layer up in `on_key` only while a document box is up, and is
         // untouched here) — fair trades for one-hand pane chords.
         //
         // THE LIST ITSELF LIVES IN `workbench`, because the bench needs exactly
@@ -10146,6 +10229,7 @@ impl TerminalView {
             return;
         }
         if self.bench.face() != face {
+            self.grid_paint.update(cx, |v, _| v.clear_afterglow());
             self.bench.set_face(face);
             // A pane whose face changed has changed what its keystrokes mean,
             // so the header's own count and the tab badge both want redrawing.
@@ -10157,6 +10241,7 @@ impl TerminalView {
     /// its shell; anywhere else it swaps the terminal and the bench. See
     /// [`crate::workbench::next_face`].
     pub fn toggle_face(&mut self, cx: &mut Context<Self>) {
+        self.grid_paint.update(cx, |v, _| v.clear_afterglow());
         self.bench.toggle_face(self.doc.is_some());
         cx.notify();
     }
@@ -10224,6 +10309,12 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.resolved_theme(cx);
+        let focused_now = self.focus_handle(cx).is_focused(window);
+        let letter_glow = th
+            .grade
+            .letter_glow_for_focus(focused_now, th.terminal_light);
+        let mut grid_th = th.clone();
+        grid_th.grade.text = th.grade.text_for_focus(focused_now, th.terminal_light);
         let menu_skin = crate::skin::for_theme(cx, &th, th.grade.scale);
         // The floating square re-records where its controls are as it paints.
         self.float_zones.borrow_mut().clear();
@@ -10633,7 +10724,6 @@ impl Render for TerminalView {
         // edge below is the acknowledgement (a click, alt+arrows, or the
         // notification jump all land here), so you never miss which agent
         // finished while you were away, and there is nothing to dismiss.
-        let focused_now = self.focus_handle(cx).is_focused(window);
         if focused_now != self.was_focused {
             self.was_focused = focused_now;
             if focused_now {
@@ -10681,11 +10771,24 @@ impl Render for TerminalView {
         // drawn there. The next terminal frame snapshots the current viewport.
         let mut lines =
             if self.bench.face() == crate::workbench::Face::Workbench || self.has_doc_face() {
+                self.grid_paint.update(cx, |v, _| v.clear_afterglow());
                 Vec::new()
             } else {
-                self.styled_lines(&th, inverted)
+                self.styled_lines(&grid_th, inverted)
             };
+        let mut glyphs = if lines.is_empty() {
+            Vec::new()
+        } else {
+            (*self
+                .styled_memo
+                .borrow()
+                .as_ref()
+                .expect("styled viewport built")
+                .glyphs)
+                .clone()
+        };
         arm_grid_fallbacks(&mut lines, window.text_system());
+        arm_grid_fallbacks(&mut glyphs, window.text_system());
         if std::env::var("TD_ANCHORDEBUG").is_ok() {
             // The last few non-blank grid rows + whether each is detected as the
             // human prompt line — reveals a caret we don't recognise or a leading
@@ -10729,6 +10832,7 @@ impl Render for TerminalView {
         if th.crawl || !anchor_top() {
             // Bottom-anchor (crawl + default normal mode).
             self.paint_offset = bottom_anchor_rows(&mut lines, self.grid.rows);
+            bottom_anchor_rows(&mut glyphs, self.grid.rows);
             self.paint_inverted = false;
             self.paint_to_grid = None;
         } else if inverted {
@@ -10743,6 +10847,7 @@ impl Render for TerminalView {
             };
             let (new_lines, perm) = invert_logical_read(lines, &wraps, agent_mode);
             lines = new_lines;
+            glyphs = invert_logical_read(glyphs, &wraps, agent_mode).0;
             // #149: paint the selection in VISUAL order now that rows are permuted,
             // so a cross-section drag highlights the visually-contiguous span (not
             // whole reversed blocks). styled_lines skipped the logical highlight.
@@ -10756,7 +10861,31 @@ impl Render for TerminalView {
             self.paint_to_grid = None;
         }
         let ps = crate::lang::current().strings();
-        let status = if self.needs_input {
+        // UI CONFIG, the PANES layer: one config for every pane — no pane is in
+        // charge of its own. The title, the state word and ⋯ are not switches.
+        let ui = |k: crate::uiconfig::Key| crate::uiconfig::shown(cx, k);
+        let ui_logo = ui(crate::uiconfig::Key::PaneLogo);
+        let ui_mode = ui(crate::uiconfig::Key::PaneMode);
+        let ui_face = ui(crate::uiconfig::Key::PaneFace);
+        let ui_agent = ui(crate::uiconfig::Key::PaneAgent);
+        let ui_handover = ui(crate::uiconfig::Key::PaneHandover);
+        let ui_surface = ui(crate::uiconfig::Key::PaneSurface);
+        let ui_sliders = ui(crate::uiconfig::Key::PaneSliders);
+        let ui_close = ui(crate::uiconfig::Key::PaneClose);
+        // With the face toggle put away, what the bench is holding still has
+        // to be said somewhere: the state word says it.
+        let held = if ui_face { 0 } else { self.bench_queued() };
+        let status = if held > 0 {
+            let l = crate::lang::current();
+            let n = held.to_string();
+            format!(
+                "\u{25c7} {}",
+                crate::lang::fill(
+                    &l.count(&l.strings().parts.pane_queued_answers, held),
+                    &[("queued", &n)]
+                )
+            )
+        } else if self.needs_input {
             // waiting on the HUMAN outranks "done": the turn isn't over, it's
             // yours. The phrases that detect it stay English (they read the
             // agent's own TUI); the chip is drawn in the reader's language.
@@ -10787,16 +10916,20 @@ impl Render for TerminalView {
         let optical = sk.type_scale;
         let controls_w = (pane_w - 64. * scale) / optical;
         let show_human = SHOW_HUMAN_NAV_GLYPH && controls_w >= 470.; // 1st: 👤 ▲▼ nav
-        let show_eq = controls_w >= 410.; //    2nd: EQ / display
-        let show_theme = controls_w >= 360.; //  3rd: 🎨 theme
+        let show_eq = ui_sliders && controls_w >= 410.; //    2nd: EQ / display
+        let show_theme = ui_surface && controls_w >= 360.; //  3rd: 🎨 theme
         let show_focus = SHOW_FOCUS_GLYPH && controls_w >= 264.; // 4th & last: 👓 FOCUS
                                                                  // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
                                                                  // The handover chip shrinks before anything tucks: its name above
                                                                  // 470, the word for its list down to 264, and below that it is a row
                                                                  // in the ⋯ menu like every other control here.
         let handover_name = controls_w >= 470.;
-        let show_handover = controls_w >= 264. && self.has_handovers();
-        let overflow = (SHOW_FOCUS_GLYPH && !show_focus)
+        let show_handover = ui_handover && controls_w >= 264. && self.has_handovers();
+        // UI CONFIG's hidden controls go where narrow-pane controls already go.
+        let overflow = !ui_face
+            || !ui_agent
+            || !ui_close
+            || (SHOW_FOCUS_GLYPH && !show_focus)
             || !show_theme
             || !show_eq
             || (SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent())
@@ -10881,6 +11014,74 @@ impl Render for TerminalView {
                         .child(step("▼", true, cx)),
                 );
             }
+            // Parker's order for a Clean header's ⋯: "agent + / surface (painter)
+            // Sliders (guages) / Bench" — then what was already here.
+            let uis = &crate::lang::current().strings().ui;
+            if !ui_agent {
+                menu = menu.child(
+                    item(
+                        "⌁",
+                        crate::lang::current()
+                            .strings()
+                            .parts
+                            .pane_launch_agent_chip,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.hdr_overflow = None;
+                            cx.emit(OpenAgentLauncher);
+                            cx.notify();
+                        }),
+                    ),
+                );
+            }
+            if !show_theme {
+                menu = menu.child(item("🎨", uis.cfg_surface).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(OpenThemeMenu { at: pos });
+                        cx.notify();
+                    }),
+                ));
+            }
+            if !show_eq {
+                menu = menu.child(item("📊", uis.cfg_sliders).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(OpenDisplayMenu { at: pos });
+                        cx.notify();
+                    }),
+                ));
+            }
+            if !ui_face {
+                // The face this pane is NOT showing: one press goes there.
+                let other = if self.bench.face() == crate::workbench::Face::Workbench {
+                    crate::workbench::Face::Terminal
+                } else {
+                    crate::workbench::Face::Workbench
+                };
+                let queued = self.bench_queued();
+                let label = if queued > 0 && other == crate::workbench::Face::Workbench {
+                    format!("{} \u{b7} {queued}", other.chip())
+                } else {
+                    other.chip().to_string()
+                };
+                menu = menu.child(item("\u{25e8}", &label).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        v.set_face(other, cx);
+                        cx.notify();
+                    }),
+                ));
+            }
             if !show_handover && self.has_handovers() {
                 let word = crate::lang::current().strings().artifacts_word;
                 menu = menu.child(item("▤", word).on_mouse_down(
@@ -10892,40 +11093,6 @@ impl Render for TerminalView {
                         cx.notify();
                     }),
                 ));
-            }
-            if !show_eq {
-                menu = menu.child(
-                    item(
-                        "📊",
-                        crate::lang::current().strings().parts.pane_overflow_display,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            v.hdr_overflow = None;
-                            cx.emit(OpenDisplayMenu { at: pos });
-                            cx.notify();
-                        }),
-                    ),
-                );
-            }
-            if !show_theme {
-                menu = menu.child(
-                    item(
-                        "🎨",
-                        crate::lang::current().strings().parts.pane_overflow_theme,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            v.hdr_overflow = None;
-                            cx.emit(OpenThemeMenu { at: pos });
-                            cx.notify();
-                        }),
-                    ),
-                );
             }
             if SHOW_FOCUS_GLYPH && !show_focus {
                 menu = menu.child(
@@ -10943,6 +11110,16 @@ impl Render for TerminalView {
                         }),
                     ),
                 );
+            }
+            if !ui_close {
+                menu = menu.child(item("×", uis.cfg_close).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(ClosePane);
+                    }),
+                ));
             }
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
@@ -11254,7 +11431,7 @@ impl Render for TerminalView {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(logo_el)
+                    .when(ui_logo, |d| d.child(logo_el))
                     .child(format!("▸ {} · {buf}", self.mode.label_i18n()))
                     .child(div().w(px(6.)).h(px(13.)).bg(th.cursor))
                     .into_any_element()
@@ -11291,11 +11468,11 @@ impl Render for TerminalView {
                     // A pane's title is what its program said — a command, a
                     // host, a path — so it is set as data, not as a name.
                     .map(|d| sk.data(d))
-                    .child(logo_el)
+                    .when(ui_logo, |d| d.child(logo_el))
                     // The launch mark rides before the label rather than after
                     // it: the title clips on a narrow pane, and the mark is the
                     // part that says how this pane came to be here.
-                    .children(self.launch_mark.map(|mark| {
+                    .children(self.launch_mark.filter(|_| ui_logo).map(|mark| {
                         div()
                             .flex_none()
                             .px(px(5. * scale))
@@ -11310,7 +11487,10 @@ impl Render for TerminalView {
                     // ▸: one lead mark, not two. Unfocused panes keep the ▸, so
                     // the chevron says which pane has the keyboard.
                     .children(focused_now.then(|| sk.chevron("»")).flatten())
-                    .child(if focused_now && sk.chevron("»").is_some() {
+                    .child(if !ui_mode {
+                        // UI CONFIG put the mode away: the title alone.
+                        label.clone()
+                    } else if focused_now && sk.chevron("»").is_some() {
                         format!("{} · {label}", self.mode.label_i18n())
                     } else {
                         format!("▸ {} · {label}", self.mode.label_i18n())
@@ -11350,30 +11530,32 @@ impl Render for TerminalView {
                     .flex_shrink_0()
                     // roomier spacing between the header glyphs — scales with the bar
                     .gap(hpad)
-                    .child(face_toggle)
-                    .child(
-                        sk.chip(false)
-                            .id("launch-agent")
-                            .debug_selector(|| "launch-agent".into())
-                            .cursor_pointer()
-                            .text_size(sk.text_px((hicon * 0.42).max(8.5)))
-                            .whitespace_nowrap()
-                            .child(if pane_w / optical >= 470. {
-                                crate::lang::current()
-                                    .strings()
-                                    .parts
-                                    .pane_launch_agent_chip
-                            } else {
-                                "⌁"
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(OpenAgentLauncher);
-                                }),
-                            ),
-                    )
+                    .when(ui_face, |d| d.child(face_toggle))
+                    .when(ui_agent, |d| {
+                        d.child(
+                            sk.chip(false)
+                                .id("launch-agent")
+                                .debug_selector(|| "launch-agent".into())
+                                .cursor_pointer()
+                                .text_size(sk.text_px((hicon * 0.42).max(8.5)))
+                                .whitespace_nowrap()
+                                .child(if pane_w / optical >= 470. {
+                                    crate::lang::current()
+                                        .strings()
+                                        .parts
+                                        .pane_launch_agent_chip
+                                } else {
+                                    "⌁"
+                                })
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        cx.emit(OpenAgentLauncher);
+                                    }),
+                                ),
+                        )
+                    })
                     // What this pane's agent handed over: the newest one's
                     // name, and the list behind ▾. See `pane/handed.rs`.
                     .children(
@@ -11533,38 +11715,40 @@ impl Render for TerminalView {
                             .child(crate::lang::current().strings().parts.pane_off_limits_badge)
                     }))
                     .child(status)
-                    .child(
-                        // close just this sub-tab (×): ends this pane's shell.
-                        // Big, borderless, full-height — a generous click target;
-                        // a soft hover tint stands in for the dropped border.
-                        div()
-                            .id("close-pane")
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px_4()
-                            .rounded_md()
-                            .text_color(bar_fg)
-                            .cursor_pointer()
-                            // Still bigger than the other header glyphs, and by
-                            // exactly as much as it always was — the old
-                            // `hicon + 10` was 1.36× the old glyph metric, so
-                            // the ratio is kept as a ratio rather than as an
-                            // offset that would have grown to half again as
-                            // dominant once the glyphs halved.
-                            .text_size(sk.text_px(hicon * 1.36))
-                            .line_height(px(hicon * 1.36))
-                            .hover(|s| s.bg(bar_fg.alpha(0.18)))
-                            .child("×")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(ClosePane);
-                                }),
-                            ),
-                    ),
+                    .when(ui_close, |d| {
+                        d.child(
+                            // close just this sub-tab (×): ends this pane's shell.
+                            // Big, borderless, full-height — a generous click target;
+                            // a soft hover tint stands in for the dropped border.
+                            div()
+                                .id("close-pane")
+                                .h_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .px_4()
+                                .rounded_md()
+                                .text_color(bar_fg)
+                                .cursor_pointer()
+                                // Still bigger than the other header glyphs, and by
+                                // exactly as much as it always was — the old
+                                // `hicon + 10` was 1.36× the old glyph metric, so
+                                // the ratio is kept as a ratio rather than as an
+                                // offset that would have grown to half again as
+                                // dominant once the glyphs halved.
+                                .text_size(sk.text_px(hicon * 1.36))
+                                .line_height(px(hicon * 1.36))
+                                .hover(|s| s.bg(bar_fg.alpha(0.18)))
+                                .child("×")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        cx.emit(ClosePane);
+                                    }),
+                                ),
+                        )
+                    }),
             );
         header = header.shadow(header_shadows(bar_fg, glow, th.crt, th.grade.phosphor));
 
@@ -11708,43 +11892,49 @@ impl Render for TerminalView {
         // INVERSE of that tube's distortion and the two must be measuring the
         // same rectangle or the cancellation is against the wrong curve.
         // Nothing on the bench face — see [`Self::note_layout`].
-        let note_el = self.note.clone().filter(|_| on_terminal).map(|note| {
-            let paper_stock = sk.note_decoration == crate::skin::NoteDecoration::Flower;
-            let store = self.content_bounds.clone();
-            let pal = sk.note_palette(&th);
-            let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
-            // The pane's own curvature, and zero while a modal has flattened the
-            // whole screen — the note un-bends with everything else that frame
-            // rather than being the one thing that stayed compensated.
-            let (k1, k2) = if crate::warp::is_suppressed() || th.crawl {
-                (0.0, 0.0)
-            } else {
-                crate::theme::warp_coeffs(th.warp)
-            };
-            div().absolute().inset_0().child(
-                canvas(
-                    |_, _, _| {},
-                    move |_, _, window, cx| {
-                        let Some(content) = store.lock().ok().and_then(|b| *b) else {
-                            return;
-                        };
-                        if let Some(mut lay) = crate::sticky::layout(content, note.tilt()) {
-                            lay.pre_warp(content, k1, k2);
-                            crate::sticky::paint(
-                                &note,
-                                &lay,
-                                &pal,
-                                peeling,
-                                paper_stock,
-                                window,
-                                cx,
-                            );
-                        }
-                    },
+        // UI CONFIG's notes switch: one for every pane, like the rest.
+        let ui_notes = crate::uiconfig::shown(cx, crate::uiconfig::Key::PaneNotes);
+        let note_el = self
+            .note
+            .clone()
+            .filter(|_| on_terminal && ui_notes)
+            .map(|note| {
+                let paper_stock = sk.note_decoration == crate::skin::NoteDecoration::Flower;
+                let store = self.content_bounds.clone();
+                let pal = sk.note_palette(&th);
+                let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
+                // The pane's own curvature, and zero while a modal has flattened the
+                // whole screen — the note un-bends with everything else that frame
+                // rather than being the one thing that stayed compensated.
+                let (k1, k2) = if crate::warp::is_suppressed() || th.crawl {
+                    (0.0, 0.0)
+                } else {
+                    crate::theme::warp_coeffs(th.warp)
+                };
+                div().absolute().inset_0().child(
+                    canvas(
+                        |_, _, _| {},
+                        move |_, _, window, cx| {
+                            let Some(content) = store.lock().ok().and_then(|b| *b) else {
+                                return;
+                            };
+                            if let Some(mut lay) = crate::sticky::layout(content, note.tilt()) {
+                                lay.pre_warp(content, k1, k2);
+                                crate::sticky::paint(
+                                    &note,
+                                    &lay,
+                                    &pal,
+                                    peeling,
+                                    paper_stock,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        },
+                    )
+                    .size_full(),
                 )
-                .size_full(),
-            )
-        });
+            });
 
         // The document inside the square paints in THIS pane's resolved theme,
         // which a pane can hold apart from the window's. Handed down every
@@ -11903,6 +12093,7 @@ impl Render for TerminalView {
                                         k2,
                                         crawl,
                                         tube_bezel,
+                                        if on_terminal { letter_glow } else { 0.0 },
                                     );
                                     let changed = {
                                         let mut slot = store.lock().unwrap();
@@ -11948,17 +12139,47 @@ impl Render for TerminalView {
                         grid_paint::GridPaint::replace_if_changed(
                             &mut self.grid_paint,
                             grid_paint::Snapshot {
-                                lines,
+                                lines: std::rc::Rc::new(lines),
+                                glyphs,
                                 cell_h: self.cell_h,
+                                cell_w: self.cell_w,
+                                // The resolved theme's grade, so Clean's hold reaches it.
+                                linger: th.grade.linger_for_focus(focused_now),
+                                context: Some(grid_paint::HistoryContext {
+                                    theme: {
+                                        // Timings do not change the retained glyph paint.
+                                        // Keep them out of geometry/style invalidation.
+                                        let mut history = grid_th.clone();
+                                        history.grade.afterglow_ms = None;
+                                        history.grade.cursor_linger_ms = None;
+                                        history.grade.off_cursor_linger_ms = None;
+                                        history.grade.inactive_cursor_linger_ms = None;
+                                        history.grade.inactive_off_cursor_linger_ms = None;
+                                        history
+                                    },
+                                    offset: self.session.term.lock().display_offset(),
+                                    alternate: alt_screen_active,
+                                    cols: self.grid.cols,
+                                    rows: self.grid.rows,
+                                    inverted: self.paint_inverted,
+                                }),
                                 pad: (grid_pad_x, grid_pad_y),
                                 crawl: th.crawl,
                                 bleed: (th.letter_glow > 0.001).then_some(0.35 * th.letter_glow),
                             },
                             cx,
                         );
-                        gpui::AnyView::from(self.grid_paint.clone())
-                            .cached(gpui::StyleRefinement::default().w_full().h(px(height)))
-                            .into_any_element()
+                        let paint = gpui::AnyView::from(self.grid_paint.clone());
+                        if self.grid_paint.read(cx).is_animating() {
+                            // Repainting a cached parent forces its cached children
+                            // to refresh too. Keep the animated wrapper uncached so
+                            // the independent live-text cache survives fade frames.
+                            paint.into_any_element()
+                        } else {
+                            paint
+                                .cached(gpui::StyleRefinement::default().w_full().h(px(height)))
+                                .into_any_element()
+                        }
                     })
                     .children(pictures_over)
                     .children(copy_el)
@@ -16749,8 +16970,9 @@ mod tests {
         // anything, because the pane's handler runs first.
         assert_eq!(alt_char("k"), None);
         // ...and the neighbouring close chord is a DIFFERENT layer: ctrl+w is
-        // intercepted in `on_key` as close-tab and never gets here, so it keeps
-        // its werase encoding. Asserted so the two rungs stay distinguishable.
+        // taken in `on_key` while a document box is up, and with none it gets
+        // here and must still be werase. Asserted so the two rungs stay
+        // distinguishable.
         assert_eq!(bytes("ctrl-w"), Some(vec![0x17]));
         // ctrl+alt+arrows walk the LEFT BAR's tree — the workspace's, and never
         // PTY bytes. Covered by the blanket `m.control` arm; asserted because

@@ -2,8 +2,8 @@
 
 Every terminal-delight process listens on its own unix socket for one-line
 commands, and the same binary is also the client. A live window is therefore
-scriptable — from the desktop, a keybinding, a bar widget, or an agent's own shell
-— without touching any PTY.
+scriptable — from the desktop, a keybinding, a bar widget, or an agent's own shell.
+Only the bench verbs and `adopt --run` reach a terminal's input (see Boundary).
 
 ## Why it matters
 
@@ -22,15 +22,21 @@ names every pane in it.
 | **Self-addressing** | A tab edit aims at the window it is *running in*, not whichever is on screen — an agent scripting its own tab hits its own window | #305 | — |
 | **Naming your own tab costs no arguments** | The zero-argument form targets the caller's own tab, and an op list survives being run twice | `ctl.rs` tab verbs | `terminal-delight ctl tab name <text>` |
 | **Verb parsed before pane resolution** | A typo in the verb is reported as a typo, not diagnosed as an environment problem | `ctl.rs` verb-parse ordering | — |
-| **MCP policy toggles + `mcp rpc`** | Flip the MCP read/write policy live, or hand a whole JSON-RPC line to the protocol handler | `ctl.rs` | `terminal-delight ctl mcp rpc '<json>'` |
+| **MCP policy toggles + `mcp rpc`** | Hand a JSON-RPC line to the handler. All six global MCP policy changes are refused unless the window was launched with `TD_MCP_SCRIPTED=1` (decision 0003) | `ctl.rs` | `terminal-delight ctl mcp rpc '<json>'` |
 | **`ping` / `paint status`** | Liveness and current overlay state, for bar widgets and scripts | `ctl.rs` | `terminal-delight ctl ping` |
 
 ## Boundary
 
-`ctl` changes **appearance, tabs, notes and policy**. It does not write bytes to a
-PTY — the same read-only boundary the [MCP surface](01-agentic-mcp.md) holds. The
-one deliberate exception is opt-in and lives elsewhere:
-[keepalive](11-usage-vitals-keepalive.md) types into an idle prompt.
+`ctl` changes **appearance, tabs, notes and documents**, and **MCP policy only in a
+window launched with `TD_MCP_SCRIPTED=1`**. Two kinds of command reach a terminal's
+input, both on purpose:
+
+- **The bench verbs.** `bench say`, `choose`, `submit` and `click` act on an agent
+  pane's bench as a person would. `bench type` only fills the composer.
+- **`adopt --run`.** It opens a new pane and types its command there.
+
+None of them reaches a pane marked off-limits to agents. The full list of terminal-input
+routes is [the security manifest](../security/terminal-input.md).
 
 ## Status
 

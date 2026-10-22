@@ -1,0 +1,10 @@
+    Checking util v0.1.0 (/home/parker/.cache/td-security-finish/zed-upstream/crates/util)
+    Checking http_client v0.1.0 (/home/parker/.cache/td-security-finish/zed-upstream/crates/http_client)
+    Checking gpui v0.2.2 (/home/parker/.cache/td-security-finish/zed-upstream/crates/gpui)
+    Checking gpui_wgpu v0.1.0 (/home/parker/.cache/td-security-finish/zed-upstream/crates/gpui_wgpu)
+    Checking gpui_linux v0.1.0 (/home/parker/.cache/td-security-finish/zed-upstream/crates/gpui_linux)
+    Checking gpui_platform v0.1.0 (/home/parker/.cache/td-security-finish/zed-upstream/crates/gpui_platform)
+    Checking terminal-delight v0.4.0-rc.3 (/home/parker/.cache/td-security-finish/wt/app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 30.52s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`

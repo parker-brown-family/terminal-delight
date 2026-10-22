@@ -1,0 +1,10 @@
+Starting Restricted offline run 5ab0b89cb4219c5d9299ea44ebc7a8c7: work="/home/parker/TDRestrictedNative.dOeL14/work" access=read-write TD=own-note output=plain-text
+Inspect or revoke from Standard: terminal-delight restricted status 5ab0b89cb4219c5d9299ea44ebc7a8c7 / restricted revoke 5ab0b89cb4219c5d9299ea44ebc7a8c7
+
+RESTRICTED ACCESS PROPOSAL — workload request, no access granted
+Run: 5ab0b89cb4219c5d9299ea44ebc7a8c7
+Current resource: "/home/parker/TDRestrictedNative.dOeL14/work" (read-write)
+Request supplied by workload: "Need external packages"
+Consequence: changing scope requires a separately chosen new run. This proposal has no approval action.
+Dismiss from Standard: terminal-delight restricted dismiss 5ab0b89cb4219c5d9299ea44ebc7a8c7
+

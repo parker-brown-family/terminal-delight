@@ -1,0 +1,39 @@
+     Locking 12 packages to latest compatible versions
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.229
+   Compiling zmij v1.0.23
+   Compiling syn v3.0.9
+   Compiling libc v0.2.191
+   Compiling serde v1.0.229
+   Compiling serde_json v1.0.154
+   Compiling serde_derive v1.0.229
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+   Compiling terminal-delight v0.0.0 (/home/parker/.cache/td-security-finish/proof/module-mutations-final-3)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.36s
+     Running unittests src/main.rs (target/debug/deps/terminal_delight-73ed7d4d68427bb2)
+
+running 18 tests
+test restricted::seccomp::tests::kernel_interfaces_no_offline_build_needs_are_refused ... ok
+test restricted::seccomp::tests::no_new_connection_or_addressed_send_can_bypass_the_preconnected_channel ... ok
+test restricted::seccomp::tests::only_unnamed_unix_pairs_are_available_for_internal_ipc ... ok
+test restricted::tests::a_restricted_launch_is_explicit_and_never_interprets_command_arguments ... ok
+test restricted::tests::a_text_only_gateway_cannot_select_a_target_grant_or_delegate ... ok
+test restricted::tests::access_requests_are_bounded_proposals_and_never_change_grants ... ok
+test restricted::tests::output_cannot_invoke_terminal_protocol_even_when_utf8_is_split ... ok
+test restricted::tests::output_cannot_reorder_what_a_reader_sees ... ok
+test restricted::tests::oversized_slow_and_invalid_peers_do_not_poison_the_next_request ... ok
+test restricted::tests::revoke_acknowledges_after_an_accepted_note_and_denies_subsequent_effects ... ok
+test restricted::tests::runtime_symlinks_and_broad_permissions_cannot_be_adopted ... ok
+test restricted::tests::the_helper_must_include_safe_setup_path_resolution ... ok
+test restricted::tests::the_work_grant_excludes_runtime_home_special_files_and_unmounted_symlink_targets ... ok
+test restricted::work::tests::a_swapped_path_cannot_hide_the_pinned_trees_host_socket ... ok
+test restricted::work::tests::even_a_clean_replacement_is_not_the_selected_pinned_directory ... ok
+test restricted::work::tests::home_descendants_are_explicit_grants_but_hidden_and_external_roots_are_refused ... ok
+test restricted::work::tests::mount_identity_compares_mount_id_even_for_the_same_device ... ok
+test restricted::work::tests::nested_entries_are_checked_by_fd_and_symlinks_are_not_followed ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+

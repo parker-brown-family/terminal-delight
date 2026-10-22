@@ -155,7 +155,7 @@ pub fn write_answers(
 /// and then looked for `..` is one clever encoding away from being wrong;
 /// a path segment made only of letters, digits, dashes and underscores cannot
 /// name a parent at all.
-fn sanitise(key: &str) -> String {
+pub(crate) fn sanitise(key: &str) -> String {
     let cleaned: String = key
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))

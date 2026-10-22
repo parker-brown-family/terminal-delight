@@ -60,6 +60,7 @@ use super::notes::{
     PictureLines, Refusal, FORMAT,
 };
 use super::page::{place, PageToView};
+use crate::keylayer::GlowMove;
 use crate::lang::fill;
 use crate::theme::Theme;
 use crate::EditBuffer;
@@ -216,6 +217,11 @@ pub struct NoteBox {
     /// Open on notes whose words a Markdown file no longer has: they can be
     /// read and deleted, and nothing can be added to them.
     pub gone: bool,
+    /// How far the notes are turned back from the newest, in pixels: 0 shows
+    /// the newest above the draft, which is where a note just added lands.
+    /// Parker, 2026-10-21: *"trying to add more comments just has them not
+    /// show up! needs to be scrollable for infinite comments!"*
+    pub back: f32,
 }
 
 /// A part of the bar or the note box, as the last paint laid it out.
@@ -229,6 +235,9 @@ pub enum Zone {
     Gone,
     /// Anywhere on the bar that is not a button.
     Bar,
+    /// The first-time line drawn above an empty bar. A press on it is the
+    /// bar's: taken, and never passed to the page underneath.
+    Cue,
     /// Anywhere inside the note box.
     Box,
     /// The draft being written, inside the box. Pressing it does what
@@ -371,6 +380,22 @@ impl Said {
 /// that recorded it.
 type Zones = Rc<RefCell<Vec<(Bounds<Pixels>, Zone)>>>;
 
+/// The note box's list as the last paint measured it: the height it was
+/// given and the height its notes needed. `None` until a paint has said,
+/// which is not the same as a list that fits.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ListRoom {
+    pub view: Option<f32>,
+    pub content: Option<f32>,
+}
+
+impl ListRoom {
+    /// How far the list can turn back from its newest note, when known.
+    pub fn back_max(&self) -> Option<f32> {
+        Some((self.content? - self.view?).max(0.0))
+    }
+}
+
 /// Where a layer's notes are written.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Keeping {
@@ -471,6 +496,8 @@ pub struct NotesLayer {
     /// what reached the screen, which is not always what a press would find.
     drawn: std::cell::Cell<(usize, usize)>,
     zones: Zones,
+    /// The open box's list, as the last paint measured it, for the wheel.
+    room: Rc<std::cell::Cell<ListRoom>>,
 }
 
 /// What a press on the layer did.
@@ -572,6 +599,7 @@ impl NotesLayer {
             revealing: false,
             drawn: std::cell::Cell::new((0, 0)),
             zones: Rc::new(RefCell::new(Vec::new())),
+            room: Rc::new(std::cell::Cell::new(ListRoom::default())),
         };
         layer.refresh();
         layer
@@ -617,6 +645,7 @@ impl NotesLayer {
             revealing: false,
             drawn: std::cell::Cell::new((0, 0)),
             zones: Rc::new(RefCell::new(Vec::new())),
+            room: Rc::new(std::cell::Cell::new(ListRoom::default())),
         };
         layer.refresh();
         layer
@@ -1083,6 +1112,42 @@ impl NotesLayer {
         !self.pending.is_empty() && self.can_save().is_ok()
     }
 
+    /// The first-time line drawn above the bar, in `l`: how to note, how to
+    /// see what takes a note, how to stamp and how to send, for somebody
+    /// opening their first brief. `None` once there is anything on the page
+    /// (a note, orphans included, a concur, a picture or an edit waiting),
+    /// on a page that takes no notes or cannot be edited, and while the
+    /// pictures are not yet read: unread is not none, and a line that
+    /// appears late is better than one that tells a person with pictures
+    /// on the page how to begin. The stamp clause needs a page that takes
+    /// concurs; the send clause needs somebody beside the document, named
+    /// as ↪ names them.
+    pub fn first_time_line_in(&self, beside: Option<&str>, l: crate::lang::Lang) -> Option<String> {
+        let notes = self.notes()?;
+        if self.read_only_in(l).is_some() || self.can_edit_in(l).is_err() {
+            return None;
+        }
+        let concurs = self.concurs().map_or(0, ConcurMap::count);
+        if notes.count() + concurs > 0 || !self.pending.is_empty() {
+            return None;
+        }
+        if self.picture_count() != Some(0) {
+            return None;
+        }
+        let t = &l.strings().parts;
+        let mut clauses = vec![
+            t.notes_first_note.to_string(),
+            t.notes_first_alt.to_string(),
+        ];
+        if self.concurs().is_some() {
+            clauses.push(t.notes_first_stamp.to_string());
+        }
+        if let Some(who) = beside {
+            clauses.push(fill(t.notes_first_send, &[("who", who)]));
+        }
+        Some(clauses.join(" · "))
+    }
+
     /// What ↪ does: the map exactly as copy map would give it, notes not yet
     /// saved included, and whether the press saves them. `None` with nothing
     /// to send.
@@ -1205,6 +1270,32 @@ impl NotesLayer {
 
     // ── notes, added and taken away ─────────────────────────────────────────
 
+    /// A wheel turn while the note box is open turns its notes, never the
+    /// page under it. `dy` is the turn in pixels, positive towards the top.
+    /// `None` when no box is open; otherwise whether the notes moved.
+    pub fn wheel_box(&mut self, dy: f32) -> Option<bool> {
+        let b = self.note_box.as_mut()?;
+        let was = b.back;
+        let next = (b.back + dy).max(0.0);
+        b.back = match self.room.get().back_max() {
+            Some(max) => next.min(max),
+            None => next,
+        };
+        Some((b.back - was).abs() > f32::EPSILON)
+    }
+
+    /// The open box's notes, turned from the keyboard: a step is an arrow's
+    /// worth, and a page is nine tenths of the list as last measured. Before
+    /// it has been measured a page is a step, the least that can be wrong.
+    fn turn_box(&mut self, mv: GlowMove) {
+        let step = crate::docopen::DOC_ARROW_STEP;
+        let (dir, by) = match mv {
+            GlowMove::Step(dir) => (dir, step),
+            GlowMove::Page(dir) => (dir, self.room.get().view.map_or(step, |h| h * 0.9)),
+        };
+        self.wheel_box(-f32::from(dir) * by);
+    }
+
     /// Open the note box on an anchor, with an empty draft.
     pub fn open(&mut self, nid: String, title: String) {
         if self.note_box.as_ref().is_some_and(|b| b.nid == nid) {
@@ -1215,6 +1306,7 @@ impl NotesLayer {
             title,
             draft: EditBuffer::default(),
             gone: false,
+            back: 0.0,
         });
     }
 
@@ -1226,6 +1318,7 @@ impl NotesLayer {
             title,
             draft: EditBuffer::default(),
             gone: true,
+            back: 0.0,
         });
     }
 
@@ -1289,6 +1382,18 @@ impl NotesLayer {
         let m = &ks.modifiers;
         if ks.key == "escape" {
             self.note_box = None;
+            return true;
+        }
+        // The square's chords turn the notes while the box is over it, and
+        // plain PageUp/PageDown do too: the draft has no use for them.
+        let plain = !m.control && !m.alt && !m.shift && !m.platform;
+        let turn = match ks.key.as_str() {
+            "pageup" if plain => Some(GlowMove::Page(-1)),
+            "pagedown" if plain => Some(GlowMove::Page(1)),
+            _ => crate::keylayer::glow_chord(&ks.key, m.control, m.shift, m.alt),
+        };
+        if let Some(mv) = turn {
+            self.turn_box(mv);
             return true;
         }
         if !self.has_caret() {
@@ -1388,6 +1493,7 @@ impl NotesLayer {
             return false;
         }
         b.draft = EditBuffer::default();
+        b.back = 0.0;
         let (nid, title) = (b.nid.clone(), b.title.clone());
         self.add_note(nid, title, text, utc_minute(now));
         true
@@ -1588,7 +1694,9 @@ impl NotesLayer {
         let hit = zones
             .iter()
             .rev()
-            .find(|(b, z)| b.contains(&at) && !matches!(z, Zone::Box | Zone::Draft | Zone::Bar))
+            .find(|(b, z)| {
+                b.contains(&at) && !matches!(z, Zone::Box | Zone::Draft | Zone::Bar | Zone::Cue)
+            })
             .map(|(_, z)| *z);
         if self.note_box.is_some() {
             match hit {
@@ -1623,7 +1731,7 @@ impl NotesLayer {
                 }
                 LayerPress::Took
             }
-            _ if under(Zone::Bar) => LayerPress::Took,
+            _ if under(Zone::Bar) || under(Zone::Cue) => LayerPress::Took,
             _ => LayerPress::Pass,
         }
     }
@@ -1704,6 +1812,9 @@ impl NotesLayer {
             // Whether the last paint drew the bar: a script can see the way
             // in is on screen without anybody looking.
             "bar": self.zones.borrow().iter().any(|(_, z)| *z == Zone::Bar),
+            // And whether it drew the first-time line above the bar, which a
+            // newcomer reads before anything else in the square.
+            "cue": self.zones.borrow().iter().any(|(_, z)| *z == Zone::Cue),
             // And how many elements it outlined, which only Alt does, and
             // how many 💬 it drew.
             "boxes": self.drawn.get().0,
@@ -1727,8 +1838,16 @@ impl NotesLayer {
     /// A canvas that records where its parent was painted as `zone`.
     fn record(&self, zone: Zone) -> impl IntoElement {
         let zones = self.zones.clone();
+        // Only what shows takes a press: a note turned out of the list keeps
+        // its delete's place, under the title or the draft, and a press there
+        // must not reach it.
         canvas(
-            move |bounds, _, _| zones.borrow_mut().push((bounds, zone)),
+            move |bounds, window, _| {
+                let shown = bounds.intersect(&window.content_mask().bounds);
+                if !shown.is_empty() {
+                    zones.borrow_mut().push((shown, zone));
+                }
+            },
             |_, _, _, _| {},
         )
         .absolute()
@@ -1875,6 +1994,7 @@ impl NotesLayer {
             .font_family(SharedString::from(sk.font_family.clone()))
             .text_size(px(text))
             .text_color(th.text.alpha(0.8))
+            .max_w(px(900.))
             .child(self.record(Zone::Bar));
         match self.read_only_in(l) {
             Some(why) => row = row.child(div().child(why)),
@@ -1942,14 +2062,41 @@ impl NotesLayer {
                     .child(said.text().to_string()),
             );
         }
-        // Clear of the reading rail down the right edge.
-        div()
+        // Clear of the reading rail down the right edge, with the first-time
+        // line, when there is one, stacked above the bar rather than inside
+        // it, so the bar keeps its own width. The stack spans the view from
+        // a 10 px margin on the left, so the line wraps inside a narrow
+        // square instead of running off its left edge (a square floating
+        // over a bench is about 480 px wide); each child keeps its own width
+        // and sits on the right.
+        let mut stack = div()
             .absolute()
+            .left(px(10.))
             .right(px(super::progress::GUTTER))
             .bottom(px(10.))
-            .max_w(px(900.))
-            .child(row)
-            .into_any_element()
+            .flex()
+            .flex_col()
+            .items_end()
+            .gap(px(4.));
+        if let Some(line) = self.first_time_line_in(beside, l) {
+            stack = stack.child(
+                sk.chrome(sk.sheet())
+                    .relative()
+                    .max_w(px(620.))
+                    .px(px(10.))
+                    .py(px(4.))
+                    .rounded(sk.rad_raw(6.))
+                    .bg(th.surface.alpha(0.96))
+                    .border_1()
+                    .border_color(th.accent.alpha(0.3))
+                    .font_family(SharedString::from(sk.font_family.clone()))
+                    .text_size(px(text))
+                    .text_color(th.accent)
+                    .child(self.record(Zone::Cue))
+                    .child(line),
+            );
+        }
+        stack.child(row).into_any_element()
     }
 
     /// The draft, a run of text for each line the note has, split where it
@@ -2149,7 +2296,66 @@ impl NotesLayer {
         }
         // A draft that wraps grows downward, and the box stops at eight
         // tenths of the view. The notes already written give up their room
-        // first, so the draft and Add note stay on screen as it grows.
+        // first, so the draft and Add note stay on screen as it grows. What
+        // they gave up is turned back to by the wheel: the list sits on its
+        // newest note, and `back` lowers it from there: an offset, never a
+        // margin, which would take the height the notes are seen through.
+        let room = self.room.get();
+        let back = room.back_max().map_or(b.back, |max| b.back.min(max));
+        let (seen, needed) = (self.room.clone(), self.room.clone());
+        let mut scroller = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .justify_end()
+            .min_h(px(0.))
+            .overflow_hidden()
+            .child(
+                canvas(
+                    move |bounds, _, _| {
+                        let mut r = seen.get();
+                        r.view = Some(f32::from(bounds.size.height));
+                        seen.set(r);
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+            .child(
+                list.flex_none().relative().top(px(back)).child(
+                    canvas(
+                        move |bounds, _, _| {
+                            let mut r = needed.get();
+                            r.content = Some(f32::from(bounds.size.height));
+                            needed.set(r);
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .inset_0(),
+                ),
+            );
+        // A thumb on the right edge, only when there is more than shows: as
+        // last measured, so it trails a frame behind a note added or deleted.
+        if let (Some(view_h), Some(content_h), Some(max)) =
+            (room.view, room.content, room.back_max())
+        {
+            if max > 0.5 && content_h > 0.0 {
+                let thumb = (view_h * view_h / content_h).max(16.0).min(view_h);
+                let top = (max - back) / max * (view_h - thumb);
+                scroller = scroller.child(
+                    div()
+                        .absolute()
+                        .right(px(0.))
+                        .top(px(top))
+                        .w(px(3.))
+                        .h(px(thumb))
+                        .rounded(px(2.))
+                        .bg(th.accent.alpha(0.55)),
+                );
+            }
+        }
         let mut content = div()
             .flex()
             .flex_col()
@@ -2157,7 +2363,7 @@ impl NotesLayer {
             .gap(px(10.))
             .px(px(12.))
             .py(px(10.))
-            .child(list.min_h(px(0.)).overflow_hidden());
+            .child(scroller);
         if let Some(pictures) = self.draw_pictures(&b.nid, deletable, th, sk) {
             content = content.child(pictures);
         }
@@ -2503,6 +2709,97 @@ mod tests {
             key: key.into(),
             key_char: ch.map(str::to_string),
         }
+    }
+
+    /// Parker, 2026-10-21: *"trying to add more comments just has them not
+    /// show up! needs to be scrollable for infinite comments!"* Thirty notes
+    /// in a short view: the newest shows above the draft, the wheel turns
+    /// back to the oldest, and only a delete that shows takes a press.
+    #[gpui::test]
+    fn a_long_thread_of_notes_turns_under_the_wheel(cx: &mut gpui::TestAppContext) {
+        let notes: Vec<String> = (0..30)
+            .map(|i| {
+                format!(r#"{{"text":"note {i}","title":"a title","ts":"2026-10-21 18:{i:02}"}}"#)
+            })
+            .collect();
+        let island = format!(r#"{{"a":[{}]}}"#, notes.join(","));
+        let mut l = layer(&island, "{}", ConcurSupport::Supported);
+        l.open("a".into(), "a title".into());
+        let th = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).expect("the embedded theme");
+        let sk = crate::skin::parse(crate::skin::DEFAULT_SKIN_TOML)
+            .expect("the embedded skin")
+            .bake(&th, 1.0);
+        let view = gpui::size(px(600.), px(400.));
+        let cx = cx.add_empty_window();
+        let deletes = |l: &NotesLayer, cx: &mut gpui::VisualTestContext| {
+            l.clear_zones();
+            cx.draw(Point::default(), view, |_, _| {
+                l.draw_box(view, &th, &sk).expect("open")
+            });
+            let zones = l.zones.borrow();
+            let shown: Vec<usize> = zones
+                .iter()
+                .filter_map(|(_, z)| match z {
+                    Zone::Delete(i) => Some(*i),
+                    _ => None,
+                })
+                .collect();
+            let add = zones.iter().any(|(_, z)| *z == Zone::AddNote);
+            (shown, add)
+        };
+        let (shown, add) = deletes(&l, cx);
+        assert!(add, "Add note stays on screen");
+        assert!(shown.contains(&29), "the newest shows: {shown:?}");
+        assert!(
+            !shown.contains(&0),
+            "the oldest is turned out, and takes no press: {shown:?}"
+        );
+        assert!(shown.len() < 30, "thirty do not fit in four hundred pixels");
+        let max = l
+            .room
+            .get()
+            .back_max()
+            .expect("the paint measured the list");
+        assert!(max > 0.0);
+        assert_eq!(l.wheel_box(1e6), Some(true), "the wheel turns the notes");
+        assert_eq!(
+            l.note_box().map(|b| b.back),
+            Some(max),
+            "and stops at the oldest"
+        );
+        assert_eq!(l.wheel_box(10.), Some(false), "past it nothing moves");
+        // The keyboard turns it as the wheel does: ctrl+↓ a step towards the
+        // newest, ctrl+shift+↓ and plain PageDown nine tenths of the list.
+        let press = |l: &mut NotesLayer, chord: &str| {
+            let k = Keystroke::parse(chord).expect("a chord");
+            assert!(l.key(&k, SystemTime::now()), "{chord} is the box's");
+            l.note_box().map(|b| b.back).expect("open")
+        };
+        let view_h = l.room.get().view.expect("measured");
+        let step = crate::docopen::DOC_ARROW_STEP;
+        assert_eq!(press(&mut l, "ctrl-down"), max - step);
+        assert_eq!(press(&mut l, "ctrl-up"), max);
+        assert_eq!(press(&mut l, "ctrl-shift-down"), max - view_h * 0.9);
+        assert_eq!(press(&mut l, "pageup"), max);
+        assert!(
+            l.note_box().is_some_and(|b| b.draft.text().is_empty()),
+            "none of it typed"
+        );
+        let (shown, add) = deletes(&l, cx);
+        assert!(add);
+        assert!(shown.contains(&0), "the oldest shows: {shown:?}");
+        assert!(!shown.contains(&29), "the newest is turned out: {shown:?}");
+        // A note added lands in view.
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_790_278_680);
+        for c in ["h", "i"] {
+            assert!(l.key(&ks(c, false, Some(c)), now));
+        }
+        assert!(l.add(now));
+        assert_eq!(l.note_box().map(|b| b.back), Some(0.0));
+        let (shown, _) = deletes(&l, cx);
+        assert!(shown.contains(&30), "the note just added shows: {shown:?}");
+        l.note_box = None;
+        assert_eq!(l.wheel_box(5.), None, "no box: the page takes the turn");
     }
 
     #[test]
@@ -2999,6 +3296,151 @@ mod tests {
             Path::new("/r/page.html"),
         );
         assert_eq!(read_only.send_button(&anchors, Some("agent")), None);
+    }
+
+    /// Somebody opening their first brief is told, above the bar, how to
+    /// note, how to see what takes a note, how to stamp and how to send. The
+    /// line goes at the first mark of any kind, is never drawn on a page that
+    /// takes no notes, waits for the pictures to be read, and says only what
+    /// the page and the pane can do: no stamp on a page without concurs, no
+    /// send with nobody beside. Every language draws all four clauses and
+    /// keeps the name ↪ sends to.
+    ///
+    /// Mutation-tested: dropping the concur, picture or pending checks, or
+    /// adding the stamp clause unconditionally, fails this.
+    #[test]
+    fn the_first_time_line_is_drawn_on_an_empty_brief_until_its_first_mark() {
+        use crate::lang::Lang;
+        let read = |l: &mut NotesLayer| {
+            l.pictures_read(
+                "/state/pictures/b".into(),
+                Ok(DocImages::empty(Path::new("/r/b.html"))),
+            )
+        };
+        let full = "click anything to note it · hold Alt to see what takes one \
+                    · ✓ stamps a decision · ↪ sends your notes to agent";
+
+        let mut l = layer("{}", "{}", ConcurSupport::Supported);
+        assert_eq!(
+            l.first_time_line_in(Some("agent"), Lang::En),
+            None,
+            "pictures unread: unread is not none"
+        );
+        read(&mut l);
+        assert_eq!(
+            l.first_time_line_in(Some("agent"), Lang::En).as_deref(),
+            Some(full)
+        );
+        assert_eq!(
+            l.first_time_line_in(None, Lang::En).as_deref(),
+            Some(
+                "click anything to note it · hold Alt to see what takes one · ✓ stamps a decision"
+            ),
+            "nobody beside: no send clause"
+        );
+        l.add_note(
+            "a".into(),
+            "a title".into(),
+            "mine".into(),
+            "2026-10-21 18:00".into(),
+        );
+        assert_eq!(
+            l.first_time_line_in(Some("agent"), Lang::En),
+            None,
+            "gone at the first note"
+        );
+
+        let mut stamped = layer("{}", "{}", ConcurSupport::Supported);
+        read(&mut stamped);
+        stamped.toggle_concur("ask-b", SystemTime::now()).unwrap();
+        assert_eq!(
+            stamped.first_time_line_in(Some("agent"), Lang::En),
+            None,
+            "gone at the first stamp"
+        );
+        let mut kept = layer(
+            "{}",
+            r#"{"ask-b":"2026-10-21 18:00"}"#,
+            ConcurSupport::Supported,
+        );
+        read(&mut kept);
+        assert_eq!(
+            kept.first_time_line_in(Some("agent"), Lang::En),
+            None,
+            "a stamp in the file"
+        );
+        let mut noted = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
+        read(&mut noted);
+        assert_eq!(
+            noted.first_time_line_in(Some("agent"), Lang::En),
+            None,
+            "a note in the file"
+        );
+        noted.open("a".into(), "a title".into());
+        noted.delete_shown(0);
+        assert_eq!(noted.count_on("a"), 0);
+        assert_eq!(
+            noted.first_time_line_in(Some("agent"), Lang::En),
+            None,
+            "nothing left on the page, but a deletion waiting to be saved"
+        );
+
+        let mut pictured = layer("{}", "{}", ConcurSupport::Supported);
+        let root = std::env::temp_dir().join(format!("td-first-line-{}", std::process::id()));
+        let doc = Path::new("/r/b.html");
+        let folder = doc_images::folder(&root, doc);
+        pictured.pictures_read(folder.clone(), doc_images::read(&folder, doc));
+        assert!(
+            pictured.first_time_line_in(None, Lang::En).is_some(),
+            "an empty folder is none"
+        );
+        let kept = doc_images::attach(&folder, doc, "b", b"shot", "png", "2026-10-21 18:00")
+            .map(|(list, one)| (list, vec![one]));
+        pictured.attached(kept);
+        assert_eq!(
+            pictured.first_time_line_in(None, Lang::En),
+            None,
+            "gone at the first picture"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+
+        let mut old = layer("{}", "{}", ConcurSupport::NotSupported);
+        read(&mut old);
+        assert_eq!(
+            old.first_time_line_in(Some("agent"), Lang::En).as_deref(),
+            Some("click anything to note it · hold Alt to see what takes one · ↪ sends your notes to agent"),
+            "a page that takes no concurs is not told to stamp"
+        );
+
+        let mut read_only = NotesLayer::new(
+            notes::read(b"<html><body><p>just a page</p></body></html>"),
+            None,
+            ConcurSupport::Unknown,
+            0,
+            Path::new("/r/page.html"),
+        );
+        read(&mut read_only);
+        assert_eq!(read_only.first_time_line_in(Some("agent"), Lang::En), None);
+
+        let mut fresh = layer("{}", "{}", ConcurSupport::Supported);
+        read(&mut fresh);
+        for lang in Lang::ALL {
+            let line = fresh.first_time_line_in(Some("CLAUDE"), lang).unwrap();
+            assert_eq!(
+                line.matches(" · ").count(),
+                3,
+                "{lang:?}: four clauses in {line}"
+            );
+            assert!(line.contains("CLAUDE"), "{lang:?} keeps the name: {line}");
+            assert!(line.contains('✓') && line.contains('↪'), "{lang:?}: {line}");
+            if lang != Lang::En {
+                assert_ne!(
+                    line,
+                    full.replace("agent", "CLAUDE"),
+                    "{lang:?} is translated"
+                );
+            }
+        }
     }
 
     /// What the report and the control socket carry is the English; the bar

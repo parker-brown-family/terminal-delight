@@ -2,10 +2,24 @@
 //! tube registration, headers and effects still run on every parent frame.
 use super::*;
 
+#[derive(Clone, PartialEq)]
+pub(super) struct HistoryContext {
+    pub theme: Theme,
+    pub offset: usize,
+    pub alternate: bool,
+    pub cols: usize,
+    pub rows: usize,
+    pub inverted: bool,
+}
+
 #[derive(Default, PartialEq)]
 pub(super) struct Snapshot {
-    pub lines: styling::Lines,
+    pub lines: std::rc::Rc<styling::Lines>,
+    pub glyphs: styling::Lines,
     pub cell_h: f32,
+    pub cell_w: f32,
+    pub linger: theme::TextLinger,
+    pub context: Option<HistoryContext>,
     pub pad: (f32, f32),
     pub crawl: bool,
     /// The alpha of the phosphor bleed under every letter, or `None` for a
@@ -46,23 +60,102 @@ pub(super) fn bleed_runs(runs: &[TextRun], alpha: f32) -> Vec<TextRun> {
 #[derive(Default)]
 pub(super) struct GridPaint {
     snapshot: Snapshot,
+    trail: afterglow::Trail,
+    live: Option<gpui::Entity<LiveGrid>>,
     #[cfg(test)]
     pub renders: std::rc::Rc<std::cell::Cell<usize>>,
 }
 
+#[derive(Default, PartialEq)]
+struct LiveSnapshot {
+    lines: std::rc::Rc<styling::Lines>,
+    cell_h: f32,
+    cell_w: f32,
+    crawl: bool,
+    bleed: Option<f32>,
+    font_size: Option<f32>,
+}
+
+#[derive(Default)]
+struct LiveGrid {
+    snapshot: LiveSnapshot,
+    #[cfg(test)]
+    renders: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
 impl GridPaint {
+    pub fn is_animating(&self) -> bool {
+        !self.trail.glyphs.is_empty()
+    }
+
+    pub fn clear_afterglow(&mut self) {
+        self.trail.clear();
+        self.snapshot.context = None;
+    }
+
     pub fn replace_if_changed(view: &mut gpui::Entity<Self>, snapshot: Snapshot, cx: &mut App) {
         // Final painted rows include selection, cursor, colours and inversion.
         // A generation counter would miss UI changes without new output.
         if view.read(cx).snapshot != snapshot {
+            let previous = view.read(cx);
+            let mut trail = previous.trail.clone();
+            let compatible = previous.snapshot.context.is_some()
+                && previous.snapshot.context == snapshot.context
+                && previous.snapshot.cell_h == snapshot.cell_h
+                && previous.snapshot.cell_w == snapshot.cell_w
+                && previous.snapshot.pad == snapshot.pad
+                && previous.snapshot.crawl == snapshot.crawl;
+            if compatible {
+                if previous.snapshot.linger != snapshot.linger {
+                    trail.retime(snapshot.linger, cx.background_executor().now());
+                }
+                trail.observe(
+                    &previous.snapshot.glyphs,
+                    &snapshot.glyphs,
+                    cx.background_executor().now(),
+                    snapshot.linger,
+                    snapshot
+                        .context
+                        .as_ref()
+                        .map_or(afterglow::MIN_GLYPH_BUDGET, |c| {
+                            c.cols
+                                .saturating_mul(c.rows)
+                                .max(afterglow::MIN_GLYPH_BUDGET)
+                        }),
+                );
+            } else {
+                trail.clear();
+            }
             #[cfg(test)]
             let renders = view.read(cx).renders.clone();
+            let live_snapshot = LiveSnapshot {
+                lines: snapshot.lines.clone(),
+                cell_h: snapshot.cell_h,
+                cell_w: snapshot.cell_w,
+                crawl: snapshot.crawl,
+                bleed: snapshot.bleed,
+                font_size: snapshot.context.as_ref().map(|c| c.theme.font_size),
+            };
+            let live = previous
+                .live
+                .as_ref()
+                .filter(|live| live.read(cx).snapshot == live_snapshot)
+                .cloned();
+            let live = live.unwrap_or_else(|| {
+                cx.new(|_| LiveGrid {
+                    snapshot: live_snapshot,
+                    #[cfg(test)]
+                    renders: Default::default(),
+                })
+            });
             // GPUI collects dirty views BEFORE rendering the parent. Notifying
             // an existing child here is too late for this frame. An immutable
             // replacement has no old paint to reuse, so the change is visible
             // in this very frame, with no extra frame scheduled to catch up.
             *view = cx.new(|_| Self {
                 snapshot,
+                trail,
+                live: Some(live),
                 #[cfg(test)]
                 renders,
             });
@@ -71,17 +164,66 @@ impl GridPaint {
 }
 
 impl Render for GridPaint {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         {
             self.renders.set(self.renders.get() + 1);
         }
+        let now = cx.background_executor().now();
+        self.trail.prune(now);
+        if !self.trail.glyphs.is_empty() {
+            window.request_animation_frame();
+        }
         let s = &self.snapshot;
         div()
+            .relative()
+            .w_full()
+            .h(px(s.cell_h * s.lines.len() as f32 + 2.0 * s.pad.1))
             .px(px(s.pad.0))
             .py(px(s.pad.1))
             .flex()
             .flex_col()
+            .children(self.live.clone().map(|live| {
+                gpui::AnyView::from(live).cached(
+                    gpui::StyleRefinement::default()
+                        .w_full()
+                        .h(px(s.cell_h * s.lines.len() as f32)),
+                )
+            }))
+            .children(self.trail.paint_groups(now).into_iter().map(|ghost| {
+                div()
+                    .absolute()
+                    .map(|d| {
+                        if s.crawl {
+                            d.left(gpui::relative(0.5)).ml(px((ghost.column as f32
+                                - ghost.leading_columns as f32
+                                - ghost.line_columns as f32 * 0.5)
+                                * s.cell_w))
+                        } else {
+                            d.left(px(s.pad.0 + ghost.column as f32 * s.cell_w))
+                        }
+                    })
+                    .top(px(s.pad.1 + ghost.row as f32 * s.cell_h))
+                    .h(px(s.cell_h))
+                    .whitespace_nowrap()
+                    .child(StyledText::new(ghost.text).with_runs(ghost.runs))
+            }))
+    }
+}
+
+impl Render for LiveGrid {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(test)]
+        self.renders.set(self.renders.get() + 1);
+        let s = &self.snapshot;
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .map(|d| match s.font_size {
+                Some(size) => d.text_size(px(size)),
+                None => d,
+            })
             .children(s.lines.iter().cloned().map(|(text, runs)| {
                 if s.crawl {
                     return match crawl_centered_runs(text, runs) {
@@ -128,6 +270,590 @@ mod tests {
     use super::*;
     use crate::pane::harness::Pane;
     use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn fading_letters_reuse_the_live_grid_even_in_intrusive(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.settle();
+        pane.view.update(pane.cx, |v, _| {
+            let mut choice = theme::house_outer();
+            choice.id = "intrusive".into();
+            choice.palette = None;
+            choice.follow_omarchy = Some(false);
+            v.appearance.set_theme(theme::ThemeGroup::of(&choice));
+            let mut grade = theme::Grade::neutral();
+            grade.crt = true;
+            grade.afterglow_ms = Some(220.0);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+        });
+        pane.settle_size();
+        pane.view.update(pane.cx, |v, cx| {
+            v.session.term.lock().advance(b"\x1b[?25l\x1b[2J\x1b[HOLD");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+        });
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[HNEW"));
+        pane.redraw();
+        let (live, rendered, animated) = pane.view.read_with(pane.cx, |v, cx| {
+            let grid = v.grid_paint.read(cx);
+            let live = grid.live.clone().unwrap();
+            let rendered = live.read(cx).renders.get();
+            (live, rendered, grid.renders.get())
+        });
+        assert!(rendered > 0);
+        for _ in 0..4 {
+            pane.cx.executor().advance_clock(Duration::from_millis(40));
+            pane.view.update(pane.cx, |v, cx| {
+                v.grid_paint.update(cx, |_, cx| cx.notify());
+            });
+            pane.redraw();
+            pane.view.read_with(pane.cx, |v, cx| {
+                let grid = v.grid_paint.read(cx);
+                assert_eq!(grid.live.as_ref().unwrap().entity_id(), live.entity_id());
+                assert_eq!(
+                    live.read(cx).renders.get(),
+                    rendered,
+                    "fade laid out live letters again"
+                );
+                assert!(!grid.trail.glyphs.is_empty());
+            });
+        }
+        assert!(
+            pane.view
+                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).renders.get())
+                > animated,
+            "fixture did not draw the animated layer"
+        );
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[HFRESH"));
+        pane.redraw();
+        pane.view.read_with(pane.cx, |v, cx| {
+            let fresh = v.grid_paint.read(cx).live.as_ref().unwrap().read(cx);
+            assert!(fresh
+                .snapshot
+                .lines
+                .iter()
+                .any(|(text, _)| text.contains("FRESH")));
+            assert_ne!(
+                v.grid_paint.read(cx).live.as_ref().unwrap().entity_id(),
+                live.entity_id(),
+                "new output reused stale live text"
+            );
+        });
+    }
+
+    /// Skin is chrome, design is texture, and crawl/glass are independent.
+    /// Exercise the actual pane and GPU registration for every embedded pair;
+    /// additions to either registry automatically join this regression.
+    #[gpui::test]
+    fn lighting_and_erasure_work_in_every_skin_design_glass_and_crawl_combination(
+        cx: &mut TestAppContext,
+    ) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.settle();
+        let skins = pane.view.read_with(pane.cx, |_, cx| {
+            cx.global::<crate::skin::SkinRegistry>()
+                .builtins
+                .iter()
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>()
+        });
+        assert!(!skins.is_empty());
+        for skin in &skins {
+            for design in theme::builtin_ids() {
+                for glass in [false, true] {
+                    for crawl in [false, true] {
+                        let case = format!("{skin}/{design}/glass={glass}/crawl={crawl}");
+                        pane.cx.update(|window, cx| {
+                            crate::skin::select(cx, skin).unwrap();
+                            window.focus(&pane.view.read(cx).focus_handle.clone(), cx);
+                        });
+                        pane.view.update(pane.cx, |v, cx| {
+                            let mut choice = theme::house_outer();
+                            choice.id = design.into();
+                            choice.seed = None;
+                            choice.palette = None;
+                            choice.follow_omarchy = Some(false);
+                            v.appearance.set_theme(theme::ThemeGroup::of(&choice));
+                            let mut grade = theme::Grade::neutral();
+                            grade.text = 0.8;
+                            grade.crt = glass;
+                            grade.crawl = crawl;
+                            grade.afterglow_ms = Some(220.0);
+                            v.appearance.grade = Some(grade);
+                            v.appearance.pins = theme::GradePins::all();
+                            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+                        });
+                        // Resizing deliberately invalidates retained positions.
+                        // Finish the style's real PTY resize before erasing.
+                        pane.settle_size();
+                        pane.view.update(pane.cx, |v, cx| {
+                            let mut term = v.session.term.lock();
+                            term.advance(b"\x1b[2J\x1b[H\x1b[31mPHOSPHOR\x1b[0m\x1b[1;2H");
+                            term.start_selection(
+                                SelectionType::Simple,
+                                TermPoint::new(Line(0), Column(0)),
+                                Side::Left,
+                            );
+                            term.update_selection(TermPoint::new(Line(0), Column(8)), Side::Left);
+                            drop(term);
+                            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+                        });
+                        crate::warp::set_suppressed(false);
+                        crate::warp::begin_frame();
+                        pane.redraw();
+                        let active_glows = crate::warp::rect_glows();
+                        if design == theme::CLEAN {
+                            // Clean holds the light off, whatever the dials say:
+                            // nothing glows and nothing erased lingers.
+                            assert!(
+                                active_glows.iter().all(|g| g.abs() < 1e-5),
+                                "Clean lit the letters: {case}"
+                            );
+                            let linger = pane
+                                .view
+                                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).snapshot.linger);
+                            assert_eq!(
+                                (linger.cursor_ms, linger.off_cursor_ms),
+                                (0.0, 0.0),
+                                "Clean lingers: {case}"
+                            );
+                            continue;
+                        }
+                        let expected_glow = if design == "intrusive" { 0.37 } else { 0.20 };
+                        assert!(!active_glows.is_empty(), "no GPU tube: {case}");
+                        assert!(
+                            active_glows
+                                .iter()
+                                .all(|g| (*g - expected_glow).abs() < 1e-5),
+                            "wrong active GPU glow: {case}"
+                        );
+                        let saved = pane.read(|v| v.appearance.clone());
+                        let before = pane.view.read_with(pane.cx, |v, cx| {
+                            let s = &v.grid_paint.read(cx).snapshot;
+                            (s.context.clone().unwrap(), s.cell_w, s.cell_h, s.pad)
+                        });
+                        let colour = pane.view.read_with(pane.cx, |v, cx| {
+                            let grid = v.grid_paint.read(cx);
+                            assert_eq!(
+                                grid.snapshot.linger,
+                                theme::Grade::default().linger_for_focus(true),
+                                "{case}"
+                            );
+                            assert_eq!(grid.snapshot.crawl, crawl, "{case}");
+                            grid.snapshot
+                                .glyphs
+                                .iter()
+                                .find(|(text, _)| text.contains("PHOSPHOR"))
+                                .unwrap()
+                                .1[0]
+                                .color
+                        });
+                        pane.read(|v| {
+                            let mut term = v.session.term.lock();
+                            term.clear_selection();
+                            term.advance(b"\x1b[2J\x1b[H>");
+                        });
+                        pane.redraw();
+                        pane.cx.executor().advance_clock(Duration::from_millis(500));
+                        pane.read(|v| v.session.term.lock().advance(b"\x1b[1;2H"));
+                        pane.redraw();
+                        pane.view.read_with(pane.cx, |v, cx| {
+                            let grid = v.grid_paint.read(cx);
+                            assert!(
+                                grid.snapshot
+                                    .lines
+                                    .iter()
+                                    .any(|(text, _)| text.contains('>')),
+                                "new text delayed: {case}"
+                            );
+                            assert_eq!(
+                                grid.trail
+                                    .glyphs
+                                    .iter()
+                                    .map(|g| g.text.as_str())
+                                    .collect::<String>(),
+                                "PHOSPHOR",
+                                "incomplete erasure: {case}; context={} theme={} cells={:?}->{:?}; pad={:?}->{:?}; grid={:?}->{:?}",
+                                before.0 == *grid.snapshot.context.as_ref().unwrap(),
+                                before.0.theme == grid.snapshot.context.as_ref().unwrap().theme,
+                                (before.1, before.2), (grid.snapshot.cell_w, grid.snapshot.cell_h),
+                                before.3, grid.snapshot.pad,
+                                (before.0.cols, before.0.rows, before.0.offset, before.0.inverted),
+                                { let c = grid.snapshot.context.as_ref().unwrap(); (c.cols, c.rows, c.offset, c.inverted) }
+                            );
+                            for ghost in &grid.trail.glyphs {
+                                assert_eq!(
+                                    ghost.run.color, colour,
+                                    "decorated ghost colour: {case}"
+                                );
+                                assert!(ghost.run.background_color.is_none(), "{case}");
+                                assert!(
+                                    ghost.opacity(cx.background_executor().now()) > 0.0,
+                                    "expired early: {case}"
+                                );
+                            }
+                        });
+                        pane.cx.executor().advance_clock(Duration::from_millis(150));
+                        // The headless platform drops on_request_frame
+                        // callbacks. Deliver the same child notification that
+                        // request_animation_frame supplies on the native one.
+                        pane.view.update(pane.cx, |v, cx| {
+                            v.grid_paint.update(cx, |_, cx| cx.notify());
+                        });
+                        pane.redraw();
+                        assert!(
+                            pane.view.read_with(pane.cx, |v, cx| v
+                                .grid_paint
+                                .read(cx)
+                                .trail
+                                .glyphs
+                                .is_empty()),
+                            "not expired at650ms: {case}"
+                        );
+
+                        pane.cx.update(|window, _| window.blur());
+                        crate::warp::begin_frame();
+                        pane.redraw();
+                        let inactive_glows = crate::warp::rect_glows();
+                        assert!(!inactive_glows.is_empty(), "no inactive GPU tube: {case}");
+                        assert!(
+                            inactive_glows.iter().all(|g| *g == 1.0),
+                            "wrong inactive glow: {case}"
+                        );
+                        let fraction = if design == "intrusive" { 0.52 } else { 0.45 };
+                        let text = pane.view.read_with(pane.cx, |v, cx| {
+                            v.grid_paint
+                                .read(cx)
+                                .snapshot
+                                .context
+                                .as_ref()
+                                .unwrap()
+                                .theme
+                                .grade
+                                .text
+                        });
+                        assert!(
+                            (text - 0.8 * fraction).abs() < 1e-5,
+                            "wrong inactive text: {case}"
+                        );
+                        assert!(
+                            pane.read(|v| v.appearance == saved),
+                            "focus mutated settings: {case}"
+                        );
+
+                        // An explicit off is a matched negative control in the
+                        // same real pane, rather than an absent observation.
+                        pane.view.update(pane.cx, |v, _| {
+                            let grade = v.appearance.grade.as_mut().unwrap();
+                            grade.image_glow = Some(0.0);
+                            grade.inactive_image_glow = Some(0.0);
+                            grade.afterglow_ms = Some(0.0);
+                            v.session.term.lock().advance(b"\x1b[2J\x1b[HCONTROL");
+                        });
+                        crate::warp::begin_frame();
+                        pane.redraw();
+                        pane.read(|v| v.session.term.lock().advance(b"\x1b[2J\x1b[H>"));
+                        pane.redraw();
+                        assert!(
+                            crate::warp::rect_glows().iter().all(|g| *g == 0.0),
+                            "off still glows: {case}"
+                        );
+                        assert!(
+                            pane.view.read_with(pane.cx, |v, cx| v
+                                .grid_paint
+                                .read(cx)
+                                .trail
+                                .glyphs
+                                .is_empty()),
+                            "off retains glyphs: {case}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn real_focus_changes_only_the_drawn_terminal_text(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'focus fixture\\n'; exec cat");
+        pane.wait_for("focus fixture");
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.text = 0.8;
+            grade.afterglow_ms = Some(0.0);
+            grade.cursor_linger_ms = Some(80.0);
+            grade.off_cursor_linger_ms = Some(320.0);
+            grade.inactive_cursor_linger_ms = Some(30.0);
+            grade.inactive_off_cursor_linger_ms = Some(120.0);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            cx.notify();
+        });
+        pane.redraw();
+        let before = pane.read(|v| v.appearance.clone());
+        let active = pane.view.read_with(pane.cx, |v, cx| {
+            v.grid_paint
+                .read(cx)
+                .snapshot
+                .context
+                .as_ref()
+                .unwrap()
+                .theme
+                .grade
+                .text
+        });
+        assert!((active - 0.8).abs() < 0.001);
+        assert_eq!(
+            pane.view
+                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).snapshot.linger),
+            theme::TextLinger {
+                cursor_ms: 80.0,
+                off_cursor_ms: 320.0
+            }
+        );
+        pane.cx.update(|window, _| window.blur());
+        pane.redraw();
+        let inactive = pane.view.read_with(pane.cx, |v, cx| {
+            v.grid_paint
+                .read(cx)
+                .snapshot
+                .context
+                .as_ref()
+                .unwrap()
+                .theme
+                .grade
+                .text
+        });
+        assert!((inactive - 0.36).abs() < 0.001);
+        assert_eq!(
+            pane.view
+                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).snapshot.linger),
+            theme::TextLinger {
+                cursor_ms: 30.0,
+                off_cursor_ms: 120.0
+            }
+        );
+        pane.cx.update(|window, cx| {
+            window.focus(&pane.view.read(cx).focus_handle.clone(), cx);
+        });
+        pane.redraw();
+        assert!(
+            pane.read(|v| v.appearance == before),
+            "focus changed saved settings"
+        );
+        let active_again = pane.view.read_with(pane.cx, |v, cx| {
+            v.grid_paint
+                .read(cx)
+                .snapshot
+                .context
+                .as_ref()
+                .unwrap()
+                .theme
+                .grade
+                .text
+        });
+        assert!((active_again - active).abs() < 0.001);
+        assert_eq!(
+            pane.view
+                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).snapshot.linger),
+            theme::TextLinger {
+                cursor_ms: 80.0,
+                off_cursor_ms: 320.0
+            }
+        );
+    }
+
+    #[gpui::test]
+    fn adjusting_one_linger_slider_does_not_clear_the_other_trail(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.settle();
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.cursor_linger_ms = Some(220.0);
+            grade.off_cursor_linger_ms = Some(650.0);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            v.session.term.lock().advance(b"\x1b[?25l\x1b[2J\x1b[HAB");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+        });
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[H\x1b[2KA"));
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[H\x1b[2KC"));
+        pane.redraw();
+        let text = |pane: &mut Pane| {
+            pane.view.read_with(pane.cx, |v, cx| {
+                v.grid_paint
+                    .read(cx)
+                    .trail
+                    .glyphs
+                    .iter()
+                    .map(|g| g.text.as_str())
+                    .collect::<String>()
+            })
+        };
+        assert_eq!(text(&mut pane), "BA");
+        pane.cx.executor().advance_clock(Duration::from_millis(100));
+        pane.view.update(pane.cx, |v, _| {
+            v.appearance.grade.as_mut().unwrap().cursor_linger_ms = Some(0.0);
+        });
+        pane.redraw();
+        assert_eq!(
+            text(&mut pane),
+            "B",
+            "disabling short linger cleared the erased string"
+        );
+        pane.view.update(pane.cx, |v, _| {
+            v.appearance
+                .grade
+                .as_mut()
+                .unwrap()
+                .inactive_off_cursor_linger_ms = Some(0.0);
+        });
+        pane.redraw();
+        assert_eq!(
+            text(&mut pane),
+            "B",
+            "an inactive dial changed an active trail"
+        );
+        pane.view.update(pane.cx, |v, _| {
+            v.appearance.grade.as_mut().unwrap().off_cursor_linger_ms = Some(100.0);
+        });
+        pane.redraw();
+        assert!(
+            text(&mut pane).is_empty(),
+            "retiming renewed the trail's birth"
+        );
+        assert!(pane.view.read_with(pane.cx, |v, cx| v
+            .grid_paint
+            .read(cx)
+            .snapshot
+            .lines
+            .iter()
+            .any(|(s, _)| s.contains('C'))));
+    }
+
+    #[gpui::test]
+    fn an_erased_paragraph_survives_bottom_alignment_and_cursor_motion(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.afterglow_ms = Some(220.0);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            v.session
+                .term
+                .lock()
+                .advance(b"\x1b[2J\x1b[HWHOLE WORD\r\nSECOND ROW\r\nFINAL ROW");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+            cx.notify();
+        });
+        pane.redraw();
+        let old_offset = pane.read(|v| v.paint_offset);
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[2J\x1b[H>"));
+        pane.redraw();
+        assert_ne!(
+            old_offset,
+            pane.read(|v| v.paint_offset),
+            "fixture must move bottom alignment"
+        );
+        let erased = pane.view.read_with(pane.cx, |v, cx| {
+            v.grid_paint
+                .read(cx)
+                .trail
+                .glyphs
+                .iter()
+                .map(|g| (g.row, g.column, g.text.clone()))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            erased
+                .iter()
+                .map(|(_, _, s)| s.as_str())
+                .collect::<String>(),
+            "WHOLEWORDSECONDROWFINALROW"
+        );
+        pane.cx.executor().advance_clock(Duration::from_millis(260));
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[1;3H"));
+        pane.redraw();
+        let after_cursor = pane.view.read_with(pane.cx, |v, cx| {
+            v.grid_paint
+                .read(cx)
+                .trail
+                .glyphs
+                .iter()
+                .map(|g| (g.row, g.column, g.text.clone()))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(after_cursor, erased);
+        pane.cx.executor().advance_clock(Duration::from_millis(390));
+        pane.cx.update(|window, _| window.refresh());
+        pane.cx.run_until_parked();
+        assert!(pane.view.read_with(pane.cx, |v, cx| v
+            .grid_paint
+            .read(cx)
+            .trail
+            .glyphs
+            .is_empty()));
+    }
+
+    #[gpui::test]
+    fn live_grid_shows_new_text_while_old_glyphs_expire_and_clear_on_cover(
+        cx: &mut TestAppContext,
+    ) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.afterglow_ms = Some(200.0);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            v.session.term.lock().advance(b"\x1b[2J\x1b[HOLD");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+            cx.notify();
+        });
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[HNEW"));
+        pane.redraw();
+        let (new_is_live, ghosts) = pane.view.read_with(pane.cx, |v, cx| {
+            let grid = v.grid_paint.read(cx);
+            (
+                grid.snapshot
+                    .lines
+                    .iter()
+                    .any(|(text, _)| text.contains("NEW")),
+                grid.trail.glyphs.len(),
+            )
+        });
+        assert!(new_is_live, "new text was delayed");
+        assert!(ghosts > 0, "replaced letters left no afterglow");
+        pane.cx.executor().advance_clock(Duration::from_millis(250));
+        pane.cx.update(|window, _| window.refresh());
+        pane.cx.run_until_parked();
+        assert!(pane.view.read_with(pane.cx, |v, cx| v
+            .grid_paint
+            .read(cx)
+            .trail
+            .glyphs
+            .is_empty()));
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[HOLD"));
+        pane.redraw();
+        pane.view.update(pane.cx, |v, cx| {
+            v.set_face(crate::workbench::Face::Workbench, cx)
+        });
+        pane.redraw();
+        assert!(pane.view.read_with(pane.cx, |v, cx| v
+            .grid_paint
+            .read(cx)
+            .trail
+            .glyphs
+            .is_empty()));
+    }
 
     /// The bleed is each run's own colour, fainter, with nothing that would
     /// print four times: no background, no underline, no strike.

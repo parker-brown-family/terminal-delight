@@ -1,0 +1,22 @@
+   Compiling terminal-delight v0.0.0 (/home/parker/.cache/td-security-finish/proof/module-mutations-final-3)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.30s
+     Running unittests src/main.rs (target/debug/deps/terminal_delight-73ed7d4d68427bb2)
+
+running 1 test
+test restricted::work::tests::mount_identity_compares_mount_id_even_for_the_same_device ... FAILED
+
+failures:
+
+---- restricted::work::tests::mount_identity_compares_mount_id_even_for_the_same_device stdout ----
+
+thread 'restricted::work::tests::mount_identity_compares_mount_id_even_for_the_same_device' (3026487) panicked at src/restricted/work.rs:308:14:
+called `Result::unwrap_err()` on an `Ok` value: ()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    restricted::work::tests::mount_identity_compares_mount_id_even_for_the_same_device
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin terminal-delight`

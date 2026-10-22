@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "dev/**"]
     tags: ['v*']
 
 # A new push to a pull request cancels that pull request's older run, which
@@ -50,7 +50,20 @@ jobs:
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
             pkg-config \
-            poppler-utils
+            poppler-utils \
+            libcap-dev meson ninja-build
+
+      # The distro helper lacks descriptor mounts. Use a fixed upstream release
+      # with safe setup-path resolution; the runtime also refuses older helpers.
+      - name: Install the qualified Restricted helper
+        run: |
+          curl --fail --location --retry 3 -o /tmp/bubblewrap-0.12.0.tar.xz https://github.com/containers/bubblewrap/releases/download/v0.12.0/bubblewrap-0.12.0.tar.xz
+          echo '9760d007363e3abba7c747489910f9f82d9fca53ba3bd3282e396fa3c97a3314  /tmp/bubblewrap-0.12.0.tar.xz' | sha256sum --check
+          tar -xJf /tmp/bubblewrap-0.12.0.tar.xz -C /tmp
+          meson setup /tmp/bwrap-build /tmp/bubblewrap-0.12.0 --prefix=/usr -Dman=disabled -Dtests=false -Dbash_completion=disabled -Dzsh_completion=disabled
+          meson compile -C /tmp/bwrap-build
+          sudo install -m 0755 /tmp/bwrap-build/bwrap /usr/bin/bwrap
+          /usr/bin/bwrap --version
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -101,6 +114,11 @@ jobs:
 
       - name: Test, fallback core
         run: cargo test --locked --features core-alacritty
+
+      - name: Prove the Restricted OS boundary
+        run: |
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" "/run/user/$(id -u)"
+          cargo test --locked --test restricted -- --ignored --test-threads=1
 
       - name: Release build smoke
         run: cargo build --release --locked

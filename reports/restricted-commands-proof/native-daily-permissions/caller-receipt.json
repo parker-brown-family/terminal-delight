@@ -1,0 +1,91 @@
+{
+  "pane": 1,
+  "shell": 3864811,
+  "note": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "posted \u2014 the note is on pane 3864811's glass"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session permissions3864624 \u00b7 window 3864631 \u00b7 td-f5b9a6791418-restricted-review"
+        }
+      ],
+      "structuredContent": {
+        "pid": 3864811,
+        "posted": true,
+        "instance": {
+          "session": "permissions3864624",
+          "window": 3864631,
+          "build": "td-f5b9a6791418-restricted-review"
+        }
+      }
+    }
+  },
+  "open": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "/home/parker/.cache/td-security-finish/proof/native-daily-final-permissions/own.html \u2014 float pane 1"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session permissions3864624 \u00b7 window 3864631 \u00b7 td-f5b9a6791418-restricted-review"
+        }
+      ],
+      "structuredContent": {
+        "path": "/home/parker/.cache/td-security-finish/proof/native-daily-final-permissions/own.html",
+        "placement": "here",
+        "pane": 3864811,
+        "said": "float pane 1",
+        "instance": {
+          "session": "permissions3864624",
+          "window": 3864631,
+          "build": "td-f5b9a6791418-restricted-review"
+        }
+      }
+    }
+  },
+  "notes": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "/home/parker/.cache/td-security-finish/proof/native-daily-final-permissions/own.html \u2014 floating over your pane\nno notes to read: the page is not laid out yet"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session permissions3864624 \u00b7 window 3864631 \u00b7 td-f5b9a6791418-restricted-review"
+        }
+      ],
+      "structuredContent": {
+        "path": "/home/parker/.cache/td-security-finish/proof/native-daily-final-permissions/own.html",
+        "place": "float",
+        "pane": 3864811,
+        "found": "float-over-you",
+        "notes": null,
+        "concurs": null,
+        "unsaved": null,
+        "map": null,
+        "state": null,
+        "read_only": null,
+        "why": "the page is not laid out yet",
+        "pictures_attached": [],
+        "instance": {
+          "session": "permissions3864624",
+          "window": 3864631,
+          "build": "td-f5b9a6791418-restricted-review"
+        }
+      }
+    }
+  }
+}
