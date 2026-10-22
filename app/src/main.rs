@@ -17,12 +17,10 @@
 //! survives a restart — see [`sticky`]) ·
 //! ctrl+scroll or the bezel scrubber: menu-bar size · F1 opens help.
 //!
-//! **TD never types into a terminal on its own.** Every byte that reaches a pty
-//! comes from a key you pressed, a paste, a scroll, or the terminal protocol
-//! answering the program in the pane — see [`pane::TerminalView::send`], whose
-//! only caller is the key handler. There is no timer, socket, plugin or MCP verb
-//! that can put text in front of an agent. The cache keepalive, which typed into
-//! idle prompts on a schedule, was removed for that reason.
+//! Terminal input routes are enumerated in `docs/security/terminal-input.md`:
+//! human gestures, protocol replies, scripted bench actions and command launch.
+//! Standard processes retain account authority. Restricted commands receive a
+//! separate OS boundary and typed gateway, never host control or raw PTY input.
 //!
 //! One restorable session per compositor workspace: see [`instance`] for how a
 //! window claims one, and [`session`] for what a pane carries into it.
@@ -85,6 +83,7 @@ mod plugins;
 mod ptyscan;
 mod readrows;
 mod recover;
+mod restricted;
 mod screenread;
 mod session;
 mod skin;
@@ -8494,8 +8493,8 @@ impl Workspace {
         let mut out = String::new();
         let said = self.act_on_picked_pane(
             cx,
-            |v| v.bench.face() == workbench::Face::Workbench,
-            "no pane is showing its bench",
+            |v| !v.off_limits && v.bench.face() == workbench::Face::Workbench,
+            "no allowed pane is showing its bench; an off-limits pane takes no scripted pointer or probe",
             |view, _cx| out = view.bench_probe(),
         );
         if said.starts_with("err") {
@@ -8523,11 +8522,14 @@ impl Workspace {
             let (_, leaves, focused) = self.bench_targets();
             let flags: Vec<bool> = leaves
                 .iter()
-                .map(|l| l.read(cx).bench.face() == workbench::Face::Workbench)
+                .map(|l| {
+                    let v = l.read(cx);
+                    !v.off_limits && v.bench.face() == workbench::Face::Workbench
+                })
                 .collect();
             let said = match workbench::bench_target(&flags, focused) {
                 Some(i) => leaves[i].update(cx, |v, cx| v.synthetic_pointer(p, window, cx)),
-                None => "err no pane is showing its bench".to_string(),
+                None => "err no allowed pane is showing its bench; an off-limits pane takes no scripted pointer or probe".to_string(),
             };
             let _ = reply.send(said);
         }
@@ -8712,6 +8714,9 @@ impl Workspace {
                 // A pane showing a document is left on it. `bench off` turns a
                 // window of benches back to its terminals; it was never meant
                 // to take away a page somebody opened beside their prompt.
+                if view.off_limits {
+                    return;
+                }
                 if view.bench.face() == workbench::Face::Document {
                     return;
                 }
@@ -38403,6 +38408,8 @@ mod tests {
             "pub(crate) fn bench_type(",
             "pub(crate) fn bench_choose(",
             "pub(crate) fn bench_submit(",
+            "pub(crate) fn bench_probe(",
+            "fn drain_pending_pointer(",
         ] {
             let body: String = live_fn(verb)
                 .lines()
@@ -38625,6 +38632,10 @@ mod tests {
             .expect("set_all_faces skips a pane on its Document face");
         let set = faces.find("view.set_face(").expect("the faces are set");
         assert!(guard < set, "the guard comes before any face is set");
+        let protected = faces
+            .find("if view.off_limits {")
+            .expect("scripted face changes skip protected panes");
+        assert!(protected < set);
         assert!(
             !faces.contains("view.toggle_face("),
             "toggle is terminal ⇄ bench, not alt+k's walk onto a document"
@@ -41025,6 +41036,7 @@ mod tests {
         assert_eq!(
             streams,
             [
+                ("restricted", &["help"][..]),
                 ("skin", &["--list"][..]),
                 ("conversation", &["zzz-no-such-conversation"][..]),
             ],
@@ -43603,6 +43615,7 @@ Usage:
                                  back exactly what was there before
   terminal-delight ctl <cmd>     drive a RUNNING instance over its control socket
   terminal-delight mcp           relay MCP over stdio into a RUNNING instance
+  terminal-delight restricted    explicitly run an offline command with limited access (help)
   terminal-delight probe <pid>   report a terminal's cwd + resumable agent session, as JSON
   terminal-delight agent-usage   refresh this machine's AI subscription usage records
   terminal-delight agent-vitals  the three attention bars for one transcript, as JSON
@@ -43839,6 +43852,7 @@ enum Verb {
     /// Make Terminal Delight the terminal `xdg-terminal-exec` opens, or put
     /// back exactly what was there before (see [`defaultterm`]).
     DefaultTerminal,
+    Restricted,
 }
 
 /// Whether the broken-pipe gate in `tests/broken_pipe.rs` can run a verb — and
@@ -43875,6 +43889,12 @@ enum Piping {
 /// Every roster now reads this one, so a verb added below is a verb the
 /// dispatch test, the usage test and the broken-pipe gate all pick up.
 const VERBS: &[VerbSpec] = &[
+    VerbSpec {
+        word: "restricted",
+        verb: Verb::Restricted,
+        typed: true,
+        piping: Piping::Streams(&["help"]),
+    },
     VerbSpec {
         word: "--td-emit-demo",
         verb: Verb::EmitDemo,
@@ -44105,6 +44125,7 @@ fn main() {
             let code = match verb {
                 Verb::EmitDemo => demo::emit_and_block(),
                 Verb::Ctl => ctl::run_cli(&argv[2..]),
+                Verb::Restricted => restricted::run_cli(&argv[2..]),
                 Verb::Mcp => ctl::run_mcp_cli(&argv[2..]),
                 Verb::AgentUsage => usage::run_cli(&argv[2..]),
                 Verb::AgentVitals => vitals::run_cli(&argv[2..]),

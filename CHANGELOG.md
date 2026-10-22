@@ -7,6 +7,23 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Security for 0.5.0 development
+
+- **Global MCP policy belongs to the operator.** All six control-socket policy
+  changes require a window launched with `TD_MCP_SCRIPTED=1`; otherwise they
+  refuse without changing state. Agents cannot self-enable access or disable
+  unrelated workloads. The MCP panel and access-request flow remain available.
+- **Offline Restricted commands have an enforced scope.** Explicit launch grants
+  one work directory, clean temporary home and optional own-pane text notes.
+  Required namespaces, filtered text I/O and a per-run gateway exclude host TD
+  controls, credentials, desktop/native services and network. Revocation blocks
+  future notes; grants are never restored into a replacement run. Online agents,
+  TUIs and automatic delegation are unavailable in this first profile. Standard
+  terminals retain account access. Shared writable output remains an influence
+  channel and complete resource-exhaustion prevention is not claimed.
+- **Synthetic bench pointers respect off-limits panes.** Click, hover, probe and
+  scripted face selection no longer reach a protected pane. (#1090)
+
 ### Added for 0.5.0 development
 
 - **Terminal lighting follows focus in every skin.** Active and inactive panes

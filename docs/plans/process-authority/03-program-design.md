@@ -1,0 +1,23 @@
+# Program design: fail-closed launch and per-run grants
+
+`restricted.rs` owns CLI parsing, work-root validation/pinning, private run-directory lifecycle, sandbox argv construction, filtered I/O, gateway and operator loops. Main dispatch names the verb before GUI initialization. Existing ctl helpers own pane resolution and MCP note forwarding. No host wire or persisted session schema changes.
+
+CLI: `restricted run --workdir PATH [--read-only] [--td-note] -- PROGRAM ARGS...`; `restricted status RUN`; `restricted revoke RUN`; inside, `restricted call JSON`. Run IDs are random 128-bit values with exclusive directory creation. The operator path is derived only from a validated ID. Direct callers outside the sandbox have ordinary Standard account authority; protection runs from the restricted workload toward the host.
+
+Gateway tagged operations: `status`, `note` with text only, and `request_access` with reason only. Unknown operations and fields are refused. No target, generic tool name, pin, file path, script, approval answer or delegation field is accepted. Text is bounded and control-free. The gateway exposes no document-rendering or surface-action deputy. Status carries selected scope, revocation and pending proposal; unavailable capabilities are named.
+
+The note grant is immutable and scoped to one captured session/pane/shell start tick. Revoke holds the same lock as dispatch, so its acknowledgement follows any accepted in-flight note. A replacement process/pane or window not serving the captured session is refused. Existing global writes/exposure controls may still refuse a granted note. The broker never widens them.
+
+Child standard streams are pipes; the supervisor marks all non-stdio descriptors close-on-exec, preserves only the work/filter setup descriptors consumed by bubblewrap and the preconnected TD datagram descriptor, and bubblewrap detaches the terminal session. A seccomp filter denies new connections and addressed sends, including io_uring and alternate syscall ABIs; this also blocks a host socket added to the shared work tree after validation. Streaming UTF-8 filtering preserves split characters, repairs invalid bytes and strips terminal controls. Memory is bounded per stream/socket request; request loops have timeouts and rate limits. Complete CPU/memory quotas are not claimed. Supervisor death kills the sandbox; completion cleans children and removes ephemeral sockets and records.
+
+Regression oracles exercise real socket parsing, work-directory refusal, plain-text output, sandbox canaries and positive allowed work. GUI pointer coverage uses the deterministic GPUI harness plus a routing source gate; removing the check must fail. E2E uses scratch directories, a socket service, loopback listener and scratch native window, never live panes.
+
+## Evidence-driven changes during qualification
+
+The first OS test refused the parent-/proc directory mount under ptrace policy; direct --bind-fd now pins and verifies the directory. The next test exposed a real inherited canary FD: bubblewrap preserves unrelated inherited descriptors, so the supervisor must explicitly mark them close-on-exec. The late-socket case then motivated the preconnected packet channel and syscall filter. These failures changed implementation; they are not counted as passing negative tests. CLOSE_RANGE_CLOEXEC requires Linux 5.11 or later, bubblewrap 0.12.0 or newer and the required options must exist, and unsupported setup refuses the command.
+
+The final scope audit also rejects hard-linked work files and overlaps with configured state/config roots, and resolves the protected account home through getpwuid_r instead of trusting HOME. This prevents aliases and environment overrides bypassing the work-root checks. Root, set-ID execution and an unavailable account home fail closed. The earlier research considered hard links granted content; this first profile deliberately narrows that proposal.
+
+The syscall ceiling also refuses new sockets in every address family, listeners and ancillary FD transfer. Unnamed AF_UNIX pairs remain for internal IPC. This excludes transport families outside ordinary network namespaces and keeps the inherited TD packet channel usable. All run/setup authority stays in the fixed protected user runtime, never a workload-controlled override.
+
+Ubuntu CI caught the allowed-work regression: cc resolves through /etc/alternatives, which was absent. The launch now mounts that system alias directory read-only when present, alongside the linker cache. It does not expose the rest of /etc. The existing compile-and-execute OS probe is the regression gate; denial-only tests would have missed this portability failure.

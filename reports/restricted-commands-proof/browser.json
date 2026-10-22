@@ -1,0 +1,33 @@
+{
+  "passed": true,
+  "layouts": [
+    {
+      "width": 390,
+      "scrollWidth": 375,
+      "figures": 6,
+      "annotated": 6,
+      "svg": true,
+      "external": []
+    },
+    {
+      "width": 968,
+      "scrollWidth": 953,
+      "figures": 6,
+      "annotated": 6,
+      "svg": true,
+      "external": []
+    },
+    {
+      "width": 1100,
+      "scrollWidth": 1085,
+      "figures": 6,
+      "annotated": 6,
+      "svg": true,
+      "external": []
+    }
+  ],
+  "notes": "add / anchored export / embed / clear local state / reopen passed",
+  "errors": [],
+  "external_requests": [],
+  "sandbox": "Chromium sandbox enabled"
+}
