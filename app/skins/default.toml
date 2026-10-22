@@ -116,6 +116,7 @@ icon = "▢"
 # glow_a     = 0.11   # how hot the bloom is, 0..1 — NOT a length
 # cut        = 7.0    # how far a cut corner reaches, read only under corner = "cut"
 # grain      = 1.0    # cached grain strength, 0..1
+# frost      = 0.0    # Gaussian diffusion of the grid beneath smoked groupings
 # roughness  = 1.0    # edge irregularity, 0..1
 # lift       = 1.0    # contact shadow and stock depth, 0..2
 # marker_alpha = 0.22 # highlighter opacity, 0..1

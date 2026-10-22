@@ -45,6 +45,7 @@ mod deck;
 mod defaultterm;
 mod demo;
 mod derive;
+mod desktop_glass;
 mod diag;
 mod dirlogo;
 mod doc;
@@ -25762,7 +25763,7 @@ impl Workspace {
             // spelled by hand — bg, rounded(10), a 1px darken(surface, 0.3)
             // border. Under deco it is square with a twin rule, and nothing here
             // had to know.
-            sk.panel()
+            sk.spine_panel()
                 .flex_none()
                 .w(px(self.left_bar_w * s))
                 .h_full()
@@ -28286,6 +28287,11 @@ impl Render for Workspace {
         // strip and every overlay without a line of this function changing.
         let sk = skin::skin(cx, scale);
         let bezel = darken(th.surface, 0.55);
+        window.set_background_appearance(if sk.m.frost > 0. {
+            gpui::WindowBackgroundAppearance::Blurred
+        } else {
+            gpui::WindowBackgroundAppearance::Opaque
+        });
         let tab = &self.tabs[self.active];
         let mut leaves = vec![];
         tab.root.leaves(&mut leaves);
@@ -29795,7 +29801,7 @@ impl Render for Workspace {
                     .rounded(sk.rad_raw(6.))
                     .border_1()
                     .border_color(th.accent.alpha(0.4))
-                    .map(|d| sk.finish(d))
+                    .map(|d| sk.finish_group(d))
                     .child(label(title))
             };
             // A folded row is a target of its own: a hover on it opens it after
@@ -30417,7 +30423,12 @@ impl Render for Workspace {
                     ],
                 ),
             ];
-            let mut rows = div().flex().flex_col().gap_2();
+            let mut rows = div()
+                .relative()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .when(sk.m.frost > 0., |d| sk.finish_group(d).p_2());
             for (heading, controls) in groups {
                 let mut section = div().flex().flex_col().gap_1().child(label(heading));
                 for (key, name, value) in controls {
@@ -45694,6 +45705,7 @@ fn main() {
         // theme::init because a skin resolves against whatever palette is live,
         // and precedes any window because the first frame already draws chrome.
         skin::init(cx);
+        desktop_glass::init(cx);
         // The desktop's own colour schemes, scanned once. Must follow theme::init
         // (a state restore resolves panes against both) and precede any window.
         palette::init(cx);

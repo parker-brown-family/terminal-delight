@@ -53,6 +53,10 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added for 0.5.0 development
 
+- **Ops groupings use smoked glass.** Overlay frames stay solid while their
+  groupings reveal the desktop through the compositor's blur. The left spine
+  diffuses its own grid beneath sharp labels. Fullscreen, 100% opacity and an
+  unavailable compositor opacity reading keep the grouping faces solid.
 - **A Clean design, and UI CONFIG to hide any chrome.** Clean turns the light
   and tube off everywhere — letters, cards, frame, borders, menus, afterglow —
   and squares the corners; it holds the tube off and overrides Quiet. New

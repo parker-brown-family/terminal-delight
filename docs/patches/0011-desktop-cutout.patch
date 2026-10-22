@@ -1,0 +1,196 @@
+diff --git a/crates/gpui/src/color.rs b/crates/gpui/src/color.rs
+--- a/crates/gpui/src/color.rs
++++ b/crates/gpui/src/color.rs
+@@ -747,6 +747,7 @@
+     LinearGradient = 1,
+     PatternSlash = 2,
+     Checkerboard = 3,
++    DesktopCutout = 4,
+ }
+ 
+ /// A color space for color interpolation.
+@@ -790,6 +791,7 @@
+     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+         match self.tag {
+             BackgroundTag::Solid => write!(f, "Solid({:?})", self.solid),
++            BackgroundTag::DesktopCutout => write!(f, "DesktopCutout({:?})", self.solid),
+             BackgroundTag::LinearGradient => write!(
+                 f,
+                 "LinearGradient({}, {:?}, {:?})",
+@@ -908,6 +910,23 @@
+ }
+ 
+ impl Background {
++    /// Replace earlier scene pixels with a translucent desktop-facing plate.
++    /// `cut` chamfers its top-left and bottom-right corners, in physical pixels.
++    /// Later scene content is composed normally, keeping labels sharp.
++    pub fn desktop_cutout(color: Hsla, cut: f32) -> Self {
++        Self {
++            tag: BackgroundTag::DesktopCutout,
++            solid: color,
++            gradient_angle_or_pattern_height: cut.max(0.),
++            ..Default::default()
++        }
++    }
++
++    /// Whether this background replaces earlier pixels rather than blending over them.
++    pub fn is_desktop_cutout(&self) -> bool {
++        self.tag == BackgroundTag::DesktopCutout
++    }
++
+     /// Returns the solid color if this is a solid background, None otherwise.
+     pub fn as_solid(&self) -> Option<Hsla> {
+         if self.tag == BackgroundTag::Solid {
+@@ -940,6 +959,7 @@
+     pub fn is_transparent(&self) -> bool {
+         match self.tag {
+             BackgroundTag::Solid => self.solid.is_transparent(),
++            BackgroundTag::DesktopCutout => false,
+             BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.is_transparent()),
+             BackgroundTag::PatternSlash => self.solid.is_transparent(),
+             BackgroundTag::Checkerboard => self.solid.is_transparent(),
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -2356,8 +2356,10 @@
+ 
+     /// Sets the window background appearance.
+     pub fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
+-        self.platform_window
+-            .set_background_appearance(background_appearance);
++        if self.platform_window.background_appearance() != background_appearance {
++            self.platform_window
++                .set_background_appearance(background_appearance);
++        }
+     }
+ 
+     /// Mark the window as dirty at the platform level.
+diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
+--- a/crates/gpui/src/style.rs
++++ b/crates/gpui/src/style.rs
+@@ -711,6 +711,7 @@
+             let mut border_color = match background_color {
+                 Some(color) => match color.tag {
+                     BackgroundTag::Solid
++                    | BackgroundTag::DesktopCutout
+                     | BackgroundTag::PatternSlash
+                     | BackgroundTag::Checkerboard => color.solid,
+ 
+diff --git a/crates/gpui_wgpu/src/shaders.wgsl b/crates/gpui_wgpu/src/shaders.wgsl
+--- a/crates/gpui_wgpu/src/shaders.wgsl
++++ b/crates/gpui_wgpu/src/shaders.wgsl
+@@ -405,7 +405,7 @@
+     solid: Hsla, colors: array<LinearColorStop, 2>) -> GradientColor {
+     var result = GradientColor();
+ 
+-    if (tag == 0u || tag == 2u || tag == 3u) {
++    if (tag == 0u || tag == 2u || tag == 3u || tag == 4u) {
+         result.solid = hsla_to_rgba(solid);
+     } else if (tag == 1u) {
+         // The hsla_to_rgba is returns a linear sRGB color
+@@ -566,11 +566,24 @@
+ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
+     // Alpha clip first, since we don't have `clip_distance`.
+     if (any(input.clip_distances < vec4<f32>(0.0))) {
+-        return vec4<f32>(0.0);
++        discard;
+     }
+ 
+     let quad = b_quads[input.quad_id];
+ 
++    // td-desktop-cutout: erase the old scene only inside this chamfered plate.
++    // Its pipeline uses replacement blending; ordinary foreground draws follow.
++    if (quad.background.tag == 4u) {
++        let p = input.position.xy - quad.bounds.origin;
++        let cut = min(quad.background.gradient_angle_or_pattern_height,
++            min(quad.bounds.size.x, quad.bounds.size.y) / 3.0);
++        if (p.x + p.y < cut ||
++            quad.bounds.size.x + quad.bounds.size.y - p.x - p.y < cut) {
++            discard;
++        }
++        return blend_color(input.background_solid, 1.0);
++    }
++
+     let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
+         input.background_solid, input.background_color0, input.background_color1);
+ 
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -103,6 +103,7 @@
+ 
+ struct WgpuPipelines {
+     quads: wgpu::RenderPipeline,
++    desktop_cutouts: wgpu::RenderPipeline,
+     shadows: wgpu::RenderPipeline,
+     path_rasterization: wgpu::RenderPipeline,
+     paths: wgpu::RenderPipeline,
+@@ -1099,6 +1100,21 @@
+             &shader_module,
+         );
+ 
++        let desktop_cutouts = create_pipeline(
++            "desktop_cutouts",
++            "vs_quad",
++            "fs_quad",
++            &layouts.globals,
++            &layouts.instances,
++            wgpu::PrimitiveTopology::TriangleStrip,
++            &[Some(wgpu::ColorTargetState {
++                blend: None,
++                ..color_target.clone()
++            })],
++            1,
++            &shader_module,
++        );
++
+         let shadows = create_pipeline(
+             "shadows",
+             "vs_shadow",
+@@ -1239,6 +1255,7 @@
+ 
+         WgpuPipelines {
+             quads,
++            desktop_cutouts,
+             shadows,
+             path_rasterization,
+             paths,
+@@ -1853,14 +1870,30 @@
+         instance_offset: &mut u64,
+         pass: &mut wgpu::RenderPass<'_>,
+     ) -> bool {
+-        let data = unsafe { Self::instance_bytes(quads) };
+-        self.draw_instances(
+-            data,
+-            quads.len() as u32,
+-            &self.resources().pipelines.quads,
+-            instance_offset,
+-            pass,
+-        )
++        let mut start = 0;
++        while start < quads.len() {
++            let cutout = quads[start].background.is_desktop_cutout();
++            let end = quads[start..]
++                .iter()
++                .position(|q| q.background.is_desktop_cutout() != cutout)
++                .map_or(quads.len(), |n| start + n);
++            let pipeline = if cutout {
++                &self.resources().pipelines.desktop_cutouts
++            } else {
++                &self.resources().pipelines.quads
++            };
++            if !self.draw_instances(
++                unsafe { Self::instance_bytes(&quads[start..end]) },
++                (end - start) as u32,
++                pipeline,
++                instance_offset,
++                pass,
++            ) {
++                return false;
++            }
++            start = end;
++        }
++        true
+     }
+ 
+     fn draw_shadows(

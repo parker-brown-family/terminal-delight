@@ -70,6 +70,9 @@ rail       = 2.0
 # A tight, bright bloom: a lit edge on an instrument, not haze in a room.
 glow       = 5.0
 glow_a     = 0.16
+# The grid beneath a grouping diffuses through smoked glass. Its labels stay
+# sharp; desktop opacity and desktop blur belong to the compositor.
+frost      = 3.0
 
 [ink]
 # The structure is drawn in the accent, at three strengths, so a panel's edge
