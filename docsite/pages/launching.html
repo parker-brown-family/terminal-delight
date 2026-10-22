@@ -54,9 +54,9 @@
 <p>Switching harness moves the effort to the nearest level the other one has, so <code>max</code> becomes <code>xhigh</code> on Codex. The panel always opens on <code>anywhere</code>.</p>
 
 <h3>The command</h3>
-<pre><code>claude --model &lt;model&gt; --effort &lt;effort&gt; [reach] --append-system-prompt "$(cat '&lt;briefing&gt;')"
-codex --model &lt;model&gt; [reach] -c model_reasoning_effort=&lt;effort&gt;</code></pre>
-<p>The briefing is the workbench's instructions to the agent, written owner-only to <code>briefing.txt</code> in the session's state folder. Codex takes no briefing flag and reads <code>AGENTS.md</code> instead.</p>
+<pre><code>TD_BRIEFED=1 claude --model &lt;model&gt; --effort &lt;effort&gt; [reach] --append-system-prompt "$(cat '&lt;briefing&gt;')"
+TD_BRIEFED=1 codex --model &lt;model&gt; [reach] -c model_reasoning_effort=&lt;effort&gt; "$(cat '&lt;briefing&gt;')"</code></pre>
+<p>The briefing is the workbench's instructions to the agent, written owner-only to <code>briefing.txt</code> in the session's state folder. Claude Code takes it as an appended system prompt; Codex takes it as its first message and keeps its own <code>AGENTS.md</code>. <code>TD_BRIEFED=1</code> tells a <a href="/briefs">briefing hook</a> in that agent that it has already been told. When the window was started from a desktop session, the line begins with <code>env</code> and the display variables it carries over.</p>
 
 <h3>Where it lands</h3>
 <p>If the pane you opened the panel from is known to be at an idle prompt, Terminal Delight types into it: <kbd>Ctrl</kbd>+<kbd>U</kbd> to clear anything half-typed, <code>cd</code> to the project if the pane is somewhere else, then the command. If the pane is busy, or hasn't been read yet, a new tab opens in the same branch of the <a href="/left-bar">left bar</a>. The hint ends in <code>↵ starts in this pane</code> or <code>↵ opens a new tab</code>. The pane keeps whichever face it had.</p>
