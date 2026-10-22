@@ -36,7 +36,7 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
    - Spawn the copy, record the answer, and notify.
    - Read the Codex size and model in vitals.
    - Proof: the `askcopy.rs` tests, the conversation tests, the three remaining planned breaks, and the two by-hand live copies.
-6. **Words and docs.**
+6. **[DONE 2026-10-22] Words and docs.**
    - Update `docs/mcp.md`, the docsite MCP page and `docs/security/terminal-input.md`.
    - Change the ctl refusal text.
    - Write a readable review page for Parker.
@@ -133,4 +133,22 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
     - Both copies got the measured switches and the worker's model, and no `TD_` variables. The record holds six lines with no words.
   - Found by the photograph and fixed: the card first read "Asks you to change its access" and named `request_access`. It now reads "Asks you to start a read-only copy" and names `ask_agent`, in all nine languages.
   - Found on the way, my own: the rig first waited for the word "done", and the stand-in copy's answer contains "done". The rig tore down the window under the second copy, which looked for a while like the window closing a pipe it did not own.
+- **Slice 6, done (ee77c4e6).**
+  - `docs/mcp.md` covers:
+    - the three positions;
+    - the War Room's seats, lines, rungs and reach rules;
+    - `ask_line`;
+    - `ask_agent` with its copies, `ask_answer` and the record;
+    - the push feed skipping seated panes;
+    - two new security bullets.
+  - The docsite pages are updated: MCP, agent wall, panes, ctl, sticky notes.
+  - The docsite builder reads `s.ui.*` help rows from `lang/chrome.rs`, so the War Room's row is on the key sheet. Its two fixes for the wall's vanished row are deleted, as the builder requires.
+  - The terminal-input note names `takes_writes()` and records that the asks add no way into a terminal.
+  - Every refusal that pointed at the robot button or the MCP CONTROL panel now names the War Room. `an_unscripted_window_refuses_all_global_policy_mutations` pins it.
+  - Gates: fmt, clippy `-D warnings`, 2,776 tests passing, 17 ignored.
+  - The review page is `reports/2026-10-22-the-war-room-built.html`:
+    - eight figures, two of them photographs of the built window;
+    - four decisions;
+    - narrative gate: journey, headings 0.61;
+    - 621 words of prose against 530 of captions.
 
