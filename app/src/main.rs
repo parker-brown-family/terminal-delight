@@ -1654,6 +1654,13 @@ fn tray_rules_h(rules: usize, bare_pills: usize) -> f32 {
         + 2. * (TRAY_PAD + TRAY_AREA_PAD)
 }
 
+/// How long the pointer rests on a folded palette row before it opens. Parker
+/// asked for 900 ms when the rows first folded (2026-10-21), then for a reveal
+/// 150 ms faster once he had used it (2026-10-22). A click opens it at once.
+const FOLD_OPEN_MS: u64 = 750;
+/// How long an opened row stays open after the pointer leaves it.
+const FOLD_CLOSE_MS: u64 = 400;
+
 /// The window's top bar at its full height, before the scale: the row the
 /// corner, the tab strip and the agent counter sit in.
 const TOP_BAR_H: f32 = 43.;
@@ -4488,7 +4495,7 @@ struct Workspace {
     /// UI CONFIG's page in the painter palette: OUTER (false) or PANES.
     ui_cfg_panes: bool,
     /// Folding rows (UI CONFIG's `option_rows` off): the row opened by a
-    /// 900 ms hover or a click, the row under the pointer, and a generation
+    /// hover (`FOLD_OPEN`) or a click, the row under the pointer, and a generation
     /// that lets a newer hover cancel an older timer.
     fold_open: Option<&'static str>,
     fold_hover: Option<&'static str>,
@@ -27506,13 +27513,12 @@ impl Workspace {
         cx.notify();
     }
 
-    /// A folded row under the pointer opens after 900 ms; one the pointer has
-    /// left folds 400 ms later. Parker: "all the options collapsed down to the
-    /// selected option for a 900ms hover to OPEN THE TRAY". Each hover bumps
-    /// the generation, so only the latest timer may act.
+    /// A folded row under the pointer opens after `FOLD_OPEN`; one the pointer
+    /// has left folds `FOLD_CLOSE` later. Each hover bumps the generation, so
+    /// only the latest timer may act.
     fn fold_hovered(&mut self, row: &'static str, hovered: bool, cx: &mut Context<Self>) {
-        const OPEN: Duration = Duration::from_millis(900);
-        const FOLD: Duration = Duration::from_millis(400);
+        const OPEN: Duration = Duration::from_millis(FOLD_OPEN_MS);
+        const FOLD: Duration = Duration::from_millis(FOLD_CLOSE_MS);
         self.fold_gen = self.fold_gen.wrapping_add(1);
         let gen = self.fold_gen;
         if hovered {
@@ -27539,7 +27545,8 @@ impl Workspace {
         .detach();
     }
 
-    /// A click on a folded row's choice opens the row at once.
+    /// A click on a folded row, its choice or anywhere beside it, opens the
+    /// row at once.
     fn fold_open_now(&mut self, row: &'static str, cx: &mut Context<Self>) {
         self.fold_gen = self.fold_gen.wrapping_add(1);
         self.fold_open = Some(row);
@@ -29075,7 +29082,7 @@ impl Render for Workspace {
             // theming). The dynamics glyph column is an orthogonal dimension
             // layered on top of whichever theme is active here.
             // UI CONFIG's `option_rows` off: each row shows only what it is set
-            // to, until a 900 ms hover or a click opens it.
+            // to, until a hover (`FOLD_OPEN_MS`) or a click opens it.
             let folded = !uiconfig::shown(cx, uiconfig::Key::OptionRows);
             let closed = |row: &str| folded && self.fold_open != Some(row);
             let (closed_design, closed_skin, closed_colour, closed_syntax) = (
@@ -29709,7 +29716,10 @@ impl Render for Workspace {
                     .map(|d| sk.finish(d))
                     .child(label(title))
             };
-            // A folded row is a hover target of its own: 900 ms on it opens it.
+            // A folded row is a target of its own: a hover on it opens it after
+            // `FOLD_OPEN_MS`, and a click anywhere on it opens it at once. A
+            // click on a choice in an open row is the choice's, which stops it
+            // here.
             let fold = |row: &'static str, el: gpui::Div, cx: &mut Context<Self>| {
                 div()
                     .id(SharedString::from(format!("fold-{row}")))
@@ -29717,6 +29727,14 @@ impl Render for Workspace {
                         d.on_hover(cx.listener(move |ws, hovered: &bool, _w, cx| {
                             ws.fold_hovered(row, *hovered, cx);
                         }))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                if ws.fold_open != Some(row) {
+                                    ws.fold_open_now(row, cx);
+                                }
+                            }),
+                        )
                     })
                     .child(el)
             };
@@ -37745,6 +37763,21 @@ mod tests {
     /// The frame used to be the pane's grid width at the reader's zoom, which is
     /// what held a narrow pane's read to its own few columns however wide the
     /// glass was. A mutation back to that fails here.
+    /// A folded palette row opens on a 750 ms hover, Parker's second number,
+    /// and on a click anywhere on it, not only on the choice it shows.
+    #[test]
+    fn a_folded_row_opens_on_a_short_hover_or_any_click() {
+        assert_eq!(FOLD_OPEN_MS, 750, "the hover reveal Parker asked for");
+        assert!(FOLD_CLOSE_MS < 1000);
+        let src = shipped_code();
+        let at = src.find("let fold = |row").expect("the fold wrapper");
+        let wrapper = &src[at..at + src[at..].find("};").expect("end")];
+        assert!(
+            wrapper.contains("fold_hovered(row") && wrapper.contains("fold_open_now(row"),
+            "a folded row opens on hover and on a click anywhere on it"
+        );
+    }
+
     #[test]
     fn the_reader_frames_its_text_at_the_glass_not_the_pane() {
         let code = shipped_code();
