@@ -24,7 +24,7 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
    - Add `ask_agent` (cheap), `ask_answer`, `askrecord.rs`, and the untrusted label.
    - `list_panes` follows lines and counts what is hidden.
    - Proof: the `mcp.rs` tests, the record tests, and the planned break that lets an unseated pane be asked, run again through the verb.
-4. **The rail by risk, and bypass lines.**
+4. **[DONE 2026-10-22] The rail by risk, and bypass lines.**
    - Every `Ask` carries a `Severity`, and `rail_ink` follows it.
    - Add `AskLine` with the 1/3/10 count picker and `grant_bypass`.
    - Enforce one pending ask per pane.
@@ -80,3 +80,10 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
   - The War Room shot (`reports/2026-10-22-war-room-evidence/war-room-asked.png`) shows "2 answered from what was visible · 0 by a copy · 0 with no line".
   - Found: `list_panes`'s MCP-off error still says "the robot button on the mother bar". It is fixed in slice 6 with the ctl text.
   - Flake: `host::owning::a_pane_knows_which_session_and_pane_it_is` failed once under a full run and passed 5/5 alone, with host.rs untouched here. File an issue.
+- **Slice 4, done (3aad9bdd).**
+  - Rail asks are inked by `coordination::Severity`, using the theme's ANSI 2/4/3/1 through `rail_risk_slot`, and the glyph and name lead the card.
+  - `access::Change::AskLine` (`ask_line`) asks for a bypass. The card's 1/3/10 picker sets `Ask.prompts` (3 preselected), and Yes calls `Chart::grant_bypass`.
+  - One pending ask per agent.
+  - request_access's description and schema list `ask_line`, and now say a second ask is refused rather than replacing the first.
+  - Gates: fmt, clippy `-D warnings`, 2,749 tests passing, 15 ignored.
+  - Planned break *drop the pending check*: `one_pending_ask_per_asking_pane` went red. The first attempt at this break matched the test's own copy of the line and changed nothing. It was redone on the production line only, as the gates hub warns.
