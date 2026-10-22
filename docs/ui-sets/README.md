@@ -27,7 +27,7 @@ Sets in `~/.config/terminal-delight/ui/` appear in UI CONFIG beside `all` and `c
 
 `[panes]` is **one config for every pane**: the logo, the mode, the DOC | TERM | BENCH toggle (`face`), + AGENT, the handover chip, the pane's surface and sliders glyphs, close, and sticky notes. No pane is in charge of its own chrome.
 
-`option_rows = false` folds the painter palette's rows to their selection. A 900 ms hover opens a row, and so does a click on the folded choice.
+`option_rows = false` folds the painter palette's rows to their selection. A 750 ms hover opens a row, and so does a click anywhere on it.
 
 ## Who decides
 
