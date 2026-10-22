@@ -4252,6 +4252,94 @@ pub fn launch_button(sk: &Skin, th: &Theme) -> Div {
     )
 }
 
+/// The offer on the bench of an agent the person started by TYPING, which
+/// nobody briefed: it does not know it can present work here or hand over a
+/// decision brief, so the bench would stay empty and look broken.
+///
+/// The same dialogue as [`empty`] — one bounded card, everything centred, the
+/// action inside it — because it sits where that card would, on the surface a
+/// person reads when they flip to the bench and find nothing. `buttons` is
+/// `None` once the answer has been carried out; `said` is what came of it.
+/// `file` names Claude Code's settings file, because a yes writes it and a
+/// person agreeing to a write should know which.
+pub fn typed_briefing(
+    file: &str,
+    said: Option<String>,
+    buttons: Option<Div>,
+    sk: &Skin,
+    th: &Theme,
+) -> Div {
+    let w = words();
+    let card = sk
+        .panel()
+        .flex()
+        .flex_col()
+        .items_center()
+        .w_full()
+        .max_w(px(sk.tpx(420.)))
+        .gap(px(sk.tpx(12.)))
+        .px(px(sk.tpx(26.)))
+        .py(px(sk.tpx(20.)))
+        .child(micro(w.benchdraw_typed_title, Step::Lead, th.complement, sk, th).text_center())
+        .child(
+            micro(
+                w.benchdraw_typed_why,
+                Step::Body,
+                th.complement.alpha(0.85),
+                sk,
+                th,
+            )
+            .text_center(),
+        )
+        .child(
+            micro(
+                crate::lang::fill(w.benchdraw_typed_how, &[("file", file)]),
+                Step::Note,
+                sk.ink.ink_faint,
+                sk,
+                th,
+            )
+            .text_center(),
+        )
+        .children(buttons)
+        // Padded below, because as the card's last row its descenders were
+        // clipped flat — measured in a hidden window, where the line read as
+        // struck through until it had room.
+        .children(said.map(|s| {
+            micro(s, Step::Body, th.accent, sk, th)
+                .text_center()
+                .pb(px(sk.tpx(6.)))
+        }));
+    div().flex().flex_col().items_center().w_full().child(card)
+}
+
+/// One of the offer's two answers: the yes lit the way [`launch_button`] is,
+/// the no a plain chip beside it.
+pub fn offer_button(label: &str, yes: bool, sk: &Skin, th: &Theme) -> Div {
+    let chip = sk
+        .chip(yes)
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .flex_none()
+        .px(px(sk.tpx(18.)))
+        .py(px(sk.tpx(8.)))
+        .cursor_pointer()
+        .text_size(px(sk.pt(if yes { Step::Head } else { Step::Body })))
+        .font_weight(if yes {
+            gpui::FontWeight::BOLD
+        } else {
+            gpui::FontWeight::NORMAL
+        })
+        .child(sk.caps(label));
+    if yes {
+        aglow(chip, th.human, th)
+    } else {
+        chip
+    }
+}
+
 /// Whether `title` echoes `subtitle` (or vice versa), and if so, the BYTE
 /// offset within TRIMMED `subtitle` where the echoed part ends — `0` when
 /// `subtitle` is itself the shorter, fully-contained echoed side, in which

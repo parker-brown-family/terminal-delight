@@ -26,8 +26,13 @@
 //! supported initial PROMPT argument, leaving its own configured instructions
 //! intact. A custom local command receives a file or context argument through
 //! local-agent.toml. Every launcher path uses the same packet and bundled kit.
-//! Agents compute their drop directory from TD_SESSION and TD_PANE_ID. A plain
-//! hand-started agent remains outside this launcher contract.
+//! Agents compute their drop directory from TD_SESSION and TD_PANE_ID.
+//!
+//! A Claude agent the person started by TYPING gets the same packet from a
+//! `SessionStart` hook running `terminal-delight briefing`, once they have said
+//! yes to it ([`crate::briefhook`]). Every line the launcher types carries
+//! [`BRIEFED_ENV`], so that hook stays quiet in a pane this module already
+//! briefed rather than handing it the same page twice.
 
 use std::path::{Path, PathBuf};
 
@@ -430,7 +435,10 @@ impl Recipe {
     /// prose would be a second instruction that can drift from the first.
     ///
     /// `kit` is the decision-brief `SKILL.md` written for this launch, when it
-    /// could be written; see [`crate::briefkit`].
+    /// could be written; see [`crate::briefkit`]. The launch itself goes
+    /// through [`session_briefing`], which a typed agent's hook shares; this
+    /// stays for the tests that read the text for an arbitrary drop directory.
+    #[cfg(test)]
     pub fn briefing(&self, drop_dir: &str, kit: Option<&Path>) -> String {
         let kit = kit.map(|p| p.display().to_string());
         crate::surface::launch_briefing(drop_dir, kit.as_deref())
@@ -448,7 +456,7 @@ impl Recipe {
         let p = crate::lang::current().strings().parts;
         let skill = crate::briefkit::write(kit_root)
             .map_err(|e| crate::lang::fill(p.launcher_err_kit, &[("e", &e.to_string())]))?;
-        let text = self.briefing(&format!("{}/$TD_PANE_ID", dir.display()), Some(&skill));
+        let text = session_briefing(dir, Some(&skill));
         write_briefing(dir, &text)
             .map_err(|e| crate::lang::fill(p.launcher_err_briefing, &[("e", &e.to_string())]))
     }
@@ -460,10 +468,14 @@ impl Recipe {
         adapter: Option<&LocalAdapter>,
     ) -> Result<String, String> {
         if self.harness != Harness::Local {
-            return Ok(with_desktop_environment(
-                &self.command_line(briefing),
-                |key| std::env::var(key).ok(),
-            ));
+            let line = self.command_line(briefing);
+            let line = match briefing {
+                Some(_) => format!("{BRIEFED_ENV}=1 {line}"),
+                None => line,
+            };
+            return Ok(with_desktop_environment(&line, |key| {
+                std::env::var(key).ok()
+            }));
         }
         let p = crate::lang::current().strings().parts;
         if self.reach != Reach::Anywhere {
@@ -513,6 +525,30 @@ fn with_desktop_environment(line: &str, read: impl Fn(&str) -> Option<String>) -
     } else {
         format!("env {} {line}", assignments.join(" "))
     }
+}
+
+/// The briefing a session's panes are handed, with `dir` the session's
+/// surfaces directory and `skill` the kit's `SKILL.md`, when it could be
+/// written.
+///
+/// One function for the two ways an agent hears it — the launcher's
+/// `briefing.txt` and `terminal-delight briefing`'s stdout — so a typed agent
+/// and a launched one are told the same thing, byte for byte. Per SESSION, not
+/// per pane: the agent computes its own drop directory from `$TD_PANE_ID`.
+pub fn session_briefing(dir: &Path, skill: Option<&Path>) -> String {
+    let kit = skill.map(|p| p.display().to_string());
+    crate::surface::launch_briefing(&format!("{}/$TD_PANE_ID", dir.display()), kit.as_deref())
+}
+
+/// Set on every command line the launcher types, so the agent it starts — and
+/// any hook that agent runs — can tell it was already briefed.
+pub const BRIEFED_ENV: &str = "TD_BRIEFED";
+
+/// Whether a process's environment (`/proc/<pid>/environ`, NUL-separated)
+/// says the launcher briefed it.
+pub fn briefed_environment(bytes: &[u8]) -> bool {
+    let want = format!("{BRIEFED_ENV}=1");
+    bytes.split(|b| *b == 0).any(|item| item == want.as_bytes())
 }
 
 // One reserved existing wire value, not a new host protocol variant.
@@ -717,6 +753,61 @@ mod tests {
         c.reach = Reach::Anywhere;
         assert!(!c.command_line(None).contains("--sandbox"));
         assert_eq!(Reach::default(), Reach::Anywhere);
+    }
+
+    /// Every line the launcher types for a briefed agent says so, and a line
+    /// with no briefing does not claim one — the typed-agent hook keys on it.
+    #[test]
+    fn a_briefed_launch_line_carries_the_marker_and_an_unbriefed_one_does_not() {
+        let briefing = Path::new("/run/td/briefing.txt");
+        for harness in [Harness::Claude, Harness::Codex] {
+            let r = recipe(harness, "high");
+            let line = r.command_line_with_adapter(Some(briefing), None).unwrap();
+            assert!(
+                line.contains(&format!("{BRIEFED_ENV}=1 {}", harness.binary())),
+                "{line}"
+            );
+            let bare = r.command_line_with_adapter(None, None).unwrap();
+            assert!(!bare.contains(BRIEFED_ENV), "{bare}");
+        }
+    }
+
+    /// The marker as the window reads it back from `/proc/<pid>/environ`:
+    /// exactly `TD_BRIEFED=1`, not a prefix or another value of it.
+    #[test]
+    fn the_briefed_marker_is_read_exactly() {
+        assert!(briefed_environment(b"HOME=/h\0TD_BRIEFED=1\0PATH=/bin\0"));
+        assert!(!briefed_environment(b"HOME=/h\0TD_BRIEFED=0\0"));
+        assert!(!briefed_environment(b"TD_BRIEFED=10\0XTD_BRIEFED=1\0"));
+        assert!(!briefed_environment(b""));
+    }
+
+    /// And the marker runs: a shell given the typed line hands the agent
+    /// `TD_BRIEFED=1` in its environment, which is how a hook it starts sees it.
+    #[test]
+    fn the_marker_reaches_the_agent_s_environment() {
+        let dir = std::env::temp_dir().join(format!("td-briefed-env-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("claude");
+        std::fs::write(&fake, "#!/bin/sh\nprintf '%s' \"$TD_BRIEFED\"\n").unwrap();
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(dir.join("briefing.txt"), "hello").unwrap();
+        let line = recipe(Harness::Claude, "high")
+            .command_line_with_adapter(Some(&dir.join("briefing.txt")), None)
+            .unwrap();
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&line)
+            .env("PATH", format!("{}:/usr/bin:/bin", dir.display()))
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "1",
+            "{line} -> {out:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

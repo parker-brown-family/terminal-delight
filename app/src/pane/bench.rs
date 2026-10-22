@@ -521,6 +521,64 @@ impl TerminalView {
         true
     }
 
+    /// Whether this pane's bench offers to tell agents started by typing
+    /// about the workbench: a Claude agent whose environment says the
+    /// launcher did not brief it, while nobody has answered and the hook is
+    /// not in — or after an answer on this pane, so the card can say what came
+    /// of it.
+    fn typed_briefing_due(&self) -> bool {
+        crate::briefhook::offer_shows(
+            self.mode == crate::pane::PaneMode::Claude,
+            self.wb_briefed,
+            self.wb_typed_said.is_some(),
+            crate::briefhook::offer_due,
+        )
+    }
+
+    fn typed_briefing_card(&self, sk: &crate::skin::Skin, th: &crate::theme::Theme) -> gpui::Div {
+        let w = crate::lang::current().strings().parts;
+        let file = crate::briefhook::settings_path(|k| std::env::var(k).ok())
+            .map(|p| {
+                let home = crate::session::home_dir();
+                match p.strip_prefix(&home) {
+                    Ok(rest) => format!("~/{}", rest.display()),
+                    Err(_) => p.display().to_string(),
+                }
+            })
+            .unwrap_or_else(|| "settings.json".into());
+        let said = self.wb_typed_said.as_ref().map(|r| match r {
+            Ok(true) => w.benchdraw_typed_done.to_string(),
+            Ok(false) => w.benchdraw_typed_declined.to_string(),
+            Err(e) => crate::lang::fill(w.benchdraw_typed_failed, &[("e", e)]),
+        });
+        // A yes that failed is offered again: it was not remembered.
+        let buttons = (!matches!(self.wb_typed_said, Some(Ok(_)))).then(|| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_center()
+                .gap(px(sk.tpx(10.)))
+                .child(
+                    crate::benchdraw::offer_button(w.benchdraw_typed_yes, true, sk, th).child(
+                        crate::benchdraw::zone(
+                            self.wb_zones.clone(),
+                            crate::workbench::Hit::TypedBriefing(true),
+                        ),
+                    ),
+                )
+                .child(
+                    crate::benchdraw::offer_button(w.benchdraw_typed_no, false, sk, th).child(
+                        crate::benchdraw::zone(
+                            self.wb_zones.clone(),
+                            crate::workbench::Hit::TypedBriefing(false),
+                        ),
+                    ),
+                )
+        });
+        crate::benchdraw::typed_briefing(&file, said, buttons, sk, th)
+    }
+
     /// Act on a bench click. One `match`, so a control added to [`Hit`] is a
     /// control the compiler makes this handle.
     pub(super) fn bench_hit(
@@ -543,6 +601,12 @@ impl TerminalView {
                 self.bench.close_card();
             }
             Hit::Launch => cx.emit(OpenAgentLauncher),
+            // TD's own action, carried out here: a settings file is written,
+            // or an answer remembered. Nothing goes to the agent's terminal —
+            // this is not a surface verb, so no `[workbench]` line is sent.
+            Hit::TypedBriefing(yes) => {
+                self.wb_typed_said = Some(crate::briefhook::answer(yes).map(|()| yes));
+            }
             Hit::AddNote => self.bench_note_open(cx),
             Hit::EndAgent => self.bench_end_agent(cx),
             Hit::PauseTurn => self.bench_pause(cx),
@@ -4085,7 +4149,13 @@ impl TerminalView {
         // drawn under something. A turn in flight already implies an agent, so
         // the two agree today — but the offer is a claim that the room is empty
         // and that is the value which says whether it is.
-        let offering = room_id.is_none() && !agent_now && !self.wb_had_agent;
+        let launch_offer = room_id.is_none() && !agent_now && !self.wb_had_agent;
+        // The other offer an empty bench can make: telling agents started by
+        // typing about the bench, on one the launcher did not brief.
+        let typed_offer = room_id.is_none() && self.typed_briefing_due();
+        // Either way an offer is the thing on the bench, and the body reads
+        // from eye level rather than the floor (`body_anchor`).
+        let offering = launch_offer || typed_offer;
         // THE REVIEW TAKES THE WORKBENCH, and is chosen BEFORE the body it
         // replaces is built — not after.
         //
@@ -4218,6 +4288,10 @@ impl TerminalView {
                 // No card: the conversation.
                 None => {
                     let tail = self.recent_lines(if full { 18 } else { 12 });
+                    // Built here rather than above the match, so nothing it
+                    // registers exists unless it is drawn (see the review's
+                    // note on the WRITING side of that invariant, above).
+                    let typed = typed_offer.then(|| self.typed_briefing_card(sk, th));
                     div()
                         .flex()
                         .flex_col()
@@ -4231,7 +4305,7 @@ impl TerminalView {
                         // thing on the surface and the sentence naming it were not
                         // in the same box, so they aligned independently and read as
                         // two unrelated blocks. A dialogue holds its own action.
-                        .when(offering, |d| {
+                        .when(launch_offer, |d| {
                             d.child(crate::benchdraw::empty(
                                 false,
                                 "",
@@ -4245,6 +4319,7 @@ impl TerminalView {
                                 th,
                             ))
                         })
+                        .children(typed)
                         .when(shows.mirror, |d| {
                             d.child(crate::benchdraw::conversation(&tail, sk, th))
                         })

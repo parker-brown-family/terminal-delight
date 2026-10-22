@@ -139,12 +139,23 @@ cd app &amp;&amp; cargo run</code></pre>
 
 <div class="pair">
   <div class="term">
+<h3>The briefing hook</h3>
+<p>One hook needs no source tree. A Claude agent you start by typing <code>claude</code> is not told what a <a href="/launching">LAUNCH AGENT</a> pane is told, about the workbench and <a href="/briefs">decision briefs</a>, until a <code>SessionStart</code> hook tells it. The binary adds that hook itself, after you say yes on the agent's bench, or from a terminal. It appends to <code>~/.claude/settings.json</code> and keeps a timestamped backup, the same way.</p>
+  </div>
+  <div class="bench">
+<pre class="cmd"><code>terminal-delight briefing hook on</code></pre>
+  </div>
+</div>
+
+<div class="pair">
+  <div class="term">
 <h3>Removing it</h3>
-<p>Delete the AppImage, or <code>~/.local/bin/terminal-delight</code> if you moved it there. Deleting <code>~/.config/terminal-delight/</code> and <code>~/.local/state/terminal-delight/</code> removes your settings, sessions and saved work. If you installed the hooks, uninstall them from the source tree.</p>
+<p>Delete the AppImage, or <code>~/.local/bin/terminal-delight</code> if you moved it there. Deleting <code>~/.config/terminal-delight/</code> and <code>~/.local/state/terminal-delight/</code> removes your settings, sessions and saved work. If you installed the hooks, uninstall them from the source tree, and take the briefing hook out first, while the binary is still there.</p>
   </div>
   <div class="bench">
 <pre class="cmd"><code>rm -f ~/.local/bin/terminal-delight
 rm -rf ~/.config/terminal-delight ~/.local/state/terminal-delight</code></pre>
+<pre class="cmd"><code>terminal-delight briefing hook off</code></pre>
 <pre class="cmd"><code>scripts/install-agent-hooks.sh --uninstall</code></pre>
   </div>
 </div>
