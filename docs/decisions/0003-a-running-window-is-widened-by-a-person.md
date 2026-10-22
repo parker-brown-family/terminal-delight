@@ -75,7 +75,7 @@ composer, `ctl bench choose` and `ctl bench submit` press its answers, and
 `ctl bench click` presses whatever is under the point, pause and end agent
 included. A press reaches the agent as keys into a live picker or as a
 `[workbench]` line, only while that pane is on screen, and flashes when it
-does. The 0.5 change also refuses off-limits panes for synthetic pointer, probe and scripted face selection, closing issue 1090. The pane a Standard caller names in `mcp from` remains cooperative routing metadata; a Restricted gateway never accepts that assertion.
+does. The 0.5 change also refuses off-limits panes for synthetic pointer, probe and scripted face selection, closing issue 1090. The session in `mcp from` prevents misrouting. The control socket captures its kernel peer PID, and the current pane snapshot retains a claimed pane only for descendants of that pane's shell. A forged claim is downgraded to no pane; the Restricted supervisor and a genuine relay retain their own-pane authority. This is process attribution within the account, not a defence against hostile Standard host processes.
 
 ## When this expires
 

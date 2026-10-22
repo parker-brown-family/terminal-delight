@@ -1,0 +1,18 @@
+
+running 1 test
+test mcp::tests::hidden_document_notes_are_private_but_the_callers_own_float_still_works ... FAILED
+
+failures:
+
+---- mcp::tests::hidden_document_notes_are_private_but_the_callers_own_float_still_works stdout ----
+
+thread 'mcp::tests::hidden_document_notes_are_private_but_the_callers_own_float_still_works' (2924221) panicked at src/mcp.rs:3089:9:
+assertion failed: notes_of(&s)["structuredContent"]["path"].is_null()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    mcp::tests::hidden_document_notes_are_private_but_the_callers_own_float_still_works
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2562 filtered out; finished in 0.00s
+

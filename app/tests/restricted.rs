@@ -19,7 +19,16 @@ impl Fixture {
             .unwrap()
             .read_exact(&mut random)
             .unwrap();
-        let path = std::env::temp_dir().join(format!("tr-{:016x}", u64::from_ne_bytes(random)));
+        let home = Command::new("python3")
+            .args([
+                "-c",
+                "import pwd,os; print(pwd.getpwuid(os.getuid()).pw_dir)",
+            ])
+            .output()
+            .unwrap();
+        assert!(home.status.success());
+        let home = PathBuf::from(String::from_utf8(home.stdout).unwrap().trim());
+        let path = home.join(format!("tr-{:016x}", u64::from_ne_bytes(random)));
         fs::DirBuilder::new().mode(0o700).create(&path).unwrap();
         for name in ["work"] {
             fs::DirBuilder::new()
@@ -63,6 +72,82 @@ fn wait_file(path: &std::path::Path) {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+#[ignore = "real Linux mount identity; CI runs explicitly with bubblewrap"]
+fn a_nested_same_device_bind_mount_is_refused_before_the_command_starts() {
+    let f = Fixture::new();
+    let mount = f.0.join("work/nested");
+    fs::create_dir(&mount).unwrap();
+    let outside = f.0.join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("host-file"), "not granted").unwrap();
+    let output = Command::new("/usr/bin/bwrap")
+        .args(["--unshare-user", "--bind", "/", "/", "--bind"])
+        .arg(&outside)
+        .arg(&mount)
+        .arg("--")
+        .arg(BIN)
+        .env("XDG_RUNTIME_DIR", &f.1)
+        .args(["restricted", "run", "--workdir"])
+        .arg(f.0.join("work"))
+        .args(["--", "sh", "-c", "touch /work/SHOULD-NOT-RUN"])
+        .output()
+        .unwrap();
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(
+        error.contains("nested host mount"),
+        "did not reach the intended boundary: {error}"
+    );
+    assert!(!f.0.join("work/SHOULD-NOT-RUN").exists());
+}
+
+#[test]
+#[ignore = "real Linux gateway and operator channels; CI runs explicitly"]
+fn a_pending_proposal_is_visible_and_only_the_operator_can_dismiss_it() {
+    let f = Fixture::new();
+    let child = f.command().args(["--", "python3", "-c", r#"
+import json, os, pathlib, subprocess, time
+td='terminal-delight'
+def rpc(value):
+    return json.loads(subprocess.run([td,'restricted','call',json.dumps(value)],capture_output=True,text=True,pass_fds=(int(os.environ['TD_GATEWAY_FD']),)).stdout)
+assert rpc({'op':'request_access','reason':'Need external packages'})['granted'] is False
+assert rpc({'op':'dismiss'})['ok'] is False
+state=rpc({'op':'status'})
+pathlib.Path('/work/ready.json').write_text(json.dumps(state))
+while not pathlib.Path('/work/go').exists(): time.sleep(.02)
+state=rpc({'op':'status'})
+assert state['pending_access_request'] is None and state['note']=='not_granted'
+assert rpc({'op':'request_access','reason':'Try another proposal'})['ok'] is False
+assert rpc({'op':'note','text':'No grant appeared'})['ok'] is False
+"#]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let ready = f.0.join("work/ready.json");
+    wait_file(&ready);
+    let state: serde_json::Value = serde_json::from_slice(&fs::read(&ready).unwrap()).unwrap();
+    assert_eq!(state["pending_access_request"], "Need external packages");
+    let id = state["run"].as_str().unwrap();
+    let dismissed = Command::new(BIN)
+        .env("XDG_RUNTIME_DIR", &f.1)
+        .args(["restricted", "dismiss", id])
+        .output()
+        .unwrap();
+    assert!(
+        dismissed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dismissed.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&dismissed.stdout).unwrap();
+    assert!(result["pending_access_request"].is_null());
+    assert_eq!(result["access_request_available"], false);
+    fs::write(f.0.join("work/go"), "").unwrap();
+    let output = child.wait_with_output().unwrap();
+    let visible = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{visible}");
+    assert_eq!(visible.matches("RESTRICTED ACCESS PROPOSAL").count(), 1);
+    assert!(visible.contains("Need external packages") && visible.contains("no access granted"));
+    assert!(visible.contains(&format!("restricted dismiss {id}")));
 }
 
 #[test]

@@ -1,0 +1,39 @@
+   Compiling terminal-delight v0.0.0 (/home/parker/.cache/td-security-finish/proof/module-mutations-final-3)
+warning: unused import: `std::os::unix::ffi::OsStrExt`
+ --> src/restricted/work.rs:8:5
+  |
+8 | use std::os::unix::ffi::OsStrExt;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `name`
+   --> src/restricted/work.rs:153:54
+    |
+153 |             |part| !matches!(part, Component::Normal(name) if true),
+    |                                                      ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `terminal-delight` (bin "terminal-delight" test) generated 2 warnings (run `cargo fix --bin "terminal-delight" -p terminal-delight --tests` to apply 2 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.34s
+     Running unittests src/main.rs (target/debug/deps/terminal_delight-73ed7d4d68427bb2)
+
+running 1 test
+test restricted::work::tests::home_descendants_are_explicit_grants_but_hidden_and_external_roots_are_refused ... FAILED
+
+failures:
+
+---- restricted::work::tests::home_descendants_are_explicit_grants_but_hidden_and_external_roots_are_refused stdout ----
+
+thread 'restricted::work::tests::home_descendants_are_explicit_grants_but_hidden_and_external_roots_are_refused' (3026155) panicked at src/restricted/work.rs:269:13:
+accepted /home/parker/.cache/tdtmp/td-work-ceaed510c6e590e8/home/.aws
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    restricted::work::tests::home_descendants_are_explicit_grants_but_hidden_and_external_roots_are_refused
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin terminal-delight`

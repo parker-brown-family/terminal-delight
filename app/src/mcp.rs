@@ -282,11 +282,13 @@ pub struct ConfigPatch {
     /// `leave_note` tool (already validated); rides the config pipeline so a
     /// note write shares the one writes gate, the one pane lookup, and the one
     /// GUI-thread apply with every other pane mutation. Pane targets only.
+    #[serde(skip)]
     pub note: Option<NoteChange>,
     /// Declare (or withdraw) what this turn produced — the one artifact a person
     /// is meant to open. Filled in by `declare_deliverable`, already validated;
     /// rides the same pipeline as the note for the same reasons. Pane targets
     /// only.
+    #[serde(skip)]
     pub deliverable: Option<DeliverableChange>,
     /// A work object for the pane's WORKBENCH, already parsed and validated by
     /// [`crate::surface::parse`]. Filled in by `present_surface`; rides the
@@ -579,6 +581,18 @@ pub fn may_write(cfg: &McpConfig, is_agent: bool, off_limits: bool, own_pane: bo
     should_expose(cfg, is_agent, off_limits && !own_pane)
 }
 
+/// Recheck policy at the actual UI effect, after a request's snapshot may have
+/// gone stale. An access proposal is the sole write allowed with Writes off.
+pub fn apply_permission(cfg: &McpConfig, patch: &ConfigPatch) -> Result<(), &'static str> {
+    if !cfg.enabled {
+        Err("MCP exposure is disabled")
+    } else if !cfg.writable && patch.ask.is_none() {
+        Err("MCP writes are disabled")
+    } else {
+        Ok(())
+    }
+}
+
 // ===========================================================================
 // JSON-RPC 2.0 — the read-only MCP server's wire protocol.
 //
@@ -681,6 +695,8 @@ pub struct DocInfo {
     /// floats over, or the split's own pane.
     pub pane: u32,
     pub place: DocPlace,
+    /// A hidden document is readable only when it belongs to the caller.
+    pub off_limits: bool,
     /// For a split, the host id of the pane it was opened beside. `None` for a
     /// float, whose pane is [`Self::pane`], and for a split whose opening this
     /// window did not see — one restored from a saved layout — which is still
@@ -719,7 +735,7 @@ pub fn document_beside<'a>(
     docs: &'a [DocInfo],
     caller: &PaneInfo,
 ) -> Option<(&'a DocInfo, Beside)> {
-    let here = |d: &&DocInfo| d.tab == caller.tab;
+    let here = |d: &&DocInfo| d.tab == caller.tab && (!d.off_limits || d.pane == caller.pid);
     if let Some(d) = docs
         .iter()
         .filter(here)
@@ -841,10 +857,8 @@ impl Snapshot {
     }
 
     /// Whether `pid` is the pane the caller is sitting in — what makes an
-    /// update [`ConfigPatch::own_pane`]. As trustworthy as the caller's pane
-    /// id, which the host puts in the pane's environment: a process that
-    /// forges it is pretending to be another pane, and the most it reaches
-    /// that way is that pane's note, deliverable and bench, never a read.
+    /// update [`ConfigPatch::own_pane`]. The ctl transport verifies its peer PID
+    /// against this pane's shell ancestry before installing the caller claim.
     fn is_callers(&self, pid: u32) -> bool {
         self.caller
             .as_ref()
@@ -2259,6 +2273,15 @@ where
         Ok(p) => p.pid,
         Err(e) => return tool_err(&e),
     };
+    if let Some(pid) = pid {
+        if !snap
+            .panes
+            .iter()
+            .any(|p| p.pid == pid && (p.exposed || snap.is_callers(pid)))
+        {
+            return tool_err(&format!("no pane with pid {pid}"));
+        }
+    }
     let patch = ConfigPatch {
         ask: Some(Ask {
             change,
@@ -2405,36 +2428,40 @@ where
         .and_then(|p| p.pane_id)
         .zip(snap.instance.as_ref())
         .map(|(pane, inst)| crate::surfacefeed::pane_dir(&inst.session, pane));
-    if let Some(dir) = pane_dir.as_ref() {
-        match post.op {
-            crate::surface::Op::Retire => {
-                crate::surfacefeed::retire_surface(dir, post.id.as_str());
-            }
-            // A failure here is not worth refusing the call over: the surface
-            // still reaches the bench, and the person sees it. It costs the
-            // restart, which is what the log line is for.
-            _ => {
-                if let Err(err) = crate::surfacefeed::drop_surface(dir, post.id.as_str(), &doc) {
-                    eprintln!(
-                        "terminal-delight mcp: presented {:?} but could not persist it into {}: {err}",
-                        post.id.as_str(),
-                        dir.display()
-                    );
-                }
-            }
-        }
-    }
 
     let patch = ConfigPatch {
-        surface: Some(post),
+        surface: Some(post.clone()),
         own_pane: snap.is_callers(pid),
         ..Default::default()
     };
     match apply(&[(Target::Pane(pid), patch)]).into_iter().next() {
-        Some((_, Ok(_))) => tool_ok(
-            said,
-            json!({ "pid": pid, "surface": id, "kind": kind, "op": op }),
-        ),
+        Some((_, Ok(_))) => {
+            if let Some(dir) = pane_dir.as_ref() {
+                match post.op {
+                    crate::surface::Op::Retire => {
+                        crate::surfacefeed::retire_surface(dir, post.id.as_str());
+                    }
+                    // A failure here is not worth refusing the call over: the surface
+                    // still reaches the bench, and the person sees it. It costs the
+                    // restart, which is what the log line is for.
+                    _ => {
+                        if let Err(err) =
+                            crate::surfacefeed::drop_surface(dir, post.id.as_str(), &doc)
+                        {
+                            eprintln!(
+                            "terminal-delight mcp: presented {:?} but could not persist it into {}: {err}",
+                            post.id.as_str(),
+                            dir.display()
+                        );
+                        }
+                    }
+                }
+            }
+            tool_ok(
+                said,
+                json!({ "pid": pid, "surface": id, "kind": kind, "op": op }),
+            )
+        }
         Some((_, Err(e))) => tool_err(&e),
         None => tool_err("the window did not answer the surface write"),
     }
@@ -2484,7 +2511,7 @@ fn document_notes(args: &Value, snap: &Snapshot) -> Value {
         Ok(p) => p,
         Err(why) => return tool_err(&why),
     };
-    if !me.exposed {
+    if !should_expose(&snap.config, me.is_agent, false) {
         return tool_err(&format!(
             "the pane you are calling from ({}) is not exposed under the current \
              policy, so nothing about it is answered",
@@ -2728,7 +2755,7 @@ where
         Ok(p) => p,
         Err(why) => return tool_err(&why),
     };
-    if !me.exposed {
+    if !should_expose(&snap.config, me.is_agent, false) {
         return tool_err(&format!(
             "the pane you are calling from ({}) is not exposed under the current \
              policy, so nothing opens in it",
@@ -2992,6 +3019,107 @@ pub fn encode_notification(n: &Notification) -> String {
 #[cfg(test)]
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stale_snapshots_do_not_override_the_current_write_policy() {
+        let mut live = McpConfig {
+            enabled: true,
+            writable: true,
+            ..Default::default()
+        };
+        let note = ConfigPatch {
+            note: Some(NoteChange::Clear),
+            ..Default::default()
+        };
+        assert!(apply_permission(&live, &note).is_ok());
+        live.writable = false;
+        assert_eq!(
+            apply_permission(&live, &note),
+            Err("MCP writes are disabled")
+        );
+        let ask = ConfigPatch {
+            ask: Some(crate::access::Ask {
+                change: crate::access::Change::WritesOn,
+                pid: None,
+                title: None,
+                why: "Need a note".into(),
+                at: std::time::Instant::now(),
+            }),
+            ..Default::default()
+        };
+        assert!(
+            apply_permission(&live, &ask).is_ok(),
+            "asking must still work with writes off"
+        );
+        live.enabled = false;
+        assert_eq!(
+            apply_permission(&live, &ask),
+            Err("MCP exposure is disabled")
+        );
+    }
+    #[test]
+    fn config_json_cannot_inject_validated_notes_or_deliverables() {
+        for value in [
+            json!({"note":{"post":{"text":"x".repeat(9000),"title":"bad","pin":false}}}),
+            json!({"deliverable":{"declare":{"label":"bad","href":"javascript:alert(1)"}}}),
+            json!({"deliverable":{"declare":{"label":"bad","href":"data:text/html,unsafe"}}}),
+        ] {
+            assert!(
+                serde_json::from_value::<ConfigPatch>(value.clone()).is_err(),
+                "{value}"
+            );
+            let result = call(
+                &snap(true, true, vec![agent_pane(100, true)]),
+                "set_pane_config",
+                {
+                    let mut value = value;
+                    value["pid"] = json!(100);
+                    value
+                },
+            );
+            assert_eq!(result["isError"], true);
+        }
+        assert!(serde_json::from_value::<ConfigPatch>(json!({"brightness":42})).is_ok());
+    }
+
+    #[test]
+    fn hidden_document_notes_are_private_but_the_callers_own_float_still_works() {
+        let mut hidden = doc(0, 300, DocPlace::Split, Some(9), "/private/notes.html");
+        hidden.off_limits = true;
+        let mut s = window_with(vec![hidden]);
+        assert!(notes_of(&s)["structuredContent"]["path"].is_null());
+        let mut own = doc(0, 100, DocPlace::Float, None, "/own/notes.html");
+        own.off_limits = true;
+        s.documents.push(own);
+        s.panes.iter_mut().find(|p| p.pid == 100).unwrap().exposed = false;
+        assert_eq!(notes_of(&s)["structuredContent"]["path"], "/own/notes.html");
+        s.config.writable = true;
+        let md = TempDoc::new("own-hidden.md", "# Own document\n");
+        let opened = std::cell::Cell::new(false);
+        let result = open_document(&json!({"path":md.0}), &s, &|request| {
+            assert_eq!(request.pid, 100);
+            opened.set(true);
+            Ok("opened".into())
+        });
+        assert_ne!(result["isError"], true);
+        assert!(opened.get());
+        s.caller.as_mut().unwrap().pane = None;
+        assert_eq!(notes_of(&s)["isError"], true);
+    }
+
+    #[test]
+    fn access_requests_do_not_disclose_hidden_panes() {
+        let mut s = window_with(vec![]);
+        s.panes.iter_mut().find(|p| p.pid == 200).unwrap().exposed = false;
+        for pid in [200, 9999] {
+            let result = call(
+                &s,
+                "request_access",
+                json!({"change":"close_pane","pid":pid,"why":"please hide"}),
+            );
+            assert_eq!(result["isError"], true);
+            assert!(text_of(&result).contains(&format!("no pane with pid {pid}")));
+        }
+    }
     use super::*;
 
     #[test]
@@ -3137,35 +3265,38 @@ mod tests {
     /// asking the gate again, so a surface persisted "on the way past" and then
     /// refused would still reach an off-limits pane a few seconds later.
     ///
-    /// Mutation-tested: dropping the `.filter(...)` on the persistence path
-    /// fails this.
+    /// The snapshot can allow a pane that the live UI refuses by the time it
+    /// handles Apply. Both that race and an already-hidden snapshot must leave
+    /// no persisted card for the next sweep.
     #[test]
     fn a_refused_surface_is_not_persisted_for_the_sweep_to_deliver() {
-        let session = format!("td-test-refused-surface-{}", std::process::id());
-        let mut s = snap_writable(vec![agent_pane(300, false)]);
-        if let Some(inst) = s.instance.as_mut() {
-            inst.session = session.clone();
+        for exposed in [false, true] {
+            let session = format!("td-test-refused-surface-{}-{exposed}", std::process::id());
+            let mut s = snap_writable(vec![agent_pane(300, exposed)]);
+            if let Some(inst) = s.instance.as_mut() {
+                inst.session = session.clone();
+            }
+            let dir = crate::surfacefeed::pane_dir(&session, u64::from(300u32 % 97));
+            let line = json!({ "id": 3, "method": "tools/call", "params": {
+                "name": "present_surface", "arguments": { "pid": 300,
+                "surface": { "td": "0.4", "kind": "response", "title": "t",
+                    "id": "pushed", "model": { "layman": "x" } } } } })
+            .to_string();
+            let refuse = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+                vec![(ups[0].0.clone(), Err("pane 300 is not exposed".into()))]
+            };
+            let reply = handle_line_with(&line, &s, no_tail, &refuse, no_search).unwrap();
+            let landed = dir.exists();
+            if let Some(root) = dir.parent() {
+                let _ = std::fs::remove_dir_all(root);
+            }
+            assert!(reply.contains("isError"), "{reply}");
+            assert!(
+                !landed,
+                "a refused surface was written to {}",
+                dir.display()
+            );
         }
-        let dir = crate::surfacefeed::pane_dir(&session, u64::from(300u32 % 97));
-        let line = json!({ "id": 3, "method": "tools/call", "params": {
-            "name": "present_surface", "arguments": { "pid": 300,
-            "surface": { "td": "0.4", "kind": "response", "title": "t",
-                "id": "pushed", "model": { "layman": "x" } } } } })
-        .to_string();
-        let refuse = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
-            vec![(ups[0].0.clone(), Err("pane 300 is not exposed".into()))]
-        };
-        let reply = handle_line_with(&line, &s, no_tail, &refuse, no_search).unwrap();
-        let landed = dir.exists();
-        if let Some(root) = dir.parent() {
-            let _ = std::fs::remove_dir_all(root);
-        }
-        assert!(reply.contains("isError"), "{reply}");
-        assert!(
-            !landed,
-            "a refused surface was written to {}",
-            dir.display()
-        );
     }
 
     /// An agent cannot claim the exception for itself: `own_pane` is not a
@@ -4173,6 +4304,7 @@ mod tests {
             tab,
             pane,
             place,
+            off_limits: false,
             opened_by,
             path: path.into(),
             notes: Ok(report(&format!("NOTES — {path}\n"), 1, 0)),

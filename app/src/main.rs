@@ -7870,6 +7870,7 @@ impl Workspace {
                         tab: ti,
                         pane: pid,
                         place,
+                        off_limits: p.off_limits,
                         opened_by: match place {
                             mcp::DocPlace::Split => p.doc_opened_by(),
                             mcp::DocPlace::Float => None,
@@ -8079,6 +8080,10 @@ impl Workspace {
         let mut out = Vec::with_capacity(updates.len());
         let mut changed = false;
         for (target, patch) in updates {
+            if let Err(reason) = mcp::apply_permission(&self.mcp, patch) {
+                out.push((target.clone(), Err(reason.into())));
+                continue;
+            }
             match target {
                 mcp::Target::Outer => {
                     let mut choice = theme::outer_choice(cx);
@@ -8157,7 +8162,13 @@ impl Workspace {
                             let ask_change: Result<Option<access::Ask>, String> = match &patch.ask {
                                 None => Ok(None),
                                 Some(ask) => {
-                                    let named = ask.pid.and_then(|p| self.leaf_by_shell_pid(p, cx));
+                                    let named = ask
+                                        .pid
+                                        .and_then(|p| self.leaf_by_shell_pid(p, cx))
+                                        .filter(|target| {
+                                            let v = target.read(cx);
+                                            !v.off_limits || v.shell_pid() == Some(*pid)
+                                        });
                                     let (off, title) = match &named {
                                         Some(t) => {
                                             let v = t.read(cx);
@@ -8267,12 +8278,9 @@ impl Workspace {
                                 }
                             }
                         }
-                        Some((_, false)) => out.push((
-                            target.clone(),
-                            Err(format!(
-                                "pane {pid} is not exposed under the current policy"
-                            )),
-                        )),
+                        Some((_, false)) => {
+                            out.push((target.clone(), Err(format!("no pane with pid {pid}"))))
+                        }
                         None => out.push((target.clone(), Err(format!("no pane with pid {pid}")))),
                     }
                 }
@@ -11225,6 +11233,10 @@ impl Workspace {
         reply: std::sync::mpsc::Sender<String>,
         cx: &mut Context<Self>,
     ) {
+        if !self.mcp.writable {
+            let _ = reply.send("err MCP writes are disabled".into());
+            return;
+        }
         let mut leaves = vec![];
         for tab in &self.tabs {
             tab.root.leaves(&mut leaves);
@@ -14180,13 +14192,21 @@ impl Workspace {
             .map(|op| {
                 // Shape was validated at parse time; a target error here would
                 // already have been reported, so treat it as "no tab".
-                let key = match op.target() {
-                    Ok(Some(TabRef::Index(i))) => self.tab_key(i),
-                    Ok(Some(TabRef::Pane(pid))) => {
-                        self.tab_holding_pane(pid, cx).and_then(|i| self.tab_key(i))
-                    }
+                let index = match op.target() {
+                    Ok(Some(TabRef::Index(i))) => Some(i),
+                    Ok(Some(TabRef::Pane(pid))) => self.tab_holding_pane(pid, cx),
                     Ok(None) | Err(_) => None,
                 };
+                let key = index
+                    .filter(|i| {
+                        let Some(tab) = self.tabs.get(*i) else {
+                            return false;
+                        };
+                        let mut leaves = vec![];
+                        tab.root.leaves(&mut leaves);
+                        leaves.iter().all(|leaf| !leaf.read(cx).off_limits)
+                    })
+                    .and_then(|i| self.tab_key(i));
                 (key, op.action)
             })
             .collect();

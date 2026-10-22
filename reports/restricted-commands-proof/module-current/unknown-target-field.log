@@ -1,0 +1,24 @@
+   Compiling terminal-delight v0.0.0 (/home/parker/.cache/td-security-finish/proof/module-mutations-final-3)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.56s
+     Running unittests src/main.rs (target/debug/deps/terminal_delight-73ed7d4d68427bb2)
+
+running 1 test
+test restricted::tests::a_text_only_gateway_cannot_select_a_target_grant_or_delegate ... FAILED
+
+failures:
+
+---- restricted::tests::a_text_only_gateway_cannot_select_a_target_grant_or_delegate stdout ----
+
+thread 'restricted::tests::a_text_only_gateway_cannot_select_a_target_grant_or_delegate' (3026968) panicked at src/restricted.rs:1055:13:
+assertion `left == right` failed: {"op":"note","text":"hello","pid":999}
+  left: Bool(true)
+ right: false
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    restricted::tests::a_text_only_gateway_cannot_select_a_target_grant_or_delegate
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.11s
+
+error: test failed, to rerun pass `--bin terminal-delight`

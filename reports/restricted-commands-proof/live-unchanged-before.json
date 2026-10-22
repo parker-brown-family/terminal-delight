@@ -1,0 +1,14 @@
+{
+  "launcher": "/home/parker/.local/lib/terminal-delight/td-3ff49b8e-0.5-restricted",
+  "launcher_sha256": "3b9165e704c951c55801fee10244b4a00a277049a71804f46adce9c9d6c2c3a4",
+  "processes": {
+    "563197": {
+      "start_tick": 71541239,
+      "exe": "/home/parker/.local/lib/terminal-delight/td-3ff49b8e-0.5-restricted"
+    },
+    "2108452": {
+      "start_tick": 55894047,
+      "exe": "/home/parker/.local/lib/terminal-delight/td-babe2dc-translations"
+    }
+  }
+}
