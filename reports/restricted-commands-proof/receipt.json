@@ -22,11 +22,11 @@
     },
     "format": "passed",
     "mutations": "11 killed; baseline and restored application checks pass",
-    "native": "final optimized binary: exact own-pane note, existing policy, forged target, delegation, proposal and revocation passed",
+    "native": "Exact old-host native run passed before distro alias mount addition; final source OS/mutation baseline passes. Production rerun recorded in operational delivery.",
     "release": "passed"
   },
   "source_sha256": {
-    "app/src/restricted.rs": "6e48c78aaa17a689a9ad8717c2932a92e00a7d3285978677632fac38457d7eae",
+    "app/src/restricted.rs": "c0abf1da6719d2798db74d23c906c68b834d56c11660d71adfea27c4dc80c7bf",
     "app/src/restricted/seccomp.rs": "32009aa93869604724d98b54a0b7a68c27952c36e7a89a7f9ea03715f5f79bda",
     "app/src/ctl.rs": "ac94b90e7a429b230428401505fbab8c38a5a74e0cd6b845db443cfd56ffaeed",
     "app/src/main.rs": "bc63f66a30c1a1e2b01a6a7a517f552743bf5bd1dfd61fe23cd4621f1a8cb9e2",
@@ -62,5 +62,11 @@
   "mutation_reproducer": "/home/parker/BROWN-FAMILY-SPORTS/Software/apes/projects/terminal-delight/scripts/restricted-boundary-mutations/restricted-boundary-mutations.py",
   "application_mutation_reproducer": "/tmp/td-authority-routing-mutations.py",
   "native_reproducer": "/tmp/td-authority-native.sh",
-  "binary_sha256": "eb2b1806dc765016beb798b634af434143af2e664d1f2bf8b3677c014f91c173"
+  "binary_sha256": "eb2b1806dc765016beb798b634af434143af2e664d1f2bf8b3677c014f91c173",
+  "portability": {
+    "first_CI": "https://github.com/parker-brown-family/terminal-delight/actions/runs/39709793959",
+    "failure": "Ubuntu cc symlink traversed the deliberately absent /etc/alternatives; both core suites and denial probes passed, allowed C build failed.",
+    "fix": "Read-only /etc/alternatives aliases are included when present, alongside system tools; rest of /etc stays absent.",
+    "verification": "Existing real C compile-and-execute OS probe is the regression gate on Ubuntu."
+  }
 }
