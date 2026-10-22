@@ -1,0 +1,48 @@
+# terminal-delight UI set — clean
+#
+# What a window shows when it wears the Clean design, which asks for this set
+# with `ui = "clean"`. Parker's notes on the UI CONFIG workshop, 2026-10-22:
+#
+#   - "clean prefers top tabs, and that hides the left spine" — but "we
+#     DEFINITELY DO NOT HIDE THE little arrow to change this even in clean
+#     mode". The ◀/▶ handle is not a switch at all; it cannot be hidden.
+#   - "THe agent state attention pill on the top right stays!"
+#   - "clean mode shouldn't BLOCK elements from being made visible" — so this
+#     file is an ASK. Any switch flipped in UI CONFIG outranks it.
+#
+# A key this file leaves out is no opinion, which resolves to shown. Each
+# pane's title, its state and its ⋯ are never switches: they are the way back
+# and the news.
+
+name = "clean"
+icon = "○"
+
+[outer]
+app_mark        = false
+git_notice      = false
+agent_counter   = false
+left_bar        = false   # top tabs instead; the arrow stays
+left_bar_header = false
+allowance       = false
+spine           = true    # the attention pill stays
+split_buttons   = false
+counts          = false
+scale           = false
+surfaces        = false   # the six menu glyphs fold into CONFIG
+sliders         = false
+graveyard       = false
+notifications   = false
+bug_report      = false
+plugins         = false
+option_rows     = false   # the palette's rows fold to their selection
+
+[panes]
+logo     = false
+mode     = false
+face     = false          # DOC | TERM | BENCH
+agent    = false          # + AGENT
+handover = false
+surface  = false
+sliders  = false
+close    = false
+notes    = true

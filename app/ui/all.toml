@@ -1,0 +1,45 @@
+# terminal-delight UI set — all
+#
+# Every piece of chrome, as Terminal Delight drew it before UI CONFIG existed.
+# It is the set every design but Clean asks for, by saying nothing.
+#
+# It is also the TEMPLATE for writing a set of your own. Copy it to
+# ~/.config/terminal-delight/ui/<name>.toml, give it a name, and turn off what
+# you do not want. A key you delete is no opinion and resolves to shown, so a
+# set can be as short as one line. The switches you flip by hand in UI CONFIG
+# outrank any set.
+
+name = "all"
+icon = "▣"
+
+# The frame around the panes — once per window.
+[outer]
+app_mark        = true    # the mark at the top left
+git_notice      = true    # "Git · N projects with new findings"
+agent_counter   = true    # the ▶ ‖ ✕ ✓ ○ ? strip, top right
+left_bar        = true    # the project tree (off = tabs across the top)
+left_bar_header = true    # fold all, + new project
+allowance       = true    # the 5-hour and weekly rails
+spine           = true    # the attention pill and its queue
+split_buttons   = true    # split right, split down
+counts          = true    # "28 tabs · 31 panes"
+scale           = true    # the ▭ 100% button
+surfaces        = true    # 🎨 — the painter palette
+sliders         = true    # the bar chart — display sliders
+graveyard       = true    # 🪦
+notifications   = true    # 🔔
+bug_report      = true    # 🐞
+plugins         = true    # 🧩
+option_rows     = true    # every option in the palette's rows (off = folded)
+
+# Every pane at once. No pane has a config of its own.
+[panes]
+logo     = true           # the tool, project or chosen logo
+mode     = true           # CLAUDE · CODEX · SHELL
+face     = true           # DOC | TERM | BENCH
+agent    = true           # + AGENT
+handover = true           # the newest handover, and its history
+surface  = true           # 🎨 — this pane's surface
+sliders  = true           # the bar chart — this pane's sliders
+close    = true           # ×
+notes    = true           # sticky notes on the glass

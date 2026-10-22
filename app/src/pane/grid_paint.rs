@@ -404,8 +404,25 @@ mod tests {
                         crate::warp::set_suppressed(false);
                         crate::warp::begin_frame();
                         pane.redraw();
-                        let expected_glow = if design == "intrusive" { 0.37 } else { 0.20 };
                         let active_glows = crate::warp::rect_glows();
+                        if design == theme::CLEAN {
+                            // Clean holds the light off, whatever the dials say:
+                            // nothing glows and nothing erased lingers.
+                            assert!(
+                                active_glows.iter().all(|g| g.abs() < 1e-5),
+                                "Clean lit the letters: {case}"
+                            );
+                            let linger = pane
+                                .view
+                                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).snapshot.linger);
+                            assert_eq!(
+                                (linger.cursor_ms, linger.off_cursor_ms),
+                                (0.0, 0.0),
+                                "Clean lingers: {case}"
+                            );
+                            continue;
+                        }
+                        let expected_glow = if design == "intrusive" { 0.37 } else { 0.20 };
                         assert!(!active_glows.is_empty(), "no GPU tube: {case}");
                         assert!(
                             active_glows
