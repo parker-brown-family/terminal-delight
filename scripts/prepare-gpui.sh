@@ -59,9 +59,10 @@ patch_fit="$repo_root/docs/patches/0007-path-targets-fit-the-paths.patch"
 patch_rim="$repo_root/docs/patches/0008-glass-rim.patch"
 patch_image_glow="$repo_root/docs/patches/0009-image-glow.patch"
 patch_glow_taps="$repo_root/docs/patches/0010-image-glow-taps.patch"
+patch_cutout="$repo_root/docs/patches/0011-desktop-cutout.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps"; do
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -145,3 +146,7 @@ apply_patch "$patch_image_glow" "image-glow" \
 # the shader instead of satisfying only the older image-glow API sentinel.
 apply_patch "$patch_glow_taps" "image-glow-taps" \
     'grep -qF "Explicit taps preserve the kernel" crates/gpui_wgpu/src/crt_pass.wgsl'
+
+# Replace the pixels under desktop-facing glass before normal foreground draws.
+apply_patch "$patch_cutout" "desktop-cutout" \
+    'grep -qF "is_desktop_cutout" crates/gpui/src/color.rs'
