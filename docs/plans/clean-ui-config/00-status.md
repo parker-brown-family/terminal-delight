@@ -12,10 +12,11 @@
 - [x] 3 — pane header gates, ⋯ order, waiting state word
 - [x] 4 — UI CONFIG in the painter palette
 - [x] 5 — nearly square (corner_cap, clean skin); selection is the existing single border
-- [x] 6 — folding rows (DESIGN, SKIN, PROGRAM COLOUR, SYNTAX; THEME and sticky note not yet)
+- [x] 6 — folding rows (DESIGN, SKIN, PROGRAM COLOUR, SYNTAX; THEME and sticky note in 563a1888)
 - [x] 7 — nine languages, `terminal-delight ui`, docs/ui-sets, tests, gates; build on workspace 7
+- [x] 8 — looks that remember (cd078fd7): each design keeps the changes made while wearing it; sizes, picture, palette, program colour, syntax and note paper stay yours; look dials pinnable; every design declares its tube in `[look]`; dot + per-design and per-dial reset, undo. Brief `reports/2026-10-22-looks-that-remember.html`, all four asks concurred 2026-10-22. Design profiles (named, shareable) are issue #1100, open to an outside contributor.
 
-Built 2026-10-22 as commit 2058da52 on `feat/clean-ui-config`, draft PR https://github.com/parker-brown-family/terminal-delight/pull/1098 (base dev/0.5.0, milestone 0.5.0). A fresh-install copy runs on workspace 7: `sh ~/.cache/clean-play/launch.sh` (own TD_SESSION `clean-play`, own XDG_CONFIG_HOME under ~/.cache/clean-play/config). Waiting on Parker's hands-on feedback.
+Built 2026-10-22 as commit 2058da52 on `feat/clean-ui-config`, draft PR https://github.com/parker-brown-family/terminal-delight/pull/1098 (base dev/0.5.0, milestone 0.5.0). A fresh-install copy runs on workspace 7: `sh ~/.cache/clean-play/launch.sh` (own TD_SESSION `clean-play`, own XDG_CONFIG_HOME under ~/.cache/clean-play/config). Rebuilt with per-design memory on 2026-10-22 (cd078fd7) and relaunched on workspace 7. Waiting on Parker's hands-on feedback.
 
 ## Settled before Gate 1 — the Clean workshop, Parker's notes of 2026-10-21
 
