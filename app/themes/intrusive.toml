@@ -20,6 +20,12 @@ icon = "◉"
 # Colours only show where no palette is chosen; on a fresh window the TD palette
 # owns colour and this design owns the glass. Phosphor green, a shade hotter
 # than hacker's, for the windows where they do show.
+# THE LOOK a window starts from the first time it wears this design (see
+# app/src/looks.rs). Only what differs from the house look; everything else,
+# and every change you make while wearing it, is the window's to remember.
+[look]
+crt = true
+
 [colors]
 bg      = "#020d06"
 surface = "#06180d"

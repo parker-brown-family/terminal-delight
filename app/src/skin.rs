@@ -71,6 +71,7 @@ const BUILTIN_SKINS: &[(&str, &str)] = &[
     ("deco", include_str!("../skins/deco.toml")),
     ("console", include_str!("../skins/console.toml")),
     ("ops", include_str!("../skins/ops.toml")),
+    ("clean", include_str!("../skins/clean.toml")),
 ];
 
 // ---------------------------------------------------------------------------
@@ -434,6 +435,10 @@ metric_tokens! {
     // gpui's own scale, which today's chrome spells as rounded_sm / _md / _lg.
     radius      => "radius",      4.0,   "corner radius of a small element (gpui rounded_sm)";
     radius_lg   => "radius_lg",   10.0,  "corner radius of a whole region — the left bar's own frame";
+    // The largest corner anything draws, including the sites that spell their
+    // radius by hand (the window's frame at 14, a menu at 8). Effectively no cap
+    // by default; Clean's "not perfectly square, but close" is a cap of 3.
+    corner_cap  => "corner_cap",  9999.0, "the largest corner radius any element draws";
     hairline    => "hairline",    1.0,   "the thinnest line the chrome draws";
     border      => "border",      1.0,   "the width of an element's border";
     rule_gap    => "rule_gap",    2.0,   "the space between the two lines of a double rule";
@@ -1436,7 +1441,7 @@ impl Skin {
     /// chose; it does not own the shapes the content is.
     pub fn radius_pill(&self) -> Pixels {
         match self.shape.corner {
-            Corner::Round => px(9999.),
+            Corner::Round => self.capped(9999.),
             Corner::Square | Corner::Cut => px(0.),
         }
     }
@@ -1447,7 +1452,7 @@ impl Skin {
     /// all to one token would be a look change smuggled in under a refactor.
     pub fn rad(&self, v: f32) -> Pixels {
         match self.shape.corner {
-            Corner::Round => self.px(v),
+            Corner::Round => px(f32::from(self.px(v)).min(self.m.corner_cap.max(0.))),
             Corner::Square | Corner::Cut => px(0.),
         }
     }
@@ -1455,9 +1460,17 @@ impl Skin {
     /// The same, for the sites that spell it `rounded(px(v))` with no scale.
     pub fn rad_raw(&self, v: f32) -> Pixels {
         match self.shape.corner {
-            Corner::Round => px(v),
+            Corner::Round => self.capped(v),
             Corner::Square | Corner::Cut => px(0.),
         }
+    }
+
+    /// A radius some site spells by hand and keeps under EVERY corner strategy
+    /// — the window's frame, the screen well, the pane frame — held under the
+    /// skin's `corner_cap`. Square skins keep those corners exactly as before;
+    /// only a skin with a cap (Clean's 3 px) draws them nearly square.
+    pub fn capped(&self, v: f32) -> Pixels {
+        px(v.min(self.m.corner_cap.max(0.)))
     }
 
     /// A TAB on the strip, marked or not. `tint` is the tab's own colour where
@@ -3298,7 +3311,7 @@ mod tests {
     fn paper_ui_handwriting_does_not_change_the_terminal_font() {
         let spec = parse(include_str!("../skins/chalk.toml")).unwrap();
         assert!(spec.unknown.is_empty(), "{:?}", spec.unknown);
-        for id in ["quiet-command", "tactical-overdrive", "hacker"] {
+        for id in ["clean", "tactical-overdrive", "hacker"] {
             let th = theme::parse(theme::builtin_toml(id).unwrap()).unwrap();
             let terminal_font = th.font_family.clone();
             let sk = spec.bake(&th, 1.0);

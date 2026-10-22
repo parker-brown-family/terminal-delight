@@ -24,13 +24,15 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 pub const DEFAULT_THEME_TOML: &str = include_str!("../themes/hacker.toml");
 
+/// The design a new window wears, and the zero of the DESIGN row: no tube and
+/// no light, held so while it is worn (see [`hold_clean`]). It replaced Quiet.
+pub const CLEAN: &str = "clean";
+pub const CLEAN_THEME_TOML: &str = include_str!("../themes/clean.toml");
+
 /// (id, embedded toml) for every built-in. The user file at
 /// ~/.config/terminal-delight/theme.toml stays hot-reloaded as id "custom".
 pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
-    (
-        "quiet-command",
-        include_str!("../themes/quiet-command.toml"),
-    ),
+    (CLEAN, CLEAN_THEME_TOML),
     (
         "tactical-overdrive",
         include_str!("../themes/tactical-overdrive.toml"),
@@ -87,6 +89,15 @@ struct ThemeFile {
     /// axes (see [`crate::skin`]); this key is only a theme's *preference* on the
     /// third, and the user's own `skin.toml` still overrides it.
     skin: Option<String>,
+    /// Which UI SET this theme asks for — `ui = "clean"`. Like `skin`, only a
+    /// preference: a set or a switch the person chose outranks it (see
+    /// [`crate::uiconfig`]). Absent means the theme has no opinion.
+    ui: Option<String>,
+    /// The look this design ships with — the dials a window starts from the
+    /// first time it wears it (`crt = true` on Hacker). Absent keys fall back
+    /// to the house look. See [`crate::looks`].
+    #[serde(default)]
+    look: crate::looks::LookDials,
     colors: FileColors,
     #[serde(default)]
     effects: FileEffects,
@@ -112,14 +123,16 @@ pub enum TerminalLightPreset {
     #[default]
     Standard,
     Intrusive,
+    /// Clean: no light on the letters, focused or not.
+    Clean,
 }
 
 impl TerminalLightPreset {
     fn for_design(id: &str) -> Self {
-        if id == "intrusive" {
-            Self::Intrusive
-        } else {
-            Self::Standard
+        match id {
+            "intrusive" => Self::Intrusive,
+            CLEAN => Self::Clean,
+            _ => Self::Standard,
         }
     }
 
@@ -127,12 +140,13 @@ impl TerminalLightPreset {
         match self {
             Self::Standard => 0.20,
             Self::Intrusive => 0.37,
+            Self::Clean => 0.0,
         }
     }
 
     fn inactive_text(self) -> f32 {
         match self {
-            Self::Standard => 0.45,
+            Self::Standard | Self::Clean => 0.45,
             Self::Intrusive => 0.52,
         }
     }
@@ -149,6 +163,12 @@ pub struct Theme {
     /// `None` is a real answer and not a default: it means this theme has no
     /// opinion about the chrome's SHAPE, so whatever skin is active stands.
     pub skin: Option<String>,
+    /// The UI set this theme asks for, by id (see [`crate::uiconfig`]). `None`
+    /// means no opinion, so the window's own set stands.
+    pub ui: Option<String>,
+    /// The look this design ships with, over the house look (see
+    /// [`design_stock`]). Only what the file says.
+    pub look: crate::looks::LookDials,
     pub bg: Hsla,
     pub surface: Hsla,
     pub text: Hsla,
@@ -1497,6 +1517,10 @@ fn read_design_id<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     Ok(match id.as_str() {
         "chalk-flower" | "chalk-night" => "hacker".into(),
         "field-command" => "tactical-overdrive".into(),
+        // Quiet was folded into Clean on 2026-10-21 ("CLEAN BULLDOZES QUIET!"):
+        // under any palette its light colours never showed, and every dial it
+        // owned was already zero.
+        "quiet-command" | "quiet" => CLEAN.into(),
         _ => id,
     })
 }
@@ -1600,12 +1624,15 @@ impl Default for ThemeChoice {
 /// **The CRT dials are his, kept for the day someone switches the tube on.**
 /// Warp and the roll bar are stored exactly as his window has them, so opening
 /// the GAUGES tray's CRT section and pressing the switch gives exactly the
-/// screen this was taken from, with no slider moved. The base `custom` theme
-/// file is seeded from `hacker` on first run, which is where the scanlines,
-/// glare and bloom come from when it is on.
+/// screen this was taken from, with no slider moved — once the window leaves
+/// Clean, which holds the tube off while it is worn.
+///
+/// **A new window wears Clean** (Parker, 2026-10-21: new-window settings are
+/// "CUSTOMIZABLE, but at a default -- CLEAN"). A saved new-window template
+/// outranks this; see [`crate::uiconfig::NewWindow`].
 pub fn house_outer() -> ThemeChoice {
     ThemeChoice {
-        id: "custom".into(),
+        id: CLEAN.into(),
         seed: None,
         color: ColorMode::OnTheme, // "theme" program colour
         syntax: true,
@@ -1631,7 +1658,7 @@ pub fn house_outer() -> ThemeChoice {
             off_cursor_linger_ms: None,
             inactive_cursor_linger_ms: None,
             inactive_off_cursor_linger_ms: None,
-            glare: None, // the `custom` theme's glass, seeded from `hacker`
+            glare: None, // the design's own glass
             tracking: Some(HOUSE_ROLL),
             crawl: false,
             crawl_angle: CRAWL_ANGLE_DEFAULT,
@@ -2837,6 +2864,7 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
         && choice.grade.tracking.is_none()
         && !choice.grade.crawl
         && choice.grade.crt
+        && choice.id != CLEAN
     {
         return base;
     }
@@ -2909,6 +2937,12 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     if !th.crt {
         flatten_tube(&mut th);
     }
+    // Clean holds the tube and the light off, whatever the dials say. Only this
+    // resolved copy is held; the scope's grade keeps every value for the next
+    // design.
+    if choice.id == CLEAN {
+        hold_clean(&mut th);
+    }
     // Layer 4 — the INVERT dimension: the LAST colour op, photo-negating the whole
     // resolved palette. Applied after every other recolour so it flips whatever
     // the theme + set + overrides produced. Grade (a paint-time display axis) then
@@ -2944,6 +2978,44 @@ pub fn flatten_tube(th: &mut Theme) {
     th.screen_glare = 0.0;
     th.bezel = 0.0;
     th.letter_glow = 0.0;
+}
+
+/// A design's look as shipped: the house look, with the design file's own
+/// `[look]` table over it. What a window wears the first time it picks the
+/// design, and what "reset to as designed" goes back to.
+pub fn design_stock(cx: &App, id: &str) -> crate::looks::LookDials {
+    let house = crate::looks::LookDials::of(&house_outer().grade);
+    let reg = cx.global::<ThemeRegistry>();
+    let own = if id == "custom" {
+        Some(reg.custom.look.clone())
+    } else {
+        reg.builtins
+            .iter()
+            .find(|(i, _)| i == id)
+            .map(|(_, t)| t.look.clone())
+    };
+    own.unwrap_or_default().over(&house)
+}
+
+/// What Clean holds off while it is worn: the whole tube, as the CRT switch
+/// would, and every light — the glow on the letters (focused and not), the
+/// afterglow of erased text, the bloom on cards and the window's frame
+/// (`glow`), and the halo on lit borders (the phosphor gauge).
+///
+/// Applied to the RESOLVED theme only. The GAUGES tray reads the scope's own
+/// grade, which keeps the person's values, and says Clean is holding them.
+pub fn hold_clean(th: &mut Theme) {
+    th.crt = false;
+    flatten_tube(th);
+    th.glow = 0.0;
+    th.grade.phosphor = 0.0;
+    th.grade.image_glow = Some(0.0);
+    th.grade.inactive_image_glow = Some(0.0);
+    th.grade.afterglow_ms = Some(0.0);
+    th.grade.cursor_linger_ms = Some(0.0);
+    th.grade.off_cursor_linger_ms = Some(0.0);
+    th.grade.inactive_cursor_linger_ms = Some(0.0);
+    th.grade.inactive_off_cursor_linger_ms = Some(0.0);
 }
 
 /// Photo-negative of a colour: invert each RGB channel (`1 − x`), alpha kept. A
@@ -3406,6 +3478,8 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         name,
         icon: file.icon.unwrap_or_else(|| "◈".into()),
         skin: file.skin,
+        ui: file.ui,
+        look: file.look,
         bg: c.bg,
         surface: c.surface,
         text: c.text,
@@ -3513,10 +3587,10 @@ mod tests {
         assert!(!palettes.is_empty());
         for (design, source) in BUILTIN_THEMES {
             let base = parse(source).unwrap();
-            let expected = if *design == "intrusive" {
-                (0.37, 0.52)
-            } else {
-                (0.20, 0.45)
+            let expected = match *design {
+                "intrusive" => (0.37, 0.52),
+                CLEAN => (0.0, 0.45),
+                _ => (0.20, 0.45),
             };
             for (id, palette) in &palettes {
                 for flat in [false, true] {
@@ -3686,6 +3760,80 @@ mod tests {
         }
     }
 
+    /// Quiet was folded into Clean. A window or a pane saved wearing it comes
+    /// back wearing Clean, not the custom file nobody chose.
+    #[test]
+    fn a_saved_quiet_design_comes_back_as_clean() {
+        assert!(!builtin_ids().contains(&"quiet-command"));
+        assert!(builtin_ids().contains(&CLEAN));
+        let mut saved = serde_json::to_value(ThemeChoice::default()).unwrap();
+        saved["id"] = "quiet-command".into();
+        let restored: ThemeChoice = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.id, CLEAN);
+        let mut group = serde_json::to_value(ThemeGroup::of(&ThemeChoice::default())).unwrap();
+        group["id"] = "quiet-command".into();
+        let restored: ThemeGroup = serde_json::from_value(group).unwrap();
+        assert_eq!(restored.id, CLEAN);
+    }
+
+    /// Clean asks for its own trim and its own UI set, and lights nothing.
+    #[test]
+    fn clean_asks_for_its_trim_and_its_ui_set() {
+        let th = parse(CLEAN_THEME_TOML).unwrap();
+        assert_eq!(th.skin.as_deref(), Some("clean"));
+        assert_eq!(th.ui.as_deref(), Some("clean"));
+        assert_eq!(th.terminal_light, TerminalLightPreset::Clean);
+        assert_eq!(th.glow, 0.0);
+        let hacker = parse(DEFAULT_THEME_TOML).unwrap();
+        assert_eq!(
+            hacker.ui, None,
+            "a design that says nothing asks for nothing"
+        );
+    }
+
+    /// While Clean is worn it holds the tube and every light off, whatever the
+    /// dials say; the scope's own grade keeps them, so the next design gets
+    /// them back unchanged.
+    #[gpui::test]
+    fn clean_holds_the_tube_and_the_light_off_and_keeps_the_dials(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            crate::palette::init_shipped(cx);
+            init_embedded(cx, house_outer());
+            let mut lit = house_outer();
+            assert_eq!(lit.id, CLEAN, "a new window wears Clean");
+            lit.grade.crt = true;
+            lit.grade.image_glow = Some(0.6);
+            lit.grade.phosphor = 2.5;
+            lit.grade.cursor_linger_ms = Some(200.0);
+            let held = resolve(cx, &lit);
+            assert!(!held.crt, "the tube is held off");
+            assert_eq!(held.warp, 0.0);
+            assert_eq!(held.scanline_opacity, 0.0);
+            for focused in [true, false] {
+                assert_eq!(
+                    held.grade
+                        .letter_glow_for_focus(focused, held.terminal_light),
+                    0.0,
+                    "no light on the letters, focused={focused}"
+                );
+                let linger = held.grade.linger_for_focus(focused);
+                assert_eq!((linger.cursor_ms, linger.off_cursor_ms), (0.0, 0.0));
+            }
+            assert_eq!(held.grade.phosphor, 0.0, "no halo on lit borders");
+            assert_eq!(held.glow, 0.0, "no bloom on cards or the frame");
+            assert_eq!(lit.grade.image_glow, Some(0.6), "the dial is kept");
+
+            let hacker = ThemeChoice {
+                id: "hacker".into(),
+                ..lit.clone()
+            };
+            let on = resolve(cx, &hacker);
+            assert!(on.crt && on.warp > 0.0, "the tube comes back as it was");
+            assert!((on.grade.letter_glow_for_focus(true, on.terminal_light) - 0.6).abs() < 1e-6);
+            assert_eq!(on.grade.phosphor, 2.5);
+        });
+    }
+
     /// The Tactical design brings the OPS skin, the way Deco brings its own;
     /// Intrusive asks for none, because it is meant to be mixed with any.
     #[test]
@@ -3719,6 +3867,18 @@ mod tests {
         let mut th = parse(src).unwrap();
         flatten_tube(&mut th);
         assert_eq!(th.letter_glow, 0.0, "a flat tube still bleeds");
+    }
+
+    /// Every shipped design says what its tube is, so one nobody has touched
+    /// looks as designed whichever design was worn before it: Hacker, Intrusive
+    /// and Tactical ship the CRT on, Clean and Deco ship it off.
+    #[test]
+    fn every_design_declares_its_tube() {
+        for (id, src) in BUILTIN_THEMES {
+            let crt = parse(src).unwrap().look.crt;
+            let want = !matches!(*id, "clean" | "deco");
+            assert_eq!(crt, Some(want), "{id} must declare its tube in [look]");
+        }
     }
 
     #[test]
@@ -4871,7 +5031,7 @@ mod tests {
             c.dynamic.is_plain() && c.seed.is_none(),
             "nothing layered on it"
         );
-        assert_eq!(c.id, "custom", "design: custom");
+        assert_eq!(c.id, CLEAN, "design: clean");
         assert_eq!(c.color, ColorMode::OnTheme, "program colour: theme");
         assert!(
             c.syntax && c.syntax_scheme == SyntaxScheme::Agentic,
@@ -4947,7 +5107,12 @@ warp = 1.5
         cx.update(|cx| {
             crate::palette::init_shipped(cx);
             init_embedded(cx, house_outer());
-            let off = house_outer();
+            // The switch is Hacker's to obey: Clean holds the tube off whatever
+            // it says (see `clean_holds_the_tube_and_the_light_off_and_keeps_the_dials`).
+            let off = ThemeChoice {
+                id: "hacker".into(),
+                ..house_outer()
+            };
             let flat = resolve(cx, &off);
             for (what, v) in [
                 ("warp", flat.warp),
@@ -5078,7 +5243,10 @@ warp = 1.5
                 hacker.screen_glare > 0.0,
                 "the fixture needs a theme with glass"
             );
-            let mut on = house_outer();
+            let mut on = ThemeChoice {
+                id: "hacker".into(),
+                ..house_outer()
+            };
             on.grade.crt = true;
             assert_eq!(on.grade.glare, None);
             assert_eq!(
@@ -6112,7 +6280,9 @@ pub fn init(cx: &mut App) {
         if let Some(dir) = path.parent() {
             let _ = fs::create_dir_all(dir);
         }
-        let _ = fs::write(&path, DEFAULT_THEME_TOML);
+        // Seeded from Clean, the design a new window wears, so "edit your
+        // theme" starts from what is on screen.
+        let _ = fs::write(&path, CLEAN_THEME_TOML);
     }
     let initial = load_custom(&path, palette.as_ref())
         .unwrap_or_else(|_| parse(DEFAULT_THEME_TOML).expect("embedded theme parses"));

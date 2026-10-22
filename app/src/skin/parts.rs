@@ -102,6 +102,8 @@ pub(crate) fn theme_icon_btn(
         .items_center()
         .justify_center()
         .rounded_md()
+        // A corner cap (Clean's nearly square trim) holds this under it too.
+        .when(sk.m.corner_cap < 6., |d| d.rounded(sk.capped(6.)))
         .border_1()
         .cursor_pointer();
     if sk.is_paper() {
@@ -165,6 +167,8 @@ pub(crate) fn color_mode_btn(
         .items_center()
         .justify_center()
         .rounded_md()
+        // A corner cap (Clean's nearly square trim) holds this under it too.
+        .when(sk.m.corner_cap < 6., |d| d.rounded(sk.capped(6.)))
         .border_1()
         .cursor_pointer();
     if sk.is_paper() {
@@ -259,6 +263,8 @@ pub(crate) fn note_paper_btn(
         .justify_center()
         .overflow_hidden()
         .rounded_md()
+        // A corner cap (Clean's nearly square trim) holds this under it too.
+        .when(sk.m.corner_cap < 6., |d| d.rounded(sk.capped(6.)))
         .border_1()
         .cursor_pointer();
     if sk.is_paper() {
