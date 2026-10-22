@@ -3807,6 +3807,96 @@ fn a_handover_is_on_its_page_and_opens_into_the_pane_from_there(cx: &mut TestApp
     assert_eq!(pane.float_path(), None, "the page is toggled off");
 }
 
+/// Only a person replaces a square. An agent's `open_document` over a square
+/// that is already up — the person's page, here a picture they Alt+clicked —
+/// is held: the square still shows their page, the agent is answered `held`,
+/// and the file is kept as the pane's handover, not yet opened, for the
+/// artifact rail. With no square up, the same verb opens it. And the rail's
+/// road, which is the person's, opens it over whatever is there.
+///
+/// Parker, 2026-10-22, after an agent's finished turn replaced the page he was
+/// writing a note in: *"definitely will not override the currently open glow
+/// pane"*.
+#[gpui::test]
+fn an_agents_open_never_replaces_a_square_the_person_has_up(cx: &mut TestAppContext) {
+    let (mut pane, dir, png) = pane_showing_a_picture(cx, "held-open");
+    let report = dir.fixture("../README.md", "report.md");
+    let report = report.to_str().expect("UTF-8").to_string();
+    let target =
+        || crate::docopen::drawable_document(std::path::Path::new(&report)).expect("markdown");
+    let mine = std::path::PathBuf::from(&png);
+
+    // The person's page is up.
+    let at = pane.point_at(&png);
+    pane.click(at, Pane::alt());
+    assert_eq!(pane.float_path(), Some(mine.clone()));
+
+    // The agent's open is held.
+    let said = pane.view.update(pane.cx, |v, cx| v.open_here(target(), cx));
+    assert!(said.starts_with("held "), "{said}");
+    assert_eq!(
+        pane.float_path(),
+        Some(mine.clone()),
+        "the person's square is still the person's"
+    );
+    let key = crate::handover::key_of(&report);
+    assert!(
+        pane.read(|v| v.handovers().contains(&key)),
+        "kept as a handover"
+    );
+    assert!(
+        !pane.read(|v| v.handovers().is_opened(&key)),
+        "and not opened: nobody has seen it"
+    );
+    // Asked again, it is held again and still kept once.
+    let again = pane.view.update(pane.cx, |v, cx| v.open_here(target(), cx));
+    assert!(again.starts_with("held "), "{again}");
+    assert_eq!(pane.read(|v| v.handovers().len()), 1);
+
+    // The rail's road is a person's: the newest handover opens over the square.
+    pane.view
+        .update(pane.cx, |v, cx| v.open_newest_handover(cx));
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&report))
+    );
+    assert!(
+        pane.read(|v| v.handovers().is_opened(&key)),
+        "and now it is opened"
+    );
+
+    // With no square up, the agent's open opens.
+    pane.keys("escape");
+    assert_eq!(pane.float_path(), None);
+    let said = pane.view.update(pane.cx, |v, cx| v.open_here(target(), cx));
+    assert!(said.starts_with("ok float"), "{said}");
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&report))
+    );
+    assert_eq!(desktop_launches(), Vec::<String>::new());
+}
+
+/// A square holding notes not yet saved is held like any other, and the agent
+/// hears `held`, not the old `err` that read as a failure to retry.
+#[gpui::test]
+fn an_agents_open_over_unsaved_notes_is_held_and_keeps_the_notes(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief, png) = pane_showing_a_brief(cx, "held-unsaved");
+    open_the_brief_with_an_unsaved_note(&mut pane, &brief);
+    let target = crate::docopen::drawable_document(std::path::Path::new(&png)).expect("a picture");
+    let said = pane.view.update(pane.cx, |v, cx| v.open_here(target, cx));
+    assert!(said.starts_with("held "), "{said}");
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&brief))
+    );
+    assert_eq!(
+        pane.doc_notes().expect("notes")["unsaved"],
+        1,
+        "the note is still there"
+    );
+}
+
 /// A `Deliverable:` line an agent printed is read off the pane's real grid,
 /// including the link Claude Code wraps at the pane's edge and carries on two
 /// spaces in. These are the rows of the HC Video pane on 2026-10-06, at that
