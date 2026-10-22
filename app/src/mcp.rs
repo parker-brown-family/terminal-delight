@@ -8,7 +8,7 @@
 //! finishes or calls a given tool, and act — without ever touching a keyboard.
 //!
 //! This module is the *safe foundation* for that: the operator-managed policy
-//! (the mother-bar robot panel edits it) plus the exact, tested shape of the
+//! (the War Room's switches edit it) plus the exact, tested shape of the
 //! snapshot the server would expose. The hard line: **nothing here can WRITE to
 //! a PTY.** Sending bytes into a shell is arbitrary code execution; the entire
 //! first cut is observe-only, and the policy below defaults to *exposing
@@ -40,7 +40,7 @@ pub struct McpConfig {
     /// the server on makes it a read-only *watch* surface; flipping this makes
     /// it a *remote-control* surface (an agent can dim/recolour your terminals).
     /// Off by default — that escalation must be a deliberate choice, and the
-    /// `TD_MCP_WRITE` env var or the robot panel's "writes" toggle sets it.
+    /// `TD_MCP_WRITE` env var or the War Room's "writes" switch sets it.
     pub writable: bool,
 }
 
@@ -1844,8 +1844,8 @@ where
 {
     if !snap.config.enabled {
         return tool_err(
-            "MCP exposure is disabled. Enable it in terminal-delight's MCP \
-             CONTROL panel (the robot button on the mother bar).",
+            "MCP exposure is disabled. Enable it in terminal-delight's War Room \
+             (the agent counter, top right).",
         );
     }
     let query = args.get("query").and_then(Value::as_str).unwrap_or("");
@@ -1903,8 +1903,8 @@ where
 fn engineering_state(snap: &Snapshot) -> Value {
     if !snap.config.enabled {
         return tool_err(
-            "MCP exposure is disabled. Enable it in terminal-delight's MCP \
-             CONTROL panel (the robot button on the mother bar).",
+            "MCP exposure is disabled. Enable it in terminal-delight's War Room \
+             (the agent counter, top right).",
         );
     }
     if !snap.engineering_allowed {
@@ -1994,8 +1994,8 @@ fn engineering_state(snap: &Snapshot) -> Value {
 fn list_panes(snap: &Snapshot) -> Value {
     if !snap.config.enabled {
         return tool_err(
-            "MCP exposure is disabled. Enable it in terminal-delight's MCP \
-             CONTROL panel (the robot button on the mother bar).",
+            "MCP exposure is disabled. Enable it in terminal-delight's War Room \
+             (the agent counter, top right).",
         );
     }
     let exposed: Vec<PaneInfo> = snap
@@ -2226,7 +2226,9 @@ where
         return tool_err("MCP exposure is disabled.");
     }
     if !snap.config.events {
-        return tool_err("Event tailing is off — enable Events in the MCP CONTROL panel.");
+        return tool_err(
+            "Event tailing is off — enable Events in the War Room (the agent counter, top right).",
+        );
     }
     let Some(pid) = args.get("pid").and_then(Value::as_u64) else {
         return tool_err("pane_events requires an integer `pid` (see list_panes).");
@@ -2271,8 +2273,8 @@ where
 fn get_pane_config(args: &Value, snap: &Snapshot) -> Value {
     if !snap.config.enabled {
         return tool_err(
-            "MCP exposure is disabled. Enable it in terminal-delight's MCP \
-             CONTROL panel (the robot button on the mother bar).",
+            "MCP exposure is disabled. Enable it in terminal-delight's War Room \
+             (the agent counter, top right).",
         );
     }
     let targets = match args.get("targets") {
@@ -2383,12 +2385,14 @@ where
     G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
 {
     if !snap.config.enabled {
-        return tool_err("MCP exposure is disabled. Enable it in the MCP CONTROL panel.");
+        return tool_err(
+            "MCP exposure is disabled. Enable it in the War Room (the agent counter, top right).",
+        );
     }
     if !snap.config.writable {
         return tool_err(
             "MCP writes are disabled. This server is a read-only watch surface \
-             until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
+             until you opt in: enable \"writes\" in the War Room (or set \
              TD_MCP_WRITE=1) to let an agent change pane appearance. An agent can ask the person for them with request_access, change writes_on.",
         );
     }
@@ -2449,12 +2453,14 @@ where
     G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
 {
     if !snap.config.enabled {
-        return tool_err("MCP exposure is disabled. Enable it in the MCP CONTROL panel.");
+        return tool_err(
+            "MCP exposure is disabled. Enable it in the War Room (the agent counter, top right).",
+        );
     }
     if !snap.config.writable {
         return tool_err(
             "MCP writes are disabled. This server is a read-only watch surface \
-             until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
+             until you opt in: enable \"writes\" in the War Room (or set \
              TD_MCP_WRITE=1) to let an agent leave a note. An agent can ask the person for them with request_access, change writes_on.",
         );
     }
@@ -2503,12 +2509,14 @@ where
     G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
 {
     if !snap.config.enabled {
-        return tool_err("MCP exposure is disabled. Enable it in the MCP CONTROL panel.");
+        return tool_err(
+            "MCP exposure is disabled. Enable it in the War Room (the agent counter, top right).",
+        );
     }
     if !snap.config.writable {
         return tool_err(
             "MCP writes are disabled. This server is a read-only watch surface \
-             until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
+             until you opt in: enable \"writes\" in the War Room (or set \
              TD_MCP_WRITE=1) to let an agent declare a deliverable. An agent can ask the person for them with request_access, change writes_on.",
         );
     }
@@ -2572,7 +2580,9 @@ where
 {
     use crate::access::{validate_why, Ask, Change};
     if !snap.config.enabled {
-        return tool_err("MCP exposure is disabled. Enable it in the MCP CONTROL panel.");
+        return tool_err(
+            "MCP exposure is disabled. Enable it in the War Room (the agent counter, top right).",
+        );
     }
     let named = args.get("change").and_then(Value::as_str).unwrap_or("");
     let Some(change) = Change::parse(named) else {
@@ -2660,12 +2670,14 @@ where
     G: Fn(&[ConfigUpdate]) -> Vec<ApplyOutcome>,
 {
     if !snap.config.enabled {
-        return tool_err("MCP exposure is disabled. Enable it in the MCP CONTROL panel.");
+        return tool_err(
+            "MCP exposure is disabled. Enable it in the War Room (the agent counter, top right).",
+        );
     }
     if !snap.config.writable {
         return tool_err(
             "MCP writes are disabled. This server is a read-only watch surface \
-             until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
+             until you opt in: enable \"writes\" in the War Room (or set \
              TD_MCP_WRITE=1) to let an agent present a surface. An agent can ask the person for them with request_access, change writes_on.",
         );
     }
@@ -2840,8 +2852,8 @@ fn surface_catalogue() -> Value {
 fn document_notes(args: &Value, snap: &Snapshot) -> Value {
     if !snap.config.enabled {
         return tool_err(
-            "MCP exposure is disabled. Enable it in terminal-delight's MCP \
-             CONTROL panel (the robot button on the mother bar).",
+            "MCP exposure is disabled. Enable it in terminal-delight's War Room \
+             (the agent counter, top right).",
         );
     }
     if args.as_object().is_some_and(|a| !a.is_empty()) {
@@ -3076,12 +3088,14 @@ where
     O: Fn(&OpenRequest) -> OpenOutcome,
 {
     if !snap.config.enabled {
-        return tool_err("MCP exposure is disabled. Enable it in the MCP CONTROL panel.");
+        return tool_err(
+            "MCP exposure is disabled. Enable it in the War Room (the agent counter, top right).",
+        );
     }
     if !snap.config.writable {
         return tool_err(
             "MCP writes are disabled. This server is a read-only watch surface \
-             until you opt in: enable \"writes\" in the MCP CONTROL panel (or set \
+             until you opt in: enable \"writes\" in the War Room (or set \
              TD_MCP_WRITE=1) to let an agent open a document. An agent can ask the person for them with request_access, change writes_on.",
         );
     }

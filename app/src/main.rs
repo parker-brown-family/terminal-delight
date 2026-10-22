@@ -2849,7 +2849,7 @@ struct StateFile {
     /// interface ever offered it as a setting. The rest is on [`SavedScope`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scope: Option<SavedScope>,
-    /// Read-only MCP control-surface policy (the mother-bar robot panel). Absent
+    /// Read-only MCP control-surface policy (the War Room's switches). Absent
     /// on pre-feature files → the locked-down [`mcp::McpConfig`] default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mcp: Option<mcp::McpConfig>,
@@ -6964,7 +6964,7 @@ impl Workspace {
         if std::env::var_os("TD_MCP").is_some() {
             // A SECOND, explicit opt-in promotes the read-only watch surface to a
             // remote-control one (an agent may change pane appearance via
-            // set_pane_config). The robot panel persists this in state; the env
+            // set_pane_config). The War Room persists this in state; the env
             // var forces it on for a headless / orchestrated launch.
             if std::env::var_os("TD_MCP_WRITE").is_some() {
                 ws.mcp.writable = true;
