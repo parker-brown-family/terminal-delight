@@ -42,6 +42,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   `ctl bench click`, `bench hover`, `bench probe` and `bench on|off|toggle` skip
   a pane marked off-limits to agents, as the other bench commands already did.
   (#1090)
+- **Nor do the document commands, or a refused surface.** `ctl doc notes` read
+  out your notes on a brief floating over an off-limits pane, and `ctl doc note`,
+  `doc concur`, `doc close` and `doc here` could add notes that looked like yours
+  or discard unsaved ones; all the `ctl doc` commands now skip such a pane. A
+  surface an agent was refused for an off-limits pane was still saved to disk
+  and shown there a few seconds later; it is no longer saved.
 
 ### Added for 0.5.0 development
 
