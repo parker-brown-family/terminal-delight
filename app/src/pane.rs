@@ -12,6 +12,7 @@ use crate::screenread::{
     rows_fingerprint, wants_human_row, wants_human_unless_answered, PROMPT_TAIL_ROWS,
 };
 
+mod afterglow;
 /// The workbench half of this view — every method that draws or drives the
 /// bench. A child module so it keeps private access; see `pane/bench.rs`.
 mod bench;
@@ -24,6 +25,7 @@ mod grid_paint;
 mod handed;
 /// Visibility-aware housekeeping deadlines and wakeups.
 mod housekeeping;
+mod input_edit;
 /// Bounded reuse of the viewport's styled text.
 mod styling;
 use crate::term;
@@ -3522,7 +3524,7 @@ impl gpui::EventEmitter<DragPaneStart> for TerminalView {}
 pub struct ClosePane;
 impl gpui::EventEmitter<ClosePane> for TerminalView {}
 
-/// Ctrl+W in this pane — the workspace closes the whole active tab, always via
+/// Ctrl+Shift+W in this pane — the workspace closes the whole active tab, always via
 /// the serious confirmation dialog (never a silent close).
 pub struct RequestCloseTab;
 impl gpui::EventEmitter<RequestCloseTab> for TerminalView {}
@@ -5675,6 +5677,7 @@ impl TerminalView {
     /// Forget every picture this pane holds — the textures here and the images
     /// in the core. Called when its tab stops being shown.
     pub fn forget_pictures(&mut self, cx: &mut Context<Self>) {
+        self.grid_paint.update(cx, |v, _| v.clear_afterglow());
         let held = {
             let mut term = self.session.term.lock();
             let held = term.pictures().len();
@@ -7048,8 +7051,8 @@ impl TerminalView {
             }
             // alt+k flips this pane between its two faces, from either side. It
             // was alt+w for one day, and alt+w was already taken: it is the
-            // middle rung of the close ladder (ctrl+w the tab, super+w the tile,
-            // alt+w the focused PANE). `keystroke_bytes` is told about `k` too,
+            // middle rung of the close ladder (ctrl+w the document box,
+            // ctrl+shift+w the tab, super+w the tile, alt+w the focused PANE). `keystroke_bytes` is told about `k` too,
             // so the letter cannot reach a shell as ESC k on the way past.
             crate::keylayer::Layer::Face => {
                 self.toggle_face(cx);
@@ -7093,22 +7096,13 @@ impl TerminalView {
                 Handled::Consumed
             }
             crate::keylayer::Layer::Rename => self.rename_key(&k, ks, cx),
-            // Escape over a floating document closes it, and nothing else about
-            // the key is the square's — unless a note is being written in it,
-            // when `keylayer` routes every key here for the note box to take.
-            // The document is asked first: the note box, then a brief's own
-            // dialog, is what Escape puts away before the square itself.
-            crate::keylayer::Layer::Float => {
-                let took = self
-                    .float
-                    .as_ref()
-                    .map(|f| f.view.clone())
-                    .is_some_and(|view| view.update(cx, |doc, cx| doc.key(ks, cx)));
-                if !took {
-                    self.request_close_float(cx);
-                }
-                Handled::Consumed
-            }
+            // Escape over a floating document closes it, and ctrl+↑/↓ turns it;
+            // nothing else about the key is the square's — unless a note is
+            // being written in it, when `keylayer` routes every key here for the
+            // note box to take. The document is asked first: the note box, then
+            // a brief's own dialog, is what Escape puts away before the square
+            // itself, and an open note box turns its notes on the same chords.
+            crate::keylayer::Layer::Float => self.float_key(ks, cx),
             // The Document face: its own keys move the document, and every
             // other key it was handed stops there — the shell is hidden.
             crate::keylayer::Layer::Document => self.doc_key(ks, cx),
@@ -7372,6 +7366,10 @@ impl TerminalView {
                 "m" => self.toggle_handover_page(cx),
                 // The most recently closed thing comes back.
                 "z" => cx.emit(ReopenClosed),
+                // Ctrl+Shift+W closes the whole tab (always confirmed by the
+                // workspace). It was plain Ctrl+W until that chord went to the
+                // document box, the smallest thing a close can take.
+                "w" => cx.emit(RequestCloseTab),
                 // Two keys for one panel, and the second is not redundant.
                 // fcitx5's Unicode addon binds Ctrl+Shift+U — `libunicode.so`
                 // carries both `Control+Shift+U` and `Control+Alt+Shift+U` — and
@@ -7393,9 +7391,13 @@ impl TerminalView {
             return Handled::Declined;
         }
         match k.key {
-            // Ctrl+W closes the whole tab (always confirmed by the workspace).
-            // Intercepted here so it never reaches the PTY as werase (^W).
-            "w" => cx.emit(RequestCloseTab),
+            // Ctrl+W puts away the document box on top — a clip, then the
+            // square it was covering — the way its ✕ and Escape do, notes and
+            // all guarded. The table claims it only while a box is up, so with
+            // none it reaches the PTY as werase (^W).
+            "w" => {
+                self.request_close_float(cx);
+            }
             "f" => cx.emit(OpenFind { global: false }),
             // Ctrl+X = CUT the selection: copy it, and when it is the trailing
             // run on the live input line, erase it there too (see
@@ -7454,16 +7456,38 @@ impl TerminalView {
         // itself, so it types the edit (see `erase_selection_keys`). A selection
         // anywhere else is not text being typed, and the key goes through as it
         // always has.
-        if !k.control
+        let deletion_chord = k.key == "backspace" && k.shift && !k.platform && !k.function;
+        let edit_keys = if deletion_chord {
+            let term = self.session.term.lock();
+            let editable = (self.mode == PaneMode::Shell || self.mode.is_agent())
+                && (!term.mode().contains(TermMode::ALT_SCREEN) || self.mode.is_agent())
+                && term.display_offset() == 0;
+            if !editable {
+                None
+            } else if k.control && k.alt {
+                // Readline's whole edit buffer, including literal newlines.
+                // No Enter, interrupt or terminal-history clearing.
+                Some(b"\x01\x0b".to_vec())
+            } else if k.control {
+                input_edit::line_keys(&term)
+            } else if !k.alt {
+                Some(b"\x1b\x7f".to_vec())
+            } else {
+                None
+            }
+        } else if !k.control
             && !k.alt
             && !k.shift
             && !k.platform
             && matches!(k.key, "backspace" | "delete")
         {
-            if let Some(keys) = self.erase_selection_keys() {
-                self.send(keys, cx);
-                return Handled::Declined;
-            }
+            self.erase_selection_keys()
+        } else {
+            None
+        };
+        if let Some(keys) = edit_keys {
+            self.send(keys, cx);
+            return Handled::Declined;
         }
         // Paging the pane itself. PageUp/PageDown page the scrollback in AGENT
         // panes — a Claude/Codex session keeps its whole convo in our history and
@@ -7519,23 +7543,37 @@ impl TerminalView {
     /// both the live pane and the FOCUS mirror.
     fn extend_kbd_selection(&mut self, right: bool, word: bool, cx: &mut Context<Self>) {
         let last_col = self.grid.cols.saturating_sub(1);
-        // one cell in the requested direction, clamped to the row (no line-wrap:
-        // command-line selection is single-row; mouse handles multi-line spans).
-        let step = |p: TermPoint| -> TermPoint {
-            if right {
-                if p.column.0 < last_col {
-                    TermPoint::new(p.line, Column(p.column.0 + 1))
+        let next = {
+            let mut term = self.session.term.lock();
+            // A soft wrap is still the same editable line. Keep hard row
+            // boundaries as boundaries so shift-arrows do not enter history.
+            let step = |p: TermPoint| -> TermPoint {
+                if right {
+                    if p.column.0 < last_col {
+                        TermPoint::new(p.line, Column(p.column.0 + 1))
+                    } else if p.line < term.bottommost_line()
+                        && term
+                            .row(p.line)
+                            .iter()
+                            .any(|c| c.flags.contains(Flags::WRAPLINE))
+                    {
+                        TermPoint::new(Line(p.line.0 + 1), Column(0))
+                    } else {
+                        p
+                    }
+                } else if p.column.0 > 0 {
+                    TermPoint::new(p.line, Column(p.column.0 - 1))
+                } else if p.line > term.topmost_line()
+                    && term
+                        .row(Line(p.line.0 - 1))
+                        .iter()
+                        .any(|c| c.flags.contains(Flags::WRAPLINE))
+                {
+                    TermPoint::new(Line(p.line.0 - 1), Column(last_col))
                 } else {
                     p
                 }
-            } else if p.column.0 > 0 {
-                TermPoint::new(p.line, Column(p.column.0 - 1))
-            } else {
-                p
-            }
-        };
-        let next = {
-            let mut term = self.session.term.lock();
+            };
             let (anchor, active) = match self.kbd_sel {
                 Some(ae) => ae,
                 None => {
@@ -8286,8 +8324,9 @@ impl TerminalView {
     /// The keys that erase the selection from the line being typed, or `None`
     /// when the selection is not on that line.
     ///
-    /// On it means: one row, the cursor's row, with the view at the bottom —
-    /// scrollback is history, and a selection there is something to copy. And
+    /// Soft-wrapped rows form one editable line. A selection crossing explicit
+    /// newlines must span the cursor's row; unrelated history is only copied.
+    /// The view must be at the bottom. And
     /// not a full-screen program unless it is an agent: in `less` or `vim` the
     /// arrow keys scroll or move rather than walk a caret through a line, but
     /// Claude Code draws its prompt on the alternate screen too, with the
@@ -8295,25 +8334,13 @@ impl TerminalView {
     /// selects and deletes.
     fn erase_selection_keys(&self) -> Option<Vec<u8>> {
         let term = self.session.term.lock();
-        let range = term.selection_range()?;
         let mode = term.mode();
         if term.display_offset() != 0
             || (mode.contains(TermMode::ALT_SCREEN) && !self.mode.is_agent())
         {
             return None;
         }
-        let caret = term.cursor().point;
-        if range.start.line != caret.line || range.end.line != caret.line {
-            return None;
-        }
-        let row = term.row(caret.line).0;
-        erase_run_keys(
-            &row,
-            range.start.column.0,
-            range.end.column.0,
-            caret.column.0,
-            mode.contains(TermMode::APP_CURSOR),
-        )
+        input_edit::selection_keys(&term)
     }
     /// Paste the clipboard into the PTY, honouring bracketed-paste mode.
     ///
@@ -8927,6 +8954,9 @@ impl TerminalView {
         let mut lines: Vec<(String, Vec<TextRun>)> = (0..self.grid.rows)
             .map(|_| (String::with_capacity(cols), Vec::with_capacity(cols)))
             .collect();
+        let mut glyphs: styling::Lines = (0..self.grid.rows)
+            .map(|_| (String::with_capacity(cols), Vec::new()))
+            .collect();
 
         // The `syntax` overlay tokenises the literal text, so it needs each full
         // row up front. Collect the cells once, build per-row colour palettes,
@@ -9017,6 +9047,17 @@ impl TerminalView {
                 other => Some(ansi_to_hsla(other, th, th.bg)),
             };
             let mut flags = cell.flags;
+            // Retain the program's text colour, including its own inverse/DIM,
+            // before TD draws a selection or its block cursor over the glyph.
+            let mut glyph_fg = if flags.contains(Flags::INVERSE) {
+                bg.unwrap_or(th.bg)
+            } else {
+                fg
+            };
+            if flags.contains(Flags::DIM) {
+                glyph_fg.a *= 0.6;
+            }
+            let glyph_fg = grade.apply(glyph_fg, Channel::Text);
             if !sel_visual && selection.is_some_and(|s| s.contains(indexed.point)) {
                 flags.insert(Flags::INVERSE);
             }
@@ -9059,6 +9100,24 @@ impl TerminalView {
             let ch_len = ch.len_utf8();
             text.push(ch);
 
+            let (glyph_text, glyph_runs) = &mut glyphs[row as usize];
+            glyph_text.push(ch);
+            if let Some(last) = glyph_runs
+                .last_mut()
+                .filter(|r| r.color == glyph_fg && r.font.weight == weight)
+            {
+                last.len += ch_len;
+            } else {
+                glyph_runs.push(TextRun {
+                    len: ch_len,
+                    font: grid_font(th, weight),
+                    color: glyph_fg,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                });
+            }
+
             let matches_last = runs.last().is_some_and(|r: &TextRun| {
                 r.color == fg
                     && r.background_color == bg
@@ -9081,6 +9140,7 @@ impl TerminalView {
         *self.styled_memo.borrow_mut() = Some(styling::Memo {
             key,
             lines: std::rc::Rc::new(lines.clone()),
+            glyphs: std::rc::Rc::new(glyphs),
         });
         lines
     }
@@ -10075,8 +10135,8 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         // absent from the table is one deleted `return` away from arriving as
         // ESC k. Taking alt+r costs readline's revert-line, alt+v its
         // page-scroll, alt+h its mark-paragraph, alt+w its copy-region-as-kill
-        // and alt+k its (unbound-by-default) slot (the DESTRUCTIVE ^W werase is
-        // ctrl+w, intercepted a layer up in `on_key` as close-tab, and is
+        // and alt+k its (unbound-by-default) slot (^W werase is ctrl+w, taken a
+        // layer up in `on_key` only while a document box is up, and is
         // untouched here) — fair trades for one-hand pane chords.
         //
         // THE LIST ITSELF LIVES IN `workbench`, because the bench needs exactly
@@ -10146,6 +10206,7 @@ impl TerminalView {
             return;
         }
         if self.bench.face() != face {
+            self.grid_paint.update(cx, |v, _| v.clear_afterglow());
             self.bench.set_face(face);
             // A pane whose face changed has changed what its keystrokes mean,
             // so the header's own count and the tab badge both want redrawing.
@@ -10157,6 +10218,7 @@ impl TerminalView {
     /// its shell; anywhere else it swaps the terminal and the bench. See
     /// [`crate::workbench::next_face`].
     pub fn toggle_face(&mut self, cx: &mut Context<Self>) {
+        self.grid_paint.update(cx, |v, _| v.clear_afterglow());
         self.bench.toggle_face(self.doc.is_some());
         cx.notify();
     }
@@ -10224,6 +10286,12 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.resolved_theme(cx);
+        let focused_now = self.focus_handle(cx).is_focused(window);
+        let letter_glow = th
+            .grade
+            .letter_glow_for_focus(focused_now, th.terminal_light);
+        let mut grid_th = th.clone();
+        grid_th.grade.text = th.grade.text_for_focus(focused_now, th.terminal_light);
         let menu_skin = crate::skin::for_theme(cx, &th, th.grade.scale);
         // The floating square re-records where its controls are as it paints.
         self.float_zones.borrow_mut().clear();
@@ -10633,7 +10701,6 @@ impl Render for TerminalView {
         // edge below is the acknowledgement (a click, alt+arrows, or the
         // notification jump all land here), so you never miss which agent
         // finished while you were away, and there is nothing to dismiss.
-        let focused_now = self.focus_handle(cx).is_focused(window);
         if focused_now != self.was_focused {
             self.was_focused = focused_now;
             if focused_now {
@@ -10681,11 +10748,24 @@ impl Render for TerminalView {
         // drawn there. The next terminal frame snapshots the current viewport.
         let mut lines =
             if self.bench.face() == crate::workbench::Face::Workbench || self.has_doc_face() {
+                self.grid_paint.update(cx, |v, _| v.clear_afterglow());
                 Vec::new()
             } else {
-                self.styled_lines(&th, inverted)
+                self.styled_lines(&grid_th, inverted)
             };
+        let mut glyphs = if lines.is_empty() {
+            Vec::new()
+        } else {
+            (*self
+                .styled_memo
+                .borrow()
+                .as_ref()
+                .expect("styled viewport built")
+                .glyphs)
+                .clone()
+        };
         arm_grid_fallbacks(&mut lines, window.text_system());
+        arm_grid_fallbacks(&mut glyphs, window.text_system());
         if std::env::var("TD_ANCHORDEBUG").is_ok() {
             // The last few non-blank grid rows + whether each is detected as the
             // human prompt line — reveals a caret we don't recognise or a leading
@@ -10729,6 +10809,7 @@ impl Render for TerminalView {
         if th.crawl || !anchor_top() {
             // Bottom-anchor (crawl + default normal mode).
             self.paint_offset = bottom_anchor_rows(&mut lines, self.grid.rows);
+            bottom_anchor_rows(&mut glyphs, self.grid.rows);
             self.paint_inverted = false;
             self.paint_to_grid = None;
         } else if inverted {
@@ -10743,6 +10824,7 @@ impl Render for TerminalView {
             };
             let (new_lines, perm) = invert_logical_read(lines, &wraps, agent_mode);
             lines = new_lines;
+            glyphs = invert_logical_read(glyphs, &wraps, agent_mode).0;
             // #149: paint the selection in VISUAL order now that rows are permuted,
             // so a cross-section drag highlights the visually-contiguous span (not
             // whole reversed blocks). styled_lines skipped the logical highlight.
@@ -11903,6 +11985,7 @@ impl Render for TerminalView {
                                         k2,
                                         crawl,
                                         tube_bezel,
+                                        if on_terminal { letter_glow } else { 0.0 },
                                     );
                                     let changed = {
                                         let mut slot = store.lock().unwrap();
@@ -11948,17 +12031,46 @@ impl Render for TerminalView {
                         grid_paint::GridPaint::replace_if_changed(
                             &mut self.grid_paint,
                             grid_paint::Snapshot {
-                                lines,
+                                lines: std::rc::Rc::new(lines),
+                                glyphs,
                                 cell_h: self.cell_h,
+                                cell_w: self.cell_w,
+                                linger: grade.linger_for_focus(focused_now),
+                                context: Some(grid_paint::HistoryContext {
+                                    theme: {
+                                        // Timings do not change the retained glyph paint.
+                                        // Keep them out of geometry/style invalidation.
+                                        let mut history = grid_th.clone();
+                                        history.grade.afterglow_ms = None;
+                                        history.grade.cursor_linger_ms = None;
+                                        history.grade.off_cursor_linger_ms = None;
+                                        history.grade.inactive_cursor_linger_ms = None;
+                                        history.grade.inactive_off_cursor_linger_ms = None;
+                                        history
+                                    },
+                                    offset: self.session.term.lock().display_offset(),
+                                    alternate: alt_screen_active,
+                                    cols: self.grid.cols,
+                                    rows: self.grid.rows,
+                                    inverted: self.paint_inverted,
+                                }),
                                 pad: (grid_pad_x, grid_pad_y),
                                 crawl: th.crawl,
                                 bleed: (th.letter_glow > 0.001).then_some(0.35 * th.letter_glow),
                             },
                             cx,
                         );
-                        gpui::AnyView::from(self.grid_paint.clone())
-                            .cached(gpui::StyleRefinement::default().w_full().h(px(height)))
-                            .into_any_element()
+                        let paint = gpui::AnyView::from(self.grid_paint.clone());
+                        if self.grid_paint.read(cx).is_animating() {
+                            // Repainting a cached parent forces its cached children
+                            // to refresh too. Keep the animated wrapper uncached so
+                            // the independent live-text cache survives fade frames.
+                            paint.into_any_element()
+                        } else {
+                            paint
+                                .cached(gpui::StyleRefinement::default().w_full().h(px(height)))
+                                .into_any_element()
+                        }
                     })
                     .children(pictures_over)
                     .children(copy_el)
@@ -16749,8 +16861,9 @@ mod tests {
         // anything, because the pane's handler runs first.
         assert_eq!(alt_char("k"), None);
         // ...and the neighbouring close chord is a DIFFERENT layer: ctrl+w is
-        // intercepted in `on_key` as close-tab and never gets here, so it keeps
-        // its werase encoding. Asserted so the two rungs stay distinguishable.
+        // taken in `on_key` while a document box is up, and with none it gets
+        // here and must still be werase. Asserted so the two rungs stay
+        // distinguishable.
         assert_eq!(bytes("ctrl-w"), Some(vec![0x17]));
         // ctrl+alt+arrows walk the LEFT BAR's tree — the workspace's, and never
         // PTY bytes. Covered by the blanket `m.control` arm; asserted because

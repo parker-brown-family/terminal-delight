@@ -123,10 +123,11 @@ pub enum Layer {
     /// The inline rename box in the header, also drawn on both faces, also a
     /// caret you can see. Same terms as [`Layer::Sticky`].
     Rename,
-    /// A document floating over the terminal face. Escape closes it, and
-    /// [`send_chord`] is its ↪ while its bar draws one; that is all it takes:
-    /// every other key still reaches the shell underneath, which is the whole
-    /// point of reading beside it rather than instead of it.
+    /// A document floating over the terminal face. Escape closes it,
+    /// [`send_chord`] is its ↪ while its bar draws one, and [`glow_chord`]
+    /// turns it; that is all it takes: every other key still reaches the
+    /// shell underneath, which is the whole point of reading beside it rather
+    /// than instead of it.
     ///
     /// Below [`Layer::Sticky`] and [`Layer::Rename`], so a caret blinking
     /// somewhere else on the pane keeps its own Escape.
@@ -233,6 +234,46 @@ pub fn send_chord(key: &str, control: bool, shift: bool, alt: bool) -> bool {
     key == "enter" && control && shift && !alt
 }
 
+/// A turn of a floating document from the keyboard: one step, or most of
+/// the view, `-1` towards the top and `1` towards the end.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GlowMove {
+    Step(i8),
+    Page(i8),
+}
+
+/// ctrl+↑/↓ steps the floating square, ctrl+shift+↑/↓ pages it, and with its
+/// note box open the same chords turn the notes.
+///
+/// Parker, 2026-10-21, laying the modifiers out by surface: ctrl for the
+/// floating square, alt for the panes, ctrl+alt for the left spine. Alt+arrows
+/// and ctrl+alt were already those. The square had nothing, so reading a
+/// brief beside an agent needed the wheel. Paging is on shift rather than on
+/// ctrl+PageUp/PageDown, which switch tabs and keep doing so with a square up:
+/// his pick, over taking them while the square floats.
+///
+/// What it costs: while a square floats, ctrl+↑/↓ and ctrl+shift+↑/↓ do not
+/// reach the shell as `CSI 1;5A` and `CSI 1;6A`. Word motion is ctrl+←/→, which
+/// stays the shell's. With no square up nothing is taken.
+///
+/// Takes the parts rather than a [`Key`], as [`send_chord`] does, so the note
+/// box, which reads a `gpui::Keystroke`, asks the same question.
+pub fn glow_chord(key: &str, control: bool, shift: bool, alt: bool) -> Option<GlowMove> {
+    if !control || alt {
+        return None;
+    }
+    let dir = match key {
+        "up" => -1,
+        "down" => 1,
+        _ => return None,
+    };
+    Some(if shift {
+        GlowMove::Page(dir)
+    } else {
+        GlowMove::Step(dir)
+    })
+}
+
 /// One rung: the layer, and whether it claims this keystroke.
 type Rung = (Layer, fn(&Key, &Up) -> bool);
 
@@ -268,7 +309,8 @@ const LADDER: [Rung; 13] = [
         u.float
             && (u.float_caret
                 || k.key == "escape"
-                || (u.float_sends && send_chord(k.key, k.control, k.shift, k.alt)))
+                || (u.float_sends && send_chord(k.key, k.control, k.shift, k.alt))
+                || (!k.platform && glow_chord(k.key, k.control, k.shift, k.alt).is_some()))
     }),
     (Layer::Document, |_, u| u.document),
     (Layer::Bench, |_, u| u.bench),
@@ -324,9 +366,9 @@ pub fn human_turn_chord(k: &Key) -> bool {
 /// - A PLAIN arrow walks the bench's rail and a PLAIN escape peels its overlays.
 ///   Only the modified forms leave.
 pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
-    // ctrl+alt+<anything> walks the left bar's tree. Matched on the modifiers
-    // alone, because that pair is not an editing chord anywhere.
-    if control && alt {
+    // Backspace belongs to the active editor: Ctrl+Shift+Alt+Backspace clears
+    // its input. The other Ctrl+Alt keys retain the tree-navigation route.
+    if control && alt && key != "backspace" {
         return true;
     }
     if !alt {
@@ -407,18 +449,35 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
             if k.key == "v" && (note_caret(up) || up.sticky || up.rename) {
                 return false;
             }
-            // The panels and the clipboard. Shift is what keeps raw ctrl+a / ^D /
-            // ^G / ^U reaching the pseudoterminal.
+            // The panels, the clipboard and closing the tab. Shift is what keeps
+            // raw ctrl+a / ^D / ^G / ^U / ^W reaching the pseudoterminal.
             return matches!(
                 k.key,
-                "t" | "c" | "v" | "k" | "a" | "b" | "n" | "m" | "z" | "u" | "y" | "d" | "g" | "f"
+                "t" | "c"
+                    | "v"
+                    | "k"
+                    | "a"
+                    | "b"
+                    | "n"
+                    | "m"
+                    | "z"
+                    | "u"
+                    | "y"
+                    | "d"
+                    | "g"
+                    | "f"
+                    | "w"
             );
         }
-        return matches!(
-            k.key,
-            // ^W is werase, and the tab is worth more than it here.
-            "w" | "f" | "x"
-        );
+        // ctrl+w puts away the document box on top, one press per box. With no
+        // box up it is ^W, werase, again: closing the tab moved to ctrl+shift+w,
+        // because the close nearest to hand should take the smallest thing, and
+        // a whole tab of live shells was what a stray ^W used to cost. A note
+        // being written in the box keeps the chord, so the box decides.
+        if k.key == "w" {
+            return up.float && !up.float_caret;
+        }
+        return matches!(k.key, "f" | "x");
     }
     false
 }
@@ -980,6 +1039,35 @@ mod tests {
         assert_eq!(route(&named("enter"), &floating()), Layer::Terminal);
     }
 
+    /// ctrl+w is the document box's close while one is up, and ^W otherwise;
+    /// the tab's close is ctrl+shift+w whether a box is up or not.
+    #[test]
+    fn ctrl_w_closes_the_box_and_ctrl_shift_w_the_tab() {
+        let up = floating();
+        assert_eq!(route(&ctrl("w"), &up), Layer::PaneChord, "the box on top");
+        assert_eq!(route(&ctrl_shift("w"), &up), Layer::PaneChord);
+        assert_eq!(
+            route(&ctrl("w"), &Up::default()),
+            Layer::Terminal,
+            "no box: ^W reaches the shell as werase"
+        );
+        assert_eq!(route(&ctrl_shift("w"), &Up::default()), Layer::PaneChord);
+        assert_eq!(
+            route(&ctrl("w"), &on_bench()),
+            Layer::Bench,
+            "no box on the bench: the composer's kill-word"
+        );
+        let writing = Up {
+            float_caret: true,
+            ..floating()
+        };
+        assert_eq!(
+            route(&ctrl("w"), &writing),
+            Layer::Float,
+            "a note being written in the box hears the chord first"
+        );
+    }
+
     /// ctrl+shift+enter is ↪ over a square whose bar draws the button, and
     /// goes where it always went over one that does not — or with no square
     /// at all. The window's and the pane's chords still pass it by.
@@ -1028,7 +1116,12 @@ mod tests {
             assert_eq!(route(&k, &up), Layer::Float, "{k:?}");
         }
         assert_eq!(route(&alt("w"), &up), Layer::Window);
-        assert_eq!(route(&ctrl("w"), &up), Layer::PaneChord);
+        assert_eq!(route(&ctrl_shift("w"), &up), Layer::PaneChord);
+        assert_eq!(
+            route(&ctrl("w"), &up),
+            Layer::Float,
+            "the note's, not the close"
+        );
         assert_eq!(route(&alt("k"), &up), Layer::Face);
         // With no float the caret claims nothing: it is the float's.
         let stray = Up {
@@ -1036,6 +1129,56 @@ mod tests {
             ..Up::default()
         };
         assert_eq!(route(&ch("a"), &stray), Layer::Terminal);
+    }
+
+    /// ctrl for the floating square, alt for the panes, ctrl+alt for the left
+    /// spine. ctrl+↑/↓ and ctrl+shift+↑/↓ are the square's only while one
+    /// floats; ctrl+PageUp/PageDown still switch tabs over it, and with no
+    /// square the arrows are the shell's again.
+    #[test]
+    fn ctrl_arrows_turn_the_floating_square_and_nothing_else() {
+        let up = floating();
+        for k in [
+            ctrl("up"),
+            ctrl("down"),
+            ctrl_shift("up"),
+            ctrl_shift("down"),
+        ] {
+            assert_eq!(route(&k, &up), Layer::Float, "{k:?} over a square");
+            assert_eq!(
+                route(&k, &Up::default()),
+                Layer::Terminal,
+                "{k:?} with none"
+            );
+        }
+        assert_eq!(
+            glow_chord("up", true, false, false),
+            Some(GlowMove::Step(-1))
+        );
+        assert_eq!(
+            glow_chord("down", true, true, false),
+            Some(GlowMove::Page(1))
+        );
+        assert_eq!(
+            route(&ctrl("pageup"), &up),
+            Layer::Terminal,
+            "the tabs' chord"
+        );
+        assert_eq!(route(&ctrl("left"), &up), Layer::Terminal, "word motion");
+        assert_eq!(route(&alt("up"), &up), Layer::Window, "pane focus");
+        let spine = Key {
+            key: "up",
+            control: true,
+            alt: true,
+            ..Key::default()
+        };
+        assert_eq!(route(&spine, &up), Layer::Window, "the left spine");
+        assert_eq!(glow_chord("up", true, false, true), None);
+        assert_eq!(
+            route(&named("up"), &up),
+            Layer::Terminal,
+            "a plain arrow is the shell's"
+        );
     }
 
     /// Every paste chord goes to a note being written, on the square and on
@@ -1237,7 +1380,11 @@ mod tests {
             Layer::PaneChord,
             "the pane's chord"
         );
-        assert_eq!(route(&ctrl("w"), &doc), Layer::PaneChord, "closing the tab");
+        assert_eq!(
+            route(&ctrl_shift("w"), &doc),
+            Layer::PaneChord,
+            "closing the tab"
+        );
         assert_eq!(route(&alt("k"), &doc), Layer::Face, "alt+k to the shell");
         assert_eq!(route(&named("f1"), &doc), Layer::Help);
         assert_eq!(
@@ -1289,9 +1436,9 @@ mod tests {
             "ctrl+shift+b opens the left bar on either face"
         );
         assert_eq!(
-            route(&ctrl("w"), &bench),
+            route(&ctrl_shift("w"), &bench),
             Layer::PaneChord,
-            "ctrl+w closes the tab on either face"
+            "ctrl+shift+w closes the tab on either face"
         );
         // The window's chords: the complaint that started this.
         assert_eq!(
@@ -1435,7 +1582,14 @@ mod tests {
         );
         assert!(pane_chord(&alt("backspace"), &stuck));
 
-        assert!(pane_chord(&ctrl("w"), &nothing), "^W closes the tab");
+        assert!(
+            !pane_chord(&ctrl("w"), &nothing),
+            "^W is werase with no box up"
+        );
+        assert!(
+            pane_chord(&ctrl_shift("w"), &nothing),
+            "ctrl+shift+w closes the tab"
+        );
         assert!(pane_chord(&ctrl("f"), &nothing));
         assert!(pane_chord(&ctrl_shift("f"), &nothing), "find across panes");
         assert!(pane_chord(&alt("s"), &nothing));
@@ -1663,5 +1817,69 @@ mod tests {
             doc_caret: true,
         };
         assert_eq!(route(&named("f1"), &everything), Layer::Help);
+    }
+
+    #[test]
+    fn deletion_chords_reach_the_active_editor_even_with_a_note_stuck() {
+        for (control, alt) in [(false, false), (true, false), (true, true)] {
+            let key = Key {
+                key: "backspace",
+                shift: true,
+                control,
+                alt,
+                ..Key::default()
+            };
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        note: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Terminal
+            );
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        bench: true,
+                        note: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Bench
+            );
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        sticky: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Sticky
+            );
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        rename: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Rename
+            );
+            assert_eq!(
+                route(
+                    &key,
+                    &Up {
+                        document: true,
+                        ..Up::default()
+                    }
+                ),
+                Layer::Document
+            );
+        }
     }
 }

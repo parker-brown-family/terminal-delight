@@ -1,0 +1,76 @@
+{
+  "default": "2,594 passed; 10 ignored",
+  "default_suites": [
+    [
+      "2478",
+      "9"
+    ],
+    [
+      "9",
+      "0"
+    ],
+    [
+      "2",
+      "0"
+    ],
+    [
+      "4",
+      "0"
+    ],
+    [
+      "8",
+      "0"
+    ],
+    [
+      "84",
+      "1"
+    ],
+    [
+      "9",
+      "0"
+    ]
+  ],
+  "fallback": "2,541 passed; 10 ignored",
+  "fallback_suites": [
+    [
+      "2425",
+      "9"
+    ],
+    [
+      "9",
+      "0"
+    ],
+    [
+      "2",
+      "0"
+    ],
+    [
+      "4",
+      "0"
+    ],
+    [
+      "8",
+      "0"
+    ],
+    [
+      "84",
+      "1"
+    ],
+    [
+      "9",
+      "0"
+    ]
+  ],
+  "commands": [
+    "cargo test --locked -j 3 -- --test-threads=1",
+    "cargo test --locked --features core-alacritty -j 3 -- --test-threads=1",
+    "cargo fmt -- --check",
+    "cargo clippy --locked -- -D warnings",
+    "cargo clippy --locked --features core-alacritty -- -D warnings",
+    "cargo build --release --locked -j 3"
+  ],
+  "binary_sha256": "fb145f11e537e9332f6e9bd4ee587f34bab30f361aab49f7d7ca70c39b79ccf0",
+  "patch_replay": "Fresh pinned worktree; all patches apply and three GPU files compare exactly.",
+  "gpu_cost": "unmeasured",
+  "date": "2026-10-20"
+}

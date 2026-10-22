@@ -4,7 +4,8 @@
 //! other pane keeps its exact place. ctrl+shift+t / [+]: new tab · ctrl+shift+u|y: Σ usage ·
 //! ctrl+pgup/pgdn: switch · right-click tab: rename · alt+arrows: pane focus
 //! by direction · ctrl+arrows: word-jump in the shell · alt+v / alt+h: split ↔ / ↕
-//! alt+w: close the focused PANE (ctrl+w closes the whole tab) ·
+//! alt+w: close the focused PANE (ctrl+shift+w closes the whole tab, ctrl+w the
+//! document box over a pane) ·
 //! alt+k: flip the focused pane between its TERMINAL and WORKBENCH faces ·
 //! alt+g: open or close Git coordination ·
 //! ctrl+alt+arrows: walk the left bar's tree (→ opens a branch, then steps in;
@@ -2315,7 +2316,7 @@ struct Deleted {
 /// What one retirement is holding.
 ///
 /// Every way of ending something in this application puts one of these in the
-/// trash instead of hanging up: the bay, the ✕, ctrl+w, alt+w, and the two menu
+/// trash instead of hanging up: the bay, the ✕, ctrl+shift+w, alt+w, and the two menu
 /// rows. They differ only in how they come back — a branch by its tab indices,
 /// a pane by the split it sat in — which is why this is an enum and not two
 /// trashes.
@@ -5124,7 +5125,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         ws.close_pane(pane.entity_id(), window, cx);
     })
     .detach();
-    // Ctrl+W in a pane → close the whole active tab, always via the confirm dialog
+    // Ctrl+Shift+W in a pane → close the whole active tab, always via the confirm dialog
     cx.subscribe(pane, |ws, _pane, _ev: &RequestCloseTab, cx| {
         ws.confirm_close_active_tab(cx);
     })
@@ -7952,6 +7953,16 @@ impl Workspace {
             crawl_depth: K::CrawlDepth.to_percent(g.crawl_depth),
             crt: g.crt,
             phosphor: K::Phosphor.to_percent(g.phosphor),
+            image_glow: g.image_glow.map(|v| K::ImageGlow.to_percent(v)),
+            inactive_image_glow: g
+                .inactive_image_glow
+                .map(|v| K::InactiveImageGlow.to_percent(v)),
+            inactive_text: g.inactive_text.map(|v| K::InactiveText.to_percent(v)),
+            afterglow_ms: g.afterglow_ms,
+            cursor_linger_ms: g.cursor_linger_ms,
+            off_cursor_linger_ms: g.off_cursor_linger_ms,
+            inactive_cursor_linger_ms: g.inactive_cursor_linger_ms,
+            inactive_off_cursor_linger_ms: g.inactive_off_cursor_linger_ms,
         }
     }
 
@@ -8010,6 +8021,36 @@ impl Workspace {
         }
         if let Some(p) = patch.crawl_depth {
             set!(K::CrawlDepth, p);
+        }
+        if let Some(p) = patch.inactive_image_glow {
+            set!(K::InactiveImageGlow, p);
+        }
+        if let Some(p) = patch.inactive_text {
+            set!(K::InactiveText, p);
+        }
+        if let Some(ms) = patch.afterglow_ms {
+            g.set(K::AfterglowMs, ms);
+            touched.insert(theme::GradeChannel::AfterglowMs);
+        }
+        // Apply the legacy reset before explicit independent overrides.
+        if let Some(ms) = patch.cursor_linger_ms {
+            g.set(K::CursorLingerMs, ms);
+            touched.insert(theme::GradeChannel::CursorLingerMs);
+        }
+        if let Some(ms) = patch.off_cursor_linger_ms {
+            g.set(K::OffCursorLingerMs, ms);
+            touched.insert(theme::GradeChannel::OffCursorLingerMs);
+        }
+        if let Some(ms) = patch.inactive_cursor_linger_ms {
+            g.set(K::InactiveCursorLingerMs, ms);
+            touched.insert(theme::GradeChannel::InactiveCursorLingerMs);
+        }
+        if let Some(ms) = patch.inactive_off_cursor_linger_ms {
+            g.set(K::InactiveOffCursorLingerMs, ms);
+            touched.insert(theme::GradeChannel::InactiveOffCursorLingerMs);
+        }
+        if let Some(p) = patch.image_glow {
+            set!(K::ImageGlow, p);
         }
         if let Some(p) = patch.phosphor {
             set!(K::Phosphor, p);
@@ -18668,7 +18709,7 @@ impl Workspace {
         }
     }
 
-    /// Ctrl+W: always raise the confirmation dialog for the active tab — even a
+    /// Ctrl+Shift+W: always raise the confirmation dialog for the active tab — even a
     /// single-pane tab. Closing a tab ends live shells, so it's never silent.
     fn confirm_close_active_tab(&mut self, cx: &mut Context<Self>) {
         if self.active < self.tabs.len() {
@@ -19652,7 +19693,7 @@ impl Workspace {
                 .position(|p| p.focus_handle(cx).is_focused(window))
                 .unwrap_or(0);
             // Alt+W closes the FOCUSED PANE — the rung that was missing from
-            // the middle of the close ladder. Ctrl+W already closed the whole
+            // the middle of the close ladder. Ctrl+Shift+W closes the whole
             // tab and Super+W closes the tile in Omarchy, but the one unit
             // Terminal Delight owns by itself had no chord at all, only the
             // header ×. Same path as that ×: one shell ends, the split collapses
@@ -20941,8 +20982,18 @@ impl Workspace {
                         | theme::GradeKey::TextSize
                         | theme::GradeKey::BenchSize
                         | theme::GradeKey::Phosphor
-                        | theme::GradeKey::Glare => {
+                        | theme::GradeKey::Glare
+                        | theme::GradeKey::ImageGlow
+                        | theme::GradeKey::InactiveImageGlow
+                        | theme::GradeKey::InactiveText => {
                             format!("{}%", (v * 100.).round() as i32)
+                        }
+                        theme::GradeKey::AfterglowMs
+                        | theme::GradeKey::CursorLingerMs
+                        | theme::GradeKey::OffCursorLingerMs
+                        | theme::GradeKey::InactiveCursorLingerMs
+                        | theme::GradeKey::InactiveOffCursorLingerMs => {
+                            format!("{} ms", v.round() as i32)
                         }
                         theme::GradeKey::CrawlAngle => format!("{}\u{00b0}", v.round() as i32),
                         theme::GradeKey::CrawlDepth => format!("{v:.1}\u{00d7}"),
@@ -29145,6 +29196,7 @@ impl Render for Workspace {
             let is_pane = matches!(scope, MenuScope::Pane(_));
             let cur = self.choice_for(&scope, cx);
             let grade = cur.grade;
+            let light_preset = self.scope_theme(&scope, cx).terminal_light;
             // Grade-group "follow outer" state — independent of the theme tray.
             let following = match &scope {
                 MenuScope::Pane(p) => p.read(cx).appearance.follows_outer_grade(),
@@ -29157,28 +29209,88 @@ impl Render for Workspace {
                     .child(s.to_string())
             };
             let t = self.lang.strings();
-            let mut rows = div().flex().flex_col().gap_1();
-            for (key, _name) in theme::Grade::CHANNELS {
-                let name = match key {
-                    theme::GradeKey::TextSize => t.g_text_size,
-                    theme::GradeKey::BenchSize => t.g_bench_size,
-                    theme::GradeKey::Brightness => t.g_brightness,
-                    theme::GradeKey::Contrast => t.g_contrast,
-                    theme::GradeKey::Colour => t.g_colour,
-                    theme::GradeKey::Text => t.g_text,
-                    theme::GradeKey::Background => t.g_background,
-                    theme::GradeKey::Gamma => t.g_gamma,
-                    theme::GradeKey::Scale => t.g_menu_bar,
-                    theme::GradeKey::Phosphor => t.g_phosphor,
-                    _ => _name,
-                };
-                // A main gauge always holds its own position (pinned by
-                // `main_gauges_always_hold_a_position`); only a dial left to the
-                // theme answers `None`, and those live in the CRT section.
-                if let Some(v) = grade.get(key) {
-                    rows = rows.child(self.slider_row(key, name, v, &th, cx));
+            use theme::GradeKey as G;
+            let active_linger = grade.linger_for_focus(true);
+            let inactive_linger = grade.linger_for_focus(false);
+            let groups = [
+                (
+                    t.g_type_hdr,
+                    vec![
+                        (G::TextSize, t.g_text_size, grade.text_size),
+                        (G::BenchSize, t.g_bench_size, grade.bench_gauge()),
+                        (G::Scale, t.g_menu_bar, grade.scale),
+                    ],
+                ),
+                (
+                    t.g_picture_hdr,
+                    vec![
+                        (G::Brightness, t.g_brightness, grade.brightness),
+                        (G::Contrast, t.g_contrast, grade.contrast),
+                        (G::Colour, t.g_colour, grade.colour),
+                        (G::Background, t.g_background, grade.background),
+                        (G::Gamma, t.g_gamma, grade.gamma),
+                        (G::Phosphor, t.g_phosphor, grade.phosphor),
+                    ],
+                ),
+                (
+                    t.g_active_hdr,
+                    vec![
+                        (G::Text, t.g_text, grade.text),
+                        (
+                            G::ImageGlow,
+                            t.d_image_glow,
+                            grade.image_glow_at_edge(light_preset),
+                        ),
+                        (
+                            G::CursorLingerMs,
+                            t.g_cursor_linger,
+                            active_linger.cursor_ms,
+                        ),
+                        (
+                            G::OffCursorLingerMs,
+                            t.g_off_cursor_linger,
+                            active_linger.off_cursor_ms,
+                        ),
+                    ],
+                ),
+                (
+                    t.g_inactive_hdr,
+                    vec![
+                        (
+                            G::InactiveText,
+                            t.g_text_level,
+                            grade.inactive_text_at_edge(light_preset),
+                        ),
+                        (
+                            G::InactiveImageGlow,
+                            t.d_image_glow,
+                            grade.inactive_image_glow_at_edge(),
+                        ),
+                        (
+                            G::InactiveCursorLingerMs,
+                            t.g_cursor_linger,
+                            inactive_linger.cursor_ms,
+                        ),
+                        (
+                            G::InactiveOffCursorLingerMs,
+                            t.g_off_cursor_linger,
+                            inactive_linger.off_cursor_ms,
+                        ),
+                    ],
+                ),
+            ];
+            let mut rows = div().flex().flex_col().gap_2();
+            for (heading, controls) in groups {
+                let mut section = div().flex().flex_col().gap_1().child(label(heading));
+                for (key, name, value) in controls {
+                    section = section.child(self.slider_row(key, name, value, &th, cx));
+                    if key == G::InactiveText {
+                        section = section.child(label(t.g_text_relative));
+                    }
                 }
+                rows = rows.child(section);
             }
+            rows = rows.child(label(t.g_afterglow_hint));
             // The foot of the tray: one faint disclosure row per easter egg.
             // Deliberately quieter than every label above it — somebody has to
             // go looking.
@@ -29191,7 +29303,7 @@ impl Render for Workspace {
                     .child(format!("{} {}", if open { "▾" } else { "▸" }, name))
             };
             let panel_w: f32 = sk.fit(300., 320.);
-            const PANEL_H_EST: f32 = 346.; // 10 slider rows + reset + follow-outer
+            const PANEL_H_EST: f32 = 700.; // grouped sliders, hints, reset and inheritance
             let mut panel = sk.sheet().id("osd-panel").absolute().w(px(panel_w));
             let tray_top = match self.osd_at {
                 Some(at) => {
@@ -32324,7 +32436,8 @@ impl Render for Workspace {
                         row("Alt+A", s.launch_agent),
                         row("Alt+L", s.lookup),
                         row("Alt+G", s.git_coordination),
-                        row("Ctrl+W", s.close_tab),
+                        row("Ctrl+W", s.close_doc),
+                        row("Ctrl+Shift+W", s.close_tab),
                         row("Ctrl+Alt+↑↓←→", s.walk_tree),
                         row("Ctrl+Alt+1…9", s.jump_branch),
                         row("Ctrl+Alt+R", s.rename_row),
@@ -32340,6 +32453,9 @@ impl Render for Workspace {
                         row(s.k_rclick, s.rclick),
                         row("Ctrl+Shift+C / V", s.copy_paste),
                         row("Ctrl+X", s.cut),
+                        row("Shift+Backspace", s.delete_word),
+                        row("Ctrl+Shift+Backspace", s.delete_line),
+                        row("Ctrl+Shift+Alt+Backspace", s.clear_input),
                         row(s.k_ctrl_arrows, s.word_jump),
                         row("Ctrl+F", s.find),
                         row("Ctrl+Shift+F", s.find_all),
@@ -32368,6 +32484,7 @@ impl Render for Workspace {
                     vec![
                         row(s.k_scroll_wheel, s.scroll_hist),
                         row("Ctrl+Shift+K", s.clear_scroll),
+                        row("Ctrl+↑↓ · Ctrl+Shift+↑↓", s.turn_square),
                     ],
                 ))
                 .child(section(
@@ -44514,5 +44631,117 @@ mod nav_tests {
             (1usize, (0., 120., 500., 600.)),
         ];
         assert_eq!(neighbour_in_dir(from, &cands, "left"), Some(1));
+    }
+    #[test]
+    fn image_glow_config_patch_pins_only_it_and_reports_unset() {
+        let mut grade = theme::Grade::neutral();
+        assert_eq!(Workspace::grade_report(&grade).image_glow, None);
+        let patch: mcp::ConfigPatch = serde_json::from_str(r#"{"image_glow":35}"#).unwrap();
+        let touched = Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(
+            touched,
+            theme::GradePins::only(theme::GradeChannel::ImageGlow)
+        );
+        assert_eq!(Workspace::grade_report(&grade).image_glow, Some(35.0));
+        let other: mcp::ConfigPatch = serde_json::from_str(r#"{"brightness":60}"#).unwrap();
+        Workspace::apply_config_patch(&mut grade, &other);
+        assert_eq!(Workspace::grade_report(&grade).image_glow, Some(35.0));
+        let off: mcp::ConfigPatch =
+            serde_json::from_str(r#"{"image_glow":0,"crt":false}"#).unwrap();
+        Workspace::apply_config_patch(&mut grade, &off);
+        assert_eq!(grade.image_glow, Some(0.0));
+        assert!(!grade.crt);
+    }
+
+    #[test]
+    fn terminal_light_patch_uses_percentages_and_explicit_milliseconds() {
+        let mut grade = theme::Grade::default();
+        let patch: mcp::ConfigPatch = serde_json::from_str(
+            r#"{"image_glow":15,"inactive_image_glow":65,"inactive_text":75,"afterglow_ms":360}"#,
+        )
+        .unwrap();
+        let touched = Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(touched.iter().count(), 8); // legacy timing owns all four new trails
+        let report = Workspace::grade_report(&grade);
+        assert!((report.image_glow.unwrap() - 15.0).abs() < 0.0001);
+        assert!((report.inactive_image_glow.unwrap() - 65.0).abs() < 0.0001);
+        assert!((report.inactive_text.unwrap() - 75.0).abs() < 0.0001);
+        assert_eq!(report.afterglow_ms, Some(360.0));
+        let patch: mcp::ConfigPatch = serde_json::from_str(r#"{"afterglow_ms":0}"#).unwrap();
+        let touched = Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(
+            touched,
+            theme::GradePins::only(theme::GradeChannel::AfterglowMs)
+        );
+        assert_eq!(grade.afterglow_ms, Some(0.0));
+        assert_eq!(grade.inactive_text, Some(0.75));
+    }
+
+    #[test]
+    fn linger_patch_uses_independent_milliseconds_and_preserves_omission() {
+        let mut grade = theme::Grade::default();
+        let report = Workspace::grade_report(&grade);
+        assert_eq!(report.cursor_linger_ms, None);
+        assert_eq!(report.off_cursor_linger_ms, None);
+        assert_eq!(report.inactive_cursor_linger_ms, None);
+        assert_eq!(report.inactive_off_cursor_linger_ms, None);
+        let patch = serde_json::from_str(r#"{"cursor_linger_ms":110,"off_cursor_linger_ms":325,"inactive_cursor_linger_ms":40,"inactive_off_cursor_linger_ms":600}"#).unwrap();
+        let touched = Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(touched.iter().count(), 4);
+        let report = Workspace::grade_report(&grade);
+        assert_eq!(report.cursor_linger_ms, Some(110.0));
+        assert_eq!(report.off_cursor_linger_ms, Some(325.0));
+        assert_eq!(report.inactive_cursor_linger_ms, Some(40.0));
+        assert_eq!(report.inactive_off_cursor_linger_ms, Some(600.0));
+        let patch = serde_json::from_str(r#"{"cursor_linger_ms":0}"#).unwrap();
+        let touched = Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(
+            touched,
+            theme::GradePins::only(theme::GradeChannel::CursorLingerMs)
+        );
+        assert_eq!(
+            grade.linger_for_focus(true),
+            theme::TextLinger {
+                cursor_ms: 0.0,
+                off_cursor_ms: 325.0
+            }
+        );
+        assert_eq!(
+            grade.linger_for_focus(false),
+            theme::TextLinger {
+                cursor_ms: 40.0,
+                off_cursor_ms: 600.0
+            }
+        );
+        let patch = serde_json::from_str(r#"{"cursor_linger_ms":null}"#).unwrap();
+        assert!(Workspace::apply_config_patch(&mut grade, &patch).is_empty());
+        assert_eq!(grade.cursor_linger_ms, Some(0.0));
+        let patch = serde_json::from_str(r#"{"cursor_linger_ms":900,"off_cursor_linger_ms":-10,"inactive_cursor_linger_ms":-1,"inactive_off_cursor_linger_ms":900}"#).unwrap();
+        Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(
+            grade.linger_for_focus(true),
+            theme::TextLinger {
+                cursor_ms: 220.0,
+                off_cursor_ms: 0.0
+            }
+        );
+        assert_eq!(
+            grade.linger_for_focus(false),
+            theme::TextLinger {
+                cursor_ms: 0.0,
+                off_cursor_ms: 650.0
+            }
+        );
+        let patch = serde_json::from_str(r#"{"afterglow_ms":0,"cursor_linger_ms":75}"#).unwrap();
+        Workspace::apply_config_patch(&mut grade, &patch);
+        assert_eq!(
+            grade.linger_for_focus(true),
+            theme::TextLinger {
+                cursor_ms: 75.0,
+                off_cursor_ms: 0.0
+            }
+        );
+        assert_eq!(grade.linger_for_focus(false), theme::TextLinger::default());
+        assert!(serde_json::from_str::<mcp::ConfigPatch>(r#"{"curser_linger_ms":50}"#).is_err());
     }
 }

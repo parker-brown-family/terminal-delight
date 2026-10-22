@@ -326,6 +326,11 @@ impl Backend for MarkdownDoc {
         _sf: f32,
         _cx: &mut Context<DocumentView>,
     ) -> bool {
+        // The note box sits over the column: a turn there turns its notes.
+        let dy = super::markdown::wheel_px(delta, line);
+        if let Some(moved) = self.notes.as_mut().and_then(|l| l.wheel_box(dy)) {
+            return moved;
+        }
         MarkdownDoc::wheel(self, delta, line, Some(f32::from(view.height)))
     }
 

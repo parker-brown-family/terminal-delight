@@ -7,6 +7,28 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added for 0.5.0 development
+
+- **Terminal lighting follows focus in every skin.** Active and inactive panes
+  have separate letter-glow controls, and inactive text can dim relative to the
+  active setting. GAUGES groups type, picture, active terminals and inactive
+  terminals. Standard starts at 20% active glow and 45% inactive
+  text; Intrusive uses 37% and 52%. Both use 100% inactive glow. Explicit settings
+  take priority, including zero. These effects also work with CRT glass off.
+- **Erased passages fade where they were drawn.** New text appears immediately;
+  old letters retain their original colour before selection/cursor decoration.
+  Active and inactive terminals each have cursor-linger and off-cursor-linger
+  sliders: text changes range from 0–220ms and erased passages from 0–650ms.
+  The existing 220/650ms appearance is the maximum and default; zero disables
+  each trail independently. Shorter settings have no hidden minimum. Old saved
+  afterglow zero stays off. The retained history is bounded per pane.
+- **Backspace deletes selections across wrapped input.** Shift+Backspace deletes
+  the previous word, Ctrl+Shift+Backspace the entire current logical line, and
+  Ctrl+Shift+Alt+Backspace all editable input, including literal newlines. The
+  terminal gestures use Readline-compatible editing; full-screen editors keep
+  their own keys. The workbench composer has the same edits with undo. F1 Help
+  lists all three shortcuts in all nine languages.
+
 ### Upgrading from 0.3.0
 
 Nothing you saved is renamed or moved. No config or state file was renamed or
@@ -417,6 +439,15 @@ the changes you may notice in the first hour.
 
 ### Changed
 
+- **Ctrl+↑/↓ steps a floating document; Ctrl+Shift+↑/↓ pages it.** With its
+  note box open the same chords, and plain PageUp/PageDown, turn the notes. The
+  Document face takes them too. Ctrl+PageUp/PageDown still switch tabs, and
+  with no document floating the chords reach the shell as before.
+- **Ctrl+W closes the document on top; Ctrl+Shift+W closes the tab.** A
+  picture, page or clip opened in a box over a pane now goes away with Ctrl+W,
+  one box per press, as Escape and its ✕ already did. Closing the whole tab
+  moved to Ctrl+Shift+W and still asks first. With no box open, Ctrl+W reaches
+  the shell or agent again as delete-word.
 - **Model menus name the models your agents actually offer.** The launcher,
   the saved launch defaults and the workbench's live model dial read their
   choices and reasoning levels from the installed Codex or Claude, and cards and
@@ -609,6 +640,11 @@ the changes you may notice in the first hour.
   the pane and Super+V typed `^V`. A pane now takes Ctrl+Insert as copy and
   Shift+Insert as paste, the chords every other terminal takes, and the README
   gives the one-line Hyprland rule that tags Terminal Delight a terminal. (#892)
+- **A note box holds any number of notes.** Notes past the box's height were
+  saved but clipped out of sight with no way to scroll to them. The box now
+  opens on the newest, the wheel turns back to the oldest, and a note just
+  added is always in view. A hidden note's delete no longer takes a press
+  under the draft.
 - **Launching Codex no longer picks a retired model.** The launcher's Codex
   menu offered `gpt-5-codex` and `gpt-5` and passed one with `--model`, which a
   current Codex account rejects with HTTP 400. Codex now starts on the model in

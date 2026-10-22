@@ -1,0 +1,88 @@
+{
+  "layouts": [
+    {
+      "width": 390,
+      "overflow": false,
+      "coverage": [
+        [
+          "figure",
+          3,
+          3
+        ],
+        [
+          ".grill .ask",
+          1,
+          1
+        ],
+        [
+          "table.wide tbody tr",
+          4,
+          4
+        ]
+      ],
+      "brokenImages": 0,
+      "external": [],
+      "svg": [
+        true
+      ],
+      "wallpaper": "\"wallpaper · hackerman · omarchy.png\""
+    },
+    {
+      "width": 968,
+      "overflow": false,
+      "coverage": [
+        [
+          "figure",
+          3,
+          3
+        ],
+        [
+          ".grill .ask",
+          1,
+          1
+        ],
+        [
+          "table.wide tbody tr",
+          4,
+          4
+        ]
+      ],
+      "brokenImages": 0,
+      "external": [],
+      "svg": [
+        true
+      ],
+      "wallpaper": "\"wallpaper · hackerman · omarchy.png\""
+    },
+    {
+      "width": 1100,
+      "overflow": false,
+      "coverage": [
+        [
+          "figure",
+          3,
+          3
+        ],
+        [
+          ".grill .ask",
+          1,
+          1
+        ],
+        [
+          "table.wide tbody tr",
+          4,
+          4
+        ]
+      ],
+      "brokenImages": 0,
+      "external": [],
+      "svg": [
+        true
+      ],
+      "wallpaper": "\"wallpaper · hackerman · omarchy.png\""
+    }
+  ],
+  "errors": [],
+  "notes": "note, concurrence, anchored export, embedded save and reopen passed",
+  "frames": "all six recorded paragraph/word frames changed on click"
+}

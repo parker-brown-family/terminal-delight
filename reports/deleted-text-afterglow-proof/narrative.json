@@ -1,0 +1,340 @@
+{
+  "file": "/home/parker/Work/td-phosphor-glow-lab/terminal-delight/reports/2026-10-21-deleted-text-afterglow.html",
+  "subject": "Whole deleted terminal passages now fade for at least 450ms, with the approved Standard and Intrusive defaults ready in a native testing instance.",
+  "reader": "Parker, who just selected these lighting values from native GAUGES screenshots and asked for complete deleted words and paragraphs to linger as the cursor moves.",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.88
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.38
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "argument",
+      "probabilities": {
+        "journey": 0.39,
+        "catalogue": 0.07,
+        "argument": 0.52,
+        "report": 0.01,
+        "none_of_the_above": 0.01
+      },
+      "confidence": 0.4
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Deleted text now lingers",
+      "text": "You wanted the whole deleted word or paragraph to remain on the glass as the cursor moves away. The new build keeps those old letters at their previous positions for a longer fade, and uses the Standard and Intrusive defaults from your screenshots. \n\n450 ms \nMinimum fade for erased text. Ordinary replacements start at 220 ms. New text appears immediately.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 0.85,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.32,
+            "1": 0.52,
+            "2": 0.15,
+            "3": 0.01
+          },
+          "confidence": 0.51
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.07
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.08
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.09,
+            "complication": 0.01,
+            "turn": 0.71,
+            "consequence": 0.12,
+            "resolution": 0.03,
+            "aside": 0.03,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.66
+        }
+      },
+      "latency_ms": 531.9397819694132,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "The whole passage stays",
+      "text": "These are recorded frames from the native terminal. The left pane erased its text; the cursor moved about 60 ms later. The untouched pane beside it changed by zero pixels. Choose the paragraph or word, then compare the three captures. \n 01 \u00b7 NATIVE ERASURE \n Wrapped paragraph Whole word \nCapture began 258 ms after erasure \n Early After 220 ms Finished \n Figure 1. The complete visible deletion survives cursor movement and the shorter replacement fade. Capture began around 258 ms after erasure; the image takes another 140\u2013150 ms to capture. The word and paragraph both remain visible, with less light than in their early frames. The finished captures begin around 650 ms. Deterministic tests verify expiry at 450 ms. Letter bloom is disabled in this timing fixture to isolate the retained glyphs. measured",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.52,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.07,
+            "1": 0.39,
+            "2": 0.49,
+            "3": 0.05
+          },
+          "confidence": 0.42
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.29
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.06,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.19,
+            "1": 0.56,
+            "2": 0.24,
+            "3": 0.01
+          },
+          "confidence": 0.55
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.23
+        },
+        "role": {
+          "type": "choice",
+          "choice": "aside",
+          "probabilities": {
+            "setup": 0.02,
+            "complication": 0.01,
+            "turn": 0.13,
+            "consequence": 0.09,
+            "resolution": 0.02,
+            "aside": 0.72,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.67
+        }
+      },
+      "latency_ms": 491.6270599933341,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "The dial controls the fade",
+      "text": "The existing Afterglow slider stays at 220 ms by default. Erased text uses the longer of that value and 450 ms. Set the slider to zero to clear all afterglow, or raise it above 450 ms to lengthen both kinds. \n 02 \u00b7 DRAWING RULE \n Figure 2. The longer erasure fade never delays current text. This timeline is drawn from Trail::observe , not from a frame-time measurement. Each pane retains at most the larger of one visible viewport and 4,096 glyphs. Bottom alignment alone preserves the old coordinates; scrolling, resizing, changing focus or theme still clears them. code-derived",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.41,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.06,
+            "1": 0.49,
+            "2": 0.42,
+            "3": 0.03
+          },
+          "confidence": 0.46
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.27
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.04,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.11,
+            "1": 0.75,
+            "2": 0.14,
+            "3": 0
+          },
+          "confidence": 0.75
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.21
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0.37,
+            "consequence": 0.59,
+            "resolution": 0.02,
+            "aside": 0.02,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.52
+        }
+      },
+      "latency_ms": 535.421194974333,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "Your two defaults",
+      "text": "The organised GAUGES now resolve unset lighting controls from the selected design. Existing values you explicitly set keep priority. Both modes use 100% inactive glow and the shared picture settings in your screenshots. \n 03 \u00b7 NATIVE GAUGES \n\n STANDARD 20% active glow \u00b7 45% inactive text \n\n INTRUSIVE 37% active glow \u00b7 52% inactive text \n Figure 3. Both native panels show the defaults you selected. The lighting fields were absent in both fixture files. Inactive text is a fraction of the active text-intensity setting, not a measured luminance ratio. New windows also start with the shared picture values shown here; older saved grades retain their compatibility values. measured",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.72,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.33,
+            "2": 0.54,
+            "3": 0.1
+          },
+          "confidence": 0.51
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.21
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.52,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.46,
+            "2": 0.48,
+            "3": 0.03
+          },
+          "confidence": 0.45
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.09
+        },
+        "role": {
+          "type": "choice",
+          "choice": "aside",
+          "probabilities": {
+            "setup": 0.03,
+            "complication": 0,
+            "turn": 0.24,
+            "consequence": 0.11,
+            "resolution": 0.06,
+            "aside": 0.56,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.49
+        }
+      },
+      "latency_ms": 505.8940309099853,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "Try it in your window",
+      "text": "The separate test instance is open on workspace 4 . Select ERASED TEXT \u00b7 220 / 450 ms : the left shell uses Standard and the right uses Intrusive. Click between them to compare focus, then run: \nafterglow-demo \nThe demo alternates ordinary replacement, whole-word deletion and a wrapped-paragraph deletion with cursor movement. Ctrl+C returns to the original screen. Your four earlier shells and their contents remain in the other tabs. Close GAUGES to see GPU letter glow; the existing panel-preview limitation remains. \n\n Deleted-text readability \nThe erasure fade starts at 450 ms. Try deleting your own words and paragraphs, and leave a note here if the trail should stay stronger or linger longer. \n\n Verification and source \nBoth full core suites passed: 2,612 / 2,559 tests , with 10 ignored in each. Both strict Clippy gates, format and the locked release build passed. New tests cover complete deleted strings, cursor movement, exact expiry, a viewport larger than the old cap and design defaults surviving a palette change. | \n | Native check | Result \n | Word and paragraph beyond 220 ms | Visible old glyphs remain; the neighboring text region is identical. \n | Ordinary replacement after 220 ms | Within one 8-bit RGB level of the settled frame. Timing starts at output emission, not the first rendered frame. \n | Erasure with afterglow zero | Early and settled text regions match exactly. \n | Live delivery | Six interactive panes, including the four earlier shell processes; the running executable matches the tested release binary. \nAn erasure is detected when any painted row loses visible graphemes. Every changed old glyph in that update receives the longer lifetime. This covers wrapped passages and prompt movement without inspecting an editor's key commands. Restoring a heading on another row cannot cancel the erasure. \nThe larger fresh text default exposed a clipped startup grid in the test fixture. Only its window height changed from 640 to 720 pixels; its intentional 100\u00d728 grid and interaction assertions remain intact. \nEvidence: native timing \u00b7 pixel comparisons \u00b7 test counts \u00b7 running instance . GPU frame cost remains unmeasured qualification work ; the GAUGES preview limitation is separately tracked. \nSource: glyph retention \u00b7 painted coordinates \u00b7 defaults . Binary SHA-256: 81eb231005af6354ed33645988a517ef646549f4ebdad566ed22cd245e9a4a06 . \n\n Dedicated effect branch \u00b7 draft \u00b7 base main \u00b7 release unassigned. This page records the new deletion behaviour; the earlier lighting review records the preceding defaults. \n . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.84,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.24,
+            "2": 0.63,
+            "3": 0.11
+          },
+          "confidence": 0.61
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.7
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.32,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.61,
+            "2": 0.34,
+            "3": 0.01
+          },
+          "confidence": 0.6
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.55
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0,
+            "turn": 0.04,
+            "consequence": 0.16,
+            "resolution": 0.48,
+            "aside": 0.3,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.39
+        }
+      },
+      "latency_ms": 528.1808159779757,
+      "failure": null
+    }
+  ]
+}

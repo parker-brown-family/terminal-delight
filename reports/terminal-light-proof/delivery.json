@@ -1,0 +1,300 @@
+{
+  "session": "phosphor-glow-test",
+  "old_pid": 622621,
+  "new_pid": 2104454,
+  "binary_sha256": "209beed8441fd9fe940b234f2cd6b488fb70ec158b48db3ca18ee0d26c92d7d6",
+  "normal_session_pid": 1329313,
+  "normal_session_still_alive": true,
+  "preserved_panes": [
+    {
+      "tab": 0,
+      "title": "Glow",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 588177,
+      "pane_id": 1,
+      "cwd": "/home/parker/Work/td-phosphor-glow-lab/terminal-delight",
+      "exposed": true
+    },
+    {
+      "tab": 0,
+      "title": "Reference \u00b7 zero glow",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 588183,
+      "pane_id": 2,
+      "cwd": "/home/parker/Work/td-phosphor-glow-lab/terminal-delight",
+      "exposed": true
+    }
+  ],
+  "panes": [
+    {
+      "tab": 0,
+      "title": "Glow",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 588177,
+      "pane_id": 1,
+      "cwd": "/home/parker/Work/td-phosphor-glow-lab/terminal-delight",
+      "exposed": true
+    },
+    {
+      "tab": 0,
+      "title": "Reference \u00b7 zero glow",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 588183,
+      "pane_id": 2,
+      "cwd": "/home/parker/Work/td-phosphor-glow-lab/terminal-delight",
+      "exposed": true
+    },
+    {
+      "tab": 1,
+      "title": "LEFT \u00b7 click to activate",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 2105139,
+      "pane_id": 3,
+      "cwd": "/home/parker/Work/td-phosphor-glow-lab/terminal-delight",
+      "exposed": true
+    },
+    {
+      "tab": 1,
+      "title": "RIGHT \u00b7 click to activate",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 2105145,
+      "pane_id": 4,
+      "cwd": "/home/parker/Work/td-phosphor-glow-lab/terminal-delight",
+      "exposed": true
+    }
+  ],
+  "client": {
+    "address": "0x57761df5bc20",
+    "mapped": true,
+    "hidden": false,
+    "visible": true,
+    "acceptsInput": true,
+    "at": [
+      16,
+      52
+    ],
+    "size": [
+      1568,
+      920
+    ],
+    "workspace": {
+      "id": 4,
+      "name": "4"
+    },
+    "floating": true,
+    "monitor": 1,
+    "class": "terminal-delight",
+    "title": "terminal-delight \u2014 phosphor-glow-test",
+    "initialClass": "terminal-delight",
+    "initialTitle": "terminal-delight \u2014 phosphor-glow-test",
+    "pid": 2104454,
+    "xwayland": false,
+    "pinned": false,
+    "pinFullscreened": false,
+    "fullscreen": 0,
+    "fullscreenClient": 0,
+    "fullscreenHandler": "default",
+    "allowedOverFullscreen": true,
+    "grouped": [],
+    "tags": [
+      "default-opacity*",
+      "terminal*"
+    ],
+    "swallowing": "0x0",
+    "focusHistoryID": 5,
+    "inhibitingIdle": false,
+    "xdgTag": "",
+    "xdgDescription": "",
+    "contentType": "none",
+    "tearingHint": false,
+    "stableId": "180006b4"
+  },
+  "settings": {
+    "configs": [
+      {
+        "target": 588177,
+        "scope": "pane",
+        "tab": 0,
+        "title": "Glow",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 12.723958969116211,
+          "contrast": 71.0859375,
+          "colour": 70.34896087646484,
+          "text": 88.234375,
+          "background": 26.54947853088379,
+          "gamma": 92.31770324707031,
+          "menu_bar": 33.333335876464844,
+          "text_size": 33.921875,
+          "bench_size": 11.510415077209473,
+          "warp": 100.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 49.434898376464844,
+          "image_glow": null,
+          "inactive_image_glow": null,
+          "inactive_text": null,
+          "afterglow_ms": null
+        }
+      },
+      {
+        "target": 588183,
+        "scope": "pane",
+        "tab": 0,
+        "title": "Reference \u00b7 zero glow",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 12.723958969116211,
+          "contrast": 71.0859375,
+          "colour": 70.34896087646484,
+          "text": 88.234375,
+          "background": 26.54947853088379,
+          "gamma": 92.31770324707031,
+          "menu_bar": 33.333335876464844,
+          "text_size": 33.921875,
+          "bench_size": 11.510415077209473,
+          "warp": 100.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 49.434898376464844,
+          "image_glow": null,
+          "inactive_image_glow": null,
+          "inactive_text": null,
+          "afterglow_ms": null
+        }
+      },
+      {
+        "target": 2105139,
+        "scope": "pane",
+        "tab": 1,
+        "title": "LEFT \u00b7 click to activate",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 12.723958969116211,
+          "contrast": 71.0859375,
+          "colour": 70.34896087646484,
+          "text": 88.234375,
+          "background": 26.54947853088379,
+          "gamma": 92.31770324707031,
+          "menu_bar": 33.333335876464844,
+          "text_size": 33.921875,
+          "bench_size": 11.510415077209473,
+          "warp": 100.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 49.434898376464844,
+          "image_glow": null,
+          "inactive_image_glow": null,
+          "inactive_text": null,
+          "afterglow_ms": null
+        }
+      },
+      {
+        "target": 2105145,
+        "scope": "pane",
+        "tab": 1,
+        "title": "RIGHT \u00b7 click to activate",
+        "mode": "SHELL",
+        "grade": {
+          "brightness": 12.723958969116211,
+          "contrast": 71.0859375,
+          "colour": 70.34896087646484,
+          "text": 88.234375,
+          "background": 26.54947853088379,
+          "gamma": 92.31770324707031,
+          "menu_bar": 33.333335876464844,
+          "text_size": 33.921875,
+          "bench_size": 11.510415077209473,
+          "warp": 100.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 49.434898376464844,
+          "image_glow": null,
+          "inactive_image_glow": null,
+          "inactive_text": null,
+          "afterglow_ms": null
+        }
+      },
+      {
+        "target": "outer",
+        "scope": "outer",
+        "grade": {
+          "brightness": 12.723958969116211,
+          "contrast": 71.0859375,
+          "colour": 70.34896087646484,
+          "text": 88.234375,
+          "background": 26.54947853088379,
+          "gamma": 92.31770324707031,
+          "menu_bar": 33.333335876464844,
+          "text_size": 33.921875,
+          "bench_size": 11.510415077209473,
+          "warp": 100.0,
+          "crawl": false,
+          "crawl_angle": 17.543859481811523,
+          "crawl_depth": 16.38796043395996,
+          "crt": false,
+          "phosphor": 49.434898376464844,
+          "image_glow": null,
+          "inactive_image_glow": null,
+          "inactive_text": null,
+          "afterglow_ms": null
+        }
+      }
+    ],
+    "instance": {
+      "session": "phosphor-glow-test",
+      "window": 2104454,
+      "build": "terminal-delight-phosphor"
+    }
+  },
+  "picture_settings": {
+    "skin": "ops",
+    "theme": {
+      "color": "default",
+      "follow_omarchy": true,
+      "id": "tactical-overdrive",
+      "palette": "highlands",
+      "syntax": true,
+      "syntax_scheme": "markdown",
+      "grade": {
+        "background": 0.26549479365348816,
+        "bench_size": 0.761145830154419,
+        "brightness": 0.12723958492279053,
+        "colour": 0.7034896016120911,
+        "contrast": 0.7108593583106995,
+        "crawl_angle": 12.0,
+        "crawl_depth": 2.5,
+        "crt": false,
+        "gamma": 0.9231770634651184,
+        "glare": 0.2988802194595337,
+        "phosphor": 1.9773958921432495,
+        "scale": 1.0,
+        "text": 0.8823437690734863,
+        "text_size": 1.0749062299728394,
+        "tracking": [
+          1.0,
+          0.8148148059844971,
+          0.2068965584039688
+        ],
+        "warp": 1.3663281202316284
+      }
+    }
+  },
+  "active_tab": 1,
+  "existing_pty_input_sent": false,
+  "skin_status": "active=ops known=chalk,default,deco,console,ops"
+}
