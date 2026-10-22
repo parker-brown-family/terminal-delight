@@ -20,4 +20,20 @@ if [ "${STATE:-working}" = working ]; then
 else
   printf '\n\342\235\257 \n  ? for shortcuts\n'
 fi
+# The asking stand-in: from inside its own seated pane, ask each named pane
+# through MCP, as a real agent would, and keep what came back.
+if [ -n "${ASK_TITLES:-}" ] && [ -n "${TD:-}" ]; then
+  out=${ASK_OUT:-$HOME/.cache/war-room-rig/asks.out}; : > "$out"
+  sleep 8
+  panes=$("$TD" ctl --workspace special:warroomrig mcp from "$TD_SESSION" "$TD_PANE_ID" rpc '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_panes","arguments":{}}}' 2>&1 | cut -f2-)
+  printf 'raw: %s\n' "$(printf '%s' "$panes" | head -c 400)" >> "$out"
+  printf 'list_panes: %s\n' "$(printf '%s' "$panes" | python3 -c 'import json,sys; d=json.load(sys.stdin)["result"]["structuredContent"]; print(json.dumps({"panes":[(p["title"],p["reach"]) for p in d["panes"]],"hidden":d["hidden"]}))' 2>&1)" >> "$out"
+  IFS=',' read -ra want <<< "$ASK_TITLES"
+  for title in "${want[@]}"; do
+    pid=$(printf '%s' "$panes" | python3 -c 'import json,sys; t=sys.argv[1]; d=json.load(sys.stdin)["result"]["structuredContent"]["panes"]; print(next((p["pid"] for p in d if p["title"]==t), 0))' "$title" 2>/dev/null)
+    req=$(python3 -c 'import json,sys; print(json.dumps({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ask_agent","arguments":{"pid":int(sys.argv[1]),"question":"What is left on your task?"}}}))' "$pid")
+    ans=$("$TD" ctl --workspace special:warroomrig mcp from "$TD_SESSION" "$TD_PANE_ID" rpc "$req" 2>&1 | cut -f2-)
+    printf '%s (pid %s): %s\n' "$title" "$pid" "$(printf '%s' "$ans" | python3 -c 'import json,sys; r=json.load(sys.stdin)["result"]; t=r["content"]; print(("ERROR " + t[0]["text"][:220]) if r.get("isError") else ("OK " + t[-1]["text"].replace(chr(10)," | ")[:300]))' 2>&1)" >> "$out"
+  done
+fi
 while :; do sleep 3600; done

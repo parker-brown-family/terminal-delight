@@ -3,6 +3,12 @@ panes = 6
 lang = "en"
 left_bar = true
 
+[mcp]
+enabled = true
+expose = "agents-only"
+events = true
+writable = false
+
 [[projects]]
 id = 1
 name = "server"
@@ -40,7 +46,7 @@ project = 1
 [tabs.node.Leaf]
 cwd = "$HOME/.cache/war-room-rig/seats/release"
 name = "release lead"
-resume = "SIZE=512340 MODEL=claude-opus-5-5 STATE=working TASK='cut the release notes' BRIEF='Release notes drafted; waiting on the auth fix before tagging.' $HOME/.cache/war-room-rig/bin/claude"
+resume = "TD=$HOME/Work/td-authority-lab/war-room-target/debug/terminal-delight ASK_TITLES='backend lead,docs pages,auth refactor,scratch' SIZE=512340 MODEL=claude-opus-5-5 STATE=working TASK='cut the release notes' BRIEF='Release notes drafted; waiting on the auth fix before tagging.' $HOME/.cache/war-room-rig/bin/claude"
 seat = 101
 
 [[tabs]]

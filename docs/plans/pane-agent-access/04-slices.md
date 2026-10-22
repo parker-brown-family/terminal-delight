@@ -20,7 +20,7 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
    - The read-only position is in the right-click menu.
    - Strings are written in all nine languages.
    - Proof: the door tests, `the_switch_row_is_drawn_by_one_function`, `only_the_war_room_and_the_rail_draw_lines`, `latest_response_ignores_the_selected_card`, and screenshots of a scratch window.
-3. **Cheap asks.**
+3. **[DONE 2026-10-22] Cheap asks.**
    - Add `ask_agent` (cheap), `ask_answer`, `askrecord.rs`, and the untrusted label.
    - `list_panes` follows lines and counts what is hidden.
    - Proof: the `mcp.rs` tests, the record tests, and the planned break that lets an unseated pane be asked, run again through the verb.
@@ -67,3 +67,16 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
   - Found by the photographs, fixed before commit:
     - A line two rows down crossed the seat between and covered its label.
     - The bypass label sat on a shorter line's label.
+- **Slice 3, done (23643370).**
+  - `ask_agent` answers from the cheap reads, decided by `warroom::decide_ask` in the window's `ask_bridge`.
+  - `askrecord.rs` keeps each ask's length and fingerprint, never its words. `list_panes` gives a `hidden` count, and the War Room shows the ask numbers.
+  - Planned break *drop the line check from `decide_ask`*: `an_ask_is_refused_by_name_in_order` went red.
+  - End to end, in the hidden rig, the stand-in release lead asked from inside its own seated pane through `ctl --workspace special:warroomrig mcp from <session> <pane>`, the door a real agent's relay uses (`evidence/rig/asks-2026-10-22.out`):
+    - backend lead: answered, along its ask line;
+    - auth refactor: answered, via the bypass (read-only caps at ask);
+    - docs pages: refused `no_line` (a read line);
+    - scratch: refused `no_line` (unseated).
+  - The record held four lines, with fingerprints and no words (`evidence/rig/asks-record-2026-10-22.jsonl`). The bypass was not spent by cheap answers.
+  - The War Room shot (`reports/2026-10-22-war-room-evidence/war-room-asked.png`) shows "2 answered from what was visible · 0 by a copy · 0 with no line".
+  - Found: `list_panes`'s MCP-off error still says "the robot button on the mother bar". It is fixed in slice 6 with the ctl text.
+  - Flake: `host::owning::a_pane_knows_which_session_and_pane_it_is` failed once under a full run and passed 5/5 alone, with host.rs untouched here. File an issue.
