@@ -28951,7 +28951,11 @@ impl Render for Workspace {
                 .flex_row()
                 .justify_center()
                 .gap(px(TRAY_NOTE_GAP));
+            let closed_note = closed("note");
             for (mode, paper) in papers {
+                if closed_note && cur.note != mode {
+                    continue;
+                }
                 let cur_c = cur.clone();
                 let cap = match mode {
                     theme::NotePaper::Contrast => t.np_contrast,
@@ -28973,6 +28977,14 @@ impl Render for Workspace {
                                 None,
                                 help_delay,
                                 help_owner.clone(),
+                            )
+                        })
+                        .when(closed_note, |b| {
+                            b.on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    ws.fold_open_now("note", cx)
+                                }),
                             )
                         })
                         .on_mouse_down(
@@ -29260,6 +29272,12 @@ impl Render for Workspace {
                     && matches!(cur.dynamic, theme::Dynamic::Custom(_)),
                 None,
             ));
+            // Folded, the THEME column shows only the palette being worn — unless
+            // none is (following the desktop), when there is nothing to fold to.
+            let closed_theme = closed("theme");
+            if closed_theme && dyn_entries.iter().any(|e| e.1) {
+                dyn_entries.retain(|e| e.1);
+            }
             const PER_COL: usize = 10; // fill a column vertically before wrapping
             let columns = dyn_entries.len().div_ceil(PER_COL);
             let glyph_col_w = sk.fit(TRAY_GLYPH_COL_W, 190.).max(
@@ -29339,6 +29357,14 @@ impl Render for Workspace {
                     };
                     let tile =
                         palette_help(tile, name, preview, None, help_delay, help_owner.clone());
+                    let tile = tile.when(closed_theme && active, |b| {
+                        b.on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                ws.fold_open_now("theme", cx)
+                            }),
+                        )
+                    });
                     col = col.child(tile.on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -29370,11 +29396,6 @@ impl Render for Workspace {
                     .map(|d| sk.finish(d))
                     .child(label(title))
             };
-            let themes = area(t.ui.pal_hdr_theme, glyph_col_w)
-                .child(dyn_cols)
-                .child(hsep())
-                .child(label(t.t_note))
-                .child(note_row);
             // A folded row is a hover target of its own: 900 ms on it opens it.
             let fold = |row: &'static str, el: gpui::Div, cx: &mut Context<Self>| {
                 div()
@@ -29386,6 +29407,11 @@ impl Render for Workspace {
                     })
                     .child(el)
             };
+            let themes = area(t.ui.pal_hdr_theme, glyph_col_w)
+                .child(fold("theme", dyn_cols, cx))
+                .child(hsep())
+                .child(label(t.t_note))
+                .child(fold("note", note_row, cx));
             let pickers = area(t.ui.pal_hdr_style, TRAY_PICKER_W)
                 .child(label(t.t_theme))
                 .child(fold("design", theme_row, cx))
