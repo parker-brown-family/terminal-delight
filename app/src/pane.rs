@@ -10861,7 +10861,31 @@ impl Render for TerminalView {
             self.paint_to_grid = None;
         }
         let ps = crate::lang::current().strings();
-        let status = if self.needs_input {
+        // UI CONFIG, the PANES layer: one config for every pane — no pane is in
+        // charge of its own. The title, the state word and ⋯ are not switches.
+        let ui = |k: crate::uiconfig::Key| crate::uiconfig::shown(cx, k);
+        let ui_logo = ui(crate::uiconfig::Key::PaneLogo);
+        let ui_mode = ui(crate::uiconfig::Key::PaneMode);
+        let ui_face = ui(crate::uiconfig::Key::PaneFace);
+        let ui_agent = ui(crate::uiconfig::Key::PaneAgent);
+        let ui_handover = ui(crate::uiconfig::Key::PaneHandover);
+        let ui_surface = ui(crate::uiconfig::Key::PaneSurface);
+        let ui_sliders = ui(crate::uiconfig::Key::PaneSliders);
+        let ui_close = ui(crate::uiconfig::Key::PaneClose);
+        // With the face toggle put away, what the bench is holding still has
+        // to be said somewhere: the state word says it.
+        let held = if ui_face { 0 } else { self.bench_queued() };
+        let status = if held > 0 {
+            let l = crate::lang::current();
+            let n = held.to_string();
+            format!(
+                "\u{25c7} {}",
+                crate::lang::fill(
+                    &l.count(&l.strings().parts.pane_queued_answers, held),
+                    &[("queued", &n)]
+                )
+            )
+        } else if self.needs_input {
             // waiting on the HUMAN outranks "done": the turn isn't over, it's
             // yours. The phrases that detect it stay English (they read the
             // agent's own TUI); the chip is drawn in the reader's language.
@@ -10892,16 +10916,20 @@ impl Render for TerminalView {
         let optical = sk.type_scale;
         let controls_w = (pane_w - 64. * scale) / optical;
         let show_human = SHOW_HUMAN_NAV_GLYPH && controls_w >= 470.; // 1st: 👤 ▲▼ nav
-        let show_eq = controls_w >= 410.; //    2nd: EQ / display
-        let show_theme = controls_w >= 360.; //  3rd: 🎨 theme
+        let show_eq = ui_sliders && controls_w >= 410.; //    2nd: EQ / display
+        let show_theme = ui_surface && controls_w >= 360.; //  3rd: 🎨 theme
         let show_focus = SHOW_FOCUS_GLYPH && controls_w >= 264.; // 4th & last: 👓 FOCUS
                                                                  // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
                                                                  // The handover chip shrinks before anything tucks: its name above
                                                                  // 470, the word for its list down to 264, and below that it is a row
                                                                  // in the ⋯ menu like every other control here.
         let handover_name = controls_w >= 470.;
-        let show_handover = controls_w >= 264. && self.has_handovers();
-        let overflow = (SHOW_FOCUS_GLYPH && !show_focus)
+        let show_handover = ui_handover && controls_w >= 264. && self.has_handovers();
+        // UI CONFIG's hidden controls go where narrow-pane controls already go.
+        let overflow = !ui_face
+            || !ui_agent
+            || !ui_close
+            || (SHOW_FOCUS_GLYPH && !show_focus)
             || !show_theme
             || !show_eq
             || (SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent())
@@ -10986,6 +11014,74 @@ impl Render for TerminalView {
                         .child(step("▼", true, cx)),
                 );
             }
+            // Parker's order for a Clean header's ⋯: "agent + / surface (painter)
+            // Sliders (guages) / Bench" — then what was already here.
+            let uis = &crate::lang::current().strings().ui;
+            if !ui_agent {
+                menu = menu.child(
+                    item(
+                        "⌁",
+                        crate::lang::current()
+                            .strings()
+                            .parts
+                            .pane_launch_agent_chip,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.hdr_overflow = None;
+                            cx.emit(OpenAgentLauncher);
+                            cx.notify();
+                        }),
+                    ),
+                );
+            }
+            if !show_theme {
+                menu = menu.child(item("🎨", uis.cfg_surface).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(OpenThemeMenu { at: pos });
+                        cx.notify();
+                    }),
+                ));
+            }
+            if !show_eq {
+                menu = menu.child(item("📊", uis.cfg_sliders).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(OpenDisplayMenu { at: pos });
+                        cx.notify();
+                    }),
+                ));
+            }
+            if !ui_face {
+                // The face this pane is NOT showing: one press goes there.
+                let other = if self.bench.face() == crate::workbench::Face::Workbench {
+                    crate::workbench::Face::Terminal
+                } else {
+                    crate::workbench::Face::Workbench
+                };
+                let queued = self.bench_queued();
+                let label = if queued > 0 && other == crate::workbench::Face::Workbench {
+                    format!("{} \u{b7} {queued}", other.chip())
+                } else {
+                    other.chip().to_string()
+                };
+                menu = menu.child(item("\u{25e8}", &label).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        v.set_face(other, cx);
+                        cx.notify();
+                    }),
+                ));
+            }
             if !show_handover && self.has_handovers() {
                 let word = crate::lang::current().strings().artifacts_word;
                 menu = menu.child(item("▤", word).on_mouse_down(
@@ -10997,40 +11093,6 @@ impl Render for TerminalView {
                         cx.notify();
                     }),
                 ));
-            }
-            if !show_eq {
-                menu = menu.child(
-                    item(
-                        "📊",
-                        crate::lang::current().strings().parts.pane_overflow_display,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            v.hdr_overflow = None;
-                            cx.emit(OpenDisplayMenu { at: pos });
-                            cx.notify();
-                        }),
-                    ),
-                );
-            }
-            if !show_theme {
-                menu = menu.child(
-                    item(
-                        "🎨",
-                        crate::lang::current().strings().parts.pane_overflow_theme,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            v.hdr_overflow = None;
-                            cx.emit(OpenThemeMenu { at: pos });
-                            cx.notify();
-                        }),
-                    ),
-                );
             }
             if SHOW_FOCUS_GLYPH && !show_focus {
                 menu = menu.child(
@@ -11048,6 +11110,16 @@ impl Render for TerminalView {
                         }),
                     ),
                 );
+            }
+            if !ui_close {
+                menu = menu.child(item("×", uis.cfg_close).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(ClosePane);
+                    }),
+                ));
             }
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
@@ -11359,7 +11431,7 @@ impl Render for TerminalView {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(logo_el)
+                    .when(ui_logo, |d| d.child(logo_el))
                     .child(format!("▸ {} · {buf}", self.mode.label_i18n()))
                     .child(div().w(px(6.)).h(px(13.)).bg(th.cursor))
                     .into_any_element()
@@ -11396,11 +11468,11 @@ impl Render for TerminalView {
                     // A pane's title is what its program said — a command, a
                     // host, a path — so it is set as data, not as a name.
                     .map(|d| sk.data(d))
-                    .child(logo_el)
+                    .when(ui_logo, |d| d.child(logo_el))
                     // The launch mark rides before the label rather than after
                     // it: the title clips on a narrow pane, and the mark is the
                     // part that says how this pane came to be here.
-                    .children(self.launch_mark.map(|mark| {
+                    .children(self.launch_mark.filter(|_| ui_logo).map(|mark| {
                         div()
                             .flex_none()
                             .px(px(5. * scale))
@@ -11415,7 +11487,10 @@ impl Render for TerminalView {
                     // ▸: one lead mark, not two. Unfocused panes keep the ▸, so
                     // the chevron says which pane has the keyboard.
                     .children(focused_now.then(|| sk.chevron("»")).flatten())
-                    .child(if focused_now && sk.chevron("»").is_some() {
+                    .child(if !ui_mode {
+                        // UI CONFIG put the mode away: the title alone.
+                        label.clone()
+                    } else if focused_now && sk.chevron("»").is_some() {
                         format!("{} · {label}", self.mode.label_i18n())
                     } else {
                         format!("▸ {} · {label}", self.mode.label_i18n())
@@ -11455,30 +11530,32 @@ impl Render for TerminalView {
                     .flex_shrink_0()
                     // roomier spacing between the header glyphs — scales with the bar
                     .gap(hpad)
-                    .child(face_toggle)
-                    .child(
-                        sk.chip(false)
-                            .id("launch-agent")
-                            .debug_selector(|| "launch-agent".into())
-                            .cursor_pointer()
-                            .text_size(sk.text_px((hicon * 0.42).max(8.5)))
-                            .whitespace_nowrap()
-                            .child(if pane_w / optical >= 470. {
-                                crate::lang::current()
-                                    .strings()
-                                    .parts
-                                    .pane_launch_agent_chip
-                            } else {
-                                "⌁"
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(OpenAgentLauncher);
-                                }),
-                            ),
-                    )
+                    .when(ui_face, |d| d.child(face_toggle))
+                    .when(ui_agent, |d| {
+                        d.child(
+                            sk.chip(false)
+                                .id("launch-agent")
+                                .debug_selector(|| "launch-agent".into())
+                                .cursor_pointer()
+                                .text_size(sk.text_px((hicon * 0.42).max(8.5)))
+                                .whitespace_nowrap()
+                                .child(if pane_w / optical >= 470. {
+                                    crate::lang::current()
+                                        .strings()
+                                        .parts
+                                        .pane_launch_agent_chip
+                                } else {
+                                    "⌁"
+                                })
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        cx.emit(OpenAgentLauncher);
+                                    }),
+                                ),
+                        )
+                    })
                     // What this pane's agent handed over: the newest one's
                     // name, and the list behind ▾. See `pane/handed.rs`.
                     .children(
@@ -11638,38 +11715,40 @@ impl Render for TerminalView {
                             .child(crate::lang::current().strings().parts.pane_off_limits_badge)
                     }))
                     .child(status)
-                    .child(
-                        // close just this sub-tab (×): ends this pane's shell.
-                        // Big, borderless, full-height — a generous click target;
-                        // a soft hover tint stands in for the dropped border.
-                        div()
-                            .id("close-pane")
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px_4()
-                            .rounded_md()
-                            .text_color(bar_fg)
-                            .cursor_pointer()
-                            // Still bigger than the other header glyphs, and by
-                            // exactly as much as it always was — the old
-                            // `hicon + 10` was 1.36× the old glyph metric, so
-                            // the ratio is kept as a ratio rather than as an
-                            // offset that would have grown to half again as
-                            // dominant once the glyphs halved.
-                            .text_size(sk.text_px(hicon * 1.36))
-                            .line_height(px(hicon * 1.36))
-                            .hover(|s| s.bg(bar_fg.alpha(0.18)))
-                            .child("×")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(ClosePane);
-                                }),
-                            ),
-                    ),
+                    .when(ui_close, |d| {
+                        d.child(
+                            // close just this sub-tab (×): ends this pane's shell.
+                            // Big, borderless, full-height — a generous click target;
+                            // a soft hover tint stands in for the dropped border.
+                            div()
+                                .id("close-pane")
+                                .h_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .px_4()
+                                .rounded_md()
+                                .text_color(bar_fg)
+                                .cursor_pointer()
+                                // Still bigger than the other header glyphs, and by
+                                // exactly as much as it always was — the old
+                                // `hicon + 10` was 1.36× the old glyph metric, so
+                                // the ratio is kept as a ratio rather than as an
+                                // offset that would have grown to half again as
+                                // dominant once the glyphs halved.
+                                .text_size(sk.text_px(hicon * 1.36))
+                                .line_height(px(hicon * 1.36))
+                                .hover(|s| s.bg(bar_fg.alpha(0.18)))
+                                .child("×")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        cx.emit(ClosePane);
+                                    }),
+                                ),
+                        )
+                    }),
             );
         header = header.shadow(header_shadows(bar_fg, glow, th.crt, th.grade.phosphor));
 
@@ -11813,43 +11892,49 @@ impl Render for TerminalView {
         // INVERSE of that tube's distortion and the two must be measuring the
         // same rectangle or the cancellation is against the wrong curve.
         // Nothing on the bench face — see [`Self::note_layout`].
-        let note_el = self.note.clone().filter(|_| on_terminal).map(|note| {
-            let paper_stock = sk.note_decoration == crate::skin::NoteDecoration::Flower;
-            let store = self.content_bounds.clone();
-            let pal = sk.note_palette(&th);
-            let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
-            // The pane's own curvature, and zero while a modal has flattened the
-            // whole screen — the note un-bends with everything else that frame
-            // rather than being the one thing that stayed compensated.
-            let (k1, k2) = if crate::warp::is_suppressed() || th.crawl {
-                (0.0, 0.0)
-            } else {
-                crate::theme::warp_coeffs(th.warp)
-            };
-            div().absolute().inset_0().child(
-                canvas(
-                    |_, _, _| {},
-                    move |_, _, window, cx| {
-                        let Some(content) = store.lock().ok().and_then(|b| *b) else {
-                            return;
-                        };
-                        if let Some(mut lay) = crate::sticky::layout(content, note.tilt()) {
-                            lay.pre_warp(content, k1, k2);
-                            crate::sticky::paint(
-                                &note,
-                                &lay,
-                                &pal,
-                                peeling,
-                                paper_stock,
-                                window,
-                                cx,
-                            );
-                        }
-                    },
+        // UI CONFIG's notes switch: one for every pane, like the rest.
+        let ui_notes = crate::uiconfig::shown(cx, crate::uiconfig::Key::PaneNotes);
+        let note_el = self
+            .note
+            .clone()
+            .filter(|_| on_terminal && ui_notes)
+            .map(|note| {
+                let paper_stock = sk.note_decoration == crate::skin::NoteDecoration::Flower;
+                let store = self.content_bounds.clone();
+                let pal = sk.note_palette(&th);
+                let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
+                // The pane's own curvature, and zero while a modal has flattened the
+                // whole screen — the note un-bends with everything else that frame
+                // rather than being the one thing that stayed compensated.
+                let (k1, k2) = if crate::warp::is_suppressed() || th.crawl {
+                    (0.0, 0.0)
+                } else {
+                    crate::theme::warp_coeffs(th.warp)
+                };
+                div().absolute().inset_0().child(
+                    canvas(
+                        |_, _, _| {},
+                        move |_, _, window, cx| {
+                            let Some(content) = store.lock().ok().and_then(|b| *b) else {
+                                return;
+                            };
+                            if let Some(mut lay) = crate::sticky::layout(content, note.tilt()) {
+                                lay.pre_warp(content, k1, k2);
+                                crate::sticky::paint(
+                                    &note,
+                                    &lay,
+                                    &pal,
+                                    peeling,
+                                    paper_stock,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        },
+                    )
+                    .size_full(),
                 )
-                .size_full(),
-            )
-        });
+            });
 
         // The document inside the square paints in THIS pane's resolved theme,
         // which a pane can hold apart from the window's. Handed down every
@@ -12058,7 +12143,8 @@ impl Render for TerminalView {
                                 glyphs,
                                 cell_h: self.cell_h,
                                 cell_w: self.cell_w,
-                                linger: grade.linger_for_focus(focused_now),
+                                // The resolved theme's grade, so Clean's hold reaches it.
+                                linger: th.grade.linger_for_focus(focused_now),
                                 context: Some(grid_paint::HistoryContext {
                                     theme: {
                                         // Timings do not change the retained glyph paint.

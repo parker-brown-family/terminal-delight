@@ -225,6 +225,11 @@ impl Pane {
         cx.executor().allow_parking();
         cx.update(|cx| {
             let mut outer = crate::theme::house_outer();
+            // The house's dials on the design every pane wore before Clean — the
+            // custom slot seeded from Hacker. Clean holds the light and the
+            // afterglow off, and these tests are about the light and the
+            // afterglow; Clean's own hold is tested in theme.rs and grid_paint.rs.
+            outer.id = "hacker".into();
             outer.grade.warp = 0.0;
             // The house sizes, but no colour grading: the house brightness and
             // contrast take every near-black background to exactly black, and
