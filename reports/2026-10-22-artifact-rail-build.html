@@ -952,8 +952,13 @@ dialog#d-export { max-width: 780px; }
 
 <!-- Notes and concurs are baked in here by "save into file". Leave them empty and leave them in,
      with their data-format: it names the format notes.js writes, and other writers check it. -->
-<script type="application/json" id="report-notes" data-format="1">{}</script>
-<script type="application/json" id="report-concurs" data-format="1">{}</script>
+<script type="application/json" id="report-notes" data-format="1" data-rev="2026-10-22T20:47:51.615Z">{}</script>
+<script type="application/json" id="report-concurs" data-format="1" data-rev="2026-10-22T20:47:51.615Z">{
+ "ask-should-clean-hide": "2026-10-22 20:47",
+ "ask-does-a-pane-whose": "2026-10-22 20:47",
+ "ask-should-an-agent-s": "2026-10-22 20:47",
+ "ask-a-new-artifact-arrives": "2026-10-22 20:47"
+}</script>
 
 <script>
   /* Set before notes.js runs. Used for the storage key and the download filename. */
@@ -1556,4 +1561,18 @@ document.querySelectorAll('[data-dlg]').forEach(function (b) {
 })();
 
 </script>
-</body></html>
+<!--
+READER NOTES —
+NOTES — 2026-10-22-artifact-rail-build.html
+0 notes on 0 elements · 4 concurs.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[ask-should-clean-hide] Should Clean hide 📜?  ✓ concur
+
+[ask-does-a-pane-whose] Does a pane whose agent has exited keep its card?  ✓ concur
+
+[ask-should-an-agent-s] Should an agent's video or sound still play over your square?  ✓ concur
+
+[ask-a-new-artifact-arrives] A new artifact arrives while the rail is open: where does its card go?  ✓ concur
+
+--></body></html>
