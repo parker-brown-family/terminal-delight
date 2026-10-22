@@ -1,6 +1,6 @@
 {
   "method": "Actual module and seccomp source in a small harness. Host-pane target is unavailable here and tested separately through the real native window.",
-  "source_sha256": "6e48c78aaa17a689a9ad8717c2932a92e00a7d3285978677632fac38457d7eae",
+  "source_sha256": "c0abf1da6719d2798db74d23c906c68b834d56c11660d71adfea27c4dc80c7bf",
   "filter_sha256": "32009aa93869604724d98b54a0b7a68c27952c36e7a89a7f9ea03715f5f79bda",
   "baseline_unit": "pass",
   "baseline_os": "3 passed",

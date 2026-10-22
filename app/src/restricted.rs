@@ -296,8 +296,12 @@ fn sandbox(
             cmd.args(["--ro-bind", path, path]);
         }
     }
-    if Path::new("/etc/ld.so.cache").exists() {
-        cmd.args(["--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache"]);
+    // Debian system-tool aliases (including cc) resolve through alternatives.
+    // Expose those read-only aliases, not the rest of host /etc.
+    for path in ["/etc/ld.so.cache", "/etc/alternatives"] {
+        if Path::new(path).exists() {
+            cmd.args(["--ro-bind", path, path]);
+        }
     }
     cmd.args([
         "--proc",
