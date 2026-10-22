@@ -1654,6 +1654,31 @@ fn tray_rules_h(rules: usize, bare_pills: usize) -> f32 {
         + 2. * (TRAY_PAD + TRAY_AREA_PAD)
 }
 
+/// The window's top bar at its full height, before the scale: the row the
+/// corner, the tab strip and the agent counter sit in.
+const TOP_BAR_H: f32 = 43.;
+/// The top bar with nothing in it. The left bar and the screen each keep 7 px
+/// under it (their `mt(7.)`), so one more makes 8, the margin down the sides
+/// (`ml_2`, `mx_2`): the panes sit as far from the top of the frame as from
+/// its sides.
+const TOP_BAR_EMPTY_H: f32 = 1.;
+
+/// Whether the top bar has anything to show. Clean's UI set hides the mark,
+/// the Git notice and the agent counter; with the left bar open the tabs are
+/// listed there rather than across the top; and a window the compositor
+/// decorates draws no frame buttons of its own. Parker, on a live window in
+/// that state: a 43 px band of nothing over the panes, "a top border that I
+/// don't love".
+fn top_bar_is_empty(
+    left_bar: bool,
+    mark: bool,
+    notice: bool,
+    counter: bool,
+    frame_buttons: bool,
+) -> bool {
+    left_bar && !mark && !notice && !counter && !frame_buttons
+}
+
 fn tray_panel_h_est() -> f32 {
     let style = tray_pickers_h(
         theme::picker_count(),
@@ -28844,10 +28869,17 @@ impl Render for Workspace {
         } else {
             tab_strip.into_any_element()
         };
+        let top_empty = top_bar_is_empty(self.left_bar, ui_mark, ui_notice, ui_counter, is_client);
         let bezel_top = sk
             .sheet()
             // min-height (not fixed): extra tab rows grow the bar downward.
-            .min_h(px(43. * scale))
+            // With nothing to show it folds to a margin (see
+            // `top_bar_is_empty`), and stays the window's move handle.
+            .min_h(px(if top_empty {
+                TOP_BAR_EMPTY_H
+            } else {
+                TOP_BAR_H
+            } * scale))
             .flex_none()
             .flex()
             // ONE ROW — the mark and the project's badge, then the ticker or
@@ -28871,7 +28903,7 @@ impl Render for Workspace {
             .flex_row()
             .items_center()
             .px(px(12. * scale))
-            .py(px(7. * scale))
+            .py(px(if top_empty { 0. } else { 7. } * scale))
             // NO row gap, deliberately. The corner is pinned to the tree's
             // width and the void after it is an exact number, so the tabs'
             // left edge is `px + corner + strip_void` — the same
@@ -28926,7 +28958,7 @@ impl Render for Workspace {
                     // fixed element is cutoff... should have some breathing
                     // room". The row's own padding is the breathing room; the
                     // corner just has to stop being shorter than its contents.
-                    .min_h(px(22. * scale))
+                    .min_h(px(if top_empty { 0. } else { 22. } * scale))
                     // clip instead of paint-over: when the window narrows past
                     // the corner, the fixed-size children must truncate, not
                     // bleed onto the always-kept right-side controls (#86).
@@ -37746,6 +37778,44 @@ mod tests {
     /// and *"hang our ticker to start over there"*. The mark does the
     /// identifying, the badge and the ticker do the informing, and the tree
     /// says where you are standing.
+    /// Clean with the left bar open leaves the top bar nothing to show, and
+    /// then it folds to the side margin; any one thing in it, or the tab strip
+    /// across the top, keeps the full row.
+    #[test]
+    fn an_empty_top_bar_folds_to_a_margin() {
+        assert!(top_bar_is_empty(true, false, false, false, false));
+        for (mark, notice, counter, frame) in [
+            (true, false, false, false),
+            (false, true, false, false),
+            (false, false, true, false),
+            (false, false, false, true),
+        ] {
+            assert!(
+                !top_bar_is_empty(true, mark, notice, counter, frame),
+                "something is shown: {mark} {notice} {counter} {frame}"
+            );
+        }
+        assert!(
+            !top_bar_is_empty(false, false, false, false, false),
+            "with the left bar shut the tabs are the top bar's"
+        );
+        assert!(TOP_BAR_EMPTY_H < TOP_BAR_H);
+        // And the bar reads it: its height, padding and corner all follow.
+        let src = shipped_code();
+        let at = src.find("let bezel_top =").expect("bezel_top");
+        let top = &src[at..at + src[at..].find("\n        let ").expect("end")];
+        for piece in [
+            "TOP_BAR_EMPTY_H",
+            "if top_empty { 0. } else { 7. }",
+            "if top_empty { 0. } else { 22. }",
+        ] {
+            assert!(
+                top.contains(piece),
+                "the top bar no longer folds by `{piece}`"
+            );
+        }
+    }
+
     #[test]
     fn the_header_corner_carries_window_attention_and_retires_the_ticker() {
         let src = shipped_src();
