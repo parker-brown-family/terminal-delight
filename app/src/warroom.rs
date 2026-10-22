@@ -414,6 +414,57 @@ pub fn reach(
     }
 }
 
+/// What the rail's colour for an ask is read from (Gate 2, figure 6).
+pub enum RiskFacts {
+    /// A window-wide or pane change an agent asked for.
+    Pane(crate::access::Change),
+    /// A bypass line: to another project, into a read-only pane, and for how
+    /// many prompts.
+    Bypass {
+        across_projects: bool,
+        into_read_only: bool,
+        prompts: u8,
+    },
+    /// A read-only copy that would read `reads` tokens (`None`: unknown),
+    /// against the person's press limit.
+    Copy { reads: Option<u64>, limit: u64 },
+}
+
+/// How serious an ask is, on the coordination panel's four-step scale: the
+/// colour says how much could go wrong, not what kind of ask it is. Narrowing
+/// access is clear; reading a little is caution; wider or costlier is a
+/// warning; writes, or a copy past two and a half times the limit, alert. An
+/// unknown size is never cheaper than a warning.
+pub fn risk(facts: &RiskFacts) -> crate::coordination::Severity {
+    use crate::access::Change;
+    use crate::coordination::Severity::*;
+    match facts {
+        RiskFacts::Pane(change) => match change {
+            Change::ClosePane => Clear,
+            Change::EventsOn | Change::AskLine => Caution,
+            Change::OpenPane | Change::ExposeShells => Warning,
+            Change::WritesOn => Alert,
+        },
+        RiskFacts::Bypass {
+            across_projects,
+            into_read_only,
+            prompts,
+        } => {
+            if *across_projects || *into_read_only || *prompts > crate::access::BYPASS_PROMPTS {
+                Warning
+            } else {
+                Caution
+            }
+        }
+        RiskFacts::Copy { reads, limit } => match reads {
+            None => Warning,
+            Some(n) if *n * 2 <= *limit * 3 => Caution,
+            Some(n) if *n * 2 <= *limit * 5 => Warning,
+            Some(_) => Alert,
+        },
+    }
+}
+
 /// One ask's name in the record and, for a copy, in `ask_answer`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -983,6 +1034,87 @@ mod tests {
             Ok("line"),
             "read-only caps at ask"
         );
+    }
+
+    /// Every row of the Gate 2 risk table, in the order it was drawn.
+    #[test]
+    fn risk_matches_the_rail_table() {
+        use crate::access::Change;
+        use crate::coordination::Severity::*;
+        let limit = ASK_PRESS_TOKENS;
+        let bypass = |a, r, p| {
+            risk(&RiskFacts::Bypass {
+                across_projects: a,
+                into_read_only: r,
+                prompts: p,
+            })
+        };
+        let copy = |reads| risk(&RiskFacts::Copy { reads, limit });
+        assert_eq!(
+            risk(&RiskFacts::Pane(Change::ClosePane)),
+            Clear,
+            "to put a pane off-limits"
+        );
+        assert_eq!(
+            risk(&RiskFacts::Pane(Change::EventsOn)),
+            Caution,
+            "to receive pushed events"
+        );
+        assert_eq!(
+            bypass(false, false, 3),
+            Caution,
+            "a bypass, three prompts, same project"
+        );
+        assert_eq!(
+            copy(Some(600_000)),
+            Caution,
+            "a copy reading up to 600,000 tokens"
+        );
+        assert_eq!(
+            risk(&RiskFacts::Pane(Change::OpenPane)),
+            Warning,
+            "to see a hidden pane"
+        );
+        assert_eq!(
+            risk(&RiskFacts::Pane(Change::ExposeShells)),
+            Warning,
+            "or every plain shell"
+        );
+        assert_eq!(
+            bypass(true, false, 3),
+            Warning,
+            "a bypass into another project"
+        );
+        assert_eq!(bypass(false, true, 3), Warning, "or a read-only pane");
+        assert_eq!(
+            bypass(false, false, 10),
+            Warning,
+            "or for more than three prompts"
+        );
+        assert_eq!(
+            copy(Some(1_000_000)),
+            Warning,
+            "a copy reading up to 1,000,000 tokens"
+        );
+        assert_eq!(
+            risk(&RiskFacts::Pane(Change::WritesOn)),
+            Alert,
+            "to turn writes on"
+        );
+        assert_eq!(
+            copy(Some(1_000_001)),
+            Alert,
+            "a copy reading more than 1,000,000"
+        );
+    }
+
+    #[test]
+    fn an_unknown_copy_size_is_never_cheaper_than_warning() {
+        let r = risk(&RiskFacts::Copy {
+            reads: None,
+            limit: ASK_PRESS_TOKENS,
+        });
+        assert!(r >= crate::coordination::Severity::Warning, "{r:?}");
     }
 
     #[test]

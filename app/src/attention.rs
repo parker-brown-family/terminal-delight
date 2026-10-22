@@ -425,6 +425,12 @@ pub struct AskRow {
     pub what: String,
     /// The agent's reason, already flattened to one line. Theirs.
     pub why: String,
+    /// How serious the ask is — the row's colour and glyph. `None` for an ask
+    /// the window has not assessed, which keeps its lane's colour.
+    pub risk: Option<crate::coordination::Severity>,
+    /// For a bypass: the prompts it will grant, which the person may change
+    /// on the card before pressing Yes. `None` for every other ask.
+    pub bypass: Option<u8>,
 }
 
 /// One thing seen about one pane. Slice 1 synthesises these; slice 2 observes
@@ -1345,6 +1351,8 @@ mod tests {
             ask: Some(AskRow {
                 what: "Let agents see \u{201c}prod\u{201d}".into(),
                 why: "read the deploy log".into(),
+                risk: None,
+                bypass: None,
             }),
             ..obs(pane, None, Some(secs_ago))
         }

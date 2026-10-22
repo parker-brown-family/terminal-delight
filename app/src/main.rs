@@ -8365,16 +8365,59 @@ impl Workspace {
                                         }
                                         None => (None, None),
                                     };
+                                    // For a bypass: a line runs between seats, so
+                                    // both panes must be seated, and asking is
+                                    // pointless when a line already reaches.
+                                    let asker_party = leaf.read(cx).party();
+                                    let target_party = named.as_ref().map(|t| t.read(cx).party());
+                                    let line_reaches_ask = target_party
+                                        .filter(|t| asker_party.seat.is_some() && t.seat.is_some())
+                                        .map(|t| {
+                                            warroom::reach(
+                                                &self.mcp,
+                                                &self.chart,
+                                                Some(&asker_party),
+                                                &t,
+                                                false,
+                                            ) >= warroom::Reach::Ask
+                                        });
                                     let now = access::Now {
                                         pane_off_limits: off,
                                         mcp: &self.mcp,
+                                        line_reaches_ask,
                                     };
-                                    match access::nothing_to_ask(ask.change, ask.pid, &now) {
-                                        Some(why) => Err(why),
-                                        None => Ok(Some(access::Ask {
-                                            title,
-                                            ..ask.clone()
-                                        })),
+                                    let project_of = |l: &Entity<TerminalView>| {
+                                        self.tab_index_of(l.entity_id())
+                                            .and_then(|ti| self.place_of(ti).project)
+                                    };
+                                    let facts = match ask.change {
+                                        access::Change::AskLine => warroom::RiskFacts::Bypass {
+                                            across_projects: named.as_ref().is_some_and(|t| {
+                                                project_of(t) != project_of(&leaf)
+                                            }),
+                                            into_read_only: target_party.is_some_and(|t| {
+                                                t.access == warroom::AgentAccess::ReadOnly
+                                            }),
+                                            prompts: ask.prompts,
+                                        },
+                                        other => warroom::RiskFacts::Pane(other),
+                                    };
+                                    if leaf.read(cx).access_ask.is_some() {
+                                        // One ask at a time per agent (Gate 3,
+                                        // question 2): a second would hide the
+                                        // first, which is still on the rail.
+                                        Err("one ask at a time: your earlier ask is still on \
+                                             the person's rail"
+                                            .to_string())
+                                    } else {
+                                        match access::nothing_to_ask(ask.change, ask.pid, &now) {
+                                            Some(why) => Err(why),
+                                            None => Ok(Some(access::Ask {
+                                                title,
+                                                risk: Some(warroom::risk(&facts)),
+                                                ..ask.clone()
+                                            })),
+                                        }
                                     }
                                 }
                             };
@@ -24026,6 +24069,8 @@ impl Workspace {
                 let ask = view.access_ask.as_ref().map(|a| attention::AskRow {
                     what: a.change.ask_words(a.title.as_deref()),
                     why: a.why.clone(),
+                    risk: a.risk,
+                    bypass: (a.change == access::Change::AskLine).then_some(a.prompts),
                 });
                 let kind = if ask.is_some() {
                     Some(attention::AttentionKind::Access)
@@ -24221,6 +24266,10 @@ impl Workspace {
                             why: "the migration failed there and I need its last 50 lines to \
                                   say why"
                                 .into(),
+                            risk: Some(warroom::risk(&warroom::RiskFacts::Pane(
+                                access::Change::OpenPane,
+                            ))),
+                            bypass: None,
                         }),
                     }
                 },
@@ -24371,6 +24420,30 @@ impl Workspace {
         };
         let outcome = match answer {
             access::Answer::No => access::Outcome::Kept,
+            access::Answer::Yes if ask.change == access::Change::AskLine => {
+                // A bypass line from the asker's seat to the pane it named,
+                // for the prompts the person picked. Either seat gone, and
+                // there is nothing to draw it between.
+                let from = asker.read(cx).seat;
+                let to = ask
+                    .pid
+                    .and_then(|pid| self.leaf_by_shell_pid(pid, cx))
+                    .and_then(|t| t.read(cx).seat);
+                match from.zip(to) {
+                    None => access::Outcome::Gone,
+                    Some((from, to)) => {
+                        let reaches = self.chart.line(from, to).is_some_and(|l| {
+                            !l.is_bypass() && l.rung.known() >= Some(warroom::Rung::Ask)
+                        });
+                        if reaches {
+                            access::Outcome::AlreadySo
+                        } else {
+                            self.chart.grant_bypass(from, to, ask.prompts);
+                            access::Outcome::Done
+                        }
+                    }
+                }
+            }
             access::Answer::Yes => match access::grant_config(ask.change, &mut self.mcp) {
                 Some(outcome) => outcome,
                 None => {
@@ -24393,6 +24466,19 @@ impl Workspace {
         self.save(cx);
         cx.notify();
         true
+    }
+
+    /// A person picked how many prompts a bypass grants, on its card.
+    fn rail_pick_prompts(&mut self, key: u64, prompts: u8, cx: &mut Context<Self>) {
+        if let Some(asker) = self.leaf_by_key(key) {
+            asker.update(cx, |v, cx| {
+                if let Some(ask) = v.access_ask.as_mut() {
+                    ask.prompts = prompts;
+                    cx.notify();
+                }
+            });
+        }
+        cx.notify();
     }
 
     /// The live pane whose row key (entity id) is `key`.
@@ -24427,7 +24513,6 @@ impl Workspace {
         }
     }
 
-    /// The live pane whose shell has this pid — the number agents name panes by.
     /// The leaf showing host pane `pane`, the id an MCP caller is verified by.
     fn leaf_by_pane_id(&self, pane: u64, cx: &App) -> Option<Entity<TerminalView>> {
         for tab in &self.tabs {
@@ -24443,6 +24528,7 @@ impl Workspace {
         None
     }
 
+    /// The live pane whose shell has this pid — the number agents name panes by.
     fn leaf_by_shell_pid(&self, pid: u32, cx: &App) -> Option<Entity<TerminalView>> {
         for tab in &self.tabs {
             let mut leaves = vec![];
@@ -24823,7 +24909,20 @@ impl Workspace {
         }
     }
 
-    fn rail_ink(kind: attention::AttentionKind, sk: &skin::Skin) -> Hsla {
+    fn rail_ink(
+        kind: attention::AttentionKind,
+        risk: Option<coordination::Severity>,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+    ) -> Hsla {
+        // An ask is coloured by how serious it is, not by its kind (Parker,
+        // Gate 1: "COlour coding needs to distinguish the severity or
+        // seriousness or risk of the ask"). The four steps are the coordination
+        // panel's, in the theme's own colours, with caution in blue so the
+        // steps differ by hue and not only by brightness.
+        if let (attention::AttentionKind::Access, Some(sev)) = (kind, risk) {
+            return th.ansi[rail_risk_slot(sev)];
+        }
         match kind {
             // Amber: the one lane whose answer is a person's to give and the
             // row's own buttons to take. Not the decision red, which sends a
@@ -24977,7 +25076,7 @@ impl Workspace {
                 .children(per_lane.into_iter().map(|(k, n)| {
                     div()
                         .text_size(sk.text_px(11. * s))
-                        .text_color(Self::rail_ink(k, &sk))
+                        .text_color(Self::rail_ink(k, None, &theme::theme(cx), &sk))
                         .child(format!("{n}"))
                 }))
                 .when(unknown > 0, |d| {
@@ -25208,7 +25307,7 @@ impl Workspace {
             .ok();
         let cursor = self.rail_cursor.min(waiting.len().saturating_sub(1));
         for (row_index, it) in waiting.iter().enumerate() {
-            let ink = Self::rail_ink(it.kind, &sk);
+            let ink = Self::rail_ink(it.kind, it.ask.as_ref().and_then(|a| a.risk), &th, &sk);
             let on_cursor = row_index == cursor;
             let unseen = self.rail_seen.is_unseen(it);
             let head = div()
@@ -25291,12 +25390,17 @@ impl Workspace {
                         .flex()
                         .flex_col()
                         .gap(px(2. * s))
-                        .child(
-                            div()
-                                .text_size(sk.text_px(10.5 * s))
-                                .text_color(ink)
-                                .child(a.what.clone()),
-                        )
+                        .child(div().text_size(sk.text_px(10.5 * s)).text_color(ink).child(
+                            match a.risk {
+                                Some(sev) => format!(
+                                    "{} {} \u{b7} {}",
+                                    sev.glyph(),
+                                    sev.label_in(self.lang),
+                                    a.what
+                                ),
+                                None => a.what.clone(),
+                            },
+                        ))
                         .child(
                             div()
                                 .px(px(4. * s))
@@ -25488,8 +25592,44 @@ impl Workspace {
                 // that answer an ask, and each stops its press here so the row
                 // underneath does not also go to the pane: answering is not
                 // visiting. `y` and `n` do the same for the cursor's row.
-                .children(it.ask.as_ref().map(|_| {
+                .children(it.ask.as_ref().map(|ask_row| {
                     let key = it.pane;
+                    // A bypass card lets the person pick how many prompts the
+                    // line grants before pressing Yes; three is preselected.
+                    let picker = ask_row.bypass.map(|chosen| {
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap(px(3. * s))
+                            .items_center()
+                            .children(access::BYPASS_CHOICES.into_iter().map(|n| {
+                                div()
+                                    .id(SharedString::from(format!("rail-prompts-{key}-{n}")))
+                                    .px(px(6. * s))
+                                    .rounded(px(3. * s))
+                                    .border_1()
+                                    .border_color(if n == chosen { ink } else { sk.ink.ink_dim })
+                                    .text_size(sk.text_px(9.5 * s))
+                                    .text_color(if n == chosen { ink } else { sk.ink.ink_dim })
+                                    .cursor_pointer()
+                                    .child(SharedString::from(n.to_string()))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.rail_pick_prompts(key, n, cx);
+                                        }),
+                                    )
+                            }))
+                            .child(
+                                div()
+                                    .text_size(sk.text_px(9. * s))
+                                    .text_color(sk.ink.ink_dim)
+                                    .child(SharedString::from(
+                                        self.lang.strings().parts.access_bypass_prompts,
+                                    )),
+                            )
+                    });
                     let button = |label: &'static str, yes: bool| {
                         let answer = if yes {
                             access::Answer::Yes
@@ -25529,6 +25669,7 @@ impl Workspace {
                         .flex_row()
                         .gap(px(6. * s))
                         .items_center()
+                        .children(picker)
                         .child(button(self.lang.strings().ui.rail_btn_yes, true))
                         .child(button(self.lang.strings().ui.rail_btn_no, false))
                 }));
@@ -27072,6 +27213,18 @@ fn palette_rule(label: &str, on: bool, th: &theme::Theme, sk: &skin::Skin) -> gp
         .cursor_pointer()
         .child(label.to_string())
         .child(slider_switch(on, th, sk))
+}
+
+/// The theme's ANSI slot a rail ask is inked in, by how serious it is: green,
+/// blue, yellow, red. Four different hues, so the steps read apart without
+/// relying on brightness.
+fn rail_risk_slot(sev: coordination::Severity) -> usize {
+    match sev {
+        coordination::Severity::Clear => 2,
+        coordination::Severity::Caution => 4,
+        coordination::Severity::Warning => 3,
+        coordination::Severity::Alert => 1,
+    }
 }
 
 pub(crate) fn darken(mut c: Hsla, f: f32) -> Hsla {
@@ -38551,6 +38704,42 @@ mod tests {
         }
     }
 
+    /// An ask on the rail is inked by its risk, not its lane, in four
+    /// different hues; every other row keeps its lane's colour.
+    #[test]
+    fn rail_ink_follows_risk_for_access_asks() {
+        use coordination::Severity::*;
+        let slots: Vec<usize> = [Clear, Caution, Warning, Alert]
+            .map(rail_risk_slot)
+            .to_vec();
+        assert_eq!(slots, vec![2, 4, 3, 1], "green, blue, yellow, red");
+        let ink = live_fn("    fn rail_ink(");
+        assert!(ink.contains("(attention::AttentionKind::Access, Some(sev))"));
+        assert!(ink.contains("th.ansi[rail_risk_slot(sev)]"));
+        let src = shipped_src();
+        assert!(
+            src.contains("Self::rail_ink(it.kind, it.ask.as_ref().and_then(|a| a.risk), &th, &sk)")
+        );
+    }
+
+    /// An agent waits on one ask at a time (Gate 3, question 2): a second is
+    /// refused while the first is on the rail, before anything else is asked.
+    #[test]
+    fn one_pending_ask_per_asking_pane() {
+        let apply = live_fn("    fn apply_mcp_config(");
+        let pending = apply
+            .find("if leaf.read(cx).access_ask.is_some() {")
+            .expect("the check");
+        let asked = apply
+            .find("access::nothing_to_ask(ask.change")
+            .expect("the ask");
+        assert!(pending < asked, "the pending check comes first");
+        assert!(
+            apply.contains("risk: Some(warroom::risk(&facts))"),
+            "every ask is assessed"
+        );
+    }
+
     /// The agent wall is an easter egg now: it still runs, and nothing on
     /// screen leads to it. Ctrl+Shift+A is its one door outside the demo and
     /// dev environment hooks, and the help screen no longer lists it.
@@ -38651,12 +38840,13 @@ mod tests {
         assert_eq!(
             calls,
             vec![
+                "main.rs: .chart.grant_bypass(",
                 "war_room_view.rs: .chart.draw(",
                 "war_room_view.rs: .chart.erase(",
                 "war_room_view.rs: .chart.forget_seat(",
                 "war_room_view.rs: .set_seat(",
             ],
-            "something other than the War Room panel changes the chart"
+            "something other than the War Room panel or the rail's answer changes the chart"
         );
     }
 

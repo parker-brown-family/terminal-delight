@@ -29,7 +29,7 @@ use std::time::Instant;
 
 use crate::mcp::{Expose, McpConfig};
 
-/// The settings an agent may ask a person to change. Five, and only these.
+/// The settings an agent may ask a person to change. Six, and only these.
 ///
 /// The narrowing twins of the last three are left out on purpose: an agent
 /// that wants less access can simply not use it, and every extra verb is one
@@ -47,16 +47,20 @@ pub enum Change {
     ExposeShells,
     /// Let agents tail other agents' transcripts.
     EventsOn,
+    /// A bypass line in the War Room: ask one pane directly, past the chart,
+    /// for a few prompts (three unless the person picks another count).
+    AskLine,
 }
 
 impl Change {
     /// Every change, in the order the tool description lists them.
-    pub const ALL: [Change; 5] = [
+    pub const ALL: [Change; 6] = [
         Change::OpenPane,
         Change::ClosePane,
         Change::WritesOn,
         Change::ExposeShells,
         Change::EventsOn,
+        Change::AskLine,
     ];
 
     /// The name on the wire, which is also the name in the answer line.
@@ -67,6 +71,7 @@ impl Change {
             Change::WritesOn => "writes_on",
             Change::ExposeShells => "expose_shells",
             Change::EventsOn => "events_on",
+            Change::AskLine => "ask_line",
         }
     }
 
@@ -76,7 +81,7 @@ impl Change {
 
     /// Whether the change is about one pane, and so needs that pane's pid.
     pub fn needs_pane(self) -> bool {
-        matches!(self, Change::OpenPane | Change::ClosePane)
+        matches!(self, Change::OpenPane | Change::ClosePane | Change::AskLine)
     }
 
     /// What a person reads on the rail row, in their words rather than ours.
@@ -100,6 +105,7 @@ impl Change {
             Change::WritesOn => t.access_ask_writes_on.into(),
             Change::ExposeShells => t.access_ask_expose_shells.into(),
             Change::EventsOn => t.access_ask_events_on.into(),
+            Change::AskLine => crate::lang::fill(t.access_ask_ask_line, &[("pane", &pane)]),
         }
     }
 
@@ -112,6 +118,9 @@ impl Change {
             Change::WritesOn => "MCP writes are on".into(),
             Change::ExposeShells => "plain shells are shown to agents".into(),
             Change::EventsOn => "agents' tool calls are shown to agents".into(),
+            Change::AskLine => {
+                format!("you may ask {pane} directly, for the prompts on the bypass line")
+            }
         }
     }
 
@@ -124,6 +133,7 @@ impl Change {
             Change::WritesOn => "MCP writes stay off".into(),
             Change::ExposeShells => "only agent panes are shown to agents".into(),
             Change::EventsOn => "agents' tool calls stay hidden".into(),
+            Change::AskLine => format!("no line reaches {pane} from your seat"),
         }
     }
 }
@@ -177,7 +187,18 @@ pub struct Ask {
     pub why: String,
     /// When the ask arrived, so the row can say how long it has waited.
     pub at: Instant,
+    /// How serious the ask is — the rail's colour and glyph. Assessed by the
+    /// window when the ask arrives (`warroom::risk`); `None` until then.
+    pub risk: Option<crate::coordination::Severity>,
+    /// For a bypass: the prompts it grants, three unless the person picks
+    /// another count on the card before pressing Yes.
+    pub prompts: u8,
 }
+
+/// The prompts a bypass grants unless the person picks another count.
+pub const BYPASS_PROMPTS: u8 = 3;
+/// The counts the rail offers for a bypass.
+pub const BYPASS_CHOICES: [u8; 3] = [1, 3, 10];
 
 /// A person's answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,6 +227,10 @@ pub enum Outcome {
 pub struct Now<'a> {
     pub pane_off_limits: Option<bool>,
     pub mcp: &'a McpConfig,
+    /// For `ask_line`: `None` when the asker or the pane is not seated in the
+    /// War Room (a line runs between seats), else whether a line from the
+    /// asker's seat already reaches the pane as far as ask.
+    pub line_reaches_ask: Option<bool>,
 }
 
 /// Why there is nothing to ask, or `None` when the ask can stand.
@@ -238,6 +263,21 @@ pub fn nothing_to_ask(change: Change, pid: Option<u32>, now: &Now) -> Option<Str
             .mcp
             .events
             .then(|| "agents' tool calls are already shown".to_string()),
+        Change::AskLine => match (now.pane_off_limits, now.line_reaches_ask) {
+            (None, _) => Some(match pid {
+                Some(p) => format!("no pane with pid {p} in this window"),
+                None => "a bypass is to one pane, and none was named".to_string(),
+            }),
+            (Some(true), _) => Some(format!("{pane} is off-limits; no line can reach it")),
+            (Some(false), None) => Some(format!(
+                "a line runs between War Room seats, and your pane or {pane} is not seated; \
+                 only a person seats panes, in the War Room"
+            )),
+            (Some(false), Some(true)) => Some(format!(
+                "a line from your seat already reaches {pane} as far as ask"
+            )),
+            (Some(false), Some(false)) => None,
+        },
     }
 }
 
@@ -253,7 +293,7 @@ pub fn grant_config(change: Change, mcp: &mut McpConfig) -> Option<Outcome> {
         }
     };
     match change {
-        Change::OpenPane | Change::ClosePane => None,
+        Change::OpenPane | Change::ClosePane | Change::AskLine => None,
         Change::WritesOn => Some(flip(&mut mcp.writable)),
         Change::EventsOn => Some(flip(&mut mcp.events)),
         Change::ExposeShells => Some(if matches!(mcp.expose, Expose::All) {
@@ -322,6 +362,45 @@ fn one_line(s: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn ask_line_is_a_wire_change_about_one_pane() {
+        assert_eq!(Change::parse("ask_line"), Some(Change::AskLine));
+        assert!(Change::AskLine.needs_pane());
+        assert_eq!(
+            grant_config(Change::AskLine, &mut McpConfig::default()),
+            None,
+            "not a window switch"
+        );
+    }
+
+    /// A bypass runs between two War Room seats: no pane, an off-limits pane,
+    /// an unseated pane and a line that already reaches each leave nothing to
+    /// ask, each in its own words.
+    #[test]
+    fn an_ask_line_needs_two_seats_and_no_line_that_reaches() {
+        let on = McpConfig {
+            enabled: true,
+            ..McpConfig::default()
+        };
+        let now = |off: Option<bool>, reaches: Option<bool>| Now {
+            pane_off_limits: off,
+            mcp: &on,
+            line_reaches_ask: reaches,
+        };
+        let why = |off, reaches| nothing_to_ask(Change::AskLine, Some(7), &now(off, reaches));
+        assert!(why(None, None).unwrap().contains("no pane with pid 7"));
+        assert!(why(Some(true), Some(false)).unwrap().contains("off-limits"));
+        assert!(why(Some(false), None).unwrap().contains("not seated"));
+        assert!(why(Some(false), Some(true))
+            .unwrap()
+            .contains("already reaches"));
+        assert_eq!(
+            why(Some(false), Some(false)),
+            None,
+            "two seats and no line: the ask stands"
+        );
+    }
+
     fn ask(change: Change, pid: Option<u32>) -> Ask {
         Ask {
             change,
@@ -329,6 +408,8 @@ mod tests {
             title: None,
             why: "reason".into(),
             at: Instant::now(),
+            risk: None,
+            prompts: crate::access::BYPASS_PROMPTS,
         }
     }
 
@@ -344,9 +425,9 @@ mod tests {
     }
 
     #[test]
-    fn only_the_two_pane_changes_name_a_pane() {
+    fn only_the_pane_changes_and_the_bypass_name_a_pane() {
         let pane: Vec<_> = Change::ALL.into_iter().filter(|c| c.needs_pane()).collect();
-        assert_eq!(pane, [Change::OpenPane, Change::ClosePane]);
+        assert_eq!(pane, [Change::OpenPane, Change::ClosePane, Change::AskLine]);
     }
 
     #[test]
@@ -373,6 +454,7 @@ mod tests {
                 &Now {
                     pane_off_limits: off,
                     mcp: cfg,
+                    line_reaches_ask: None,
                 },
             )
         };
@@ -386,6 +468,7 @@ mod tests {
                 &Now {
                     pane_off_limits: Some(off),
                     mcp: &McpConfig::default(),
+                    line_reaches_ask: None,
                 },
             )
         };
@@ -398,6 +481,7 @@ mod tests {
                 &Now {
                     pane_off_limits: None,
                     mcp: cfg,
+                    line_reaches_ask: None,
                 },
             )
         };
@@ -428,7 +512,7 @@ mod tests {
                 Change::WritesOn => w.writable = true,
                 Change::ExposeShells => w.expose = Expose::All,
                 Change::EventsOn => w.events = true,
-                Change::OpenPane | Change::ClosePane => unreachable!(),
+                Change::OpenPane | Change::ClosePane | Change::AskLine => unreachable!(),
             }
             w
         };

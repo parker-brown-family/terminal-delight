@@ -1411,19 +1411,22 @@ fn tool_defs() -> Value {
                  answer is typed into your own terminal as one line beginning \
                  [workbench:<tag>] (your $TD_TAG), once your pane is on screen; the \
                  setting itself changes the moment they press Yes, so retrying what \
-                 was refused also tells you. Five changes: `open_pane` (a pane a \
+                 was refused also tells you. Six changes: `open_pane` (a pane a \
                  person marked off-limits; needs its `pid`), `close_pane` (mark a \
                  pane off-limits — say so when you see secrets; needs `pid`), \
                  `writes_on` (notes, deliverables, the bench, appearance), \
                  `expose_shells` (show plain shells, not only agent panes), \
-                 `events_on` (other agents' tool calls). Appearance needs no ask: \
-                 with writes on, `set_pane_config` restyles a pane directly. One ask \
-                 per pane at a time; a new one replaces yours. Works with writes off.",
+                 `events_on` (other agents' tool calls), `ask_line` (a bypass line \
+                 in the War Room, so `ask_agent` may ask the pane `pid` directly, \
+                 past the chart, for a few prompts; both panes must be seated). \
+                 Appearance needs no ask: with writes on, `set_pane_config` restyles \
+                 a pane directly. One ask at a time: another is refused while yours \
+                 waits on the rail. Works with writes off.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "change": { "type": "string", "enum": ["open_pane", "close_pane", "writes_on", "expose_shells", "events_on"], "description": "the setting you are asking to have changed" },
-                    "pid": { "type": "integer", "description": "the pane the change is about, for open_pane and close_pane only" },
+                    "change": { "type": "string", "enum": ["open_pane", "close_pane", "writes_on", "expose_shells", "events_on", "ask_line"], "description": "the setting you are asking to have changed" },
+                    "pid": { "type": "integer", "description": "the pane the change is about, for open_pane, close_pane and ask_line only" },
                     "why": { "type": "string", "description": "one sentence, at most 40 words, saying what you need it for — the person reads it before answering" }
                 },
                 "required": ["change", "why"],
@@ -2515,6 +2518,8 @@ where
             title: None,
             why,
             at: std::time::Instant::now(),
+            risk: None,
+            prompts: crate::access::BYPASS_PROMPTS,
         }),
         own_pane: snap.is_callers(asker),
         ..Default::default()
@@ -3278,6 +3283,8 @@ mod tests {
                 title: None,
                 why: "Need a note".into(),
                 at: std::time::Instant::now(),
+                risk: None,
+                prompts: crate::access::BYPASS_PROMPTS,
             }),
             ..Default::default()
         };
