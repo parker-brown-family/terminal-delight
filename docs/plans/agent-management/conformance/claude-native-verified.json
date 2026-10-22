@@ -1,0 +1,441 @@
+{
+  "additional_snapshots": [
+    {
+      "actor": {
+        "binding_evidence": "/home/parker/.claude/sessions/2716326.json",
+        "executable": {
+          "at_ms": 1792526760379,
+          "source": "/proc/2716326/exe",
+          "state": "observed",
+          "value": "/home/parker/.local/share/mise/installs/claude/2.1.296/claude"
+        },
+        "inference_runtime": {
+          "reason": "Claude exposes no separate local inference runtime identity",
+          "state": "unknown"
+        },
+        "location": {
+          "pane": 42,
+          "shell": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2713084,
+            "start_ticks": 59939562
+          },
+          "td_session": "1"
+        },
+        "model": {
+          "effort": {
+            "state": "not_collected"
+          },
+          "provider_revision": {
+            "reason": "Provider revision is not exposed by the local harness",
+            "state": "unknown"
+          },
+          "reported": {
+            "state": "not_collected"
+          },
+          "requested": {
+            "state": "not_collected"
+          }
+        },
+        "observed_at_ms": 1792526760379,
+        "run": {
+          "conversation": "ed569b73-f45f-4049-b645-e261689f1db2",
+          "endpoint": "/run/user/1000/cc-socks/2716326.sock",
+          "endpoint_generation": "81:77928:1792521286:785871871",
+          "harness": "claude",
+          "process": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2716326,
+            "start_ticks": 59941099
+          }
+        },
+        "transcript": {
+          "at_ms": 1792526846422,
+          "source": "Explicit conformance path; session ID checked in record",
+          "state": "observed",
+          "value": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl"
+        },
+        "version": {
+          "at_ms": 1792526760379,
+          "source": "/home/parker/.claude/sessions/2716326.json",
+          "state": "observed",
+          "value": "2.1.296"
+        }
+      },
+      "id": "74d787a86e84bc939a504996c726bde03ce1f11eb8f260509be30ae393cd2cf5"
+    },
+    {
+      "actor": {
+        "binding_evidence": "Explicit live conformance arguments supplied by managing session; cooperative attribution",
+        "executable": {
+          "at_ms": 1792526760379,
+          "source": "/proc/2696547/exe",
+          "state": "observed",
+          "value": "/home/parker/.local/share/mise/installs/codex/0.162.1/bin/codex"
+        },
+        "inference_runtime": {
+          "state": "not_collected"
+        },
+        "location": {
+          "pane": 41,
+          "shell": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2681687,
+            "start_ticks": 59922703
+          },
+          "td_session": "1"
+        },
+        "model": {
+          "effort": {
+            "state": "not_collected"
+          },
+          "provider_revision": {
+            "reason": "Provider revision is not exposed by the local harness",
+            "state": "unknown"
+          },
+          "reported": {
+            "state": "not_collected"
+          },
+          "requested": {
+            "state": "not_collected"
+          }
+        },
+        "observed_at_ms": 1792526760379,
+        "run": {
+          "conversation": "01a15a96-d75b-70f0-85cd-a5000afe45d2",
+          "endpoint": "/tmp/codex-daemon-1000/b3758b151dc3c3a878b05ccc2b83e8e8b4e8307804e4e8170b7639a85882f98e",
+          "endpoint_generation": "56:3805484:1792480721:531359949",
+          "harness": "codex",
+          "process": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2696547,
+            "start_ticks": 59932113
+          }
+        },
+        "transcript": {
+          "state": "not_collected"
+        },
+        "version": {
+          "state": "not_collected"
+        }
+      },
+      "id": "76839105c7516e13255685cd4d0878d763f0d98d2b6c726a39deb6670418fe23"
+    },
+    {
+      "actor": {
+        "binding_evidence": "/home/parker/.claude/sessions/2716326.json",
+        "executable": {
+          "at_ms": 1792526760379,
+          "source": "/proc/2716326/exe",
+          "state": "observed",
+          "value": "/home/parker/.local/share/mise/installs/claude/2.1.296/claude"
+        },
+        "inference_runtime": {
+          "reason": "Claude exposes no separate local inference runtime identity",
+          "state": "unknown"
+        },
+        "location": {
+          "pane": 42,
+          "shell": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2713084,
+            "start_ticks": 59939562
+          },
+          "td_session": "1"
+        },
+        "model": {
+          "effort": {
+            "state": "not_collected"
+          },
+          "provider_revision": {
+            "reason": "Provider revision is not exposed by the local harness",
+            "state": "unknown"
+          },
+          "reported": {
+            "state": "not_collected"
+          },
+          "requested": {
+            "state": "not_collected"
+          }
+        },
+        "observed_at_ms": 1792526760379,
+        "run": {
+          "conversation": "ed569b73-f45f-4049-b645-e261689f1db2",
+          "endpoint": "/run/user/1000/cc-socks/2716326.sock",
+          "endpoint_generation": "81:77928:1792521286:785871871",
+          "harness": "claude",
+          "process": {
+            "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+            "pid": 2716326,
+            "start_ticks": 59941099
+          }
+        },
+        "version": {
+          "at_ms": 1792526760379,
+          "source": "/home/parker/.claude/sessions/2716326.json",
+          "state": "observed",
+          "value": "2.1.296"
+        }
+      },
+      "id": "e7f7c36ecfce4fa3248f03be43d9eeb310bab3fa2923a3e50fb69bde5c7abf8c"
+    }
+  ],
+  "content_sha256": "f64697041e9012ba0f7306e3392076e4efa4d992d9308dc621d819211a2ed6ce",
+  "database_id": "01a15aeb-b9c9-7004-8418-4b6ed4a767e0",
+  "envelope": {
+    "caused_by_message": null,
+    "dispatch_before_ms": 1792527360397,
+    "expected_model": null,
+    "experiment": "original-markdown-assignment",
+    "key": "01a15aeb-b9cd-7101-a642-7a0d1ce2982e",
+    "parent_request": null,
+    "target": {
+      "conversation": "ed569b73-f45f-4049-b645-e261689f1db2",
+      "endpoint": "/run/user/1000/cc-socks/2716326.sock",
+      "endpoint_generation": "81:77928:1792521286:785871871",
+      "harness": "claude",
+      "process": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2716326,
+        "start_ticks": 59941099
+      }
+    },
+    "text": "Parker asked the managing agent in pane 41 to send this assignment to your existing process in pane 42 (task 1). Request 01a15aeb-b9cd-7101-a642-7a0d1ce2982e. Please create /home/parker/Work/terminal-delight/reports/agent-management-ipsum.md containing exactly one short paragraph of Lorem ipsum, with no heading. Keep it quick. Then reply with the output path and this request ID. This is the single task, not a request to start an agent. If this is not the task 1 pane, decline it."
+  },
+  "receipt": {
+    "attempts": [
+      2
+    ],
+    "confirmed_by_td": 1,
+    "database_id": "01a15aeb-b9c9-7004-8418-4b6ed4a767e0",
+    "events": [
+      {
+        "at_ms": 1792526760398,
+        "data": {
+          "caller_attribution": "cooperative local pane declaration",
+          "parent_request": null,
+          "recipient": "e7f7c36ecfce4fa3248f03be43d9eeb310bab3fa2923a3e50fb69bde5c7abf8c",
+          "root_request": "01a15aeb-b9cd-7101-a642-7a0e3940c5de",
+          "sender": "237a073d92824eef25788eb175a79dcc7c3809349ef6e0e3820f79b349cd0797"
+        },
+        "kind": "accepted",
+        "request": "01a15aeb-b9cd-7101-a642-7a0e3940c5de",
+        "sequence": 1
+      },
+      {
+        "at_ms": 1792526760402,
+        "data": {
+          "adapter": {
+            "revision": "claude-peer-1-r1",
+            "td_build": "conformance harness; window integration pending",
+            "vendor_version": {
+              "at_ms": 1792526760379,
+              "source": "/home/parker/.claude/sessions/2716326.json",
+              "state": "observed",
+              "value": "2.1.296"
+            }
+          },
+          "attempt": 1,
+          "attempt_id": "01a15aeb-b9d2-732d-bf7c-130b55185c80",
+          "recipient": "e7f7c36ecfce4fa3248f03be43d9eeb310bab3fa2923a3e50fb69bde5c7abf8c"
+        },
+        "kind": "dispatch_intent",
+        "request": "01a15aeb-b9cd-7101-a642-7a0e3940c5de",
+        "sequence": 2
+      },
+      {
+        "at_ms": 1792526765416,
+        "data": {
+          "reason": "No correlated native receipt within five seconds; no automatic resend"
+        },
+        "kind": "delivery_unconfirmed",
+        "request": "01a15aeb-b9cd-7101-a642-7a0e3940c5de",
+        "sequence": 3
+      },
+      {
+        "at_ms": 1792526846424,
+        "data": {
+          "evidence": {
+            "native_message_id": "01a15aeb-b9cd-7101-a642-7a0e3940c5de",
+            "observed_at_ms": 1792526846423,
+            "scope": "exact user-message UUID in recipient transcript",
+            "session_id": "ed569b73-f45f-4049-b645-e261689f1db2",
+            "source": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl",
+            "source_time": "2026-10-20T20:06:00.481Z"
+          },
+          "scope": "reconciled input consumption"
+        },
+        "kind": "native_accepted",
+        "request": "01a15aeb-b9cd-7101-a642-7a0e3940c5de",
+        "sequence": 4
+      },
+      {
+        "at_ms": 1792526846424,
+        "data": {
+          "actor": "74d787a86e84bc939a504996c726bde03ce1f11eb8f260509be30ae393cd2cf5",
+          "evidence": {
+            "native_message_id": "01a15aeb-b9cd-7101-a642-7a0e3940c5de",
+            "observed_at_ms": 1792526846423,
+            "scope": "exact user-message UUID in recipient transcript",
+            "session_id": "ed569b73-f45f-4049-b645-e261689f1db2",
+            "source": "/home/parker/.claude/projects/-home-parker-Work-terminal-delight/ed569b73-f45f-4049-b645-e261689f1db2.jsonl",
+            "source_time": "2026-10-20T20:06:00.481Z"
+          },
+          "scope": "input consumed; responsibility and result remain separate"
+        },
+        "kind": "recipient_acknowledged",
+        "request": "01a15aeb-b9cd-7101-a642-7a0e3940c5de",
+        "sequence": 5
+      },
+      {
+        "at_ms": 1792527103131,
+        "data": {
+          "actor": "76839105c7516e13255685cd4d0878d763f0d98d2b6c726a39deb6670418fe23",
+          "report": {
+            "evidence": [
+              "/home/parker/Work/terminal-delight/reports/agent-management-ipsum.md"
+            ],
+            "expected_run": {
+              "conversation": "01a15a96-d75b-70f0-85cd-a5000afe45d2",
+              "endpoint": "/tmp/codex-daemon-1000/b3758b151dc3c3a878b05ccc2b83e8e8b4e8307804e4e8170b7639a85882f98e",
+              "endpoint_generation": "56:3805484:1792480721:531359949",
+              "harness": "codex",
+              "process": {
+                "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+                "pid": 2696547,
+                "start_ticks": 59932113
+              }
+            },
+            "kind": "verified",
+            "reply_key": "01a15af0-f49a-747e-9dd5-91967d41c66f",
+            "request": "01a15aeb-b9cd-7101-a642-7a0e3940c5de",
+            "text": "Read the 232-byte UTF-8 output. Exactly one nonempty paragraph, no heading. SHA-256 8702f35d45d61793982fc9564ecba57bc71df6488e18d69c8317d954332333a6."
+          }
+        },
+        "kind": "resolution_reported",
+        "request": "01a15aeb-b9cd-7101-a642-7a0e3940c5de",
+        "sequence": 6
+      }
+    ],
+    "native_delivery": "native_accepted",
+    "recipient_ack": {
+      "at_ms": 1792526846424,
+      "source": "input consumed; responsibility and result remain separate",
+      "state": "observed",
+      "value": 5
+    },
+    "request": "01a15aeb-b9cd-7101-a642-7a0e3940c5de",
+    "resolution_reports": [
+      6
+    ],
+    "work_reports": []
+  },
+  "recipient": {
+    "binding_evidence": "/home/parker/.claude/sessions/2716326.json",
+    "executable": {
+      "at_ms": 1792526760379,
+      "source": "/proc/2716326/exe",
+      "state": "observed",
+      "value": "/home/parker/.local/share/mise/installs/claude/2.1.296/claude"
+    },
+    "inference_runtime": {
+      "reason": "Claude exposes no separate local inference runtime identity",
+      "state": "unknown"
+    },
+    "location": {
+      "pane": 42,
+      "shell": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2713084,
+        "start_ticks": 59939562
+      },
+      "td_session": "1"
+    },
+    "model": {
+      "effort": {
+        "state": "not_collected"
+      },
+      "provider_revision": {
+        "reason": "Provider revision is not exposed by the local harness",
+        "state": "unknown"
+      },
+      "reported": {
+        "state": "not_collected"
+      },
+      "requested": {
+        "state": "not_collected"
+      }
+    },
+    "observed_at_ms": 1792526760379,
+    "run": {
+      "conversation": "ed569b73-f45f-4049-b645-e261689f1db2",
+      "endpoint": "/run/user/1000/cc-socks/2716326.sock",
+      "endpoint_generation": "81:77928:1792521286:785871871",
+      "harness": "claude",
+      "process": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2716326,
+        "start_ticks": 59941099
+      }
+    },
+    "version": {
+      "at_ms": 1792526760379,
+      "source": "/home/parker/.claude/sessions/2716326.json",
+      "state": "observed",
+      "value": "2.1.296"
+    }
+  },
+  "request": "01a15aeb-b9cd-7101-a642-7a0e3940c5de",
+  "schema": 1,
+  "sender": {
+    "binding_evidence": "Explicit live conformance arguments supplied by managing session; cooperative attribution",
+    "executable": {
+      "at_ms": 1792526760379,
+      "source": "/proc/2696547/exe",
+      "state": "observed",
+      "value": "/home/parker/.local/share/mise/installs/codex/0.162.1/bin/codex"
+    },
+    "inference_runtime": {
+      "state": "not_collected"
+    },
+    "location": {
+      "pane": 41,
+      "shell": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2681687,
+        "start_ticks": 59922703
+      },
+      "td_session": "1"
+    },
+    "model": {
+      "effort": {
+        "state": "not_collected"
+      },
+      "provider_revision": {
+        "reason": "Provider revision is not exposed by the local harness",
+        "state": "unknown"
+      },
+      "reported": {
+        "state": "not_collected"
+      },
+      "requested": {
+        "state": "not_collected"
+      }
+    },
+    "observed_at_ms": 1792526760379,
+    "run": {
+      "conversation": "01a15a96-d75b-70f0-85cd-a5000afe45d2",
+      "endpoint": "/tmp/codex-daemon-1000/b3758b151dc3c3a878b05ccc2b83e8e8b4e8307804e4e8170b7639a85882f98e",
+      "endpoint_generation": "56:3805484:1792480721:531359949",
+      "harness": "codex",
+      "process": {
+        "boot_id": "5f1f7c2a-12cf-4151-b80c-6f612e533157",
+        "pid": 2696547,
+        "start_ticks": 59932113
+      }
+    },
+    "version": {
+      "state": "not_collected"
+    }
+  }
+}

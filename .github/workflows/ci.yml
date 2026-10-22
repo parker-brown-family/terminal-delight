@@ -44,6 +44,7 @@ jobs:
           sudo apt-get install -y \
             libasound2-dev \
             libfontconfig1-dev \
+            libsqlite3-dev \
             libwayland-dev \
             libx11-dev \
             libxcb1-dev \
@@ -79,20 +80,22 @@ jobs:
           workspaces: app
 
       - name: Format
-        run: cargo fmt -- --check
+        # --all also traverses the patched external Zed path dependencies.
+        # Check both TD packages without imposing formatting on that checkout.
+        run: cargo fmt -p terminal-delight -p td-agent-management -- --check
 
       - name: Check
         run: cargo check --locked
 
       - name: Clippy
-        run: cargo clippy --locked -- -D warnings
+        run: cargo clippy --workspace --locked -- -D warnings
 
       # The alacritty fallback core is the way back if rio-vt misbehaves, and
       # the oracle the suite is checked against. A fallback nobody builds is
       # one that no longer compiles on the day it is needed (issue 826 removes
       # it, and these steps with it).
       - name: Clippy, fallback core
-        run: cargo clippy --locked --features core-alacritty -- -D warnings
+        run: cargo clippy --workspace --locked --features core-alacritty -- -D warnings
 
       # The HTML engine's tests drive a real Chromium, and the runner's AppArmor
       # forbids the unprivileged user namespaces its sandbox needs, so without
@@ -110,10 +113,10 @@ jobs:
         run: timeout 180 chromium --headless=new --no-first-run --disable-gpu --dump-dom about:blank >/dev/null 2>&1 || true
 
       - name: Test
-        run: cargo test --locked
+        run: cargo test --workspace --locked
 
       - name: Test, fallback core
-        run: cargo test --locked --features core-alacritty
+        run: cargo test --workspace --locked --features core-alacritty
 
       - name: Prove the Restricted OS boundary
         run: |

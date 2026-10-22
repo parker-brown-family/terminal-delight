@@ -167,6 +167,7 @@ pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::
     if BRIDGE.set(Mutex::new(req_tx)).is_err() {
         return; // unreachable behind the guard, but never install two
     }
+    crate::management_mcp::start();
 
     // Ticker: services snapshot requests on the main thread + feeds the notifier.
     cx.spawn(async move |this, cx| {
@@ -308,6 +309,23 @@ pub(crate) fn respond(line: &str) -> Option<String> {
     respond_as(line, None, None)
 }
 
+/// Fresh UI policy first; process/transcript resolution stays on the worker thread.
+pub(crate) fn management_environment(
+) -> td_agent_management::state::Result<td_agent_management::worker::Environment> {
+    crate::management_mcp::environment(&management_snapshot()?)
+}
+
+pub(crate) fn management_snapshot() -> td_agent_management::state::Result<mcp::Snapshot> {
+    let (tx, rx) = mpsc::channel();
+    if !bridge_send(UiReq::Snapshot(tx)) {
+        return Err("Window bridge unavailable; scheduling paused".into());
+    }
+    let snap = rx
+        .recv_timeout(SNAPSHOT_BUDGET)
+        .map_err(|_| "Window snapshot unavailable; scheduling paused")?;
+    Ok(snap)
+}
+
 /// [`respond`], with the caller named.
 ///
 /// `caller` is what a relay worked out about ITSELF from its own process tree —
@@ -378,13 +396,14 @@ pub(crate) fn respond_as(
                     Err(_) => Err("terminal-delight UI not ready".to_string()),
                 }
             };
-            mcp::handle_line_full(
+            mcp::handle_line_managed(
                 line,
                 &snap,
                 |p, n| tail_for(p, &snap.panes, n, &home),
                 apply,
                 search,
                 open,
+                |name, args| crate::management_mcp::call(name, args, &snap),
             )
         }
         Err(RecvTimeoutError::Disconnected) | Err(RecvTimeoutError::Timeout) => {

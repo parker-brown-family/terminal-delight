@@ -8,6 +8,11 @@ repository = "https://github.com/parker-brown-family/terminal-delight"
 readme = "../README.md"
 publish = false
 
+[workspace]
+members = ["src/agent_management"]
+default-members = [".", "src/agent_management"]
+resolver = "2"
+
 [package.metadata.terminal-delight]
 # gpui consumed from a pinned Zed checkout (post-wgpu Linux renderer) carrying
 # the td-crt-pass patch (docs/patches/0001-td-crt-pass.patch) — the per-pane
@@ -25,6 +30,7 @@ default = []
 core-alacritty = ["dep:alacritty_terminal"]
 
 [dependencies]
+td-agent-management = { path = "src/agent_management" }
 alacritty_terminal = { version = "0.26", optional = true }
 # The terminal emulator core, reached only through src/vt/. Without its
 # defaults, which bring Rio's own pseudoterminal and event loop (TD has its
