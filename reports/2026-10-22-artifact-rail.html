@@ -1045,8 +1045,14 @@ dialog#d-export { max-width: 780px; }
 
 <!-- Notes and concurs are baked in here by "save into file". Leave them empty and leave them in,
      with their data-format: it names the format notes.js writes, and other writers check it. -->
-<script type="application/json" id="report-notes" data-format="1">{}</script>
-<script type="application/json" id="report-concurs" data-format="1">{}</script>
+<script type="application/json" id="report-notes" data-format="1" data-rev="2026-10-22T19:06:22.137Z">{}</script>
+<script type="application/json" id="report-concurs" data-format="1" data-rev="2026-10-22T19:06:22.137Z">{
+ "ask-does-the-hold-apply": "2026-10-22 19:05",
+ "ask-when-does-the-counter": "2026-10-22 19:05",
+ "ask-what-is-a-card": "2026-10-22 19:05",
+ "ask-what-happens-to-a": "2026-10-22 19:05",
+ "ask-whose-agents-are-on": "2026-10-22 19:06"
+}</script>
 
 <script>
   /* Set before notes.js runs. Used for the storage key and the download filename. */
@@ -1649,4 +1655,20 @@ document.querySelectorAll('[data-dlg]').forEach(function (b) {
 })();
 
 </script>
-</body></html>
+<!--
+READER NOTES —
+NOTES — 2026-10-22-artifact-rail.html
+0 notes on 0 elements · 5 concurs.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[ask-does-the-hold-apply] Does the hold apply to every pane, or only the one you're focused on?  ✓ concur
+
+[ask-when-does-the-counter] When does the counter bump?  ✓ concur
+
+[ask-what-is-a-card] What is a card called?  ✓ concur
+
+[ask-what-happens-to-a] What happens to a card when its pane closes?  ✓ concur
+
+[ask-whose-agents-are-on] Whose agents are on the rail?  ✓ concur
+
+--></body></html>
