@@ -364,6 +364,12 @@ pub fn sets(cx: &App) -> Vec<Arc<UiSet>> {
         .unwrap_or_default()
 }
 
+/// Replace the window's whole UI choice — what a design brings back with it
+/// when it is picked again (see [`crate::looks`]).
+pub fn set_choice(cx: &mut App, choice: UiChoice) {
+    cx.global_mut::<UiState>().choice = choice;
+}
+
 /// Flip one switch by hand.
 pub fn flip(cx: &mut App, key: Key, on: bool) {
     cx.global_mut::<UiState>().choice.flip(key, on);

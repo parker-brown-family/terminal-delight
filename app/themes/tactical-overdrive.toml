@@ -7,6 +7,12 @@ icon = "★"
 # other design still works, because an explicit skin choice outranks this.
 skin = "ops"
 
+# THE LOOK a window starts from the first time it wears this design (see
+# app/src/looks.rs). Only what differs from the house look; everything else,
+# and every change you make while wearing it, is the window's to remember.
+[look]
+crt = true
+
 [colors]
 bg      = "#061015"
 surface = "#101f26"

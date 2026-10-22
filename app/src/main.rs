@@ -65,6 +65,7 @@ mod keylayer;
 mod lang;
 mod launcher;
 mod launchpref;
+mod looks;
 mod lookup;
 mod mcp;
 mod mcp_tail;
@@ -2743,6 +2744,10 @@ struct StateFile {
     /// CONFIG existed, whose `left_bar` is read into the new switch once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ui: Option<uiconfig::UiChoice>,
+    /// What each design remembers of the changes made while wearing it, and
+    /// the look dials pinned to every design (see [`looks`]).
+    #[serde(default, skip_serializing_if = "looks::Looks::is_empty")]
+    looks: looks::Looks,
     /// The bar's width in logical pixels at scale 1.0, if it has ever been
     /// dragged. `None` = the default width.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2871,6 +2876,7 @@ impl Default for StateFile {
             projects: Vec::new(),
             left_bar: None,
             ui: None,
+            looks: looks::Looks::default(),
             left_bar_w: None,
             // `None`, not `Some(false)`: a fresh state file has no opinion
             // about the slot, and that is a different thing from having chosen
@@ -4461,6 +4467,11 @@ struct Workspace {
     fold_open: Option<&'static str>,
     fold_hover: Option<&'static str>,
     fold_gen: u64,
+    /// What each design remembers (see [`looks`]), the one step "undo" can
+    /// take back, and the right-click menu on a DESIGN button.
+    looks: looks::Looks,
+    look_undo: Option<LookUndo>,
+    design_menu: Option<(String, Point<Pixels>)>,
     /// Whether a new-window template is saved — read at startup and kept, so
     /// the palette never touches the disk to draw.
     new_window_saved: bool,
@@ -6116,6 +6127,9 @@ impl Workspace {
             fold_open: None,
             fold_hover: None,
             fold_gen: 0,
+            looks: saved.looks.clone(),
+            look_undo: None,
+            design_menu: None,
             new_window_saved: uiconfig::NewWindow::path().exists(),
             dead_menu: false,
             dead_filter: None,
@@ -7707,6 +7721,7 @@ impl Workspace {
                 .collect(),
             left_bar: Some(self.left_bar),
             ui: Some(uiconfig::choice(cx)),
+            looks: self.looks.clone(),
             rail_pinned: Some(self.rail_pinned),
             left_bar_w: Some(self.left_bar_w),
             slot_remaining: Some(self.slot_remaining),
@@ -20993,18 +21008,95 @@ impl Workspace {
         let (min, max, neutral) = key.range();
         let v = value.clamp(min, max);
         let frac = ((v - min) / (max - min)).clamp(0., 1.);
+        // In the window's tray a look dial says whether it differs from the
+        // worn design (a dot that resets it) and whether it is pinned to every
+        // design (right-click the label). See `looks`.
+        let look = matches!(self.osd_menu, Some(MenuScope::Outer))
+            .then(|| looks::look_key(key))
+            .flatten();
+        let (pinned, changed) = look.map_or((false, false), |k| {
+            let cur = theme::outer_choice(cx);
+            let pinned = self.looks.pinned.contains(k);
+            let changed = !pinned
+                && looks::LookDials::of(&cur.grade)
+                    .changes(&theme::design_stock(cx, &cur.id))
+                    .has(k);
+            (pinned, changed)
+        });
+        let t = self.lang.strings();
+        let reset_tip = t.ui.look_dial_reset;
+        // The dot sits in the margin left of the label, so a changed row
+        // keeps the same geometry as every other.
+        let dot = look.filter(|_| changed).map(|k| {
+            div()
+                .id(SharedString::from(format!("look-reset-{k}")))
+                .absolute()
+                .left(px(-13.))
+                .top_0()
+                .bottom_0()
+                .w(px(12.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .tooltip(move |_w, cx| {
+                    cx.new(|_| SlotTooltip {
+                        lines: vec![reset_tip.to_string()],
+                    })
+                    .into()
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.reset_look_dial(k, cx);
+                    }),
+                )
+                .child(div().size(px(6.)).rounded_full().bg(th.accent))
+        });
+        let label_el = div()
+            .relative()
+            .w(px(74.))
+            .text_size(sk.text_px(10.))
+            .text_color(th.text.alpha(0.8))
+            .child(if pinned {
+                format!("\u{1f4cc} {label}")
+            } else {
+                label.to_string()
+            })
+            .children(dot);
+        let label_el = match look {
+            Some(k) => {
+                let tip = if pinned {
+                    t.ui.look_unpin
+                } else {
+                    t.ui.look_pin
+                };
+                label_el
+                    .id(SharedString::from(format!("look-pin-{k}")))
+                    .tooltip(move |_w, cx| {
+                        cx.new(|_| SlotTooltip {
+                            lines: vec![tip.to_string()],
+                        })
+                        .into()
+                    })
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.toggle_look_pin(k, cx);
+                        }),
+                    )
+                    .into_any_element()
+            }
+            None => label_el.into_any_element(),
+        };
         div()
             .flex()
             .flex_row()
             .items_center()
             .gap_2()
-            .child(
-                div()
-                    .w(px(74.))
-                    .text_size(sk.text_px(10.))
-                    .text_color(th.text.alpha(0.8))
-                    .child(label.to_string()),
-            )
+            .child(label_el)
             .child(
                 div()
                     .w(px(TRACK))
@@ -27305,6 +27397,14 @@ fn td_anchor_top_forced() -> bool {
     })
 }
 
+/// Everything one "undo" of a design switch or reset puts back.
+struct LookUndo {
+    choice: ThemeChoice,
+    skin: Option<String>,
+    ui: uiconfig::UiChoice,
+    looks: looks::Looks,
+}
+
 /// UI CONFIG, as the workspace sees it (see [`uiconfig`]).
 impl Workspace {
     /// Show or hide the left bar BY HAND — Ctrl+Shift+B, the ◀ and ▶ handles,
@@ -27398,6 +27498,125 @@ impl Workspace {
         self.fold_gen = self.fold_gen.wrapping_add(1);
         self.fold_open = Some(row);
         cx.notify();
+    }
+
+    /// What the window is wearing, in the pieces a design switch moves.
+    fn wearing(&self, cx: &App) -> looks::Wearing {
+        looks::Wearing {
+            grade: theme::outer_choice(cx).grade,
+            skin: skin::is_pinned(cx).then(|| skin::active_id(cx)),
+            ui: uiconfig::choice(cx),
+        }
+    }
+
+    /// Put a look on the window: its choice, its skin pin, its UI CONFIG.
+    fn wear(
+        &mut self,
+        choice: ThemeChoice,
+        skin_pin: Option<String>,
+        ui: uiconfig::UiChoice,
+        cx: &mut Context<Self>,
+    ) {
+        let id = skin_pin.unwrap_or_else(|| skin::FOLLOW_THEME.to_string());
+        if let Err(e) = skin::select(cx, &id) {
+            eprintln!("terminal-delight: {e}");
+        }
+        uiconfig::set_choice(cx, ui);
+        theme::select_outer(cx, choice);
+        self.ui_changed(cx);
+    }
+
+    /// Everything one undo restores.
+    fn look_undo_point(&self, cx: &App) -> LookUndo {
+        let now = self.wearing(cx);
+        LookUndo {
+            choice: theme::outer_choice(cx),
+            skin: now.skin,
+            ui: now.ui,
+            looks: self.looks.clone(),
+        }
+    }
+
+    /// Pick a design for the window: the one being left keeps what was changed
+    /// while wearing it, and the one picked comes back as it was left — or as
+    /// designed, the first time. "Each design remembers your changes."
+    fn switch_outer_design(&mut self, to: String, cx: &mut Context<Self>) {
+        let cur = theme::outer_choice(cx);
+        if cur.id == to {
+            return;
+        }
+        self.look_undo = Some(self.look_undo_point(cx));
+        let now = self.wearing(cx);
+        let next = looks::switch(&mut self.looks, &cur.id, &now, &to, |id| {
+            theme::design_stock(cx, id)
+        });
+        let choice = ThemeChoice {
+            id: to,
+            grade: next.grade,
+            ..cur
+        };
+        self.wear(choice, next.skin, next.ui, cx);
+    }
+
+    /// "Reset to as designed": forget what a design remembers, and if it is
+    /// the one being worn, put it back as shipped. Undoable.
+    fn reset_design(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.look_undo = Some(self.look_undo_point(cx));
+        self.looks.designs.remove(id);
+        let cur = theme::outer_choice(cx);
+        if cur.id == id {
+            let mut grade = cur.grade;
+            theme::design_stock(cx, id).apply(&mut grade, &self.looks.pinned);
+            self.wear(
+                ThemeChoice { grade, ..cur },
+                None,
+                uiconfig::UiChoice::default(),
+                cx,
+            );
+        } else {
+            self.save(cx);
+            cx.notify();
+        }
+    }
+
+    /// Take back the last design switch or reset.
+    fn undo_look(&mut self, cx: &mut Context<Self>) {
+        if let Some(u) = self.look_undo.take() {
+            self.looks = u.looks;
+            self.wear(u.choice, u.skin, u.ui, cx);
+        }
+    }
+
+    /// One dial back to how the worn design ships it.
+    fn reset_look_dial(&mut self, key: &'static str, cx: &mut Context<Self>) {
+        let mut choice = theme::outer_choice(cx);
+        let keep: std::collections::BTreeSet<String> = looks::LookDials::KEYS
+            .iter()
+            .filter(|k| **k != key)
+            .map(|k| k.to_string())
+            .collect();
+        theme::design_stock(cx, &choice.id).apply(&mut choice.grade, &keep);
+        theme::select_outer(cx, choice);
+        self.save(cx);
+        cx.refresh_windows();
+    }
+
+    /// Pin a look dial to every design, or let it be remembered per design.
+    fn toggle_look_pin(&mut self, key: &'static str, cx: &mut Context<Self>) {
+        if !self.looks.pinned.remove(key) {
+            self.looks.pinned.insert(key.to_string());
+        }
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// How many changes a design carries — for its dot and its reset row.
+    fn design_changes(&self, id: &str, cx: &App) -> usize {
+        let cur = theme::outer_choice(cx);
+        let now = (cur.id == id).then(|| self.wearing(cx));
+        looks::changes_in(&self.looks, id, now.as_ref(), |d| {
+            theme::design_stock(cx, d)
+        })
     }
 
     /// Back to Clean for new windows: the template goes.
@@ -27731,6 +27950,15 @@ impl Render for Workspace {
                 self.theme_menu = Some(MenuScope::Outer);
                 // `TD_TRAY_DEMO=panes` shows UI CONFIG's PANES page.
                 self.ui_cfg_panes = how == "panes";
+                // `TD_TRAY_DEMO=design:X,Y` right-clicks the worn design there.
+                if let Some((x, y)) = how
+                    .strip_prefix("design:")
+                    .and_then(|xy| xy.split_once(','))
+                    .and_then(|(x, y)| Some((x.parse().ok()?, y.parse().ok()?)))
+                {
+                    let id = theme::outer_choice(cx).id;
+                    self.design_menu = Some((id, point(px(x), px(y))));
+                }
                 cx.notify();
             }
         }
@@ -28828,8 +29056,22 @@ impl Render for Workspace {
                     "hacker" => t.ui.pal_help_theme_hacker,
                     _ => t.ui.pal_help_theme_custom,
                 };
+                // A dot on a design that carries your changes (see `looks`).
+                let tuned = !is_pane && self.design_changes(&id, cx) > 0;
                 let btn = palette_help(
                     theme_icon_btn(&th, &sk, &icon, tlbl, active)
+                        .relative()
+                        .when(tuned, |b| {
+                            b.child(
+                                div()
+                                    .absolute()
+                                    .top(px(3.))
+                                    .right(px(4.))
+                                    .size(px(6.))
+                                    .rounded_full()
+                                    .bg(th.accent),
+                            )
+                        })
                         .id(SharedString::from(format!("theme-btn-{id}"))),
                     help,
                     None,
@@ -28837,8 +29079,20 @@ impl Render for Workspace {
                     help_delay,
                     help_owner.clone(),
                 );
+                let menu_id = id.clone();
                 theme_row = theme_row.child(
-                    btn.when(closed_design, |b| {
+                    btn.when(!is_pane, |b| {
+                        // Right-click: reset this design to as designed, or undo.
+                        b.on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.design_menu = Some((menu_id.clone(), ev.position));
+                                cx.notify();
+                            }),
+                        )
+                    })
+                    .when(closed_design, |b| {
                         b.on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -28850,15 +29104,21 @@ impl Render for Workspace {
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
-                            // Switch the base theme only; seed/colour/syntax/grade and
-                            // the dynamic dimension all carry over unchanged.
-                            ws.set_menu_choice(
-                                ThemeChoice {
-                                    id: id.clone(),
-                                    ..cur_c.clone()
-                                },
-                                cx,
-                            );
+                            ws.design_menu = None;
+                            if is_pane {
+                                // A pane's own design: switch the base theme only;
+                                // everything else carries over unchanged.
+                                ws.set_menu_choice(
+                                    ThemeChoice {
+                                        id: id.clone(),
+                                        ..cur_c.clone()
+                                    },
+                                    cx,
+                                );
+                            } else {
+                                // The window's: each design remembers its changes.
+                                ws.switch_outer_design(id.clone(), cx);
+                            }
                         }),
                     ),
                 );
@@ -29759,6 +30019,76 @@ impl Render for Workspace {
                     .child(hsep())
                     .child(new_windows)
             });
+            // Right-click on a DESIGN button: reset it to as designed, or undo.
+            let design_menu = self
+                .design_menu
+                .clone()
+                .filter(|_| !is_pane)
+                .map(|(id, pos)| {
+                    let n = self.design_changes(&id, cx);
+                    let name = match id.as_str() {
+                        "clean" => t.thm_clean,
+                        "tactical-overdrive" => t.thm_tactical,
+                        "hacker" => t.thm_hacker,
+                        "intrusive" => t.thm_intrusive,
+                        "custom" => t.thm_custom,
+                        "deco" => t.ui.pal_thm_deco,
+                        other => other,
+                    }
+                    .to_string();
+                    let row = |text: String, hint: String| {
+                        div()
+                            .flex()
+                            .flex_row()
+                            .justify_between()
+                            .gap_4()
+                            .px_3()
+                            .py_1()
+                            .cursor_pointer()
+                            .hover(|d| d.bg(th.accent.alpha(0.18)))
+                            .child(text)
+                            .child(div().text_color(th.text.alpha(0.5)).child(hint))
+                    };
+                    let reset_id = id.clone();
+                    // The house overlay recipe, which also flattens the glass.
+                    let menu = over_the_glass_tip(&th, &sk, 1.)
+                        .min_w(px(220.))
+                        .px(px(0.))
+                        .py(px(4.))
+                        .text_size(sk.text_px(11.))
+                        .text_color(th.text)
+                        .child(
+                            row(
+                                crate::lang::fill(t.ui.look_reset_to, &[("design", &name)]),
+                                n.to_string(),
+                            )
+                            .id("design-menu-reset")
+                            .when(n == 0, |d| d.opacity(0.45))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.design_menu = None;
+                                    ws.reset_design(&reset_id, cx);
+                                }),
+                            ),
+                        )
+                        .when(self.look_undo.is_some(), |d| {
+                            d.child(
+                                row(format!("\u{21b6} {}", t.ui.look_undo), String::new())
+                                    .id("design-menu-undo")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.design_menu = None;
+                                            ws.undo_look(cx);
+                                        }),
+                                    ),
+                            )
+                        });
+                    gpui::deferred(gpui::anchored().position(pos).snap_to_window().child(menu))
+                });
             // A sub-tab icon click anchors the tray at the click (right edge at
             // the cursor, opening down-left); clamp it fully on-screen. The
             // outer menu (menu_at == None) is raised from the 🎨 glyph at the
@@ -29819,12 +30149,18 @@ impl Render for Workspace {
                 .text_color(th.text)
                 .on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        if ws.design_menu.take().is_some() {
+                            cx.notify();
+                        }
+                    }),
                 )
                 .child(themes)
                 .child(pickers)
                 .child(controls)
-                .children(ui_area);
+                .children(ui_area)
+                .children(design_menu);
             // full-screen scrim: click anywhere outside closes
             div()
                 .absolute()
@@ -29833,6 +30169,7 @@ impl Render for Workspace {
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                         ws.theme_menu = None;
+                        ws.design_menu = None;
                         cx.notify();
                     }),
                 )
@@ -37128,6 +37465,8 @@ mod tests {
             ("terminal_state_toggle", 1),
             // Concise palette help, including Custom's interactive editor link.
             ("palette_help", 2),
+            // a look dial's pin (on its label) and its reset dot
+            ("slider_row", 2),
             // the corner's two split buttons, both built by this one function
             ("split_button", 1),
         ];

@@ -93,6 +93,11 @@ struct ThemeFile {
     /// preference: a set or a switch the person chose outranks it (see
     /// [`crate::uiconfig`]). Absent means the theme has no opinion.
     ui: Option<String>,
+    /// The look this design ships with — the dials a window starts from the
+    /// first time it wears it (`crt = true` on Hacker). Absent keys fall back
+    /// to the house look. See [`crate::looks`].
+    #[serde(default)]
+    look: crate::looks::LookDials,
     colors: FileColors,
     #[serde(default)]
     effects: FileEffects,
@@ -161,6 +166,9 @@ pub struct Theme {
     /// The UI set this theme asks for, by id (see [`crate::uiconfig`]). `None`
     /// means no opinion, so the window's own set stands.
     pub ui: Option<String>,
+    /// The look this design ships with, over the house look (see
+    /// [`design_stock`]). Only what the file says.
+    pub look: crate::looks::LookDials,
     pub bg: Hsla,
     pub surface: Hsla,
     pub text: Hsla,
@@ -2972,6 +2980,23 @@ pub fn flatten_tube(th: &mut Theme) {
     th.letter_glow = 0.0;
 }
 
+/// A design's look as shipped: the house look, with the design file's own
+/// `[look]` table over it. What a window wears the first time it picks the
+/// design, and what "reset to as designed" goes back to.
+pub fn design_stock(cx: &App, id: &str) -> crate::looks::LookDials {
+    let house = crate::looks::LookDials::of(&house_outer().grade);
+    let reg = cx.global::<ThemeRegistry>();
+    let own = if id == "custom" {
+        Some(reg.custom.look.clone())
+    } else {
+        reg.builtins
+            .iter()
+            .find(|(i, _)| i == id)
+            .map(|(_, t)| t.look.clone())
+    };
+    own.unwrap_or_default().over(&house)
+}
+
 /// What Clean holds off while it is worn: the whole tube, as the CRT switch
 /// would, and every light — the glow on the letters (focused and not), the
 /// afterglow of erased text, the bloom on cards and the window's frame
@@ -3454,6 +3479,7 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         icon: file.icon.unwrap_or_else(|| "◈".into()),
         skin: file.skin,
         ui: file.ui,
+        look: file.look,
         bg: c.bg,
         surface: c.surface,
         text: c.text,
@@ -3841,6 +3867,18 @@ mod tests {
         let mut th = parse(src).unwrap();
         flatten_tube(&mut th);
         assert_eq!(th.letter_glow, 0.0, "a flat tube still bleeds");
+    }
+
+    /// Every shipped design says what its tube is, so one nobody has touched
+    /// looks as designed whichever design was worn before it: Hacker, Intrusive
+    /// and Tactical ship the CRT on, Clean and Deco ship it off.
+    #[test]
+    fn every_design_declares_its_tube() {
+        for (id, src) in BUILTIN_THEMES {
+            let crt = parse(src).unwrap().look.crt;
+            let want = !matches!(*id, "clean" | "deco");
+            assert_eq!(crt, Some(want), "{id} must declare its tube in [look]");
+        }
     }
 
     #[test]

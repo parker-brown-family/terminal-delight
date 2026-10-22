@@ -27,6 +27,12 @@ icon = "○"
 skin = "clean"
 ui = "clean"
 
+# THE LOOK a window starts from the first time it wears this design (see
+# app/src/looks.rs). Only what differs from the house look; everything else,
+# and every change you make while wearing it, is the window's to remember.
+[look]
+crt = false
+
 [colors]
 bg      = "#030708"
 surface = "#0c1823"
