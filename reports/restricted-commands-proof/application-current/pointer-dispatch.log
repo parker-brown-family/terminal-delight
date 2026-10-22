@@ -1,0 +1,18 @@
+
+running 1 test
+test pane::behaviour::synthetic_bench_pointer_refuses_off_limits_but_reaches_an_allowed_pane ... FAILED
+
+failures:
+
+---- pane::behaviour::synthetic_bench_pointer_refuses_off_limits_but_reaches_an_allowed_pane stdout ----
+
+thread 'pane::behaviour::synthetic_bench_pointer_refuses_off_limits_but_reaches_an_allowed_pane' (2848118) panicked at src/pane/behaviour.rs:74:9:
+ok float=none hint=None showing=None
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    pane::behaviour::synthetic_bench_pointer_refuses_off_limits_but_reaches_an_allowed_pane
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2562 filtered out; finished in 0.03s
+

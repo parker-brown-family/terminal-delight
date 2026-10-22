@@ -1,0 +1,29 @@
+   Compiling terminal-delight v0.0.0 (/home/parker/.cache/td-security-finish/proof/module-mutations-final-3)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.40s
+     Running tests/restricted.rs (target/debug/deps/restricted-170347c1d84af9c3)
+
+running 1 test
+test a_later_host_socket_in_the_work_tree_cannot_bypass_the_gateway ... FAILED
+
+failures:
+
+---- a_later_host_socket_in_the_work_tree_cannot_bypass_the_gateway stdout ----
+
+thread 'a_later_host_socket_in_the_work_tree_cannot_bypass_the_gateway' (3029285) panicked at tests/restricted.rs:363:5:
+Starting Restricted offline run 9997cd16ff908381e6de2b3be8ddde4c: work="/home/parker/tr-f27c325d8579b8c8/work" access=read-write TD=none output=plain-text
+Inspect or revoke from Standard: terminal-delight restricted status 9997cd16ff908381e6de2b3be8ddde4c / restricted revoke 9997cd16ff908381e6de2b3be8ddde4c
+Traceback (most recent call last):
+  File "<string>", line 11, in <module>
+    else: raise AssertionError('late host service reachable')
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: late host service reachable
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    a_later_host_socket_in_the_work_tree_cannot_bypass_the_gateway
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.12s
+
+error: test failed, to rerun pass `--test restricted`

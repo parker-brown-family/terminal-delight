@@ -1,0 +1,31 @@
+backend  https://openrouter.ai/api  (OPENROUTER_API_KEY from /home/parker/Work/jev-integrations/.env)   model jev-latest
+file     reports/2026-10-21-restricted-commands.html
+7 sections, 1 request each, 5 questions batched per request
+
+ #  unexpl  ident  seam  pulls  role          heading
+    0-3 lo 0-1 lo 0-3lo 0-1 hi
+------------------------------------------------------------------------------------------------
+ 1    1.22   0.31    --   0.74  setup         Restricted commands
+ 2    1.49   0.35  1.11   0.96  turn          Shared workspace
+ 3    1.74   0.26  0.57   0.93  turn          Directory identity
+ 4    1.98   0.25  0.91   0.15  turn          Caller identity
+ 5    1.55   0.28  1.57   0.10  consequence   Access proposals
+ 6    1.99   0.66  1.50   0.13  aside         Regression controls
+ 7    1.88   0.54  1.13   0.77  resolution    Held installation
+
+Document
+  opens cold to a stranger     0.81   (high is good: a stranger could say what it is about)
+  headings tell the story      0.17   (high is good)
+  arc                        argument
+
+Worst first — repair these
+   6  Regression controls                                  leans on identifiers, ends flat
+   5  Access proposals                                     ends flat
+   4  Caller identity                                      ends flat
+   7  Held installation                                    leans on identifiers
+   2  Shared workspace                                     ok
+   3  Directory identity                                   ok
+
+7 section requests + 1 document request in 822 ms wall, slowest 491 ms
+
+wrote /home/parker/.cache/td-security-finish/proof/report-narrative-final.json

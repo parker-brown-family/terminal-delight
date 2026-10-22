@@ -1,0 +1,7 @@
+{
+  "candidate": "/home/parker/.cache/td-security-finish/artifacts/td-f5b9a6791418-restricted-review",
+  "sha256": "8edf3b15bdacfec3035d759c16817ba32fef167ec82d2fee0bf8b340ea3307bd",
+  "destination": "/home/parker/.local/lib/terminal-delight/td-f5b9a6791418-restricted-review",
+  "applied": false,
+  "effect": "future launches only; running windows unchanged"
+}

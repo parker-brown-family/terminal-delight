@@ -1,0 +1,19 @@
+{
+  "head": "f5b9a67914180329666cb05fc60e43e0ca7f9988",
+  "tree": "b1bfa23da375674c5c4220a8b3d9c212d70b7c79",
+  "parents": [
+    "837e5948c2c36cbc1cb584e5d8be2f5fc2ebddc3",
+    "99b9c904f4ea7e86d221c7f49b0091799929511e"
+  ],
+  "application_delta_from_review": [
+    "app/src/main.rs",
+    "app/src/palette/current/tests.rs",
+    "app/src/theme.rs"
+  ],
+  "local_only": true,
+  "purpose": "Preserve existing daily palette/note previews; no live installation.",
+  "binary": "/home/parker/.cache/td-security-finish/artifacts/td-f5b9a6791418-restricted-review",
+  "binary_sha256": "8edf3b15bdacfec3035d759c16817ba32fef167ec82d2fee0bf8b340ea3307bd",
+  "source_fingerprint": "6707674e3b8c249f20564ecef051a098038c7c122e61d2797cfdbeef93ba255b",
+  "qualification": "passed; not installed"
+}

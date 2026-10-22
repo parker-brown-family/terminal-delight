@@ -1,0 +1,24 @@
+   Compiling terminal-delight v0.0.0 (/home/parker/.cache/td-security-finish/proof/module-mutations-final-3)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.48s
+     Running unittests src/main.rs (target/debug/deps/terminal_delight-73ed7d4d68427bb2)
+
+running 1 test
+test restricted::seccomp::tests::no_new_connection_or_addressed_send_can_bypass_the_preconnected_channel ... FAILED
+
+failures:
+
+---- restricted::seccomp::tests::no_new_connection_or_addressed_send_can_bypass_the_preconnected_channel stdout ----
+
+thread 'restricted::seccomp::tests::no_new_connection_or_addressed_send_can_bypass_the_preconnected_channel' (3029814) panicked at src/restricted/seccomp.rs:228:13:
+assertion `left == right` failed
+  left: 2147418112
+ right: 327681
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    restricted::seccomp::tests::no_new_connection_or_addressed_send_can_bypass_the_preconnected_channel
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin terminal-delight`

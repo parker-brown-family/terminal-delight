@@ -1,0 +1,9 @@
+{
+  "window_pid": 3560658,
+  "window_alive": false,
+  "profile": "/run/user/1000/terminal-delight/chromium-3560658-0",
+  "exists": true,
+  "browser_owners": [],
+  "helper": "hidden_close removes WIN from HIDDEN_WINDOWS; hidden_sweep only iterates HIDDEN_WINDOWS",
+  "removed": true
+}

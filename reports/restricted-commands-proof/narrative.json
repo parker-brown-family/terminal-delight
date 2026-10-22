@@ -1,41 +1,89 @@
 {
   "file": "reports/2026-10-21-restricted-commands.html",
-  "subject": "Terminal Delight adds an explicit offline launch for unfamiliar build scripts with one work directory and no other-pane control",
-  "reader": "Parker owns Terminal Delight and knows the rogue-pane question, returning from AFK without having seen the implementation or test logs",
+  "subject": "The reviewed offline Restricted boundary and its tests, with live installation held",
+  "reader": "Parker knows Terminal Delight and raised the rogue-process concern, but does not read Rust and was away from the implementation",
   "model": "jev-latest",
   "backend": "https://openrouter.ai/api",
   "document": {
     "opens_cold": {
       "type": "noul",
-      "noul": 0.79
+      "noul": 0.81
     },
     "headings_tell_the_story": {
       "type": "noul",
-      "noul": 0.76
+      "noul": 0.17
     },
     "arc": {
       "type": "choice",
       "choice": "argument",
       "probabilities": {
-        "journey": 0.47,
-        "catalogue": 0.02,
-        "argument": 0.49,
-        "report": 0.01,
-        "none_of_the_above": 0.01
+        "journey": 0.39,
+        "catalogue": 0.15,
+        "argument": 0.42,
+        "report": 0.04,
+        "none_of_the_above": 0
       },
-      "confidence": 0.36
+      "confidence": 0.27
     }
   },
   "document_failure": null,
   "sections": [
     {
       "index": 1,
-      "heading": "Keep an unfamiliar build away from the rest of your workspace",
-      "text": "A build script in an ordinary Terminal Delight pane has your account\u2019s access, including routes to other panes. This change adds an explicit Restricted launch for offline shell/build work: the chosen project, read-only system tools and temporary home/tmp. It cannot open host controllers or new connections. Standard terminals keep their existing behavior. Online agents, TUIs and automatic handoffs are unavailable in this first profile. \n Single owner Explicit restricted launch 0.4 unchanged",
+      "heading": "Restricted commands",
+      "text": "A build from an unfamiliar repository can run beside a production shell. Both belong to you, but the build should not gain control of that shell. Restricted starts the build with one chosen project and no network. This review fixes the reported gaps and records what the tests cover.",
       "answers": {
         "unexplained": {
           "type": "score",
-          "score": 1.67,
+          "score": 1.22,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.07,
+            "1": 0.65,
+            "2": 0.25,
+            "3": 0.03
+          },
+          "confidence": 0.62
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.31
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.74
+        },
+        "role": {
+          "type": "choice",
+          "choice": "setup",
+          "probabilities": {
+            "setup": 0.41,
+            "complication": 0.21,
+            "turn": 0.3,
+            "consequence": 0.01,
+            "resolution": 0.05,
+            "aside": 0.01,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.31
+        }
+      },
+      "latency_ms": 367.0969770755619,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "Shared workspace",
+      "text": "01 \u00b7 One owner, different reach \n\n Standard terminal \nNormal account access.\nProduction shell, private files, online tools. \n Restricted command \nOne project at /work .\nOffline tools and temporary scratch space. \n Online Restricted agent \nUnavailable.\nProduct and architecture drafts only. \n Standard remains the compatibility choice; Restricted is an explicit launch. An off-limits pane mark controls TD disclosure and does not sandbox its programs. Drawn from the implemented CLI and permission policy. \nThat leaves two boundaries to verify: which files the command receives, and which TD actions it can request.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.49,
           "legend": {
             "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
             "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
@@ -44,67 +92,19 @@
           },
           "probabilities": {
             "0": 0.04,
-            "1": 0.33,
-            "2": 0.54,
-            "3": 0.08
+            "1": 0.47,
+            "2": 0.45,
+            "3": 0.04
           },
-          "confidence": 0.51
+          "confidence": 0.43
         },
         "stands_on_identifier": {
           "type": "noul",
-          "noul": 0.32
-        },
-        "raises_a_question": {
-          "type": "noul",
-          "noul": 0.41
-        },
-        "role": {
-          "type": "choice",
-          "choice": "turn",
-          "probabilities": {
-            "setup": 0.01,
-            "complication": 0.04,
-            "turn": 0.6,
-            "consequence": 0.34,
-            "resolution": 0.01,
-            "aside": 0,
-            "none_of_the_above": 0
-          },
-          "confidence": 0.53
-        }
-      },
-      "latency_ms": 363.1048339884728,
-      "failure": null
-    },
-    {
-      "index": 2,
-      "heading": "The question was about programs sharing one person\u2019s authority",
-      "text": "\u201cSingle user\u201d tells us who owns the workspace. It does not tell us which program that person intended to authorize. A local socket alone cannot make that distinction. 01 \u00b7 The existing Standard contract \n\n Ordinary workload \nNormal account access \n Host services, other files and processes, network \nReachable through ordinary account authority \n Standard remains useful for arbitrary terminal work, with ordinary account authority. A malicious Standard program can still edit state, launch another window or contact same-user services. The new global-toggle guard reduces cooperative bypass and nuisance; it is not the isolation boundary. Source: the existing host/control routes and selected threat model.",
-      "answers": {
-        "unexplained": {
-          "type": "score",
-          "score": 1.54,
-          "legend": {
-            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
-            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
-            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
-            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
-          },
-          "probabilities": {
-            "0": 0.06,
-            "1": 0.4,
-            "2": 0.48,
-            "3": 0.06
-          },
-          "confidence": 0.42
-        },
-        "stands_on_identifier": {
-          "type": "noul",
-          "noul": 0.37
+          "noul": 0.35
         },
         "seam": {
           "type": "score",
-          "score": 0.93,
+          "score": 1.11,
           "legend": {
             "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
             "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
@@ -112,43 +112,43 @@
             "3": "The opening reads as the first paragraph of a separate document about a different subject."
           },
           "probabilities": {
-            "0": 0.22,
-            "1": 0.64,
-            "2": 0.13,
+            "0": 0.16,
+            "1": 0.58,
+            "2": 0.25,
             "3": 0.01
           },
-          "confidence": 0.63
+          "confidence": 0.57
         },
         "raises_a_question": {
           "type": "noul",
-          "noul": 0.64
+          "noul": 0.96
         },
         "role": {
           "type": "choice",
-          "choice": "complication",
+          "choice": "turn",
           "probabilities": {
-            "setup": 0.04,
-            "complication": 0.8,
-            "turn": 0.06,
-            "consequence": 0.07,
-            "resolution": 0,
-            "aside": 0.03,
-            "none_of_the_above": 0
+            "setup": 0.31,
+            "complication": 0.09,
+            "turn": 0.33999999999999997,
+            "consequence": 0.18,
+            "resolution": 0.03,
+            "aside": 0.04,
+            "none_of_the_above": 0.01
           },
-          "confidence": 0.77
+          "confidence": 0.23
         }
       },
-      "latency_ms": 409.0736040379852,
+      "latency_ms": 490.5687930295244,
       "failure": null
     },
     {
       "index": 3,
-      "heading": "Restriction begins before workload code starts",
-      "text": "02 \u00b7 Add an OS boundary; keep the rest in place \n\n Restricted workload \nOne work directory \u00b7 temporary home \u00b7 plain text \n Host services, other files and processes, network \nBlocked by required namespaces, descriptor cleanup and connection filtering \n Restricted code and its children receive the chosen files, not the host\u2019s ambient channels. Read-only system programs remain available; secrets already inside the chosen work directory are granted content. Namespace or descriptor setup failure stops the command; there is no Standard fallback. Plain-text relaying closes terminal-protocol routes. Source: the actual launch policy and OS canary tests, not a mock container design. \nNotes, terminal output and the shared work directory remain influence channels. Its authorized output can mislead a later privileged consumer. The initial scan rejects hard links, protected state/config overlaps, host sockets, pipes, devices and nested mounts; syscall filtering also blocks sockets that appear there later.",
+      "heading": "Directory identity",
+      "text": "The review found that validation pinned one directory but scanned its pathname. Renaming that path could make the scan inspect a replacement. Validation now walks open directory handles and checks each entry\u2019s device and mount identity. \n 02 \u00b7 Follow the pinned tree \n\n Before the fix \n- Pin project A. \n- A moves; clean B takes its name. \n- Scan B, then mount A. \n Now \n- Pin project A. \n- Walk A through its open handles. \n- Refuse a replaced root or nested mount. \n Both pin/scan swap tests refuse launch, and a real same-device bind mount is refused before the command starts. These are test observations, not an estimate of every possible host race. A malicious host process remains outside the protection direction. \n 03 \u00b7 The work-root rule is predictable \n\nALLOW ~/Projects/example \nGRANTED CONTENT ~/Projects/example/.git and other files inside it \nREFUSE ~/.aws , ~/.kube/project , hidden selected paths \nREFUSE system trees and external volumes such as /mnt/disk \n Select a non-hidden directory below the OS account home. Copy outside work into a dedicated project. Secrets already in that project, supplied arguments and stdin are granted content. The rule follows the canonical path: a volume mounted below an allowed home path belongs to the selected grant. Nested mounts within it are refused. \nThe command\u2019s access to TD needs its own check.",
       "answers": {
         "unexplained": {
           "type": "score",
-          "score": 1.97,
+          "score": 1.74,
           "legend": {
             "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
             "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
@@ -157,19 +157,19 @@
           },
           "probabilities": {
             "0": 0.01,
-            "1": 0.13,
-            "2": 0.74,
-            "3": 0.12
+            "1": 0.27,
+            "2": 0.68,
+            "3": 0.04
           },
-          "confidence": 0.73
+          "confidence": 0.67
         },
         "stands_on_identifier": {
           "type": "noul",
-          "noul": 0.23
+          "noul": 0.26
         },
         "seam": {
           "type": "score",
-          "score": 0.96,
+          "score": 0.57,
           "legend": {
             "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
             "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
@@ -177,43 +177,238 @@
             "3": "The opening reads as the first paragraph of a separate document about a different subject."
           },
           "probabilities": {
-            "0": 0.14,
-            "1": 0.77,
-            "2": 0.09,
+            "0": 0.46,
+            "1": 0.5,
+            "2": 0.04,
             "3": 0
           },
-          "confidence": 0.77
+          "confidence": 0.5
         },
         "raises_a_question": {
           "type": "noul",
-          "noul": 0.77
+          "noul": 0.93
         },
         "role": {
           "type": "choice",
           "choice": "turn",
           "probabilities": {
             "setup": 0,
-            "complication": 0,
-            "turn": 0.8,
+            "complication": 0.09,
+            "turn": 0.63,
             "consequence": 0.2,
-            "resolution": 0,
-            "aside": 0,
+            "resolution": 0.07,
+            "aside": 0.01,
             "none_of_the_above": 0
           },
-          "confidence": 0.77
+          "confidence": 0.57
         }
       },
-      "latency_ms": 426.28936003893614,
+      "latency_ms": 347.5412350380793,
       "failure": null
     },
     {
       "index": 4,
-      "heading": "A useful TD action needs a narrow grant",
-      "text": "03 \u00b7 Add one grant, without exposing the host controller \n\n Restricted workload \nOne work directory \u00b7 temporary home \u00b7 plain text \n Host services, other files and processes, network \nBlocked by required namespaces, descriptor cleanup and connection filtering \n Optional own-note grant \nPreconnected typed gateway \u2192 calling pane only. Outside operator can revoke. \n The workload can post only text on its own pane when explicitly granted. The preconnected gateway accepts no target, generic RPC, approval answer, document action or handoff. The recipient\u2019s process generation and existing MCP switches are checked on each note. A separate outside operator channel can revoke; it cannot be reached through the workload\u2019s files or connection API. Source: broker tests and the scratch native-window run. 04 \u00b7 Authority ends without silently returning \n\n Launch \nFresh run ID.\nOne selected scope. \n Request more \nOne pending proposal.\nNo new permission. \n Revoke \nFinish an accepted note.\nDeny subsequent notes. \n Exit / replacement \nNo inherited grant.\nNew run required. \n Revocation stops future TD use, not work already completed. It does not undo files, recall information or stop file work already running. Filesystem/network changes require a new launch. This profile has no automatic handoff operation. An unrestricted reader can still act on its authorized output; TD does not claim to constrain that reader. Source: lifecycle, concurrency and native revocation checks.",
+      "heading": "Caller identity",
+      "text": "An agent could previously name another pane and be treated as its occupant. The OS now reports which process connected to TD. TD checks that process runs under the pane it claims, then checks the current policy before making a change. A Restricted command uses a supervisor outside its sandbox to relay its permitted note. \n 04 \u00b7 Check the caller, then the current policy \n\n A forged pane claim loses its own-pane exception. A real relay and Restricted supervisor still work. Surfaces are saved only after UI acceptance; a stale snapshot cannot leave a refused card for the later sweep. Diagram follows the actual request path. \n 05 \u00b7 Hidden still permits its own work | \n | Scratch native exercise | Observed \n | Genuine caller: own hidden note, document open and notes read | Allowed \n | Forged caller: note, deliverable, surface, request and document read | Refused \n | Foreign document/Workbench routes; hidden-tab edits by PID or index | Hidden target protected \n | Ordinary window: all six MCP policy mutations | Refused \n These checks run against the application in isolated native windows. Config-field injection and queued input have additional behavioral tests. Picker routing is mutation-tested in the native window, rather than inferred from a source-text search.",
       "answers": {
         "unexplained": {
           "type": "score",
-          "score": 1.91,
+          "score": 1.98,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.15,
+            "2": 0.69,
+            "3": 0.15
+          },
+          "confidence": 0.68
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.25
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.91,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.26,
+            "1": 0.57,
+            "2": 0.17,
+            "3": 0
+          },
+          "confidence": 0.57
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.15
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.08,
+            "turn": 0.78,
+            "consequence": 0.13,
+            "resolution": 0.01,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.74
+        }
+      },
+      "latency_ms": 417.0371050713584,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "Access proposals",
+      "text": "06 \u00b7 One proposal, no grant \n RESTRICTED ACCESS PROPOSAL \u2014 workload request, no access granted \nCurrent resource: chosen project (read-write)\nRequest supplied by workload: \u201cNeed external packages\u201d\nConsequence: changing scope requires a separately chosen new run. terminal-delight restricted dismiss RUN \n The supervisor prints one proposal in the run terminal. Outside-only dismissal clears it without resetting that run\u2019s proposal budget. The workload cannot dismiss or approve it. A real OS test checks visibility, refusal and unchanged grants. The attention rail is not connected to this profile. \n\nThe optional own-note grant still follows the existing MCP switches. Revocation blocks future TD effects after an in-flight accepted note finishes; it does not undo files or stop ongoing file work. Network, TUIs, GUI services and automatic delegation remain unavailable.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.55,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.4,
+            "2": 0.55,
+            "3": 0.02
+          },
+          "confidence": 0.52
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.28
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.57,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.43,
+            "2": 0.51,
+            "3": 0.04
+          },
+          "confidence": 0.49
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.1
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.02,
+            "turn": 0.39,
+            "consequence": 0.49,
+            "resolution": 0.08,
+            "aside": 0.02,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.4
+        }
+      },
+      "latency_ms": 364.1138189705089,
+      "failure": null
+    },
+    {
+      "index": 6,
+      "heading": "Regression controls",
+      "text": "Removing each protection independently checks whether its regression test can detect the failure. The first injection fixtures could not: their invalid payloads were refused before reaching the intended guard. Correcting those fixtures made both removed guards fail their intended tests. \n 07 \u00b7 Actual evidence and limits \n\n 2670 \nDefault-core checks passed.\n15 ignored, reported separately. \n 2617 \nFallback-core checks passed.\n15 ignored, reported separately. \n 5 real OS probes \nExplicitly invoked.\nUseful work and attempted boundary crossings. \n\n 21 independent mutations caught \nOne protection removed at a time, with baseline and exact-byte restoration controls. Compiler failures do not count. \n Coverage has limits \nARM runtime qualification is unmeasured. Complete resource quotas, hostile host users and kernel exploits are outside this qualification. \n Every reproduced escape or broken allowed workflow adds a permanent regression case. Passing this corpus measures these paths; it never makes the threat model complete. Receipts name the source fingerprint, binary digest, commands and logs. Earlier mixed-source evidence is archived as historical. \n\nBoth strict production lint runs, formatting, the optimized build and remote CI pass. The native exercise also checks the older host binary used by the existing daily window. Authorized output and shared files can still mislead an unrestricted reader; that reader\u2019s broader actions are outside the boundary. \n Open the source and reproducible evidence \n The security review completion \u00b7 Portable reproducers \u00b7 Current receipt \u00b7 User guide \nThe development receipt records the tested source file map and exact binary digest. Its full raw logs remain in the local operational archive; the repository includes the commands, summaries and individual mutation controls. \nThe installable local candidate also preserves the daily build\u2019s existing palette and note previews. It has its own qualification receipt and digest: its source is the reviewed development code plus those existing previews, not a claim that the two trees are identical. \nThe candidate receipt records its separate source map and binary digest. Its full suites: 2672 default and 2619 fallback tests passed, with ignored tests separate in the receipt. Both native exercises pass against these exact candidate bytes.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.99,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.12,
+            "2": 0.75,
+            "3": 0.12
+          },
+          "confidence": 0.74
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.66
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.5,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.47,
+            "2": 0.48,
+            "3": 0.02
+          },
+          "confidence": 0.45
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.13
+        },
+        "role": {
+          "type": "choice",
+          "choice": "aside",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.07,
+            "turn": 0.03,
+            "consequence": 0.3,
+            "resolution": 0.04,
+            "aside": 0.55,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.48
+        }
+      },
+      "latency_ms": 369.75886300206184,
+      "failure": null
+    },
+    {
+      "index": 7,
+      "heading": "Held installation",
+      "text": "08 \u00b7 Ready without replacing the live window \n\n Completed \nOne review completion for 0.5 development.\nCurrent-source tests and portable evidence.\nOffline user guide and visible proposals. \n Held as instructed \nThe live daily window still uses the earlier Restricted build.\nThese review fixes await installation.\n0.4 releases and agent-management integration are separate. \n Scratch qualification leaves the daily window in place. The installation command below is for after review. No claim of a new release or candidate hold is made. \n\n# Install for future launches, after review\npython3 /home/parker/.cache/td-security-finish/wt/reports/restricted-commands-proof/install-candidate.py --candidate /home/parker/.cache/td-security-finish/artifacts/td-f5b9a6791418-restricted-review --sha256 8edf3b15bdacfec3035d759c16817ba32fef167ec82d2fee0bf8b340ea3307bd --expected-launcher /home/parker/.local/lib/terminal-delight/td-3ff49b8e-0.5-restricted --apply\n\n# Undo a later selection\npython3 /home/parker/.cache/td-security-finish/wt/reports/restricted-commands-proof/install-candidate.py --candidate /home/parker/.local/lib/terminal-delight/td-3ff49b8e-0.5-restricted --sha256 3b9165e704c951c55801fee10244b4a00a277049a71804f46adce9c9d6c2c3a4 --expected-launcher /home/parker/.local/lib/terminal-delight/td-f5b9a6791418-restricted-review --apply \n\nThe install command selects the reviewed candidate for future launches; the undo command selects the previous binary again. Both keep the versioned files. Omit --apply to inspect first. Save work and use the normal close/reopen path when ready; the installer never reloads a running window. \n\n Parker: enable required CI on dev/0.5.0 . The workflow now runs on development pushes, but the branch has no protection or active ruleset ; running checks alone does not gate a merge. \n\nThe next provider-connected profile has product and architecture drafts only. Provider compatibility, credential isolation, budgets and constrained recipients need their own qualification before that profile can exist. \n\n . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.88,
           "legend": {
             "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
             "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
@@ -223,18 +418,18 @@
           "probabilities": {
             "0": 0.01,
             "1": 0.19,
-            "2": 0.68,
-            "3": 0.12
+            "2": 0.71,
+            "3": 0.09
           },
-          "confidence": 0.67
+          "confidence": 0.7
         },
         "stands_on_identifier": {
           "type": "noul",
-          "noul": 0.31
+          "noul": 0.54
         },
         "seam": {
           "type": "score",
-          "score": 1.02,
+          "score": 1.13,
           "legend": {
             "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
             "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
@@ -242,163 +437,33 @@
             "3": "The opening reads as the first paragraph of a separate document about a different subject."
           },
           "probabilities": {
-            "0": 0.12,
+            "0": 0.07,
             "1": 0.74,
-            "2": 0.14,
-            "3": 0
+            "2": 0.17,
+            "3": 0.02
           },
-          "confidence": 0.74
+          "confidence": 0.72
         },
         "raises_a_question": {
           "type": "noul",
-          "noul": 0.38
+          "noul": 0.77
         },
         "role": {
           "type": "choice",
-          "choice": "turn",
+          "choice": "resolution",
           "probabilities": {
             "setup": 0,
-            "complication": 0.01,
-            "turn": 0.72,
-            "consequence": 0.25,
-            "resolution": 0.01,
-            "aside": 0.01,
+            "complication": 0,
+            "turn": 0.01,
+            "consequence": 0.05,
+            "resolution": 0.85,
+            "aside": 0.09,
             "none_of_the_above": 0
           },
-          "confidence": 0.67
+          "confidence": 0.82
         }
       },
-      "latency_ms": 384.0042630909011,
-      "failure": null
-    },
-    {
-      "index": 5,
-      "heading": "The first profile can be used today in the development build",
-      "text": "05 \u00b7 The implemented surface is an explicit command \n\nterminal-delight restricted run --workdir /path/to/project -- sh -c 'make test' \n /work \u2192 chosen directory Network \u2192 none Home \u2192 temporary TD \u2192 none by default \nterminal-delight restricted run --workdir /path/to/project --td-note -- sh \nterminal-delight restricted call '{\"op\":\"note\",\"text\":\"Build complete\"}' \nFrom outside, use the run ID printed at launch: \nterminal-delight restricted status RUN\nterminal-delight restricted revoke RUN \n Choose Restricted explicitly for offline work; existing panes are never retroactively certified. Add --read-only for a read-only project. TUIs, provider credentials, GUI apps and automatic agent delegation are unavailable. Programs that close inherited descriptors lose the TD channel. Linux descriptor cleanup, seccomp and the required bubblewrap options must work; unsupported setup refuses launch. The earlier GUI mockups remain planning sketches.",
-      "answers": {
-        "unexplained": {
-          "type": "score",
-          "score": 1.66,
-          "legend": {
-            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
-            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
-            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
-            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
-          },
-          "probabilities": {
-            "0": 0.04,
-            "1": 0.3,
-            "2": 0.63,
-            "3": 0.03
-          },
-          "confidence": 0.59
-        },
-        "stands_on_identifier": {
-          "type": "noul",
-          "noul": 0.46
-        },
-        "seam": {
-          "type": "score",
-          "score": 1.16,
-          "legend": {
-            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
-            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
-            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
-            "3": "The opening reads as the first paragraph of a separate document about a different subject."
-          },
-          "probabilities": {
-            "0": 0.09,
-            "1": 0.68,
-            "2": 0.22,
-            "3": 0.01
-          },
-          "confidence": 0.67
-        },
-        "raises_a_question": {
-          "type": "noul",
-          "noul": 0.47
-        },
-        "role": {
-          "type": "choice",
-          "choice": "consequence",
-          "probabilities": {
-            "setup": 0,
-            "complication": 0.01,
-            "turn": 0.16,
-            "consequence": 0.34,
-            "resolution": 0.33,
-            "aside": 0.16,
-            "none_of_the_above": 0
-          },
-          "confidence": 0.23
-        }
-      },
-      "latency_ms": 426.9981849938631,
-      "failure": null
-    },
-    {
-      "index": 6,
-      "heading": "The checks include successful work and attempted escapes",
-      "text": "06 \u00b7 Actual evidence and honest limits | \n | Check | Result \n\n | Default terminal core \u00b7 whole suite | 2652 passed \u00b7 13 ignored \n | Fallback terminal core \u00b7 whole suite | Pending \n\n | Actual OS boundary | 3 probes passed: allowed build; protected files, FD, processes and services; later Unix socket; read-only work; revoke and supervisor death. \n\n | Actual native window | Own note succeeded at the proven supervisor PID. Existing writes-off policy, forged target, delegation and post-revoke note were refused. Other panes unchanged. \n\n | Deliberately weakened implementations | Eight module/filter mutations caught; routing/dispatch/control mutation qualification pending. \n\n | Format, strict lints, optimized build, CI | Final qualification in progress; see the evidence receipt for current state. \n\n | Online/TUI/GUI/automatic handoff profiles | Unavailable. No compatibility claim. \n\n | Full resource quotas / hostile host / kernel | Outside this profile\u2019s demonstrated protection. \n\n A denial counts only when the boundary was reached, and allowed work still succeeds. The first tests caught a refused parent-/proc mount and a real inherited-FD escape in the implementation; both changed the design. Mutation checks then deliberately reopen those routes and must fail. Counts above include existing ignored tests; the three OS tests are separately invoked, rather than called passed because the default suite skips them. \nAll adversarial work used scratch files, services and windows. No live pane or 0.4 release ref was changed. The native handoff feature retains its separate cooperative Standard contract and qualification work. \n Source, commands and reproducible evidence \nThe mechanism drawings follow the implemented policy; their geometry is illustrative. Green is a granted/verified route, blue is host structure, orange is an attempted route that is refused, grey is unavailable or unmeasured. No performance estimate is implied. \n- Launch, typed broker and filtered I/O \n- Native-ABI syscall policy \n- Real OS boundary probes \n- Selected architecture and threat model \n- Qualification receipt \n- The single security pull request \nBubblewrap is reused as an installed mechanism, with policy owned by TD. Its upstream guidance explains that callers define protection. The descriptor mount verifies the selected directory; kernel connections and addressed sends are denied by the additional filter. No external code or prompt was copied into the implementation. \ncargo test --locked --no-fail-fast -- --test-threads=1\ncargo test --locked --features core-alacritty --no-fail-fast -- --test-threads=1\ncargo test --locked --test restricted -- --ignored --test-threads=1 . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
-      "answers": {
-        "unexplained": {
-          "type": "score",
-          "score": 2.02,
-          "legend": {
-            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
-            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
-            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
-            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
-          },
-          "probabilities": {
-            "0": 0.01,
-            "1": 0.11,
-            "2": 0.74,
-            "3": 0.14
-          },
-          "confidence": 0.73
-        },
-        "stands_on_identifier": {
-          "type": "noul",
-          "noul": 0.53
-        },
-        "seam": {
-          "type": "score",
-          "score": 1.12,
-          "legend": {
-            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
-            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
-            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
-            "3": "The opening reads as the first paragraph of a separate document about a different subject."
-          },
-          "probabilities": {
-            "0": 0.12,
-            "1": 0.64,
-            "2": 0.23,
-            "3": 0.01
-          },
-          "confidence": 0.63
-        },
-        "raises_a_question": {
-          "type": "noul",
-          "noul": 0.68
-        },
-        "role": {
-          "type": "choice",
-          "choice": "aside",
-          "probabilities": {
-            "setup": 0,
-            "complication": 0.04,
-            "turn": 0.03,
-            "consequence": 0.18,
-            "resolution": 0.02,
-            "aside": 0.73,
-            "none_of_the_above": 0
-          },
-          "confidence": 0.69
-        }
-      },
-      "latency_ms": 481.81669507175684,
+      "latency_ms": 238.4466619696468,
       "failure": null
     }
   ]
