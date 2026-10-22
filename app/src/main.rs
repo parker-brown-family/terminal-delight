@@ -26720,6 +26720,34 @@ enum PalettePreview {
     Custom(Box<ThemeChoice>),
 }
 
+/// Identity of the palette being rendered, rather than the saved manual pick
+/// underneath an inherited desktop palette. An unnamed desktop stays unnamed.
+struct PaletteSelection {
+    id: Option<String>,
+    custom: bool,
+    desktop: bool,
+}
+
+impl PaletteSelection {
+    fn of(cx: &App, choice: &ThemeChoice) -> Self {
+        let desktop = choice.follow_omarchy == Some(true) && palette::current(cx).is_some();
+        let active = theme::running_palette(cx, choice);
+        let id = if desktop {
+            palette::current_status(cx)
+                .1
+                .map(|s| s.to_lowercase().replace(' ', "-"))
+        } else {
+            active.map(|p| p.id.clone())
+        };
+        let custom = active.is_none() && matches!(choice.dynamic, theme::Dynamic::Custom(_));
+        Self {
+            id,
+            custom,
+            desktop,
+        }
+    }
+}
+
 impl PalettePreview {
     /// Resolve only when help opens, rather than parsing every palette per frame.
     fn colours(&self, cx: &App) -> Option<Vec<Hsla>> {
@@ -28000,7 +28028,14 @@ impl Render for Workspace {
         // tree in the app and the one a chrome change is most likely to break.
         if let Ok(how) = std::env::var("TD_TRAY_DEMO") {
             if self.theme_menu.is_none() {
-                self.theme_menu = Some(MenuScope::Outer);
+                // `TD_TRAY_DEMO=pane` opens the first pane's own tray instead.
+                self.theme_menu = if how == "pane" {
+                    let mut leaves = Vec::new();
+                    self.tabs[self.active].root.leaves(&mut leaves);
+                    leaves.first().map(|p| MenuScope::Pane((**p).clone()))
+                } else {
+                    Some(MenuScope::Outer)
+                };
                 // `TD_TRAY_DEMO=panes` shows UI CONFIG's PANES page.
                 self.ui_cfg_panes = how == "panes";
                 // `TD_TRAY_DEMO=design:X,Y` right-clicks the worn design there.
@@ -29078,6 +29113,7 @@ impl Render for Workspace {
                 MenuScope::Pane(p) => p.read(cx).appearance.inherit_theme,
                 MenuScope::Outer => false,
             };
+            let selection = PaletteSelection::of(cx, &cur);
             // THEME picker (retained — hacker/custom/quiet/tactical are the base
             // theming). The dynamics glyph column is an orthogonal dimension
             // layered on top of whichever theme is active here.
@@ -29574,6 +29610,25 @@ impl Render for Workspace {
             // each other here exactly as they do in the paint overlay, and one
             // tile is lit.
             let mut chips = palette::chips(cx);
+            // A running theme hidden from Omarchy's picker still needs a marker.
+            // Never offer an uninstalled theme as a tile that would discard
+            // retained colours when clicked.
+            if let Some(id) = &selection.id {
+                if !chips.iter().any(|c| &c.id == id) {
+                    if let Some(p) = palette::find(cx, id) {
+                        let (first, second) = palette::split_label(id);
+                        chips.push(palette::Chip {
+                            id: id.clone(),
+                            letter: p.paint_letter(),
+                            rest: first.chars().skip(1).collect(),
+                            second,
+                            light: p.light,
+                            bg: p.bg,
+                            chips: p.chips,
+                        });
+                    }
+                }
+            }
             if let Some(i) = chips.iter().position(|c| c.id == palette::TERMINAL_DELIGHT) {
                 let td = chips.remove(i);
                 chips.insert(0, td);
@@ -29581,15 +29636,13 @@ impl Render for Workspace {
             let mut dyn_entries: Vec<(paint::Pick, bool, Option<palette::Chip>)> = chips
                 .into_iter()
                 .map(|c| {
-                    let active = cur.follow_omarchy != Some(true)
-                        && cur.palette.as_deref() == Some(c.id.as_str());
+                    let active = selection.id.as_deref() == Some(c.id.as_str());
                     (paint::Pick::Palette(c.id.clone()), active, Some(c))
                 })
                 .collect();
             dyn_entries.push((
                 paint::Pick::Set(theme::Dynamic::Custom(Box::default())),
-                cur.follow_omarchy != Some(true)
-                    && matches!(cur.dynamic, theme::Dynamic::Custom(_)),
+                selection.custom,
                 None,
             ));
             // Folded, the THEME column shows only the palette being worn — unless
@@ -29620,6 +29673,7 @@ impl Render for Workspace {
                     let cur_c = cur.clone();
                     let tile = div()
                         .id(box_id)
+                        .relative()
                         .w(px(40.))
                         .h(px(40.))
                         .flex()
@@ -29662,10 +29716,38 @@ impl Render for Workspace {
                             .text_color(if active { th.text } else { th.text.alpha(0.7) })
                             .child(theme::Dynamic::Custom(Box::default()).glyph()),
                     };
+                    let tile = tile.when(active, |d| {
+                        let d = d.border(px(3.)).border_color(th.text);
+                        if sk.shape.material == skin::Material::Paper {
+                            d.shadow(paper::shadows_with(paper::Stock {
+                                lift: (sk.m.lift * 1.5).min(2.),
+                                ..Default::default()
+                            }))
+                        } else {
+                            d.shadow(
+                                theme::phosphor(
+                                    th.grade.phosphor,
+                                    BoxShadow {
+                                        color: th.text.alpha(0.22),
+                                        offset: gpui::point(px(0.), px(0.)),
+                                        blur_radius: px(6.),
+                                        spread_radius: px(0.),
+                                        inset: false,
+                                    },
+                                )
+                                .into_iter()
+                                .collect(),
+                            )
+                        }
+                    });
                     let (name, preview) = if let Some(c) = chip {
                         (
                             c.id.replace('-', " ").to_uppercase(),
-                            Some(PalettePreview::Omarchy(c.id.clone())),
+                            Some(if active && selection.desktop {
+                                PalettePreview::Custom(Box::new(cur.clone()))
+                            } else {
+                                PalettePreview::Omarchy(c.id.clone())
+                            }),
                         )
                     } else {
                         let mut g = theme::ThemeGroup::of(&cur);

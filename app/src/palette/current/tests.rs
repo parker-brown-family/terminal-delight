@@ -225,3 +225,133 @@ fn omarchy_legacy_path_does_not_hide_an_invalid_primary_or_an_invalid_ansi_role(
         "a manual paint pick releases the live source"
     );
 }
+
+#[gpui::test]
+fn palette_menu_marks_the_running_theme_at_each_inheritance_level(cx: &mut gpui::TestAppContext) {
+    let dir = Desktop::new("menu-levels");
+    let roots = dir.roots();
+    stage(&roots.primary, "#112233", "Tokyo Night");
+    let manual = theme::house_outer();
+    cx.update(|cx| {
+        crate::palette::init_shipped(cx);
+        theme::init_embedded(cx, manual.clone());
+        watch(cx, roots.clone());
+        for desktop_on in [false, true] {
+            let mut outer = manual.clone();
+            outer.follow_omarchy = Some(desktop_on);
+            let outer_selection = crate::PaletteSelection::of(cx, &outer);
+            assert_eq!(outer_selection.desktop, desktop_on);
+            assert_eq!(
+                outer_selection.id.as_deref(),
+                Some(if desktop_on {
+                    "tokyo-night"
+                } else {
+                    "terminal-delight"
+                })
+            );
+            for following in [false, true] {
+                let pane = PaneTheme {
+                    inherit_theme: following,
+                    theme: Some(ThemeGroup::of(&manual)),
+                    ..Default::default()
+                };
+                let effective = pane.effective(&outer);
+                let selected = crate::PaletteSelection::of(cx, &effective);
+                let desktop = desktop_on && following;
+                assert_eq!(selected.desktop, desktop);
+                assert_eq!(
+                    selected.id.as_deref(),
+                    Some(if desktop {
+                        "tokyo-night"
+                    } else {
+                        "terminal-delight"
+                    })
+                );
+                assert_eq!(
+                    theme::resolve(cx, &effective).bg,
+                    theme::running_palette(cx, &effective).unwrap().bg
+                );
+            }
+        }
+    });
+    cx.run_until_parked();
+    stage(&roots.primary, "#223344", "gruvbox");
+    tick(cx);
+    let linked = ThemeChoice {
+        follow_omarchy: Some(true),
+        ..manual
+    };
+    cx.update(|cx| {
+        let selected = crate::PaletteSelection::of(cx, &linked);
+        assert_eq!(selected.id.as_deref(), Some("gruvbox"));
+    });
+    fs::remove_file(roots.primary.join("current/theme/colors.toml")).unwrap();
+    tick(cx);
+    cx.update(|cx| {
+        let selected = crate::PaletteSelection::of(cx, &linked);
+        assert_eq!(
+            selected.id.as_deref(),
+            Some("gruvbox"),
+            "last-good colours remain the running theme"
+        );
+        assert!(selected.desktop);
+        assert!(!current_status(cx).0);
+        assert_eq!(
+            theme::resolve(cx, &linked).bg,
+            theme::parse_hex("#223344").unwrap()
+        );
+    });
+}
+
+#[gpui::test]
+fn palette_menu_keeps_unnamed_and_unavailable_sources_distinct(cx: &mut gpui::TestAppContext) {
+    let dir = Desktop::new("menu-absent");
+    let roots = dir.roots();
+    let linked = ThemeChoice {
+        follow_omarchy: Some(true),
+        ..theme::house_outer()
+    };
+    cx.update(|cx| {
+        crate::palette::init_shipped(cx);
+        theme::init_embedded(cx, linked.clone());
+        watch(cx, roots.clone());
+        let selected = crate::PaletteSelection::of(cx, &linked);
+        assert_eq!(
+            selected.id.as_deref(),
+            Some("terminal-delight"),
+            "no valid desktop means the manual fallback is actually running"
+        );
+        assert!(!selected.desktop);
+        let missing = ThemeChoice {
+            palette: Some("uninstalled".into()),
+            follow_omarchy: Some(false),
+            ..linked.clone()
+        };
+        assert!(
+            crate::PaletteSelection::of(cx, &missing).id.is_none(),
+            "an uninstalled manual palette must not appear active"
+        );
+    });
+    cx.run_until_parked();
+    stage(&roots.primary, "#334455", "gruvbox");
+    fs::remove_file(roots.primary.join("current/theme.name")).unwrap();
+    tick(cx);
+    cx.update(|cx| {
+        let mut custom = linked.clone();
+        custom.dynamic = Dynamic::Custom(Box::default());
+        let selected = crate::PaletteSelection::of(cx, &custom);
+        assert!(selected.desktop);
+        assert!(
+            selected.id.is_none(),
+            "valid unnamed colours cannot identify a theme tile"
+        );
+        assert!(!selected.custom, "the parked custom palette is not running");
+        assert_eq!(
+            theme::resolve(cx, &custom).bg,
+            theme::parse_hex("#334455").unwrap()
+        );
+        custom.follow_omarchy = Some(false);
+        custom.palette = None;
+        assert!(crate::PaletteSelection::of(cx, &custom).custom);
+    });
+}

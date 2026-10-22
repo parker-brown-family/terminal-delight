@@ -53,6 +53,26 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added for 0.5.0 development
 
+- **A Clean design, and UI CONFIG to hide any chrome.** Clean turns the light
+  and tube off everywhere — letters, cards, frame, borders, menus, afterglow —
+  and squares the corners; it holds the tube off and overrides Quiet. New
+  windows open Clean, and that default is changeable. A UI CONFIG section in the
+  painter hides any piece of chrome, at the window (OUTER) layer and at one
+  global PANE layer shared by every pane, with the hidden menu glyphs giving way
+  to a classic CONFIG dropdown. Each design remembers the look you set while
+  wearing it, and a folded option row shows only its selection. (#1098)
+- **The top bar collapses when it holds nothing.** With the app mark, Git notice
+  and agent counter hidden by Clean's UI set and no window buttons, that row
+  folds to a hairline, so the panes sit under the frame by the same margin as
+  the sides instead of below an empty band. (#1103)
+- **A folded option row opens on hover or a click.** A row collapsed to its
+  selection opens after about three-quarters of a second of hover, or at once on
+  a click anywhere on it. (#1104)
+- **The palette marks the running theme.** The worn theme gets a thicker border
+  and a subtle phosphor glow, and Chalk gives the selected tile more depth; the
+  marker follows the actual pane or outer-window theme, including inherited
+  Omarchy colours. (#1077)
+
 - **Terminal lighting follows focus in every skin.** Active and inactive panes
   have separate letter-glow controls, and inactive text can dim relative to the
   active setting. GAUGES groups type, picture, active terminals and inactive
