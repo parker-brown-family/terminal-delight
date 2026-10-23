@@ -1,0 +1,15 @@
+{
+  "source_commit": "73306bca",
+  "binary": "/home/parker/.local/lib/terminal-delight/td-73306bca-0.5-war-room-search",
+  "sha256": "0b090654e62d9744b6b37f38018de4a2ff851d3d1903305eeb98d773020361bf",
+  "previous_launcher": "/home/parker/.local/lib/terminal-delight/td-adc0d5fb-0.5-shipping-defaults",
+  "launcher": "/home/parker/.local/lib/terminal-delight/td-73306bca-0.5-war-room-search",
+  "running_window_reloaded": false,
+  "tests": {
+    "passed": 2795,
+    "ignored": 17,
+    "mode": "serial full suite"
+  },
+  "clippy": "pass",
+  "native_ui": "hidden-window captures"
+}
