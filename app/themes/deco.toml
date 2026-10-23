@@ -1,9 +1,7 @@
 # terminal-delight theme — deco (brass, ivory and jade on a near-black ground)
 #
-# The COLOUR half of the art-deco look; the SHAPE half is app/skins/deco.toml,
-# which the `skin` key below asks for. They are separable on purpose: this
-# palette under the default skin is a perfectly good dark theme, and the deco
-# skin over the hacker palette is a perfectly good green instrument panel.
+# The COLOUR half of the art-deco look. Like the other non-Clean designs it
+# now asks for OPS; choose the deco skin to pair it with art-deco trim.
 #
 # Two accents, deliberately. Brass (`accent`) is STRUCTURAL — it carries the
 # rules, the brackets and the frames, and it is the colour of the furniture.
@@ -16,7 +14,7 @@
 # rendered.
 name = "deco"
 icon = "◈"
-skin = "deco"
+skin = "ops"
 
 # THE LOOK a window starts from the first time it wears this design (see
 # app/src/looks.rs). Only what differs from the house look; everything else,

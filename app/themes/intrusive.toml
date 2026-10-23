@@ -8,7 +8,8 @@
 #
 # So it is a DESIGN, not a skin: it owns only the screen's finish, and it mixes
 # with any trim — Intrusive under OPS is the full Pip-Boy, Intrusive under Chalk
-# is a chalkboard behind wet glass. It asks for no skin of its own.
+# is a chalkboard behind wet glass. The 0.5.0 default trim is OPS; a skin
+# chosen by hand still wins.
 #
 # What makes it intrusive rather than merely bright is `letter_glow`: the grid
 # draws every line again underneath, in each run's own colour, a pixel out in

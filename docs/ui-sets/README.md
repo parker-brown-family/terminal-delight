@@ -7,7 +7,7 @@ A UI set decides what chrome a window draws. It is a TOML file of switches, and 
 - **Skin** decides the chrome's shape.
 - **UI set** decides which pieces of chrome are there at all.
 
-The Clean design asks for the `clean` set. Every other design says nothing, so they get `all`.
+New windows open in Clean with the `clean` set. Other designs default to `standard`: the artifact, palette and slider glyphs remain visible, while counts, scale, split buttons and the remaining menu glyphs are hidden. The `all` set still shows every control.
 
 ```sh
 terminal-delight ui --list
@@ -19,7 +19,7 @@ The `all` template names every switch there is, each set to `true`, with a comme
 
 `--check` prints every switch as the set resolves it. It exits non-zero on a key no switch answers to, so a typo cannot pass silently. A set written for a newer build still loads; the unknown key is reported and ignored.
 
-Sets in `~/.config/terminal-delight/ui/` appear in UI CONFIG beside `all` and `clean`, under the name the file gives.
+Sets in `~/.config/terminal-delight/ui/` appear in UI CONFIG beside `all`, `clean` and `standard`, under the name the file gives.
 
 ## Two layers
 
@@ -32,7 +32,7 @@ Sets in `~/.config/terminal-delight/ui/` appear in UI CONFIG beside `all` and `c
 ## Who decides
 
 1. A switch flipped by hand in UI CONFIG.
-2. The set: one picked by hand, or else the one the design asks for (`ui = "clean"` in a theme file), or else `all`.
+2. The set: one picked by hand, or else the one the design asks for (`ui = "clean"` in a theme file), or else `standard`. An unavailable set falls back to `all`.
 3. Nobody: shown.
 
 A design only ever asks. Parker, 2026-10-22: *"clean mode shouldn't BLOCK elements from being made visible."* Picking a set clears the hand flips, because picking a set is asking for that set whole.

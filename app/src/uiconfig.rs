@@ -11,7 +11,7 @@
 //! A **UI set** closes that gap the way a skin closed the shape gap: as data.
 //! A set is a TOML file of switches, `[outer]` for the frame around the panes
 //! and `[panes]` for every pane at once. The built-ins are embedded from
-//! `app/ui/*.toml` (`all`, `clean`). A person's own sets come from
+//! `app/ui/*.toml` (`all`, `clean`, `standard`). A person's own sets come from
 //! `~/.config/terminal-delight/ui/*.toml`, so a set can be written and handed
 //! to an agent as a file, the way a skin can.
 //!
@@ -21,7 +21,7 @@
 //!
 //! 1. **A switch flipped by hand** in UI CONFIG (`UiChoice::outer` / `panes`).
 //! 2. **The set** — chosen by hand (`UiChoice::set`), or else the one the
-//!    window's DESIGN asks for (`ui = "clean"` in a theme file), or else `all`.
+//!    window's DESIGN asks for (`ui = "clean"` in a theme file), or else `standard`.
 //! 3. **Nobody said** — shown.
 //!
 //! That order is Parker's rule, 2026-10-22: *"clean mode shouldn't BLOCK
@@ -46,11 +46,13 @@ use serde::{Deserialize, Serialize};
 
 pub const ALL: &str = "all";
 pub const CLEAN: &str = "clean";
+pub const STANDARD: &str = "standard";
 
 /// (id, embedded toml) for every built-in set.
 const BUILTIN_SETS: &[(&str, &str)] = &[
     (ALL, include_str!("../ui/all.toml")),
     (CLEAN, include_str!("../ui/clean.toml")),
+    (STANDARD, include_str!("../ui/standard.toml")),
 ];
 
 /// Which half of the window a switch belongs to.
@@ -257,14 +259,14 @@ pub fn decide(choice: &UiChoice, set: Option<&UiSet>, key: Key) -> bool {
         .unwrap_or(true)
 }
 
-/// Which set speaks: the hand's, else the design's ask, else `all`. A set id
+/// Which set speaks: the hand's, else the design's ask, else `standard`. A set id
 /// nobody has a file for falls back to `all` rather than to "everything off".
 pub fn set_id<'a>(
     choice: &'a UiChoice,
     design_ask: Option<&'a str>,
     sets: &[Arc<UiSet>],
 ) -> &'a str {
-    let want = choice.set.as_deref().or(design_ask).unwrap_or(ALL);
+    let want = choice.set.as_deref().or(design_ask).unwrap_or(STANDARD);
     if sets.iter().any(|s| s.id == want) {
         want
     } else {
@@ -596,16 +598,30 @@ mod tests {
         );
     }
 
-    /// The hand's set, else the design's ask, else all — and a set nobody has
+    /// The hand's set, else the design's ask, else standard — and a set nobody has
     /// a file for is `all`, never "everything off".
     #[test]
-    fn the_hands_set_then_the_designs_ask_then_all() {
+    fn the_hands_set_then_the_designs_ask_then_standard() {
         let sets: Vec<Arc<UiSet>> = BUILTIN_SETS
             .iter()
             .map(|(id, src)| Arc::new(parse(id, src).unwrap()))
             .collect();
         let mut c = UiChoice::default();
-        assert_eq!(set_id(&c, None, &sets), ALL);
+        assert_eq!(set_id(&c, None, &sets), STANDARD);
+        let standard = builtin(STANDARD);
+        for k in Key::ALL {
+            let hidden = matches!(
+                k,
+                Key::SplitButtons
+                    | Key::Counts
+                    | Key::Scale
+                    | Key::Graveyard
+                    | Key::Notifications
+                    | Key::BugReport
+                    | Key::Plugins
+            );
+            assert_eq!(decide(&c, Some(&standard), *k), !hidden, "{k:?}");
+        }
         assert_eq!(set_id(&c, Some(CLEAN), &sets), CLEAN, "the design asks");
         c.set = Some(ALL.into());
         assert_eq!(

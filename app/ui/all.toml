@@ -1,7 +1,7 @@
 # terminal-delight UI set — all
 #
 # Every piece of chrome, as Terminal Delight drew it before UI CONFIG existed.
-# It is the set every design but Clean asks for, by saying nothing.
+# Choose it explicitly to show every control; non-Clean designs use standard.
 #
 # It is also the TEMPLATE for writing a set of your own. Copy it to
 # ~/.config/terminal-delight/ui/<name>.toml, give it a name, and turn off what
