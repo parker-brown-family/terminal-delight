@@ -355,7 +355,12 @@ impl Workspace {
         .inset_0();
 
         let pick = self.war_room_pick;
-        let mut chart = div().relative().w(px(chart_w)).h(px(chart_h)).child(canvas);
+        let mut chart = div()
+            .relative()
+            .flex_none()
+            .w(px(chart_w))
+            .h(px(chart_h))
+            .child(canvas);
         if seats.is_empty() && query.trim().is_empty() {
             chart = chart.child(
                 div()
@@ -626,8 +631,8 @@ impl Workspace {
             );
         }
 
-        // ---- off the chart ----
-        let mut off = div().w_full().flex().flex_row().flex_wrap().gap_2();
+        // ---- the pane pool ----
+        let mut off = div().w(px(sw)).flex_none().flex().flex_col().gap_2();
         for f in &loose {
             let leaf = f.leaf.clone();
             let is_agent = leaf.read(cx).mode.is_agent();
@@ -644,9 +649,14 @@ impl Workspace {
                         "war-pane-{}",
                         leaf.entity_id().as_u64()
                     )))
+                    .debug_selector({
+                        let id = leaf.entity_id().as_u64();
+                        move || format!("war-pane-{id}")
+                    })
                     .w(px(sw))
                     .h(px(sh))
                     .flex_none()
+                    .overflow_hidden()
                     .p_2()
                     .rounded(sk.rad_raw(7.))
                     .border_1()
@@ -736,37 +746,17 @@ impl Workspace {
             );
         }
 
-        let drop_chart_ink = th.accent;
         let switches = self.mcp_switch_buttons(&sk, th, "war", cx);
-        let panel = div()
-            .id("war-room-panel")
-            .w(px(chart_w + pad * 4.).max(px(820.)))
-            .max_w(gpui::relative(0.95))
-            .max_h(px(self.tray_card_h()))
-            .overflow_x_hidden()
-            .overflow_y_scroll()
-            .p_3()
-            .rounded(sk.radius_lg())
-            .border_2()
-            .border_color(th.accent.alpha(0.85))
-            .bg(darken(th.surface, 0.6))
-            .shadow(float_shadows(th.accent, th.grade.phosphor))
+        // Headers are siblings of scroll bodies. Zero minimum height on every
+        // flex ancestor prevents the contents from stretching the frame.
+        let header = div()
+            .id("war-room-header")
+            .debug_selector(|| "war-room-header".to_string())
+            .flex_none()
+            .min_w(px(0.))
             .flex()
             .flex_col()
             .gap_2()
-            .text_size(sk.text_px(10.))
-            .text_color(th.text)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    if ws.war_room_pick.take().is_some() {
-                        cx.notify();
-                    }
-                }),
-            )
-            .map(|d| sk.chrome(sk.finish(d)))
-            .child(self.war_room_org_controls(&sk, th, cx))
             .child(
                 div()
                     .flex()
@@ -859,7 +849,16 @@ impl Workspace {
                         .p_2()
                         .child(SharedString::from(ui.wr_no_matches.to_string())),
                 )
-            })
+            });
+        let org_header = div()
+            .id("war-org-header")
+            .debug_selector(|| "war-org-header".to_string())
+            .flex_none()
+            .min_w(px(0.))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(self.war_room_org_controls(&sk, th, cx))
             .child(
                 div()
                     .text_size(sk.text_px(8.5))
@@ -883,70 +882,131 @@ impl Workspace {
                             ("unlined", &n.unlined_answered.to_string()),
                         ],
                     )))
-            }))
-            .when(!seats.is_empty() || query.trim().is_empty(), |d| {
-                d.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .min_w(px(0.))
-                        .w_full()
-                        .gap_3()
-                        .items_start()
-                        .child(
-                            div()
-                                .id("war-room-chart")
-                                .debug_selector(|| "war-room-chart".to_string())
-                                .min_w(px(0.))
-                                .flex_1()
-                                .overflow_x_scroll()
-                                .rounded(sk.rad_raw(8.))
-                                .border_1()
-                                .border_color(th.text.alpha(0.14))
-                                .drag_over::<PaneDrag>(move |d, _, _, _| {
-                                    d.border_color(drop_chart_ink)
-                                })
-                                .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
-                                    if let Some(org) = ws.war_org {
-                                        ws.war_room_assign(&d.leaf, org, false, cx);
-                                    }
-                                }))
-                                .child(chart),
-                        ),
-                )
-            })
-            .when(!loose.is_empty(), |d| {
-                d.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .pt_2()
-                        .border_t_1()
-                        .border_color(th.text.alpha(0.14))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .gap_2()
-                                .items_center()
-                                .child(
-                                    div()
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_size(sk.text_px(8.5))
-                                        .text_color(th.text.alpha(0.7))
-                                        .child(SharedString::from(ui.wr_off_hdr.to_string())),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(sk.text_px(8.5))
-                                        .text_color(th.text.alpha(0.5))
-                                        .child(SharedString::from(ui.wr_off_blurb.to_string())),
-                                ),
-                        )
-                        .child(off),
-                )
-            });
+            }));
+        let drop_chart_ink = th.accent;
+        let chart_tile = div()
+            .id("war-org-tile")
+            .debug_selector(|| "war-org-tile".to_string())
+            .flex_1()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(org_header)
+            .child(
+                div()
+                    .id("war-room-chart")
+                    .debug_selector(|| "war-room-chart".to_string())
+                    .flex_1()
+                    .min_w(px(0.))
+                    .min_h(px(0.))
+                    .overflow_x_scroll()
+                    .overflow_y_scroll()
+                    .rounded(sk.rad_raw(8.))
+                    .border_1()
+                    .border_color(th.text.alpha(0.14))
+                    .drag_over::<PaneDrag>(move |d, _, _, _| d.border_color(drop_chart_ink))
+                    .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
+                        if let Some(org) = ws.war_org {
+                            ws.war_room_assign(&d.leaf, org, false, cx);
+                        }
+                    }))
+                    .child(chart),
+            );
+        let pool_tile = div()
+            .id("war-pool-tile")
+            .debug_selector(|| "war-pool-tile".to_string())
+            .w(px(sw + 18.))
+            .max_w(gpui::relative(0.4))
+            .flex_none()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .p_2()
+            .rounded(sk.rad_raw(8.))
+            .border_1()
+            .border_color(th.text.alpha(0.14))
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .id("war-pool-header")
+                    .debug_selector(|| "war-pool-header".to_string())
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(th.text.alpha(0.85))
+                            .child(SharedString::from(ui.wr_off_hdr.to_string())),
+                    )
+                    .child(
+                        div()
+                            .text_size(sk.text_px(8.5))
+                            .text_color(th.text.alpha(0.6))
+                            .child(SharedString::from(ui.wr_off_blurb.to_string())),
+                    ),
+            )
+            .child(
+                div()
+                    .id("war-room-pool")
+                    .debug_selector(|| "war-room-pool".to_string())
+                    .flex_1()
+                    .min_w(px(0.))
+                    .min_h(px(0.))
+                    .overflow_x_scroll()
+                    .overflow_y_scroll()
+                    .child(off),
+            );
+        let panel = div()
+            .id("war-room-panel")
+            .debug_selector(|| "war-room-panel".to_string())
+            .w(gpui::relative(0.95))
+            .h(gpui::relative(0.9))
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .overflow_hidden()
+            .p_3()
+            .rounded(sk.radius_lg())
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
+            .bg(darken(th.surface, 0.6))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .text_size(sk.text_px(10.))
+            .text_color(th.text)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    if ws.war_room_pick.take().is_some() {
+                        cx.notify();
+                    }
+                }),
+            )
+            .map(|d| sk.chrome(sk.finish(d)))
+            .child(header)
+            .child(
+                div()
+                    .id("war-room-tiles")
+                    .debug_selector(|| "war-room-tiles".to_string())
+                    .flex_1()
+                    .min_w(px(0.))
+                    .min_h(px(0.))
+                    .overflow_hidden()
+                    .flex()
+                    .flex_row()
+                    .gap_3()
+                    .child(chart_tile)
+                    .child(pool_tile),
+            );
 
         Some(
             div()
@@ -1092,7 +1152,7 @@ impl Workspace {
         let mut choices = div()
             .flex()
             .flex_row()
-            .flex_wrap()
+            .flex_none()
             .items_center()
             .gap_1()
             .child(SharedString::from(ui.wr_org.to_string()));
@@ -1103,6 +1163,7 @@ impl Workspace {
                 Self::bezel_btn(sk, &self.war_room_org_label(id), self.war_org == Some(id))
                     .id(SharedString::from(format!("war-org-{}", id.0)))
                     .debug_selector(move || format!("war-org-{}", id.0))
+                    .flex_none()
                     .max_w(px(240.))
                     .truncate()
                     .drag_over::<PaneDrag>(move |s, _, _, _| s.border_color(ink))
@@ -1115,7 +1176,7 @@ impl Workspace {
                     })),
             );
         }
-        choices = choices.child(
+        let mut actions = div().flex().flex_row().flex_none().gap_1().child(
             Self::bezel_btn(sk, ui.wr_org_new, false)
                 .id("war-org-new")
                 .debug_selector(|| "war-org-new".to_string())
@@ -1127,7 +1188,7 @@ impl Workspace {
                 })),
         );
         if let Some(id) = self.war_org {
-            choices = choices.child(
+            actions = actions.child(
                 Self::bezel_btn(sk, ui.wr_org_rename, false)
                     .id("war-org-rename")
                     .debug_selector(|| "war-org-rename".to_string())
@@ -1144,7 +1205,23 @@ impl Workspace {
                     })),
             );
         }
-        let mut controls = div().flex().flex_col().gap_2().child(choices);
+        let mut controls = div().min_w(px(0.)).flex().flex_col().gap_2().child(
+            div()
+                .min_w(px(0.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .id("war-org-choices")
+                        .min_w(px(0.))
+                        .flex_1()
+                        .overflow_x_scroll()
+                        .child(choices),
+                )
+                .child(actions),
+        );
         if let Some((_, buffer)) = &self.war_org_edit {
             controls = controls.child(
                 div()
@@ -2388,6 +2465,115 @@ mod tests {
                 );
             })
         });
+    }
+
+    #[gpui::test]
+    fn chart_and_pool_scroll_inside_the_frame_while_their_headers_stay_put(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let (worker, extras) = cx.update(|window, cx| {
+            ws.update(cx, |ws, cx| {
+                let worker = ws.war_room_seat_leaf(warroom::SeatId(101), cx).unwrap();
+                ws.war_room_unseat(&worker, cx);
+                let mut extras = Vec::new();
+                for i in 0..6 {
+                    let pane = {
+                        let _fork = crate::testsync::forks_and_locks();
+                        make_pane_window_owned(
+                            session::PaneRestore {
+                                program: Some(("/bin/cat".into(), vec![])),
+                                ..Default::default()
+                            },
+                            window,
+                            cx,
+                        )
+                    };
+                    pane.update(cx, |v, _| v.mode = pane::PaneMode::Codex);
+                    ws.tabs.push(Tab::new(
+                        Node::Leaf(pane.clone()),
+                        Some(format!("Pool {i}")),
+                    ));
+                    extras.push(pane);
+                }
+                let mut from = warroom::SeatId(100);
+                for i in 200..208 {
+                    let to = warroom::SeatId(i);
+                    ws.war_orgs.assign(to, ws.war_org.unwrap());
+                    ws.chart.draw(from, to, warroom::Rung::See);
+                    from = to;
+                }
+                for i in 0..12 {
+                    ws.war_orgs.create(&format!("Other crew {i}"));
+                }
+                cx.notify();
+                (worker, extras)
+            })
+        });
+        for pane in extras {
+            let stop = pane.read_with(cx, |v, _| v.fixture_shutdown());
+            cx.on_quit(stop);
+        }
+        let first = format!("war-pane-{}", worker.entity_id().as_u64());
+        for dimensions in [size(px(900.), px(560.)), size(px(1200.), px(1000.))] {
+            cx.simulate_resize(dimensions);
+            cx.run_until_parked();
+            let frame = bounds(cx, "war-room-panel");
+            let chart = bounds(cx, "war-room-chart");
+            let pool = bounds(cx, "war-room-pool");
+            assert!(frame.origin.x >= px(0.) && frame.right() <= dimensions.width);
+            assert!(frame.origin.y >= px(0.) && frame.bottom() <= dimensions.height);
+            assert!(chart.bottom() <= frame.bottom() && pool.bottom() <= frame.bottom());
+            assert!(chart.size.height > px(0.) && pool.size.height > px(0.));
+            assert!(
+                chart.right() < pool.origin.x,
+                "the pool belongs on the right"
+            );
+            let headers = ["war-room-header", "war-org-header", "war-pool-header"];
+            let fixed = headers.map(|id| bounds(cx, id));
+            let card = bounds(cx, &first);
+            let member = bounds(cx, "war-seat-100");
+            let wheel = |cx: &mut gpui::VisualTestContext, at| {
+                cx.simulate_event(gpui::ScrollWheelEvent {
+                    position: at,
+                    delta: gpui::ScrollDelta::Lines(point(0., -4.)),
+                    modifiers: Default::default(),
+                    touch_phase: gpui::TouchPhase::Moved,
+                });
+                cx.run_until_parked();
+            };
+            wheel(cx, pool.center());
+            assert!(
+                bounds(cx, &first).origin.y < card.origin.y,
+                "pool contents scroll"
+            );
+            assert_eq!(
+                bounds(cx, "war-seat-100"),
+                member,
+                "pool wheel moved the chart"
+            );
+            let pool_after = bounds(cx, &first);
+            wheel(cx, chart.center());
+            assert!(
+                bounds(cx, "war-seat-100").origin.y < member.origin.y,
+                "chart contents scroll"
+            );
+            assert_eq!(bounds(cx, &first), pool_after, "chart wheel moved the pool");
+            assert_eq!(
+                bounds(cx, &first).size,
+                card.size,
+                "scrolling reshaped a card"
+            );
+            assert_eq!(bounds(cx, "war-room-panel"), frame);
+            assert_eq!(
+                headers.map(|id| bounds(cx, id)),
+                fixed,
+                "a header scrolled away"
+            );
+        }
     }
 
     fn name() -> warroom::PaneName {

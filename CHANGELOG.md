@@ -109,7 +109,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   alone grants no access. Moving a connected member asks before removing its
   old connections. Legacy charts retain their seats and lines in an unnamed org.
   Global search finds members of other orgs and offers Open org. The expanded
-  selected-agent context panel is removed.
+  selected-agent context panel is removed. The fixed frame holds the org chart
+  on the left and the pane pool on the right. Headers and filters stay visible
+  while each tile scrolls its own contents, with overflow clipped at its bounds.
 - **War Room pane search and session cards.** Type fuzzy words across project,
   tab and pane title, or use `project:tab:pane` to search each field separately.
   Every pane has a card with session age and current context tokens. Age comes
