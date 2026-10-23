@@ -18,12 +18,48 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - **`ctl mcp …` no longer changes MCP policy from a script.** `ctl mcp on|off`,
   `ctl mcp writes on|off` and `ctl mcp expose agents|all` now answer `err` and
   change nothing, unless the window was started with `TD_MCP_SCRIPTED=1`. A
-  keybinding or bar widget that used them should open the MCP panel
-  (Ctrl+Shift+A) instead; a script that launches its own window sets the
+  keybinding or bar widget that used them should open the War Room (the agent
+  counter, top right) instead; a script that launches its own window sets the
   variable where it launches it. `ctl mcp status` still answers.
+- **`list_panes` says `reach` where it said `exposed`.** Each pane's `reach` is
+  how far the caller reaches it: `seen`, `read` or `ask`. Beside the panes, a
+  `hidden` count says how many the caller cannot see, without naming them. A
+  pane nobody has seated in the War Room is `read`, as every listed pane was.
+- **The agent counter opens the War Room, not the agent wall.** Ctrl+Shift+A
+  is now the wall's only door, and the wall's row on the key sheet is gone.
+- **A second `request_access` from one pane is refused while its first is on
+  the rail.** It used to replace the first ask, which could hide it from the
+  person who was about to answer it.
+- **The pushed events leave out seated panes.** The feed cannot tell who is
+  listening, so `agent_appeared`, `tool_call` and `agent_vanished` now carry only
+  panes nobody seated in the War Room. A watcher that counts agents from the feed
+  sees only unseated ones.
+- **The layout file gains `seat` and `agents` on a pane, `[[lines]]`, and
+  `ask_press_tokens`.** A 0.4 window reads a read-only pane as open and does not
+  know seats or lines; nothing is written for it.
 
 ### Security for 0.5.0 development
 
+- **No agent prompts another without a line a person drew.** `ask_agent` asks
+  only along a War Room line that reaches `ask`, or a bypass a person granted on
+  the rail, and a pane nobody seated is never asked. A seated pane is hidden from
+  every agent except along a line from that agent's own seat. Off-limits beats
+  every line, and read-only caps a line at ask. Only a person draws, changes or
+  erases a line: no MCP or `ctl` verb can, and the answering code is named by no
+  agent-facing surface (`only_the_war_room_and_the_rail_draw_lines`,
+  `no_agent_facing_surface_can_answer_an_ask`).
+- **A copy of another agent can only read, and waits for your Yes.** A copy
+  forks only a conversation its own agent named, and no other pane names. Claude's
+  copy runs with `Read` alone and no tool server: its servers are checked before
+  the question, its tool list the moment it reports one, and a tool outside the
+  grant that returns a result kills it. Codex's runs read-only with no network,
+  no user configuration, no apps and no web search, at version 0.162.1 only.
+  Nothing of Terminal Delight's environment reaches a copy, it saves no
+  transcript, and its process group is killed when it answers, fails, or passes
+  five minutes. By default every copy waits on the rail for a person's Yes.
+- **The record of asks keeps no words.** Every ask writes a line per stage to
+  `$XDG_STATE_HOME/terminal-delight/warroom/<session>/asks.jsonl`, with the
+  question's length and SHA-256, never the question and never the answer.
 - **Your shell can no longer change MCP policy over the control socket.** Any
   program running as you, an agent included, could turn MCP writes on in one
   command and skip the Yes or No an agent's `request_access` waits for. All six
@@ -59,6 +95,45 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added for 0.5.0 development
 
+- **The War Room: an org chart of agents that decides who may ask whom.** The
+  agent counter, top right, opens it over the panes (and the `…` menu lists it
+  when the counter is hidden). Seat an agent with its **Seat** button, then click
+  one seat and another to draw a line. A line carries a rung, and a click on its
+  label cycles it: `ask` (may ask it a question), `see` (may find it in
+  `list_panes`), `read` (may also read it), then erase. Seats are arranged in rows
+  by their lines. Each seat's card shows its agent's latest summary, state,
+  model, size, sticky note and lines in and out. Agents nobody seated are listed
+  off the chart and behave as before, except that no agent can ever ask them
+  anything. The window's five MCP switches are here as well as on the wall, and
+  the bottom line counts this session's asks: answered from what was visible, by
+  a copy, and with no line, which must stay at zero. Seats are random ids saved
+  with the pane, so a session host restart that renumbers panes keeps the chart.
+- **Agents can ask each other questions, cheapest first.** `ask_agent` answers at
+  once from what the window already shows about the asked agent: its latest
+  summary, sticky note, state, model, size and last ten tool calls. Nothing
+  reaches the asked agent. With `copy: true` it forks the asked agent's own
+  conversation into a throwaway copy that can only read, asks it once, and stops
+  it; `ask_agent` returns an `ask_id` and a stage at once, and the new verb
+  `ask_answer` reads the answer back for the asking pane only, labelled
+  untrusted. The copy waits as a card on the asker's rail row, saying how many
+  tokens it would read and the first forty words of the question, until you
+  press Yes or No. A press limit (`ask_press_tokens` in the layout, 0 unless set)
+  lets copies at or under it start without asking; the window has no control for
+  it yet. An agent can ask for a bypass line with `request_access`
+  (`change: "ask_line"`), and the card's 1 / 3 / 10 picker says how many copies
+  it allows. Refusals come by name (`no_line`, `busy`, `conversation_unnamed`,
+  `tools_wider` and nine more), so an agent can tell its person why.
+- **A pane can be read-only to agents.** Its right-click menu now has three
+  positions, the current one marked: open, read-only and off-limits. A read-only
+  pane wears `READ-ONLY` in its header. Other agents may see it, read it and, along
+  a line, ask it, but nothing from another pane writes to it: no note,
+  deliverable, surface, appearance change, bench input or synthetic click.
+- **Access asks on the rail are coloured by how serious they are.** ✓ clear
+  (green) narrows access; ◇ caution (blue) reads a little; ▲ warning (yellow) is
+  wider or costlier; ! alert (red) turns writes on or reads more than a million
+  tokens. The colours are the theme's own, and the glyph and its name lead the
+  card. A copy is a caution up to 600,000 tokens and a warning up to 1,000,000,
+  and one of unknown size is never less than a warning.
 - **Ops uses two glass layers.** Overlay backings soften their own grid with
   the same smoked treatment as the left spine. Foreground groupings and cards,
   including artifacts, coordination findings, plugins and agents, reveal the
