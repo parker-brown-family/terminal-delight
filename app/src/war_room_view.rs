@@ -340,14 +340,33 @@ impl Workspace {
         // ---- the chart: wires on a canvas, seats and labels over it ----
         let line_ink = th.accent;
         let bypass_ink = th.ansi[3];
-        let paths: Vec<(Vec<(f32, f32)>, bool)> =
-            wires.iter().map(|w| (w.points.clone(), w.bypass)).collect();
+        // Off-limits beats every line, so a line INTO an off-limits seat grants
+        // nothing — draw it faint and dashed rather than live accent, or the chart
+        // reads as a working Read/Ask into a pane the person has walled off.
+        let hidden_ink = th.faint;
+        let off_limits: std::collections::HashSet<warroom::SeatId> = seats
+            .iter()
+            .filter(|f| matches!(f.access, warroom::AgentAccess::OffLimits))
+            .filter_map(|f| f.seat)
+            .collect();
+        let paths: Vec<(Vec<(f32, f32)>, bool, bool)> = wires
+            .iter()
+            .map(|w| (w.points.clone(), w.bypass, off_limits.contains(&w.to)))
+            .collect();
         let canvas = gpui::canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
-                for (pts, bypass) in &paths {
-                    let ink = if *bypass { bypass_ink } else { line_ink };
-                    stroke_wire(bounds, pts, ink, *bypass, window);
+                for (pts, bypass, ineffective) in &paths {
+                    let ink = if *ineffective {
+                        hidden_ink
+                    } else if *bypass {
+                        bypass_ink
+                    } else {
+                        line_ink
+                    };
+                    // A line to a walled-off pane is drawn dashed, like a bypass,
+                    // to read as "not a live grant".
+                    stroke_wire(bounds, pts, ink, *bypass || *ineffective, window);
                 }
             },
         )
@@ -391,6 +410,14 @@ impl Workspace {
                 warroom::Role::Alone => ui.wr_role_alone,
             };
             let second = match (&f.model, f.access) {
+                // Off-limits is the strongest position and must show on the card,
+                // not fall through to a plain model/role line that reads normal:
+                // the person set it to hide the pane from every agent, line or no.
+                (_, warroom::AgentAccess::OffLimits) => format!(
+                    "{} · {}",
+                    f.program,
+                    self.lang.strings().parts.pane_off_limits_badge
+                ),
                 (_, warroom::AgentAccess::ReadOnly) => format!(
                     "{} · {}",
                     f.program,
@@ -1521,6 +1548,9 @@ impl Workspace {
                     .id(id)
                     .max_w(px(320.))
                     .overflow_hidden()
+                    // A full pane name ("TERMINAL DELIGHT › MCP work · claude-…")
+                    // truncates on one line instead of char-wrapping down the panel.
+                    .text_ellipsis()
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
                         if let Some(e) = &mut ws.war_relation {
@@ -1563,24 +1593,45 @@ impl Workspace {
             }
             form = form.child(list);
         }
-        let mut levels = div().flex().flex_row().flex_wrap().gap_2();
+        let mut levels = div().flex().flex_row().flex_wrap().items_center().gap_2();
         for (rung, label) in [
             (warroom::Rung::See, ui.wr_rung_see),
             (warroom::Rung::Read, ui.wr_rung_read),
             (warroom::Rung::Ask, ui.wr_rung_ask),
         ] {
-            levels = levels.child(
-                Self::bezel_btn(sk, label, editor.draft.rung == Some(rung))
-                    .id(SharedString::from(format!("war-rung-{rung:?}")))
-                    .debug_selector(move || format!("war-rung-{rung:?}"))
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        cx.stop_propagation();
-                        if let Some(e) = &mut ws.war_relation {
-                            e.draft.rung = Some(rung);
-                        }
-                        cx.notify();
-                    })),
-            );
+            let selected = editor.draft.rung == Some(rung);
+            // The rungs escalate see < read < ask. `ask` is the top clearance —
+            // the ONLY rung that lets one agent prompt another (fork its
+            // session) — so it wears the action colour (the same amber a bypass
+            // line is drawn in) and a ▲ mark, while the lower rungs are dimmed,
+            // so the powerful one reads first. A person should never grant it by
+            // reflex.
+            let is_ask = matches!(rung, warroom::Rung::Ask);
+            let shown = if is_ask {
+                format!("\u{25B2} {label}")
+            } else {
+                label.to_string()
+            };
+            let mut btn = Self::bezel_btn(sk, &shown, selected)
+                .id(SharedString::from(format!("war-rung-{rung:?}")))
+                .debug_selector(move || format!("war-rung-{rung:?}"));
+            if is_ask {
+                btn = btn
+                    .border_color(th.ansi[3])
+                    .font_weight(gpui::FontWeight::BOLD);
+                if !selected {
+                    btn = btn.text_color(th.ansi[3]);
+                }
+            } else if !selected {
+                btn = btn.opacity(0.7);
+            }
+            levels = levels.child(btn.on_click(cx.listener(move |ws, _, _, cx| {
+                cx.stop_propagation();
+                if let Some(e) = &mut ws.war_relation {
+                    e.draft.rung = Some(rung);
+                }
+                cx.notify();
+            })));
         }
         let sentence = if let Some((from, to, rung)) = editor.draft.ready(&self.war_orgs) {
             let word = match rung {
