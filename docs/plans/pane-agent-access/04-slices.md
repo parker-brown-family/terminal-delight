@@ -169,3 +169,28 @@ On 2026-10-22, in chat: *"Yes all -- into 0.5.0 and rebuild our binary here!"*, 
      - a caution band tied to the limit turned two tests red.
 4. **One pull request into dev/0.5.0**, now that the artifact rail has landed, tried in a scratch window before the live one.
 
+## Landed
+
+- **One pull request**, PR 1115, merged into `dev/0.5.0` as `eed3d4d6` on 2026-10-22. It carried:
+  - the six slices;
+  - the press-limit change;
+  - a merge of `dev/0.5.0` with the artifact rail and Ops glass, with two conflicts in `main.rs`: the module list, and the Esc ladder, where the rail is drawn over the War Room and closes first;
+  - the launch notes (`05-launch-notes.md`), the changelog and the 0.5.0 highlights.
+- **Building dev/0.5.0** in `td-authority-lab` needed renderer patch 0011 (desktop cutout) on that lab's shared `zed-upstream`. It was applied with `scripts/prepare-gpui.sh`. It only adds API, so the lab's other worktrees build as before.
+- **Gates on the PR head**:
+  - rustfmt;
+  - clippy `-D warnings` on both cores;
+  - 2,789 tests passing on the default core and 2,736 on `core-alacritty`, none failing, 17 ignored on each.
+  - Every required CI check passed.
+- **Scratch trial** of the release build, before the merge, in hidden windows on their own sessions (`evidence/rig/land/`; shots `war-room-land-*.png` in `reports/2026-10-22-war-room-evidence/`):
+  - With no press limit set, copies of 290,213 and 360,092 tokens both waited as caution cards. The first would have started unasked under the old limit. Both were pressed and answered.
+  - The record held priced, pressed and answered for each ask, with no words.
+  - Neither copy carried a `TD_` variable.
+  - With the War Room and the artifact rail open together, one Esc closed the rail and left the War Room up.
+- **The rig's own bug**, found on its first run: the rail stays open after a press, so a second Ctrl+Shift+N closed it, and the second `y` reached no card. The rig now opens the rail once.
+- **Installed** on the session-1 window with `live-window-swap-05` inside the landing lock. The window moved from `td-57bc5b3a` to `td-eed3d4d6-0.5-war-room`.
+  - The host was kept (pid 2108452), with 29 panes before and after, and the same ids, pids and shell start ticks. The split document came back.
+  - A tab closed earlier and still held for undo (pane 80, a Codex session) was hung up, as any new window does.
+  - The new window's `list_panes` gives every pane `reach: "read"` and `hidden: 0`.
+  - The receipt is `~/Work/td-authority-lab/deploy-dev-eed3d4d6/RECEIPT.md`.
+

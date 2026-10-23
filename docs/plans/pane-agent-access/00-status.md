@@ -1,7 +1,13 @@
 # Status: agent access — pane positions and an org chart of lines
 
 **Difficulty: 8/10 — all four gates.** Re-scored 2026-10-22 after Parker's notes turned the pane positions into an org chart. A security boundary that is wrong passes every test that looks only at it: on the day of the re-score, two Codex switches that looked sufficient left a read-only fork able to reach the web and the ChatGPT apps connector. The work now crosses a process boundary (TD starting forks of agent conversations), two vendors' unpublished behaviour, a new store of lines and a new corner panel. Earlier scores: 7 (the MCP-work pane, before reading the code), then 6 (one combined plan, `plan.md`).
-**Turned out to be:** _filled in at the end._
+**Turned out to be:** 8. The four gates paid for themselves early. The product gate turned a three-position switch into an org chart, and the enforcement gate measured both agents' forks before any code existed: two Codex switches that looked enough were not. Gates 2 and 3 came back as bare approvals, so Gate 4 folded into building, as the playbook says. Three surprises appeared only when real copies ran:
+
+- Claude reports its tools after the question.
+- Copies reach for the worker's remembered tools.
+- The War Room's size readings refresh only while a panel is open.
+
+Each would have cost far more after a merge. Landed 2026-10-22 as PR 1115, merged into `dev/0.5.0` as `eed3d4d6`, and installed on the session-1 window as `td-eed3d4d6-0.5-war-room`. See *Landed* at the end of `04-slices.md`.
 
 - `plan.md` — the one-gate plan for three pane positions. **Superseded as a plan** by the org chart; its read/act split, the position lattice and the verb table carry into the gates below. Parker's answers to its eight questions (note map, 2026-10-22): concur on 2, 3, 4, 6, 7, 8; 1 and 3 must be "relationship level granularity"; 5 and the saved-layout figure: no change to 0.4.0 and no backwards-facing code; 7: the person must see and edit the chart, as a **new widget with a hierarchy glyph in the bottom-right glyph row** (later amended: the top-right counter becomes the War Room's door; the artifact rail takes a new bottom-right glyph).
 - Gate 2 core — rungs on a line and where each is enforced (`02-enforcement.md`): **APPROVED 2026-10-22**, eight concurs on `reports/2026-10-22-who-may-prompt-whom.html`, amended: an ask is the authority to fork a session; cheapest first; bypass lines grant three prompts. Measured on both agent programs (`evidence/2026-10-22-fork-probes.md`, including cost).

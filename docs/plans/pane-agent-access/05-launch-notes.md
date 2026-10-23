@@ -143,7 +143,8 @@ Every ask, cheap or copy, refused or answered, writes one line per stage to `$XD
 - **Planned breaks**: every safety rule added in the six slices and the press-limit change was broken on purpose on its production line. Each break turned its test red and was restored byte for byte, and each is listed by slice in `04-slices.md`.
 - **Live copies of seeded sessions**: a Claude copy on Haiku tried Write and Bash, was refused both, and wrote nothing. It read 167,120 tokens for $0.012. A Codex 0.162.1 copy read 213,714 tokens and wrote nothing. It declined to try, so its sandbox was proven by the morning's probes, not by that run.
 - **A hidden window with stand-in agents**, with the press limit at 300,000. A copy reading 290,213 tokens started at once and answered. One reading 360,092 waited as a caution card, was pressed with `y`, and answered. Earlier, cheap asks along an ask line and a bypass were answered, and asks with no line were refused `no_line`. The record held one line per stage and no words.
-- **A scratch window and the live window** were tried on the merged build before and after the merge. Their results are recorded in the PR and in the install receipt.
+- **The merged build in a scratch window, before the merge.** With no press limit set, copies of 290,213 and 360,092 tokens both waited as caution cards, were pressed, and answered. With the War Room and the artifact rail open together, one Esc closed the rail and left the War Room up. See *Landed* in `04-slices.md`.
+- **Then on the live window**, swapped onto `td-eed3d4d6-0.5-war-room`. The session host was kept, and the same 29 panes came back.
 
 ## Where it lives
 
