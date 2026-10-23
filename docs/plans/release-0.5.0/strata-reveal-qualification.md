@@ -24,15 +24,29 @@ The cap bounds the first request, not the whole opening operation. The fallback 
 
 No new TD implementation change was made. This documentation belongs on `dev/0.5.0` as candidate qualification evidence, not as a claim that 0.5.0 fixes Strata freezes. No binary, release tag or installed TD launcher was changed by this investigation.
 
+## Repeatable proof
+
+The [reproduction guide](reveal-evidence/README.md) and two executable harnesses now accompany this record. The TD protocol harness compiles the actual reveal functions from `app/src/pane.rs`; it uses a private D-Bus service and recording-only launcher stubs, without touching the desktop.
+
+All 13 case assertions passed. Six no-reply trials, across direct and uwsm paths, fell back in 3.069–3.070 seconds. Removing the cap produced a 25.063-second wait. The tests also cover immediate rejection, healthy replies with no fallback, five-second late replies, a hanging fallback, exact URI/parent arguments and shell quoting. A deliberately wrong parent is detected. Raw events, commands, source hashes and the [receipt](reveal-evidence/protocol/receipt.json) are retained.
+
+The late-reply case confirms that a successful reply can arrive after fallback; it does not render duplicate windows. The hanging-fallback case reaches the harness's five-second watchdog: TD's three-second request cap is not an end-to-end deadline. Neither injected failure is a reproduction of Strata's internal bug.
+
+Separately, the real-release harness opens synthetic MP4/text fixtures on a private Xvfb and D-Bus inside upstream's pinned test image. It accumulates windows, so this is a load test, not a recreation of the user's three-window desktop. The initial 0.21.0 release trial reached its three-second deadline on request 29; the repeat did so on request 30. After five seconds idle, the repeat answered a ten-second-deadline probe in 4.124 seconds. That demonstrates a slow but still responsive process, not the original persistent freeze. The first 1.1.0 trial answered all 60 requests, with a 0.282-second median and 0.613-second maximum. Raw repeat results are linked in the evidence guide.
+
+These releases use a different build from the installed Arch package, and the test uses GTK 4.22.5/X11/Cairo rather than GTK 4.22.4/Wayland/NVIDIA. Portal warnings and resource limits are recorded. The old release's poor performance under this load is reproduced; a version upgrade has not been proved to cure the original lifetime failure. The installed version was not changed.
+
+The 1.1.0 repeat also answered all 60 requests (0.373-second median, 0.689-second maximum): 120 successful requests over two fresh processes. This is evidence for improved behavior in this test, not proof of multi-day reliability. Both final harnesses and their results are linked from the reproduction guide; the original desktop capture remains separate from the synthetic load results.
+
 Before admitting this behavior as qualified for a candidate:
 
 - Run the existing reveal tests on the candidate's exact source and retain their nonzero test count.
 - On a healthy manager, verify Ctrl+Shift-click selects an MP4 and a text file; record both reply and visible-window timing.
-- With an isolated unresponsive FileManager1 service, verify fallback starts after about three seconds and targets the parent directory. This controlled failure test was not run in this investigation.
+- Rerun the now-passing private-bus protocol proof against the exact candidate source; preserve its receipt and source hash.
 - If the desktop manager itself is frozen, record it as an external failure. A passing fresh-process test cannot establish multi-day reliability.
 
 ## Evidence retained locally
 
 `/home/parker/Work/reports/strata-reveal-evidence/` holds the pre-restart thread dump and window inventory, restart log, and post-restart JSON timings. Those local diagnostics are not published because window metadata can include private paths. The upstream report contains the sanitized observations. No core dump was collected.
 
-Validation of this documentation change: compare the timeout and test against current development source, review linked upstream reports and the complete diff, and run `git diff --check`. No application source changed; no full Rust build or suite was run for this documentation-only update.
+Validation: the private-bus PoC passed 13 assertions, real release trials produced per-request receipts, Python syntax compilation passed, and the documentation/source diff was reviewed with `git diff --check`. No application source changed; no full local Rust application build or suite was run. The protocol harness compiled and executed the extracted production Rust functions directly.
