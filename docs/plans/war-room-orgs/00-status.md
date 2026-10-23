@@ -21,8 +21,10 @@ Parker rejected the large selected-agent response card in his screenshot and ask
 
 Parker's amendment: “I am a fan of cards NOT transforming and drag and drop (even if it means making a card being dragged into a LOW RES render of the card to save on graphics and render power.” Keep cards fixed in shape; use a lightweight drag representation. The relationship builder is part of this approved build, not a later follow-up.
 
-The search/card feature has merged into `dev/0.5.0`. This org feature continues on `feat/war-room-orgs`. Implementation, native drag tests, the full serial suite (2,801 passed; 17 ignored), Clippy for both cores and the optimized build pass. The optimized build is installed as `td-fdc799ee-0.5-war-room-orgs` and passed a hidden native window smoke check. The running user window still needs reopening to load it. The walkthrough and capture are in [the build report](../../../reports/2026-10-23-war-room-orgs-built.md).
+The search/card feature has merged into `dev/0.5.0`. This org feature continues on `feat/war-room-orgs`. Implementation, native drag tests, the full serial suite (2,802 passed; 17 ignored), Clippy for both cores and the optimized build pass. The optimized build is installed as `td-9fbcdfc4-0.5-war-room-tiles` and passed a hidden native window smoke check. The running user window still needs reopening to load it. The walkthrough and capture are in [the build report](../../../reports/2026-10-23-war-room-orgs-built.md).
 
 ## Layout amendment
 
 Parker’s boundary-clipping screenshot on 2026-10-23 replaces the stacked chart and available-pane list with two side-by-side tiles: org chart on the left, pane pool on the right. The frame and visible headers stay fixed; the contents of each tile scroll independently. This is an authorized layout correction within the approved feature. Initial difficulty: 3/10.
+
+The layout amendment is complete. A native GPUI wheel test verifies independent scrolling, fixed headers and frame bounds at 900×560 and 1200×1000 with fourteen orgs. Optimized native captures at 1576×950 and 900×560 show a pool of fourteen panes clipped inside its viewport. The installed build and screenshots are recorded in the walkthrough. Final difficulty for this amendment: 3/10.

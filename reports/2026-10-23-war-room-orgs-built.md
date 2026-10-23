@@ -1,10 +1,18 @@
 # War Room orgs and relationships are built
 
-The large selected-agent context panel is gone. War Room now has named orgs, fixed-size pane cards and an explicit relationship builder. The optimized build is installed; reopen your Terminal Delight window to load it.
+War Room now keeps the org chart on the left and the pane pool on the right inside a fixed frame. Title, filters and tile headers stay visible while each tile’s contents scroll independently. Named orgs, fixed-size pane cards and the relationship builder remain in place; the large context panel is gone. The optimized build is installed; reopen your Terminal Delight window to load it.
 
 ![Named orgs above a chart of fixed cards, with directed relationship arrows](media/war-room-orgs/orgs.png)
 
-**Figure 1. Selecting a member highlights its card without expanding it.** This capture comes from the installed optimized build in a hidden native window. Names, session ages and token counts are test fixtures, separate from your live sessions.
+**Figure 1. The pool stays on the right and clips its long card list inside the frame.** This capture comes from the installed optimized build in a hidden native window. Names, session ages and token counts are test fixtures, separate from your live sessions.
+
+## Keep the controls in view
+
+The frame stays at a fixed size relative to the window. Scroll over the chart to move the chart, or over the pane pool to move its cards. Wide content can also scroll horizontally. Search and the tile headers stay in place, and selecting, filtering or dragging does not resize a card. A long list of org labels scrolls horizontally instead of making the header taller.
+
+![The chart and pool stay inside a short window](media/war-room-orgs/short-frame.png)
+
+**Figure 2. A short window keeps both tiles and their headers inside the visible frame.** This is the same fixture at 900×560. The chart and pool each have more content below their visible area.
 
 ## Make the relationship
 
@@ -24,9 +32,9 @@ Existing charts migrate into an **Unnamed org** with their seats and lines intac
 
 ## What passed
 
-- **2,801 tests passed; 17 ignored** in the complete serial suite.
+- **2,802 tests passed; 17 ignored** in the complete serial suite.
 - Three new model tests cover legacy migration, org identity and membership, and relationship validity.
-- Three native GPUI interaction tests perform connector dragging, card dragging, move cancellation and confirmation, explicit permission selection, relationship editing and cancellation, search across orgs, create/rename typing, fixed card bounds and terminal focus restoration.
+- Four native GPUI interaction tests perform connector dragging, card dragging, move cancellation and confirmation, explicit permission selection, relationship editing and cancellation, search across orgs, create/rename typing, fixed card bounds and terminal focus restoration. The overflow test uses fourteen orgs, a long chart and seven pool panes at 900×560 and 1200×1000; wheel events must move only the intended contents while the frame and all three headers retain their bounds.
 - Clippy passes with warnings denied for both terminal cores; formatting and diff checks pass.
 - The optimized binary opens the native War Room and answers its control socket. Figure 1 was captured from that binary.
 
@@ -34,9 +42,9 @@ The drag test verifies that saving a new relationship without choosing a permiss
 
 ## Installed build and source
 
-Installed binary: `/home/parker/.local/lib/terminal-delight/td-fdc799ee-0.5-war-room-orgs`.
+Installed binary: `/home/parker/.local/lib/terminal-delight/td-9fbcdfc4-0.5-war-room-tiles`.
 
-SHA-256: `ad0ba6d2338b76206ae8c3345d5c810e96c960b3c52d26f5629e80759e11fa50`.
+SHA-256: `96524ac79836c41f5206ca5c8ec8c78dc63b58b1b3e11918868c31ce14eba736`.
 
 The launcher now selects this binary. The current running window remains on its earlier binary until reopened. This is a local development build for the planned 0.5.0 release.
 
