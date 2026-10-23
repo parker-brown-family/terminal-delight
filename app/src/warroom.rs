@@ -858,15 +858,6 @@ impl AskBook {
     }
 }
 
-/// The position-only half of [`may_write`], for the window's apply path, which
-/// re-checks a write after the protocol layer has already checked the reach.
-pub fn position_takes_writes(cfg: &McpConfig, target: &Party, own: bool) -> bool {
-    if own {
-        return policy_admits(cfg, target.is_agent);
-    }
-    policy_admits(cfg, target.is_agent) && target.access.takes_writes()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1097,11 +1088,6 @@ mod tests {
                 may_write(&cfg, r, &target, true),
                 own,
                 "{access:?}: its own agent"
-            );
-            assert_eq!(
-                position_takes_writes(&cfg, &target, false),
-                other,
-                "{access:?}: apply path"
             );
         }
         let shell = Party {

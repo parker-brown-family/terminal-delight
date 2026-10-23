@@ -40417,7 +40417,7 @@ mod tests {
         for (gate, sites) in [
             ("warroom::visible_to_some_agent(", 3),
             ("warroom::anonymous_reach(", 1),
-            ("warroom::position_takes_writes(", 1),
+            ("warroom::may_write_live(", 1),
         ] {
             let calls: Vec<&str> = code.split(gate).skip(1).collect();
             assert_eq!(calls.len(), sites, "{gate}");
@@ -40436,10 +40436,12 @@ mod tests {
         assert!(open.contains("warroom::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent())"));
         let writes = live_fn("fn apply_mcp_config(");
         assert!(
-            writes.contains("warroom::position_takes_writes(")
+            writes.contains("warroom::may_write_live(")
+                && writes.contains("&self.chart")
                 && writes.contains("p.party()")
                 && writes.contains("patch.own_pane"),
-            "the write gate reads the position and the own-pane exception: {writes}"
+            "the write gate rechecks the LIVE chart with the pane's position and the own-pane \
+             exception at the effect: {writes}"
         );
         let snapshot = live_fn("fn mcp_snapshot(");
         assert!(
