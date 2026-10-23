@@ -289,7 +289,7 @@ impl TerminalView {
     /// The name the page is headed with: the pane's own name, as its header
     /// shows it, without the agent's activity glyph in front. Capped, because
     /// a pane nobody named can be titled with a whole shell prompt and path.
-    fn handover_pane_name(&self) -> String {
+    pub(crate) fn handover_pane_name(&self) -> String {
         let name = self.name.clone().unwrap_or_else(|| self.title.clone());
         ellipsize(
             name.trim_start_matches(|c: char| !c.is_alphanumeric()),
@@ -378,6 +378,12 @@ impl TerminalView {
     /// Whether the chip has anything to name.
     pub(crate) fn has_handovers(&self) -> bool {
         !self.handovers.is_empty()
+    }
+
+    /// Everything this pane's agent has handed over, for the artifact rail,
+    /// which reads every pane's ledger and keeps none of its own.
+    pub(crate) fn handovers(&self) -> &crate::handover::Ledger {
+        &self.handovers
     }
 
     /// The header chip. `None` when this pane's agent has handed nothing over:

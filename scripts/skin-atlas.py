@@ -120,6 +120,10 @@ def main():
         head += f'\n[[tabs]]\nname = {val(title)}\nproject = {group}\n[tabs.node.Leaf]\ncwd = {val(str(out))}\nresume = {val(shlex.join([sys.executable, str(emitter)]))}\n'
     saved = out / "config/terminal-delight/sessions" / f"{session}.toml"
     saved.write_text(head)
+    if args.scene == "plugins":
+        plugin = out / "config/terminal-delight/plugins/native-fixture/plugin.json"
+        plugin.parent.mkdir(parents=True)
+        plugin.write_text(json.dumps({"name": "Native fixture", "version": "1.0", "description": "Fictional plugin for checking the native card material.", "command": "/usr/bin/false", "actions": [{"tool": "fixture", "label": "Preview action", "surfaces": ["global"]}]}))
     desktop_keys = {"HOME", "USER", "LOGNAME", "PATH", "LANG", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "HYPRLAND_INSTANCE_SIGNATURE", "WGPU_BACKEND", "VK_ICD_FILENAMES", "LIBGL_ALWAYS_SOFTWARE"}
     env = {key: value for key, value in os.environ.items() if key in desktop_keys or key.startswith("LC_")}
     env.update(TD_SESSION=session, TD_MCP_SCRIPTED="1", TD_SKIN_ATLAS_HOME=str(out / "home"), TD_HOST_SHELL=str(fixture_shell), XDG_CONFIG_HOME=str(out / "config"), XDG_CACHE_HOME=str(out / "cache"), XDG_STATE_HOME=str(out / "state"), TMPDIR=str(out / "tmp"), SHELL=str(fixture_shell))
@@ -194,6 +198,13 @@ def main():
         panes = rpc(pid, "list_panes", {})["structuredContent"]["panes"]
         (out / "panes.json").write_text(json.dumps(panes, indent=2) + "\n")
         target = next(p for p in panes if p["tab"] == 0)
+        if args.scene == "artifacts":
+            for index, pane in enumerate(panes):
+                artifact = out / f"artifact-{index}.html"
+                artifact.write_text("<!doctype html><title>Native fixture</title><p>Fictional artifact for checking native card material.</p>")
+                answer = rpc(pid, "declare_deliverable", {"pid": pane["pid"], "label": f"Native artifact {index + 1}", "href": str(artifact)})
+                if answer.get("isError"):
+                    raise RuntimeError("fixture artifact declaration failed: " + json.dumps(answer))
         if args.grade_json:
             grade = json.loads(args.grade_json.read_text())
             receipt["grade_override"] = grade

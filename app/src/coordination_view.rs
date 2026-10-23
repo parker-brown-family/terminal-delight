@@ -371,6 +371,26 @@ impl Workspace {
     }
 
     fn build_coordination_rows(&self) -> Vec<Row> {
+        if skin_atlas_home().is_some()
+            && std::env::var("TD_SKIN_SCENE").as_deref() == Ok("coordination")
+        {
+            return [
+                ("Native fixture: merge conflict", Some(Severity::Alert)),
+                (
+                    "Native fixture: shared working folder",
+                    Some(Severity::Caution),
+                ),
+                ("Native fixture: unchecked project", None),
+            ]
+            .into_iter()
+            .map(|(title, severity)| {
+                let mut row = Row::new(RowKind::Card, title)
+                    .detail("Fictional data for checking the native material.");
+                row.severity = severity;
+                row
+            })
+            .collect();
+        }
         let l = self.lang;
         let t = l.strings().gc;
         let mut rows = vec![];
@@ -1074,23 +1094,7 @@ impl Workspace {
                 } else {
                     head = head.child(div().text_color(ink).child("›"));
                 }
-                el = el
-                    .rounded(sk.rad_raw(6.))
-                    .border_1()
-                    .border_color(if selected {
-                        ink
-                    } else {
-                        sk.ink.ink.alpha(0.16)
-                    })
-                    .border_l(px(if selected { 4. * s } else { 3. * s }))
-                    .bg(sk.ink.ink.alpha(if selected { 0.15 } else { 0.055 }))
-                    .hover(move |st| st.bg(sk.ink.ink.alpha(0.13)))
-                    .px(px(10. * s))
-                    .py(px(7. * s))
-                    .flex()
-                    .flex_col()
-                    .gap(px(3. * s))
-                    .child(head);
+                el = card_chrome(el, &sk, s, ink, selected).child(head);
             } else if row.kind == RowKind::Participant {
                 let action = row.action.clone();
                 el = el
@@ -1345,6 +1349,36 @@ impl Workspace {
         }
         true
     }
+}
+
+/// A card's chrome: radius 6, a thin border with a 3 px left edge (4 px when
+/// selected), a faint fill, and a column for its lines. `ink` is the card's
+/// meaning — a finding's severity here, an agent's state on the artifact rail
+/// ([`crate::artifact_rail`]) — and colours the whole border once selected.
+/// One function, so the two surfaces that draw cards cannot drift into two
+/// looks for the same object.
+pub(crate) fn card_chrome(
+    el: gpui::Div,
+    sk: &skin::Skin,
+    s: f32,
+    ink: Hsla,
+    selected: bool,
+) -> gpui::Div {
+    let face = sk.ink.ink;
+    el.rounded(sk.rad_raw(6.))
+        .border_1()
+        .border_color(if selected { ink } else { face.alpha(0.16) })
+        .border_l(px(if selected { 4. * s } else { 3. * s }))
+        .bg(face.alpha(if selected { 0.15 } else { 0.055 }))
+        .hover(move |st| st.bg(face.alpha(0.13)))
+        .when(sk.m.frost > 0., |el| {
+            sk.finish_group_edged(el, ink.alpha(if selected { 1. } else { 0.45 }))
+        })
+        .px(px(10. * s))
+        .py(px(7. * s))
+        .flex()
+        .flex_col()
+        .gap(px(3. * s))
 }
 
 fn counted(n: Option<usize>, noun: &lang::Plural, unknown: &str, l: lang::Lang) -> String {

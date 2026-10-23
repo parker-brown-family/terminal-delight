@@ -717,8 +717,19 @@ impl TerminalView {
     /// `open_document` with placement "here": the document floats over this
     /// pane, as Alt+click on its path opens it, and the answer is the line
     /// `ctl doc here` would give. A square already showing the file is left as
-    /// it is. One holding notes not yet saved is kept, as it is for a click,
-    /// and the answer says so rather than claiming a square that never opened.
+    /// it is.
+    ///
+    /// **Only a person replaces a square.** This is the agent's road, so a
+    /// square already up over the pane — showing anything else, with or
+    /// without notes — is HELD: it stays exactly as it was, the file is kept
+    /// as this pane's handover, where the artifact rail lists it, and the
+    /// answer begins `held` so the agent knows nothing opened and does not ask
+    /// again. Parker, 2026-10-22, after an agent's finished turn replaced the
+    /// page he was writing a note in: *"definitely will not override the
+    /// currently open glow pane"*. A clip is not held: it opens over the square
+    /// and replaces nothing ([`Self::open_clip`]). A click, the rail and
+    /// `ctl doc here` are a person's roads and go through
+    /// [`Self::open_float`], which still replaces.
     pub(crate) fn open_here(
         &mut self,
         target: crate::docopen::DocTarget,
@@ -735,6 +746,16 @@ impl TerminalView {
         };
         if showing(self, cx) {
             return format!("ok float pane {pane} — it already shows this file");
+        }
+        if self.float.is_some() && !target.kind.plays() {
+            let href = target.path.display().to_string();
+            self.hand_over(None, href, crate::handover::Source::Declared, cx);
+            return format!(
+                "held pane {pane} — a square is already open over your pane, so this \
+                 was not opened over it. It is kept as your handover: the person \
+                 sees it on the artifact rail (📜) and opens it from there. Do not \
+                 open it again."
+            );
         }
         match self.open_float(target, None, cx) {
             Err(why) => format!("desktop {why}"),

@@ -101,6 +101,7 @@ ui_keys! {
     SplitButtons   => Outer, "split_buttons";
     Counts         => Outer, "counts";
     Scale          => Outer, "scale";
+    Artifacts      => Outer, "artifacts";
     Surfaces       => Outer, "surfaces";
     Sliders        => Outer, "sliders";
     Graveyard      => Outer, "graveyard";
@@ -120,9 +121,10 @@ ui_keys! {
 }
 
 impl Key {
-    /// The six glyphs of the bottom-right corner, in the order they sit. Hide
-    /// any of them and CONFIG takes the corner.
+    /// The seven glyphs of the bottom-right corner, in the order they sit.
+    /// Hide any of them and CONFIG takes the corner.
     pub const MENU_GLYPHS: &'static [Key] = &[
+        Key::Artifacts,
         Key::Surfaces,
         Key::Sliders,
         Key::Graveyard,
@@ -344,7 +346,7 @@ pub fn shown(cx: &App, key: Key) -> bool {
     decide(&st.choice, set, key)
 }
 
-/// Any of the six corner glyphs hidden — CONFIG takes the corner.
+/// Any of the seven corner glyphs hidden — CONFIG takes the corner.
 pub fn config_in_corner(cx: &App) -> bool {
     Key::MENU_GLYPHS.iter().any(|k| !shown(cx, *k))
         || !shown(cx, Key::Counts)

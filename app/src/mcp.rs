@@ -1103,11 +1103,20 @@ pub fn no_open(_: &OpenRequest) -> OpenOutcome {
 }
 
 /// The router's reply, as `ctl doc beside` prints it, turned into an outcome:
-/// `ok …` opened or focused, `desktop …` went to the desktop because TD has no
-/// engine to draw it, and anything else is the sentence that refused it.
+/// `ok …` opened or focused, `held …` was kept as a handover because a square
+/// is already open over the pane (`TerminalView::open_here`), `desktop …` went
+/// to the desktop because TD has no engine to draw it, and anything else is the
+/// sentence that refused it.
+///
+/// A hold is not a failure. Nothing went wrong and nothing should be retried:
+/// the file is where the person will find it, so it answers as a success that
+/// keeps its first word.
 pub fn open_outcome(reply: &str) -> OpenOutcome {
     if let Some(said) = reply.strip_prefix("ok ") {
         return Ok(said.to_string());
+    }
+    if reply.starts_with("held ") {
+        return Ok(reply.to_string());
     }
     if let Some(why) = reply.strip_prefix("desktop ") {
         return Ok(format!("handed to the desktop instead: {why}"));
@@ -1568,8 +1577,11 @@ fn tool_defs() -> Value {
                  Ctrl+Alt+click does: a pane in your tab already showing the file \
                  is focused instead, and at four panes it floats over your pane. \
                  It only ever opens in your own pane or tab, and takes no pid. \
-                 Call it after declare_deliverable, for an HTML or Markdown \
-                 deliverable. Requires the writes toggle (TD_MCP_WRITE).",
+                 A square the person already has open over your pane is never \
+                 replaced: the answer then begins \"held\", the file is kept as \
+                 your handover on the artifact rail, and you should not ask \
+                 again. Call it after declare_deliverable, for an HTML or \
+                 Markdown deliverable. Requires the writes toggle (TD_MCP_WRITE).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -3152,6 +3164,7 @@ where
                 "path": shown,
                 "placement": placement.as_str(),
                 "pane": me.pid,
+                "held": said.starts_with("held "),
                 "said": said,
             }),
         ),
@@ -5534,6 +5547,12 @@ mod tests {
         assert_eq!(
             open_outcome("err the pane that asked is in no tab"),
             Err("the pane that asked is in no tab".into())
+        );
+        // A held open is a success that says so: the agent must not read it as
+        // an error to retry, nor as an open that happened.
+        assert_eq!(
+            open_outcome("held pane 9 — a square is already open over your pane"),
+            Ok("held pane 9 — a square is already open over your pane".into())
         );
     }
 

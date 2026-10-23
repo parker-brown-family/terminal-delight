@@ -470,6 +470,7 @@ metric_tokens! {
     // Read only under `corner = "cut"`; every other corner strategy ignores it.
     cut         => "cut",         7.0,   "how far a cut corner reaches along each edge";
     grain       => "grain",       1.0,   "material grain strength, 0..1";
+    frost       => "frost",       0.0,   "Gaussian blur of the grid beneath smoked groupings, in logical pixels";
     roughness   => "roughness",   1.0,   "paper edge irregularity, 0..1";
     lift        => "lift",        1.0,   "paper contact shadow and stock depth, 0..2";
     marker_alpha => "marker_alpha", 0.22, "highlighter opacity, 0..1";
@@ -1047,6 +1048,18 @@ impl Skin {
     pub fn action<E: Styled + ParentElement>(&self, d: E, active: bool) -> E {
         if self.is_paper() {
             self.paper_control(d, active)
+        } else if let Some(glass) = self.smoked_backing(
+            if active {
+                self.ink.select
+            } else {
+                self.ink.edge
+            },
+            false,
+        ) {
+            d.relative()
+                .bg(gpui::transparent_black())
+                .border_color(gpui::transparent_black())
+                .child(glass)
         } else {
             d.relative().rounded(self.radius()).children(self.grain())
         }
@@ -1182,11 +1195,51 @@ impl Skin {
         self.finish_edged(d, self.ink.edge_strong)
     }
 
+    /// A grouping inside an overlay. Its backing stays independent of the
+    /// overlay's opaque frame, so the glass never changes the frame's material.
+    pub fn finish_group<E: Styled + ParentElement>(&self, d: E) -> E {
+        self.finish_group_edged(d, self.ink.edge_strong)
+    }
+
+    /// A foreground grouping whose edge carries selection, severity or identity.
+    /// Apply before adding content, as with `finish_group`.
+    pub fn finish_group_edged<E: Styled + ParentElement>(&self, d: E, edge: Hsla) -> E {
+        if let Some(glass) = self.smoked_backing(edge, false) {
+            self.chrome(d)
+                .relative()
+                .bg(gpui::transparent_black())
+                .border_color(gpui::transparent_black())
+                .shadow(Vec::new())
+                .child(glass)
+        } else {
+            self.finish_edged(d, edge)
+        }
+    }
+
+    fn smoked_backing(&self, edge: Hsla, grid: bool) -> Option<Div> {
+        (self.is_cut() && self.shape.material == Material::Grid && self.m.frost > 0.).then(|| {
+            crate::deck::smoked_plate(
+                self.ink.panel_sunken,
+                edge,
+                self.m.cut,
+                grid.then_some((self.ink.mark.alpha(0.16), 22. * self.scale)),
+                self.m.frost * self.scale,
+            )
+        })
+    }
+
     /// [`Skin::finish`], for a region whose edge colour is a MEANING rather
     /// than furniture — the red rim of a destructive confirm. A cut plate draws
     /// its edge in `edge`; every other strategy behaves exactly as `finish`.
     pub fn finish_edged<E: Styled + ParentElement>(&self, d: E, edge: Hsla) -> E {
         let d = self.chrome(d);
+        if let Some(glass) = self.smoked_backing(edge, true) {
+            return d
+                .bg(gpui::transparent_black())
+                .border_color(gpui::transparent_black())
+                .shadow(Vec::new())
+                .child(glass);
+        }
         if self.is_cut() {
             // A floating region: the caller's fill, border and rectangular
             // shadow give way to one cut plate with a hard shadow of the same
@@ -1591,6 +1644,15 @@ impl Skin {
     /// (`perform_absolute_layout_on_absolute_children`), so the double rule goes
     /// on hugging the edge rather than sliding in with the text.
     pub fn panel(&self) -> Div {
+        self.panel_with_grid(false)
+    }
+
+    /// The navigation spine frosts the deck grid rather than desktop content.
+    pub fn spine_panel(&self) -> Div {
+        self.panel_with_grid(true)
+    }
+
+    fn panel_with_grid(&self, grid: bool) -> Div {
         let d = div()
             .relative()
             .bg(self.ink.panel)
@@ -1606,7 +1668,12 @@ impl Skin {
                 Boundary::None => hsla(0., 0., 0., 0.),
                 _ => self.ink.rule_strong,
             };
-            return b_all(d.bg(hsla(0., 0., 0., 0.)), self.m.border)
+            let d =
+                b_all(d.bg(hsla(0., 0., 0., 0.)), self.m.border).border_color(hsla(0., 0., 0., 0.));
+            if let Some(glass) = self.smoked_backing(edge, grid) {
+                return d.child(glass);
+            }
+            return d
                 .border_color(hsla(0., 0., 0., 0.))
                 .child(crate::deck::plate(self.ink.panel, edge, self.m.cut, false))
                 .children(self.grain());
@@ -2473,6 +2540,7 @@ pub fn parse(source: &str) -> Result<SkinSpec, String> {
         let max = match key.as_str() {
             "grain" | "roughness" | "marker_alpha" => Some(1.),
             "lift" => Some(2.),
+            "frost" => Some(12.),
             _ => None,
         };
         if max.is_some_and(|max| *value < 0. || *value > max) {

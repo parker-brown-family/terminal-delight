@@ -645,6 +645,20 @@ pub fn local(ms: u64) -> Option<Clock> {
     })
 }
 
+/// When a card on the artifact rail says its newest handover came: the time
+/// on the day it is now, the date and the time on any other. `None` when the
+/// clock cannot place either moment, which the card shows as no time rather
+/// than as a wrong one.
+pub fn card_time(at_ms: u64, now_ms: u64, l: crate::lang::Lang) -> Option<String> {
+    let at = local(at_ms)?;
+    let now = local(now_ms)?;
+    Some(if at.date() == now.date() {
+        at.hhmm()
+    } else {
+        format!("{} {}", short_date(at, l), at.hhmm())
+    })
+}
+
 /// One row of the history page, with everything the page needs already
 /// worked out, so the page is a pure function of its rows.
 #[derive(Clone, Debug)]
