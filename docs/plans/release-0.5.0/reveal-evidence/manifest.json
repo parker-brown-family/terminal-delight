@@ -1,6 +1,6 @@
 {
   ".gitignore": "e027cf8ebf80d6dcdacced8a4dbd1c440e2436fb1868ec851db4061cb67bb787",
-  "README.md": "13caaba554b1775f26f4c16382e74b60ca11cb791a6acfbb8352b6515b8469bd",
+  "README.md": "c3737d33cb2fb7d9eebad40647dba40db7333947fad968d7d3c1e75675d716da",
   "after-restart.json": "fa2238358bd071055fde1c3203f0e2757ba7074aef4b78b98f9dae46d623fcc0",
   "incident-main-thread.txt": "068437f4fa37843a54ca1ae832ec2791d6a2eadd56a41ce8dac0be19bad384dd",
   "mp4-after-restart.json": "253a9af80594f4b814f73993e07c71445c7d50c44340e5d8050f71795a8499a3",
@@ -76,5 +76,6 @@
   "strata/1.1.0-repeat/receipt.json": "aab6414aaa3ff78d7f38ca893d9c7dd2b9ce4aab6c453ecef6c54d014d38ec6d",
   "strata/1.1.0-repeat/requests.jsonl": "5e6cfd57d899690909ec5d8d309aee703f98b6978fed1baf20bdbfc1615d75f0",
   "strata-0.21.0-x86_64-unknown-linux-gnu.tar.gz.sha256": "e1e8644d8292a6c804c785b657fa772f2d1080efb807233bed7e4c9a2997f5f1",
-  "strata-1.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256": "c78b7f48a0aa1e58b69bd2d7e70d2b8a26b44d12311a245f480cad59774b67d1"
+  "strata-1.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256": "c78b7f48a0aa1e58b69bd2d7e70d2b8a26b44d12311a245f480cad59774b67d1",
+  "desktop-upgrade-1.1.0.json": "b4fab278347831f07b7c96a97c8f6e16c0d1ba9b1575237a8a2f00330974f97c"
 }

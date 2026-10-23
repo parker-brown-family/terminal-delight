@@ -168,3 +168,7 @@ cap, wrong parent, quoting error or unexpected fallback should fail the
 assertions. Actual Ctrl+Shift-click routing and first-painted-frame timing are
 separate candidate checks; this script begins at the production command
 generator, not at a physical mouse event.
+
+## Desktop upgrade to 1.1.0
+
+After [upstream closed the report as resolved](https://github.com/lgse/strata/issues/1833#issuecomment-6372286779), the official 1.1.0 release was installed on the affected Wayland desktop. [The upgrade receipt](desktop-upgrade-1.1.0.json) records checksum and attestation verification, the running binary hash, the FileManager1 owner and four successful MP4 reveal timings. Cold activation replied in 0.8793 seconds; warm requests in 0.0799–0.0908 seconds. Multi-day reliability and physical click-to-frame timing were not measured.
