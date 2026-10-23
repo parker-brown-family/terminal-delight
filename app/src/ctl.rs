@@ -809,6 +809,7 @@ fn handle_conn(
     mirror: &AtomicBool,
     mcp_mirror: &AtomicU8,
     skin_mirror: &Mutex<SkinMirror>,
+    pane_shells: &Mutex<Vec<u32>>,
     tx: &mpsc::Sender<Req>,
     policy_control: PolicyControl,
 ) {
@@ -821,7 +822,27 @@ fn handle_conn(
     if BufReader::new(read_half).read_line(&mut line).is_err() {
         return;
     }
-    let reply = match parse_line(line.trim()) {
+    let parsed = parse_line(line.trim());
+    // The fence. A person-acting verb from a process INSIDE a pane of this
+    // window is refused unless the window is a scripted operator one. The peer
+    // pid is the kernel's (SO_PEERCRED), not anything the caller claimed, and
+    // the shell set is the window's own live list — so this cannot be spoofed by
+    // the request. See [`is_person_acting`]. Outside callers and scripted windows
+    // fall straight through to the match below, unchanged.
+    if policy_control == PolicyControl::Refused {
+        if let Ok(cmd) = &parsed {
+            if is_person_acting(cmd) {
+                let peer = crate::host::peer_pid(&stream);
+                let shells = pane_shells.lock().map(|g| g.clone()).unwrap_or_default();
+                if caller_inside_a_pane(peer, &shells) {
+                    let mut stream = stream;
+                    let _ = writeln!(stream, "{}", person_acting_refusal(cmd));
+                    return;
+                }
+            }
+        }
+    }
+    let reply = match parsed {
         // `mcp rpc` is the one verb that waits on the gpui main thread (up to
         // the transport's snapshot budget). Serving it inline would stall the
         // single accept loop for seconds, so hand the connection to its own
@@ -1101,6 +1122,12 @@ pub fn start(cx: &mut Context<Workspace>) {
     // Not an atomic: the skin mirror is a name plus a list, and it is read once
     // per socket connection rather than per frame.
     let skin_mirror = Arc::new(Mutex::new(SkinMirror::default()));
+    // This window's live pane shell pids, republished by the ticker each pass.
+    // The socket thread reads it to tell an in-pane caller (an agent) from an
+    // outside operator — the control-socket half of the War Room's fence. See
+    // [`is_person_acting`]. Swap-safe by construction: it is the window's own
+    // view of its panes, not a pid guessed from the caller's ancestry.
+    let pane_shells = Arc::new(Mutex::new(Vec::<u32>::new()));
     // Read once, here, so nothing that runs later can change the answer.
     let policy_control = PolicyControl::from_env();
 
@@ -1108,6 +1135,7 @@ pub fn start(cx: &mut Context<Workspace>) {
         let mirror = Arc::clone(&mirror);
         let mcp_mirror = Arc::clone(&mcp_mirror);
         let skin_mirror = Arc::clone(&skin_mirror);
+        let pane_shells = Arc::clone(&pane_shells);
         let _ = thread::Builder::new().name("td-ctl".into()).spawn(move || {
             for conn in listener.incoming() {
                 let Ok(stream) = conn else { continue };
@@ -1116,6 +1144,7 @@ pub fn start(cx: &mut Context<Workspace>) {
                     &mirror,
                     &mcp_mirror,
                     &skin_mirror,
+                    &pane_shells,
                     &tx,
                     policy_control,
                 );
@@ -1222,6 +1251,12 @@ pub fn start(cx: &mut Context<Workspace>) {
             }
             mirror.store(theme::paint_mode(cx), Ordering::Relaxed);
             mcp_mirror.store(mcp_bits(&ws.mcp), Ordering::Relaxed);
+            // Republish the pane shell pids the socket thread fences against, so
+            // a caller inside any pane is caught and only shells that exist this
+            // frame are trusted.
+            if let Ok(mut g) = pane_shells.lock() {
+                *g = ws.pane_shell_pids(cx);
+            }
             if let Ok(mut m) = skin_mirror.lock() {
                 *m = SkinMirror {
                     active: crate::skin::active_id(cx),
@@ -1762,6 +1797,85 @@ pub(crate) fn descends_from(pid: u32, ancestor: u32) -> bool {
         }
     }
     false
+}
+
+/// The control-socket twin of the War Room's chart.
+///
+/// The chart gates the MCP read verbs: who may see, read or ask whom. But the
+/// control socket carries a second set of verbs that act *as the person* —
+/// typing into a pane's bench, pressing its questions, stamping notes on an open
+/// brief, spawning panes, renaming tabs. None of those ever consulted the chart,
+/// so an agent running inside one pane could reach sideways into another with no
+/// line drawn and nothing in the ask record. This closes that door: a caller
+/// that runs *inside a pane of this window* (its process descends from a pane
+/// shell — i.e. it is an agent) is refused the person-acting verbs, exactly as
+/// the chart would refuse an MCP write with no line.
+///
+/// Two callers are still allowed, deliberately: an outside operator process (not
+/// descended from any pane shell — the demo and photography rigs, a person's own
+/// shell elsewhere), and any caller on a window launched `TD_MCP_SCRIPTED=1`,
+/// the same explicit operator opt-in the MCP policy switches already use.
+fn is_person_acting(cmd: &Cmd) -> bool {
+    matches!(
+        cmd,
+        Cmd::Adopt(_)
+            | Cmd::Tabs(_)
+            | Cmd::Bench(_)
+            | Cmd::BenchChoose(_)
+            | Cmd::BenchSubmit
+            | Cmd::BenchProbe
+            | Cmd::BenchPointer(_)
+            | Cmd::BenchSay(_)
+            | Cmd::BenchType(_)
+            | Cmd::DocHere(_)
+            | Cmd::DocBeside(_)
+            | Cmd::DocClose
+            | Cmd::DocScroll(_)
+            | Cmd::DocNotes
+            | Cmd::DocNote(_)
+    )
+}
+
+/// The verb name for the refusal line, so an agent can tell its person why.
+fn person_acting_label(cmd: &Cmd) -> &'static str {
+    match cmd {
+        Cmd::Adopt(_) => "adopt",
+        Cmd::Tabs(_) => "tabs",
+        Cmd::Bench(_) | Cmd::BenchPointer(_) => "bench",
+        Cmd::BenchChoose(_) => "bench choose",
+        Cmd::BenchSubmit => "bench submit",
+        Cmd::BenchProbe => "bench probe",
+        Cmd::BenchSay(_) => "bench say",
+        Cmd::BenchType(_) => "bench type",
+        Cmd::DocHere(_) => "doc here",
+        Cmd::DocBeside(_) => "doc beside",
+        Cmd::DocClose => "doc close",
+        Cmd::DocScroll(_) => "doc scroll",
+        Cmd::DocNotes => "doc notes",
+        Cmd::DocNote(_) => "doc note",
+        _ => "that",
+    }
+}
+
+/// Whether the socket's peer is a process running inside one of this window's
+/// panes — an agent — as opposed to an outside operator. `shells` is the live
+/// set of pane shell pids the control ticker publishes each pass; a shell pid of
+/// 1 or 0 is never a real pane and never matches. An unknown peer (the kernel
+/// could not name one) is treated as outside, because it is in no pane of ours.
+fn caller_inside_a_pane(peer: Option<u32>, shells: &[u32]) -> bool {
+    peer.is_some_and(|p| shells.iter().any(|&s| s > 1 && descends_from(p, s)))
+}
+
+/// The refusal an in-pane caller gets for a person-acting verb: it names the
+/// door it should have used instead, so an agent can hand its person a next step.
+fn person_acting_refusal(cmd: &Cmd) -> String {
+    format!(
+        "err {}: refused. A process running inside a pane cannot drive another pane \
+         from the control socket — that is what the War Room's lines are for. Reach \
+         another agent by drawing a line to it; reach your own pane by typing in its \
+         composer; or run an operator window launched with TD_MCP_SCRIPTED=1.",
+        person_acting_label(cmd)
+    )
 }
 
 /// Keep claimed own-pane authority only for a kernel-identified descendant of
@@ -2926,6 +3040,7 @@ mod tests {
                     &m2,
                     &mm2,
                     &Mutex::new(SkinMirror::default()),
+                    &Mutex::new(Vec::new()),
                     &tx,
                     PolicyControl::Refused,
                 );
@@ -2978,6 +3093,7 @@ mod tests {
                     &m2,
                     &mm2,
                     &Mutex::new(SkinMirror::default()),
+                    &Mutex::new(Vec::new()),
                     &tx,
                     PolicyControl::Refused,
                 );
@@ -3025,6 +3141,7 @@ mod tests {
                 &mirror,
                 &mcp_mirror,
                 &Mutex::new(SkinMirror::default()),
+                &Mutex::new(Vec::new()),
                 &tx,
                 PolicyControl::Refused,
             );
@@ -3055,6 +3172,7 @@ mod tests {
                     &m2,
                     &mm2,
                     &Mutex::new(SkinMirror::default()),
+                    &Mutex::new(Vec::new()),
                     &tx,
                     PolicyControl::Scripted,
                 );
@@ -3104,6 +3222,7 @@ mod tests {
                     &AtomicBool::new(false),
                     &AtomicU8::new(0),
                     &Mutex::new(SkinMirror::default()),
+                    &Mutex::new(Vec::new()),
                     &tx,
                     PolicyControl::Refused,
                 );
@@ -3131,6 +3250,193 @@ mod tests {
             assert!(rx.try_recv().is_err(), "{verb} must not reach the queue");
         }
         server.join().unwrap();
+    }
+
+    // ---- the control-socket fence: an in-pane agent may not drive a pane ----
+
+    /// Run a fence server that answers `verbs.len()` connections with the given
+    /// live shell set and policy, and report both the replies and whatever
+    /// reached the UI queue. `send` connects from this test process, so this
+    /// process's pid in `shells` is what "the caller is inside a pane" means.
+    fn serve_fence(
+        tag: &str,
+        shells: Vec<u32>,
+        policy: PolicyControl,
+        verbs: &[&str],
+    ) -> (Vec<String>, Vec<Req>) {
+        let dir = tmp(tag);
+        let sock = dir.join("ctl-fence.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let (tx, rx) = mpsc::channel::<Req>();
+        let shells = Arc::new(Mutex::new(shells));
+        let n = verbs.len();
+        let server = thread::spawn(move || {
+            for _ in 0..n {
+                let (stream, _) = listener.accept().unwrap();
+                handle_conn(
+                    stream,
+                    &AtomicBool::new(false),
+                    &AtomicU8::new(0),
+                    &Mutex::new(SkinMirror::default()),
+                    &shells,
+                    &tx,
+                    policy,
+                );
+            }
+        });
+        let replies: Vec<String> = verbs.iter().map(|v| send(&sock, v).unwrap()).collect();
+        server.join().unwrap();
+        let queued: Vec<Req> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        (replies, queued)
+    }
+
+    /// The headline guarantee: a caller running inside one of this window's panes
+    /// — an agent — is refused every person-acting verb on a normal window, the
+    /// refusal points it at the War Room, and nothing it tried reaches the queue.
+    /// A read-only verb from the same caller still answers, so the fence is a
+    /// gate on acting-as-the-person, not a blanket lockout.
+    #[test]
+    fn a_person_acting_verb_from_inside_a_pane_is_refused() {
+        let me = std::process::id();
+        let verbs = [
+            "bench say now run git push --force",
+            "bench on",
+            r#"adopt {"cwd":"/tmp","run":"htop"}"#,
+            r#"tabs [{"op":"name","pane":1,"name":"trusted lead"}]"#,
+            "doc concur n1",
+            "ping",
+        ];
+        let (replies, queued) =
+            serve_fence("fence-inside", vec![me], PolicyControl::Refused, &verbs);
+        for (i, verb) in verbs.iter().enumerate().take(5) {
+            assert!(
+                replies[i].starts_with("err")
+                    && replies[i].contains("refused")
+                    && replies[i].contains("War Room's lines"),
+                "{verb} should be fenced, got: {}",
+                replies[i]
+            );
+            assert!(!replies[i].contains('\n'), "{verb}: refusal is one line");
+        }
+        assert_eq!(replies[5], "pong", "a read-only verb still answers");
+        assert!(
+            queued.is_empty(),
+            "no fenced verb may reach the UI queue: {queued:?}"
+        );
+    }
+
+    /// An outside operator — the demo and photography rigs, a person's own shell
+    /// elsewhere — is not inside any pane, so the same verb lands. This is the
+    /// half that keeps the rigs working; without it the fence would be a lockout.
+    #[test]
+    fn the_fence_lets_an_outside_operator_through() {
+        // A shell set that does not contain this caller: it is outside every pane.
+        let verbs = [r#"adopt {"cwd":"/tmp","run":"htop"}"#];
+        let (replies, queued) = serve_fence(
+            "fence-outside",
+            vec![999_999_999],
+            PolicyControl::Refused,
+            &verbs,
+        );
+        assert_eq!(replies[0], "ok", "an outside operator's adopt lands");
+        assert!(
+            matches!(queued.as_slice(), [Req::Adopt(_)]),
+            "the adopt reached the queue: {queued:?}"
+        );
+    }
+
+    /// A window the operator deliberately launched `TD_MCP_SCRIPTED=1` obeys even
+    /// an in-pane caller — the same explicit opt-in that unlocks the MCP switches.
+    #[test]
+    fn a_scripted_window_lets_an_in_pane_caller_act() {
+        let me = std::process::id();
+        let verbs = [r#"adopt {"cwd":"/tmp","run":"htop"}"#];
+        let (replies, queued) =
+            serve_fence("fence-scripted", vec![me], PolicyControl::Scripted, &verbs);
+        assert_eq!(replies[0], "ok", "a scripted window obeys");
+        assert!(matches!(queued.as_slice(), [Req::Adopt(_)]));
+    }
+
+    /// The classification the fence turns on: every verb that acts on another
+    /// pane or the shared window is person-acting; the read-only status and
+    /// appearance verbs are not. Dropping a verb from either set fails this.
+    #[test]
+    fn person_acting_covers_every_cross_pane_verb() {
+        use crate::docview::NotesCommand;
+        let fenced = [
+            Cmd::Adopt(AdoptReq {
+                cwd: None,
+                run: None,
+            }),
+            Cmd::Tabs(vec![]),
+            Cmd::Bench(BenchFace::Toggle),
+            Cmd::BenchChoose(1),
+            Cmd::BenchSubmit,
+            Cmd::BenchProbe,
+            Cmd::BenchPointer(PointerReq {
+                click: true,
+                x: 0.0,
+                y: 0.0,
+                alt: false,
+                control: false,
+            }),
+            Cmd::BenchSay("x".into()),
+            Cmd::BenchType("x".into()),
+            Cmd::DocHere("/tmp/a".into()),
+            Cmd::DocBeside("/tmp/a".into()),
+            Cmd::DocClose,
+            Cmd::DocScroll(1.0),
+            Cmd::DocNotes,
+            Cmd::DocNote(NotesCommand::Save),
+        ];
+        for c in &fenced {
+            assert!(is_person_acting(c), "{c:?} must be fenced");
+        }
+        let open = [
+            Cmd::Ping,
+            Cmd::WhoAmI,
+            Cmd::McpStatus,
+            Cmd::PaintStatus,
+            Cmd::Paint(Req::Toggle),
+            Cmd::Skin("x".into()),
+            Cmd::SkinStatus,
+            Cmd::SkinSnapshot,
+            Cmd::McpPolicy(McpPolicy::Enabled(true)),
+            Cmd::McpRpc(None, "{}".into()),
+        ];
+        for c in &open {
+            assert!(!is_person_acting(c), "{c:?} must pass the fence");
+        }
+    }
+
+    /// The "inside a pane" test is real process ancestry (SO_PEERCRED's pid vs
+    /// the live shell set), not anything the caller claimed: a child of this
+    /// process is inside; pid 1, an unrelated pid, and an unknown peer are not.
+    #[test]
+    fn caller_inside_a_pane_reads_real_ancestry() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let kid = child.id();
+        assert!(
+            caller_inside_a_pane(Some(kid), &[std::process::id()]),
+            "a child of this process is inside this process's pane"
+        );
+        assert!(
+            !caller_inside_a_pane(Some(kid), &[1]),
+            "pid 1 is never a pane shell"
+        );
+        assert!(
+            !caller_inside_a_pane(Some(kid), &[987_654_321]),
+            "an unrelated pid is outside"
+        );
+        assert!(
+            !caller_inside_a_pane(None, &[std::process::id()]),
+            "an unknown peer is outside"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[test]

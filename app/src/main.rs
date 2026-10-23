@@ -9365,6 +9365,25 @@ impl Workspace {
         facts
     }
 
+    /// The shell pid of every leaf in the window — the raw material the control
+    /// socket's fence reads to tell an in-pane caller (an agent) from an outside
+    /// operator. Every leaf, not only the agent ones: a caller inside a plain
+    /// shell pane is just as much "inside this window" and must not drive another
+    /// pane around the chart. See `ctl::is_person_acting`.
+    pub(crate) fn pane_shell_pids(&self, cx: &App) -> Vec<u32> {
+        let mut shells = Vec::new();
+        for tab in self.tabs.iter() {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            for e in leaves {
+                if let Some(pid) = e.read(cx).shell_pid() {
+                    shells.push(pid);
+                }
+            }
+        }
+        shells
+    }
+
     /// Which agent panes might have a transcript worth deriving surfaces from,
     /// and which host pane id each one's surfaces belong to.
     ///
