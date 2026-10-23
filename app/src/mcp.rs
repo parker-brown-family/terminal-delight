@@ -321,6 +321,21 @@ pub struct ConfigPatch {
     /// cannot, and `deny_unknown_fields` refuses the key outright.
     #[serde(skip)]
     pub own_pane: bool,
+    /// The VERIFIED caller's pane id, for the effect-time chart recheck.
+    ///
+    /// `write_gate` checks the caller's reach against the snapshot when the
+    /// request arrives, but the write lands later, on the UI thread, by which
+    /// time a line may have been revoked, the caller may have changed seats, or
+    /// the target may be a different pane. So the write carries only the caller's
+    /// *pane id* — a stable identity — and `apply_mcp_config` resolves that pane's
+    /// CURRENT seat, the target's CURRENT party, and whether the two are the same
+    /// pane, then recomputes reach against the LIVE chart before it mutates.
+    /// Nothing captured is trusted but the identity, so a revoked line, a reseat,
+    /// a moved or exited sender, and a replaced target are all caught live.
+    /// `skip` like `own_pane`: set server-side from `snap.caller`, never from an
+    /// agent's JSON, so it cannot be asserted to forge authority.
+    #[serde(skip)]
+    pub caller_pane: Option<u64>,
     /// An ask for a person to change an access setting, from
     /// `request_access`, already validated. Rides the pipeline onto the
     /// ASKING pane, where it waits on the rail.
@@ -790,6 +805,13 @@ impl Snapshot {
         self.panes.iter().find(|p| p.pane_id == Some(pane))
     }
 
+    /// The verified caller's pane id, threaded onto a write as `caller_pane` so
+    /// the UI thread can re-resolve the sender's live seat at the effect. `None`
+    /// when the connection did not name a pane (an unknown caller).
+    fn caller_pane_id(&self) -> Option<u64> {
+        self.caller.as_ref().and_then(|c| c.pane)
+    }
+
     /// How far the caller reaches `p`. An unknown caller is no seat: it still
     /// reads a pane nobody seated, and reaches no seated pane at all.
     fn reach_of(&self, p: &PaneInfo) -> crate::warroom::Reach {
@@ -809,6 +831,43 @@ impl Snapshot {
             .iter()
             .filter(|p| self.reach_of(p) >= at_least)
             .collect()
+    }
+
+    /// The write gate the pane-mutating verbs share — `set_pane_config`,
+    /// `leave_note`, `declare_deliverable`, `present_surface`.
+    ///
+    /// Until the War Room, these verbs checked only the window's switches and the
+    /// pane's position, never the chart: with writes on, an agent could note,
+    /// re-skin, hang a deliverable on, or drop a signed-prompt surface onto a
+    /// *seated* pane it has no line to and cannot even see. This closes that, by
+    /// the same `warroom::may_write` the reading verbs already route through: the
+    /// caller's own pane and an unseated pane under the policy pass; a seated pane
+    /// with no line does not.
+    ///
+    /// A pane the caller cannot reach at all (`Hidden` — off-limits, or seated
+    /// with no line) answers exactly as a pid that is not here would, so this is
+    /// never an existence oracle. A pane the caller can see but not write (a
+    /// read-only pane that is not its own) is named, because there is nothing to
+    /// hide about a pane already in its listing. A pid absent from the listing
+    /// passes, so the apply path gives the one uniform "no pane with pid" answer.
+    fn write_gate(&self, pid: u32) -> Result<(), String> {
+        let Some(pane) = self.panes.iter().find(|p| p.pid == pid) else {
+            return Ok(());
+        };
+        let own = self.is_callers(pid);
+        let party = pane.party();
+        let reach = self.reach_of(pane);
+        if crate::warroom::may_write(&self.config, reach, &party, own) {
+            return Ok(());
+        }
+        if reach == crate::warroom::Reach::Hidden {
+            Err(format!("no pane with pid {pid}"))
+        } else {
+            Err(format!(
+                "pane {pid} takes no writes from here — it is read-only to you; \
+                 only a person, or the agent in that pane, may write it"
+            ))
+        }
     }
 
     /// Which pane a pane-scoped verb should act on: the one the caller named,
@@ -2430,7 +2489,7 @@ where
             None => return tool_err(&format!("updates[{i}] is missing `target`")),
         };
         let cfg_v = u.get("config").cloned().unwrap_or(Value::Null);
-        let patch: ConfigPatch = match serde_json::from_value(cfg_v) {
+        let mut patch: ConfigPatch = match serde_json::from_value(cfg_v) {
             Ok(p) => p,
             Err(e) => return tool_err(&format!("updates[{i}].config is invalid: {e}")),
         };
@@ -2439,7 +2498,26 @@ where
                 "updates[{i}].config has no recognised channels to change"
             ));
         }
+        // Mark the caller's own pane and carry its pane id for the effect-time
+        // recheck, the same as the note/deliverable/surface verbs — serde never
+        // deserialised either (both are `skip`), so they are set here, server-side.
+        if let Target::Pane(pid) = target {
+            patch.own_pane = snap.is_callers(pid);
+            patch.caller_pane = snap.caller_pane_id();
+        }
         updates.push((target, patch));
+    }
+    // The chart gate, per pane target: an agent may restyle its own pane and the
+    // window `outer`, and panes it reaches, but not a seated pane it has no line
+    // to. A `Hidden` pane answers as an absent one, so this is no existence
+    // oracle. `outer` and other non-pane targets are window-level appearance —
+    // the accepted minimal surface — and are not gated here.
+    for (target, _) in &updates {
+        if let Target::Pane(p) = target {
+            if let Err(e) = snap.write_gate(*p) {
+                return tool_err(&e);
+            }
+        }
     }
     let outcomes = apply(&updates);
     let results: Vec<Value> = outcomes
@@ -2486,6 +2564,9 @@ where
         Ok(pid) => u64::from(pid),
         Err(why) => return tool_err(&why),
     };
+    if let Err(e) = snap.write_gate(pid as u32) {
+        return tool_err(&e);
+    }
     let title = args.get("title").and_then(Value::as_str);
     let text = args.get("text").and_then(Value::as_str);
     let pin = args.get("pin").and_then(Value::as_bool).unwrap_or(false);
@@ -2498,6 +2579,7 @@ where
     let patch = ConfigPatch {
         note: Some(change),
         own_pane: snap.is_callers(pid as u32),
+        caller_pane: snap.caller_pane_id(),
         ..Default::default()
     };
     let outcomes = apply(&[(Target::Pane(pid as u32), patch)]);
@@ -2542,6 +2624,9 @@ where
         Ok(pid) => u64::from(pid),
         Err(why) => return tool_err(&why),
     };
+    if let Err(e) = snap.write_gate(pid as u32) {
+        return tool_err(&e);
+    }
     let change = match validate_deliverable(
         args.get("label").and_then(Value::as_str),
         args.get("href").and_then(Value::as_str),
@@ -2558,6 +2643,7 @@ where
     let patch = ConfigPatch {
         deliverable: Some(change),
         own_pane: snap.is_callers(pid as u32),
+        caller_pane: snap.caller_pane_id(),
         ..Default::default()
     };
     match apply(&[(Target::Pane(pid as u32), patch)])
@@ -2705,6 +2791,13 @@ where
     let Ok(pid) = u32::try_from(pid) else {
         return tool_err("pid is out of range");
     };
+    // The chart gate, before anything is built or applied: a surface on a seated
+    // pane this caller has no line to is the signed-prompt vector the War Room
+    // exists to close. The persistence filter below is kept too, as a second
+    // belt — the periodic sweep re-delivers from disk without re-asking.
+    if let Err(e) = snap.write_gate(pid) {
+        return tool_err(&e);
+    }
     // `surface` is where the document belongs, but an agent that sent the
     // envelope at the top level meant the same thing and being pedantic about
     // it would cost a round trip to say so.
@@ -2805,6 +2898,7 @@ where
     let patch = ConfigPatch {
         surface: Some(post.clone()),
         own_pane: snap.is_callers(pid),
+        caller_pane: snap.caller_pane_id(),
         ..Default::default()
     };
     match apply(&[(Target::Pane(pid), patch)]).into_iter().next() {
@@ -4173,6 +4267,107 @@ mod tests {
             vec![(300, "read".into())],
             "an unknown caller reaches no seat"
         );
+    }
+
+    /// The writing twin of the reading test above: with writes ON, a seated pane
+    /// the caller has no line to must take no note, deliverable, appearance or
+    /// surface — and must refuse exactly as an absent pid would, so a write verb
+    /// is no existence oracle either. The caller's own pane and an unseated pane
+    /// still write (the colleagues-in-one-building default), and a read line
+    /// opens the seated pane to every write verb.
+    ///
+    /// Planned break: removing any `write_gate` call, or weakening it to let a
+    /// `Hidden` pane through, turns the first block red.
+    #[test]
+    fn a_seated_pane_is_safe_from_every_writing_verb_without_a_line() {
+        use crate::warroom::{Chart, Rung, SeatId};
+        let mut me = agent_pane(100, true);
+        me.seat = Some(SeatId(1));
+        let mut them = agent_pane(200, true);
+        them.seat = Some(SeatId(2));
+        let loose = agent_pane(300, true);
+        let mut s = snap_writable(vec![me, them, loose]);
+        s.caller = Some(Caller {
+            session: "s".into(),
+            pane: Some(u64::from(100u32 % 97)),
+        });
+
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<Target>>> = Default::default();
+        let seen2 = seen.clone();
+        let apply = move |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            seen2
+                .lock()
+                .unwrap()
+                .extend(ups.iter().map(|(t, _)| t.clone()));
+            vec![(ups[0].0.clone(), Ok(GradeReport::default()))]
+        };
+        let run = |s: &Snapshot, name: &str, args: Value| -> Value {
+            let line = json!({ "id": 1, "method": "tools/call",
+                "params": { "name": name, "arguments": args } })
+            .to_string();
+            resp(&handle_line_with(&line, s, no_tail, &apply, no_search).unwrap())["result"].clone()
+        };
+        let verbs = |pid: u64| -> Vec<(&'static str, Value)> {
+            vec![
+                ("leave_note", json!({ "pid": pid, "text": "x" })),
+                (
+                    "declare_deliverable",
+                    json!({ "pid": pid, "href": "/r/a.html" }),
+                ),
+                (
+                    "set_pane_config",
+                    json!({ "updates": [ { "target": pid, "config": { "brightness": 10 } } ] }),
+                ),
+                (
+                    "present_surface",
+                    json!({ "pid": pid, "surface": { "td": "0.4", "kind": "response",
+                        "title": "t", "model": { "layman": "x" } } }),
+                ),
+            ]
+        };
+
+        // Seated pane 200, no line: every write verb refuses, as if 200 weren't here.
+        for (name, args) in verbs(200) {
+            let r = run(&s, name, args);
+            assert_eq!(
+                r["isError"], true,
+                "{name} must refuse a seated pane with no line"
+            );
+            assert!(
+                r["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("no pane with pid 200"),
+                "{name}: a fenced pane must look absent, got {}",
+                r["content"][0]["text"]
+            );
+        }
+        assert!(
+            seen.lock().unwrap().iter().all(|t| *t != Target::Pane(200)),
+            "no fenced write may reach apply: {:?}",
+            seen.lock().unwrap()
+        );
+
+        // The caller's own pane and the unseated loose pane still take writes.
+        for pid in [100u64, 300] {
+            let r = run(&s, "leave_note", json!({ "pid": pid, "text": "ok" }));
+            assert_ne!(
+                r["isError"], true,
+                "pid {pid} (own/unseated) should still write"
+            );
+        }
+
+        // A read line opens the seated pane to every write verb.
+        s.chart = Chart::default();
+        s.chart.draw(SeatId(1), SeatId(2), Rung::Read);
+        for (name, args) in verbs(200) {
+            let r = run(&s, name, args);
+            assert_ne!(
+                r["isError"], true,
+                "{name} must land once a read line reaches the pane: {}",
+                r["content"][0]["text"]
+            );
+        }
     }
 
     /// The window's answer, from the protocol layer's side: a cheap answer
