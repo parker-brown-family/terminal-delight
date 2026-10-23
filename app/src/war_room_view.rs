@@ -11,9 +11,10 @@
 use super::*;
 use gpui::PathBuilder;
 
-/// A seat's box, at scale 1.
+/// A seat's box, at scale 1: four lines — where it sits, its header's title,
+/// its program and model, its state and size.
 const SEAT_W: f32 = 196.;
-const SEAT_H: f32 = 66.;
+const SEAT_H: f32 = 80.;
 const COL_GAP: f32 = 30.;
 const ROW_GAP: f32 = 56.;
 const PAD: f32 = 14.;
@@ -24,7 +25,7 @@ const CARD_W: f32 = 300.;
 struct SeatFacts {
     leaf: Entity<TerminalView>,
     seat: warroom::SeatId,
-    title: String,
+    name: warroom::PaneName,
     project: String,
     program: String,
     model: Option<String>,
@@ -63,7 +64,7 @@ impl Workspace {
 
         // ---- gather: seated panes, and agent panes nobody seated ----
         let mut seats: Vec<SeatFacts> = Vec::new();
-        let mut loose: Vec<(Entity<TerminalView>, String, String)> = Vec::new();
+        let mut loose: Vec<(Entity<TerminalView>, warroom::PaneName, String)> = Vec::new();
         for (ti, tab) in self.tabs.iter().enumerate() {
             let project = self
                 .place_of(ti)
@@ -71,6 +72,7 @@ impl Workspace {
                 .and_then(|id| self.project_at(id))
                 .and_then(|p| p.name.clone())
                 .unwrap_or_default();
+            let spine = self.spine_path(ti);
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
@@ -78,22 +80,17 @@ impl Workspace {
                 if !v.mode.is_agent() && v.seat.is_none() {
                     continue;
                 }
-                let title = v
-                    .name
-                    .clone()
-                    .filter(|n| !n.is_empty())
-                    .or_else(|| (!v.title.is_empty()).then(|| v.shown_title()))
-                    .unwrap_or_else(|| v.mode.label().to_string());
+                let name = warroom::PaneName::new(&spine, &v.header_title());
                 let program = v.mode.label().to_string();
                 let Some(seat) = v.seat else {
-                    loose.push((leaf.clone(), title, program));
+                    loose.push((leaf.clone(), name, program));
                     continue;
                 };
                 let vit = v.shell_pid().and_then(|pid| self.agent_vitals.get(&pid));
                 seats.push(SeatFacts {
                     leaf: leaf.clone(),
                     seat,
-                    title,
+                    name,
                     project: project.clone(),
                     program,
                     model: vit.and_then(|x| x.model.clone()),
@@ -118,7 +115,7 @@ impl Workspace {
         let (sw, sh, cg, rg, pad) = (SEAT_W * s, SEAT_H * s, COL_GAP * s, ROW_GAP * s, PAD * s);
         let keys: Vec<(warroom::SeatId, String, String)> = seats
             .iter()
-            .map(|f| (f.seat, f.project.clone(), f.title.clone()))
+            .map(|f| (f.seat, f.project.clone(), f.name.full()))
             .collect();
         let placed = warroom::layout(&keys, &self.chart);
         let at = |seat: warroom::SeatId| -> Option<(f32, f32)> {
@@ -302,14 +299,48 @@ impl Workspace {
                     .gap_0p5()
                     .cursor_pointer()
                     .hover(|d| d.border_color(th.accent))
+                    // Where it sits: the tab's own name is kept whole, and the
+                    // levels above it are the part that clips on a narrow box.
                     .child(
                         div()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_size(sk.text_px(10.5))
-                            .text_color(th.text)
+                            .flex()
+                            .flex_row()
+                            .min_w(px(0.))
                             .overflow_hidden()
                             .whitespace_nowrap()
-                            .child(SharedString::from(f.title.clone())),
+                            .text_size(sk.text_px(10.5))
+                            .when(!f.name.outer.is_empty(), |d| {
+                                // The `›` sits outside the part that clips, so
+                                // a cut group never runs into the tab's name.
+                                d.child(
+                                    div()
+                                        .min_w(px(0.))
+                                        .truncate()
+                                        .text_color(th.text.alpha(0.6))
+                                        .child(SharedString::from(f.name.outer.clone())),
+                                )
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .text_color(th.text.alpha(0.6))
+                                        .child("\u{a0}\u{203a}\u{a0}"),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(th.text)
+                                    .child(SharedString::from(f.name.tab.clone())),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(sk.text_px(8.5))
+                            .text_color(th.text.alpha(0.8))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(SharedString::from(f.name.header.clone())),
                     )
                     .child(
                         div()
@@ -384,7 +415,7 @@ impl Workspace {
 
         // ---- off the chart ----
         let mut off = div().flex().flex_col().gap_1();
-        for (leaf, title, program) in &loose {
+        for (leaf, name, program) in &loose {
             let leaf = leaf.clone();
             off = off.child(
                 div()
@@ -399,7 +430,7 @@ impl Workspace {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_color(th.text.alpha(0.85))
-                            .child(SharedString::from(format!("{title} · {program}"))),
+                            .child(SharedString::from(format!("{} · {program}", name.full()))),
                     )
                     .child(
                         Self::bezel_btn(&sk, ui.wr_seat_btn, false)
@@ -567,6 +598,17 @@ impl Workspace {
         )
     }
 
+    /// What a person calls `leaf`: where its tab sits on the left bar, then
+    /// its header's title (see [`warroom::PaneName`]). Every place the War
+    /// Room and its rail name a pane goes through here.
+    pub(crate) fn pane_name(&self, leaf: &Entity<TerminalView>, cx: &App) -> warroom::PaneName {
+        let spine = self
+            .tab_with_leaf(leaf.entity_id())
+            .map(|ti| self.spine_path(ti))
+            .unwrap_or_default();
+        warroom::PaneName::new(&spine, &leaf.read(cx).header_title())
+    }
+
     /// One seat, opened: the agent's own latest summary first, then its
     /// state, model, size, note and lines — the cheap answers, before anyone
     /// asks a copy anything.
@@ -588,13 +630,7 @@ impl Workspace {
                     l
                 })
                 .find(|leaf| leaf.read(cx).seat == Some(seat))
-                .map(|leaf| {
-                    let v = leaf.read(cx);
-                    v.name
-                        .clone()
-                        .filter(|n| !n.is_empty())
-                        .unwrap_or_else(|| v.shown_title())
-                })
+                .map(|leaf| self.pane_name(leaf, cx).full())
                 .unwrap_or_else(unknown)
         };
         let rung = |l: &warroom::Line| match l.rung.known() {
@@ -665,13 +701,13 @@ impl Workspace {
                 div()
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
                     .text_size(sk.text_px(11.))
-                    .child(SharedString::from(f.title.clone())),
+                    .child(SharedString::from(f.name.place())),
             )
             .child(
                 div()
                     .text_size(sk.text_px(8.5))
                     .text_color(th.text.alpha(0.6))
-                    .child(SharedString::from(f.project.clone())),
+                    .child(SharedString::from(f.name.header.clone())),
             );
         if let Some((brief, layman)) = &f.summary {
             card = card.child(
@@ -887,8 +923,10 @@ impl Workspace {
                 stage,
             });
         }
+        // `tab_with_leaf`, not `tab_index_of`: the second matches a tab's
+        // first pane only, and a seat in a split would answer with no project.
         let project = self
-            .tab_index_of(target.entity_id())
+            .tab_with_leaf(target.entity_id())
             .and_then(|ti| self.place_of(ti).project)
             .and_then(|id| self.project_at(id))
             .and_then(|p| p.name.clone());
@@ -965,7 +1003,7 @@ impl Workspace {
         };
         let title = self
             .leaf_by_shell_pid(a.target_pid, cx)
-            .map(|t| seat_title(t.read(cx)));
+            .map(|t| self.pane_name(&t, cx).full());
         let ask = access::Ask {
             change: access::Change::Copy,
             pid: Some(a.target_pid),

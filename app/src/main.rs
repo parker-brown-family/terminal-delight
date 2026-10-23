@@ -8379,18 +8379,10 @@ impl Workspace {
                                                 || v.shell_pid() == Some(*pid)
                                         });
                                     let (off, title) = match &named {
-                                        Some(t) => {
-                                            let v = t.read(cx);
-                                            let title = v
-                                                .name
-                                                .clone()
-                                                .filter(|n| !n.is_empty())
-                                                .or_else(|| {
-                                                    (!v.title.is_empty()).then(|| v.shown_title())
-                                                })
-                                                .unwrap_or_else(|| v.mode.label().to_string());
-                                            (Some(v.agent_access.is_off_limits()), Some(title))
-                                        }
+                                        Some(t) => (
+                                            Some(t.read(cx).agent_access.is_off_limits()),
+                                            Some(self.pane_name(t, cx).full()),
+                                        ),
                                         None => (None, None),
                                     };
                                     // For a bypass: a line runs between seats, so
@@ -8414,8 +8406,10 @@ impl Workspace {
                                         mcp: &self.mcp,
                                         line_reaches_ask,
                                     };
+                                    // Any pane in a tab, not only its first: a
+                                    // seat in a split has the tab's project too.
                                     let project_of = |l: &Entity<TerminalView>| {
-                                        self.tab_index_of(l.entity_id())
+                                        self.tab_with_leaf(l.entity_id())
                                             .and_then(|ti| self.place_of(ti).project)
                                     };
                                     let facts = match ask.change {
@@ -13136,6 +13130,34 @@ impl Workspace {
             project: project.filter(|p| self.projects.iter().any(|q| q.id == *p)),
             initiative,
         }
+    }
+
+    /// What the left bar's row calls task `i`: its name, else its number.
+    fn task_label(&self, i: usize) -> String {
+        self.tabs
+            .get(i)
+            .and_then(|t| t.name.clone())
+            .unwrap_or_else(|| format!("{}", i + 1))
+    }
+
+    /// Where task `i` sits, in the left bar's own words: its project, its
+    /// group and its own name, outermost first, each only where it exists. A
+    /// project is in capitals because the tree draws it that way, and this is
+    /// how a person finds the pane.
+    fn spine_path(&self, i: usize) -> Vec<String> {
+        if i >= self.tabs.len() {
+            return vec![];
+        }
+        let place = self.place_of(i);
+        let mut path = vec![];
+        if let Some(id) = place.project {
+            path.push(self.branch_label(BarBranch::Project(id)).to_uppercase());
+        }
+        if let Some(id) = place.initiative {
+            path.push(self.branch_label(BarBranch::Initiative(id)));
+        }
+        path.push(self.task_label(i));
+        path
     }
 
     /// Every task as the tree sees it: where it sits, and what it is saying.
@@ -22823,10 +22845,7 @@ impl Workspace {
     ) -> AnyElement {
         let sk = skin::skin(cx, s);
         let is_active = i == self.active;
-        let label = self.tabs[i]
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("{}", i + 1));
+        let label = self.task_label(i);
         let (fill, text) = self.resolved_tab_colors(i);
 
         let grp = SharedString::from(format!("bar-task-grp-{i}"));
@@ -38966,6 +38985,60 @@ mod tests {
                 "war_room_view.rs: .set_seat(",
             ],
             "something other than the War Room panel or the rail's answer changes the chart"
+        );
+    }
+
+    /// The War Room and its rail name a pane the way a person finds it: where
+    /// its tab sits on the left bar, then the title on its header. Parker,
+    /// 2026-10-22, at row after row of "shell · CLAUDE": the list *"should be
+    /// based on the left spine + pane title"*. The rule itself is
+    /// `warroom::PaneName`'s test; this one holds every surface to it.
+    #[test]
+    fn the_war_room_names_a_pane_by_the_left_bar_and_its_header() {
+        let view = include_str!("war_room_view.rs");
+        let code: Vec<&str> = view
+            .lines()
+            .chain(shipped_src().lines())
+            .map(str::trim)
+            .filter(|l| !l.starts_with("//"))
+            .collect();
+        let has = |s: &str| code.iter().any(|l| l.contains(s));
+        for (site, what) in [
+            (
+                "warroom::PaneName::new(&spine, &v.header_title())",
+                "the seats and the rows off the chart",
+            ),
+            (
+                "warroom::PaneName::new(&spine, &leaf.read(cx).header_title())",
+                "the one helper",
+            ),
+            (
+                ".map(|leaf| self.pane_name(leaf, cx).full())",
+                "the card's lines",
+            ),
+            (
+                ".map(|t| self.pane_name(&t, cx).full());",
+                "the copy card on the rail",
+            ),
+            (
+                "Some(self.pane_name(t, cx).full()),",
+                "every other ask on the rail",
+            ),
+        ] {
+            assert!(has(site), "{what} must name a pane through `pane_name`");
+        }
+        // `tab_index_of` matches a tab's FIRST pane only, so a seat in a split
+        // would sit nowhere on the left bar and in no project.
+        assert!(
+            !view
+                .lines()
+                .map(str::trim)
+                .any(|l| !l.starts_with("//") && l.contains("tab_index_of(")),
+            "the War Room looks a pane's tab up with tab_with_leaf"
+        );
+        assert!(
+            has("self.tab_with_leaf(l.entity_id())"),
+            "a bypass asked into a split must know the split's project"
         );
     }
 

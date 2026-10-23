@@ -194,3 +194,12 @@ On 2026-10-22, in chat: *"Yes all -- into 0.5.0 and rebuild our binary here!"*, 
   - The new window's `list_panes` gives every pane `reach: "read"` and `hidden: 0`.
   - The receipt is `~/Work/td-authority-lab/deploy-dev-eed3d4d6/RECEIPT.md`.
 
+
+## After landing: names by the left bar
+
+Parker, looking at the installed War Room's OFF THE CHART list of `shell · CLAUDE` rows: it *"should be based on the left spine + pane title"*.
+
+- **Why the rows all said shell.** The War Room named a pane by its header title alone. A new window starts every title at `shell`, because the session host passes no titles on (issue 1117). Two hours after the install, fifteen agents still read `shell`.
+- **What changed.** Every War Room and rail site names a pane as `PROJECT › group › tab · header title` through `warroom::PaneName`, `spine_path` and the pane's `header_title`. A seat's box keeps the tab's name whole and shortens the levels above it. A header that only repeats the tab's name is not said twice.
+- **A fix found on the way.** The cheap answer's project and a bypass's across-projects check used `tab_index_of`, which only matches a tab's first pane, so a seat in a split had no project. Both use `tab_with_leaf` now.
+- **Proof.** `PaneName`'s test, a source test over the five naming sites, three planned breaks each caught, and a hidden window (`evidence/rig/names/`, shot `war-room-names-by-left-bar.png`).
