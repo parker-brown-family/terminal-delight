@@ -9,6 +9,13 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Upgrading from 0.4.0 (0.5.0 development)
 
+- **First launch opens in Clean; the other designs default to Ops and Standard.**
+  Standard keeps the artifact, palette and slider glyphs and hides counts, scale,
+  split buttons, graveyard, notifications, bug report and plugins. `all` still
+  shows every control. Existing skin pins, UI choices and per-design changes
+  remain authoritative. Fresh windows use ANSI program colours, Markdown syntax
+  and desktop palette inheritance, with bottom anchoring, contrast sticky notes
+  and terminal-state tint off. A saved new-window template still takes priority.
 - **`open_document` with placement `here` can answer `held`.** When a square
   is already open over the calling pane, nothing opens, the file becomes the
   pane's handover, and the answer begins `held` (MCP: a success with

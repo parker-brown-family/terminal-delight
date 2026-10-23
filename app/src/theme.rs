@@ -84,14 +84,14 @@ struct FileFont {
 struct ThemeFile {
     name: Option<String>,
     icon: Option<String>,
-    /// Which CHROME SKIN this theme asks for — `skin = "deco"`. Absent means the
-    /// default skin, which is today's chrome. Colour, texture and shape are three
+    /// Which CHROME SKIN this theme asks for — `skin = "deco"`. Absent means OPS,
+    /// the 0.5.0 default. Colour, texture and shape are three
     /// axes (see [`crate::skin`]); this key is only a theme's *preference* on the
     /// third, and the user's own `skin.toml` still overrides it.
     skin: Option<String>,
     /// Which UI SET this theme asks for — `ui = "clean"`. Like `skin`, only a
     /// preference: a set or a switch the person chose outranks it (see
-    /// [`crate::uiconfig`]). Absent means the theme has no opinion.
+    /// [`crate::uiconfig`]). Absent uses the shipped Standard set.
     ui: Option<String>,
     /// The look this design ships with — the dials a window starts from the
     /// first time it wears it (`crt = true` on Hacker). Absent keys fall back
@@ -160,8 +160,8 @@ pub struct Theme {
     /// Glyph that stands in for the theme everywhere the UI names it.
     pub icon: String,
     /// The chrome skin this theme asks for, by builtin id (see [`crate::skin`]).
-    /// `None` is a real answer and not a default: it means this theme has no
-    /// opinion about the chrome's SHAPE, so whatever skin is active stands.
+    /// Parsed files resolve an absent preference to OPS; an explicit skin
+    /// pin on the window still outranks this preference.
     pub skin: Option<String>,
     /// The UI set this theme asks for, by id (see [`crate::uiconfig`]). `None`
     /// means no opinion, so the window's own set stands.
@@ -1620,6 +1620,9 @@ impl Default for ThemeChoice {
 /// A flat screen in the Terminal Delight palette, with the picture grade from
 /// Parker's Standard/Intrusive screenshots on 2026-10-21. Existing saved grades
 /// keep their explicit values. Used for a fresh install's outer scope.
+/// Program colour is ANSI, syntax is Markdown and desktop palette inheritance
+/// is on, as selected in the 2026-10-22 settings screenshot. These preferences
+/// stay with the window across design switches, as they do for saved sessions.
 ///
 /// **The CRT dials are his, kept for the day someone switches the tube on.**
 /// Warp and the roll bar are stored exactly as his window has them, so opening
@@ -1634,9 +1637,9 @@ pub fn house_outer() -> ThemeChoice {
     ThemeChoice {
         id: CLEAN.into(),
         seed: None,
-        color: ColorMode::OnTheme, // "theme" program colour
+        color: ColorMode::Default, // ANSI, as selected in the shipping settings
         syntax: true,
-        syntax_scheme: SyntaxScheme::Agentic,
+        syntax_scheme: SyntaxScheme::Markdown,
         grade: Grade {
             brightness: 0.13,
             contrast: HOUSE_CONTRAST,
@@ -1674,7 +1677,7 @@ pub fn house_outer() -> ThemeChoice {
         human: None,
         invert: false,
         note: NotePaper::Contrast,
-        follow_omarchy: None,
+        follow_omarchy: Some(true),
     }
 }
 
@@ -3485,8 +3488,8 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         terminal_light: TerminalLightPreset::for_design(&name),
         name,
         icon: file.icon.unwrap_or_else(|| "◈".into()),
-        skin: file.skin,
-        ui: file.ui,
+        skin: file.skin.or_else(|| Some("ops".into())),
+        ui: file.ui.or_else(|| Some(crate::uiconfig::STANDARD.into())),
         look: file.look,
         bg: c.bg,
         surface: c.surface,
@@ -3794,8 +3797,9 @@ mod tests {
         assert_eq!(th.glow, 0.0);
         let hacker = parse(DEFAULT_THEME_TOML).unwrap();
         assert_eq!(
-            hacker.ui, None,
-            "a design that says nothing asks for nothing"
+            hacker.ui.as_deref(),
+            Some(crate::uiconfig::STANDARD),
+            "a design without its own UI preference uses Standard"
         );
     }
 
@@ -3842,16 +3846,24 @@ mod tests {
         });
     }
 
-    /// The Tactical design brings the OPS skin, the way Deco brings its own;
-    /// Intrusive asks for none, because it is meant to be mixed with any.
+    /// The approved shipping settings apply to every design except Clean.
     #[test]
-    fn tactical_asks_for_ops_and_intrusive_asks_for_nothing() {
-        let skin_of = |id: &str| {
-            let src = BUILTIN_THEMES.iter().find(|(i, _)| *i == id).unwrap().1;
-            parse(src).unwrap().skin
-        };
-        assert_eq!(skin_of("tactical-overdrive").as_deref(), Some("ops"));
-        assert_eq!(skin_of("intrusive"), None);
+    fn designs_ship_ops_and_standard_except_clean() {
+        for (id, src) in BUILTIN_THEMES {
+            let th = parse(src).unwrap();
+            let (skin, ui) = if *id == CLEAN {
+                ("clean", crate::uiconfig::CLEAN)
+            } else {
+                ("ops", crate::uiconfig::STANDARD)
+            };
+            assert_eq!(th.skin.as_deref(), Some(skin), "{id} skin");
+            assert_eq!(th.ui.as_deref(), Some(ui), "{id} UI");
+        }
+        // Custom files with no preference get the same defaults; an explicit
+        // author preference still wins, just as a person's skin pin does.
+        let custom = parse(&DEFAULT_THEME_TOML.replace("skin = \"ops\"", "")).unwrap();
+        assert_eq!(custom.skin.as_deref(), Some("ops"));
+        assert_eq!(custom.ui.as_deref(), Some(crate::uiconfig::STANDARD));
     }
 
     /// Letter glow is Intrusive's alone, and switching the tube off takes it
@@ -5040,10 +5052,11 @@ mod tests {
             "nothing layered on it"
         );
         assert_eq!(c.id, CLEAN, "design: clean");
-        assert_eq!(c.color, ColorMode::OnTheme, "program colour: theme");
+        assert_eq!(c.follow_omarchy, Some(true), "inherit the desktop palette");
+        assert_eq!(c.color, ColorMode::Default, "program colour: ANSI");
         assert!(
-            c.syntax && c.syntax_scheme == SyntaxScheme::Agentic,
-            "syntax: agentic"
+            c.syntax && c.syntax_scheme == SyntaxScheme::Markdown,
+            "syntax: Markdown"
         );
         let g = c.grade;
         assert!(!g.crt, "the CRT is off");

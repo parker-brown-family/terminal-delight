@@ -49,6 +49,7 @@ fn omarchy_inherit_keeps_watching_and_survives_directory_replacement(
         dynamic: Dynamic::Wood,
         seed: Some("#ff0000".into()),
         text: Some("#00ff00".into()),
+        follow_omarchy: Some(false),
         ..theme::house_outer()
     };
     let mut linked = manual.clone();
@@ -231,7 +232,10 @@ fn palette_menu_marks_the_running_theme_at_each_inheritance_level(cx: &mut gpui:
     let dir = Desktop::new("menu-levels");
     let roots = dir.roots();
     stage(&roots.primary, "#112233", "Tokyo Night");
-    let manual = theme::house_outer();
+    let manual = ThemeChoice {
+        follow_omarchy: Some(false),
+        ..theme::house_outer()
+    };
     cx.update(|cx| {
         crate::palette::init_shipped(cx);
         theme::init_embedded(cx, manual.clone());

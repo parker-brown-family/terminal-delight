@@ -1,0 +1,36 @@
+# Terminal Delight 0.5.0: Parker's approved settings, 2026-10-22.
+# Clean keeps its own set. "all" remains the full-controls template.
+name = "standard"
+icon = "◉"
+
+[outer]
+app_mark        = true
+git_notice      = true
+agent_counter   = true
+left_bar        = true
+left_bar_header = true
+allowance       = true
+spine           = true
+split_buttons   = false
+counts          = false
+scale           = false
+artifacts       = true
+surfaces        = true
+sliders         = true
+graveyard       = false
+notifications   = false
+bug_report      = false
+plugins         = false
+option_rows     = true
+
+# The screenshot's PANES page was not shown; retain all pane controls.
+[panes]
+logo     = true
+mode     = true
+face     = true
+agent    = true
+handover = true
+surface  = true
+sliders  = true
+close    = true
+notes    = true
