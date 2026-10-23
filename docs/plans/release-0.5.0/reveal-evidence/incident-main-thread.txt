@@ -1,0 +1,14 @@
+Thread 1 (Thread 0x72f13ff9be80 (LWP 3804681) "strata"):
+#0  0x000072f1447a1c10 in g_pointer_bit_lock_and_get () from /usr/lib/libglib-2.0.so.0
+#1  0x000072f1447bdc4a in g_datalist_id_dup_data () from /usr/lib/libglib-2.0.so.0
+#2  0x000072f14579c4a6 in g_weak_ref_get () from /usr/lib/libgobject-2.0.so.0
+#3  0x00006224c1922e86 in ?? ()
+#4  0x00006224c19e5a41 in ?? ()
+#5  0x00006224c18b4c99 in ?? ()
+#6  0x00006224c18b6401 in ?? ()
+#7  0x00006224c0fd6349 in ?? ()
+#8  0x000072f1447e3f64 in ?? () from /usr/lib/libglib-2.0.so.0
+#9  0x000072f1447e2c76 in ?? () from /usr/lib/libglib-2.0.so.0
+#10 0x000072f1447e4ed7 in ?? () from /usr/lib/libglib-2.0.so.0
+#11 0x000072f1447e5055 in g_main_context_iteration () from /usr/lib/libglib-2.0.so.0
+[Inferior 1 (process 3804681) detached]

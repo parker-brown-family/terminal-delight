@@ -1,0 +1,20 @@
+[
+  {
+    "seconds": 0.1318,
+    "status": 0,
+    "reply": "method return time=1792778326.625318 sender=:1.496811 -> destination=:1.496855 serial=108 reply_serial=2\n",
+    "error": ""
+  },
+  {
+    "seconds": 0.1447,
+    "status": 0,
+    "reply": "method return time=1792778326.770036 sender=:1.496811 -> destination=:1.496856 serial=109 reply_serial=2\n",
+    "error": ""
+  },
+  {
+    "seconds": 0.1537,
+    "status": 0,
+    "reply": "method return time=1792778326.923862 sender=:1.496811 -> destination=:1.496857 serial=110 reply_serial=2\n",
+    "error": ""
+  }
+]
