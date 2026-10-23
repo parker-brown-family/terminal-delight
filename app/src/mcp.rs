@@ -321,6 +321,21 @@ pub struct ConfigPatch {
     /// cannot, and `deny_unknown_fields` refuses the key outright.
     #[serde(skip)]
     pub own_pane: bool,
+    /// The VERIFIED caller's pane id, for the effect-time chart recheck.
+    ///
+    /// `write_gate` checks the caller's reach against the snapshot when the
+    /// request arrives, but the write lands later, on the UI thread, by which
+    /// time a line may have been revoked, the caller may have changed seats, or
+    /// the target may be a different pane. So the write carries only the caller's
+    /// *pane id* — a stable identity — and `apply_mcp_config` resolves that pane's
+    /// CURRENT seat, the target's CURRENT party, and whether the two are the same
+    /// pane, then recomputes reach against the LIVE chart before it mutates.
+    /// Nothing captured is trusted but the identity, so a revoked line, a reseat,
+    /// a moved or exited sender, and a replaced target are all caught live.
+    /// `skip` like `own_pane`: set server-side from `snap.caller`, never from an
+    /// agent's JSON, so it cannot be asserted to forge authority.
+    #[serde(skip)]
+    pub caller_pane: Option<u64>,
     /// An ask for a person to change an access setting, from
     /// `request_access`, already validated. Rides the pipeline onto the
     /// ASKING pane, where it waits on the rail.
@@ -788,6 +803,13 @@ impl Snapshot {
     fn caller_info(&self) -> Option<&PaneInfo> {
         let pane = self.caller.as_ref()?.pane?;
         self.panes.iter().find(|p| p.pane_id == Some(pane))
+    }
+
+    /// The verified caller's pane id, threaded onto a write as `caller_pane` so
+    /// the UI thread can re-resolve the sender's live seat at the effect. `None`
+    /// when the connection did not name a pane (an unknown caller).
+    fn caller_pane_id(&self) -> Option<u64> {
+        self.caller.as_ref().and_then(|c| c.pane)
     }
 
     /// How far the caller reaches `p`. An unknown caller is no seat: it still
@@ -2467,7 +2489,7 @@ where
             None => return tool_err(&format!("updates[{i}] is missing `target`")),
         };
         let cfg_v = u.get("config").cloned().unwrap_or(Value::Null);
-        let patch: ConfigPatch = match serde_json::from_value(cfg_v) {
+        let mut patch: ConfigPatch = match serde_json::from_value(cfg_v) {
             Ok(p) => p,
             Err(e) => return tool_err(&format!("updates[{i}].config is invalid: {e}")),
         };
@@ -2475,6 +2497,13 @@ where
             return tool_err(&format!(
                 "updates[{i}].config has no recognised channels to change"
             ));
+        }
+        // Mark the caller's own pane and carry its pane id for the effect-time
+        // recheck, the same as the note/deliverable/surface verbs — serde never
+        // deserialised either (both are `skip`), so they are set here, server-side.
+        if let Target::Pane(pid) = target {
+            patch.own_pane = snap.is_callers(pid);
+            patch.caller_pane = snap.caller_pane_id();
         }
         updates.push((target, patch));
     }
@@ -2550,6 +2579,7 @@ where
     let patch = ConfigPatch {
         note: Some(change),
         own_pane: snap.is_callers(pid as u32),
+        caller_pane: snap.caller_pane_id(),
         ..Default::default()
     };
     let outcomes = apply(&[(Target::Pane(pid as u32), patch)]);
@@ -2613,6 +2643,7 @@ where
     let patch = ConfigPatch {
         deliverable: Some(change),
         own_pane: snap.is_callers(pid as u32),
+        caller_pane: snap.caller_pane_id(),
         ..Default::default()
     };
     match apply(&[(Target::Pane(pid as u32), patch)])
@@ -2867,6 +2898,7 @@ where
     let patch = ConfigPatch {
         surface: Some(post.clone()),
         own_pane: snap.is_callers(pid),
+        caller_pane: snap.caller_pane_id(),
         ..Default::default()
     };
     match apply(&[(Target::Pane(pid), patch)]).into_iter().next() {
