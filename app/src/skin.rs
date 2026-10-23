@@ -2153,6 +2153,12 @@ impl Skin {
             .rounded(self.radius())
             .border_1()
             .text_size(px(11. * s))
+            // A button's label is one line: never let a narrow flex row shrink it
+            // below its content and char-wrap it into a vertical column (the War
+            // Room relationship panel's From/To boxes did exactly that). A label
+            // too long for its box clips; callers that expect long text add
+            // `max_w` + `text_ellipsis` for a clean "…".
+            .whitespace_nowrap()
             .cursor_pointer();
         if self.is_paper() {
             return self.paper_control(base, active);
