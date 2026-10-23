@@ -102,6 +102,14 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added for 0.5.0 development
 
+- **Named War Room orgs and a relationship builder.** Create and rename orgs;
+  drag fixed-size pane cards into an org with a lightweight text preview.
+  Drag a card's connector to another member, choose See, Read or Ask, then save
+  the directed relationship. Clicking a line edits or erases it. Membership
+  alone grants no access. Moving a connected member asks before removing its
+  old connections. Legacy charts retain their seats and lines in an unnamed org.
+  Global search finds members of other orgs and offers Open org. The expanded
+  selected-agent context panel is removed.
 - **War Room pane search and session cards.** Type fuzzy words across project,
   tab and pane title, or use `project:tab:pane` to search each field separately.
   Every pane has a card with session age and current context tokens. Age comes
@@ -110,15 +118,14 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   the panel. Searching clears any half-drawn line.
 - **The War Room: an org chart of agents that decides who may ask whom.** The
   agent counter, top right, opens it over the panes (and the `…` menu lists it
-  when the counter is hidden). Seat an agent with its **Seat** button, then click
-  one seat and another to draw a line. A line carries a rung, and a click on its
-  label cycles it: `ask` (may ask it a question), `see` (may find it in
-  `list_panes`), `read` (may also read it), then erase. Seats are arranged in rows
+  when the counter is hidden). Add an agent to an org, then connect members with
+  the relationship builder. A line carries a rung: `ask` (may ask it a question),
+  `see` (may find it in `list_panes`), or `read` (may also read it). Seats are arranged in rows
   by their lines. Every agent is named the way a person finds it: where its tab
   sits on the left bar, then its header's title (*TERMINAL DELIGHT › MCP work ·
   ✳ Per-pane MCP least privilege*), on the chart, off it and on the rail's asks.
-  Each seat's card shows its agent's latest summary, state,
-  model, size, sticky note and lines in and out. Agents nobody seated are listed
+  Each seat's compact card shows state, model, session age and context tokens.
+  Agents nobody seated are listed
   off the chart and behave as before, except that no agent can ever ask them
   anything. The window's five MCP switches are here as well as on the wall, and
   the bottom line counts this session's asks: answered from what was visible, by

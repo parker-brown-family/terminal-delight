@@ -1,20 +1,24 @@
 # War Room Orgs
 
 **Difficulty: 4/10** — one UI surface, with a small saved grouping record and a migration that must preserve existing connections. One combined plan and one approval.
-**Turned out to be:** pending.
+**Turned out to be: 5/10.** Saved membership and legacy migration stayed small; keyboard focus and native drag coverage needed more care than the initial estimate.
 
-- Combined plan: awaiting approval.
+- Combined plan: **APPROVED 2026-10-23**. Parker: “Approve layout, but yes. the relationship builder needs ot be a thing.”
 - Review page: `reports/2026-10-23-war-room-orgs.html`.
-- No application implementation changes in this worktree.
+- Implementation is authorized, including drag-and-drop membership and a relationship builder.
 
 ## Slices
 
-- [ ] Remove the expanded agent context panel; retain compact pane cards and selection.
-- [ ] Add saved named orgs, create/rename controls, and membership selection.
+- [x] Remove the expanded agent context panel; retain compact pane cards and selection.
+- [x] Add saved named orgs, create/rename controls, and membership selection.
+- [x] Keep card shape fixed during selection and dragging; drag membership with a lightweight card preview.
+- [x] Add connector dragging and an explicit source → target relationship editor with See / Read / Ask and removal.
 - [ ] Preserve legacy seats and lines, verify global search and session restore, then build and install.
 
 ## Resume
 
 Parker rejected the large selected-agent response card in his screenshot and asked to make and label orgs. The proposed model gives each pane one org. Existing seats and lines open together as an unnamed org whose label is unknown until a person names it. Explicit connections continue to control permissions. Search remains global and identifies the org containing each match. Read the plan and the page's note/concur map before implementation.
 
-The search/card feature is in the parent commits and its open pull request targets dev/0.5.0. This org plan is a separate follow-on on `plan/war-room-orgs`; do not rewrite or drop the search work.
+Parker's amendment: “I am a fan of cards NOT transforming and drag and drop (even if it means making a card being dragged into a LOW RES render of the card to save on graphics and render power.” Keep cards fixed in shape; use a lightweight drag representation. The relationship builder is part of this approved build, not a later follow-up.
+
+The search/card feature has merged into `dev/0.5.0`. This org feature continues on `feat/war-room-orgs`. Implementation, native drag tests, the full serial suite (2,801 passed; 17 ignored), Clippy for both cores and the optimized build pass. Installation and the final report are next.

@@ -2,9 +2,11 @@
 
 **Difficulty: 4/10** — one surface with persisted groups. One approval before implementation.
 
+**APPROVED 2026-10-23**, with fixed-shape cards, drag-and-drop org membership, and a relationship builder. The builder uses a connector drag from source to target, followed by an explicit See / Read / Ask selection. Clicking an existing edge label edits or removes it. A Connect action with source and target selection provides the same operation without dragging.
+
 Parker's request: “This giant card for … the agent context must die… We need to be able to MAKE AND LABEL orgs.”
 
-The selected-agent context panel is removed completely. Selecting a pane highlights its compact card and exposes a small action row. The cards keep project, tab, pane title, state, age and current context tokens. No response text expands beside the chart.
+The selected-agent context panel is removed completely. Selecting a pane highlights its compact card and exposes a small action row. The cards keep project, tab, pane title, state, age and current context tokens. Their shape stays fixed during selection and dragging. No response text expands beside the chart. A lightweight text-and-outline drag preview avoids repeatedly rendering the full card.
 
 An org is a saved, named chart containing selected panes. A selector switches orgs; New org creates an empty org from a typed label, and Rename edits the current label. Add to org assigns an available pane to the chosen org. A pane belongs to one org in this proposal. Removing it uses the existing unseat action, which removes its connections; it becomes available to add elsewhere.
 

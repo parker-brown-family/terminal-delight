@@ -2,23 +2,22 @@
 //! each seat is doing, and the window's MCP switches.
 //!
 //! The rules it draws live in `warroom`; this file only gathers what the
-//! window already knows about each seat (the agent counter's state, the size
-//! and model vitals read from the transcript, the agent's own latest summary,
-//! its sticky note) and turns a person's clicks into seats and lines. Seating
+//! window already knows about each seat (the agent counter's state, the size,
+//! age and model vitals read from the transcript) and turns a person's gestures
+//! into membership and directed lines. Seating
 //! and drawing happen here and nowhere else — see
 //! `only_the_war_room_and_the_rail_draw_lines`.
 
 use super::*;
+use crate::surfacefeed::now_ms;
 use gpui::PathBuilder;
 
 /// A seat's box at scale 1: place, title, program, state, age and tokens.
 const SEAT_W: f32 = 248.;
-const SEAT_H: f32 = 104.;
+const SEAT_H: f32 = 126.;
 const COL_GAP: f32 = 30.;
 const ROW_GAP: f32 = 56.;
 const PAD: f32 = 14.;
-/// Room on the right for the picked seat's card.
-const CARD_W: f32 = 300.;
 
 /// Everything one seat shows, gathered from facts the window already has.
 struct PaneFacts {
@@ -32,8 +31,6 @@ struct PaneFacts {
     started_ms: Option<i64>,
     state: hud::AgentState,
     access: warroom::AgentAccess,
-    note: Option<String>,
-    summary: Option<(Option<String>, String)>,
 }
 
 /// One drawn connection: a polyline in chart coordinates, how it is inked,
@@ -45,6 +42,64 @@ struct Wire {
     bypass: bool,
     label_at: (f32, f32),
     label: String,
+}
+
+#[derive(Clone)]
+struct PaneDrag {
+    leaf: Entity<TerminalView>,
+    title: String,
+    ink: Hsla,
+    bg: Hsla,
+}
+
+#[derive(Clone)]
+struct RelationDrag {
+    from: warroom::SeatId,
+    title: String,
+    ink: Hsla,
+    bg: Hsla,
+}
+
+/// An inexpensive drag representation. The original card keeps its dimensions.
+struct DragPreview {
+    title: String,
+    offset: Point<Pixels>,
+    ink: Hsla,
+    bg: Hsla,
+}
+
+impl Render for DragPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .pl(self.offset.x - px(90.))
+            .pt(self.offset.y - px(22.))
+            .child(
+                div()
+                    .w(px(180.))
+                    .h(px(44.))
+                    .p_2()
+                    .border_1()
+                    .border_color(self.ink)
+                    .rounded(px(5.))
+                    .bg(self.bg)
+                    .text_color(self.ink)
+                    .text_size(px(11.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .child(SharedString::from(self.title.clone())),
+            )
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RelationEnd {
+    From,
+    To,
+}
+
+pub(crate) struct RelationEditor {
+    draft: warroom::RelationDraft,
+    choosing: Option<RelationEnd>,
 }
 
 /// Spaces match independent words anywhere in the name. Colons address
@@ -145,19 +200,11 @@ impl Workspace {
                     started_ms: vit.and_then(|x| x.started_ms),
                     state: v.agent_status().state,
                     access: v.agent_access,
-                    note: v.saved_note().map(|n| match n.title {
-                        Some(t) if !n.text.is_empty() => format!("{t} — {}", n.text),
-                        Some(t) => t,
-                        None => n.text,
-                    }),
-                    summary: v
-                        .bench
-                        .latest_response()
-                        .map(|r| (r.brief.clone(), r.layman.clone())),
                 };
-                if facts.seat.is_some() {
+                let org = facts.seat.and_then(|seat| self.war_orgs.owner(seat));
+                if org.is_some() && org == self.war_org {
                     seats.push(facts);
-                } else {
+                } else if org.is_none() || !query.trim().is_empty() {
                     loose.push(facts);
                 }
             }
@@ -168,10 +215,23 @@ impl Workspace {
         // ---- lay the chart out ----
         let s = th.grade.scale.clamp(0.7, 1.6);
         let (sw, sh, cg, rg, pad) = (SEAT_W * s, SEAT_H * s, COL_GAP * s, ROW_GAP * s, PAD * s);
-        let keys: Vec<(warroom::SeatId, String, String)> = seats
+        let missing: Vec<_> = self
+            .war_org
+            .and_then(|id| self.war_orgs.get(id))
+            .into_iter()
+            .flat_map(|o| o.seats.iter())
+            .copied()
+            .filter(|seat| query.trim().is_empty() && self.war_room_seat_leaf(*seat, cx).is_none())
+            .collect();
+        let mut keys: Vec<(warroom::SeatId, String, String)> = seats
             .iter()
             .filter_map(|f| f.seat.map(|seat| (seat, f.project.clone(), f.name.full())))
             .collect();
+        keys.extend(
+            missing
+                .iter()
+                .map(|seat| (*seat, String::new(), ui.wr_unavailable.to_string())),
+        );
         let placed = warroom::layout(&keys, &self.chart);
         let at = |seat: warroom::SeatId| -> Option<(f32, f32)> {
             placed.iter().find(|p| p.seat == seat).map(|p| {
@@ -304,7 +364,14 @@ impl Workspace {
                     .top(px(pad))
                     .w(px(chart_w - pad * 2.))
                     .text_color(th.text.alpha(0.6))
-                    .child(SharedString::from(ui.wr_empty.to_string())),
+                    .child(SharedString::from(
+                        if self.war_org.is_some() {
+                            ui.wr_org_drop
+                        } else {
+                            ui.wr_org_empty
+                        }
+                        .to_string(),
+                    )),
             );
         }
         for f in &seats {
@@ -327,9 +394,23 @@ impl Workspace {
                 (Some(m), _) => format!("{} · {m}", f.program),
                 (None, _) => format!("{} · {role}", f.program),
             };
+            let pane_drag = PaneDrag {
+                leaf: f.leaf.clone(),
+                title: f.name.tab.clone(),
+                ink: th.accent,
+                bg: th.surface,
+            };
+            let rel_drag = RelationDrag {
+                from: seat,
+                title: format!("{} →", f.name.tab),
+                ink: th.accent,
+                bg: th.surface,
+            };
+            let drop_ink = th.accent;
             chart = chart.child(
                 div()
                     .id(SharedString::from(format!("war-seat-{}", seat.0)))
+                    .debug_selector(move || format!("war-seat-{}", seat.0))
                     .absolute()
                     .left(px(x))
                     .top(px(y))
@@ -350,6 +431,24 @@ impl Workspace {
                     .gap_0p5()
                     .cursor_pointer()
                     .hover(|d| d.border_color(th.accent))
+                    .on_drag(pane_drag, |d, position, _, cx| {
+                        cx.new(|_| DragPreview {
+                            title: d.title.clone(),
+                            offset: position,
+                            ink: d.ink,
+                            bg: d.bg,
+                        })
+                    })
+                    .drag_over::<RelationDrag>(move |style, d, _, _| {
+                        if d.from != seat {
+                            style.border_color(drop_ink)
+                        } else {
+                            style
+                        }
+                    })
+                    .on_drop(cx.listener(move |ws, d: &RelationDrag, _, cx| {
+                        ws.war_room_begin_relation(Some(d.from), Some(seat), cx);
+                    }))
                     // Where it sits: the tab's own name is kept whole, and the
                     // levels above it are the part that clips on a narrow box.
                     .child(
@@ -411,12 +510,78 @@ impl Workspace {
                             ))),
                     )
                     .child(self.war_room_metrics(f, &sk, th))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.war_room_click_seat(seat, cx);
-                        }),
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("war-connect-{}", seat.0)))
+                            .debug_selector(move || format!("war-connect-{}", seat.0))
+                            .absolute()
+                            .right(px(7. * s))
+                            .bottom(px(5. * s))
+                            .w(px(24. * s))
+                            .h(px(20. * s))
+                            .rounded(sk.rad_raw(4.))
+                            .border_1()
+                            .border_color(th.accent.alpha(0.7))
+                            .text_color(th.accent)
+                            .text_size(sk.text_px(12.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child("○")
+                            .cursor_crosshair()
+                            .on_drag(rel_drag, |d, position, _, cx| {
+                                cx.new(|_| DragPreview {
+                                    title: d.title.clone(),
+                                    offset: position,
+                                    ink: d.ink,
+                                    bg: d.bg,
+                                })
+                            })
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                cx.stop_propagation();
+                                ws.war_room_begin_relation(Some(seat), None, cx);
+                            })),
+                    )
+                    .on_click(cx.listener(move |ws, _, _w, cx| {
+                        cx.stop_propagation();
+                        ws.war_room_click_seat(seat, cx);
+                    })),
+            );
+        }
+        for seat in missing {
+            let Some((x, y)) = at(seat) else {
+                continue;
+            };
+            chart = chart.child(
+                div()
+                    .absolute()
+                    .left(px(x))
+                    .top(px(y))
+                    .w(px(sw))
+                    .h(px(sh))
+                    .p_2()
+                    .border_1()
+                    .border_color(th.text.alpha(0.3))
+                    .rounded(sk.rad_raw(7.))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .text_color(th.text.alpha(0.6))
+                    .child(SharedString::from(ui.wr_unavailable.to_string()))
+                    .child(SharedString::from(format!(
+                        "{} {} · {} {}",
+                        ui.wr_age, ui.wr_unknown, ui.wr_tokens, ui.wr_unknown
+                    )))
+                    .child(
+                        Self::bezel_btn(&sk, ui.wr_unseat_btn, false)
+                            .id(SharedString::from(format!("war-forget-{}", seat.0)))
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                cx.stop_propagation();
+                                ws.chart.forget_seat(seat);
+                                ws.war_orgs.remove(seat);
+                                ws.save(cx);
+                                cx.notify();
+                            })),
                     ),
             );
         }
@@ -428,6 +593,7 @@ impl Workspace {
             chart = chart.child(
                 div()
                     .id(SharedString::from(format!("war-line-{}-{}", from.0, to.0)))
+                    .debug_selector(move || format!("war-line-{}-{}", from.0, to.0))
                     .absolute()
                     .left(px(lx))
                     .top(px(w.label_at.1 - 9. * s))
@@ -460,16 +626,18 @@ impl Workspace {
             );
         }
 
-        // ---- the picked seat's card ----
-        let card = pick
-            .and_then(|p| seats.iter().find(|f| f.seat == Some(p)).map(|f| (p, f)))
-            .map(|(seat, f)| self.war_room_card(f, seat, &sk, th, cx));
-
         // ---- off the chart ----
         let mut off = div().w_full().flex().flex_row().flex_wrap().gap_2();
         for f in &loose {
             let leaf = f.leaf.clone();
             let is_agent = leaf.read(cx).mode.is_agent();
+            let owner = f.seat.and_then(|s| self.war_orgs.owner(s));
+            let pane_drag = PaneDrag {
+                leaf: leaf.clone(),
+                title: f.name.tab.clone(),
+                ink: th.accent,
+                bg: th.surface,
+            };
             off = off.child(
                 div()
                     .id(SharedString::from(format!(
@@ -477,6 +645,7 @@ impl Workspace {
                         leaf.entity_id().as_u64()
                     )))
                     .w(px(sw))
+                    .h(px(sh))
                     .flex_none()
                     .p_2()
                     .rounded(sk.rad_raw(7.))
@@ -486,6 +655,16 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .gap_1()
+                    .when(is_agent, |d| {
+                        d.on_drag(pane_drag, |d, position, _, cx| {
+                            cx.new(|_| DragPreview {
+                                title: d.title.clone(),
+                                offset: position,
+                                ink: d.ink,
+                                bg: d.bg,
+                            })
+                        })
+                    })
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::BOLD)
@@ -509,30 +688,59 @@ impl Workspace {
                             .child(SharedString::from(f.program.clone())),
                     )
                     .child(self.war_room_metrics(f, &sk, th))
-                    .when(is_agent, |d| {
+                    .when(f.seat.is_some() && owner.is_none(), |d| {
                         d.child(
-                            Self::bezel_btn(&sk, ui.wr_seat_btn, false)
+                            div()
+                                .text_size(sk.text_px(8.5))
+                                .text_color(th.text.alpha(0.6))
+                                .child(SharedString::from(ui.wr_org_unknown.to_string())),
+                        )
+                    })
+                    .when_some(owner, |d, org| {
+                        d.child(
+                            div()
+                                .text_size(sk.text_px(8.5))
+                                .text_color(th.accent)
+                                .child(SharedString::from(self.war_room_org_label(org))),
+                        )
+                    })
+                    .when(is_agent && owner.is_some(), |d| {
+                        let org = owner.unwrap();
+                        d.child(
+                            Self::bezel_btn(&sk, ui.wr_org_open, false)
+                                .id(SharedString::from(format!(
+                                    "war-open-org-{}",
+                                    leaf.entity_id().as_u64()
+                                )))
+                                .debug_selector(move || format!("war-open-org-{}", org.0))
+                                .on_click(cx.listener(move |ws, _, _, cx| {
+                                    cx.stop_propagation();
+                                    ws.war_room_set_org(org, cx);
+                                })),
+                        )
+                    })
+                    .when(is_agent && owner.is_none() && self.war_org.is_some(), |d| {
+                        d.child(
+                            Self::bezel_btn(&sk, ui.wr_org_add, false)
                                 .id(SharedString::from(format!(
                                     "war-seat-btn-{}",
                                     leaf.entity_id().as_u64()
                                 )))
                                 .hover(|d| d.border_color(th.accent))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        ws.war_room_seat(&leaf, cx);
-                                    }),
-                                ),
+                                .on_click(cx.listener(move |ws, _, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.war_room_seat(&leaf, cx);
+                                })),
                         )
                     }),
             );
         }
 
+        let drop_chart_ink = th.accent;
         let switches = self.mcp_switch_buttons(&sk, th, "war", cx);
         let panel = div()
             .id("war-room-panel")
-            .w(px(chart_w + CARD_W * s + pad * 4.).max(px(760.)))
+            .w(px(chart_w + pad * 4.).max(px(820.)))
             .max_w(gpui::relative(0.95))
             .max_h(px(self.tray_card_h()))
             .overflow_x_hidden()
@@ -558,6 +766,7 @@ impl Workspace {
                 }),
             )
             .map(|d| sk.chrome(sk.finish(d)))
+            .child(self.war_room_org_controls(&sk, th, cx))
             .child(
                 div()
                     .flex()
@@ -657,6 +866,7 @@ impl Workspace {
                     .text_color(th.accent.alpha(0.85))
                     .child(SharedString::from(ui.wr_hint.to_string())),
             )
+            .child(self.war_room_relationship_controls(&sk, th, cx))
             .children(self.ask_numbers.as_ref().map(|n| {
                 div()
                     .text_size(sk.text_px(8.5))
@@ -686,15 +896,23 @@ impl Workspace {
                         .child(
                             div()
                                 .id("war-room-chart")
+                                .debug_selector(|| "war-room-chart".to_string())
                                 .min_w(px(0.))
                                 .flex_1()
                                 .overflow_x_scroll()
                                 .rounded(sk.rad_raw(8.))
                                 .border_1()
                                 .border_color(th.text.alpha(0.14))
+                                .drag_over::<PaneDrag>(move |d, _, _, _| {
+                                    d.border_color(drop_chart_ink)
+                                })
+                                .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
+                                    if let Some(org) = ws.war_org {
+                                        ws.war_room_assign(&d.leaf, org, false, cx);
+                                    }
+                                }))
                                 .child(chart),
-                        )
-                        .children(card),
+                        ),
                 )
             })
             .when(!loose.is_empty(), |d| {
@@ -740,8 +958,9 @@ impl Workspace {
                 .justify_center()
                 .on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
                         ws.close_war_room();
+                        ws.focus_active(window, cx);
                         cx.notify();
                     }),
                 )
@@ -749,33 +968,61 @@ impl Workspace {
         )
     }
 
-    /// The panel owns typing in capture phase, before the focused terminal.
+    /// Modal keyboard capture keeps all editing away from the underlying PTY.
     pub(crate) fn war_room_capture_key(
         &mut self,
         key: &gpui::Keystroke,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         if !self.war_room {
             return false;
         }
-        let before = self.war_room_query.text();
-        match key.key.as_str() {
-            "escape" if !before.is_empty() => self.war_room_query = EditBuffer::seeded(""),
-            "escape" => self.close_war_room(),
-            "v" if key.modifiers.control || key.modifiers.platform => {
-                if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
-                    let text: String = text
-                        .chars()
-                        .map(|c| if c.is_control() { ' ' } else { c })
-                        .collect();
-                    self.war_room_query.insert_capped(&text, 256);
-                }
+        if key.key == "escape" {
+            if self.war_move.take().is_some()
+                || self.war_org_edit.take().is_some()
+                || self.war_relation.take().is_some()
+            {
+            } else if !self.war_room_query.text().is_empty() {
+                self.war_room_query = EditBuffer::seeded("");
+                self.war_room_pick = None;
+            } else {
+                self.close_war_room();
+                self.focus_active(window, cx);
             }
-            _ => self
-                .war_room_query
-                .apply(&key.key, &key.modifiers, key.key_char.as_deref(), 256),
+            cx.notify();
+            return true;
         }
-        if self.war_room_query.text() != before {
+        if key.key == "enter" {
+            if self.war_org_edit.is_some() {
+                self.war_room_save_org(cx);
+            } else if self.war_relation.is_some() {
+                self.war_room_save_relation(cx);
+            }
+            return true;
+        }
+        if self.war_relation.is_some() || self.war_move.is_some() {
+            return true;
+        }
+        let editing_org = self.war_org_edit.is_some();
+        let buffer = match &mut self.war_org_edit {
+            Some((_, text)) => text,
+            None => &mut self.war_room_query,
+        };
+        let before = buffer.text();
+        let cap = if editing_org { 80 } else { 256 };
+        if key.key == "v" && (key.modifiers.control || key.modifiers.platform) {
+            if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                let text: String = text
+                    .chars()
+                    .map(|c| if c.is_control() { ' ' } else { c })
+                    .collect();
+                buffer.insert_capped(&text, cap);
+            }
+        } else {
+            buffer.apply(&key.key, &key.modifiers, key.key_char.as_deref(), cap);
+        }
+        if !editing_org && buffer.text() != before {
             self.war_room_pick = None;
         }
         cx.notify();
@@ -801,6 +1048,526 @@ impl Workspace {
             .child(SharedString::from(format!("{} {tokens}", ui.wr_tokens)))
     }
 
+    fn war_room_org_label(&self, id: warroom::OrgId) -> String {
+        self.war_orgs
+            .get(id)
+            .and_then(|o| o.name.clone())
+            .unwrap_or_else(|| self.lang.strings().ui.wr_org_unnamed.to_string())
+    }
+
+    fn war_room_set_org(&mut self, id: warroom::OrgId, cx: &mut Context<Self>) {
+        if self.war_orgs.get(id).is_none() {
+            return;
+        }
+        self.war_org = Some(id);
+        self.war_room_query = EditBuffer::seeded("");
+        self.war_room_pick = None;
+        self.war_relation = None;
+        self.war_org_edit = None;
+        self.save(cx);
+        cx.notify();
+    }
+
+    fn war_room_save_org(&mut self, cx: &mut Context<Self>) {
+        let Some((id, buffer)) = &self.war_org_edit else {
+            return;
+        };
+        let text = buffer.text();
+        let org = match id {
+            Some(id) => self.war_orgs.rename(*id, &text).then_some(*id),
+            None => self.war_orgs.create(&text),
+        };
+        if let Some(org) = org {
+            self.war_room_set_org(org, cx);
+        }
+    }
+
+    fn war_room_org_controls(
+        &self,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let ui = self.lang.strings().ui;
+        let mut choices = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap_1()
+            .child(SharedString::from(ui.wr_org.to_string()));
+        for org in self.war_orgs.saved() {
+            let id = org.id;
+            let ink = th.accent;
+            choices = choices.child(
+                Self::bezel_btn(sk, &self.war_room_org_label(id), self.war_org == Some(id))
+                    .id(SharedString::from(format!("war-org-{}", id.0)))
+                    .debug_selector(move || format!("war-org-{}", id.0))
+                    .max_w(px(240.))
+                    .truncate()
+                    .drag_over::<PaneDrag>(move |s, _, _, _| s.border_color(ink))
+                    .on_drop(cx.listener(move |ws, drag: &PaneDrag, _, cx| {
+                        ws.war_room_assign(&drag.leaf, id, false, cx);
+                    }))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.war_room_set_org(id, cx);
+                    })),
+            );
+        }
+        choices = choices.child(
+            Self::bezel_btn(sk, ui.wr_org_new, false)
+                .id("war-org-new")
+                .debug_selector(|| "war-org-new".to_string())
+                .on_click(cx.listener(|ws, _, w, cx| {
+                    cx.stop_propagation();
+                    ws.war_org_edit = Some((None, EditBuffer::seeded("")));
+                    w.focus(&ws.focus_handle, cx);
+                    cx.notify();
+                })),
+        );
+        if let Some(id) = self.war_org {
+            choices = choices.child(
+                Self::bezel_btn(sk, ui.wr_org_rename, false)
+                    .id("war-org-rename")
+                    .debug_selector(|| "war-org-rename".to_string())
+                    .on_click(cx.listener(move |ws, _, w, cx| {
+                        cx.stop_propagation();
+                        let name = ws
+                            .war_orgs
+                            .get(id)
+                            .and_then(|o| o.name.as_deref())
+                            .unwrap_or("");
+                        ws.war_org_edit = Some((Some(id), EditBuffer::seeded(name)));
+                        w.focus(&ws.focus_handle, cx);
+                        cx.notify();
+                    })),
+            );
+        }
+        let mut controls = div().flex().flex_col().gap_2().child(choices);
+        if let Some((_, buffer)) = &self.war_org_edit {
+            controls = controls.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .p_2()
+                    .border_1()
+                    .border_color(th.accent.alpha(0.6))
+                    .rounded(sk.rad_raw(5.))
+                    .child(render_edit_buffer(
+                        buffer,
+                        1.,
+                        th.text,
+                        th.accent,
+                        th.accent.alpha(0.3),
+                    ))
+                    .child(
+                        Self::bezel_btn(sk, ui.wr_org_save, false)
+                            .id("war-org-save")
+                            .debug_selector(|| "war-org-save".to_string())
+                            .on_click(cx.listener(|ws, _, _, cx| {
+                                cx.stop_propagation();
+                                ws.war_room_save_org(cx);
+                            })),
+                    )
+                    .child(
+                        Self::bezel_btn(sk, ui.dlg_cancel, false)
+                            .id("war-org-cancel")
+                            .on_click(cx.listener(|ws, _, _, cx| {
+                                cx.stop_propagation();
+                                ws.war_org_edit = None;
+                                cx.notify();
+                            })),
+                    ),
+            );
+        }
+        controls
+    }
+
+    fn war_room_assign(
+        &mut self,
+        leaf: &Entity<TerminalView>,
+        org: warroom::OrgId,
+        confirmed: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.war_orgs.get(org).is_none() || !leaf.read(cx).mode.is_agent() {
+            return;
+        }
+        let old = leaf.read(cx).seat;
+        if old.is_some_and(|seat| self.war_orgs.owner(seat) == Some(org)) {
+            self.war_room_set_org(org, cx);
+            return;
+        }
+        let connected = old.is_some_and(|seat| {
+            self.chart
+                .saved()
+                .iter()
+                .any(|l| l.from == seat || l.to == seat)
+        });
+        if connected && !confirmed {
+            self.war_move = Some((leaf.clone(), org));
+            cx.notify();
+            return;
+        }
+        let seat = old.unwrap_or_else(warroom::SeatId::mint);
+        if old.is_some() {
+            self.chart.forget_seat(seat);
+        }
+        self.war_orgs.assign(seat, org);
+        leaf.update(cx, |v, cx| v.set_seat(Some(seat), cx));
+        self.war_move = None;
+        self.war_room_set_org(org, cx);
+    }
+
+    fn war_room_seat_leaf(&self, seat: warroom::SeatId, cx: &App) -> Option<Entity<TerminalView>> {
+        self.tabs
+            .iter()
+            .flat_map(|t| {
+                let mut leaves = Vec::new();
+                t.root.leaves(&mut leaves);
+                leaves
+            })
+            .find(|leaf| leaf.read(cx).seat == Some(seat))
+            .cloned()
+    }
+
+    fn war_room_seat_label(&self, seat: warroom::SeatId, cx: &App) -> String {
+        self.war_room_seat_leaf(seat, cx)
+            .as_ref()
+            .map(|leaf| self.pane_name(leaf, cx).full())
+            .unwrap_or_else(|| self.lang.strings().ui.wr_unknown.to_string())
+    }
+
+    fn war_room_begin_relation(
+        &mut self,
+        from: Option<warroom::SeatId>,
+        to: Option<warroom::SeatId>,
+        cx: &mut Context<Self>,
+    ) {
+        if from.is_some_and(|s| self.war_orgs.owner(s) != self.war_org) {
+            return;
+        }
+        if to.is_some_and(|s| self.war_orgs.owner(s) != self.war_org || Some(s) == from) {
+            return;
+        }
+        let rung = from
+            .zip(to)
+            .and_then(|(f, t)| self.chart.line(f, t))
+            .and_then(|l| l.rung.known());
+        self.war_relation = Some(RelationEditor {
+            draft: warroom::RelationDraft { from, to, rung },
+            choosing: if from.is_none() {
+                Some(RelationEnd::From)
+            } else if to.is_none() {
+                Some(RelationEnd::To)
+            } else {
+                None
+            },
+        });
+        self.war_room_query = EditBuffer::seeded("");
+        self.war_room_pick = None;
+        cx.notify();
+    }
+
+    fn war_room_choose_endpoint(&mut self, seat: warroom::SeatId, cx: &mut Context<Self>) {
+        if self.war_orgs.owner(seat) != self.war_org {
+            return;
+        }
+        if let Some(editor) = &mut self.war_relation {
+            match editor.choosing {
+                Some(RelationEnd::From) => {
+                    editor.draft.from = Some(seat);
+                    if editor.draft.to == Some(seat) {
+                        editor.draft.to = None;
+                    }
+                    editor.choosing = Some(RelationEnd::To);
+                }
+                Some(RelationEnd::To) if editor.draft.from != Some(seat) => {
+                    editor.draft.to = Some(seat);
+                    editor.choosing = None;
+                }
+                _ => return,
+            }
+            editor.draft.rung = None;
+        }
+        cx.notify();
+    }
+
+    fn war_room_save_relation(&mut self, cx: &mut Context<Self>) {
+        let ready = self
+            .war_relation
+            .as_ref()
+            .and_then(|e| e.draft.ready(&self.war_orgs));
+        if let Some((from, to, rung)) = ready {
+            if self.war_orgs.owner(from) != self.war_org
+                || self.war_room_seat_leaf(from, cx).is_none()
+                || self.war_room_seat_leaf(to, cx).is_none()
+            {
+                return;
+            }
+            self.chart.draw(from, to, rung);
+            self.war_relation = None;
+            self.save(cx);
+            cx.notify();
+        }
+    }
+
+    fn war_room_relationship_controls(
+        &self,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let ui = self.lang.strings().ui;
+        let mut controls = div().flex().flex_col().gap_2();
+        if let Some((leaf, org)) = &self.war_move {
+            let leaf = leaf.clone();
+            let org = *org;
+            let n = leaf
+                .read(cx)
+                .seat
+                .map(|s| {
+                    self.chart
+                        .saved()
+                        .iter()
+                        .filter(|l| l.from == s || l.to == s)
+                        .count()
+                })
+                .unwrap_or(0);
+            let text = lang::fill(
+                ui.wr_move_hint,
+                &[
+                    ("pane", &self.pane_name(&leaf, cx).full()),
+                    ("n", &n.to_string()),
+                ],
+            );
+            controls = controls.child(
+                div()
+                    .p_2()
+                    .border_1()
+                    .border_color(th.ansi[3])
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(SharedString::from(format!(
+                        "{text} → {}",
+                        self.war_room_org_label(org)
+                    )))
+                    .child(
+                        Self::bezel_btn(sk, ui.wr_move_confirm, false)
+                            .id("war-move-confirm")
+                            .debug_selector(|| "war-move-confirm".to_string())
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                cx.stop_propagation();
+                                ws.war_room_assign(&leaf, org, true, cx);
+                            })),
+                    )
+                    .child(
+                        Self::bezel_btn(sk, ui.dlg_cancel, false)
+                            .id("war-move-cancel")
+                            .debug_selector(|| "war-move-cancel".to_string())
+                            .on_click(cx.listener(|ws, _, _, cx| {
+                                cx.stop_propagation();
+                                ws.war_move = None;
+                                cx.notify();
+                            })),
+                    ),
+            );
+        }
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .child(
+                Self::bezel_btn(sk, ui.wr_rel_connect, self.war_relation.is_some())
+                    .id("war-connect")
+                    .debug_selector(|| "war-connect".to_string())
+                    .on_click(cx.listener(|ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.war_room_begin_relation(ws.war_room_pick, None, cx);
+                    })),
+            );
+        if let Some(seat) = self.war_room_pick {
+            if let Some(leaf) = self.war_room_seat_leaf(seat, cx) {
+                let n = self
+                    .chart
+                    .saved()
+                    .iter()
+                    .filter(|l| l.from == seat || l.to == seat)
+                    .count();
+                let label = lang::fill(ui.wr_org_remove, &[("n", &n.to_string())]);
+                row = row
+                    .child(SharedString::from(self.war_room_seat_label(seat, cx)))
+                    .child(
+                        Self::bezel_btn(sk, &label, false)
+                            .id("war-unseat")
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                cx.stop_propagation();
+                                ws.war_room_unseat(&leaf, cx);
+                            })),
+                    );
+            }
+        }
+        controls = controls.child(row);
+        let Some(editor) = &self.war_relation else {
+            return controls;
+        };
+        let mut form = div()
+            .p_2()
+            .border_1()
+            .border_color(th.accent.alpha(0.7))
+            .rounded(sk.rad_raw(6.))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(SharedString::from(ui.wr_rel.to_string()));
+        let mut ends = div().flex().flex_row().flex_wrap().gap_2();
+        for (end, seat, label, id) in [
+            (
+                RelationEnd::From,
+                editor.draft.from,
+                ui.wr_rel_from,
+                "war-rel-from",
+            ),
+            (RelationEnd::To, editor.draft.to, ui.wr_rel_to, "war-rel-to"),
+        ] {
+            let value = seat
+                .map(|s| self.war_room_seat_label(s, cx))
+                .unwrap_or_else(|| ui.wr_unknown.to_string());
+            ends = ends.child(
+                Self::bezel_btn(sk, &format!("{label}: {value}"), false)
+                    .id(id)
+                    .max_w(px(320.))
+                    .overflow_hidden()
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        if let Some(e) = &mut ws.war_relation {
+                            e.choosing = Some(end);
+                        }
+                        cx.notify();
+                    })),
+            );
+        }
+        form = form.child(ends);
+        if let Some(end) = editor.choosing {
+            let mut list = div()
+                .id("war-rel-endpoints")
+                .max_h(px(130.))
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .gap_1();
+            for tab in &self.tabs {
+                let mut leaves = Vec::new();
+                tab.root.leaves(&mut leaves);
+                for leaf in leaves {
+                    let Some(seat) = leaf.read(cx).seat else {
+                        continue;
+                    };
+                    if self.war_orgs.owner(seat) != self.war_org
+                        || matches!(end, RelationEnd::To) && editor.draft.from == Some(seat)
+                    {
+                        continue;
+                    }
+                    list = list.child(
+                        Self::bezel_btn(sk, &self.war_room_seat_label(seat, cx), false)
+                            .id(SharedString::from(format!("war-endpoint-{}", seat.0)))
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                cx.stop_propagation();
+                                ws.war_room_choose_endpoint(seat, cx);
+                            })),
+                    );
+                }
+            }
+            form = form.child(list);
+        }
+        let mut levels = div().flex().flex_row().flex_wrap().gap_2();
+        for (rung, label) in [
+            (warroom::Rung::See, ui.wr_rung_see),
+            (warroom::Rung::Read, ui.wr_rung_read),
+            (warroom::Rung::Ask, ui.wr_rung_ask),
+        ] {
+            levels = levels.child(
+                Self::bezel_btn(sk, label, editor.draft.rung == Some(rung))
+                    .id(SharedString::from(format!("war-rung-{rung:?}")))
+                    .debug_selector(move || format!("war-rung-{rung:?}"))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        if let Some(e) = &mut ws.war_relation {
+                            e.draft.rung = Some(rung);
+                        }
+                        cx.notify();
+                    })),
+            );
+        }
+        let sentence = if let Some((from, to, rung)) = editor.draft.ready(&self.war_orgs) {
+            let word = match rung {
+                warroom::Rung::See => ui.wr_rung_see,
+                warroom::Rung::Read => ui.wr_rung_read,
+                warroom::Rung::Ask => ui.wr_rung_ask,
+            };
+            lang::fill(
+                ui.wr_rel_sentence,
+                &[
+                    ("from", &self.war_room_seat_label(from, cx)),
+                    ("to", &self.war_room_seat_label(to, cx)),
+                    ("rung", word),
+                ],
+            )
+        } else {
+            ui.wr_rel_choose.to_string()
+        };
+        let ready = editor.draft.ready(&self.war_orgs).is_some_and(|(f, t, _)| {
+            self.war_room_seat_leaf(f, cx).is_some() && self.war_room_seat_leaf(t, cx).is_some()
+        });
+        levels = levels
+            .child(
+                Self::bezel_btn(sk, ui.wr_rel_save, ready)
+                    .id("war-rel-save")
+                    .debug_selector(|| "war-rel-save".to_string())
+                    .opacity(if ready { 1. } else { 0.4 })
+                    .on_click(cx.listener(|ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.war_room_save_relation(cx);
+                    })),
+            )
+            .child(
+                Self::bezel_btn(sk, ui.dlg_cancel, false)
+                    .id("war-rel-cancel")
+                    .debug_selector(|| "war-rel-cancel".to_string())
+                    .on_click(cx.listener(|ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.war_relation = None;
+                        cx.notify();
+                    })),
+            );
+        if let Some((from, to)) = editor
+            .draft
+            .from
+            .zip(editor.draft.to)
+            .filter(|(f, t)| self.chart.line(*f, *t).is_some())
+        {
+            levels = levels.child(
+                Self::bezel_btn(sk, ui.wr_erase, false)
+                    .id("war-rel-remove")
+                    .debug_selector(|| "war-rel-remove".to_string())
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.chart.erase(from, to);
+                        ws.war_relation = None;
+                        ws.save(cx);
+                        cx.notify();
+                    })),
+            );
+        }
+        controls.child(form.child(SharedString::from(sentence)).child(levels))
+    }
+
     /// What a person calls `leaf`: where its tab sits on the left bar, then
     /// its header's title (see [`warroom::PaneName`]). Every place the War
     /// Room and its rail name a pane goes through here.
@@ -810,159 +1577,6 @@ impl Workspace {
             .map(|ti| self.spine_path(ti))
             .unwrap_or_default();
         warroom::PaneName::new(&spine, &leaf.read(cx).header_title())
-    }
-
-    /// One seat, opened: the agent's own latest summary first, then its
-    /// state, model, size, note and lines — the cheap answers, before anyone
-    /// asks a copy anything.
-    fn war_room_card(
-        &self,
-        f: &PaneFacts,
-        seat: warroom::SeatId,
-        sk: &skin::Skin,
-        th: &theme::Theme,
-        cx: &mut Context<Self>,
-    ) -> gpui::Div {
-        let ui = self.lang.strings().ui;
-        let unknown = || ui.wr_unknown.to_string();
-        let title_of = |seat: warroom::SeatId| -> String {
-            self.tabs
-                .iter()
-                .flat_map(|t| {
-                    let mut l = vec![];
-                    t.root.leaves(&mut l);
-                    l
-                })
-                .find(|leaf| leaf.read(cx).seat == Some(seat))
-                .map(|leaf| self.pane_name(leaf, cx).full())
-                .unwrap_or_else(unknown)
-        };
-        let rung = |l: &warroom::Line| match l.rung.known() {
-            Some(warroom::Rung::See) => ui.wr_rung_see.to_string(),
-            Some(warroom::Rung::Read) => ui.wr_rung_read.to_string(),
-            Some(warroom::Rung::Ask) => ui.wr_rung_ask.to_string(),
-            None => ui.wr_unknown.to_string(),
-        };
-        let lines_in: Vec<String> = self
-            .chart
-            .saved()
-            .iter()
-            .filter(|l| l.to == seat)
-            .map(|l| format!("{} · {}", title_of(l.from), rung(l)))
-            .collect();
-        let lines_out: Vec<String> = self
-            .chart
-            .saved()
-            .iter()
-            .filter(|l| l.from == seat)
-            .map(|l| format!("{} · {}", title_of(l.to), rung(l)))
-            .collect();
-        let size = f
-            .size
-            .map(|n| lang::fill(ui.wr_size, &[("tokens", &grouped(n))]))
-            .unwrap_or_else(unknown);
-        let row = |label: &str, value: String| {
-            div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .child(
-                    div()
-                        .w(px(88.))
-                        .flex_none()
-                        .text_size(sk.text_px(8.))
-                        .text_color(th.text.alpha(0.55))
-                        .child(SharedString::from(label.to_string())),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .text_color(th.text)
-                        .child(SharedString::from(value)),
-                )
-        };
-        let join = |v: &[String]| {
-            if v.is_empty() {
-                ui.wr_none.to_string()
-            } else {
-                v.join("\n")
-            }
-        };
-        let leaf = f.leaf.clone();
-        let mut card = div()
-            .w(px(CARD_W))
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .p_2()
-            .rounded(sk.rad_raw(8.))
-            .border_1()
-            .border_color(th.complement.alpha(0.6))
-            .bg(darken(th.surface, 0.45))
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                    .text_size(sk.text_px(11.))
-                    .child(SharedString::from(f.name.place())),
-            )
-            .child(
-                div()
-                    .text_size(sk.text_px(8.5))
-                    .text_color(th.text.alpha(0.6))
-                    .child(SharedString::from(f.name.header.clone())),
-            );
-        if let Some((brief, layman)) = &f.summary {
-            card = card.child(
-                div()
-                    .mt_1()
-                    .p_1()
-                    .border_l_2()
-                    .border_color(th.accent)
-                    .child(
-                        div()
-                            .text_size(sk.text_px(7.5))
-                            .text_color(th.text.alpha(0.5))
-                            .child(SharedString::from(ui.wr_card_summary.to_string())),
-                    )
-                    .child(SharedString::from(
-                        brief.clone().unwrap_or_else(|| layman.clone()),
-                    )),
-            );
-        }
-        card.child(row(
-            ui.wr_card_state,
-            f.state.label_in(self.lang).to_string(),
-        ))
-        .child(row(
-            ui.wr_card_model,
-            f.model.clone().unwrap_or_else(unknown),
-        ))
-        .child(row(ui.wr_card_size, size))
-        .child(row(
-            ui.wr_age,
-            session_age(f.started_ms, now_ms() as i64).unwrap_or_else(unknown),
-        ))
-        .child(row(
-            ui.wr_card_note,
-            f.note.clone().unwrap_or_else(|| ui.wr_none.to_string()),
-        ))
-        .child(row(ui.wr_card_in, join(&lines_in)))
-        .child(row(ui.wr_card_out, join(&lines_out)))
-        .child(
-            Self::bezel_btn(sk, ui.wr_unseat_btn, false)
-                .id("war-unseat")
-                .mt_1()
-                .hover(|d| d.border_color(th.accent))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.war_room_unseat(&leaf, cx);
-                    }),
-                ),
-        )
     }
 
     /// An agent's question for another (`ask_agent`), or its read-back of a
@@ -1374,15 +1988,17 @@ impl Workspace {
     pub(crate) fn close_war_room(&mut self) {
         self.war_room = false;
         self.war_room_pick = None;
+        self.war_relation = None;
+        self.war_org_edit = None;
+        self.war_move = None;
         self.war_room_query = EditBuffer::seeded("");
     }
 
     /// A person seated a pane: mint its seat and save it with the pane.
     fn war_room_seat(&mut self, leaf: &Entity<TerminalView>, cx: &mut Context<Self>) {
-        let seat = warroom::SeatId::mint();
-        leaf.update(cx, |v, cx| v.set_seat(Some(seat), cx));
-        self.save(cx);
-        cx.notify();
+        if let Some(org) = self.war_org {
+            self.war_room_assign(leaf, org, false, cx);
+        }
     }
 
     /// A person took a seat off the chart: its lines go with it, and the pane
@@ -1392,6 +2008,8 @@ impl Workspace {
             return;
         };
         self.chart.forget_seat(seat);
+        self.war_orgs.remove(seat);
+        self.war_relation = None;
         leaf.update(cx, |v, cx| v.set_seat(None, cx));
         if self.war_room_pick == Some(seat) {
             self.war_room_pick = None;
@@ -1400,40 +2018,32 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Click a seat, then another, to draw a line from the first to the
-    /// second (Gate 3, question 3). Clicking the picked seat again lets go.
+    /// Selection never grants a relationship or changes a card's dimensions.
     fn war_room_click_seat(&mut self, seat: warroom::SeatId, cx: &mut Context<Self>) {
-        match self.war_room_pick {
-            Some(p) if p == seat => self.war_room_pick = None,
-            Some(p) => {
-                self.chart.draw(p, seat, warroom::Rung::Ask);
-                self.war_room_pick = None;
-                self.save(cx);
-            }
-            None => self.war_room_pick = Some(seat),
+        if self
+            .war_relation
+            .as_ref()
+            .is_some_and(|e| e.choosing.is_some())
+        {
+            self.war_room_choose_endpoint(seat, cx);
+        } else {
+            self.war_room_pick = if self.war_room_pick == Some(seat) {
+                None
+            } else {
+                Some(seat)
+            };
+            cx.notify();
         }
-        cx.notify();
     }
 
-    /// Click a line to change how far it reaches: ask, see, read, then gone.
-    /// A bypass is erased by its click, since a person granted it for its
-    /// prompts and nothing else.
+    /// The edge label opens an explicit editor; it never cycles a permission.
     fn war_room_click_line(
         &mut self,
         from: warroom::SeatId,
         to: warroom::SeatId,
         cx: &mut Context<Self>,
     ) {
-        let Some(line) = self.chart.line(from, to) else {
-            return;
-        };
-        match (line.is_bypass(), line.rung.known()) {
-            (false, Some(warroom::Rung::Ask)) => self.chart.draw(from, to, warroom::Rung::See),
-            (false, Some(warroom::Rung::See)) => self.chart.draw(from, to, warroom::Rung::Read),
-            _ => self.chart.erase(from, to),
-        }
-        self.save(cx);
-        cx.notify();
+        self.war_room_begin_relation(Some(from), Some(to), cx);
     }
 }
 
@@ -1476,26 +2086,22 @@ fn stroke_wire(
             t = e + gap;
         }
     }
-}
-
-/// A count with its thousands grouped, as the briefs print them: 360,090.
-fn grouped(n: u64) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
+    // A line is directed: the arrow reaches the target, including upward links.
+    if let Some(pair) = pts.windows(2).rev().find(|p| p[0] != p[1]) {
+        let (a, b) = (pair[0], pair[1]);
+        let length = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+        let (dx, dy) = ((b.0 - a.0) / length, (b.1 - a.1) / length);
+        segment(
+            (b.0 - dx * 8. - dy * 4., b.1 - dy * 8. + dx * 4.),
+            b,
+            window,
+        );
+        segment(
+            (b.0 - dx * 8. + dy * 4., b.1 - dy * 8. - dx * 4.),
+            b,
+            window,
+        );
     }
-    out
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 /// A refusal's wire name, for the record.
@@ -1505,7 +2111,6 @@ fn refusal_code(r: &warroom::Refusal) -> Option<String> {
         .and_then(|v| v.as_str().map(str::to_string))
 }
 
-/// What a seat is called: the name a person gave it, else its title.
 fn seat_title(t: &TerminalView) -> String {
     t.name
         .clone()
@@ -1516,6 +2121,274 @@ fn seat_title(t: &TerminalView) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture(
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        Entity<Workspace>,
+        &'static mut gpui::VisualTestContext,
+        warroom::OrgId,
+    ) {
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = || session::PaneRestore {
+            program: Some(("/bin/cat".into(), vec![])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(1200.), px(1000.)), |w, cx| {
+                Workspace::build(true, true, Some(seed()), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let vcx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let other = vcx.update(|w, cx| {
+            ws.update(cx, |ws, cx| {
+                let second = {
+                    let _fork = crate::testsync::forks_and_locks();
+                    make_pane_window_owned(seed(), w, cx)
+                };
+                ws.tabs
+                    .push(Tab::new(Node::Leaf(second), Some("Worker".into())));
+                let org = ws.war_orgs.create("Cinema crew").unwrap();
+                let other = ws.war_orgs.create("Launch crew").unwrap();
+                for (i, tab) in ws.tabs.iter_mut().enumerate() {
+                    tab.name = Some(if i == 0 { "Lead" } else { "Worker" }.into());
+                    let mut leaves = Vec::new();
+                    tab.root.leaves(&mut leaves);
+                    let pane = leaves[0].clone();
+                    let seat = warroom::SeatId(100 + i as u64);
+                    pane.update(cx, |v, cx| {
+                        v.mode = pane::PaneMode::Codex;
+                        v.seat = Some(seat);
+                        cx.notify();
+                    });
+                    ws.war_orgs.assign(seat, org);
+                }
+                ws.war_org = Some(org);
+                ws.war_room = true;
+                ws.left_bar = false;
+                w.focus(&ws.focus_handle, cx);
+                cx.notify();
+                other
+            })
+        });
+        let cleanup = ws.read_with(vcx, |ws, cx| {
+            let mut leaves = Vec::new();
+            for tab in &ws.tabs {
+                tab.root.leaves(&mut leaves);
+            }
+            leaves
+                .iter()
+                .map(|p| p.read(cx).fixture_shutdown())
+                .collect::<Vec<_>>()
+        });
+        for stop in cleanup {
+            vcx.on_quit(stop);
+        }
+        vcx.run_until_parked();
+        vcx.update(|w, cx| {
+            w.refresh();
+            w.draw(cx).clear();
+        });
+        (ws, vcx, other)
+    }
+
+    fn bounds(cx: &mut gpui::VisualTestContext, id: &str) -> Bounds<Pixels> {
+        cx.debug_bounds(Box::leak(id.to_string().into_boxed_str()))
+            .unwrap_or_else(|| panic!("{id} not drawn"))
+    }
+
+    fn click(cx: &mut gpui::VisualTestContext, id: &str) {
+        let at = bounds(cx, id).center();
+        cx.simulate_mouse_down(at, MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_up(at, MouseButton::Left, gpui::Modifiers::default());
+        cx.run_until_parked();
+    }
+
+    fn drag(cx: &mut gpui::VisualTestContext, from: &str, to: &str) {
+        let start = bounds(cx, from).center();
+        let end = bounds(cx, to).center();
+        cx.simulate_mouse_down(start, MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_move(
+            start + point(px(9.), px(9.)),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_move(end, MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_up(end, MouseButton::Left, gpui::Modifiers::default());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn connector_drag_requires_explicit_permission_and_keeps_card_shape(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let original = bounds(cx, "war-seat-100").size;
+        click(cx, "war-seat-100");
+        assert_eq!(
+            bounds(cx, "war-seat-100").size,
+            original,
+            "selection transformed the card"
+        );
+        assert!(ws.read_with(cx, |ws, _| ws.chart.saved().is_empty()));
+        drag(cx, "war-connect-100", "war-seat-101");
+        ws.read_with(cx, |ws, _| {
+            let editor = ws
+                .war_relation
+                .as_ref()
+                .expect("connector drop opened the builder");
+            assert_eq!(editor.draft.from, Some(warroom::SeatId(100)));
+            assert_eq!(editor.draft.to, Some(warroom::SeatId(101)));
+            assert_eq!(editor.draft.rung, None);
+            assert!(
+                ws.chart.saved().is_empty(),
+                "dropping a connector granted access"
+            );
+        });
+        click(cx, "war-rel-save");
+        assert!(ws.read_with(cx, |ws, _| ws.chart.saved().is_empty()));
+        click(cx, "war-rung-Read");
+        click(cx, "war-rel-save");
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(
+                ws.chart
+                    .line(warroom::SeatId(100), warroom::SeatId(101))
+                    .unwrap()
+                    .rung
+                    .known(),
+                Some(warroom::Rung::Read)
+            )
+        });
+        assert_eq!(bounds(cx, "war-seat-100").size, original);
+        click(cx, "war-line-100-101");
+        click(cx, "war-rung-Ask");
+        click(cx, "war-rel-cancel");
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(
+                ws.chart
+                    .line(warroom::SeatId(100), warroom::SeatId(101))
+                    .unwrap()
+                    .rung
+                    .known(),
+                Some(warroom::Rung::Read)
+            )
+        });
+        click(cx, "war-line-100-101");
+        click(cx, "war-rel-remove");
+        assert!(ws.read_with(cx, |ws, _| ws.chart.saved().is_empty()));
+    }
+
+    #[gpui::test]
+    fn whole_card_drag_moves_membership_and_the_saved_record_keeps_identity(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        let original = bounds(cx, "war-seat-100").size;
+        ws.update(cx, |ws, cx| {
+            ws.chart.draw(
+                warroom::SeatId(100),
+                warroom::SeatId(101),
+                warroom::Rung::Read,
+            );
+            cx.notify();
+        });
+        cx.run_until_parked();
+        drag(cx, "war-seat-100", &format!("war-org-{}", other.0));
+        ws.read_with(cx, |ws, _| {
+            assert!(
+                ws.war_move.is_some(),
+                "a connected move needs a visible choice"
+            );
+            assert_ne!(ws.war_orgs.owner(warroom::SeatId(100)), Some(other));
+            assert_eq!(
+                ws.chart.saved().len(),
+                1,
+                "dragging silently erased a connection"
+            );
+        });
+        click(cx, "war-move-cancel");
+        assert_eq!(ws.read_with(cx, |ws, _| ws.chart.saved().len()), 1);
+        drag(cx, "war-seat-100", &format!("war-org-{}", other.0));
+        click(cx, "war-move-confirm");
+        assert_eq!(bounds(cx, "war-seat-100").size, original);
+        ws.read_with(cx, |ws, cx| {
+            assert_eq!(ws.war_orgs.owner(warroom::SeatId(100)), Some(other));
+            assert_eq!(ws.war_org, Some(other));
+            assert!(ws.chart.saved().is_empty());
+            let state = ws.build_state(cx);
+            let saved: StateFile = toml::from_str(&toml::to_string(&state).unwrap()).unwrap();
+            let orgs = warroom::Orgs::restore(saved.war_orgs, &[]);
+            assert_eq!(orgs.owner(warroom::SeatId(100)), Some(other));
+            assert_eq!(
+                orgs.get(other).unwrap().name.as_deref(),
+                Some("Launch crew")
+            );
+        });
+        let first = ws.read_with(cx, |ws, _| ws.war_orgs.owner(warroom::SeatId(101)).unwrap());
+        cx.simulate_keystrokes("w o r k e r");
+        cx.run_until_parked();
+        click(cx, &format!("war-open-org-{}", first.0));
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(ws.war_org, Some(first));
+            assert!(ws.war_room_query.text().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn names_are_typed_without_creating_relationships_and_close_restores_terminal_focus(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        click(cx, "war-org-new");
+        cx.simulate_keystrokes("c r e w enter");
+        cx.run_until_parked();
+        let created = ws.read_with(cx, |ws, _| {
+            let id = ws.war_org.unwrap();
+            assert_eq!(ws.war_orgs.get(id).unwrap().name.as_deref(), Some("crew"));
+            assert!(ws.war_orgs.get(id).unwrap().seats.is_empty());
+            assert!(ws.chart.saved().is_empty());
+            id
+        });
+        click(cx, "war-org-rename");
+        cx.simulate_keystrokes("t e a m enter");
+        cx.run_until_parked();
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(ws.war_org, Some(created));
+            assert_eq!(
+                ws.war_orgs.get(created).unwrap().name.as_deref(),
+                Some("team")
+            );
+            assert!(ws.chart.saved().is_empty());
+        });
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            ws.read_with(cx, |ws, cx| {
+                assert!(!ws.war_room);
+                let mut leaves = Vec::new();
+                ws.tabs[ws.active].root.leaves(&mut leaves);
+                assert!(
+                    leaves[0].focus_handle(cx).is_focused(window),
+                    "closing the editor stranded keyboard focus"
+                );
+            })
+        });
+    }
 
     fn name() -> warroom::PaneName {
         warroom::PaneName::new(

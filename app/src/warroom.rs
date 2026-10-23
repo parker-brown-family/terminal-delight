@@ -55,6 +55,125 @@ impl SeatId {
     }
 }
 
+/// A saved org identity, independent of its editable label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct OrgId(pub u64);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Org {
+    pub id: OrgId,
+    /// Legacy charts have no declared label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub seats: Vec<SeatId>,
+}
+
+/// Grouping only: every permission still comes from `Chart`.
+#[derive(Clone, Debug, Default)]
+pub struct Orgs {
+    orgs: Vec<Org>,
+}
+
+impl Orgs {
+    pub fn restore(saved: Option<Vec<Org>>, legacy: &[SeatId]) -> Self {
+        match saved {
+            Some(orgs) => Self { orgs },
+            None if legacy.is_empty() => Self::default(),
+            None => Self {
+                orgs: vec![Org {
+                    id: OrgId(SeatId::mint().0),
+                    name: None,
+                    seats: legacy
+                        .iter()
+                        .copied()
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
+                        .collect(),
+                }],
+            },
+        }
+    }
+
+    pub fn saved(&self) -> &[Org] {
+        &self.orgs
+    }
+    pub fn get(&self, id: OrgId) -> Option<&Org> {
+        self.orgs.iter().find(|o| o.id == id)
+    }
+
+    /// Ambiguous or absent membership stays unknown.
+    pub fn owner(&self, seat: SeatId) -> Option<OrgId> {
+        let mut owners = self.orgs.iter().filter(|o| o.seats.contains(&seat));
+        let owner = owners.next()?.id;
+        owners.next().is_none().then_some(owner)
+    }
+
+    pub fn create(&mut self, name: &str) -> Option<OrgId> {
+        let name = name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let id = OrgId(SeatId::mint().0);
+        self.orgs.push(Org {
+            id,
+            name: Some(name.to_string()),
+            seats: vec![],
+        });
+        Some(id)
+    }
+
+    pub fn rename(&mut self, id: OrgId, name: &str) -> bool {
+        let name = name.trim();
+        if name.is_empty() {
+            return false;
+        }
+        let Some(org) = self.orgs.iter_mut().find(|o| o.id == id) else {
+            return false;
+        };
+        org.name = Some(name.to_string());
+        true
+    }
+
+    pub fn assign(&mut self, seat: SeatId, org: OrgId) -> bool {
+        if self.get(org).is_none() {
+            return false;
+        }
+        self.remove(seat);
+        self.orgs
+            .iter_mut()
+            .find(|o| o.id == org)
+            .unwrap()
+            .seats
+            .push(seat);
+        true
+    }
+
+    pub fn remove(&mut self, seat: SeatId) {
+        for org in &mut self.orgs {
+            org.seats.retain(|s| *s != seat);
+        }
+    }
+}
+
+/// An unfinished relationship grants nothing until both endpoints and a rung
+/// are explicitly selected and the person saves it.
+#[derive(Clone, Debug, Default)]
+pub struct RelationDraft {
+    pub from: Option<SeatId>,
+    pub to: Option<SeatId>,
+    pub rung: Option<Rung>,
+}
+
+impl RelationDraft {
+    pub fn ready(&self, orgs: &Orgs) -> Option<(SeatId, SeatId, Rung)> {
+        let (from, to, rung) = (self.from?, self.to?, self.rung?);
+        (from != to && orgs.owner(from).is_some() && orgs.owner(from) == orgs.owner(to))
+            .then_some((from, to, rung))
+    }
+}
+
 /// A person's choice for one pane, for every agent. Set only by a person: the
 /// pane's right-click menu or a Yes on the attention rail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -843,6 +962,92 @@ pub fn position_takes_writes(cfg: &McpConfig, target: &Party, own: bool) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_org_migration_keeps_labels_unknown_and_seats_stable() {
+        let legacy = [SeatId(7), SeatId(9), SeatId(7)];
+        let orgs = Orgs::restore(None, &legacy);
+        assert_eq!(orgs.saved().len(), 1);
+        let org = &orgs.saved()[0];
+        assert_eq!(org.name, None);
+        assert_eq!(org.seats, vec![SeatId(7), SeatId(9)]);
+        let saved = toml::to_string(org).unwrap();
+        let restored: Org = toml::from_str(&saved).unwrap();
+        assert_eq!(&restored, org);
+        assert_eq!(
+            Orgs::restore(Some(vec![restored]), &[]).owner(SeatId(7)),
+            Some(org.id)
+        );
+        assert!(
+            Orgs::restore(Some(vec![]), &legacy).saved().is_empty(),
+            "declared empty is not a legacy layout"
+        );
+        assert!(Orgs::restore(None, &[]).saved().is_empty());
+    }
+
+    #[test]
+    fn org_names_and_membership_have_stable_identity_and_validate_the_destination() {
+        let mut orgs = Orgs::default();
+        assert_eq!(orgs.create("  "), None);
+        let first = orgs.create("Cinema").unwrap();
+        let second = orgs.create("BFS").unwrap();
+        assert!(orgs.assign(SeatId(1), first));
+        assert!(!orgs.assign(SeatId(1), OrgId(0)));
+        assert_eq!(orgs.owner(SeatId(1)), Some(first));
+        assert!(orgs.rename(first, "Production"));
+        assert!(!orgs.rename(first, " "));
+        assert_eq!(orgs.get(first).unwrap().name.as_deref(), Some("Production"));
+        assert_eq!(orgs.owner(SeatId(1)), Some(first));
+        assert!(orgs.assign(SeatId(1), second));
+        assert!(orgs.get(first).unwrap().seats.is_empty());
+        assert_eq!(orgs.get(second).unwrap().seats, vec![SeatId(1)]);
+        orgs.remove(SeatId(1));
+        assert_eq!(orgs.owner(SeatId(1)), None);
+    }
+
+    #[test]
+    fn a_relationship_needs_explicit_permission_and_two_members_of_the_same_org() {
+        let mut orgs = Orgs::default();
+        let a = orgs.create("A").unwrap();
+        let b = orgs.create("B").unwrap();
+        orgs.assign(SeatId(1), a);
+        orgs.assign(SeatId(2), a);
+        orgs.assign(SeatId(3), b);
+        let mut draft = RelationDraft::default();
+        assert_eq!(draft.ready(&orgs), None);
+        draft.from = Some(SeatId(1));
+        draft.to = Some(SeatId(2));
+        assert_eq!(draft.ready(&orgs), None, "a drop is not permission");
+        draft.rung = Some(Rung::Read);
+        assert_eq!(draft.ready(&orgs), Some((SeatId(1), SeatId(2), Rung::Read)));
+        draft.to = Some(SeatId(1));
+        assert_eq!(draft.ready(&orgs), None, "no self link");
+        draft.to = Some(SeatId(3));
+        assert_eq!(draft.ready(&orgs), None, "no invisible cross-org grant");
+        draft.to = Some(SeatId(99));
+        assert_eq!(draft.ready(&orgs), None, "missing member");
+        let ambiguous = Orgs::restore(
+            Some(vec![
+                Org {
+                    id: OrgId(4),
+                    name: None,
+                    seats: vec![SeatId(1), SeatId(2)],
+                },
+                Org {
+                    id: OrgId(5),
+                    name: None,
+                    seats: vec![SeatId(1)],
+                },
+            ]),
+            &[],
+        );
+        draft.to = Some(SeatId(2));
+        assert_eq!(
+            draft.ready(&ambiguous),
+            None,
+            "ambiguous membership is unknown"
+        );
+    }
 
     fn on() -> McpConfig {
         McpConfig {
