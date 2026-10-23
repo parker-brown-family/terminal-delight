@@ -9,6 +9,7 @@
 - Gate 2 — Architecture (`02-architecture.md`, beside the approved core in `02-enforcement.md`): **APPROVED 2026-10-22**, eight concurs with no notes on `reports/2026-10-22-war-room-architecture.html`. First bare approval: if Gate 3 is also bare, Gate 4 folds into it.
 - Gate 3 — Program design (`03-program-design.md`): **APPROVED 2026-10-22**, seven concurs, no notes, then "go!".
 - Gate 4 — Slices (`04-slices.md`): **folded into building**. Gates 2 and 3 were bare approvals back to back, so by the playbook's rule the slice plan went straight to work on branch `feat/war-room`, worktree `~/Work/td-authority-lab/war-room`.
+- Build page (`reports/2026-10-22-the-war-room-built.html`): **all four decisions taken as recommended, 2026-10-22**: *"Yes all -- into 0.5.0 and rebuild our binary here!"* The six departures are accepted, askers poll `ask_answer`, the press limit is 0 by default, and the work lands as one pull request into dev/0.5.0 after a scratch-window trial. See the end of `04-slices.md`.
 
 ## Slices — see `04-slices.md` (the list below is the superseded one-gate plan's, kept for history)
 - [ ] Slice 1 — tracer bullet: the three-level type and the split gate; read-only settable only from tests; every write verb refuses it from another agent.

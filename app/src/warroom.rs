@@ -347,9 +347,19 @@ impl From<Rung> for Reach {
     }
 }
 
-/// The size above which a copy of an agent's conversation waits for a
-/// person's press, unless the person set their own (Gate 1, question 3).
-pub const ASK_PRESS_TOKENS: u64 = 400_000;
+/// The largest copy of an agent's conversation that starts without a
+/// person's press, unless the person set their own. Zero: every copy asks
+/// first (Parker, on the War Room's build page, 2026-10-22). Gate 1 drew
+/// 400,000, and the median Claude pane measured that day was about 360,000,
+/// so most copies would have started unasked.
+pub const ASK_PRESS_TOKENS: u64 = 0;
+
+/// The rail's colour for a copy, by what it reads (Gate 2, figure 6): up to
+/// this many tokens it is a caution.
+pub const COPY_CAUTION_TOKENS: u64 = 600_000;
+
+/// Up to this many tokens a copy is a warning; past it, an alert.
+pub const COPY_WARNING_TOKENS: u64 = 1_000_000;
 
 /// One side of a reach question: a pane as the rules see it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -415,16 +425,17 @@ pub enum RiskFacts {
         into_read_only: bool,
         prompts: u8,
     },
-    /// A read-only copy that would read `reads` tokens (`None`: unknown),
-    /// against the person's press limit.
-    Copy { reads: Option<u64>, limit: u64 },
+    /// A read-only copy that would read `reads` tokens (`None`: unknown).
+    /// The colour is the size alone: the press limit decides whether a copy
+    /// waits, not how serious it looks.
+    Copy { reads: Option<u64> },
 }
 
 /// How serious an ask is, on the coordination panel's four-step scale: the
 /// colour says how much could go wrong, not what kind of ask it is. Narrowing
 /// access is clear; reading a little is caution; wider or costlier is a
-/// warning; writes, or a copy past two and a half times the limit, alert. An
-/// unknown size is never cheaper than a warning.
+/// warning; writes, or a copy reading more than [`COPY_WARNING_TOKENS`],
+/// alert. An unknown size is never cheaper than a warning.
 pub fn risk(facts: &RiskFacts) -> crate::coordination::Severity {
     use crate::access::Change;
     use crate::coordination::Severity::*;
@@ -449,10 +460,10 @@ pub fn risk(facts: &RiskFacts) -> crate::coordination::Severity {
                 Caution
             }
         }
-        RiskFacts::Copy { reads, limit } => match reads {
+        RiskFacts::Copy { reads } => match reads {
             None => Warning,
-            Some(n) if *n * 2 <= *limit * 3 => Caution,
-            Some(n) if *n * 2 <= *limit * 5 => Warning,
+            Some(n) if *n <= COPY_CAUTION_TOKENS => Caution,
+            Some(n) if *n <= COPY_WARNING_TOKENS => Warning,
             Some(_) => Alert,
         },
     }
@@ -636,9 +647,11 @@ pub fn may_write(cfg: &McpConfig, reach: Reach, target: &Party, own: bool) -> bo
 }
 
 /// Whether a copy waits for a person's press on the rail: when it would read
-/// more than their limit, or nobody knows how much it would read.
+/// more than their limit, or nobody knows how much it would read. A size of
+/// zero is not a size, since every copy reads at least its own instructions,
+/// so it waits like an unknown one, and a limit of zero means every copy asks.
 pub fn copy_waits_for_press(reads: Option<u64>, limit: u64) -> bool {
-    !matches!(reads, Some(n) if n <= limit)
+    !matches!(reads, Some(n) if n > 0 && n <= limit)
 }
 
 /// How far a copy ask has got, on the wire as `stage` with what each stage
@@ -1186,7 +1199,6 @@ mod tests {
     fn risk_matches_the_rail_table() {
         use crate::access::Change;
         use crate::coordination::Severity::*;
-        let limit = ASK_PRESS_TOKENS;
         let bypass = |a, r, p| {
             risk(&RiskFacts::Bypass {
                 across_projects: a,
@@ -1194,7 +1206,7 @@ mod tests {
                 prompts: p,
             })
         };
-        let copy = |reads| risk(&RiskFacts::Copy { reads, limit });
+        let copy = |reads| risk(&RiskFacts::Copy { reads });
         assert_eq!(
             risk(&RiskFacts::Pane(Change::ClosePane)),
             Clear,
@@ -1255,10 +1267,7 @@ mod tests {
 
     #[test]
     fn an_unknown_copy_size_is_never_cheaper_than_warning() {
-        let r = risk(&RiskFacts::Copy {
-            reads: None,
-            limit: ASK_PRESS_TOKENS,
-        });
+        let r = risk(&RiskFacts::Copy { reads: None });
         assert!(r >= crate::coordination::Severity::Warning, "{r:?}");
     }
 
@@ -1308,6 +1317,38 @@ mod tests {
             "unknown never runs unpressed"
         );
         assert!(copy_waits_for_press(None, u64::MAX));
+        assert!(
+            copy_waits_for_press(Some(0), 400_000),
+            "a zero is a misreading, and waits"
+        );
+    }
+
+    #[test]
+    fn by_default_every_copy_waits_for_a_press() {
+        for reads in [None, Some(0), Some(1), Some(5_000), Some(400_000)] {
+            assert!(
+                copy_waits_for_press(reads, ASK_PRESS_TOKENS),
+                "{reads:?} started unasked"
+            );
+        }
+    }
+
+    #[test]
+    fn a_copys_colour_does_not_follow_the_press_limit() {
+        use crate::coordination::Severity::*;
+        assert_eq!(risk(&RiskFacts::Copy { reads: Some(1) }), Caution);
+        assert_eq!(
+            risk(&RiskFacts::Copy {
+                reads: Some(600_000)
+            }),
+            Caution
+        );
+        assert_eq!(
+            risk(&RiskFacts::Copy {
+                reads: Some(600_001)
+            }),
+            Warning
+        );
     }
 
     #[test]

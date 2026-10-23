@@ -258,11 +258,12 @@ read, asks it the question once, and stops it. A copy re-reads the whole of that
 agent's context on every model call, so it is priced when it is asked for, from
 the very transcript it would fork:
 
-- **At or under the press limit** it starts at once. The limit is
-  `ask_press_tokens` in the layout, 400,000 unless set.
-- **Over the limit, or of unknown size**, it waits as a card on the asker's rail
-  row, saying what it would read and the first words of the question, until a
-  person presses Yes or No.
+- **By default every copy waits** as a card on the asker's rail row, saying what
+  it would read and the first words of the question, until a person presses Yes
+  or No. The press limit, `ask_press_tokens` in the layout, is 0 unless set.
+- **A person who sets a limit** lets a copy at or under it start at once. A copy
+  over it, or of unknown size, still waits for the press. The window has no
+  control for the limit yet; it is a line in the layout file.
 
 Either way `ask_agent` returns an `ask_id` and a stage at once, and the asker
 reads the answer later with `ask_answer`. Stages: `awaiting_press`, `running`,
@@ -463,7 +464,7 @@ silence it.
   person drew in the War Room, or a bypass a person granted on the rail. An
   unseated pane is never asked.
 - **A copy can only read, and the person pays for it.** See *Asking another
-  agent*: a copy over the press limit waits for a Yes, and the record keeps no
+  agent*: by default every copy waits for a Yes, and the record keeps no
   question and no answer.
 - **Locked by default.** Ships disabled; when enabled, agents-only; a plain
   shell's cwd/scrollback is never exposed unless the operator explicitly widens

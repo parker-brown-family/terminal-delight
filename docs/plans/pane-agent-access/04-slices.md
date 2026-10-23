@@ -152,3 +152,20 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
     - narrative gate: journey, headings 0.61;
     - 621 words of prose against 530 of captions.
 
+## Parker's answers on the build page
+
+On 2026-10-22, in chat: *"Yes all -- into 0.5.0 and rebuild our binary here!"*, then *"DETAILED launch notes, this feature is CHUNKY."* Each of the page's four decisions was taken as recommended:
+
+1. **The six departures are accepted** as the design. The program design is not rewritten; this file is where they are recorded.
+2. **An asking agent comes back for its copy's answer** with `ask_answer` until a pushed notice exists. Nothing is typed into its terminal.
+3. **The press limit is 0 by default**, so every copy asks first.
+   - `warroom::ASK_PRESS_TOKENS` is 0, and a measured size of zero waits like an unknown one, since every copy reads at least its own instructions.
+   - A copy's rail colour no longer follows the limit. At 0 the old rule (caution up to 1.5× the limit, warning up to 2.5×) would have put every copy card in red. The bands are now the sizes Gate 2 drew from a 400,000 limit: caution up to 600,000 tokens, warning up to 1,000,000, alert past it (`COPY_CAUTION_TOKENS`, `COPY_WARNING_TOKENS`).
+   - When the limit is 0, `ask_agent` says the person presses Yes for every copy instead of naming "a press limit of 0".
+   - Tests: `by_default_every_copy_waits_for_a_press`, `a_copys_colour_does_not_follow_the_press_limit`, `a_waiting_copy_names_a_limit_only_when_the_person_set_one`.
+   - Planned breaks, each caught and restored byte for byte:
+     - the default put back to 400,000 turned two tests red;
+     - the zero guard dropped turned two tests red;
+     - a caution band tied to the limit turned two tests red.
+4. **One pull request into dev/0.5.0**, now that the artifact rail has landed, tried in a scratch window before the live one.
+

@@ -2158,12 +2158,18 @@ fn copy_status(status: &crate::warroom::CopyStatus) -> Value {
         None => "an unknown number of tokens".to_string(),
     };
     let text = match &status.stage {
-        CopyStage::AwaitingPress => format!(
-            "ask {id}: a read-only copy would read {reads}, which is over the person's press \
-             limit of {} or cannot be known, so it waits for their Yes on the rail. Read it \
-             later with ask_answer {{\"ask_id\": {id}}}.",
-            status.press_limit
-        ),
+        CopyStage::AwaitingPress => {
+            let why = match status.press_limit {
+                0 => "and the person presses Yes for every copy".to_string(),
+                limit => {
+                    format!("which is over the person's press limit of {limit} or cannot be known")
+                }
+            };
+            format!(
+                "ask {id}: a read-only copy would read {reads}, {why}, so it waits for their \
+                 Yes on the rail. Read it later with ask_answer {{\"ask_id\": {id}}}."
+            )
+        }
         CopyStage::Running => format!(
             "ask {id}: a read-only copy is answering; it reads {reads}. Read it later with \
              ask_answer {{\"ask_id\": {id}}}."
@@ -4276,7 +4282,7 @@ mod tests {
             AskReply::Copy(CopyStatus {
                 ask_id: AskId(41),
                 reads: Some(560_000),
-                press_limit: 400_000,
+                press_limit: crate::warroom::ASK_PRESS_TOKENS,
                 stage,
             })
         };
@@ -4297,7 +4303,11 @@ mod tests {
         assert_ne!(out["isError"], true, "{out}");
         assert_eq!(out["structuredContent"]["stage"], "awaiting_press");
         assert_eq!(out["structuredContent"]["ask_id"], 41);
-        assert!(text_of(&out).contains("press"), "{}", text_of(&out));
+        assert!(
+            text_of(&out).contains("presses Yes for every copy"),
+            "{}",
+            text_of(&out)
+        );
         assert!(matches!(&calls.borrow()[0], AskCall::Question(r) if r.copy));
 
         let out = run(line("ask_answer", json!({"ask_id": 41})));
@@ -4318,6 +4328,22 @@ mod tests {
         assert!(text_of(&out).contains("(no_such_ask)"), "{}", text_of(&out));
         let out = run(line("ask_answer", json!({})));
         assert_eq!(out["isError"], true, "an ask id is required");
+    }
+
+    #[test]
+    fn a_waiting_copy_names_a_limit_only_when_the_person_set_one() {
+        use crate::warroom::{AskId, CopyStage, CopyStatus};
+        let status = |press_limit| CopyStatus {
+            ask_id: AskId(3),
+            reads: Some(450_000),
+            press_limit,
+            stage: CopyStage::AwaitingPress,
+        };
+        let set = text_of(&copy_status(&status(400_000)));
+        assert!(set.contains("press limit of 400000"), "{set}");
+        let every = text_of(&copy_status(&status(0)));
+        assert!(every.contains("presses Yes for every copy"), "{every}");
+        assert!(!every.contains("limit of 0"), "{every}");
     }
 
     #[test]

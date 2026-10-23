@@ -972,10 +972,7 @@ impl Workspace {
             title,
             why: access::excerpt(&a.question),
             at: std::time::Instant::now(),
-            risk: Some(warroom::risk(&warroom::RiskFacts::Copy {
-                reads: a.reads,
-                limit: self.press_limit(),
-            })),
+            risk: Some(warroom::risk(&warroom::RiskFacts::Copy { reads: a.reads })),
             prompts: access::BYPASS_PROMPTS,
             reads: a.reads,
             ask_id: Some(id),
