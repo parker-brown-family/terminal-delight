@@ -579,6 +579,61 @@ pub fn decide_ask(
 /// The longest question an ask carries.
 pub const QUESTION_MAX_CHARS: usize = 4_000;
 
+/// What a person calls a pane: where its tab sits on the left bar, and the
+/// title on the pane's own header. The header alone cannot do it — until an
+/// agent names itself, every header reads "shell", and a list of twenty
+/// agents reads as twenty identical rows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PaneName {
+    /// The left bar's levels above the tab, outermost first, joined by its
+    /// own `›`: "TERMINAL DELIGHT", or "SERVER › auth work". Empty for an
+    /// unfiled tab.
+    pub outer: String,
+    /// The tab's own name, as its row on the left bar reads.
+    pub tab: String,
+    /// The pane header's title. Empty when the header has none.
+    pub header: String,
+}
+
+impl PaneName {
+    /// From the left bar's levels and the header's title. A level with no
+    /// words is left out rather than drawn as an empty `›`, and a header that
+    /// only repeats the tab's name is not said twice.
+    pub fn new(spine: &[String], header: &str) -> Self {
+        let mut levels: Vec<&str> = spine
+            .iter()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect();
+        let tab = levels.pop().unwrap_or_default();
+        let header = header.trim();
+        PaneName {
+            outer: levels.join(" \u{203a} "),
+            tab: tab.to_string(),
+            header: if header == tab { "" } else { header }.to_string(),
+        }
+    }
+
+    /// The whole place: "TERMINAL DELIGHT › MCP work".
+    pub fn place(&self) -> String {
+        match (self.outer.is_empty(), self.tab.is_empty()) {
+            (false, false) => format!("{} \u{203a} {}", self.outer, self.tab),
+            (false, true) => self.outer.clone(),
+            (true, _) => self.tab.clone(),
+        }
+    }
+
+    /// The place and the header on one line, for a row with room for one.
+    pub fn full(&self) -> String {
+        let place = self.place();
+        match (place.is_empty(), self.header.is_empty()) {
+            (false, false) => format!("{place} · {}", self.header),
+            (false, true) => place,
+            (true, _) => self.header.clone(),
+        }
+    }
+}
+
 /// What a seat shows, and what the cheap answer carries about it. Unknown is
 /// `None` all the way to the wire — never a 0 size or an empty model.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1321,6 +1376,44 @@ mod tests {
             copy_waits_for_press(Some(0), 400_000),
             "a zero is a misreading, and waits"
         );
+    }
+
+    /// Parker, looking at row after row of "shell · CLAUDE": the name should be
+    /// the left bar plus the pane's title.
+    #[test]
+    fn a_pane_is_named_by_its_place_on_the_left_bar_then_its_header() {
+        let spine = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let n = PaneName::new(
+            &spine(&["TERMINAL DELIGHT", "MCP work"]),
+            "✳ Per-pane MCP least privilege",
+        );
+        assert_eq!(n.place(), "TERMINAL DELIGHT › MCP work");
+        // The tab's own name is kept apart, so a narrow box can keep it whole
+        // and let the levels above it give way.
+        let deep = PaneName::new(&spine(&["SERVER", "auth work", "backend lead"]), "shell");
+        assert_eq!(
+            (deep.outer.as_str(), deep.tab.as_str()),
+            ("SERVER › auth work", "backend lead")
+        );
+        assert_eq!(
+            n.full(),
+            "TERMINAL DELIGHT › MCP work · ✳ Per-pane MCP least privilege"
+        );
+        // Two headers that both say "shell" are told apart by where they sit.
+        let a = PaneName::new(&spine(&["GLOBAL", "OPEN"]), "shell");
+        let b = PaneName::new(&spine(&["JEV", "judgement surface"]), "shell");
+        assert_ne!(a.full(), b.full());
+        // A level with no words is not drawn as an empty `›`, and a part
+        // that is missing leaves the other standing alone.
+        let g = PaneName::new(&spine(&["", "  ", "X Files"]), "  ");
+        assert_eq!(g.place(), "X Files");
+        assert_eq!(g.outer, "");
+        assert_eq!(g.full(), "X Files");
+        assert_eq!(PaneName::new(&[], "shell").full(), "shell");
+        // A pane named after its tab is not named twice.
+        let r = PaneName::new(&spine(&["SERVER", "release lead"]), "release lead");
+        assert_eq!(r.full(), "SERVER › release lead");
+        assert_eq!(r.header, "");
     }
 
     #[test]

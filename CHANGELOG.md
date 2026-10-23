@@ -101,7 +101,10 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   one seat and another to draw a line. A line carries a rung, and a click on its
   label cycles it: `ask` (may ask it a question), `see` (may find it in
   `list_panes`), `read` (may also read it), then erase. Seats are arranged in rows
-  by their lines. Each seat's card shows its agent's latest summary, state,
+  by their lines. Every agent is named the way a person finds it: where its tab
+  sits on the left bar, then its header's title (*TERMINAL DELIGHT › MCP work ·
+  ✳ Per-pane MCP least privilege*), on the chart, off it and on the rail's asks.
+  Each seat's card shows its agent's latest summary, state,
   model, size, sticky note and lines in and out. Agents nobody seated are listed
   off the chart and behave as before, except that no agent can ever ask them
   anything. The window's five MCP switches are here as well as on the wall, and

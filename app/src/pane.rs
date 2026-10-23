@@ -6825,6 +6825,23 @@ impl TerminalView {
         }
     }
 
+    /// The title on this pane's own header: the name a person gave it, else,
+    /// on the Document face, the file's name (the shell's own title describes
+    /// a terminal that is not on screen), else the OSC title. The War Room
+    /// names a pane with this too, so the two cannot disagree.
+    pub fn header_title(&self) -> String {
+        let document = (self.bench.face() == crate::workbench::Face::Document)
+            .then(|| self.document_path())
+            .flatten()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned());
+        self.name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .or(document)
+            .unwrap_or_else(|| self.shown_title())
+    }
+
     /// This pane's note for the state file.
     ///
     /// A note being COMPOSED saves what has been typed, not the draft's
@@ -11498,18 +11515,8 @@ impl Render for TerminalView {
                 // sub-tab onto another tab, or drop it on a pane to split there.
                 // Right-click renames it (custom name wins over the OSC title).
                 // On the Document face the title is the file's name, unless the
-                // pane was renamed: the shell's own title describes a terminal
-                // that is not on screen.
-                let shown = (face_now == crate::workbench::Face::Document)
-                    .then(|| self.document_path())
-                    .flatten()
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().into_owned());
-                let label = self
-                    .name
-                    .clone()
-                    .or(shown)
-                    .unwrap_or_else(|| self.shown_title());
+                // pane was renamed — see `header_title`.
+                let label = self.header_title();
                 div()
                     .flex_1()
                     // min-width:0 lets the title actually shrink (a nowrap flex
