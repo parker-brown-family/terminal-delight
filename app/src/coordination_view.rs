@@ -135,8 +135,12 @@ impl Workspace {
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
                 let p = leaf.read(cx);
-                self.coord_off_limits_seen |= p.off_limits;
-                if mcp::should_expose(&self.mcp, p.mode.is_agent(), p.off_limits) {
+                self.coord_off_limits_seen |= p.agent_access.is_off_limits();
+                // The coordination view serves every agent at once, so a seated
+                // pane (reachable only along a line) is not in it.
+                if crate::warroom::anonymous_reach(&self.mcp, &p.party())
+                    >= crate::warroom::Reach::Read
+                {
                     authorized_projects.insert(id.clone(), name.clone());
                     visible.push(format!(
                         "{:?}:{}",

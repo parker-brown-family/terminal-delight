@@ -29,7 +29,7 @@ use std::time::Instant;
 
 use crate::mcp::{Expose, McpConfig};
 
-/// The settings an agent may ask a person to change. Five, and only these.
+/// The settings an agent may ask a person to change. Six, and only these.
 ///
 /// The narrowing twins of the last three are left out on purpose: an agent
 /// that wants less access can simply not use it, and every extra verb is one
@@ -47,16 +47,25 @@ pub enum Change {
     ExposeShells,
     /// Let agents tail other agents' transcripts.
     EventsOn,
+    /// A bypass line in the War Room: ask one pane directly, past the chart,
+    /// for a few prompts (three unless the person picks another count).
+    AskLine,
+    /// A read-only copy of an agent, over the person's press limit or of
+    /// unknown size. Not on the wire: only the window raises it, from an
+    /// `ask_agent` with `copy`, so no agent can put one on the rail by name.
+    Copy,
 }
 
 impl Change {
-    /// Every change, in the order the tool description lists them.
-    pub const ALL: [Change; 5] = [
+    /// Every change an agent can name, in the order the tool description
+    /// lists them. [`Change::Copy`] is not among them.
+    pub const ALL: [Change; 6] = [
         Change::OpenPane,
         Change::ClosePane,
         Change::WritesOn,
         Change::ExposeShells,
         Change::EventsOn,
+        Change::AskLine,
     ];
 
     /// The name on the wire, which is also the name in the answer line.
@@ -67,6 +76,8 @@ impl Change {
             Change::WritesOn => "writes_on",
             Change::ExposeShells => "expose_shells",
             Change::EventsOn => "events_on",
+            Change::AskLine => "ask_line",
+            Change::Copy => "copy",
         }
     }
 
@@ -76,7 +87,10 @@ impl Change {
 
     /// Whether the change is about one pane, and so needs that pane's pid.
     pub fn needs_pane(self) -> bool {
-        matches!(self, Change::OpenPane | Change::ClosePane)
+        matches!(
+            self,
+            Change::OpenPane | Change::ClosePane | Change::AskLine | Change::Copy
+        )
     }
 
     /// What a person reads on the rail row, in their words rather than ours.
@@ -89,17 +103,30 @@ impl Change {
     /// line the agent gets back ([`Self::done_words`], [`Self::kept_words`])
     /// stays English.
     pub fn ask_words(self, title: Option<&str>) -> String {
+        self.ask_words_reading(title, None)
+    }
+
+    /// [`Self::ask_words`], with what a copy would read (`None`: unknown).
+    pub fn ask_words_reading(self, title: Option<&str>, reads: Option<u64>) -> String {
         let t = &crate::lang::current().strings().parts;
         let pane = match title {
             Some(name) => format!("\u{201c}{}\u{201d}", one_line(name)),
             None => t.access_ask_a_pane.to_string(),
         };
         match self {
+            Change::Copy => match reads {
+                Some(n) => crate::lang::fill(
+                    t.access_ask_copy,
+                    &[("pane", &pane), ("tokens", &crate::hud::fmt_tokens(n))],
+                ),
+                None => crate::lang::fill(t.access_ask_copy_unknown, &[("pane", &pane)]),
+            },
             Change::OpenPane => crate::lang::fill(t.access_ask_open_pane, &[("pane", &pane)]),
             Change::ClosePane => crate::lang::fill(t.access_ask_close_pane, &[("pane", &pane)]),
             Change::WritesOn => t.access_ask_writes_on.into(),
             Change::ExposeShells => t.access_ask_expose_shells.into(),
             Change::EventsOn => t.access_ask_events_on.into(),
+            Change::AskLine => crate::lang::fill(t.access_ask_ask_line, &[("pane", &pane)]),
         }
     }
 
@@ -112,6 +139,10 @@ impl Change {
             Change::WritesOn => "MCP writes are on".into(),
             Change::ExposeShells => "plain shells are shown to agents".into(),
             Change::EventsOn => "agents' tool calls are shown to agents".into(),
+            Change::AskLine => {
+                format!("you may ask {pane} directly, for the prompts on the bypass line")
+            }
+            Change::Copy => format!("a read-only copy of {pane} is answering"),
         }
     }
 
@@ -124,6 +155,8 @@ impl Change {
             Change::WritesOn => "MCP writes stay off".into(),
             Change::ExposeShells => "only agent panes are shown to agents".into(),
             Change::EventsOn => "agents' tool calls stay hidden".into(),
+            Change::AskLine => format!("no line reaches {pane} from your seat"),
+            Change::Copy => format!("no copy of {pane} was started"),
         }
     }
 }
@@ -177,7 +210,31 @@ pub struct Ask {
     pub why: String,
     /// When the ask arrived, so the row can say how long it has waited.
     pub at: Instant,
+    /// How serious the ask is — the rail's colour and glyph. Assessed by the
+    /// window when the ask arrives (`warroom::risk`); `None` until then.
+    pub risk: Option<crate::coordination::Severity>,
+    /// For a bypass: the prompts it grants, three unless the person picks
+    /// another count on the card before pressing Yes.
+    pub prompts: u8,
+    /// For a copy: what it would read per model call, in tokens. `None` is
+    /// unknown, which is why the card is on the rail at all.
+    pub reads: Option<u64>,
+    /// For a copy: the ask it answers, in the window's book.
+    pub ask_id: Option<crate::warroom::AskId>,
 }
+
+impl Ask {
+    /// What a person reads on the rail row.
+    pub fn words(&self) -> String {
+        self.change
+            .ask_words_reading(self.title.as_deref(), self.reads)
+    }
+}
+
+/// The prompts a bypass grants unless the person picks another count.
+pub const BYPASS_PROMPTS: u8 = 3;
+/// The counts the rail offers for a bypass.
+pub const BYPASS_CHOICES: [u8; 3] = [1, 3, 10];
 
 /// A person's answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,6 +263,10 @@ pub enum Outcome {
 pub struct Now<'a> {
     pub pane_off_limits: Option<bool>,
     pub mcp: &'a McpConfig,
+    /// For `ask_line`: `None` when the asker or the pane is not seated in the
+    /// War Room (a line runs between seats), else whether a line from the
+    /// asker's seat already reaches the pane as far as ask.
+    pub line_reaches_ask: Option<bool>,
 }
 
 /// Why there is nothing to ask, or `None` when the ask can stand.
@@ -238,6 +299,23 @@ pub fn nothing_to_ask(change: Change, pid: Option<u32>, now: &Now) -> Option<Str
             .mcp
             .events
             .then(|| "agents' tool calls are already shown".to_string()),
+        Change::AskLine => match (now.pane_off_limits, now.line_reaches_ask) {
+            (None, _) => Some(match pid {
+                Some(p) => format!("no pane with pid {p} in this window"),
+                None => "a bypass is to one pane, and none was named".to_string(),
+            }),
+            (Some(true), _) => Some(format!("{pane} is off-limits; no line can reach it")),
+            (Some(false), None) => Some(format!(
+                "a line runs between War Room seats, and your pane or {pane} is not seated; \
+                 only a person seats panes, in the War Room"
+            )),
+            (Some(false), Some(true)) => Some(format!(
+                "a line from your seat already reaches {pane} as far as ask"
+            )),
+            (Some(false), Some(false)) => None,
+        },
+        // Raised by the window, which has already decided it stands.
+        Change::Copy => None,
     }
 }
 
@@ -253,7 +331,7 @@ pub fn grant_config(change: Change, mcp: &mut McpConfig) -> Option<Outcome> {
         }
     };
     match change {
-        Change::OpenPane | Change::ClosePane => None,
+        Change::OpenPane | Change::ClosePane | Change::AskLine | Change::Copy => None,
         Change::WritesOn => Some(flip(&mut mcp.writable)),
         Change::EventsOn => Some(flip(&mut mcp.events)),
         Change::ExposeShells => Some(if matches!(mcp.expose, Expose::All) {
@@ -291,6 +369,15 @@ pub fn answer_line(tag: Option<&str>, ask: &Ask, answer: Answer, outcome: Outcom
         Some(p) => format!("{} {p}", ask.change.wire()),
         None => ask.change.wire().to_string(),
     };
+    // A copy was asked for through `ask_agent`, and is read back by its id.
+    let (verb, then) = match (ask.change, ask.ask_id) {
+        (Change::Copy, Some(id)) => (
+            "ask_agent",
+            format!("; read it with ask_answer {{\"ask_id\": {}}}", id.0),
+        ),
+        (Change::Copy, None) => ("ask_agent", String::new()),
+        _ => ("request_access", String::new()),
+    };
     let said = match answer {
         Answer::Yes => "yes",
         Answer::No => "no",
@@ -301,7 +388,23 @@ pub fn answer_line(tag: Option<&str>, ask: &Ask, answer: Answer, outcome: Outcom
         Outcome::AlreadySo => format!("{} already", ask.change.done_words(ask.pid)),
         Outcome::Gone => format!("{} has closed, so nothing changed", pane_words(ask.pid)),
     };
-    one_line(&format!("{sign} request_access {what}: {said}, {result}"))
+    let then = if answer == Answer::Yes {
+        then
+    } else {
+        String::new()
+    };
+    one_line(&format!("{sign} {verb} {what}: {said}, {result}{then}"))
+}
+
+/// The first [`WHY_MAX_WORDS`] words of `text`, on one line: what a copy's
+/// card shows of the question it would answer.
+pub fn excerpt(text: &str) -> String {
+    let flat = one_line(text);
+    let words: Vec<&str> = flat.split(' ').collect();
+    if words.len() <= WHY_MAX_WORDS {
+        return flat;
+    }
+    format!("{}\u{2026}", words[..WHY_MAX_WORDS].join(" "))
 }
 
 /// Every control character becomes a space and runs of whitespace become one.
@@ -322,6 +425,45 @@ fn one_line(s: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn ask_line_is_a_wire_change_about_one_pane() {
+        assert_eq!(Change::parse("ask_line"), Some(Change::AskLine));
+        assert!(Change::AskLine.needs_pane());
+        assert_eq!(
+            grant_config(Change::AskLine, &mut McpConfig::default()),
+            None,
+            "not a window switch"
+        );
+    }
+
+    /// A bypass runs between two War Room seats: no pane, an off-limits pane,
+    /// an unseated pane and a line that already reaches each leave nothing to
+    /// ask, each in its own words.
+    #[test]
+    fn an_ask_line_needs_two_seats_and_no_line_that_reaches() {
+        let on = McpConfig {
+            enabled: true,
+            ..McpConfig::default()
+        };
+        let now = |off: Option<bool>, reaches: Option<bool>| Now {
+            pane_off_limits: off,
+            mcp: &on,
+            line_reaches_ask: reaches,
+        };
+        let why = |off, reaches| nothing_to_ask(Change::AskLine, Some(7), &now(off, reaches));
+        assert!(why(None, None).unwrap().contains("no pane with pid 7"));
+        assert!(why(Some(true), Some(false)).unwrap().contains("off-limits"));
+        assert!(why(Some(false), None).unwrap().contains("not seated"));
+        assert!(why(Some(false), Some(true))
+            .unwrap()
+            .contains("already reaches"));
+        assert_eq!(
+            why(Some(false), Some(false)),
+            None,
+            "two seats and no line: the ask stands"
+        );
+    }
+
     fn ask(change: Change, pid: Option<u32>) -> Ask {
         Ask {
             change,
@@ -329,7 +471,40 @@ mod tests {
             title: None,
             why: "reason".into(),
             at: Instant::now(),
+            risk: None,
+            prompts: crate::access::BYPASS_PROMPTS,
+            reads: None,
+            ask_id: None,
         }
+    }
+
+    /// Only the window raises a copy card: no wire name parses to it, so an
+    /// agent cannot ask for one through `request_access`.
+    #[test]
+    fn copy_is_not_a_wire_change() {
+        assert!(!Change::ALL.contains(&Change::Copy));
+        assert_eq!(Change::parse("copy"), None);
+        assert_eq!(Change::parse(Change::Copy.wire()), None);
+        assert_eq!(grant_config(Change::Copy, &mut McpConfig::default()), None);
+    }
+
+    #[test]
+    fn a_copy_card_names_what_it_reads_and_its_answer_names_the_ask() {
+        let mut a = ask(Change::Copy, Some(200));
+        a.title = Some("auth refactor".into());
+        a.reads = Some(560_000);
+        a.ask_id = Some(crate::warroom::AskId(41));
+        assert!(a.words().contains("560.0k"), "{}", a.words());
+        a.reads = None;
+        assert!(a.words().contains("unknown"), "{}", a.words());
+        let yes = answer_line(Some("t"), &a, Answer::Yes, Outcome::Done);
+        assert!(
+            yes.starts_with("[workbench:t] ask_agent copy 200: yes"),
+            "{yes}"
+        );
+        assert!(yes.ends_with(r#"ask_answer {"ask_id": 41}"#), "{yes}");
+        let no = answer_line(Some("t"), &a, Answer::No, Outcome::Kept);
+        assert!(no.contains("no copy of pane 200 was started") && !no.contains("ask_answer"));
     }
 
     #[test]
@@ -344,9 +519,9 @@ mod tests {
     }
 
     #[test]
-    fn only_the_two_pane_changes_name_a_pane() {
+    fn only_the_pane_changes_and_the_bypass_name_a_pane() {
         let pane: Vec<_> = Change::ALL.into_iter().filter(|c| c.needs_pane()).collect();
-        assert_eq!(pane, [Change::OpenPane, Change::ClosePane]);
+        assert_eq!(pane, [Change::OpenPane, Change::ClosePane, Change::AskLine]);
     }
 
     #[test]
@@ -373,6 +548,7 @@ mod tests {
                 &Now {
                     pane_off_limits: off,
                     mcp: cfg,
+                    line_reaches_ask: None,
                 },
             )
         };
@@ -386,6 +562,7 @@ mod tests {
                 &Now {
                     pane_off_limits: Some(off),
                     mcp: &McpConfig::default(),
+                    line_reaches_ask: None,
                 },
             )
         };
@@ -398,6 +575,7 @@ mod tests {
                 &Now {
                     pane_off_limits: None,
                     mcp: cfg,
+                    line_reaches_ask: None,
                 },
             )
         };
@@ -428,7 +606,9 @@ mod tests {
                 Change::WritesOn => w.writable = true,
                 Change::ExposeShells => w.expose = Expose::All,
                 Change::EventsOn => w.events = true,
-                Change::OpenPane | Change::ClosePane => unreachable!(),
+                Change::OpenPane | Change::ClosePane | Change::AskLine | Change::Copy => {
+                    unreachable!()
+                }
             }
             w
         };
@@ -525,6 +705,9 @@ mod tests {
                 "set_off_limits",
                 "toggle_off_limits",
                 "access_ask",
+                "answer_copy",
+                "start_copy",
+                "grant_bypass",
             ] {
                 assert!(
                     !code.contains(forbidden),
@@ -533,5 +716,59 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A copy starts in two places only: from the ask itself when it reads no
+    /// more than the press limit, and from a person's Yes on its card. A third
+    /// caller would be a copy nobody priced or pressed.
+    #[test]
+    fn a_copy_starts_only_under_the_limit_or_on_a_press() {
+        // Everything before the test module: main.rs has test-only items
+        // well before its tests, and rail_answer sits between them.
+        let code = |source: &'static str| -> String {
+            source[..source.find("\nmod tests {").unwrap_or(source.len())]
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let view = code(include_str!("war_room_view.rs"));
+        let main = code(include_str!("main.rs"));
+        // Each call, with the function it sits in; the definition is not a call.
+        let starts: Vec<&str> = view
+            .match_indices("start_copy(")
+            .filter(|(i, _)| !view[..*i].ends_with("fn "))
+            .map(|(i, _)| &view[view[..i].rfind("fn ").unwrap_or(0)..i])
+            .collect();
+        assert_eq!(starts.len(), 2, "two callers of start_copy: {starts:?}");
+        assert!(
+            starts
+                .iter()
+                .any(|c| c.starts_with("fn ask_question")
+                    && c.ends_with("CopyStage::Running => self.")),
+            "the ask starts a copy only when it is priced to run"
+        );
+        assert!(
+            starts
+                .iter()
+                .any(|c| c.starts_with("fn answer_copy") && c.contains("access::Answer::Yes =>")),
+            "a press starts a copy only on Yes"
+        );
+        assert!(
+            !main.contains("start_copy("),
+            "main.rs starts no copy of its own"
+        );
+        let answers: Vec<usize> = main.match_indices("answer_copy(").map(|(i, _)| i).collect();
+        assert_eq!(answers.len(), 1, "one caller of answer_copy");
+        let caller = &main[main[..answers[0]].rfind("fn ").unwrap()..answers[0]];
+        assert!(
+            caller.starts_with("fn rail_answer"),
+            "only the rail answers a copy card"
+        );
+        assert_eq!(
+            view.matches("answer_copy(").count(),
+            1,
+            "war_room_view.rs only defines answer_copy"
+        );
     }
 }

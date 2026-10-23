@@ -2911,15 +2911,19 @@ pub struct TerminalView {
     /// window is a process away from the terminal, and a reading that comes
     /// back empty is not evidence that the recipe was wrong.
     staged: crate::session::PaneRestore,
-    /// A person marked this pane off-limits to agents: no agent reads it or
-    /// writes to it through MCP, except the one running inside it acting on
-    /// its own pane (see `mcp::may_write`), and the control socket's bench
-    /// verbs never pick it. Set and cleared ONLY by a person: the terminal's
-    /// right-click menu, or a Yes on the rail to an agent's `request_access`
-    /// — no control-socket or MCP verb reaches it, because both answer
-    /// agents, and a lock an agent can lift is decoration. Persisted per leaf
-    /// in the state file.
-    pub off_limits: bool,
+    /// A person's position for this pane, for every agent: open, read-only
+    /// (agents may watch and ask, never write or type into its bench) or
+    /// off-limits (no agent reads it or writes to it through MCP, except the
+    /// one running inside it acting on its own pane — see
+    /// `warroom::may_write` — and the control socket's bench verbs never pick
+    /// it). Set and cleared ONLY by a person: the terminal's right-click menu,
+    /// or a Yes on the rail to an agent's `request_access` — no control-socket
+    /// or MCP verb reaches it, because both answer agents, and a lock an agent
+    /// can lift is decoration. Persisted per leaf in the state file.
+    pub agent_access: crate::warroom::AgentAccess,
+    /// This pane's seat in the War Room, once a person seats it. Saved with
+    /// the leaf so it outlives the pane's number (see `warroom::SeatId`).
+    pub seat: Option<crate::warroom::SeatId>,
     /// Whether this pane is in the tab being shown, written by the workspace
     /// on every draw (`Workspace::render`). An atomic so the workspace can set
     /// it while only reading the pane, and so it is never a frame stale.
@@ -4680,26 +4684,59 @@ impl TerminalView {
         self.hdr_overflow.is_some() || self.ctx_menu.is_some()
     }
 
-    /// The person's right-click: mark this pane off-limits to agents, or let
-    /// agents see it again. The only writer of [`Self::off_limits`] outside a
-    /// restore, on purpose — see the field.
-    pub(crate) fn toggle_off_limits(&mut self, cx: &mut Context<Self>) {
-        self.off_limits = !self.off_limits;
-        if !self.off_limits {
+    /// The position, set to a value: a person's choice in the right-click menu
+    /// or a Yes on the rail (`Workspace::rail_answer`) — the only writer of
+    /// [`Self::agent_access`] outside a restore. A person's press either way,
+    /// which is the whole rule of the field. Emits nothing when the
+    /// position is already so; a position that takes writes again releases any
+    /// bench input held while it did not.
+    pub(crate) fn set_agent_access(
+        &mut self,
+        access: crate::warroom::AgentAccess,
+        cx: &mut Context<Self>,
+    ) {
+        if self.agent_access == access {
+            return;
+        }
+        self.agent_access = access;
+        if access.takes_writes() {
             self.bench_drain(cx);
         }
         cx.emit(OffLimitsChanged);
         cx.notify();
     }
 
-    /// The same mark, set to a value rather than flipped: a person's Yes on
-    /// the rail to an agent that asked for this pane to be opened or closed
-    /// (`Workspace::rail_answer`). A person's press either way, which is the
-    /// whole rule of the field. Emits nothing when the mark is already so.
-    pub(crate) fn set_off_limits(&mut self, on: bool, cx: &mut Context<Self>) {
-        if self.off_limits != on {
-            self.toggle_off_limits(cx);
+    /// Seat this pane in the War Room, or take it off. Called from the War
+    /// Room panel only — a person's click — and saved with the leaf.
+    pub(crate) fn set_seat(
+        &mut self,
+        seat: Option<crate::warroom::SeatId>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.seat != seat {
+            self.seat = seat;
+            cx.notify();
         }
+    }
+
+    /// This pane as the War Room's rules see it.
+    pub(crate) fn party(&self) -> crate::warroom::Party {
+        crate::warroom::Party {
+            seat: self.seat,
+            is_agent: self.mode.is_agent(),
+            access: self.agent_access,
+        }
+    }
+
+    /// The off-limits mark alone, as a Yes to `open_pane` / `close_pane` sets
+    /// it: closing makes the pane off-limits, opening makes it fully open.
+    pub(crate) fn set_off_limits(&mut self, on: bool, cx: &mut Context<Self>) {
+        let access = if on {
+            crate::warroom::AgentAccess::OffLimits
+        } else {
+            crate::warroom::AgentAccess::Open
+        };
+        self.set_agent_access(access, cx);
     }
 
     /// Plain spawn (no restore context); kept for `cx.new(TerminalView::new)`.
@@ -5131,7 +5168,8 @@ impl TerminalView {
             pane_id,
             guard,
             superseded: false,
-            off_limits: false,
+            agent_access: crate::warroom::AgentAccess::Open,
+            seat: None,
             staged: restore.clone(),
             title: DEFAULT_TITLE.into(),
             name: None,
@@ -10498,27 +10536,47 @@ impl Render for TerminalView {
                 // and MCP both answer agents, and a mark an agent could lift
                 // would be decoration.
                 .child(div().my(px(3.)).h(px(1.)).bg(faint.alpha(0.35)))
-                .child(
-                    row(
-                        if self.off_limits {
-                            crate::lang::current()
-                                .strings()
-                                .parts
-                                .pane_ctx_let_agents_see
+                // Three positions, the current one marked: open, read-only (agents
+                // may watch and ask, never write or type into the bench), and
+                // off-limits. Picking one is a person's choice of the position.
+                .children({
+                    use crate::warroom::AgentAccess;
+                    let parts = crate::lang::current().strings().parts;
+                    [
+                        (
+                            AgentAccess::Open,
+                            parts.pane_ctx_let_agents_see,
+                            "ctx-agents-open",
+                        ),
+                        (
+                            AgentAccess::ReadOnly,
+                            parts.pane_ctx_read_only,
+                            "ctx-agents-read-only",
+                        ),
+                        (
+                            AgentAccess::OffLimits,
+                            parts.pane_ctx_off_limits,
+                            "ctx-agents-off-limits",
+                        ),
+                    ]
+                    .into_iter()
+                    .map(|(access, label, id)| {
+                        let mark = if self.agent_access == access {
+                            "\u{25cf}"
                         } else {
-                            crate::lang::current().strings().parts.pane_ctx_off_limits
-                        },
-                        true,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|v, _, _, cx| {
-                            v.ctx_menu = None;
-                            cx.stop_propagation();
-                            v.toggle_off_limits(cx);
-                        }),
-                    ),
-                );
+                            "\u{25cb}"
+                        };
+                        row(&format!("{mark} {label}"), true).id(id).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |v, _, _, cx| {
+                                v.ctx_menu = None;
+                                cx.stop_propagation();
+                                v.set_agent_access(access, cx);
+                            }),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                });
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
         // PAINT mode — the wall-wide palette overlay (raised by `terminal-delight
@@ -11703,17 +11761,29 @@ impl Render for TerminalView {
                     // Off-limits sits with the controls on the right, which a
                     // narrow pane keeps while its title clips: it is the one
                     // thing on this header that changes what an agent may do.
-                    .children(self.off_limits.then(|| {
-                        div()
-                            .flex_none()
-                            .px(px(5. * scale))
-                            .rounded(sk.rad(4.))
-                            .border_1()
-                            .border_color(bar_fg.alpha(0.75))
-                            .text_color(bar_fg)
-                            .text_size(sk.text_px(9.5 * scale))
-                            .child(crate::lang::current().strings().parts.pane_off_limits_badge)
-                    }))
+                    .children({
+                        let parts = crate::lang::current().strings().parts;
+                        match self.agent_access {
+                            crate::warroom::AgentAccess::Open => None,
+                            crate::warroom::AgentAccess::ReadOnly => {
+                                Some(parts.pane_read_only_badge)
+                            }
+                            crate::warroom::AgentAccess::OffLimits => {
+                                Some(parts.pane_off_limits_badge)
+                            }
+                        }
+                        .map(|badge| {
+                            div()
+                                .flex_none()
+                                .px(px(5. * scale))
+                                .rounded(sk.rad(4.))
+                                .border_1()
+                                .border_color(bar_fg.alpha(0.75))
+                                .text_color(bar_fg)
+                                .text_size(sk.text_px(9.5 * scale))
+                                .child(badge)
+                        })
+                    })
                     .child(status)
                     .when(ui_close, |d| {
                         d.child(

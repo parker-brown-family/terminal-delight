@@ -171,10 +171,8 @@ const APP_KEY_FIXES = [
     why: 'a tab never crosses a group (main.rs, the tab move)' },
   { key: 'theme icon (top-right)', text: 'PALETTE — Themes, style and rules', to: ['🎨 (bottom-right)', null],
     why: 'the 🎨 sits bottom-right' },
-  { key: '🤖 (mother bar)', text: 'MCP — read-only agent-watch surface', drop: true,
-    why: 'the wall has no chrome glyph' },
-  { key: 'Ctrl+Shift+A', text: 'MCP — read-only agent-watch surface', to: [null, 'The agent wall: every agent pane as a card'],
-    why: 'OpenAgentPanel raises the agent wall (pane.rs, main.rs)' },
+  { key: '\u{f06a9} (agent counter, top right)', text: 'the War Room: who may reach whom, and the window\u2019s MCP switches', to: ['agent counter (top right)', 'The War Room: who may reach whom, and the window\u2019s MCP switches'],
+    why: 'the app draws the counter with an icon-font glyph the docs do not carry' },
   { key: 'wheel / shift+wheel', text: 'Pan a zoomed FOCUS read down / sideways', to: ['wheel', 'Pan a zoomed FOCUS read; it wraps, so only down'],
     why: 'the reader wraps and has no horizontal axis' },
   { key: 'Ctrl+Alt+T', text: 'New window (quick scratch)', to: [null, 'Opens Terminal Delight on GNOME, once scripts/install-hotkey.sh binds it'],
@@ -187,9 +185,13 @@ async function appKeys() {
   const block = lang.match(/pub const EN: Strings = Strings \{([\s\S]*?)\n\};/);
   if (!block) { fail(where, 'app/src/lang.rs has no EN strings block'); return []; }
   const en = {};
-  for (const m of block[1].matchAll(/^\s+(\w+): "((?:[^"\\]|\\.)*)",/gm)) {
-    en[m[1]] = m[2].replace(/\\u\{([0-9a-f]+)\}/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/\\"/g, '"');
-  }
+  const unescape = (v) => v.replace(/\\u\{([0-9a-f]+)\}/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/\\"/g, '"');
+  for (const m of block[1].matchAll(/^\s+(\w+): "((?:[^"\\]|\\.)*)",/gm)) en[m[1]] = unescape(m[2]);
+  /* the chrome strings (`s.ui.*`), which some rows use: the War Room's, for one */
+  const chrome = await readFile(join(ROOT, 'app', 'src', 'lang', 'chrome.rs'), 'utf8');
+  const chromeBlock = chrome.match(/pub const EN: Chrome = Chrome \{([\s\S]*?)\n\};/);
+  if (!chromeBlock) { fail(where, 'app/src/lang/chrome.rs has no EN block'); return []; }
+  for (const m of chromeBlock[1].matchAll(/^\s+(\w+): "((?:[^"\\]|\\.)*)",/gm)) en[`ui.${m[1]}`] = unescape(m[2]);
   const start = main.indexOf('let col_a = div()'), end = main.indexOf('// The FEATURES view', start);
   if (start < 0 || end < 0) { fail(where, 'the help sheet in app/src/main.rs moved; update appKeys()'); return []; }
   const region = main.slice(start, end), split = region.indexOf('let col_b');
@@ -197,11 +199,11 @@ async function appKeys() {
   const label = (expr) => {
     let m;
     if ((m = expr.match(/^"((?:[^"\\]|\\.)*)"$/))) return m[1];
-    if ((m = expr.match(/^s\.(\w+)$/))) return string(m[1]);
-    if ((m = expr.match(/^&format!\("((?:[^"\\]|\\.)*)",\s*s\.(\w+)\)$/))) return m[1].replace('{}', string(m[2]));
+    if ((m = expr.match(/^s\.((?:ui\.)?\w+)$/))) return string(m[1]);
+    if ((m = expr.match(/^&format!\("((?:[^"\\]|\\.)*)",\s*s\.((?:ui\.)?\w+)\)$/))) return unescape(m[1]).replace('{}', string(m[2]));
     fail(where, `a help row it cannot read: ${expr}`); return expr;
   };
-  const ROW = /row\(\s*("(?:[^"\\]|\\.)*"|&format!\("(?:[^"\\]|\\.)*",\s*s\.\w+\)|s\.\w+)\s*,\s*s\.(\w+)\s*\)/g;
+  const ROW = /row\(\s*("(?:[^"\\]|\\.)*"|&format!\("(?:[^"\\]|\\.)*",\s*s\.(?:ui\.)?\w+\)|s\.(?:ui\.)?\w+)\s*,\s*s\.((?:ui\.)?\w+)\s*\)/g;
   const cols = [region.slice(0, split), region.slice(split)].map((part) =>
     [...part.matchAll(/section\(\s*s\.(\w+),\s*vec!\[([\s\S]*?)\]\s*,?\s*\)/g)].map((sm) => ({
       title: string(sm[1]),

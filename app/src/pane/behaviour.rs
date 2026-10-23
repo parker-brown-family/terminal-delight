@@ -24,7 +24,7 @@ fn queued_input_waits_while_the_pane_is_off_limits(cx: &mut TestAppContext) {
         v.set_on_screen(false, cx);
         v.bench_deliver(b"queued-canary".to_vec(), cx);
         assert_eq!(v.bench_queued(), 1);
-        v.off_limits = true;
+        v.agent_access = crate::warroom::AgentAccess::OffLimits;
         v.set_on_screen(true, cx);
         assert_eq!(
             v.bench_queued(),
@@ -42,7 +42,7 @@ fn queued_input_waits_while_the_pane_is_off_limits(cx: &mut TestAppContext) {
         "queued input reached the host"
     );
     attached.pane.view.update(attached.pane.cx, |v, cx| {
-        v.off_limits = false;
+        v.agent_access = crate::warroom::AgentAccess::Open;
         v.bench_drain(cx);
         assert_eq!(v.bench_queued(), 0);
     });
@@ -59,7 +59,9 @@ fn queued_input_waits_while_the_pane_is_off_limits(cx: &mut TestAppContext) {
 fn synthetic_bench_pointer_refuses_off_limits_but_reaches_an_allowed_pane(cx: &mut TestAppContext) {
     let pane = Pane::running(cx, "exec cat");
     let view = pane.view.clone();
-    pane.view.update(pane.cx, |v, _| v.off_limits = true);
+    pane.view.update(pane.cx, |v, _| {
+        v.agent_access = crate::warroom::AgentAccess::OffLimits
+    });
     for click in [false, true] {
         let request = crate::ctl::PointerReq {
             click,
@@ -76,7 +78,9 @@ fn synthetic_bench_pointer_refuses_off_limits_but_reaches_an_allowed_pane(cx: &m
             "{said}"
         );
     }
-    pane.view.update(pane.cx, |v, _| v.off_limits = false);
+    pane.view.update(pane.cx, |v, _| {
+        v.agent_access = crate::warroom::AgentAccess::Open
+    });
     let said = pane.cx.update(|window, cx| {
         view.update(cx, |v, cx| {
             v.synthetic_pointer(
@@ -3401,15 +3405,19 @@ fn the_off_limits_toggle_marks_and_unmarks_the_pane_and_says_so(cx: &mut TestApp
         .detach();
     });
     assert!(
-        !pane.read(|v| v.off_limits),
+        !pane.read(|v| v.agent_access.is_off_limits()),
         "a pane starts visible to agents"
     );
-    pane.view.update(pane.cx, |v, cx| v.toggle_off_limits(cx));
+    pane.view.update(pane.cx, |v, cx| {
+        v.set_agent_access(crate::warroom::AgentAccess::OffLimits, cx)
+    });
     pane.redraw();
-    assert!(pane.read(|v| v.off_limits));
-    pane.view.update(pane.cx, |v, cx| v.toggle_off_limits(cx));
+    assert!(pane.read(|v| v.agent_access.is_off_limits()));
+    pane.view.update(pane.cx, |v, cx| {
+        v.set_agent_access(crate::warroom::AgentAccess::Open, cx)
+    });
     pane.redraw();
-    assert!(!pane.read(|v| v.off_limits));
+    assert!(!pane.read(|v| v.agent_access.is_off_limits()));
     assert_eq!(said.get(), 2, "each change is announced, for the save");
 }
 

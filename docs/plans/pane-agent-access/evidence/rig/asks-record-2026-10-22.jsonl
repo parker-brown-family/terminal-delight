@@ -1,0 +1,4 @@
+{"id":1792703067484,"at_ms":1792703067484,"from":101,"to":102,"via":"line","stage":"cheap","question_len":26,"question_sha256":"a670302bcdcdbe29fd4d655f0f7f68855ce61f824cb7d3c886618f7b98ea470b","program":"CLAUDE"}
+{"id":1792703067647,"at_ms":1792703067647,"from":101,"to":104,"via":"line","stage":"refused","refusal":"no_line","question_len":26,"question_sha256":"a670302bcdcdbe29fd4d655f0f7f68855ce61f824cb7d3c886618f7b98ea470b"}
+{"id":1792703067817,"at_ms":1792703067817,"from":101,"to":103,"via":"bypass","stage":"cheap","question_len":26,"question_sha256":"a670302bcdcdbe29fd4d655f0f7f68855ce61f824cb7d3c886618f7b98ea470b","program":"CLAUDE"}
+{"id":1792703067979,"at_ms":1792703067979,"from":101,"via":"none","stage":"refused","refusal":"no_line","question_len":26,"question_sha256":"a670302bcdcdbe29fd4d655f0f7f68855ce61f824cb7d3c886618f7b98ea470b"}

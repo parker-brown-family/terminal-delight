@@ -2,14 +2,14 @@
 {
   "title": "Agent wall",
   "description": "The agent wall shows every pane in the window as a card: which agent, where, what it's doing, and three bars read from its own transcript that say whether it should keep going, compact, hand off or stop.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "updated": "2026-10-22",
+  "trueOf": "feat/war-room at 0e93aaa3: the counter opens the War Room, the wall is Ctrl+Shift+A",
   "summary": "Every agent as a card, with three health bars"
 }
 </script>
 
 <section data-register="brief">
-<p class="lede">The agent wall shows every pane in the window as a card. Open it with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>, or by clicking the agent counter in the top right. Click a card and you're in that pane.</p>
+<p class="lede">The agent wall shows every pane in the window as a card. Open it with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>. Click a card and you're in that pane.</p>
 <p>Each card names the agent, the directory it's in, the model it's running and what it's doing right now. Cards are grouped the way your tabs are, and the chips across the top narrow them by group, by program and by state, so twelve agents can come down to the two that are blocked.</p>
 <p>A Claude agent's card also carries three bars, read from its own transcript: how full its context is, how worn it is, and how much of what it's holding is still about the task. When those add up to <b>STOP</b> or <b>HAND OFF</b>, the card turns up a red <code>CALL</code> chip and a <code>⚠</code>, because those two need a person to decide.</p>
 <p class="invite">Story explains the three bars. Technical has how each is computed.</p>
@@ -25,10 +25,9 @@
 <section data-register="technical" data-headline="Cards, bars and the call">
 <h3>Opening it</h3>
 <ul>
-  <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> from any pane.</li>
-  <li>The agent counter in the top right of the window. It counts <code>▶</code> working, <code>‖</code> blocked, <code>✕</code> error, <code>✓</code> finished, <code>○</code> idle and <code>?</code> unknown, and fills a cell only when that state needs you.</li>
-  <li><code>AGENTS · MCP</code>, first in the <code>…</code> menu.</li>
+  <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> from any pane. That is the only door now.</li>
 </ul>
+<p>The agent counter in the top right of the window opens the <a href="/mcp">War Room</a> instead, and so does <code>WAR ROOM</code> in the <code>…</code> menu. The counter counts <code>▶</code> working, <code>‖</code> blocked, <code>✕</code> error, <code>✓</code> finished, <code>○</code> idle and <code>?</code> unknown, and fills a cell only when that state needs you.</p>
 <p>Click outside the panel to close it. Clicking a card focuses that pane, switches to its tab and closes the wall.</p>
 
 <h3>The header</h3>

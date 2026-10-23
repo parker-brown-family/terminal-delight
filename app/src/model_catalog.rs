@@ -449,15 +449,34 @@ pub fn compact_label(raw: &str) -> Option<String> {
     )
 }
 
-struct Transport {
+/// One agent program spoken to in JSON lines over its stdin and stdout: the
+/// model list's runner, and the War Room's read-only copies (`askcopy.rs`).
+/// Its whole process group is killed when it is dropped, so a copy cannot
+/// outlive the ask that started it.
+pub(crate) struct Transport {
     child: Child,
-    input: ChildStdin,
+    /// `None` once [`Self::close_input`] has sent end-of-file.
+    input: Option<ChildStdin>,
     output: mpsc::Receiver<Result<Value, String>>,
     deadline: Instant,
+    /// The word its errors name: `catalog` for the model list, `copy` for a
+    /// copy, so neither reports the other's failure.
+    what: &'static str,
 }
 
 impl Transport {
     fn start(command: &mut Command) -> Result<Self, String> {
+        Self::start_with(command, DEADLINE, MAX_OUTPUT, "catalog")
+    }
+
+    /// Start `command` with its own deadline for the whole exchange and its
+    /// own cap on what it may print.
+    pub(crate) fn start_with(
+        command: &mut Command,
+        deadline: Duration,
+        max_output: u64,
+        what: &'static str,
+    ) -> Result<Self, String> {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -470,7 +489,7 @@ impl Transport {
         let (sender, output) = mpsc::sync_channel(8);
         std::thread::spawn(move || {
             use std::io::Read;
-            let mut reader = BufReader::new(stdout.take(MAX_OUTPUT + 1));
+            let mut reader = BufReader::new(stdout.take(max_output + 1));
             let mut consumed = 0;
             loop {
                 let mut line = String::new();
@@ -478,18 +497,18 @@ impl Transport {
                     Ok(0) => break,
                     Ok(size) => {
                         consumed += size as u64;
-                        if consumed > MAX_OUTPUT {
-                            let _ = sender.send(Err("catalog output exceeded limit".into()));
+                        if consumed > max_output {
+                            let _ = sender.send(Err(format!("{what} output exceeded limit")));
                             break;
                         }
                         let value =
-                            serde_json::from_str(&line).map_err(|_| "invalid catalog JSON".into());
+                            serde_json::from_str(&line).map_err(|_| format!("invalid {what} JSON"));
                         if sender.send(value).is_err() {
                             break;
                         }
                     }
                     Err(_) => {
-                        let _ = sender.send(Err("cannot read agent catalog".into()));
+                        let _ = sender.send(Err(format!("cannot read agent {what}")));
                         break;
                     }
                 }
@@ -497,28 +516,45 @@ impl Transport {
         });
         Ok(Self {
             child,
-            input,
+            input: Some(input),
             output,
-            deadline: Instant::now() + DEADLINE,
+            deadline: Instant::now() + deadline,
+            what,
         })
     }
 
-    fn send(&mut self, value: Value) -> Result<(), String> {
-        writeln!(self.input, "{value}").map_err(|_| "cannot request agent catalog".to_string())?;
-        self.input
-            .flush()
-            .map_err(|_| "cannot flush catalog request".into())
+    pub(crate) fn send(&mut self, value: Value) -> Result<(), String> {
+        self.send_text(&value.to_string())
     }
 
-    fn next(&self) -> Result<Value, String> {
+    /// One line of plain text, for a program that reads its prompt from stdin.
+    pub(crate) fn send_text(&mut self, text: &str) -> Result<(), String> {
+        let what = self.what;
+        let input = self
+            .input
+            .as_mut()
+            .ok_or_else(|| format!("{what} input already closed"))?;
+        writeln!(input, "{text}").map_err(|_| format!("cannot request agent {what}"))?;
+        input
+            .flush()
+            .map_err(|_| format!("cannot flush {what} request"))
+    }
+
+    /// End-of-file on the program's stdin.
+    pub(crate) fn close_input(&mut self) {
+        self.input = None;
+    }
+
+    pub(crate) fn next(&self) -> Result<Value, String> {
         let remaining = self.deadline.saturating_duration_since(Instant::now());
-        self.output.recv_timeout(remaining).map_err(|error| {
-            match error {
-                mpsc::RecvTimeoutError::Timeout => "catalog request timed out",
-                mpsc::RecvTimeoutError::Disconnected => "agent closed catalog connection",
-            }
-            .to_string()
-        })?
+        self.output
+            .recv_timeout(remaining)
+            .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout => format!("{} request timed out", self.what),
+                mpsc::RecvTimeoutError::Disconnected => {
+                    format!("agent closed {} connection", self.what)
+                }
+            })?
     }
 
     fn response(&self, id: u64) -> Result<Value, String> {

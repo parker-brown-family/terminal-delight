@@ -86,9 +86,18 @@ line arrives prefixed `[workbench:<tag>]`, so the agent can tell its own person'
 else's. (`ctl bench type` only fills the composer and writes nothing to the terminal.) So the
 sentence above is true of `adopt` and not of the socket: any process running as you can put a line
 in front of an agent on screen, the bench's way. **Since 0.5 development a pane marked off-limits
-(`docs/mcp.md`) takes none of them:** the bench verbs skip it when they pick a pane (`main.rs`, with
-`!v.off_limits` in each picker), and a synthetic click or hover is refused again at dispatch
-(`pane/bench.rs`), so a pane that became off-limits after the pick still takes nothing.
+or read-only (`docs/mcp.md`) takes none of them:** the bench verbs skip it when they pick a pane
+(`main.rs`, with `v.agent_access.takes_writes()` in each write picker), and a synthetic click or
+hover is refused again at dispatch (`pane/bench.rs`), so a pane whose position changed after the
+pick still takes nothing.
+
+**The War Room's asks add no way in.** `ask_agent` answers from what the window already shows, and
+writes nothing anywhere. A copy (`ask_agent` with `copy`) is a new process, started by the window
+with its own stdin pipe; the question goes down that pipe, and the asked agent's terminal and
+conversation are never touched (`app/src/askcopy.rs`). The only line typed into anybody's terminal
+is the rail's answer to the asking agent after a person presses Yes or No: the same signed bench
+line `request_access` answers have always used. A copy finishing types nothing: that line would be
+signed as the person's, and no person acted.
 
 **And a plugin this repository ships puts that verb in front of agents.** `plugins/td-send/`
 declares `pull_workspace` and describes itself as "the ⇄ desk-consolidation verbs td-send

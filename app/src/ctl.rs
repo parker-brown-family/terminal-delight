@@ -139,7 +139,7 @@ fn bench_outcome(rx: mpsc::Receiver<String>) -> String {
         .unwrap_or_else(|_| "err the window did not answer".into())
 }
 
-/// One field of the MCP control-surface policy — the robot panel's toggles.
+/// One field of the MCP control-surface policy — the War Room's switches.
 /// The socket refuses every one of them, in either direction, unless the window
 /// was launched to be scripted — see [`PolicyControl`]. A scripted window applies
 /// them like the panel's press: it writes `ws.mcp` and `save()`s, so the change
@@ -167,7 +167,7 @@ impl McpPolicy {
             Self::ExposeAll(true) => "mcp expose all",
             Self::ExposeAll(false) => "mcp expose agents",
         };
-        format!("err {verb}: nothing changed. Global MCP policy is a person's choice in the MCP control panel (Ctrl+Shift+A). An agent can propose wider access with request_access when MCP is on; it cannot change global switches, including disabling other workloads. Operator scripts must launch their own window with TD_MCP_SCRIPTED=1.")
+        format!("err {verb}: nothing changed. Global MCP policy is a person's choice in the War Room (the agent counter, top right). An agent can propose wider access with request_access when MCP is on; it cannot change global switches, including disabling other workloads. Operator scripts must launch their own window with TD_MCP_SCRIPTED=1.")
     }
 }
 
@@ -1191,7 +1191,7 @@ pub fn start(cx: &mut Context<Workspace>) {
                     Req::DocNote(cmd, reply) => {
                         let _ = reply.send(ws.doc_note(cmd, cx));
                     }
-                    // The same escalation the robot panel performs, and the same
+                    // The same escalation the War Room's switch performs, and the same
                     // persistence: a grant made from the CLI shows in the panel
                     // and survives a restart.
                     // An id the window does not know still gets refused here —
@@ -3121,7 +3121,7 @@ mod tests {
             assert!(reply.starts_with("err"), "{verb}: {reply}");
             for word in [
                 "nothing changed",
-                "Ctrl+Shift+A",
+                "War Room",
                 "request_access",
                 "TD_MCP_SCRIPTED=1",
             ] {

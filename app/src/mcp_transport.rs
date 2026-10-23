@@ -61,6 +61,9 @@ enum UiReq {
     /// workspace has handled the pane's request — after this tick — so the
     /// sender travels with the request rather than being answered here.
     Open(mcp::OpenRequest, mpsc::Sender<String>),
+    /// `ask_agent`: an agent's question for another, decided and answered by
+    /// the window, which holds the War Room's chart and the seat facts.
+    Ask(mcp::AskCall, mpsc::Sender<mcp::AskReply>),
 }
 
 /// Build a uniform refusal for a whole batch (used when the UI is gone/wedged).
@@ -222,6 +225,18 @@ pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::
                             alive = false;
                         }
                     }
+                    Ok(UiReq::Ask(request, reply)) => {
+                        match this.update(cx, |ws, cx| ws.ask_bridge(&request, cx)) {
+                            Ok(answer) => {
+                                let _ = reply.send(answer);
+                            }
+                            Err(_) => {
+                                let _ = reply
+                                    .send(mcp::AskReply::Refused(crate::warroom::Refusal::Gone));
+                                alive = false;
+                            }
+                        }
+                    }
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => return, // reader gone
                 }
@@ -272,6 +287,7 @@ fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot
         coordination: Some(ws.coord_authorized.clone()),
         engineering_allowed: ws.coordination_full_scope(),
         documents: ws.mcp_documents(cx),
+        chart: ws.chart.clone(),
     }
 }
 
@@ -378,13 +394,33 @@ pub(crate) fn respond_as(
                     Err(_) => Err("terminal-delight UI not ready".to_string()),
                 }
             };
-            mcp::handle_line_full(
+            let ask = |call: &mcp::AskCall| -> mcp::AskReply {
+                let gone = || mcp::AskReply::Refused(crate::warroom::Refusal::Gone);
+                // A copy is priced here, on this connection's thread: which
+                // conversation the pane holds is a fact about the whole
+                // window, and reading its size is file work the window's
+                // thread must not wait on.
+                let mut call = call.clone();
+                if let mcp::AskCall::Question(req) = &mut call {
+                    if req.copy {
+                        let bound = paneident::resolve(&fleet_facts(&snap.panes), &home);
+                        req.price = Some(crate::askcopy::price(&bound, req.target));
+                    }
+                }
+                let (tx, rx) = mpsc::channel();
+                if !bridge_send(UiReq::Ask(call, tx)) {
+                    return gone();
+                }
+                rx.recv_timeout(SNAPSHOT_BUDGET).unwrap_or_else(|_| gone())
+            };
+            mcp::handle_line_asking(
                 line,
                 &snap,
                 |p, n| tail_for(p, &snap.panes, n, &home),
                 apply,
                 search,
                 open,
+                ask,
             )
         }
         Err(RecvTimeoutError::Disconnected) | Err(RecvTimeoutError::Timeout) => {
@@ -487,14 +523,27 @@ fn notify_loop(
         // also re-walk every transcript in every project directory.
         let bound = paneident::certain(&fleet_facts(&snap.panes), &home);
         let mut tailed: HashMap<u32, Vec<mcp::ToolEvent>> = HashMap::new();
-        for p in snap.panes.iter().filter(|p| p.exposed && p.is_agent) {
+        // Pushed events reach every connection at once, so each pane carries
+        // the reach an agent nobody can name gets: a seated pane is not pushed.
+        let pushable: Vec<mcp::PaneInfo> = snap
+            .panes
+            .iter()
+            .map(|p| mcp::PaneInfo {
+                reach: Some(crate::warroom::anonymous_reach(&snap.config, &p.party())),
+                ..p.clone()
+            })
+            .collect();
+        for p in pushable
+            .iter()
+            .filter(|p| p.is_agent && p.reach >= Some(crate::warroom::Reach::Read))
+        {
             let events = match bound.get(&p.pid) {
                 Some(path) => mcp_tail::tail_tool_events(path, PUSH_TAIL),
                 None => vec![],
             };
             tailed.insert(p.pid, events);
         }
-        for n in watcher.diff(&snap.panes, &tailed) {
+        for n in watcher.diff(&pushable, &tailed) {
             if out_tx.send(mcp::encode_notification(&n)).is_err() {
                 return; // writer gone
             }
@@ -532,7 +581,9 @@ mod tests {
                 session: Some("claude --resume x".into()),
                 tool: None,
                 note: None,
-                exposed: true,
+                reach: None,
+                access: crate::warroom::AgentAccess::Open,
+                seat: None,
                 grade: mcp::GradeReport::default(),
             }],
             outer_grade: mcp::GradeReport::default(),
@@ -546,6 +597,7 @@ mod tests {
             coordination: None,
             engineering_allowed: false,
             documents: vec![],
+            chart: crate::warroom::Chart::default(),
         }
     }
 

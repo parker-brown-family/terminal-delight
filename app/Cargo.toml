@@ -73,6 +73,8 @@ libc = "0.2.186"
 gpui_wgpu = { path = "../../zed-upstream/crates/gpui_wgpu" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
+# The ask record keeps a question's fingerprint instead of its words.
+sha2 = "0.10"
 toml = "0.8"
 
 [dev-dependencies]
