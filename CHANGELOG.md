@@ -102,6 +102,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added for 0.5.0 development
 
+- **War Room pane search and session cards.** Type fuzzy words across project,
+  tab and pane title, or use `project:tab:pane` to search each field separately.
+  Every pane has a card with session age and current context tokens. Age comes
+  from the conversation's first recorded timestamp and survives a resume;
+  unavailable measurements say unknown. Escape clears the search, then closes
+  the panel. Searching clears any half-drawn line.
 - **The War Room: an org chart of agents that decides who may ask whom.** The
   agent counter, top right, opens it over the panes (and the `…` menu lists it
   when the counter is hidden). Seat an agent with its **Seat** button, then click

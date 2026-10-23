@@ -4543,6 +4543,8 @@ struct Workspace {
     /// The War Room is open: the panel the agent counter and the `…` row
     /// raise. The agent wall stays reachable only by Ctrl+Shift+A.
     war_room: bool,
+    /// Fuzzy search across project, tab and pane title while the panel is open.
+    war_room_query: EditBuffer,
     /// The seat a person clicked first in the War Room; a click on another
     /// seat draws a line from this one to it.
     war_room_pick: Option<warroom::SeatId>,
@@ -6252,6 +6254,7 @@ impl Workspace {
             ask_press_tokens: saved.ask_press_tokens,
             mcp_menu: false,
             war_room: false,
+            war_room_query: EditBuffer::seeded(""),
             war_room_pick: None,
             ask_seq: 0,
             ask_numbers: None,
@@ -35620,6 +35623,10 @@ impl Render for Workspace {
             // when the pane it reads does not hold the keyboard, and otherwise by
             // that pane, which has to hear the Esc (`escape_closes_the_reader`).
             .capture_key_down(cx.listener(|ws, ev: &KeyDownEvent, window, cx| {
+                if ws.war_room_capture_key(&ev.keystroke, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
                 if ev.keystroke.key.as_str() == "escape" && ws.close_popups() {
                     cx.stop_propagation();
                     cx.notify();

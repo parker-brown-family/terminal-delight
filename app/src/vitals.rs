@@ -286,6 +286,8 @@ pub struct Vitals {
     /// The current context, or `None` when nothing measured it. See
     /// [`WindowStat::tokens`].
     pub tokens: Option<u64>,
+    /// Earliest real transcript timestamp, in Unix milliseconds.
+    pub started_ms: Option<i64>,
     pub limit: u64,
     pub turns_left: Option<u64>,
     pub ballast: Option<u64>,
@@ -1435,6 +1437,7 @@ pub fn from_body(body: &str, stamp: (u64, u64)) -> Option<Vitals> {
         }),
         effort: t.effort.as_deref().map(|e| e.to_uppercase()),
         tokens: win.tokens,
+        started_ms: t.started,
         limit: win.limit,
         turns_left: win.turns_left,
         ballast: rel.ballast,
@@ -1468,6 +1471,7 @@ pub(crate) struct CodexWindow {
     pub window: u64,
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub started_ms: Option<i64>,
 }
 
 /// Read a Codex rollout's last `token_count` and `turn_context`. `None` until
@@ -1476,13 +1480,20 @@ pub(crate) struct CodexWindow {
 pub(crate) fn codex_window(body: &str) -> Option<CodexWindow> {
     let mut last: Option<(u64, u64)> = None;
     let (mut model, mut effort) = (None, None);
+    let mut started_ms = None;
     for line in body.lines() {
-        if !line.contains("\"token_count\"") && !line.contains("\"turn_context\"") {
+        if !line.contains("\"token_count\"")
+            && !line.contains("\"turn_context\"")
+            && !line.contains("\"timestamp\"")
+        {
             continue;
         }
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
+        if let Some(ts) = parse_ts(v.get("timestamp").and_then(Value::as_str)) {
+            started_ms = Some(started_ms.map_or(ts, |old: i64| old.min(ts)));
+        }
         let Some(payload) = v.get("payload") else {
             continue;
         };
@@ -1520,6 +1531,7 @@ pub(crate) fn codex_window(body: &str) -> Option<CodexWindow> {
         window,
         model,
         effort,
+        started_ms,
     })
 }
 
@@ -1562,6 +1574,7 @@ fn from_codex(body: &str, stamp: (u64, u64)) -> Option<Vitals> {
         model_id: c.model,
         effort: c.effort.map(|e| e.to_uppercase()),
         tokens: Some(c.tokens),
+        started_ms: c.started_ms,
         limit: c.window,
         turns_left: None,
         ballast: None,
@@ -2351,6 +2364,44 @@ mod tests {
             from_body(&body, (1, 2)).is_none(),
             "not read as a Claude transcript"
         );
+        assert_eq!(
+            vit.started_ms, None,
+            "missing timestamps are not session age zero"
+        );
+        let resumed = format!(
+            "{}\n{}\n{body}",
+            r#"{"type":"session_meta","timestamp":"2026-10-20T08:00:00Z","payload":{}}"#,
+            r#"{"type":"turn_context","timestamp":"2026-10-23T09:00:00Z","payload":{}}"#
+        );
+        assert_eq!(
+            from_codex(&resumed, (1, 2)).unwrap().started_ms,
+            parse_ts(Some("2026-10-20T08:00:00Z")),
+            "resume preserves the conversation's beginning"
+        );
+    }
+
+    #[test]
+    fn claude_session_age_uses_the_first_real_record() {
+        let mut b = Build::new();
+        b.assistant(1000, 0, 50, &[]);
+        let body = format!(
+            "{}\n{}\n{}",
+            r#"{"type":"assistant","timestamp":"2026-08-01T00:00:00Z","message":{"model":"<synthetic>"}}"#,
+            r#"{"type":"user","timestamp":"2026-09-01T12:00:00Z","message":{"content":"start"}}"#,
+            b.body()
+        );
+        assert_eq!(v(&body).started_ms, parse_ts(Some("2026-09-01T12:00:00Z")));
+        let no_times: String = b
+            .body()
+            .lines()
+            .map(|line| {
+                let mut record: Value = serde_json::from_str(line).unwrap();
+                record.as_object_mut().unwrap().remove("timestamp");
+                record.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(v(&no_times).started_ms, None);
     }
 
     // ── the bar's own maths ────────────────────────────────────────────────

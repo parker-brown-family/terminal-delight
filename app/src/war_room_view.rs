@@ -11,10 +11,9 @@
 use super::*;
 use gpui::PathBuilder;
 
-/// A seat's box, at scale 1: four lines — where it sits, its header's title,
-/// its program and model, its state and size.
-const SEAT_W: f32 = 196.;
-const SEAT_H: f32 = 80.;
+/// A seat's box at scale 1: place, title, program, state, age and tokens.
+const SEAT_W: f32 = 248.;
+const SEAT_H: f32 = 104.;
 const COL_GAP: f32 = 30.;
 const ROW_GAP: f32 = 56.;
 const PAD: f32 = 14.;
@@ -22,14 +21,15 @@ const PAD: f32 = 14.;
 const CARD_W: f32 = 300.;
 
 /// Everything one seat shows, gathered from facts the window already has.
-struct SeatFacts {
+struct PaneFacts {
     leaf: Entity<TerminalView>,
-    seat: warroom::SeatId,
+    seat: Option<warroom::SeatId>,
     name: warroom::PaneName,
     project: String,
     program: String,
     model: Option<String>,
     size: Option<u64>,
+    started_ms: Option<i64>,
     state: hud::AgentState,
     access: warroom::AgentAccess,
     note: Option<String>,
@@ -47,6 +47,51 @@ struct Wire {
     label: String,
 }
 
+/// Spaces match independent words anywhere in the name. Colons address
+/// project:tab:pane; empty segments leave that field unrestricted.
+fn pane_search_score(project: &str, name: &warroom::PaneName, query: &str) -> Option<i64> {
+    let query = query.trim().to_lowercase();
+    let score = |hay: &str, query: &str| -> Option<i64> {
+        let hay = hay.to_lowercase();
+        query.split_whitespace().try_fold(0, |sum, word| {
+            pane::fuzzy_match(&hay, word).map(|(n, _)| sum + n)
+        })
+    };
+    if query.contains(':') {
+        let header = if name.header.is_empty() {
+            &name.tab
+        } else {
+            &name.header
+        };
+        let fields = [project, &name.tab, header];
+        let parts: Vec<_> = query.split(':').collect();
+        if parts.len() > fields.len() {
+            return None;
+        }
+        parts
+            .iter()
+            .zip(fields)
+            .try_fold(0, |sum, (query, hay)| score(hay, query).map(|n| sum + n))
+    } else {
+        score(
+            &format!("{project} {} {} {}", name.outer, name.tab, name.header),
+            &query,
+        )
+    }
+}
+
+/// Wall-clock age since the conversation's first recorded timestamp. No
+/// timestamp (or one in the future) remains unknown, including after resume.
+fn session_age(started_ms: Option<i64>, now_ms: i64) -> Option<String> {
+    let seconds = u64::try_from(now_ms.checked_sub(started_ms?)?).ok()? / 1000;
+    Some(match seconds {
+        0..60 => format!("{seconds}s"),
+        60..3600 => format!("{}m", seconds / 60),
+        3600..86400 => format!("{}h {}m", seconds / 3600, seconds % 3600 / 60),
+        _ => format!("{}d {}h", seconds / 86400, seconds % 86400 / 3600),
+    })
+}
+
 impl Workspace {
     /// The War Room, when it is open. Drawn flat over the panes (see the
     /// warped-surface table), closed by a click outside it or by Esc.
@@ -62,9 +107,11 @@ impl Workspace {
         let ui = self.lang.strings().ui;
         let lang = self.lang;
 
-        // ---- gather: seated panes, and agent panes nobody seated ----
-        let mut seats: Vec<SeatFacts> = Vec::new();
-        let mut loose: Vec<(Entity<TerminalView>, warroom::PaneName, String)> = Vec::new();
+        // ---- gather: seated panes, and every pane off the chart ----
+        let mut seats: Vec<PaneFacts> = Vec::new();
+        let mut loose: Vec<PaneFacts> = Vec::new();
+        let query = self.war_room_query.text();
+        let mut total = 0;
         for (ti, tab) in self.tabs.iter().enumerate() {
             let project = self
                 .place_of(ti)
@@ -76,25 +123,26 @@ impl Workspace {
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
+                total += 1;
                 let v = leaf.read(cx);
-                if !v.mode.is_agent() && v.seat.is_none() {
+                let name = warroom::PaneName::new(&spine, &v.header_title());
+                if pane_search_score(&project, &name, &query).is_none() {
                     continue;
                 }
-                let name = warroom::PaneName::new(&spine, &v.header_title());
-                let program = v.mode.label().to_string();
-                let Some(seat) = v.seat else {
-                    loose.push((leaf.clone(), name, program));
-                    continue;
-                };
-                let vit = v.shell_pid().and_then(|pid| self.agent_vitals.get(&pid));
-                seats.push(SeatFacts {
+                let vit = v
+                    .mode
+                    .is_agent()
+                    .then(|| v.shell_pid().and_then(|pid| self.agent_vitals.get(&pid)))
+                    .flatten();
+                let facts = PaneFacts {
                     leaf: leaf.clone(),
-                    seat,
+                    seat: v.seat,
                     name,
                     project: project.clone(),
-                    program,
+                    program: v.mode.label().to_string(),
                     model: vit.and_then(|x| x.model.clone()),
                     size: vit.and_then(|x| x.tokens),
+                    started_ms: vit.and_then(|x| x.started_ms),
                     state: v.agent_status().state,
                     access: v.agent_access,
                     note: v.saved_note().map(|n| match n.title {
@@ -106,16 +154,23 @@ impl Workspace {
                         .bench
                         .latest_response()
                         .map(|r| (r.brief.clone(), r.layman.clone())),
-                });
+                };
+                if facts.seat.is_some() {
+                    seats.push(facts);
+                } else {
+                    loose.push(facts);
+                }
             }
         }
+        loose.sort_by_key(|f| std::cmp::Reverse(pane_search_score(&f.project, &f.name, &query)));
+        let shown = seats.len() + loose.len();
 
         // ---- lay the chart out ----
         let s = th.grade.scale.clamp(0.7, 1.6);
         let (sw, sh, cg, rg, pad) = (SEAT_W * s, SEAT_H * s, COL_GAP * s, ROW_GAP * s, PAD * s);
         let keys: Vec<(warroom::SeatId, String, String)> = seats
             .iter()
-            .map(|f| (f.seat, f.project.clone(), f.name.full()))
+            .filter_map(|f| f.seat.map(|seat| (seat, f.project.clone(), f.name.full())))
             .collect();
         let placed = warroom::layout(&keys, &self.chart);
         let at = |seat: warroom::SeatId| -> Option<(f32, f32)> {
@@ -241,7 +296,7 @@ impl Workspace {
 
         let pick = self.war_room_pick;
         let mut chart = div().relative().w(px(chart_w)).h(px(chart_h)).child(canvas);
-        if seats.is_empty() {
+        if seats.is_empty() && query.trim().is_empty() {
             chart = chart.child(
                 div()
                     .absolute()
@@ -253,14 +308,11 @@ impl Workspace {
             );
         }
         for f in &seats {
-            let Some((x, y)) = at(f.seat) else { continue };
-            let picked = pick == Some(f.seat);
+            let Some(seat) = f.seat else { continue };
+            let Some((x, y)) = at(seat) else { continue };
+            let picked = pick == Some(seat);
             let state_ink = agent_state_glow(th, th.accent, f.state);
-            let size = f
-                .size
-                .map(hud::fmt_tokens)
-                .unwrap_or_else(|| ui.wr_unknown.to_string());
-            let role = match self.chart.role_of(f.seat) {
+            let role = match self.chart.role_of(seat) {
                 warroom::Role::Orchestrator => ui.wr_role_orchestrator,
                 warroom::Role::Manager => ui.wr_role_manager,
                 warroom::Role::Worker => ui.wr_role_worker,
@@ -275,7 +327,6 @@ impl Workspace {
                 (Some(m), _) => format!("{} · {m}", f.program),
                 (None, _) => format!("{} · {role}", f.program),
             };
-            let seat = f.seat;
             chart = chart.child(
                 div()
                     .id(SharedString::from(format!("war-seat-{}", seat.0)))
@@ -355,10 +406,11 @@ impl Workspace {
                             .text_size(sk.text_px(8.5))
                             .text_color(state_ink)
                             .child(SharedString::from(format!(
-                                "\u{25cf} {} · {size}",
+                                "\u{25cf} {}",
                                 f.state.label_in(lang)
                             ))),
                     )
+                    .child(self.war_room_metrics(f, &sk, th))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -410,50 +462,78 @@ impl Workspace {
 
         // ---- the picked seat's card ----
         let card = pick
-            .and_then(|p| seats.iter().find(|f| f.seat == p))
-            .map(|f| self.war_room_card(f, &sk, th, cx));
+            .and_then(|p| seats.iter().find(|f| f.seat == Some(p)).map(|f| (p, f)))
+            .map(|(seat, f)| self.war_room_card(f, seat, &sk, th, cx));
 
         // ---- off the chart ----
-        let mut off = div().flex().flex_col().gap_1();
-        for (leaf, name, program) in &loose {
-            let leaf = leaf.clone();
+        let mut off = div().w_full().flex().flex_row().flex_wrap().gap_2();
+        for f in &loose {
+            let leaf = f.leaf.clone();
+            let is_agent = leaf.read(cx).mode.is_agent();
             off = off.child(
                 div()
+                    .id(SharedString::from(format!(
+                        "war-pane-{}",
+                        leaf.entity_id().as_u64()
+                    )))
+                    .w(px(sw))
+                    .flex_none()
+                    .p_2()
+                    .rounded(sk.rad_raw(7.))
+                    .border_1()
+                    .border_color(th.text.alpha(0.28))
+                    .bg(darken(th.surface, 0.35))
                     .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
+                    .flex_col()
+                    .gap_1()
                     .child(
                         div()
-                            .flex_1()
-                            .min_w(px(0.))
+                            .font_weight(gpui::FontWeight::BOLD)
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_color(th.text.alpha(0.85))
-                            .child(SharedString::from(format!("{} · {program}", name.full()))),
+                            .child(SharedString::from(f.name.place())),
                     )
                     .child(
-                        Self::bezel_btn(&sk, ui.wr_seat_btn, false)
-                            .id(SharedString::from(format!(
-                                "war-seat-btn-{}",
-                                leaf.entity_id().as_u64()
-                            )))
-                            .hover(|d| d.border_color(th.accent))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.war_room_seat(&leaf, cx);
-                                }),
-                            ),
-                    ),
+                        div()
+                            .text_size(sk.text_px(8.5))
+                            .text_color(th.text.alpha(0.8))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(SharedString::from(f.name.header.clone())),
+                    )
+                    .child(
+                        div()
+                            .text_size(sk.text_px(8.5))
+                            .text_color(th.text.alpha(0.6))
+                            .child(SharedString::from(f.program.clone())),
+                    )
+                    .child(self.war_room_metrics(f, &sk, th))
+                    .when(is_agent, |d| {
+                        d.child(
+                            Self::bezel_btn(&sk, ui.wr_seat_btn, false)
+                                .id(SharedString::from(format!(
+                                    "war-seat-btn-{}",
+                                    leaf.entity_id().as_u64()
+                                )))
+                                .hover(|d| d.border_color(th.accent))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.war_room_seat(&leaf, cx);
+                                    }),
+                                ),
+                        )
+                    }),
             );
         }
 
         let switches = self.mcp_switch_buttons(&sk, th, "war", cx);
         let panel = div()
             .id("war-room-panel")
-            .max_w(px(chart_w + CARD_W * s + pad * 4.).max(px(640.)))
+            .w(px(chart_w + CARD_W * s + pad * 4.).max(px(760.)))
+            .max_w(gpui::relative(0.95))
             .max_h(px(self.tray_card_h()))
             .overflow_x_hidden()
             .overflow_y_scroll()
@@ -509,6 +589,70 @@ impl Workspace {
             )
             .child(
                 div()
+                    .id("war-room-search")
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .p_2()
+                    .rounded(sk.rad_raw(6.))
+                    .border_1()
+                    .border_color(th.accent.alpha(0.6))
+                    .bg(darken(th.surface, 0.35))
+                    .cursor(gpui::CursorStyle::IBeam)
+                    .child(render_edit_buffer(
+                        &self.war_room_query,
+                        s,
+                        th.text,
+                        th.accent,
+                        th.accent.alpha(0.3),
+                    ))
+                    .when(query.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .text_color(th.text.alpha(0.55))
+                                .child(SharedString::from(ui.wr_search.to_string())),
+                        )
+                    })
+                    .child(div().flex_1())
+                    .child(
+                        Self::bezel_btn(&sk, "×", false)
+                            .id("war-room-clear")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.war_room_query = EditBuffer::seeded("");
+                                    ws.war_room_pick = None;
+                                    cx.notify();
+                                }),
+                            ),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                            cx.stop_propagation();
+                            w.focus(&ws.focus_handle, cx);
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .text_color(th.text.alpha(0.6))
+                    .child(SharedString::from(lang::fill(
+                        ui.wr_results,
+                        &[("shown", &shown.to_string()), ("total", &total.to_string())],
+                    ))),
+            )
+            .when(shown == 0 && !query.trim().is_empty(), |d| {
+                d.child(
+                    div()
+                        .p_2()
+                        .child(SharedString::from(ui.wr_no_matches.to_string())),
+                )
+            })
+            .child(
+                div()
                     .text_size(sk.text_px(8.5))
                     .text_color(th.accent.alpha(0.85))
                     .child(SharedString::from(ui.wr_hint.to_string())),
@@ -530,54 +674,61 @@ impl Workspace {
                         ],
                     )))
             }))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_3()
-                    .items_start()
-                    .child(
-                        div()
-                            .id("war-room-chart")
-                            .flex_none()
-                            .overflow_x_scroll()
-                            .rounded(sk.rad_raw(8.))
-                            .border_1()
-                            .border_color(th.text.alpha(0.14))
-                            .child(chart),
-                    )
-                    .children(card),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .pt_2()
-                    .border_t_1()
-                    .border_color(th.text.alpha(0.14))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                div()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_size(sk.text_px(8.5))
-                                    .text_color(th.text.alpha(0.7))
-                                    .child(SharedString::from(ui.wr_off_hdr.to_string())),
-                            )
-                            .child(
-                                div()
-                                    .text_size(sk.text_px(8.5))
-                                    .text_color(th.text.alpha(0.5))
-                                    .child(SharedString::from(ui.wr_off_blurb.to_string())),
-                            ),
-                    )
-                    .child(off),
-            );
+            .when(!seats.is_empty() || query.trim().is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .min_w(px(0.))
+                        .w_full()
+                        .gap_3()
+                        .items_start()
+                        .child(
+                            div()
+                                .id("war-room-chart")
+                                .min_w(px(0.))
+                                .flex_1()
+                                .overflow_x_scroll()
+                                .rounded(sk.rad_raw(8.))
+                                .border_1()
+                                .border_color(th.text.alpha(0.14))
+                                .child(chart),
+                        )
+                        .children(card),
+                )
+            })
+            .when(!loose.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .pt_2()
+                        .border_t_1()
+                        .border_color(th.text.alpha(0.14))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_size(sk.text_px(8.5))
+                                        .text_color(th.text.alpha(0.7))
+                                        .child(SharedString::from(ui.wr_off_hdr.to_string())),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(sk.text_px(8.5))
+                                        .text_color(th.text.alpha(0.5))
+                                        .child(SharedString::from(ui.wr_off_blurb.to_string())),
+                                ),
+                        )
+                        .child(off),
+                )
+            });
 
         Some(
             div()
@@ -598,6 +749,58 @@ impl Workspace {
         )
     }
 
+    /// The panel owns typing in capture phase, before the focused terminal.
+    pub(crate) fn war_room_capture_key(
+        &mut self,
+        key: &gpui::Keystroke,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.war_room {
+            return false;
+        }
+        let before = self.war_room_query.text();
+        match key.key.as_str() {
+            "escape" if !before.is_empty() => self.war_room_query = EditBuffer::seeded(""),
+            "escape" => self.close_war_room(),
+            "v" if key.modifiers.control || key.modifiers.platform => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                    let text: String = text
+                        .chars()
+                        .map(|c| if c.is_control() { ' ' } else { c })
+                        .collect();
+                    self.war_room_query.insert_capped(&text, 256);
+                }
+            }
+            _ => self
+                .war_room_query
+                .apply(&key.key, &key.modifiers, key.key_char.as_deref(), 256),
+        }
+        if self.war_room_query.text() != before {
+            self.war_room_pick = None;
+        }
+        cx.notify();
+        true
+    }
+
+    fn war_room_metrics(&self, f: &PaneFacts, sk: &skin::Skin, th: &theme::Theme) -> gpui::Div {
+        let ui = self.lang.strings().ui;
+        let age =
+            session_age(f.started_ms, now_ms() as i64).unwrap_or_else(|| ui.wr_unknown.to_string());
+        let tokens = f
+            .size
+            .map(hud::fmt_tokens)
+            .unwrap_or_else(|| ui.wr_unknown.to_string());
+        div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap_2()
+            .text_size(sk.text_px(8.5))
+            .text_color(th.text.alpha(0.85))
+            .child(SharedString::from(format!("{} {age}", ui.wr_age)))
+            .child(SharedString::from(format!("{} {tokens}", ui.wr_tokens)))
+    }
+
     /// What a person calls `leaf`: where its tab sits on the left bar, then
     /// its header's title (see [`warroom::PaneName`]). Every place the War
     /// Room and its rail name a pane goes through here.
@@ -614,7 +817,8 @@ impl Workspace {
     /// asks a copy anything.
     fn war_room_card(
         &self,
-        f: &SeatFacts,
+        f: &PaneFacts,
+        seat: warroom::SeatId,
         sk: &skin::Skin,
         th: &theme::Theme,
         cx: &mut Context<Self>,
@@ -643,14 +847,14 @@ impl Workspace {
             .chart
             .saved()
             .iter()
-            .filter(|l| l.to == f.seat)
+            .filter(|l| l.to == seat)
             .map(|l| format!("{} · {}", title_of(l.from), rung(l)))
             .collect();
         let lines_out: Vec<String> = self
             .chart
             .saved()
             .iter()
-            .filter(|l| l.from == f.seat)
+            .filter(|l| l.from == seat)
             .map(|l| format!("{} · {}", title_of(l.to), rung(l)))
             .collect();
         let size = f
@@ -736,6 +940,10 @@ impl Workspace {
             f.model.clone().unwrap_or_else(unknown),
         ))
         .child(row(ui.wr_card_size, size))
+        .child(row(
+            ui.wr_age,
+            session_age(f.started_ms, now_ms() as i64).unwrap_or_else(unknown),
+        ))
         .child(row(
             ui.wr_card_note,
             f.note.clone().unwrap_or_else(|| ui.wr_none.to_string()),
@@ -1166,6 +1374,7 @@ impl Workspace {
     pub(crate) fn close_war_room(&mut self) {
         self.war_room = false;
         self.war_room_pick = None;
+        self.war_room_query = EditBuffer::seeded("");
     }
 
     /// A person seated a pane: mint its seat and save it with the pane.
@@ -1302,4 +1511,79 @@ fn seat_title(t: &TerminalView) -> String {
         .clone()
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| t.shown_title())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn name() -> warroom::PaneName {
+        warroom::PaneName::new(
+            &["Terminal Delight".into(), "MCP wiring".into()],
+            "Fix permissions",
+        )
+    }
+
+    #[test]
+    fn fuzzy_words_find_project_tab_and_pane_in_any_word_order() {
+        for query in [
+            "",
+            "  ",
+            "trmdlt",
+            "mcp",
+            "fxprm",
+            "prm mcp delight",
+            "MCP FIX",
+        ] {
+            assert!(
+                pane_search_score("Terminal Delight", &name(), query).is_some(),
+                "{query}"
+            );
+        }
+        assert!(pane_search_score("Terminal Delight", &name(), "zebra").is_none());
+        assert!(pane_search_score("Terminal Delight", &name(), "mcp zebra").is_none());
+    }
+
+    #[test]
+    fn colons_keep_fuzzy_matches_in_the_requested_field() {
+        for query in [
+            "trmdlt:mcp:fxprm",
+            ":mcp:",
+            "::prm",
+            "term::",
+            "::",
+            " : : ",
+        ] {
+            assert!(
+                pane_search_score("Terminal Delight", &name(), query).is_some(),
+                "{query}"
+            );
+        }
+        for query in ["mcp::", "term:permissions:", "::mcp", ":::"] {
+            assert!(
+                pane_search_score("Terminal Delight", &name(), query).is_none(),
+                "{query}"
+            );
+        }
+        let repeated = warroom::PaneName::new(&["same".into()], "same");
+        assert!(pane_search_score("", &repeated, ":same:same").is_some());
+        let unicode = warroom::PaneName::new(&["ÜBER".into()], "修复权限");
+        assert!(pane_search_score("", &unicode, ":über:修权").is_some());
+    }
+
+    #[test]
+    fn age_keeps_unmeasured_and_future_timestamps_distinct_from_zero() {
+        assert_eq!(session_age(None, 1000), None);
+        assert_eq!(session_age(Some(1001), 1000), None);
+        assert_eq!(session_age(Some(1000), 1000).as_deref(), Some("0s"));
+        for (secs, expected) in [
+            (59, "59s"),
+            (60, "1m"),
+            (3599, "59m"),
+            (3660, "1h 1m"),
+            (90000, "1d 1h"),
+        ] {
+            assert_eq!(session_age(Some(0), secs * 1000).as_deref(), Some(expected));
+        }
+    }
 }
