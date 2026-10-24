@@ -29,6 +29,7 @@
 
 mod access;
 mod art;
+mod artifact_archive;
 mod artifact_rail;
 mod askcopy;
 mod askrecord;
@@ -7728,6 +7729,19 @@ impl Workspace {
     /// showing — a running agent, closed by tidying away the blank decoy of
     /// itself. See [`hangups_of`] for the arithmetic and what it cannot see.
     fn hangup(&self, leaves: &[Entity<TerminalView>], cx: &App) {
+        let closing_entities: Vec<u64> = leaves.iter().map(|l| l.entity_id().as_u64()).collect();
+        let mut shown_entities = Vec::new();
+        for tab in &self.tabs {
+            let mut held = Vec::new();
+            tab.root.leaves(&mut held);
+            shown_entities.extend(held.iter().map(|l| l.entity_id().as_u64()));
+        }
+        let owned_to_close = hangups_of(&shown_entities, &closing_entities);
+        for leaf in leaves {
+            if owned_to_close.contains(&leaf.entity_id().as_u64()) {
+                leaf.read(cx).close_owned_terminal();
+            }
+        }
         let Some(ctx) = &self.attach else { return };
         let mut shown = vec![];
         for tab in &self.tabs {
@@ -7749,9 +7763,16 @@ impl Workspace {
             }
         }
         for pane in dying {
-            if let Err(err) = ctx.link.close_pane(hostproto::PaneId(pane)) {
-                eprintln!("terminal-delight: the session host would not close pane {pane}: {err}");
-            }
+            let link = ctx.link.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    if let Err(err) = link.close_pane(hostproto::PaneId(pane)) {
+                        eprintln!(
+                            "terminal-delight: the session host would not close pane {pane}: {err}"
+                        );
+                    }
+                })
+                .detach();
         }
     }
 

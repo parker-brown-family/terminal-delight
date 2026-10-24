@@ -7,7 +7,6 @@
 //! pane must bounce it through the notifier, or interactive programs hang
 //! waiting for an answer.
 
-use std::fs::File;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -117,7 +116,7 @@ pub struct Session {
     /// replica: the kernel object belongs to the session host, and the only
     /// honest thing a client can say about a file descriptor it does not have
     /// is that it does not have it.
-    pub master: Option<File>,
+    pub master: Option<vt::pty::Monitor>,
     /// The process at the far end of this terminal.
     ///
     /// `Some`, and our own child, when we forked it. `Some`, and somebody
@@ -205,7 +204,7 @@ pub fn spawn_in(
     let pty = spawn_pty(&spec)?;
     // Read before the pseudoterminal is handed to the loop, which takes
     // ownership of it and asks only what every source can answer.
-    let master = pty.file().try_clone().ok();
+    let master = Some(pty.monitor());
     let shell_pid = pty.child().id();
     wire_pump(
         Box::new(pty),
@@ -255,7 +254,7 @@ pub fn spawn_pty(spec: &SpawnSpec) -> io::Result<vt::pty::PtySource> {
 pub fn wire_pump(
     source: Box<dyn vt::pump::Source>,
     size: TermSize,
-    master: Option<File>,
+    master: Option<vt::pty::Monitor>,
     shell_pid: Option<u32>,
     answers: Answers,
     tap: Option<Box<dyn vt::pump::Tap>>,
@@ -356,7 +355,7 @@ pub(crate) fn spawn_program(
     };
     let size = size.with_cell(cell_px.0, cell_px.1);
     let pty = vt::pty::spawn(&options, size.window_size())?;
-    let master = pty.file().try_clone().ok();
+    let master = Some(pty.monitor());
     let shell_pid = pty.child().id();
     wire_pump(
         Box::new(pty),

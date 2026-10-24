@@ -27,7 +27,8 @@ impl TerminalView {
     /// the conversation's record so it outlives the window, and keep the
     /// history page current.
     ///
-    /// The same link handed over again changes nothing. A line read off the
+    /// A declared repeat captures the current revision without duplicating its
+    /// shelf card. A line read off the
     /// screen that the agent then declares is the same row with the stronger
     /// word, refiled so the record says `declared` too.
     pub(crate) fn hand_over(
@@ -48,7 +49,15 @@ impl TerminalView {
             source,
         };
         let key = incoming.key();
+        let repeat = incoming.clone();
         let done = self.handovers.record(incoming);
+        if done == Recorded::Known && source == Source::Declared {
+            let mut doc = handover::surface_doc(&repeat);
+            // A deliberate repeat observes a new revision without adding a
+            // second shelf card beside the agent's own card for this target.
+            doc["_td_archive_only"] = serde_json::Value::Bool(true);
+            self.bench_file_docs(&[(handover::surface_id(&key), doc)]);
+        }
         if done == Recorded::Known {
             return done;
         }
@@ -62,7 +71,11 @@ impl TerminalView {
             .bench
             .artifacts()
             .any(|(id, href)| !id.0.starts_with("handover-") && handover::key_of(href) == key);
-        if !theirs {
+        if theirs && source == Source::Declared {
+            let mut doc = handover::surface_doc(&kept);
+            doc["_td_archive_only"] = serde_json::Value::Bool(true);
+            self.bench_file_docs(&[(handover::surface_id(&key), doc)]);
+        } else if !theirs {
             let doc = handover::surface_doc(&kept);
             let id = handover::surface_id(&key);
             // Filed BEFORE it is drawn, the order `deliver_surfaces` keeps.
@@ -328,6 +341,31 @@ impl TerminalView {
         }
         self.mark_handover_opened(&h.key());
         cx.notify();
+    }
+
+    pub(crate) fn open_artifact_archive(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async {
+                    crate::artifact_archive::write_page(&crate::benchstore::store_root())
+                })
+                .await;
+            let _ = this.update(cx, |v, cx| match result {
+                Ok(path) => {
+                    if let Some(target) = crate::docopen::drawable_document(&path) {
+                        let _ = v.open_float(target, None, cx);
+                    }
+                    cx.notify();
+                }
+                Err(err) => v.say(
+                    format!("Artifact archive could not be opened: {err}"),
+                    None,
+                    cx,
+                ),
+            });
+        })
+        .detach();
     }
 
     /// `▾` on the chip, or Ctrl+Shift+M: the history page over this pane, or

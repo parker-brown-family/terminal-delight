@@ -4469,3 +4469,95 @@ fn backspace_erases_selected_literal_newlines_and_keeps_the_suffix(cx: &mut Test
     assert!(rows.contains("ready> prefix"), "{rows}");
     assert!(!rows.contains("SELECT"), "{rows}");
 }
+
+/// Exercise the same owner seam used when the workspace ends its last leaf.
+#[gpui::test]
+fn ending_a_window_owned_terminal_releases_its_child_without_closing_the_window(
+    cx: &mut TestAppContext,
+) {
+    let mut pane = Pane::running(cx, "trap '' HUP; echo ready; while :; do sleep 1; done");
+    pane.wait_for("ready");
+    let pid = pane.read(|v| v.session.shell_pid).expect("an owned child");
+    pane.read(|v| v.close_owned_terminal());
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::path::Path::new(&format!("/proc/{pid}")).exists()
+        && std::time::Instant::now() < until
+    {
+        pane.redraw();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(
+        !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+        "the owned child was reaped"
+    );
+    pane.redraw();
+}
+
+/// A real note entered through the native document view carries its creation
+/// evidence through a file rewrite and a fresh opening of that view.
+#[gpui::test]
+fn a_native_markdown_note_reopens_on_moved_words_with_its_original_revision(
+    cx: &mut TestAppContext,
+) {
+    use crate::docview::markdown::{NOTE_GUTTER, PAD};
+    use crate::docview::notes_ui::BUTTON_CSS;
+    let dir = Scratch::new("md-evidence-reopen");
+    let root = dir.join("notes");
+    let md = dir.join("plan.md");
+    let original = "The original passage needs a second look.\n\nA different closing passage.\n";
+    std::fs::write(&md, original).unwrap();
+    let mut pane = Pane::running(
+        cx,
+        &format!("printf '%s\\n' 'doc {}' 'ready'; exec cat", md.display()),
+    );
+    pane.notes_root(root);
+    pane.wait_for("ready");
+    pane.settle();
+    let at = pane.point_at(md.to_str().unwrap());
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let (x, y, w, _) = pane.float_zone(FloatHit::Body).unwrap();
+    pane.hover(point(px(x + 60.), px(y + PAD + 6.)));
+    pane.redraw();
+    pane.click(
+        point(
+            px(x + w - PAD - NOTE_GUTTER / 2.),
+            px(y + PAD + BUTTON_CSS / 2.),
+        ),
+        Default::default(),
+    );
+    pane.keys("r e v i s e ctrl-enter");
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        pane.redraw();
+        let report = pane.doc_notes().unwrap();
+        if report["notes"] == 1 && report["unsaved"] == 0 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < until,
+            "note did not save: {report}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    pane.view.update(pane.cx, |v, cx| {
+        v.close_float(cx);
+    });
+    std::fs::write(&md, format!("A new opening.\n\n{original}")).unwrap();
+    let at = pane.point_at(md.to_str().unwrap());
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let report = pane.doc_notes().unwrap();
+    let map = report["map"].as_str().unwrap();
+    assert!(map.contains("[L3]"), "{map}");
+    assert!(map.contains("revise"), "{map}");
+    assert!(
+        map.contains("The original passage needs a second look."),
+        "{map}"
+    );
+    assert!(
+        map.contains(&crate::artifact_archive::digest(original.as_bytes())),
+        "{map}"
+    );
+    assert!(!map.contains("md-unresolved-"), "{map}");
+}

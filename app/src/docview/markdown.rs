@@ -1134,6 +1134,7 @@ pub struct MarkdownDoc {
     pub notes: Option<super::notes_ui::NotesLayer>,
     /// Every block that takes a note, from the current parse.
     pub anchors: Vec<super::md_notes::MdAnchor>,
+    pub revision: Option<String>,
     /// Where the pointer is over the view, flat and view-local: the 💬 on the
     /// block under it shows.
     pub pointer: Option<Point<Pixels>>,
@@ -1196,6 +1197,7 @@ impl MarkdownDoc {
             zoom: 1.0,
             notes: None,
             anchors: Vec::new(),
+            revision: None,
             pointer: None,
             beside: None,
             view: None,
