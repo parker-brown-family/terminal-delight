@@ -33,6 +33,11 @@ struct PaneFacts {
     access: warroom::AgentAccess,
 }
 
+/// A wire the canvas is ready to stroke: its polyline, whether it bypasses a
+/// copy's press limit (drawn dashed amber), and whether its target is off-limits
+/// (drawn faint and dashed, granting nothing).
+type WireStroke = (Vec<(f32, f32)>, bool, bool);
+
 /// One drawn connection: a polyline in chart coordinates, how it is inked,
 /// and where its label chip sits.
 struct Wire {
@@ -268,48 +273,7 @@ impl Workspace {
                     // A word this build cannot read: drawn, unknown, granting nothing.
                     (None, _) => format!("? · {}", ui.wr_unknown),
                 };
-                let (points, label_at) = if ty > fy + sh + rg / 2. {
-                    // Two or more rows down: leave through the gap under the
-                    // sender, run down the column gap beside the seat so no box
-                    // in between is crossed, and come in from the gap above it.
-                    let (x0, y0) = (fx + sw / 2., fy + sh);
-                    let (x1, y1) = (tx + sw / 2., ty);
-                    let (top, bottom) = (y0 + rg / 2., y1 - rg / 2.);
-                    let gx = if tx >= fx {
-                        tx - cg / 2.
-                    } else {
-                        tx + sw + cg / 2.
-                    };
-                    (
-                        vec![
-                            (x0, y0),
-                            (x0, top),
-                            (gx, top),
-                            (gx, bottom),
-                            (x1, bottom),
-                            (x1, y1),
-                        ],
-                        // Labelled on its last stretch, by the seat it reaches,
-                        // where it cannot sit on a shorter line's label.
-                        ((gx + x1) / 2., bottom),
-                    )
-                } else if ty > fy {
-                    // The next row: down from the sender, across, down into the seat.
-                    let (x0, y0) = (fx + sw / 2., fy + sh);
-                    let (x1, y1) = (tx + sw / 2., ty);
-                    let mid = y0 + (y1 - y0) / 2.;
-                    (
-                        vec![(x0, y0), (x0, mid), (x1, mid), (x1, y1)],
-                        ((x0 + x1) / 2., mid),
-                    )
-                } else {
-                    // Same row or above: side to side, through the gap.
-                    let left_to_right = tx > fx;
-                    let x0 = if left_to_right { fx + sw } else { fx };
-                    let x1 = if left_to_right { tx } else { tx + sw };
-                    let (y0, y1) = (fy + sh / 2., ty + sh / 2.);
-                    (vec![(x0, y0), (x1, y1)], ((x0 + x1) / 2., (y0 + y1) / 2.))
-                };
+                let (points, label_at) = wire_route((fx, fy), (tx, ty), sw, sh, cg, rg);
                 Some(Wire {
                     from: l.from,
                     to: l.to,
@@ -349,7 +313,7 @@ impl Workspace {
             .filter(|f| matches!(f.access, warroom::AgentAccess::OffLimits))
             .filter_map(|f| f.seat)
             .collect();
-        let paths: Vec<(Vec<(f32, f32)>, bool, bool)> = wires
+        let paths: Vec<WireStroke> = wires
             .iter()
             .map(|w| (w.points.clone(), w.bypass, off_limits.contains(&w.to)))
             .collect();
@@ -2176,6 +2140,77 @@ impl Workspace {
 }
 
 /// A line between two seats; a bypass is drawn dashed.
+/// The dogleg a relationship line takes from one seat to another, in chart
+/// pixels, plus the point its rung label sits on. Pure geometry so the routing
+/// can be tested without a window: `(fx, fy)` and `(tx, ty)` are the seats'
+/// top-left corners, each `sw`×`sh`, with `cg`/`rg` the column/row gaps that
+/// form the gutters a line runs down to miss the boxes between its ends.
+///
+/// The row test is the load-bearing line. One row down is a full pitch
+/// (`sh + rg`); two rows down is two pitches. The threshold sits halfway
+/// between, so an adjacent card takes the straight next-row path — a
+/// same-column pair collapses to one vertical line with the label between the
+/// cards — and only a line that actually clears a box in between detours into a
+/// side gutter. A smaller threshold (the earlier `sh + rg/2`) mistook every
+/// adjacent stacked card for a multi-row jump and sent its line off the left
+/// edge through the column-0 gutter.
+fn wire_route(
+    (fx, fy): (f32, f32),
+    (tx, ty): (f32, f32),
+    sw: f32,
+    sh: f32,
+    cg: f32,
+    rg: f32,
+) -> (Vec<(f32, f32)>, (f32, f32)) {
+    if ty > fy + 1.5 * (sh + rg) {
+        // Two or more rows down: leave through the gap under the sender, run
+        // down a column gutter beside the target so no box in between is
+        // crossed, and come in from the gap above it.
+        let (x0, y0) = (fx + sw / 2., fy + sh);
+        let (x1, y1) = (tx + sw / 2., ty);
+        let (top, bottom) = (y0 + rg / 2., y1 - rg / 2.);
+        // Prefer the gutter on the target's left; at the leftmost column that
+        // gutter is off the canvas, so fall to the one on its right. Either
+        // misses the same-column box the line is routing around.
+        let left = tx - cg / 2.;
+        let gx = if tx >= fx && left >= 0. {
+            left
+        } else {
+            tx + sw + cg / 2.
+        };
+        (
+            vec![
+                (x0, y0),
+                (x0, top),
+                (gx, top),
+                (gx, bottom),
+                (x1, bottom),
+                (x1, y1),
+            ],
+            // Labelled on its last stretch, by the seat it reaches, where it
+            // cannot sit on a shorter line's label.
+            ((gx + x1) / 2., bottom),
+        )
+    } else if ty > fy {
+        // The next row: down from the sender, across, down into the seat. A
+        // same-column pair collapses to a single vertical line, label centred.
+        let (x0, y0) = (fx + sw / 2., fy + sh);
+        let (x1, y1) = (tx + sw / 2., ty);
+        let mid = y0 + (y1 - y0) / 2.;
+        (
+            vec![(x0, y0), (x0, mid), (x1, mid), (x1, y1)],
+            ((x0 + x1) / 2., mid),
+        )
+    } else {
+        // Same row or above: side to side, through the gap.
+        let left_to_right = tx > fx;
+        let x0 = if left_to_right { fx + sw } else { fx };
+        let x1 = if left_to_right { tx } else { tx + sw };
+        let (y0, y1) = (fy + sh / 2., ty + sh / 2.);
+        (vec![(x0, y0), (x1, y1)], ((x0 + x1) / 2., (y0 + y1) / 2.))
+    }
+}
+
 fn stroke_wire(
     bounds: Bounds<Pixels>,
     pts: &[(f32, f32)],
@@ -2695,5 +2730,112 @@ mod tests {
         ] {
             assert_eq!(session_age(Some(0), secs * 1000).as_deref(), Some(expected));
         }
+    }
+
+    fn seat_xy(col: usize, row: usize) -> (f32, f32) {
+        (
+            PAD + col as f32 * (SEAT_W + COL_GAP),
+            PAD + row as f32 * (SEAT_H + ROW_GAP),
+        )
+    }
+
+    #[test]
+    fn an_adjacent_card_below_draws_one_straight_on_canvas_line() {
+        // The reported bug: claude-warrom stacked over astra-warroom, same
+        // column, one row apart. The line must be the straight next-row
+        // connector, never the multi-row gutter dogleg that ran off the left
+        // edge through column 0.
+        let (pts, label) = wire_route(
+            seat_xy(0, 0),
+            seat_xy(0, 1),
+            SEAT_W,
+            SEAT_H,
+            COL_GAP,
+            ROW_GAP,
+        );
+        // The next-row path is the 4-point shape; the gutter path has 6.
+        assert_eq!(
+            pts.len(),
+            4,
+            "adjacent card must take the next-row path: {pts:?}"
+        );
+        // Same column => a single vertical line: every point shares one x.
+        let x = pts[0].0;
+        assert!(
+            pts.iter().all(|p| (p.0 - x).abs() < 0.01),
+            "not vertical: {pts:?}"
+        );
+        // On canvas: nothing crosses the left or top edge.
+        assert!(
+            pts.iter().all(|p| p.0 >= 0. && p.1 >= 0.),
+            "off canvas: {pts:?}"
+        );
+        // The rung label sits on the line, between the two cards.
+        assert!((label.0 - x).abs() < 0.01, "label off the line: {label:?}");
+        let (bottom_of_top, top_of_bottom) = (seat_xy(0, 0).1 + SEAT_H, seat_xy(0, 1).1);
+        assert!(
+            label.1 > bottom_of_top && label.1 < top_of_bottom,
+            "label not between cards: {label:?}"
+        );
+    }
+
+    #[test]
+    fn a_multi_row_jump_keeps_its_gutter_on_canvas() {
+        // Same column, two rows down: a box sits between, so the line detours
+        // into a side gutter. At column 0 the left gutter is off the canvas, so
+        // it must reroute to the right one rather than go negative.
+        let (pts, label) = wire_route(
+            seat_xy(0, 0),
+            seat_xy(0, 2),
+            SEAT_W,
+            SEAT_H,
+            COL_GAP,
+            ROW_GAP,
+        );
+        assert_eq!(
+            pts.len(),
+            6,
+            "multi-row jump takes the gutter path: {pts:?}"
+        );
+        assert!(
+            pts.iter().all(|p| p.0 >= 0.),
+            "gutter left the canvas: {pts:?}"
+        );
+        assert!(label.0 >= 0., "label left the canvas: {label:?}");
+        // A target clear of the left edge keeps the natural left-hand gutter.
+        let (pts2, _) = wire_route(
+            seat_xy(0, 0),
+            seat_xy(1, 2),
+            SEAT_W,
+            SEAT_H,
+            COL_GAP,
+            ROW_GAP,
+        );
+        let left_gutter = seat_xy(1, 2).0 - COL_GAP / 2.;
+        assert!(
+            pts2.iter().any(|p| (p.0 - left_gutter).abs() < 0.01),
+            "did not use the left gutter: {pts2:?}"
+        );
+    }
+
+    #[test]
+    fn a_same_row_link_runs_side_to_side() {
+        let (pts, _) = wire_route(
+            seat_xy(0, 0),
+            seat_xy(1, 0),
+            SEAT_W,
+            SEAT_H,
+            COL_GAP,
+            ROW_GAP,
+        );
+        assert_eq!(
+            pts.len(),
+            2,
+            "same-row link is a single straight segment: {pts:?}"
+        );
+        // Leaves the sender's right edge, enters the target's left edge.
+        assert_eq!(pts[0].0, seat_xy(0, 0).0 + SEAT_W);
+        assert_eq!(pts[1].0, seat_xy(1, 0).0);
+        assert!(pts.iter().all(|p| p.0 >= 0. && p.1 >= 0.));
     }
 }
