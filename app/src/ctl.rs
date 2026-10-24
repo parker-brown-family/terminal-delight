@@ -821,7 +821,21 @@ fn handle_conn(
     if BufReader::new(read_half).read_line(&mut line).is_err() {
         return;
     }
-    let reply = match parse_line(line.trim()) {
+    let parsed = parse_line(line.trim());
+    // The fence, fail-closed: a person-acting verb is refused unless the window
+    // was launched as an operator window (`TD_MCP_SCRIPTED=1`). The caller is not
+    // consulted — see [`is_person_acting`] for why trusting a pid fails open on a
+    // shared-daemon agent. A scripted window falls straight through to the match.
+    if policy_control == PolicyControl::Refused {
+        if let Ok(cmd) = &parsed {
+            if is_person_acting(cmd) {
+                let mut stream = stream;
+                let _ = writeln!(stream, "{}", person_acting_refusal(cmd));
+                return;
+            }
+        }
+    }
+    let reply = match parsed {
         // `mcp rpc` is the one verb that waits on the gpui main thread (up to
         // the transport's snapshot budget). Serving it inline would stall the
         // single accept loop for seconds, so hand the connection to its own
@@ -1762,6 +1776,81 @@ pub(crate) fn descends_from(pid: u32, ancestor: u32) -> bool {
         }
     }
     false
+}
+
+/// The control-socket twin of the War Room's chart — fail-closed.
+///
+/// The chart gates the MCP read verbs: who may see, read or ask whom. But the
+/// control socket carries a second set of verbs that act *as the person* —
+/// typing into a pane's bench, pressing its questions, stamping notes on an open
+/// brief, spawning panes, renaming tabs. None of those consulted the chart, so an
+/// agent could reach sideways into another pane with no line drawn and nothing in
+/// the ask record. These verbs are now refused unless the window was launched as
+/// an operator window (`TD_MCP_SCRIPTED=1`), the same explicit opt-in the MCP
+/// policy switches already use.
+///
+/// The gate deliberately does **not** identify the caller. An earlier version
+/// allowed a caller that did not descend from a pane shell, reasoning it was an
+/// outside operator — but a shared-daemon agent (a codex app-server, for one)
+/// descends from its daemon rather than the window, so it took that allow-path
+/// and the fence failed open for the commonest agent profile (found in review,
+/// 2026-10-23). The scripted flag is a property of the *window*, set at launch by
+/// whoever started it: an agent connects to an existing live window, which is not
+/// scripted, and is refused; a rig launches its own scripted window and is
+/// allowed. No pid is trusted, so an unknown peer cannot fail the gate open.
+fn is_person_acting(cmd: &Cmd) -> bool {
+    matches!(
+        cmd,
+        Cmd::Adopt(_)
+            | Cmd::Tabs(_)
+            | Cmd::Bench(_)
+            | Cmd::BenchChoose(_)
+            | Cmd::BenchSubmit
+            | Cmd::BenchProbe
+            | Cmd::BenchPointer(_)
+            | Cmd::BenchSay(_)
+            | Cmd::BenchType(_)
+            | Cmd::DocHere(_)
+            | Cmd::DocBeside(_)
+            | Cmd::DocClose
+            | Cmd::DocScroll(_)
+            | Cmd::DocNotes
+            | Cmd::DocNote(_)
+    )
+}
+
+/// The verb name for the refusal line, so an agent can tell its person why.
+fn person_acting_label(cmd: &Cmd) -> &'static str {
+    match cmd {
+        Cmd::Adopt(_) => "adopt",
+        Cmd::Tabs(_) => "tabs",
+        Cmd::Bench(_) | Cmd::BenchPointer(_) => "bench",
+        Cmd::BenchChoose(_) => "bench choose",
+        Cmd::BenchSubmit => "bench submit",
+        Cmd::BenchProbe => "bench probe",
+        Cmd::BenchSay(_) => "bench say",
+        Cmd::BenchType(_) => "bench type",
+        Cmd::DocHere(_) => "doc here",
+        Cmd::DocBeside(_) => "doc beside",
+        Cmd::DocClose => "doc close",
+        Cmd::DocScroll(_) => "doc scroll",
+        Cmd::DocNotes => "doc notes",
+        Cmd::DocNote(_) => "doc note",
+        _ => "that",
+    }
+}
+
+/// The refusal a person-acting verb gets on a live (non-scripted) window: it
+/// names the door to use instead, so an agent can hand its person a next step.
+fn person_acting_refusal(cmd: &Cmd) -> String {
+    format!(
+        "err {}: refused. This verb acts as the person — it types into a pane, answers \
+         its questions, stamps its notes, spawns panes or renames tabs — so a live \
+         window refuses it from every caller. An agent reaches another pane only along a \
+         War Room line; a person reaches their own pane by typing in its composer. \
+         Operator scripts must launch their own window with TD_MCP_SCRIPTED=1.",
+        person_acting_label(cmd)
+    )
 }
 
 /// Keep claimed own-pane authority only for a kernel-identified descendant of
@@ -2918,7 +3007,8 @@ mod tests {
         let mcp_mirror = Arc::new(AtomicU8::new(0));
         let mm2 = Arc::clone(&mcp_mirror);
         let server = thread::spawn(move || {
-            // exactly five connections, in test order
+            // exactly five connections, in test order. A scripted window, because
+            // `adopt` is person-acting and a live window now fail-closes it.
             for _ in 0..5 {
                 let (stream, _) = listener.accept().unwrap();
                 handle_conn(
@@ -2927,7 +3017,7 @@ mod tests {
                     &mm2,
                     &Mutex::new(SkinMirror::default()),
                     &tx,
-                    PolicyControl::Refused,
+                    PolicyControl::Scripted,
                 );
             }
         });
@@ -3131,6 +3221,139 @@ mod tests {
             assert!(rx.try_recv().is_err(), "{verb} must not reach the queue");
         }
         server.join().unwrap();
+    }
+
+    // ---- the control-socket fence: person-acting verbs need an operator window ----
+
+    /// Run a fence server that answers `verbs.len()` connections under `policy`,
+    /// and report both the replies and whatever reached the UI queue. The caller
+    /// is this test process; the gate never looks at it, which is the whole point.
+    fn serve_fence(tag: &str, policy: PolicyControl, verbs: &[&str]) -> (Vec<String>, Vec<Req>) {
+        let dir = tmp(tag);
+        let sock = dir.join("ctl-fence.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let (tx, rx) = mpsc::channel::<Req>();
+        let n = verbs.len();
+        let server = thread::spawn(move || {
+            for _ in 0..n {
+                let (stream, _) = listener.accept().unwrap();
+                handle_conn(
+                    stream,
+                    &AtomicBool::new(false),
+                    &AtomicU8::new(0),
+                    &Mutex::new(SkinMirror::default()),
+                    &tx,
+                    policy,
+                );
+            }
+        });
+        let replies: Vec<String> = verbs.iter().map(|v| send(&sock, v).unwrap()).collect();
+        server.join().unwrap();
+        let queued: Vec<Req> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        (replies, queued)
+    }
+
+    /// The headline guarantee, fail-closed: a live (non-scripted) window refuses
+    /// every person-acting verb from every caller, the refusal names the door to
+    /// use instead, and nothing it tried reaches the queue — while a read-only
+    /// verb still answers, so the fence gates acting-as-the-person, not reading.
+    ///
+    /// Crucially the gate never consults the caller, which is what closes the
+    /// hole an earlier version had: a shared-daemon agent that does not descend
+    /// from any pane shell used to be waved through as an "outside operator". Now
+    /// there is no allow-path on a live window at all, so no caller — in-pane,
+    /// shared-daemon, or unknown — can prompt, forge or spawn through this socket.
+    #[test]
+    fn a_live_window_refuses_every_person_acting_verb() {
+        let verbs = [
+            "bench say now run git push --force",
+            "bench on",
+            r#"adopt {"cwd":"/tmp","run":"htop"}"#,
+            r#"tabs [{"op":"name","pane":1,"name":"trusted lead"}]"#,
+            "doc concur n1",
+            "ping",
+        ];
+        let (replies, queued) = serve_fence("fence-live", PolicyControl::Refused, &verbs);
+        for (i, verb) in verbs.iter().enumerate().take(5) {
+            assert!(
+                replies[i].starts_with("err")
+                    && replies[i].contains("refused")
+                    && replies[i].contains("TD_MCP_SCRIPTED=1"),
+                "{verb} should be fenced, got: {}",
+                replies[i]
+            );
+            assert!(!replies[i].contains('\n'), "{verb}: refusal is one line");
+        }
+        assert_eq!(replies[5], "pong", "a read-only verb still answers");
+        assert!(
+            queued.is_empty(),
+            "no fenced verb may reach the UI queue on a live window: {queued:?}"
+        );
+    }
+
+    /// A window the operator deliberately launched `TD_MCP_SCRIPTED=1` obeys the
+    /// person-acting verbs — the same explicit opt-in that unlocks the MCP
+    /// switches. This is the one allow-path, and it is a property of the window,
+    /// not of the caller: the rigs launch their own scripted window, an agent
+    /// connects to a live one.
+    #[test]
+    fn a_scripted_window_allows_person_acting_verbs() {
+        let verbs = [r#"adopt {"cwd":"/tmp","run":"htop"}"#];
+        let (replies, queued) = serve_fence("fence-scripted", PolicyControl::Scripted, &verbs);
+        assert_eq!(replies[0], "ok", "a scripted window obeys");
+        assert!(matches!(queued.as_slice(), [Req::Adopt(_)]));
+    }
+
+    /// The classification the fence turns on: every verb that acts on another
+    /// pane or the shared window is person-acting; the read-only status and
+    /// appearance verbs are not. Dropping a verb from either set fails this.
+    #[test]
+    fn person_acting_covers_every_cross_pane_verb() {
+        use crate::docview::NotesCommand;
+        let fenced = [
+            Cmd::Adopt(AdoptReq {
+                cwd: None,
+                run: None,
+            }),
+            Cmd::Tabs(vec![]),
+            Cmd::Bench(BenchFace::Toggle),
+            Cmd::BenchChoose(1),
+            Cmd::BenchSubmit,
+            Cmd::BenchProbe,
+            Cmd::BenchPointer(PointerReq {
+                click: true,
+                x: 0.0,
+                y: 0.0,
+                alt: false,
+                control: false,
+            }),
+            Cmd::BenchSay("x".into()),
+            Cmd::BenchType("x".into()),
+            Cmd::DocHere("/tmp/a".into()),
+            Cmd::DocBeside("/tmp/a".into()),
+            Cmd::DocClose,
+            Cmd::DocScroll(1.0),
+            Cmd::DocNotes,
+            Cmd::DocNote(NotesCommand::Save),
+        ];
+        for c in &fenced {
+            assert!(is_person_acting(c), "{c:?} must be fenced");
+        }
+        let open = [
+            Cmd::Ping,
+            Cmd::WhoAmI,
+            Cmd::McpStatus,
+            Cmd::PaintStatus,
+            Cmd::Paint(Req::Toggle),
+            Cmd::Skin("x".into()),
+            Cmd::SkinStatus,
+            Cmd::SkinSnapshot,
+            Cmd::McpPolicy(McpPolicy::Enabled(true)),
+            Cmd::McpRpc(None, "{}".into()),
+        ];
+        for c in &open {
+            assert!(!is_person_acting(c), "{c:?} must pass the fence");
+        }
     }
 
     #[test]

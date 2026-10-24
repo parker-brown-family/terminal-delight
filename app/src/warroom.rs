@@ -820,6 +820,33 @@ pub fn may_write(cfg: &McpConfig, reach: Reach, target: &Party, own: bool) -> bo
     reach >= Reach::Read && target.access.takes_writes()
 }
 
+/// The effect-time write check, run on the UI thread against the LIVE chart.
+///
+/// A write that `write_gate` admitted lands later, on the ticker, by which time
+/// the chart may have changed. This recomputes the decision from the sender's
+/// *current* seat and the target's *current* party, so a line revoked while the
+/// write was queued, or a reseat under the sender, stops the write. The sender is
+/// identified live by its pane id (resolved to `caller_seat` at the effect); if
+/// that pane is gone or unseated, `caller_seat` is `None` and reach collapses to
+/// `Hidden` unless the write is to the sender's own pane (`own`). Authority in the
+/// chart is per-pane-seat, so re-resolving the seat live is the whole fix:
+/// nothing captured at request time is trusted but the pane identity.
+pub fn may_write_live(
+    cfg: &McpConfig,
+    chart: &Chart,
+    caller_seat: Option<SeatId>,
+    target: &Party,
+    own: bool,
+) -> bool {
+    let caller = caller_seat.map(|seat| Party {
+        seat: Some(seat),
+        is_agent: true,
+        access: target.access,
+    });
+    let r = reach(cfg, chart, caller.as_ref(), target, own);
+    may_write(cfg, r, target, own)
+}
+
 /// Whether a copy waits for a person's press on the rail: when it would read
 /// more than their limit, or nobody knows how much it would read. A size of
 /// zero is not a size, since every copy reads at least its own instructions,
@@ -950,15 +977,6 @@ impl AskBook {
     }
 }
 
-/// The position-only half of [`may_write`], for the window's apply path, which
-/// re-checks a write after the protocol layer has already checked the reach.
-pub fn position_takes_writes(cfg: &McpConfig, target: &Party, own: bool) -> bool {
-    if own {
-        return policy_admits(cfg, target.is_agent);
-    }
-    policy_admits(cfg, target.is_agent) && target.access.takes_writes()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1066,6 +1084,39 @@ mod tests {
 
     fn line(chart: &mut Chart, from: u64, to: u64, rung: Rung) {
         chart.draw(SeatId(from), SeatId(to), rung);
+    }
+
+    /// The effect-time recheck follows the CURRENT chart and the sender's CURRENT
+    /// seat, not anything captured when the write was queued: a revoked line, and
+    /// a sender that has left its seat, both stop the write; a present line and
+    /// the sender's own pane both let it through. This is the TOCTOU guard
+    /// (issue #1133): breaking it to read a stale decision fails here.
+    #[test]
+    fn may_write_live_rechecks_the_current_chart_and_seat() {
+        let cfg = on();
+        let target = agent(Some(2), AgentAccess::Open);
+        let sender = Some(SeatId(1));
+
+        let mut with_line = Chart::default();
+        line(&mut with_line, 1, 2, Rung::Read);
+        assert!(
+            may_write_live(&cfg, &with_line, sender, &target, false),
+            "a current read line admits the write"
+        );
+
+        let revoked = Chart::default();
+        assert!(
+            !may_write_live(&cfg, &revoked, sender, &target, false),
+            "a line revoked while the write was queued stops it at the effect"
+        );
+        assert!(
+            !may_write_live(&cfg, &with_line, None, &target, false),
+            "a sender that no longer holds a seat is refused, even with the line still drawn"
+        );
+        assert!(
+            may_write_live(&cfg, &revoked, None, &target, true),
+            "the sender's own pane writes without a line, whatever the chart says"
+        );
     }
 
     #[test]
@@ -1242,11 +1293,6 @@ mod tests {
                 may_write(&cfg, r, &target, true),
                 own,
                 "{access:?}: its own agent"
-            );
-            assert_eq!(
-                position_takes_writes(&cfg, &target, false),
-                other,
-                "{access:?}: apply path"
             );
         }
         let shell = Party {

@@ -8339,6 +8339,17 @@ impl Workspace {
                     out.push((target.clone(), Ok(report)));
                 }
                 mcp::Target::Pane(pid) => {
+                    // Resolve the SENDER's current seat and pane live, so the
+                    // reach recheck below follows the chart as it is now, not as
+                    // the request's snapshot saw it (#1133). A sender that has
+                    // moved seats, been unseated, or exited loses its authority
+                    // here; its own pane is recognised by identity rather than a
+                    // captured flag, so a replaced target is never exempted.
+                    let sender = patch
+                        .caller_pane
+                        .and_then(|pane| self.leaf_with_pane_id(pane, cx));
+                    let sender_seat = sender.as_ref().and_then(|l| l.read(cx).seat);
+                    let sender_shell = sender.as_ref().and_then(|l| l.read(cx).shell_pid());
                     // locate an EXPOSED leaf with this shell pid (collect the
                     // handle first so the &self.tabs borrow ends before we mutate)
                     let mut hit = None;
@@ -8351,13 +8362,19 @@ impl Workspace {
                                 // An off-limits pane still takes an update aimed
                                 // at it by the agent running INSIDE it — its own
                                 // note, deliverable or bench — and nothing from
-                                // anywhere else (see `warroom::may_write`). The
-                                // protocol layer has already checked the caller's
-                                // reach; this re-checks the position at the effect.
-                                let exposed = warroom::position_takes_writes(
+                                // anywhere else. The request-time `write_gate`
+                                // already checked reach; this re-checks it at the
+                                // effect against the LIVE chart and the sender's
+                                // current seat, so a line revoked or reseated while
+                                // the write was queued stops it. Own-ness is the
+                                // sender BEING this pane, resolved by identity.
+                                let own = patch.own_pane || sender_shell == Some(*pid);
+                                let exposed = warroom::may_write_live(
                                     &self.mcp,
+                                    &self.chart,
+                                    sender_seat,
                                     &p.party(),
-                                    patch.own_pane,
+                                    own,
                                 );
                                 hit = Some((leaf.clone(), exposed));
                                 break 'find;
@@ -40433,7 +40450,7 @@ mod tests {
         for (gate, sites) in [
             ("warroom::visible_to_some_agent(", 3),
             ("warroom::anonymous_reach(", 1),
-            ("warroom::position_takes_writes(", 1),
+            ("warroom::may_write_live(", 1),
         ] {
             let calls: Vec<&str> = code.split(gate).skip(1).collect();
             assert_eq!(calls.len(), sites, "{gate}");
@@ -40452,10 +40469,12 @@ mod tests {
         assert!(open.contains("warroom::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent())"));
         let writes = live_fn("fn apply_mcp_config(");
         assert!(
-            writes.contains("warroom::position_takes_writes(")
+            writes.contains("warroom::may_write_live(")
+                && writes.contains("&self.chart")
                 && writes.contains("p.party()")
                 && writes.contains("patch.own_pane"),
-            "the write gate reads the position and the own-pane exception: {writes}"
+            "the write gate rechecks the LIVE chart with the pane's position and the own-pane \
+             exception at the effect: {writes}"
         );
         let snapshot = live_fn("fn mcp_snapshot(");
         assert!(
