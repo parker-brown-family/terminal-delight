@@ -343,6 +343,8 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// The archive's search field needs a browser. TD's HTML document reader
+    /// draws snapshots and routes links/notes, but does not forward form input.
     pub(crate) fn open_artifact_archive(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -353,9 +355,7 @@ impl TerminalView {
                 .await;
             let _ = this.update(cx, |v, cx| match result {
                 Ok(path) => {
-                    if let Some(target) = crate::docopen::drawable_document(&path) {
-                        let _ = v.open_float(target, None, cx);
-                    }
+                    open_with_system(&path.to_string_lossy());
                     cx.notify();
                 }
                 Err(err) => v.say(
