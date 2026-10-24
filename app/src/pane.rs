@@ -4831,6 +4831,7 @@ impl TerminalView {
                 seed: n.seed,
                 edit: None,
                 pinned: n.pinned,
+                by: n.by,
             });
         let mut events = session.events.take().expect("events taken once");
         cx.spawn(async move |this, cx| {
@@ -6872,6 +6873,7 @@ impl TerminalView {
             text,
             seed: note.seed,
             pinned: note.pinned,
+            by: note.by,
         })
     }
 
@@ -6881,6 +6883,10 @@ impl TerminalView {
     /// that has finished, not a person holding the pen. A replaced note keeps
     /// its lean — same paper, new words — where a brand-new one rolls a fresh
     /// seed, so an agent updating its own note doesn't twitch the sheet.
+    ///
+    /// Everything that arrives here was written by something other than the
+    /// person at the keyboard, so the note is the agent's and wears the
+    /// robot stamp.
     pub fn note_post(
         &mut self,
         title: Option<String>,
@@ -6899,6 +6905,7 @@ impl TerminalView {
             seed,
             edit: None,
             pinned: pin,
+            by: Some(crate::sticky::Author::Agent),
         });
         self.note_hover = None;
         cx.emit(StickyChanged);
@@ -6940,6 +6947,7 @@ impl TerminalView {
             self.sticky_peel(cx);
             return;
         }
+        note.by = crate::sticky::author_after_edit(note.by, &note.text, &text);
         note.text = text;
         note.edit = None;
         cx.emit(StickyChanged);

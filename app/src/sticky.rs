@@ -96,6 +96,34 @@ pub struct Sticky {
     /// of is the tab you are not. Set and cleared by right-clicking the paper,
     /// and by nothing else: see [`right_click`].
     pub pinned: bool,
+    /// Who wrote the words: the agent ones wear a robot stamp, so a person can
+    /// tell a note they wrote from one written FOR them. `None` is a note from
+    /// before notes recorded this, and it is drawn unstamped — not because it
+    /// is the person's, but because nobody can say it is not.
+    pub by: Option<Author>,
+}
+
+/// Who put a note's words on the paper.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Author {
+    /// Typed at the keyboard, through `alt+s`.
+    Person,
+    /// Anything that is not the person at the keyboard: an agent through the
+    /// MCP `leave_note` tool, or Terminal Delight itself (the DUPLICATE TAB
+    /// note it leaves on a respawned leaf).
+    Agent,
+}
+
+/// Who wrote a note once a person has had the pen. Changing the words makes
+/// them the person's, even on an agent's paper, so the stamp comes off;
+/// opening it and posting it back unchanged leaves it with whoever wrote it.
+pub fn author_after_edit(before: Option<Author>, old: &str, new: &str) -> Option<Author> {
+    if old == new {
+        before
+    } else {
+        Some(Author::Person)
+    }
 }
 
 /// A note on its way to or from the state file — what it says, the seed that
@@ -111,6 +139,8 @@ pub struct Saved {
     pub text: String,
     pub seed: u32,
     pub pinned: bool,
+    /// Who wrote it — see [`Sticky::by`].
+    pub by: Option<Author>,
 }
 
 /// The composer, alive only while the note has the keyboard.
@@ -136,6 +166,7 @@ impl Sticky {
                 restore: None,
             }),
             pinned: false,
+            by: Some(Author::Person),
         }
     }
 
@@ -696,6 +727,63 @@ fn disc(x: f32, y: f32, r: f32) -> Vec<(f32, f32)> {
         .collect()
 }
 
+/// An ellipse in note-local space, flattened like [`disc`].
+fn oval(x: f32, y: f32, rx: f32, ry: f32) -> Vec<(f32, f32)> {
+    let n = SEG * 4;
+    (0..n)
+        .map(|i| {
+            let a = i as f32 / n as f32 * std::f32::consts::TAU;
+            (x + rx * a.cos(), y + ry * a.sin())
+        })
+        .collect()
+}
+
+/// A rectangle with each corner a quarter circle of radius `r`, in note-local
+/// space, wound the same way as [`quad`].
+fn rounded(x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> Vec<(f32, f32)> {
+    let r = r.min((x1 - x0) / 2.0).min((y1 - y0) / 2.0);
+    let mut v = Vec::with_capacity(4 * (SEG + 1));
+    for (cx, cy, start) in [
+        (x1 - r, y0 + r, -90.0_f32),
+        (x1 - r, y1 - r, 0.0),
+        (x0 + r, y1 - r, 90.0),
+        (x0 + r, y0 + r, 180.0),
+    ] {
+        for i in 0..=SEG {
+            let a = (start + 90.0 * i as f32 / SEG as f32).to_radians();
+            v.push((cx + r * a.cos(), cy + r * a.sin()));
+        }
+    }
+    v
+}
+
+/// Fill several note-local outlines as ONE shape under the even-odd rule, so
+/// an outline inside another cuts a hole in it. Every vertex goes through the
+/// tilt and the pre-warp exactly as in [`fill`].
+fn fill_even_odd(
+    lay: &Layout,
+    outlines: &[Vec<(f32, f32)>],
+    background: impl Into<gpui::Background>,
+    window: &mut Window,
+) {
+    let mut b = PathBuilder::fill().with_style(gpui::PathStyle::Fill(
+        gpui::FillOptions::default().with_fill_rule(gpui::FillRule::EvenOdd),
+    ));
+    for outline in outlines {
+        let Some((first, rest)) = outline.split_first() else {
+            continue;
+        };
+        b.move_to(lay.to_window(first.0, first.1));
+        for p in rest {
+            b.line_to(lay.to_window(p.0, p.1));
+        }
+        b.close();
+    }
+    if let Ok(path) = b.build() {
+        window.paint_path(path, background);
+    }
+}
+
 /// Fill a note-local polyline, mapping every vertex through the tilt and the
 /// pre-warp. This is where the paper stops being four lines and becomes the
 /// shape that comes out flat on a bent tube.
@@ -990,17 +1078,32 @@ pub fn paint(
                 window,
             );
         }
-        let (x, y) = (hw - 10., hh - 9.);
-        for i in 0..5 {
-            let angle = i as f32 * std::f32::consts::TAU / 5.;
-            fill(
-                lay,
-                &disc(x + angle.cos() * 3.2, y + angle.sin() * 3.2, 2.1),
-                pal.pin.alpha(0.45),
-                window,
-            );
+        // The seal gives its corner up to the robot stamp on an agent's note:
+        // two marks in one corner read as neither.
+        if !stamped(note) {
+            let (x, y) = (hw - 10., hh - 9.);
+            for i in 0..5 {
+                let angle = i as f32 * std::f32::consts::TAU / 5.;
+                fill(
+                    lay,
+                    &disc(x + angle.cos() * 3.2, y + angle.sin() * 3.2, 2.1),
+                    pal.pin.alpha(0.45),
+                    window,
+                );
+            }
+            fill(lay, &disc(x, y, 1.1), pal.ink.alpha(0.55), window);
         }
-        fill(lay, &disc(x, y, 1.1), pal.ink.alpha(0.55), window);
+    }
+
+    // Under the writing, so a stamp that lands on a long note's last word
+    // never makes it harder to read.
+    if stamped(note) {
+        fill_even_odd(
+            lay,
+            &stamp(hw, hh, note.seed),
+            pal.ink.alpha(STAMP_INK),
+            window,
+        );
     }
 
     paint_writing(note, lay, pal, window, cx);
@@ -1008,6 +1111,60 @@ pub fn paint(
     if note.pinned {
         paint_pin(lay, pal, window);
     }
+}
+
+/// Does this note wear the robot stamp? Only when an agent wrote it — see
+/// [`Sticky::by`] for why a note nobody can attribute goes unstamped.
+pub fn stamped(note: &Sticky) -> bool {
+    note.by == Some(Author::Agent)
+}
+
+/// How heavily the stamp is inked: the note's own ink, thinned the way a
+/// rubber stamp prints, so it reads as pressed onto the paper rather than
+/// written on it, and stays the colour the theme already checked against it.
+const STAMP_INK: f32 = 0.6;
+
+/// The robot stamp an agent's note wears in its bottom-right corner: TD's
+/// working robot ([`crate::art::robot_png`]) cut as a rubber stamp — the
+/// head's rim, the face plate with its two eyes left blank, the ears and the
+/// antenna — inside a thin ring, pressed on at its own small angle the way a
+/// hand stamps paper.
+///
+/// Subpaths in note-local space, filled EVEN-ODD by [`fill_even_odd`], so a
+/// shape inside another is a hole: the paper shows through wherever a real
+/// stamp has no rubber, and the eyes come out as the paper's colour.
+fn stamp(hw: f32, hh: f32, seed: u32) -> Vec<Vec<(f32, f32)>> {
+    // Scaled off the sheet like the pin, so a tiled note and a full-screen one
+    // carry the same stamp by eye.
+    let s = (hw * 0.18).clamp(7.0, 17.0);
+    let (cx, cy) = (hw - s * 2.0, hh - s * 2.1);
+    // Never square: a stamp pressed by hand lands a few degrees off the paper,
+    // and off the writing's own lean, which is what makes it read as stamped.
+    let (sin, cos) = (-9.0 + jitter(seed, 900) * 12.0_f32).to_radians().sin_cos();
+    let place = |shape: Vec<(f32, f32)>| -> Vec<(f32, f32)> {
+        shape
+            .into_iter()
+            .map(|(x, y)| (cx + s * (x * cos - y * sin), cy + s * (x * sin + y * cos)))
+            .collect()
+    };
+    vec![
+        // The ring.
+        place(oval(0.0, 0.0, 1.62, 1.62)),
+        place(oval(0.0, 0.0, 1.48, 1.48)),
+        // The head's rim, and the face plate inside it.
+        place(rounded(-1.0, -0.62, 1.0, 0.78, 0.46)),
+        place(rounded(-0.84, -0.46, 0.84, 0.62, 0.32)),
+        place(rounded(-0.7, -0.32, 0.7, 0.48, 0.22)),
+        // The eyes, left blank.
+        place(oval(-0.32, 0.08, 0.13, 0.2)),
+        place(oval(0.32, 0.08, 0.13, 0.2)),
+        // The ears.
+        place(rounded(-1.2, -0.18, -1.04, 0.4, 0.07)),
+        place(rounded(1.04, -0.18, 1.2, 0.4, 0.07)),
+        // The antenna: a stem clear of the rim, and the ball on it.
+        place(rounded(-0.07, -0.82, 0.07, -0.64, 0.03)),
+        place(oval(0.0, -0.95, 0.13, 0.13)),
+    ]
 }
 
 /// The pushpin, stuck through the top edge.
@@ -1414,6 +1571,7 @@ mod tests {
                 seed,
                 edit: None,
                 pinned: false,
+                by: None,
             };
             let t = note.tilt();
             assert!(
@@ -1439,6 +1597,7 @@ mod tests {
             seed: 12345,
             edit: None,
             pinned: false,
+            by: None,
         };
         let b = Sticky {
             title: None,
@@ -1446,6 +1605,7 @@ mod tests {
             seed: 12345,
             edit: None,
             pinned: false,
+            by: None,
         };
         assert_eq!(a.tilt(), b.tilt(), "the tilt comes from the seed alone");
     }
@@ -1805,6 +1965,85 @@ mod tests {
                 p.base.a
             );
             assert!(p.ink.a > 0.9, "the writing itself stays legible");
+        }
+    }
+
+    /// A note typed at the keyboard is the person's, from the first keystroke,
+    /// and wears no stamp.
+    #[test]
+    fn a_note_written_at_the_keyboard_is_the_persons() {
+        let note = Sticky::composing("", 7);
+        assert_eq!(note.by, Some(Author::Person));
+        assert!(!stamped(&note), "a person's own note wore the robot stamp");
+    }
+
+    /// Only an agent's note is stamped. A note nobody can attribute — one
+    /// saved before notes recorded their writer — goes unstamped, because the
+    /// stamp is a claim and nothing backs it.
+    #[test]
+    fn only_an_agents_note_wears_the_stamp() {
+        let mut note = Sticky::composing("x", 7);
+        note.edit = None;
+        for (by, want) in [
+            (Some(Author::Agent), true),
+            (Some(Author::Person), false),
+            (None, false),
+        ] {
+            note.by = by;
+            assert_eq!(stamped(&note), want, "{by:?}");
+        }
+    }
+
+    /// Changing an agent's words makes them yours and takes the stamp off;
+    /// opening the note and posting it back unchanged does not.
+    #[test]
+    fn changing_the_words_makes_them_yours() {
+        let agent = Some(Author::Agent);
+        assert_eq!(
+            author_after_edit(agent, "tests green", "tests green, merged"),
+            Some(Author::Person)
+        );
+        assert_eq!(
+            author_after_edit(agent, "tests green", "tests green"),
+            agent,
+            "an unchanged note changed hands"
+        );
+        assert_eq!(
+            author_after_edit(None, "old", "old"),
+            None,
+            "looking at an unattributed note attributed it"
+        );
+        assert_eq!(author_after_edit(None, "old", "new"), Some(Author::Person));
+    }
+
+    /// The stamp stays on the paper, in its bottom-right quarter — clear of
+    /// the edges, the pin at the top and the lifted bottom-left corner — on
+    /// the smallest pane that carries a note and on a big one, at every lean
+    /// the seed can give it.
+    #[test]
+    fn the_stamp_sits_on_the_paper_in_its_bottom_right_corner() {
+        for (w, h) in [(250.0, 190.0), (740.0, 870.0), (1900.0, 1000.0)] {
+            let content = Bounds {
+                origin: point(px(0.0), px(0.0)),
+                size: size(px(w), px(h)),
+            };
+            let lay = layout(content, 3.0).expect("a pane this size carries a note");
+            let (hw, hh) = (
+                f32::from(lay.size.width) / 2.0,
+                f32::from(lay.size.height) / 2.0,
+            );
+            for seed in 0..64u32 {
+                for (x, y) in stamp(hw, hh, seed).into_iter().flatten() {
+                    assert!(
+                        x > 0.0 && y > 0.0,
+                        "{w}x{h} seed {seed}: ({x}, {y}) left the bottom-right quarter"
+                    );
+                    assert!(
+                        x < hw - 2.0 && y < hh - 2.0,
+                        "{w}x{h} seed {seed}: ({x}, {y}) ran off the {hw}x{hh} half-sheet"
+                    );
+                }
+            }
         }
     }
 }
