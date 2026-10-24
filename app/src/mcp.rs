@@ -471,6 +471,11 @@ pub struct NoteReport {
     pub title: Option<String>,
     pub text: String,
     pub pinned: bool,
+    /// Who wrote it, `"agent"` or `"person"`, so an agent reading the fridge
+    /// door can tell the person's own words from another agent's. Absent when
+    /// the window cannot say: a note saved before notes recorded it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<crate::sticky::Author>,
 }
 
 /// The `leave_note` contract: at most this many words of body. A note is what
@@ -6017,6 +6022,7 @@ mod tests {
             title: Some("GET MILK!".into()),
             text: "home at 7pm".into(),
             pinned: false,
+            by: None,
         });
         let s = snap(true, true, vec![pane]);
         let line = json!({ "id": 6, "method": "tools/call", "params": { "name": "list_panes" } })
@@ -6532,6 +6538,7 @@ mod tests {
             title: Some(INJECTION.into()),
             text: INJECTION.into(),
             pinned: false,
+            by: None,
         });
         let mut s = snap(true, true, vec![pane]);
         s.engineering = vec![Report {
