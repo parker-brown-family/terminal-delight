@@ -2859,6 +2859,11 @@ struct StateFile {
     /// seated, and every pane behaves as it did before the War Room.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     lines: Vec<warroom::Line>,
+    /// Absent means a legacy unnamed chart; Some([]) means explicitly no orgs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    war_orgs: Option<Vec<warroom::Org>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    war_org: Option<warroom::OrgId>,
     /// The size above which a copy of an agent waits for a person's press.
     /// Absent → the default, [`warroom::ASK_PRESS_TOKENS`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2965,6 +2970,8 @@ impl Default for StateFile {
             scope: None,
             mcp: None,
             lines: vec![],
+            war_orgs: None,
+            war_org: None,
             ask_press_tokens: None,
             // A fresh install's reader wears the pane it reads. With the CRT
             // off that is a flat screen either way; switch the tube on and the
@@ -4535,6 +4542,11 @@ struct Workspace {
     /// The War Room's lines: which seat may reach which. Changed only by a
     /// person, in the War Room or by a Yes on the rail.
     chart: warroom::Chart,
+    war_orgs: warroom::Orgs,
+    war_org: Option<warroom::OrgId>,
+    war_org_edit: Option<(Option<warroom::OrgId>, EditBuffer)>,
+    war_relation: Option<war_room_view::RelationEditor>,
+    war_move: Option<(Entity<TerminalView>, warroom::OrgId)>,
     /// A person's limit for a copy before it needs their press; `None` is the
     /// default, [`warroom::ASK_PRESS_TOKENS`].
     ask_press_tokens: Option<u64>,
@@ -5243,7 +5255,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     })
     .detach();
     cx.subscribe(pane, |ws, _pane, _ev: &OpenAgentPanel, cx| {
-        ws.war_room = false;
+        ws.close_war_room();
         ws.mcp_menu = true;
         cx.notify();
     })
@@ -6251,6 +6263,11 @@ impl Workspace {
             osd_eggs: OsdEggs::default(),
             mcp: saved.mcp.clone().unwrap_or_default(),
             chart: warroom::Chart::from_saved(saved.lines.clone()),
+            war_orgs: warroom::Orgs::default(),
+            war_org: None,
+            war_org_edit: None,
+            war_relation: None,
+            war_move: None,
             ask_press_tokens: saved.ask_press_tokens,
             mcp_menu: false,
             war_room: false,
@@ -6544,6 +6561,20 @@ impl Workspace {
             ws.prune_groups();
             ws.active = saved.active.min(ws.tabs.len() - 1);
             ws.focus_active(window, cx);
+        }
+        if !scratch {
+            let mut seats = Vec::new();
+            for tab in &ws.tabs {
+                let mut leaves = Vec::new();
+                tab.root.leaves(&mut leaves);
+                seats.extend(leaves.into_iter().filter_map(|p| p.read(cx).seat));
+            }
+            seats.extend(ws.chart.saved().iter().flat_map(|l| [l.from, l.to]));
+            ws.war_orgs = warroom::Orgs::restore(saved.war_orgs.clone(), &seats);
+            ws.war_org = saved
+                .war_org
+                .filter(|id| ws.war_orgs.get(*id).is_some())
+                .or_else(|| ws.war_orgs.saved().first().map(|o| o.id));
         }
         if ws.eng_table {
             window.focus(&ws.focus_handle, cx);
@@ -7874,6 +7905,8 @@ impl Workspace {
             scope: None,
             mcp: Some(self.mcp.clone()),
             lines: self.chart.saved().to_vec(),
+            war_orgs: Some(self.war_orgs.saved().to_vec()),
+            war_org: self.war_org,
             ask_press_tokens: self.ask_press_tokens,
             focus_inherit: self.focus_inherit_theme,
             anchor_top: self.anchor_top,
@@ -28510,7 +28543,7 @@ impl Render for Workspace {
             cx.notify();
         }
         // demo/capture hook (TD_WAR_ROOM_DEMO): open the War Room for a rig that
-        // cannot click the counter; a number picks that seat, so its card shows.
+        // cannot click the counter; a number selects that seat without granting access.
         if let Ok(how) = std::env::var("TD_WAR_ROOM_DEMO") {
             if !self.war_room {
                 self.war_room = true;
@@ -35640,7 +35673,7 @@ impl Render for Workspace {
             // when the pane it reads does not hold the keyboard, and otherwise by
             // that pane, which has to hear the Esc (`escape_closes_the_reader`).
             .capture_key_down(cx.listener(|ws, ev: &KeyDownEvent, window, cx| {
-                if ws.war_room_capture_key(&ev.keystroke, cx) {
+                if ws.war_room_capture_key(&ev.keystroke, window, cx) {
                     cx.stop_propagation();
                     return;
                 }

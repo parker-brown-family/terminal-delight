@@ -5544,6 +5544,13 @@ impl TerminalView {
         self.tokens_banked.saturating_add(self.turn_peak_tokens)
     }
 
+    /// Give a window-level fixture the same reader cleanup as the pane harness.
+    #[cfg(test)]
+    pub(crate) fn fixture_shutdown(&self) -> impl FnOnce() + 'static {
+        let notifier = self.session.notifier.clone();
+        move || notifier.shutdown()
+    }
+
     /// Should a working poll open a new live-turn via the spinner fallback?
     ///
     /// `live_is_none` alone (the pre-existing rule) is a LEVEL check, and a
