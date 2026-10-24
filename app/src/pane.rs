@@ -4367,7 +4367,11 @@ impl TerminalView {
     fn live_runtime(&self) -> crate::session::PaneRuntime {
         match (self.session.master.as_ref(), self.session.shell_pid) {
             // Our own terminal: ask the kernel through the descriptor we hold.
-            (Some(master), Some(pid)) => crate::session::capture(Some(master), pid),
+            (Some(master), Some(pid)) => master
+                .file()
+                .map_or_else(crate::session::PaneRuntime::default, |file| {
+                    crate::session::capture(Some(&file), pid)
+                }),
             // Somebody else's: the descriptor is theirs, so the same questions
             // are asked of /proc instead. Same answers, one hop further away.
             (None, Some(pid)) => crate::session::capture_via_proc(pid),
@@ -4378,11 +4382,22 @@ impl TerminalView {
         }
     }
 
+    /// Explicit user close for a terminal this window owns. Dropping a replica
+    /// or disconnecting a window is deliberately not a close request.
+    pub fn close_owned_terminal(&self) {
+        if self.session.master.is_some() {
+            self.session.notifier.shutdown();
+        }
+    }
+
     /// The pane's live cwd, cheaply (no agent-session scan) — polled by the
     /// workspace's dir-logo sweep and read at picker-open / pick time.
     pub fn current_cwd(&self) -> Option<String> {
         let pid = self.session.shell_pid?;
-        crate::session::capture_cwd(self.session.master.as_ref(), pid)
+        match &self.session.master {
+            Some(master) => crate::session::capture_cwd(Some(master.file()?.as_ref()), pid),
+            None => crate::session::capture_cwd(None, pid),
+        }
     }
 
     /// This pane's shell pid — the kernel handle behind its identity. Ephemeral
@@ -4869,7 +4884,9 @@ impl TerminalView {
                         }
                         let detected = match (view.session.master.as_ref(), view.session.shell_pid)
                         {
-                            (Some(master), Some(pid)) => Some(foreground_mode(master, pid)),
+                            (Some(master), Some(pid)) => {
+                                master.file().map(|file| foreground_mode(&file, pid))
+                            }
                             // Somebody else's terminal, or nobody's: not this
                             // window's question to answer.
                             _ => None,

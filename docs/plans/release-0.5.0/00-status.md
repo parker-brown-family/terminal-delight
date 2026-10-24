@@ -37,6 +37,16 @@ November 20 is Parker’s explicit Friday exception to the usual Monday schedule
 
 ## Work and Current Evidence
 
+- **Artifact and process continuity inclusion, approved 2026-10-24:** Parker asked
+  for the HumanLayer examination to inform original TD implementation, directed
+  that all work be completed, and selected 0.5.0 with detailed changelogs and a
+  current-session update. The scope extends existing artifacts with durable
+  discovery and captured revisions, preserves quotation/revision evidence for
+  Markdown notes, and bounds cleanup when a user explicitly ends a terminal.
+  This does not add automatic agent lifecycle management. Validation and actual
+  live-host boundaries are tracked in
+  [the implementation record](../humanlayer-continuity/00-status.md).
+
 - **Ops appearance inclusion, approved 2026-10-22:** Parker selected the smoked-glass overlay and frosted-spine update for this development branch and this machine's daily binary. The [Ops glass PR](https://github.com/parker-brown-family/terminal-delight/pull/1110) keeps overlay backings opaque, reveals the desktop through foreground groupings when compositor opacity permits, and diffuses the spine's own grid below sharp text. Fullscreen, 100% opacity and unknown compositor opacity retain solid faces. The feature's native captures, alpha measurements, 2,716 passing local tests and renderer-patch replay are recorded in the [local review](../../../reports/2026-10-22-ops-glass.html). Daily installation is separate from candidate qualification and stable publication.
 
 - **Explicit appearance inclusion, approved 2026-10-21:** Parker selected the tested terminal-lighting and deletion-shortcut feature for 0.5.0: “We are there! Ship and seal it... into the 0.5.0 branch”. Its [single feature PR](https://github.com/parker-brown-family/terminal-delight/pull/1074) now targets this branch and carries this milestone. It adds independent active/inactive letter glow, retained erased text, grouped gauges and word/line/all-input deletion gestures. Compatibility tests and native rendering-cost qualification are recorded under `docs/plans/phosphor-glow/13-promotion-product.md` through `16-promotion-slices.md`. This inclusion does not change the communication qualification, candidate hold or stable publication rules.

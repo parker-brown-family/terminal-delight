@@ -681,13 +681,15 @@ impl Pane {
         settled: impl Fn(&libc::winsize) -> bool,
     ) -> libc::winsize {
         use std::os::fd::AsRawFd;
-        let fd = self.read(|v| {
+        let master = self.read(|v| {
             v.session
                 .master
                 .as_ref()
                 .expect("a pane that owns its pseudoterminal")
-                .as_raw_fd()
+                .file()
+                .expect("live pseudoterminal")
         });
+        let fd = master.as_raw_fd();
         let deadline = Instant::now() + PATIENCE;
         loop {
             // SAFETY: TIOCGWINSZ writes one `winsize` through the pointer, and

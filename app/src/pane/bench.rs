@@ -1488,7 +1488,13 @@ impl TerminalView {
                 // name nobody chose is worse than a surface that is only on
                 // the bench.
                 Some(w) => {
-                    w.write_surface(&dir, id, doc, self.wb_conv_bond, now);
+                    if let Some(rec) =
+                        crate::benchstore::said(w.open_turn(), id, doc, self.wb_conv_bond, now)
+                    {
+                        if w.write(&dir, rec.clone()) {
+                            crate::artifact_archive::observe(&dir, &dir, w.root(), &rec);
+                        }
+                    }
                 }
                 None => {
                     if let Some(rec) = crate::benchstore::said(
@@ -1537,6 +1543,15 @@ impl TerminalView {
             // line, so the run that survives is the one nearest the moment a
             // key could arrive.
             None => {
+                let scope = format!(
+                    "session={:?};pane={:?};shell={:?}",
+                    crate::surfacefeed::session(),
+                    self.pane_id,
+                    self.session.shell_pid
+                );
+                if let Err(err) = crate::artifact_archive::file_unbound(&dir, &scope, &rec) {
+                    eprintln!("td: unbound artifact could not be preserved: {err}");
+                }
                 const HELD_CAP: usize = 256;
                 if self.wb_unfiled.len() >= HELD_CAP {
                     self.wb_unfiled.remove(0);

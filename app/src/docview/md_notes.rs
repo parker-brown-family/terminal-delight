@@ -19,9 +19,9 @@
 //! Made the way the brief's own `notes.js` makes one: a short prefix for what
 //! the block is, then the first four words of its text as a slug, and `-2`,
 //! `-3` for a repeat. An id is a name, so a note stays on its block when the
-//! file moves around it. Change a block's opening words and its notes lose
-//! it; they are kept, counted and mapped as notes on words no longer in the
-//! file (see [`build_map`]), never dropped.
+//! file moves around it. New notes also retain the original quotation, nearby
+//! passages and source revision. Reattachment is derived from that evidence;
+//! ambiguous or missing passages stay in the review map instead of guessing.
 //!
 //! # The map
 //!
@@ -34,6 +34,8 @@ use std::path::{Path, PathBuf};
 use super::markdown::{block_plain, Block, MdDoc};
 use super::notes::{self, Json, NoteMap, Obj};
 use super::notes_ui::Words;
+pub mod evidence;
+pub use evidence::{keep_with_evidence, Frame};
 
 /// One block that takes notes: its id, the words that name it, the line it
 /// starts on (1-based, as an editor counts; `None` if the parse did not say),
@@ -42,6 +44,8 @@ use super::notes_ui::Words;
 pub struct MdAnchor {
     pub nid: String,
     pub title: String,
+    pub quote: String,
+    pub kind: String,
     pub line: Option<u32>,
     pub block: usize,
     pub item: Option<usize>,
@@ -134,6 +138,8 @@ pub fn anchors(doc: &MdDoc) -> Vec<MdAnchor> {
                 out.push(MdAnchor {
                     nid: nid_for("li", &plain, &mut used),
                     title: title_of(&format!("{marker} {first}")),
+                    quote: plain.clone(),
+                    kind: "li".into(),
                     line: meta
                         .and_then(|m| m.items.get(j))
                         .and_then(|&l| editor_line(l)),
@@ -151,6 +157,8 @@ pub fn anchors(doc: &MdDoc) -> Vec<MdAnchor> {
         out.push(MdAnchor {
             nid: nid_for(pre, &plain, &mut used),
             title: title_of(&format!("{mark}{first}")),
+            quote: plain.clone(),
+            kind: pre.into(),
             line: meta.and_then(|m| editor_line(m.line)),
             block: i,
             item: None,
@@ -206,6 +214,9 @@ pub fn build_map(
         for n in list {
             out.push(format!("  · {}", one_line(n.text)));
         }
+        for summary in evidence::summaries(notes, nid) {
+            out.push(format!("  {summary}"));
+        }
         for p in pictured(nid) {
             out.push(format!("  · {p}"));
         }
@@ -228,7 +239,13 @@ pub fn build_map(
     let mut seen = std::collections::HashSet::new();
     gone.retain(|nid| seen.insert(*nid));
     if !gone.is_empty() {
-        out.push("On words no longer in the file:".into());
+        out.push(
+            if gone.iter().any(|nid| nid.starts_with("md-unresolved-")) {
+                "Notes without a unique current passage:".into()
+            } else {
+                "On words no longer in the file:".into()
+            },
+        );
         out.push(String::new());
         for nid in gone {
             let list = notes.on(nid);
@@ -236,6 +253,9 @@ pub fn build_map(
             out.push(format!("[{nid}] {title}"));
             for n in list {
                 out.push(format!("  · {}", one_line(n.text)));
+            }
+            for summary in evidence::summaries(notes, nid) {
+                out.push(format!("  {summary}"));
             }
             for p in pictured(nid) {
                 out.push(format!("  · {p}"));
@@ -267,7 +287,7 @@ fn one_line(text: &str) -> String {
 // ── the store ───────────────────────────────────────────────────────────────
 
 /// The store's format. A file of a later one is read-only here.
-pub const FORMAT: u32 = 1;
+pub const FORMAT: u32 = 2;
 
 /// `$XDG_STATE_HOME/terminal-delight/notes`, the state directory resolved as
 /// the brief's backups resolve it: the variable when it is set and absolute,
@@ -342,7 +362,7 @@ pub fn read(store: &Path) -> Result<NoteMap, String> {
         return Err(unreadable("not an object".into()));
     };
     match top.get("format") {
-        Some(Json::Num(n)) if *n == f64::from(FORMAT) => {}
+        Some(Json::Num(n)) if *n == 1.0 || *n == f64::from(FORMAT) => {}
         Some(Json::Num(n)) => {
             return Err(format!(
                 "its notes were kept by a newer TD (format {}), so this one only reads them",
@@ -407,12 +427,14 @@ pub fn write(store: &Path, doc: &Path, notes: &NoteMap) -> Result<(), Words> {
 /// keep the result: two TD windows on one file both keep their notes. Answers
 /// what the store holds afterwards. `known` is every block id the file has,
 /// so a note is never added to a block that is not there.
+#[cfg(test)]
 pub fn keep(
     store: &Path,
     doc: &Path,
     edits: &[notes::NoteEdit],
     known: &[&str],
 ) -> Result<NoteMap, Words> {
+    let _lock = evidence::lock_store(store)?;
     let mut map = read(store).map_err(Words::as_is)?;
     let mut concurs = notes::ConcurMap::default();
     notes::apply(&mut map, &mut concurs, edits, known, false)
@@ -595,13 +617,13 @@ mod tests {
             keep(&store, &doc, &[add("p-not-a-block", "x")], &known).is_err(),
             "no note on a block the file does not have"
         );
-        std::fs::write(&store, "{\"format\":2,\"notes\":{}}").unwrap();
+        std::fs::write(&store, "{\"format\":3,\"notes\":{}}").unwrap();
         let why = read(&store).unwrap_err();
         assert!(why.contains("newer TD"), "{why}");
         assert!(keep(&store, &doc, &[add("h-the-plan", "x")], &known).is_err());
         assert_eq!(
             std::fs::read_to_string(&store).unwrap(),
-            "{\"format\":2,\"notes\":{}}",
+            "{\"format\":3,\"notes\":{}}",
             "a later format is never written over"
         );
         let _ = std::fs::remove_dir_all(dir);

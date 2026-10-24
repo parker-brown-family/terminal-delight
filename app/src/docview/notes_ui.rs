@@ -469,6 +469,8 @@ pub struct NotesLayer {
     concur: ConcurSupport,
     /// The edits made here and not yet saved, oldest first.
     pending: Vec<NoteEdit>,
+    md_frame: Option<super::md_notes::Frame>,
+    md_contexts: Vec<super::md_notes::evidence::EditContext>,
     /// `base` with `pending` applied: what the page shows. `None` unless the
     /// file's notes can be shown at all.
     applied: Option<(NoteMap, ConcurMap)>,
@@ -482,6 +484,7 @@ pub struct NotesLayer {
     sent: Option<Said>,
     /// A save is running: another waits for it.
     saving: bool,
+    saving_count: usize,
     /// The file is not on disk any more. The page stays up; saving is off.
     gone: bool,
     /// Escape was pressed once with edits unsaved, and the bar said so: the
@@ -588,12 +591,15 @@ impl NotesLayer {
             base,
             concur,
             pending: Vec::new(),
+            md_frame: None,
+            md_contexts: Vec::new(),
             applied: None,
             writable,
             note_box: None,
             said: None,
             sent: None,
             saving: false,
+            saving_count: 0,
             gone: false,
             close_warned: false,
             revealing: false,
@@ -634,12 +640,15 @@ impl NotesLayer {
             base,
             concur: ConcurSupport::NotSupported,
             pending: Vec::new(),
+            md_frame: None,
+            md_contexts: Vec::new(),
             applied: None,
             writable,
             note_box: None,
             said: None,
             sent: None,
             saving: false,
+            saving_count: 0,
             gone: false,
             close_warned: false,
             revealing: false,
@@ -741,9 +750,11 @@ impl NotesLayer {
     /// its draft, and what the bar last said.
     pub fn carry_from(&mut self, old: NotesLayer) {
         self.pending = old.pending;
+        self.md_contexts = old.md_contexts;
         self.said = old.said;
         self.sent = old.sent;
         self.saving = old.saving;
+        self.saving_count = old.saving_count;
         self.note_box = old.note_box;
         // The pictures are TD's, not the page's: a new render of the same
         // brief has the same ones.
@@ -898,7 +909,7 @@ impl NotesLayer {
             Shown::Notes { notes, concurs } => {
                 let (mut n, mut c) = (notes.clone(), concurs.clone());
                 let supported = self.concur == ConcurSupport::Supported;
-                for e in &self.pending {
+                for (i, e) in self.pending.iter().enumerate() {
                     let _ = apply(
                         &mut n,
                         &mut c,
@@ -906,6 +917,9 @@ impl NotesLayer {
                         &[nid_of(e)],
                         supported,
                     );
+                    if let Some(context) = self.md_contexts.get(i) {
+                        super::md_notes::evidence::enrich_last(&mut n, e, context);
+                    }
                 }
                 Some((n, c))
             }
@@ -934,6 +948,14 @@ impl NotesLayer {
             (Some((_, c)), ConcurSupport::Supported) => Some(c),
             _ => None,
         }
+    }
+
+    pub fn set_markdown_frame(&mut self, frame: super::md_notes::Frame) {
+        self.md_frame = Some(frame);
+    }
+
+    pub fn markdown_contexts(&self) -> Vec<super::md_notes::evidence::EditContext> {
+        self.md_contexts.clone()
     }
 
     /// The notes on one anchor, saved and waiting.
@@ -1501,12 +1523,21 @@ impl NotesLayer {
 
     /// Add a note to an anchor, open or not: the control socket's way in.
     pub fn add_note(&mut self, nid: String, title: String, text: String, ts: String) {
-        self.pending.push(NoteEdit::Add {
+        let edit = NoteEdit::Add {
             nid,
             title,
             text,
             ts,
-        });
+        };
+        if self.in_store() {
+            self.md_contexts
+                .push(super::md_notes::evidence::edit_context(
+                    self.md_frame.as_ref(),
+                    self.notes(),
+                    &edit,
+                ));
+        }
+        self.pending.push(edit);
         self.said = None;
         self.sent = None;
         self.refresh();
@@ -1528,15 +1559,33 @@ impl NotesLayer {
 
     /// Delete a note by its words: the control socket's way in.
     pub fn delete_note(&mut self, nid: String, text: String, ts: Option<String>) {
-        let unsaved = self.pending.iter().rposition(|e| {
-            matches!(e, NoteEdit::Add { nid: n, text: t, ts: s, .. }
+        let unsaved = self
+            .pending
+            .iter()
+            .rposition(|e| {
+                matches!(e, NoteEdit::Add { nid: n, text: t, ts: s, .. }
                 if *n == nid && *t == text && ts.as_ref().is_none_or(|ts| ts == s))
-        });
+            })
+            .filter(|i| !self.saving || *i >= self.saving_count);
         match unsaved {
             Some(i) => {
                 self.pending.remove(i);
+                if self.in_store() && i < self.md_contexts.len() {
+                    self.md_contexts.remove(i);
+                }
             }
-            None => self.pending.push(NoteEdit::Delete { nid, text, ts }),
+            None => {
+                let edit = NoteEdit::Delete { nid, text, ts };
+                if self.in_store() {
+                    self.md_contexts
+                        .push(super::md_notes::evidence::edit_context(
+                            self.md_frame.as_ref(),
+                            self.notes(),
+                            &edit,
+                        ));
+                }
+                self.pending.push(edit);
+            }
         }
         self.said = None;
         self.sent = None;
@@ -1554,11 +1603,15 @@ impl NotesLayer {
             return Err(Refusal::ConcursUnsupported(nid.into()).sentence());
         }
         let on = self.concurs().is_some_and(|c| c.has(nid));
-        let undo = self.pending.iter().rposition(|e| match e {
-            NoteEdit::Concur { nid: n, .. } => on && n == nid,
-            NoteEdit::Unconcur { nid: n } => !on && n == nid,
-            _ => false,
-        });
+        let undo = self
+            .pending
+            .iter()
+            .rposition(|e| match e {
+                NoteEdit::Concur { nid: n, .. } => on && n == nid,
+                NoteEdit::Unconcur { nid: n } => !on && n == nid,
+                _ => false,
+            })
+            .filter(|i| !self.saving || *i >= self.saving_count);
         match (undo, on) {
             (Some(i), _) => {
                 self.pending.remove(i);
@@ -1580,6 +1633,7 @@ impl NotesLayer {
     /// The edits a save starts with: everything waiting now. What is added
     /// while it runs waits for the next one.
     pub fn begin_save(&mut self) -> Vec<NoteEdit> {
+        self.saving_count = self.pending.len();
         self.saving = true;
         // A note kept as it is written says nothing while it is kept.
         if !self.in_store() {
@@ -1597,6 +1651,7 @@ impl NotesLayer {
     pub fn kept(&mut self, made: usize, notes: NoteMap) {
         self.saving = false;
         self.pending.drain(..made.min(self.pending.len()));
+        self.md_contexts.drain(..made.min(self.md_contexts.len()));
         self.base = Shown::Notes {
             notes,
             concurs: ConcurMap::default(),
@@ -2232,6 +2287,13 @@ impl NotesLayer {
             list = list.child(div().text_color(th.text.alpha(0.6)).child(t.notes_empty));
         }
         for (i, n) in notes.iter().enumerate() {
+            let evidence = self
+                .in_store()
+                .then(|| {
+                    self.notes()
+                        .and_then(|map| super::md_notes::evidence::summary_at(map, &b.nid, i))
+                })
+                .flatten();
             let mut head = div()
                 .flex()
                 .flex_row()
@@ -2260,7 +2322,15 @@ impl NotesLayer {
                     .border_color(th.accent)
                     .bg(th.bg.alpha(0.5))
                     .child(head)
-                    .child(div().child(n.text.to_string())),
+                    .child(div().child(n.text.to_string()))
+                    .when_some(evidence, |d, evidence| {
+                        d.child(
+                            div()
+                                .text_size(px(body * 0.72))
+                                .text_color(th.faint)
+                                .child(evidence),
+                        )
+                    }),
             );
         }
         let pill = |label: &str, zone: Zone, primary: bool| {
@@ -3738,5 +3808,61 @@ mod tests {
         assert_eq!(l.unsaved(), 1, "a delete waiting to be kept");
         let brief = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
         assert!(brief.orphans(&[]).is_empty(), "a brief has no such notes");
+    }
+    #[test]
+    fn deleting_a_note_during_its_save_does_not_discard_the_next_review() {
+        let scratch = crate::testsync::Scratch::new("markdown-inflight-delete");
+        let doc = scratch.path().join("plan.md");
+        let store = scratch.path().join("notes.json");
+        let source = "The reviewed paragraph has these exact original words.";
+        let frame = super::super::md_notes::Frame {
+            revision: Some(crate::artifact_archive::digest(source.as_bytes())),
+            anchors: super::super::md_notes::anchors(&super::super::markdown::parse(source, None)),
+        };
+        let anchor = frame.anchors[0].clone();
+        let mut layer = NotesLayer::for_markdown(&doc, Ok(NoteMap::default()));
+        layer.set_markdown_frame(frame.clone());
+        layer.add_note(
+            anchor.nid.clone(),
+            anchor.title.clone(),
+            "First note".into(),
+            "first".into(),
+        );
+        let first = layer.begin_save();
+        let first_context = layer.markdown_contexts();
+        layer.add_note(
+            anchor.nid.clone(),
+            anchor.title,
+            "Second note".into(),
+            "second".into(),
+        );
+        layer.delete_note(
+            anchor.nid.clone(),
+            "First note".into(),
+            Some("first".into()),
+        );
+        let saved =
+            super::super::md_notes::keep_with_evidence(&store, &doc, &first, &first_context)
+                .unwrap();
+        layer.kept(1, super::super::md_notes::evidence::display(&saved, &frame));
+        assert_eq!(
+            layer.unsaved(),
+            2,
+            "the second add and the queued delete both remain"
+        );
+        assert_eq!(
+            layer.notes().unwrap().on(&anchor.nid)[0].text,
+            "Second note"
+        );
+        let edits = layer.begin_save();
+        let kept = super::super::md_notes::keep_with_evidence(
+            &store,
+            &doc,
+            &edits,
+            &layer.markdown_contexts(),
+        )
+        .unwrap();
+        assert_eq!(kept.count(), 1);
+        assert_eq!(kept.on(&anchor.nid)[0].text, "Second note");
     }
 }

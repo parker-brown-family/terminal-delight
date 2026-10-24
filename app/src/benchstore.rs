@@ -333,6 +333,14 @@ impl Image {
 /// One line of the transcript.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Rec {
+    /// File evidence captured by TD after a particular handover. The handover
+    /// remains the Said record; this adds neither another title nor an origin.
+    ArtifactRevision {
+        at_ms: u64,
+        said: String,
+        said_at_ms: u64,
+        observation: crate::artifact_archive::Observation,
+    },
     /// Where a segment of this conversation started: a startup, a resume or a
     /// compaction. Carries no turn — it is a boundary, not a thing said.
     Segment {
@@ -403,7 +411,7 @@ impl Rec {
     /// shifts by however many, keeping what answered what.
     pub fn shifted(self, base: u32) -> Rec {
         match self {
-            Rec::Segment { .. } => self,
+            Rec::Segment { .. } | Rec::ArtifactRevision { .. } => self,
             Rec::Ask {
                 n,
                 at_ms,
@@ -464,7 +472,7 @@ impl Rec {
     /// The turn this line belongs to. `None` for a boundary.
     pub fn n(&self) -> Option<u32> {
         match self {
-            Rec::Segment { .. } => None,
+            Rec::Segment { .. } | Rec::ArtifactRevision { .. } => None,
             Rec::Ask { n, .. }
             | Rec::Said { n, .. }
             | Rec::Asked { n, .. }
@@ -474,6 +482,13 @@ impl Rec {
 
     pub fn to_json(&self) -> Value {
         match self {
+            Rec::ArtifactRevision {
+                at_ms,
+                said,
+                said_at_ms,
+                observation,
+            } => json!({"ws": WS, "t": "artifact-revision", "at_ms": at_ms,
+                    "said": said, "said_at_ms": said_at_ms, "observation": observation}),
             Rec::Segment {
                 seq,
                 at_ms,
@@ -526,6 +541,12 @@ impl Rec {
         let n = || v.get("n").and_then(Value::as_u64).map(|x| x as u32);
         let s = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
         match v.get("t")?.as_str()? {
+            "artifact-revision" => Some(Rec::ArtifactRevision {
+                at_ms,
+                said: s("said")?,
+                said_at_ms: v.get("said_at_ms")?.as_u64()?,
+                observation: serde_json::from_value(v.get("observation")?.clone()).ok()?,
+            }),
             "segment" => Some(Rec::Segment {
                 seq: v.get("seq").and_then(Value::as_u64).unwrap_or(0) as u32,
                 at_ms,
@@ -604,6 +625,9 @@ impl Rec {
 impl Rec {
     pub fn identity(&self) -> String {
         match self {
+            Rec::ArtifactRevision {
+                said, said_at_ms, ..
+            } => format!("artifact-revision:{said}:{said_at_ms}"),
             Rec::Segment { seq, .. } => format!("segment:{seq}"),
             Rec::Ask {
                 prompt_id,
@@ -679,6 +703,10 @@ impl Writer {
             next_turn: recs.iter().filter_map(Rec::n).max().map_or(0, |n| n + 1),
             written: recs.iter().map(Rec::identity).collect(),
         }
+    }
+
+    pub fn root(&self) -> &str {
+        &self.root
     }
 
     /// The ordinal the next ask will carry.
@@ -800,6 +828,7 @@ impl Writer {
 
     /// Record a surface, with the id rules applied. `None` for an id that must
     /// never become a key.
+    #[cfg(test)]
     pub fn write_surface(
         &mut self,
         root_dir: &Path,
@@ -861,6 +890,18 @@ pub fn append(root_dir: &Path, root: &str, rec: &Rec) -> io::Result<()> {
         .create(true)
         .append(true)
         .open(path)?;
+    // The UI and the capture worker can append to the same record. Hold the
+    // lock across write_all, including a short write, so records cannot interleave.
+    use std::os::fd::AsRawFd;
+    loop {
+        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } == 0 {
+            break;
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::Interrupted {
+            return Err(err);
+        }
+    }
     f.write_all(line.as_bytes())
 }
 
@@ -963,6 +1004,9 @@ pub fn load(root_dir: &Path, root: &str) -> Loaded {
             at_ms, id, surface, ..
         } = r
         {
+            if surface.get("_td_archive_only").and_then(Value::as_bool) == Some(true) {
+                continue;
+            }
             match newest.get_mut(id) {
                 // A re-presented surface keeps its ORIGINAL place in the
                 // conversation and takes its LATEST content: it is the row that
@@ -1129,6 +1173,12 @@ pub fn run_cli(args: &[String]) -> i32 {
     println!("next turn: {}", next_turn(&dir, root));
     for r in &recs {
         match r {
+            Rec::ArtifactRevision { observation, .. } => {
+                println!(
+                    "       artifact revision: {}",
+                    observation.revision.as_deref().unwrap_or("unavailable")
+                );
+            }
             Rec::Segment {
                 seq, source, agent, ..
             } => println!("  ---  {agent} {source} -> segment {seq}"),

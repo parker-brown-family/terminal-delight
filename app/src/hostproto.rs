@@ -384,9 +384,11 @@ pub enum Persisted {
 pub struct ClosedPane {
     pub shell_pid: u32,
     /// Whether the hangup signal actually reached a process group. `false`
-    /// means the pane was already gone, which is not a failure but is not a
-    /// kill either.
+    /// is not proof of exit; inspect `cleanup` when this host supports it.
     pub signalled: bool,
+    /// Absent for an older host, an ended loop, or an acknowledgement timeout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup: Option<crate::vt::pump::CloseReport>,
 }
 
 /// The first line of a byte-stream connection, which says which pane it
@@ -700,6 +702,7 @@ fn every_reply() -> Vec<Reply> {
             outcome: Outcome::Ok(ClosedPane {
                 shell_pid: 4242,
                 signalled: true,
+                cleanup: None,
             }),
         },
         Reply::GridChecked {

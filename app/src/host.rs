@@ -226,7 +226,7 @@ struct HostPane {
     /// written to. It exists for the one question only the process holding a
     /// master may ask — which process group is in the foreground — which is
     /// why the watcher and the checkpoint had to move here with the terminals.
-    master: File,
+    master: vt::pty::Monitor,
     /// The size the pane is now. Shared with the thread that answers a
     /// program's size questions, which must read it at the moment it answers:
     /// a copy taken at spawn answered every question with the size the pane
@@ -633,7 +633,7 @@ impl Host {
         let shell_pid = pty.child().id();
         // Taken before the pseudoterminal is handed to the read loop, and the
         // reason the foreground watcher can live here at all.
-        let master = pty.file().try_clone()?;
+        let master = pty.monitor();
         let sink: Arc<Mutex<Option<Sink>>> = Arc::new(Mutex::new(None));
         let (events, incoming) = std::sync::mpsc::channel();
         let tap = HostTap {
@@ -891,24 +891,23 @@ impl Host {
         })
     }
 
-    /// Close a pane: hang up its process tree, the way a terminal window
+    /// Close a pane: hang up its owned process group, the way a terminal window
     /// closing always has.
     ///
     /// This is the only thing that kills. A client disconnecting, crashing or
     /// being replaced does not come through here.
     pub fn close_pane(&self, pane: PaneId) -> Outcome<ClosedPane> {
-        let mut panes = self.panes.lock().expect("panes");
-        let Some(p) = panes.remove(&pane) else {
+        let Some(p) = self.panes.lock().expect("panes").remove(&pane) else {
             return Outcome::Err(format!("no pane {pane}"));
         };
-        let shell_pid = p.shell_pid;
-        // Signal the group, not the process: the shell is a session leader and
-        // what a person means by closing a pane is everything running in it.
-        let signalled = unsafe { libc::kill(-(shell_pid as i32), libc::SIGHUP) } == 0;
-        p.input.shutdown();
+        // The loop owns the unreaped child. A number cached in this table must
+        // never authorize a signal, especially for an already-ended pane.
+        // Waiting happens outside the pane-table lock.
+        let cleanup = p.input.close();
         Outcome::Ok(ClosedPane {
-            shell_pid,
-            signalled,
+            shell_pid: p.shell_pid,
+            signalled: cleanup.as_ref().is_some_and(|r| r.hangup_sent),
+            cleanup,
         })
     }
 
@@ -1194,7 +1193,10 @@ impl Host {
     pub fn watch_once(&self) {
         self.watches.fetch_add(1, Ordering::SeqCst);
         for (id, pane) in self.pane_list() {
-            let detected = classify_foreground(&pane.master, pane.shell_pid);
+            let Some(master) = pane.master.file() else {
+                continue;
+            };
+            let detected = classify_foreground(&master, pane.shell_pid);
             // Read every tick, not only when there is a demotion to weigh: the
             // sticky rule wants to know whether the alternate screen is up, and
             // the heal below wants to know whether it has just come down.
@@ -1370,7 +1372,10 @@ fn upkeep_loop(
 /// A reading that failed is not a pane in no directory running nothing: only an
 /// answer replaces an answer.
 fn record_reading(pane: &HostPane) {
-    let fresh = crate::session::capture(Some(&pane.master), pane.shell_pid);
+    let Some(master) = pane.master.file() else {
+        return;
+    };
+    let fresh = crate::session::capture(Some(&master), pane.shell_pid);
     let mut held = pane.runtime.lock().expect("runtime lock");
     if fresh.cwd.is_some() {
         held.cwd = fresh.cwd;

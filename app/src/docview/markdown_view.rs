@@ -142,11 +142,10 @@ impl MarkdownDoc {
         }
         let edits = layer.begin_save();
         let made = edits.len();
-        let known: Vec<String> = self.anchors.iter().map(|a| a.nid.clone()).collect();
+        let contexts = layer.markdown_contexts();
         let root = super::notes_root(cx);
         let write = cx.background_spawn(async move {
-            let known: Vec<&str> = known.iter().map(String::as_str).collect();
-            md_notes::keep(&md_notes::store_in(&root, &doc), &doc, &edits, &known)
+            md_notes::keep_with_evidence(&md_notes::store_in(&root, &doc), &doc, &edits, &contexts)
         });
         self.keeping = cx.spawn(async move |this, cx| {
             let done = write.await;
@@ -155,9 +154,13 @@ impl MarkdownDoc {
                     return;
                 };
                 let landed = done.is_ok();
+                let frame = md_notes::Frame {
+                    revision: md.revision.clone(),
+                    anchors: md.anchors.clone(),
+                };
                 if let Some(l) = md.notes.as_mut() {
                     match done {
-                        Ok(notes) => l.kept(made, notes),
+                        Ok(notes) => l.kept(made, md_notes::evidence::display(&notes, &frame)),
                         Err(why) => l.refused(why),
                     }
                 }
@@ -619,8 +622,12 @@ fn read_markdown(md: &mut MarkdownDoc, path: &Path, cx: &mut Context<DocumentVie
         // stamp older than the text, and the next tick reads again, which
         // is harmless. The other order could miss that write for good.
         let stamp = FileStamp::of(&path);
+        let mut revision = None;
         let parsed = std::fs::read(&path)
-            .map(|bytes| markdown::parse(&String::from_utf8_lossy(&bytes), path.parent()))
+            .map(|bytes| {
+                revision = Some(crate::artifact_archive::digest(&bytes));
+                markdown::parse(&String::from_utf8_lossy(&bytes), path.parent())
+            })
             .map_err(|e| {
                 crate::lang::fill(
                     crate::lang::current().strings().parts.doc_md_unreadable,
@@ -631,12 +638,14 @@ fn read_markdown(md: &mut MarkdownDoc, path: &Path, cx: &mut Context<DocumentVie
                 )
             });
         let kept = md_notes::read(&md_notes::store_in(&root, &path));
-        (stamp, parsed, kept)
+        (stamp, parsed, kept, revision)
     });
     md.reading = cx.spawn(async move |this, cx| {
-        let (stamp, parsed, kept) = read.await;
-        this.update(cx, |view, cx| markdown_read(view, stamp, parsed, kept, cx))
-            .ok();
+        let (stamp, parsed, kept, revision) = read.await;
+        this.update(cx, |view, cx| {
+            markdown_read(view, stamp, parsed, kept, revision, cx)
+        })
+        .ok();
     });
 }
 
@@ -645,6 +654,7 @@ fn markdown_read(
     stamp: Option<FileStamp>,
     parsed: Result<markdown::MdDoc, String>,
     kept: Result<super::notes::NoteMap, String>,
+    revision: Option<String>,
     cx: &mut Context<DocumentView>,
 ) {
     view.seen = stamp;
@@ -652,9 +662,21 @@ fn markdown_read(
     let Some(md) = view.backend.downcast_mut::<MarkdownDoc>() else {
         return;
     };
+    if let Ok(doc) = &parsed {
+        md.anchors = md_notes::anchors(doc);
+        md.revision = revision;
+    }
+    let frame = md_notes::Frame {
+        revision: md.revision.clone(),
+        anchors: md.anchors.clone(),
+    };
+    let kept = kept.map(|notes| md_notes::evidence::display(&notes, &frame));
     match md.notes.as_mut() {
         Some(layer) => layer.rekept(kept),
         None => md.notes = Some(NotesLayer::for_markdown(&path, kept)),
+    }
+    if let Some(layer) = md.notes.as_mut() {
+        layer.set_markdown_frame(frame);
     }
     // The pictures pasted onto its blocks are TD's, read once.
     if !md.notes.as_ref().is_some_and(NotesLayer::pictures_known) {
