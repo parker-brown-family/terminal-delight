@@ -816,6 +816,7 @@ impl Node {
                     text: n.text,
                     seed: n.seed,
                     pinned: n.pinned,
+                    by: n.by,
                 }),
                 pane_id: view.pane_id(),
                 document: view
@@ -881,6 +882,12 @@ struct SavedNote {
     /// with no pin rather than failing to load the whole layout.
     #[serde(default)]
     pinned: bool,
+    /// Who wrote it: `"person"` or `"agent"`. Absent on every note saved before
+    /// notes recorded this, which reads back as unknown — never as the
+    /// person's — so a file from an older build cannot quietly attribute an
+    /// agent's words to them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    by: Option<sticky::Author>,
 }
 
 // A transient (de)serialization DTO for the layout tree — built, written, and
@@ -1178,6 +1185,7 @@ fn dedupe_resumes(tabs: &mut [SavedTab]) {
                     text: said.text,
                     seed: said.seed,
                     pinned: said.pinned,
+                    by: said.by,
                 });
             }
         });
@@ -5463,6 +5471,8 @@ fn duplicate_leaf_note_in(l: lang::Lang) -> sticky::Saved {
         text: ui.dup_note_text.into(),
         seed: 0,
         pinned: false,
+        // Terminal Delight wrote it, not the person: it wears the stamp.
+        by: Some(sticky::Author::Agent),
     }
 }
 
@@ -5481,6 +5491,7 @@ fn note_on_reattach(note: Option<&SavedNote>, bound: bool) -> Option<sticky::Sav
             text: n.text.clone(),
             seed: n.seed,
             pinned: n.pinned,
+            by: n.by,
         })
 }
 
@@ -5572,6 +5583,7 @@ fn plan_attach(saved: &[SavedTab], live: &[hostproto::PaneInfo]) -> AttachPlan {
                     text: n.text.clone(),
                     seed: n.seed,
                     pinned: n.pinned,
+                    by: n.by,
                 })
             };
             plans.push(match bound {
@@ -6111,6 +6123,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
                         text: n.text.clone(),
                         seed: n.seed,
                         pinned: n.pinned,
+                        by: n.by,
                     }),
                 },
                 window,
@@ -8083,6 +8096,7 @@ impl Workspace {
                         title: n.title,
                         text: n.text,
                         pinned: n.pinned,
+                        by: n.by,
                     }),
                     reach: None,
                     access: p.agent_access,
@@ -40018,6 +40032,7 @@ mod tests {
                 text: "sign in before this can continue".into(),
                 seed: 99,
                 pinned: true,
+                by: None,
             });
         }
         let saved = vec![
@@ -43360,6 +43375,7 @@ mod tests {
             text: text.to_string(),
             seed: 0,
             pinned: false,
+            by: None,
         };
         let claim = |pane: Option<u64>, resume: Option<&str>, text: &str| SavedNode::Leaf {
             off_limits: false,
@@ -43455,6 +43471,7 @@ mod tests {
                 text: "what I was doing".into(),
                 seed: 3,
                 pinned: true,
+                by: None,
             }),
             pane_id: pane,
             document: None,
@@ -43604,12 +43621,14 @@ mod tests {
             text: ours.text.clone(),
             seed: 0,
             pinned: false,
+            by: None,
         };
         let theirs = SavedNote {
             title: Some("DUPLICATE TAB".into()),
             text: "I opened this one twice on purpose".into(),
             seed: 5,
             pinned: true,
+            by: None,
         };
         assert!(
             note_on_reattach(Some(&stamped), true).is_none(),
@@ -43627,6 +43646,58 @@ mod tests {
         );
     }
 
+    /// Who wrote a note survives the state file, and a note from a file written
+    /// before notes recorded it comes back as unknown rather than as the
+    /// person's: the robot stamp is a claim, and an old file cannot back it
+    /// either way.
+    #[test]
+    fn a_notes_writer_survives_the_state_file_and_an_old_one_reads_unknown() {
+        for by in [Some(sticky::Author::Agent), Some(sticky::Author::Person)] {
+            let note = SavedNote {
+                title: Some("DONE".into()),
+                text: "tests green".into(),
+                seed: 9,
+                pinned: false,
+                by,
+            };
+            let file = toml::to_string(&note).unwrap();
+            assert_eq!(toml::from_str::<SavedNote>(&file).unwrap(), note, "{file}");
+        }
+        let agent = SavedNote {
+            title: None,
+            text: "x".into(),
+            seed: 1,
+            pinned: false,
+            by: Some(sticky::Author::Agent),
+        };
+        assert!(
+            toml::to_string(&agent).unwrap().contains("by = \"agent\""),
+            "the writer is not spelled the way the doc says"
+        );
+        let old: SavedNote = toml::from_str("text = \"back at 7\"\nseed = 4\n").unwrap();
+        assert_eq!(old.by, None, "an unattributed note was attributed");
+    }
+
+    /// The note Terminal Delight leaves on a respawned leaf is not the
+    /// person's, so it wears the stamp; and an agent reading `list_panes` is
+    /// told who wrote a note, or nothing when the window cannot say.
+    #[test]
+    fn the_terminals_own_note_is_stamped_and_the_census_says_who_wrote_it() {
+        assert_eq!(duplicate_leaf_note().by, Some(sticky::Author::Agent));
+        let report = |by| mcp::NoteReport {
+            title: None,
+            text: "x".into(),
+            pinned: false,
+            by,
+        };
+        let said = serde_json::to_value(report(Some(sticky::Author::Agent))).unwrap();
+        assert_eq!(said["by"], "agent");
+        let said = serde_json::to_value(report(Some(sticky::Author::Person))).unwrap();
+        assert_eq!(said["by"], "person");
+        let said = serde_json::to_value(report(None)).unwrap();
+        assert!(said.get("by").is_none(), "unknown was reported as {said}");
+    }
+
     /// A duplicate note saved by a window speaking German is still ours after
     /// the window switches language: the session file keeps the words it was
     /// written in, so the recogniser has to know every language's wording.
@@ -43638,6 +43709,7 @@ mod tests {
             text: german.text.clone(),
             seed: 0,
             pinned: false,
+            by: None,
         };
         assert!(
             is_duplicate_leaf_note(&stamped),
@@ -43652,6 +43724,7 @@ mod tests {
             text: LEGACY_DUPLICATE_NOTE.1.into(),
             seed: 0,
             pinned: false,
+            by: None,
         };
         assert!(
             is_duplicate_leaf_note(&legacy),
@@ -43664,6 +43737,7 @@ mod tests {
                 text: n.text,
                 seed: 0,
                 pinned: false,
+                by: None,
             };
             assert!(
                 is_duplicate_leaf_note(&saved),
