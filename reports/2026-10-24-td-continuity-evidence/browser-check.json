@@ -1,0 +1,26 @@
+{
+  "report": "2026-10-24-td-artifact-continuity.html",
+  "figures_annotatable": 6,
+  "decisions_annotatable": 1,
+  "viewport_widths_verified": [
+    1408,
+    520
+  ],
+  "requested_but_not_verified": [
+    390,
+    968
+  ],
+  "note_and_concur_map_export": true,
+  "downloaded_html_note_and_concur_islands": true,
+  "reload_persistence": true,
+  "qa_saved_file": "/home/parker/Work/td-authority-lab/humanlayer-browser-qa/qa-saved.html",
+  "heading_alignment_after_fix": {
+    "viewport": 1408,
+    "left": 204
+  },
+  "measurement": "Browser plugin DOM inspection and native page controls; saved download inspected on disk",
+  "paragraphs_annotatable": 10,
+  "unannotated_body_paragraphs": 0,
+  "total_annotatable_elements": 24,
+  "existing_browser_notes_retained": true
+}

@@ -1,0 +1,14 @@
+{
+  "report": "/home/parker/Work/td-authority-lab/humanlayer-continuity/reports/2026-10-24-td-artifact-continuity.html",
+  "sha256": "23e214865fbd09a83f8f1dfff608205762bc5c3f688188ba1391dd5777f85b4f",
+  "captured_revision": "/home/parker/.local/state/terminal-delight/conversations/artifact-revisions/23e214865fbd09a83f8f1dfff608205762bc5c3f688188ba1391dd5777f85b4f.html",
+  "captured_bytes_match": true,
+  "gui_pid": 357460,
+  "pane_pid": 1644152,
+  "open_document": {
+    "placement": "here",
+    "result": "refused: CLI tool connection lacks pane caller identity",
+    "automatic_open_verified": false
+  },
+  "delivery": "Declared through declare_deliverable; capture verified on disk. The report remains available through its clickable local link."
+}

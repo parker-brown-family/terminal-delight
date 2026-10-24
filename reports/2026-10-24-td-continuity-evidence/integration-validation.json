@@ -1,0 +1,35 @@
+{
+  "source_commit": "c12e07b6",
+  "results": {
+    "final-integrated-tests": {
+      "log": "/home/parker/Work/td-authority-lab/humanlayer-qualification/final-integrated-tests.log",
+      "sha256": "788ba931f93414693a7a49a65345b9138a788dde049e8b8867dcade3e1c9d39a",
+      "summaries": [
+        "test result: ok. 2724 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 56.95s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s",
+        "test result: ok. 0 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 84 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 42.96s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s"
+      ]
+    },
+    "final-integrated-clippy": {
+      "log": "/home/parker/Work/td-authority-lab/humanlayer-qualification/final-integrated-clippy.log",
+      "sha256": "18a1da6fd6b87b18219a287c421451f2f510596a4351ca1ba9af4e49be0b60b8",
+      "summaries": []
+    },
+    "release": {
+      "passed": true,
+      "log": "/home/parker/Work/td-authority-lab/humanlayer-qualification/final-integrated-release.log",
+      "sha256": "440719b0685206d880a5de2125eea28344757b9696daf44389b93e2b31691931"
+    }
+  },
+  "preserved_features": "War Room organization and line routing, MCP hints, daily UI and usage changes, agent-authored sticky-note stamps",
+  "archive_interaction": "Searchable archive opens in the default browser; the native reader does not forward HTML form input.",
+  "binary": {
+    "path": "/home/parker/.local/lib/terminal-delight/td-c12e07b6-0.5-artifact-continuity",
+    "sha256": "b5c0f33706b233ea648a7f9448c26f50f5fc624731402f114652f5c572bbcf3f"
+  }
+}

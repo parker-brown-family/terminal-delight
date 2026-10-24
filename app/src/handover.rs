@@ -540,6 +540,7 @@ pub fn surface_doc(h: &Handover) -> Value {
         "kind": "artifact",
         "id": surface_id(&h.key()),
         "title": h.label,
+        "handover_at_ms": h.at_ms,
         "model": {
             "href": h.href,
             "handover": h.source.word(),

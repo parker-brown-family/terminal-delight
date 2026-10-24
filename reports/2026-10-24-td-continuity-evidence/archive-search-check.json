@@ -1,0 +1,24 @@
+{
+  "method": "Actual Rust-generated HTML template and JavaScript, with two injected fixture rows; Rust unit tests separately cover row generation and escaping.",
+  "template_sha256": "fea0e6c2b05f8f81a335aec997e2bcfacafbfdf90e81ebe345f28c01b0e4d6bb",
+  "native_form_boundary": "Page::key forwards note editing and dialog controls only. Archive opens with the existing system browser opener.",
+  "status": "passed for title, path, origin and no-match queries",
+  "observations": {
+    "MIGRATION": [
+      "Migration review"
+    ],
+    "conversation-beta": [
+      "Removed checklist"
+    ],
+    "/tmp/removed.md": [
+      "Removed checklist"
+    ],
+    "no-such-entry": [],
+    "single space": [
+      "Migration review",
+      "Removed checklist"
+    ]
+  },
+  "empty_query_probe": "unmeasured: browser automation fill(\"\") left the previous value unchanged",
+  "fixture": "/home/parker/Work/td-authority-lab/humanlayer-browser-qa/archive-search-qa.html"
+}

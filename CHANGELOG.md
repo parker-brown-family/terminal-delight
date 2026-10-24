@@ -9,6 +9,24 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Upgrading from 0.4.0 (0.5.0 development)
 
+- **Markdown review notes now keep their source evidence.** A new note records the
+  quotation, neighbouring passages and SHA-256 of the document as it was read.
+  Notes stores advance to format 2 on the next successful save. Existing notes
+  remain readable, with their unavailable evidence labelled; no old quotation or
+  revision is invented. Older builds that only understand format 1 refuse to
+  overwrite an upgraded store. Keep the notes folder when backing up TD.
+- **Artifact captures use local storage.** New artifact handovers can save one
+  content-addressed copy per local revision under the workbench store's
+  `artifact-revisions/` directory. Capture is limited to regular files of at most
+  16 MiB; remote links, symlinks, special files and unavailable bytes remain links
+  with an explanation. Linked assets are not copied. Existing history is indexed
+  without pretending today's bytes were delivered in the past. No automatic
+  retention limit deletes saved revisions in this version.
+- **Existing terminal hosts must restart before using the new cleanup code.**
+  Replacing a window preserves the old host and its live terminals. Artifact and
+  note changes take effect in the new window; hosted process cleanup takes effect
+  in hosts started from this build. Ordinary client disconnection still leaves
+  terminals running.
 - **First launch opens in Clean; the other designs default to Ops and Standard.**
   Standard keeps the artifact, palette and slider glyphs and hides counts, scale,
   split buttons, graveyard, notifications, bug report and plugins. `all` still
@@ -44,6 +62,54 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - **The layout file gains `seat` and `agents` on a pane, `[[lines]]`, and
   `ask_press_tokens`.** A 0.4 window reads a read-only pane as open and does not
   know seats or lines; nothing is written for it.
+
+### Artifact and Review Continuity for 0.5.0 Development
+
+- **The artifact rail has an Archive action.** It opens a searchable local page in the default browser
+  assembled from the existing conversation records, including conversations whose
+  panes have closed. Each entry separates its current target from an available
+  captured revision. Unknown conversation identity, missing captures, unreadable
+  records and changed snapshot bytes remain visible. A handover before conversation
+  binding survives restart in an explicitly unbound record; the exact event joins
+  its later conversation without guessing from a matching pathname.
+- **Explicit repeat declarations capture changed files without duplicating cards.**
+  A target keeps its stable artifact identity while its revisions have separate
+  content hashes. Identical bytes reuse a snapshot. Background capture has a bounded
+  queue, and replaying a mailbox does not manufacture a new historic revision.
+  Capture time is recorded separately from handover time: the saved bytes are
+  those the worker reads, not an atomic copy made by the declaration itself.
+  The archive verifies a saved copy's hash before offering it.
+- **Markdown notes follow uniquely identified passages.** Unchanged quotations can
+  reattach after a move. Repeated quotations need distinguishing neighbours; ties
+  remain unresolved. A small wording edit needs both substantial shared wording
+  and matching context. The note map and note box preserve the original quotation
+  and source hash, and state how the passage was matched. Legacy notes retain their
+  existing anchor with an explicit evidence-unavailable status.
+- **Simultaneous note saves retain one another's edits.** Notes serialize their
+  read/modify/write operation through a per-document lock. A note deleted while
+  its save is running queues the deletion without discarding the next pending
+  note. Deletion after reattachment addresses the original stored note.
+
+### Explicit Terminal Cleanup for 0.5.0 Development
+
+- **Ending a terminal no longer waits indefinitely for a program that ignores
+  hangup.** The PTY owner closes its master, allows a 250 ms hangup grace period,
+  escalates to kill, then allows 250 ms to observe exit. Each of two process scans
+  has a 100 ms budget. A kernel-blocked child is handed to a reaper and reported as
+  pending; this is a bounded wait, not a guarantee that the kernel has ended it.
+- **Signals follow owned identities.** The owner retains its unreaped child through
+  the final group signal. Jobs in the same Unix session are addressed through
+  pidfds, including interactive-shell jobs in separate process groups. A late
+  close cannot signal a reused cached shell PID. A deliberately detached session
+  is outside this terminal's close operation.
+- **Observers do not keep a closed PTY alive.** Foreground-process and resize
+  inspection use a weak reference to the owner's master. Explicitly ending the
+  last window-owned view uses the same cleanup path. Hosted cleanup runs away from
+  the GUI thread. Existing hold-for-undo and client-disconnection behavior remain.
+- **The host close reply reports what was observed.** Its optional `cleanup` record
+  separates hangup/kill signal acceptance, direct-child exit, remaining observed
+  jobs and errors. Missing evidence remains absent. Older hosts and clients retain
+  compatibility with the existing close reply.
 
 ### Security for 0.5.0 development
 

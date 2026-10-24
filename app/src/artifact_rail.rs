@@ -248,6 +248,22 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Rebuild the archive away from the UI thread, then open it in the pane
+    /// the person was using when they asked.
+    fn art_archive(&mut self, cx: &mut Context<Self>) {
+        let (active, _, _) = self.bench_targets();
+        let focused = self.tabs.get(self.active).and_then(|t| t.focused);
+        let leaf = active
+            .iter()
+            .find(|l| Some(l.entity_id()) == focused)
+            .or_else(|| active.first())
+            .cloned();
+        let Some(leaf) = leaf else { return };
+        self.art_close();
+        leaf.update(cx, |v, cx| v.open_artifact_archive(cx));
+        cx.notify();
+    }
+
     /// The rail owns the arrows and Enter while it is up. Esc goes through
     /// `close_popups` with every other overlay. Returns whether the key was
     /// the rail's, so ordinary typing still reaches the pane underneath.
@@ -431,7 +447,22 @@ impl Workspace {
             .text_color(sk.ink.ink_dim)
             .child(format!("\u{1f4dc} {}", t.cfg_artifacts.to_uppercase()))
             .child(div().flex_1())
-            .when(!cards.is_empty(), |d| d.child(cards.len().to_string()));
+            .when(!cards.is_empty(), |d| d.child(cards.len().to_string()))
+            .child(
+                div()
+                    .id("art-archive")
+                    .ml(px(8.))
+                    .cursor_pointer()
+                    .text_color(th.accent)
+                    .child(t.art_archive)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.art_archive(cx);
+                        }),
+                    ),
+            );
 
         let panel = over_the_footer(div().id("art-rail").absolute(), scale)
             .w(px(RAIL_W))

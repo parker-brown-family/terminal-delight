@@ -1,0 +1,405 @@
+{
+  "file": "reports/2026-10-24-td-artifact-continuity.html",
+  "subject": "How Terminal Delight keeps artifact revisions and review evidence after a pane closes, and bounds explicit terminal cleanup.",
+  "reader": "Parker, Terminal Delight owner, who knows its panes, artifact cards and document reader but does not read Rust.",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.89
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.32
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "journey",
+      "probabilities": {
+        "journey": 0.75,
+        "catalogue": 0.13,
+        "argument": 0.04,
+        "report": 0.07,
+        "none_of_the_above": 0.01
+      },
+      "confidence": 0.69
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Artifact continuity",
+      "text": "An agent hands you a document. You close its pane, the file changes, and later you return to the review. This work extends TD\u2019s existing artifacts so you can find that handover, open the captured version, and recover the words behind your notes. The examination also exposed an indefinite wait when ending a terminal; its owner now performs bounded cleanup. \n Original TD implementation Design informed by HumanLayer",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.45,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.06,
+            "1": 0.5,
+            "2": 0.38,
+            "3": 0.06
+          },
+          "confidence": 0.44
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.23
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.48
+        },
+        "role": {
+          "type": "choice",
+          "choice": "setup",
+          "probabilities": {
+            "setup": 0.39999999999999997,
+            "complication": 0.2,
+            "turn": 0.25,
+            "consequence": 0.01,
+            "resolution": 0.11,
+            "aside": 0.02,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.3
+        }
+      },
+      "latency_ms": 407.1910670027137,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "1 After the Pane",
+      "text": "TD already had artifact cards, handover history and document notes. The gap appeared after the work moved on: the live rail depended on panes still being present, a pathname could point at rewritten bytes, and a Markdown note\u2019s short anchor could point at different words. \n 01 \u00b7 Returning to a handover \n\nAgent hands over\n Migration review \n\u2192 \nPane closes\nOriginal file changes \n\u2192 \nArchive\n Current target + captured revision \n The handover can outlive both its pane and its original file. Drawn from the closed-conversation regression test; this is a behavior diagram. \n\nHumanLayer offered useful comparisons: separate durable work from its running session, preserve review context, and make process completion observable. We kept TD\u2019s conversation records and terminal ownership model, then implemented the missing behavior in Rust.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.5,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.08,
+            "1": 0.4,
+            "2": 0.48,
+            "3": 0.04
+          },
+          "confidence": 0.4
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.31
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.67,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.43,
+            "1": 0.48,
+            "2": 0.08,
+            "3": 0.01
+          },
+          "confidence": 0.47
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.37
+        },
+        "role": {
+          "type": "choice",
+          "choice": "complication",
+          "probabilities": {
+            "setup": 0.02,
+            "complication": 0.51,
+            "turn": 0.41,
+            "consequence": 0.01,
+            "resolution": 0.04,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.43
+        }
+      },
+      "latency_ms": 365.55767292156816,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "2 Evidence Beside the Record",
+      "text": "A background worker captures an eligible local file and records its content hash beside the existing handover. Opening Archive rebuilds the list from those records, including conversations with no open pane. The searchable archive opens in your browser. \n 02 \u00b7 The existing record grows \n\n Existing TD \nArtifact handover \nConversation record \nCaptured bytes \nArchive view \n\n Capture added \nArtifact handover \nConversation record \nContent hash + local copy \nArchive view \n\n Discovery added \nArtifact handover \nConversation record \nContent hash + local copy \nSearchable archive \n TD\u2019s conversation record remains authoritative. Blue marks each addition. Drawn from bench_file_docs , artifact_archive::observe and write_page ; positions stay fixed as the design grows. \n 03 \u00b7 Choosing what to open \n Artifact archive \nFind a title, path or conversation Migration review \n Open current target \u00b7 Open captured revision Current file exists; bytes may have changed. Removed checklist \n Open current target \u00b7 Open captured revision Current file unavailable. Older design note \n Open current target \u00b7 Captured copy unavailable Revision unavailable: this handover has no capture record. \n A missing capture remains a visible absence. Strings are from the implemented archive; these entries illustrate tested states. Your archive derives its entries from saved handovers. \n\nRepeat declarations capture changed revisions without duplicating shelf cards. Identical bytes share a saved copy. An unknown conversation gets an explicitly unbound record; only the same recorded event can later acquire a known origin.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.43,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.05,
+            "1": 0.49,
+            "2": 0.44,
+            "3": 0.02
+          },
+          "confidence": 0.47
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.27
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.96,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.18,
+            "1": 0.68,
+            "2": 0.14,
+            "3": 0
+          },
+          "confidence": 0.68
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.25
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0.85,
+            "consequence": 0.13,
+            "resolution": 0.01,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.82
+        }
+      },
+      "latency_ms": 395.7745679654181,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "3 The Words You Reviewed",
+      "text": "Once a file can change independently of its handover, a note needs to say which document it described. New Markdown notes capture the passage, neighbouring text and document hash when created. Saving later never substitutes newer evidence. \n 04 \u00b7 A note keeps its original evidence \n\n When written The original passage needs a second look. \n\u201crevise\u201d Original quotation + document revision \n\u2192 \n After a move \nA new opening. The original passage needs a second look. Note follows the unique passage.\nOriginal evidence stays unchanged. \nTwo equally matching passages \u2192 unresolved; no first-match guess. \n Moving a passage can preserve its review without rewriting the evidence. The native test enters a note, saves it, rewrites the document and reopens it. Duplicate-passage tests require distinguishing context. \n\nSmall wording changes need substantial shared wording and a matching neighbour. Ties and missing passages appear among notes without a clear passage. Old notes retain their anchors with evidence marked unavailable. Concurrent saves retain one another\u2019s edits.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 0.94,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.22,
+            "1": 0.63,
+            "2": 0.15,
+            "3": 0
+          },
+          "confidence": 0.63
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.16
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.01,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.93,
+            "2": 0.04,
+            "3": 0
+          },
+          "confidence": 0.93
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.36
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.04,
+            "turn": 0.7,
+            "consequence": 0.22,
+            "resolution": 0.04,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.65
+        }
+      },
+      "latency_ms": 443.291723029688,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "4 Ending the Terminal",
+      "text": "The document survives its pane because it has a durable owner. Processes need an owner too. Previously, a terminal that ignored hangup could leave cleanup waiting indefinitely. The process holding the PTY now controls the close sequence and reports what happened. \n 05 \u00b7 A bounded close \n\n A deadline bounds waiting; it cannot force the kernel to complete an exit. These are configured limits in PtySource::close_child , not measured performance claims. Deliberately detached sessions are outside this close. \n\nThe owner retains its child through the last group signal so a recycled PID cannot become a target. Jobs in the same Unix session use pidfds, kernel handles to particular processes. Inspecting the terminal no longer keeps its master open after its owner closes it.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.84,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.18,
+            "2": 0.77,
+            "3": 0.04
+          },
+          "confidence": 0.76
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.24
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.28,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.69,
+            "2": 0.26,
+            "3": 0.02
+          },
+          "confidence": 0.67
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.16
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.08,
+            "turn": 0.76,
+            "consequence": 0.12,
+            "resolution": 0.03,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.72
+        }
+      },
+      "latency_ms": 384.38055803999305,
+      "failure": null
+    },
+    {
+      "index": 6,
+      "heading": "5 Running It",
+      "text": "That ownership boundary determines how the update reaches your current session. Replacing the window activates artifact and review changes while the existing host keeps your agents running. Hosted cleanup changes take effect when the host starts from the new build. \n 06 \u00b7 Window and host update separately \n\n Updated window \nArchive and note evidence \n\u2194 \n Existing host \nExisting PTYs and agents \n\u2192 \n Later host restart \nNew cleanup code \n Preserving live PTYs means preserving their current host. Drawn from the supported window-swap installer. The installation record below states what actually changed. \n\n The current TD window is running these changes. The guarded swap preserved all 36 live terminal identities, the existing host, 32 exposed panes, and the saved layout and split document. Artifact capture and review evidence are active. Hosted cleanup takes effect after the existing host restarts. \nThe final daily integration passed 2,840 tests and strict linting. The feature\u2019s two terminal-core suites and five restricted-command OS tests passed; the exact production executable captured two file revisions and recovered a moved note with its original quotation and hash. \n\nCaptures preserve the bytes the background worker reads, with capture time recorded separately from handover time. They cover regular local files up to 16 MiB. Remote links and linked assets are not copied. Saved revisions have no automatic expiry. Markdown stores advance to format 2 on save; older builds refuse to overwrite that format. \n\n Review the archive and note behavior. \nUse the note button on a figure or paragraph to record an amendment. The detailed changelog carries the behavior and upgrade limits. \n Source, licensing and evidence \nThe searchable Archive opens in the default browser because TD\u2019s HTML reader draws snapshots and does not forward form input. Browser checks covered title, pathname, conversation and no-match queries. The hidden native fixture could not automate the Archive-button click; that gesture remains unmeasured. \n The single 0.5.0 pull request and its current checks \u00b7 Installation receipt \u00b7 Final integration tests \u00b7 Production executable check \u00b7 Browser search check \nHumanLayer was examined at commit f16f286acfc66605e90e5dd43d76093e422a1f3c . This implementation extends TD\u2019s existing systems. No HumanLayer source code, prompt text, assets or documentation were imported or translated. \nReading a codebase for ideas and independently implementing them ordinarily does not create an Apache attribution obligation. Copyright protects expression rather than ideas, methods or systems. Apache\u2019s redistribution requirements apply when distributing the licensed work or derivative works. A copied implementation would need a different assessment. \n U.S. Copyright Office \u00b7 Apache License 2.0, section 4 \u00b7 Examined source \n Detailed changelog \u00b7 Development notes \u00b7 Validation record \n Archive source \u00b7 Review evidence source \u00b7 Process cleanup source \n\n . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.76,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.28,
+            "2": 0.62,
+            "3": 0.08
+          },
+          "confidence": 0.6
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.48
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.8,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.22,
+            "1": 0.76,
+            "2": 0.02,
+            "3": 0
+          },
+          "confidence": 0.76
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.5
+        },
+        "role": {
+          "type": "choice",
+          "choice": "aside",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0.01,
+            "consequence": 0.44,
+            "resolution": 0.05,
+            "aside": 0.49,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.4
+        }
+      },
+      "latency_ms": 396.3445470435545,
+      "failure": null
+    }
+  ]
+}
