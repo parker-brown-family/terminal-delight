@@ -65,7 +65,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Artifact and Review Continuity for 0.5.0 Development
 
-- **The artifact rail has an Archive action.** It opens a searchable local page
+- **The artifact rail has an Archive action.** It opens a searchable local page in the default browser
   assembled from the existing conversation records, including conversations whose
   panes have closed. Each entry separates its current target from an available
   captured revision. Unknown conversation identity, missing captures, unreadable
@@ -76,6 +76,8 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   A target keeps its stable artifact identity while its revisions have separate
   content hashes. Identical bytes reuse a snapshot. Background capture has a bounded
   queue, and replaying a mailbox does not manufacture a new historic revision.
+  Capture time is recorded separately from handover time: the saved bytes are
+  those the worker reads, not an atomic copy made by the declaration itself.
   The archive verifies a saved copy's hash before offering it.
 - **Markdown notes follow uniquely identified passages.** Unchanged quotations can
   reattach after a move. Repeated quotations need distinguishing neighbours; ties

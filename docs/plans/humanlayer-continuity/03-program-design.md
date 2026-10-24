@@ -7,3 +7,7 @@ Artifact indexing belongs in a focused artifact_archive module, using benchstore
 Markdown anchor evidence belongs beside md_notes and is wired through markdown_view and notes_ui. Matching compares normalized quotation and surrounding context; ties are explicit. Tests cover movement, punctuation/whitespace changes, edited opening words, removed quotations, duplicate insertion, equal evidence and format-1 migration. Shared HTML note fixtures must remain unchanged.
 
 Least-confident choices: capture limits and retention, ambiguous-note presentation, and legacy anchors with no quote. Keep absence explicit and preserve input; prefer a visible unresolved note to an invented match.
+
+## Search Interaction
+
+The archive opens through the existing system browser opener. TD’s native HTML reader renders snapshots and routes links and note controls; it does not forward HTML form input. This keeps the archive search operable without adding a general browser-input bridge. Native artifact document and note behavior remains unchanged.

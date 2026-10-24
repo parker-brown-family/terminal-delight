@@ -1,0 +1,83 @@
+{
+  "source_commit": "4505666c",
+  "commands": {
+    "default": "cargo test --locked -- --test-threads=4",
+    "fallback": "cargo test --locked --features core-alacritty -- --test-threads=4",
+    "restricted": "cargo test --locked --test restricted -- --ignored --test-threads=1",
+    "clippy": "cargo clippy --locked [--features core-alacritty] -- -D warnings",
+    "release": "cargo build --release --locked"
+  },
+  "isolated_state": "/home/parker/Work/td-authority-lab/humanlayer-test-state",
+  "results": {
+    "default-clippy": {
+      "log": "/home/parker/Work/td-authority-lab/humanlayer-qualification/default-clippy.log",
+      "sha256": "e6643f8dac16b651f59f78e6b138d9e6feb9f4429c20cc6bbcc78ded437a7b6d",
+      "summaries": [],
+      "finished": [
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.00s"
+      ]
+    },
+    "default-tests": {
+      "log": "/home/parker/Work/td-authority-lab/humanlayer-qualification/default-tests.log",
+      "sha256": "e8122d65cdf9d82d55ce9246c4e2903d26c2936b9494a6d16c5f13461af6c1cb",
+      "summaries": [
+        "test result: ok. 2707 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 58.93s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s",
+        "test result: ok. 0 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 84 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 57.02s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s"
+      ],
+      "finished": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 25s"
+      ]
+    },
+    "fallback-clippy": {
+      "log": "/home/parker/Work/td-authority-lab/humanlayer-qualification/fallback-clippy.log",
+      "sha256": "dbbcb5500ced6a38738bc2bd0730706254f149749f97c4dbf41cb2d5778ed774",
+      "summaries": [],
+      "finished": [
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 43.53s"
+      ]
+    },
+    "fallback-tests": {
+      "log": "/home/parker/Work/td-authority-lab/humanlayer-qualification/fallback-tests.log",
+      "sha256": "24c4443214f6bc6d5861b7f88ad82822a37fe693d389aa0edfb0a824cc189ed7",
+      "summaries": [
+        "test result: ok. 2654 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 69.79s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s",
+        "test result: ok. 0 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 84 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 69.66s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s"
+      ],
+      "finished": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 3m 54s"
+      ]
+    },
+    "release": {
+      "log": "/home/parker/Work/td-authority-lab/humanlayer-qualification/release.log",
+      "sha256": "27a24aa7cb75b3c049079a5d4cfd4819f8a559deb51aef3f1bee0572861ea225",
+      "summaries": [],
+      "finished": [
+        "    Finished `release` profile [optimized] target(s) in 3m 08s"
+      ]
+    },
+    "restricted-tests": {
+      "log": "/home/parker/Work/td-authority-lab/humanlayer-qualification/restricted-tests.log",
+      "sha256": "72d7ef3b5ee8ff5d95983ff7726c93684ce3d2507e887614e42b8b2aaf152dd7",
+      "summaries": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.02s"
+      ],
+      "finished": [
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.77s"
+      ]
+    }
+  },
+  "existing_failure_reproduced_then_passed": "https://github.com/parker-brown-family/terminal-delight/issues/1126",
+  "process_scan_fix": "Partial scans retain acquired pidfds and report incomplete coverage instead of dropping identities."
+}
