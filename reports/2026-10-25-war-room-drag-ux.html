@@ -665,8 +665,8 @@ dialog#d-export { max-width: 780px; }
   <p class="eyebrow">TERMINAL DELIGHT · WAR ROOM · 25 OCTOBER 2026</p>
   <h1>The War Room shows<br>where a pane can go.</h1>
   <p class="lede">You asked for clear drag destinations and secure removal from an organisation. The pool and bin now remove the pane and turn its access off. Clicking outside a menu closes it immediately.</p>
-  <p class="meta">Implementation and review · about three minutes · native development build</p>
-</header>
+  <p class="meta">Installed for next launch · about three minutes · development build</p>
+<p class="install-state">The tested build is installed for the next launch. The running window stays on the previous build: its update guard found five recoverable tabs that restarting could discard. No running pane was restarted.</p></header>
 <section id="menus">
   <h2>The stuck menu came from the terminal underneath</h2>
   <p>Right-clicks were reaching the terminal behind the War Room. Each card now opens its own named menu; its actions affect that pane.</p>
@@ -725,7 +725,7 @@ dialog#d-export { max-width: 780px; }
       <tr><td><a href="https://developer.apple.com/design/human-interface-guidelines/drag-and-drop">Apple: feedback after a drop</a></td><td>Name the removed pane and show that access is off.</td></tr>
     </tbody></table>
   </details>
-  <details id="source"><summary>Source and verification details</summary><p><a href="../app/src/war_room_view.rs">War Room gestures and tests</a> · <a href="../app/src/pane.rs">Terminal menu dismissal</a> · <a href="../app/src/warroom.rs">Copy-result invalidation</a> · <a href="../docs/plans/war-room-drag-ux/plan.md">Behaviour map and plan</a></p><pre>cargo fmt --manifest-path app/Cargo.toml -- --check
+  <p><a href="https://github.com/parker-brown-family/terminal-delight/pull/1143">Development pull request</a> · <a href="2026-10-25-war-room-drag-evidence/installation.json">Installation and rollback record</a></p><details id="source"><summary>Source and verification details</summary><p><a href="../app/src/war_room_view.rs">War Room gestures and tests</a> · <a href="../app/src/pane.rs">Terminal menu dismissal</a> · <a href="../app/src/warroom.rs">Copy-result invalidation</a> · <a href="../docs/plans/war-room-drag-ux/plan.md">Behaviour map and plan</a></p><pre>cargo fmt --manifest-path app/Cargo.toml -- --check
 cargo clippy --locked --manifest-path app/Cargo.toml -- -D warnings
 cargo test --locked --manifest-path app/Cargo.toml --no-fail-fast -- --test-threads=1</pre><p>The page’s HTML structure passed checks for unique anchors, embedded notes and self-contained assets. The browser tool blocked local-file preview, so responsive rendering and annotation interaction were not checked in-browser. Clippy and the test suite also run with <code>--features core-alacritty</code>. Native test layouts include 900 × 560. The default core is Rio.</p></details>
 </section>

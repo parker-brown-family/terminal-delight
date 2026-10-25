@@ -1,0 +1,9 @@
+{
+  "installed_for_next_launch": "/home/parker/.local/lib/terminal-delight/td-429bf789-0.5-war-room-drag",
+  "sha256": "19a6fc9b64b918b9496fd7b41abf845a9a4f8470471561a7d6648fd187fb6f30",
+  "previous_launcher": "/home/parker/.local/lib/terminal-delight/td-c12e07b6-0.5-artifact-continuity",
+  "live_window_pid": 2675234,
+  "live_window_executable": "/home/parker/.local/lib/terminal-delight/td-c12e07b6-0.5-artifact-continuity",
+  "live_swap": false,
+  "reason": "Five live panes are held outside the saved layout; guard refused potential loss. No process was restarted."
+}
