@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-25",
+  "base": "cd914c00",
+  "default_core": {
+    "passed": 2846,
+    "failed": 0,
+    "ignored": 17
+  },
+  "alacritty_core": {
+    "passed": 2793,
+    "failed": 0,
+    "ignored": 17
+  },
+  "clippy": "both cores, -D warnings, passed",
+  "format": "passed",
+  "release_build": "passed",
+  "native_fixture": {
+    "session": "draguxqa",
+    "actors": "mock claude processes, no model requests",
+    "observed": [
+      "drag focus blur and phosphor targets",
+      "pool hover and removal",
+      "bin hover and removal",
+      "correct-card context menu",
+      "outside mouse-down dismisses before mouse-up"
+    ],
+    "caveat": "captures precede final drag preview edge adjustment; GPUI bounds test verifies final adjustment"
+  },
+  "report": {
+    "static_checks": "passed",
+    "browser_check": "blocked by browser tool URL policy for file scheme",
+    "narrative": "journey after reordering; opening .64, headings .63"
+  },
+  "test_commands": [
+    "cargo test --locked --manifest-path app/Cargo.toml --no-fail-fast -- --test-threads=1",
+    "cargo test --locked --manifest-path app/Cargo.toml --features core-alacritty --no-fail-fast -- --test-threads=1"
+  ]
+}

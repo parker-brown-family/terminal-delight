@@ -10,7 +10,7 @@
 
 use super::*;
 use crate::surfacefeed::now_ms;
-use gpui::PathBuilder;
+use gpui::{anchored, deferred, PathBuilder};
 
 /// A seat's box at scale 1: place, title, program, state, age and tokens.
 const SEAT_W: f32 = 248.;
@@ -74,26 +74,106 @@ struct DragPreview {
 }
 
 impl Render for DragPreview {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .pl(self.offset.x - px(90.))
-            .pt(self.offset.y - px(22.))
-            .child(
-                div()
-                    .w(px(180.))
-                    .h(px(44.))
-                    .p_2()
-                    .border_1()
-                    .border_color(self.ink)
-                    .rounded(px(5.))
-                    .bg(self.bg)
-                    .text_color(self.ink)
-                    .text_size(px(11.))
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .child(SharedString::from(self.title.clone())),
-            )
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let mouse = window.mouse_position();
+        let viewport = window.viewport_size();
+        // Flip beside the pointer near the panel edges so the preview remains
+        // readable over the bin instead of being clipped or frosted outside it.
+        let dx = if mouse.x + px(196.) > viewport.width * 0.975 - px(16.) {
+            px(-196.)
+        } else {
+            px(16.)
+        };
+        let dy = if mouse.y + px(52.) > viewport.height * 0.95 - px(16.) {
+            px(-52.)
+        } else {
+            px(8.)
+        };
+        div().child(
+            div()
+                .id("war-drag-preview")
+                .debug_selector(|| "war-drag-preview".to_string())
+                .relative()
+                .left(self.offset.x + dx)
+                .top(self.offset.y + dy)
+                .w(px(180.))
+                .h(px(44.))
+                .p_2()
+                .border_1()
+                .border_color(self.ink)
+                .rounded(px(5.))
+                .bg(self.bg)
+                .text_color(self.ink)
+                .text_size(px(11.))
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .child(SharedString::from(self.title.clone())),
+        )
     }
+}
+
+/// A restrained phosphor halo: stronger only over the destination under the pointer.
+fn drop_glow(ink: Hsla, hovered: bool) -> Vec<BoxShadow> {
+    vec![BoxShadow {
+        color: ink.alpha(if hovered { 0.26 } else { 0.12 }),
+        offset: point(px(0.), px(0.)),
+        blur_radius: px(if hovered { 16. } else { 10. }),
+        spread_radius: px(1.),
+        inset: true,
+    }]
+}
+
+/// Reuse the reader's GPU frosting; no overlay intercepts any drop target.
+fn drag_focus() -> impl IntoElement {
+    gpui::canvas(
+        |bounds, window, _| {
+            let sf = window.scale_factor();
+            // Include the reserved drag footer below the work area.
+            warp::set_focus_blur(
+                [
+                    f32::from(bounds.origin.x) * sf,
+                    f32::from(bounds.origin.y) * sf,
+                    f32::from(bounds.size.width) * sf,
+                    (f32::from(bounds.size.height) + 68.) * sf,
+                ],
+                12. * sf,
+                6. * sf,
+                0.45,
+                6. * sf,
+            );
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
+
+fn trash_icon(ink: Hsla) -> impl IntoElement {
+    gpui::canvas(
+        |_, _, _| {},
+        move |b, _, window, _| {
+            let mut path = PathBuilder::stroke(px(1.6));
+            let p = |x, y| b.origin + point(px(x), px(y));
+            path.move_to(p(4., 6.));
+            path.line_to(p(20., 6.));
+            path.move_to(p(9., 6.));
+            path.line_to(p(9., 3.));
+            path.line_to(p(15., 3.));
+            path.line_to(p(15., 6.));
+            path.move_to(p(6., 8.));
+            path.line_to(p(7., 21.));
+            path.line_to(p(17., 21.));
+            path.line_to(p(18., 8.));
+            path.move_to(p(10., 10.));
+            path.line_to(p(10., 18.));
+            path.move_to(p(14., 10.));
+            path.line_to(p(14., 18.));
+            if let Ok(path) = path.build() {
+                window.paint_path(path, ink);
+            }
+        },
+    )
+    .size(px(24.))
 }
 
 #[derive(Clone, Copy)]
@@ -166,6 +246,10 @@ impl Workspace {
         let sk = skin::for_theme(cx, th, th.grade.scale);
         let ui = self.lang.strings().ui;
         let lang = self.lang;
+        let dragging = self.war_drag.as_ref().filter(|_| cx.has_active_drag());
+        let removing = dragging.is_some_and(|leaf| leaf.read(cx).seat.is_some());
+        let drag_active = dragging.is_some();
+        let chart_active = drag_active && self.war_org.is_some();
 
         // ---- gather: seated panes, and every pane off the chart ----
         let mut seats: Vec<PaneFacts> = Vec::new();
@@ -425,16 +509,34 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .gap_0p5()
-                    .cursor_pointer()
+                    .cursor(gpui::CursorStyle::OpenHand)
+                    .when(dragging == Some(&f.leaf), |d| d.opacity(0.35))
                     .hover(|d| d.border_color(th.accent))
-                    .on_drag(pane_drag, |d, position, _, cx| {
-                        cx.new(|_| DragPreview {
-                            title: d.title.clone(),
-                            offset: position,
-                            ink: d.ink,
-                            bg: d.bg,
-                        })
+                    .on_drag(pane_drag, {
+                        let ws = cx.entity().downgrade();
+                        move |d: &PaneDrag, position, window: &mut Window, cx: &mut App| {
+                            let _ =
+                                ws.update(cx, |ws, cx| ws.war_room_begin_drag(&d.leaf, window, cx));
+                            cx.new(|_| DragPreview {
+                                title: d.title.clone(),
+                                offset: position,
+                                ink: d.ink,
+                                bg: d.bg,
+                            })
+                        }
                     })
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener({
+                            let leaf = f.leaf.clone();
+                            move |ws, ev: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.war_context = Some((leaf.clone(), ev.position));
+                                window.focus(&ws.focus_handle, cx);
+                                cx.notify();
+                            }
+                        }),
+                    )
                     .drag_over::<RelationDrag>(move |style, d, _, _| {
                         if d.from != seat {
                             style.border_color(drop_ink)
@@ -657,15 +759,35 @@ impl Workspace {
                     .flex_col()
                     .gap_1()
                     .when(is_agent, |d| {
-                        d.on_drag(pane_drag, |d, position, _, cx| {
-                            cx.new(|_| DragPreview {
-                                title: d.title.clone(),
-                                offset: position,
-                                ink: d.ink,
-                                bg: d.bg,
+                        d.cursor(gpui::CursorStyle::OpenHand)
+                            .when(dragging == Some(&f.leaf), |d| d.opacity(0.35))
+                            .on_drag(pane_drag, {
+                                let ws = cx.entity().downgrade();
+                                move |d: &PaneDrag, position, window: &mut Window, cx: &mut App| {
+                                    let _ = ws.update(cx, |ws, cx| {
+                                        ws.war_room_begin_drag(&d.leaf, window, cx)
+                                    });
+                                    cx.new(|_| DragPreview {
+                                        title: d.title.clone(),
+                                        offset: position,
+                                        ink: d.ink,
+                                        bg: d.bg,
+                                    })
+                                }
                             })
-                        })
                     })
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener({
+                            let leaf = f.leaf.clone();
+                            move |ws, ev: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.war_context = Some((leaf.clone(), ev.position));
+                                window.focus(&ws.focus_handle, cx);
+                                cx.notify();
+                            }
+                        }),
+                    )
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::BOLD)
@@ -689,6 +811,14 @@ impl Workspace {
                             .child(SharedString::from(f.program.clone())),
                     )
                     .child(self.war_room_metrics(f, &sk, th))
+                    .when(f.access.is_off_limits(), |d| {
+                        d.child(
+                            div()
+                                .text_size(sk.text_px(8.5))
+                                .text_color(th.faint)
+                                .child(self.lang.strings().parts.pane_off_limits_badge),
+                        )
+                    })
                     .when(f.seat.is_some() && owner.is_none(), |d| {
                         d.child(
                             div()
@@ -748,6 +878,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
+            .when(drag_active, |d| d.opacity(0.3))
             .child(
                 div()
                     .flex()
@@ -780,6 +911,7 @@ impl Workspace {
             .child(
                 div()
                     .id("war-room-search")
+                    .debug_selector(|| "war-room-search".to_string())
                     .flex()
                     .flex_row()
                     .items_center()
@@ -854,7 +986,14 @@ impl Workspace {
                 div()
                     .text_size(sk.text_px(8.5))
                     .text_color(th.accent.alpha(0.85))
-                    .child(SharedString::from(ui.wr_hint.to_string())),
+                    .child(SharedString::from(
+                        if drag_active {
+                            ui.wr_drag_hint
+                        } else {
+                            ui.wr_hint
+                        }
+                        .to_string(),
+                    )),
             )
             .child(self.war_room_relationship_controls(&sk, th, cx))
             .children(self.ask_numbers.as_ref().map(|n| {
@@ -897,8 +1036,24 @@ impl Workspace {
                     .overflow_y_scroll()
                     .rounded(sk.rad_raw(8.))
                     .border_1()
-                    .border_color(th.text.alpha(0.14))
-                    .drag_over::<PaneDrag>(move |d, _, _, _| d.border_color(drop_chart_ink))
+                    .border_color(if chart_active {
+                        th.accent.alpha(0.65)
+                    } else {
+                        th.text.alpha(0.14)
+                    })
+                    .when(chart_active, |d| {
+                        d.bg(th.accent.alpha(0.035))
+                            .shadow(drop_glow(th.accent, false))
+                    })
+                    .drag_over::<PaneDrag>(move |d, _, _, _| {
+                        d.border_color(drop_chart_ink)
+                            .bg(drop_chart_ink.alpha(0.10))
+                            .shadow(drop_glow(drop_chart_ink, true))
+                    })
+                    .can_drop({
+                        let has_org = self.war_org.is_some();
+                        move |_, _, _| has_org
+                    })
                     .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
                         if let Some(org) = ws.war_org {
                             ws.war_room_assign(&d.leaf, org, false, cx);
@@ -917,7 +1072,26 @@ impl Workspace {
             .p_2()
             .rounded(sk.rad_raw(8.))
             .border_1()
-            .border_color(th.text.alpha(0.14))
+            .border_color(if removing {
+                th.accent.alpha(0.65)
+            } else {
+                th.text.alpha(0.14)
+            })
+            .when(removing, |d| {
+                d.bg(th.accent.alpha(0.035))
+                    .shadow(drop_glow(th.accent, false))
+            })
+            .drag_over::<PaneDrag>(move |style, d, _, cx| {
+                if d.leaf.read(cx).seat.is_some() {
+                    style
+                        .border_color(drop_chart_ink)
+                        .bg(drop_chart_ink.alpha(0.10))
+                        .shadow(drop_glow(drop_chart_ink, true))
+                } else {
+                    style
+                }
+            })
+            .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| ws.war_room_unseat(&d.leaf, cx)))
             .overflow_hidden()
             .flex()
             .flex_col()
@@ -940,7 +1114,14 @@ impl Workspace {
                         div()
                             .text_size(sk.text_px(8.5))
                             .text_color(th.text.alpha(0.6))
-                            .child(SharedString::from(ui.wr_off_blurb.to_string())),
+                            .child(SharedString::from(
+                                if removing {
+                                    ui.wr_drop_remove
+                                } else {
+                                    ui.wr_off_blurb
+                                }
+                                .to_string(),
+                            )),
                     ),
             )
             .child(
@@ -995,18 +1176,38 @@ impl Workspace {
                     .flex()
                     .flex_row()
                     .gap_3()
+                    .relative()
+                    .when(drag_active, |d| d.child(drag_focus()))
                     .child(chart_tile)
                     .child(pool_tile),
-            );
+            )
+            .child(self.war_room_drag_footer(removing, drag_active, &sk, th, cx));
 
         Some(
             div()
+                .occlude()
                 .absolute()
                 .inset_0()
                 .bg(th.bg.alpha(0.70))
                 .flex()
                 .items_center()
                 .justify_center()
+                .on_drag_move::<PaneDrag>(|_, window, cx| {
+                    cx.set_active_drag_cursor_style(gpui::CursorStyle::ClosedHand, window);
+                })
+                .capture_any_mouse_up(cx.listener(|ws, _, _, cx| {
+                    if ws.war_drag.take().is_some() {
+                        cx.notify();
+                    }
+                }))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.war_context = None;
+                        cx.notify();
+                    }),
+                )
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, window, cx| {
@@ -1015,8 +1216,193 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel)
+                .children(self.war_room_context_menu(&sk, th, cx)),
         )
+    }
+
+    fn war_room_begin_drag(
+        &mut self,
+        leaf: &Entity<TerminalView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.war_drag = Some(leaf.clone());
+        self.war_context = None;
+        self.war_feedback = None;
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    fn war_room_drag_footer(
+        &self,
+        removing: bool,
+        dragging: bool,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let ui = self.lang.strings().ui;
+        let ink = th.accent;
+        div()
+            .h(px(60.))
+            .flex_none()
+            .min_w(px(0.))
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .text_size(sk.text_px(9.))
+                    .text_color(th.text.alpha(0.8))
+                    .child(SharedString::from(if dragging {
+                        ui.wr_drag_hint.to_string()
+                    } else {
+                        self.war_feedback.clone().unwrap_or_default()
+                    })),
+            )
+            .when(removing, |d| {
+                d.child(
+                    div()
+                        .id("war-remove-drop")
+                        .debug_selector(|| "war-remove-drop".to_string())
+                        .h_full()
+                        .w(px(236.))
+                        .flex_none()
+                        .px_3()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .rounded(sk.rad_raw(8.))
+                        .border_1()
+                        .border_color(ink.alpha(0.65))
+                        .bg(ink.alpha(0.035))
+                        .shadow(drop_glow(ink, false))
+                        .drag_over::<PaneDrag>(move |d, _, _, _| {
+                            d.border_color(ink)
+                                .bg(ink.alpha(0.14))
+                                .shadow(drop_glow(ink, true))
+                        })
+                        .on_drop(
+                            cx.listener(|ws, d: &PaneDrag, _, cx| ws.war_room_unseat(&d.leaf, cx)),
+                        )
+                        .child(trash_icon(ink))
+                        .child(
+                            div()
+                                .min_w(px(0.))
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(div().text_color(ink).child(ui.wr_remove))
+                                .child(
+                                    div()
+                                        .text_size(sk.text_px(8.))
+                                        .text_color(th.text.alpha(0.7))
+                                        .child(ui.wr_access_off),
+                                ),
+                        ),
+                )
+            })
+    }
+
+    fn war_room_context_menu(
+        &self,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let (leaf, pos) = self.war_context.as_ref()?;
+        let ui = self.lang.strings().ui;
+        let parts = self.lang.strings().parts;
+        let row = |label: String| {
+            div()
+                .px_3()
+                .py_2()
+                .cursor_pointer()
+                .child(label)
+                .hover(|d| d.bg(th.accent.alpha(0.16)))
+        };
+        let mut menu = div()
+            .id("war-context-menu")
+            .debug_selector(|| "war-context-menu".to_string())
+            .min_w(px(220.))
+            .max_w(px(360.))
+            .py_1()
+            .flex()
+            .flex_col()
+            .occlude()
+            .bg(th.surface)
+            .border_1()
+            .border_color(th.accent.alpha(0.7))
+            .rounded(sk.rad_raw(7.))
+            .text_size(sk.text_px(11.))
+            .text_color(th.text)
+            .shadow_md()
+            .on_mouse_down_out(cx.listener(|ws, _, _, cx| {
+                ws.war_context = None;
+                cx.notify();
+            }))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .px_3()
+                    .py_1()
+                    .truncate()
+                    .text_color(th.faint)
+                    .child(SharedString::from(self.pane_name(leaf, cx).place())),
+            );
+        if leaf.read(cx).seat.is_some() {
+            let leaf = leaf.clone();
+            menu = menu.child(
+                row(ui.wr_remove.to_string())
+                    .id("war-context-remove")
+                    .debug_selector(|| "war-context-remove".to_string())
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.war_room_unseat(&leaf, cx);
+                    })),
+            );
+        }
+        for (access, label, id) in [
+            (
+                warroom::AgentAccess::Open,
+                parts.pane_ctx_let_agents_see,
+                "war-context-open",
+            ),
+            (
+                warroom::AgentAccess::ReadOnly,
+                parts.pane_ctx_read_only,
+                "war-context-read-only",
+            ),
+            (
+                warroom::AgentAccess::OffLimits,
+                parts.pane_ctx_off_limits,
+                "war-context-off-limits",
+            ),
+        ] {
+            let mark = if leaf.read(cx).agent_access == access {
+                "●"
+            } else {
+                "○"
+            };
+            let leaf = leaf.clone();
+            menu = menu.child(
+                row(format!("{mark} {label}"))
+                    .id(id)
+                    .debug_selector(move || id.to_string())
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        leaf.update(cx, |v, cx| v.set_agent_access(access, cx));
+                        ws.war_context = None;
+                        ws.save(cx);
+                        cx.notify();
+                    })),
+            );
+        }
+        Some(deferred(anchored().position(*pos).snap_to_window().child(menu)).into_any_element())
     }
 
     /// Modal keyboard capture keeps all editing away from the underlying PTY.
@@ -1030,6 +1416,15 @@ impl Workspace {
             return false;
         }
         if key.key == "escape" {
+            if cx.stop_active_drag(window) {
+                self.war_drag = None;
+                cx.notify();
+                return true;
+            }
+            if self.war_context.take().is_some() {
+                cx.notify();
+                return true;
+            }
             if self.war_move.take().is_some()
                 || self.war_org_edit.take().is_some()
                 || self.war_relation.take().is_some()
@@ -1043,6 +1438,21 @@ impl Workspace {
             }
             cx.notify();
             return true;
+        }
+        if cx.has_active_drag() {
+            return true;
+        }
+        if self.war_context.is_some() {
+            return true;
+        }
+        if key.key == "delete" && self.war_relation.is_none() && self.war_org_edit.is_none() {
+            if let Some(leaf) = self
+                .war_room_pick
+                .and_then(|seat| self.war_room_seat_leaf(seat, cx))
+            {
+                self.war_room_unseat(&leaf, cx);
+                return true;
+            }
         }
         if key.key == "enter" {
             if self.war_org_edit.is_some() {
@@ -1140,6 +1550,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let ui = self.lang.strings().ui;
+        let dragging = self.war_drag.is_some() && cx.has_active_drag();
         let mut choices = div()
             .flex()
             .flex_row()
@@ -1157,7 +1568,15 @@ impl Workspace {
                     .flex_none()
                     .max_w(px(240.))
                     .truncate()
-                    .drag_over::<PaneDrag>(move |s, _, _, _| s.border_color(ink))
+                    .when(dragging, |d| {
+                        d.border_color(ink.alpha(0.65))
+                            .shadow(drop_glow(ink, false))
+                    })
+                    .drag_over::<PaneDrag>(move |s, _, _, _| {
+                        s.border_color(ink)
+                            .bg(ink.alpha(0.14))
+                            .shadow(drop_glow(ink, true))
+                    })
                     .on_drop(cx.listener(move |ws, drag: &PaneDrag, _, cx| {
                         ws.war_room_assign(&drag.leaf, id, false, cx);
                     }))
@@ -1211,7 +1630,7 @@ impl Workspace {
                         .overflow_x_scroll()
                         .child(choices),
                 )
-                .child(actions),
+                .child(actions.when(dragging, |d| d.opacity(0.3))),
         );
         if let Some((_, buffer)) = &self.war_org_edit {
             controls = controls.child(
@@ -2083,6 +2502,9 @@ impl Workspace {
         self.war_relation = None;
         self.war_org_edit = None;
         self.war_move = None;
+        self.war_drag = None;
+        self.war_context = None;
+        self.war_feedback = None;
         self.war_room_query = EditBuffer::seeded("");
     }
 
@@ -2093,16 +2515,45 @@ impl Workspace {
         }
     }
 
-    /// A person took a seat off the chart: its lines go with it, and the pane
-    /// goes back to its own position — watched, never prompted.
+    /// Both removal targets and the click alternative revoke the same authority.
     fn war_room_unseat(&mut self, leaf: &Entity<TerminalView>, cx: &mut Context<Self>) {
         let Some(seat) = leaf.read(cx).seat else {
             return;
         };
         self.chart.forget_seat(seat);
         self.war_orgs.remove(seat);
+        self.asks.forget_seat(seat);
         self.war_relation = None;
-        leaf.update(cx, |v, cx| v.set_seat(None, cx));
+        self.war_move = None;
+        self.war_context = None;
+        let pid = leaf.read(cx).shell_pid();
+        for tab in &self.tabs {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            for pane in leaves {
+                let related = pane == leaf
+                    || pane
+                        .read(cx)
+                        .access_ask
+                        .as_ref()
+                        .is_some_and(|ask| pid.is_some() && ask.pid == pid);
+                if related {
+                    pane.update(cx, |v, cx| {
+                        v.access_ask = None;
+                        cx.notify();
+                    });
+                }
+            }
+        }
+        leaf.update(cx, |v, cx| {
+            v.set_agent_access(warroom::AgentAccess::OffLimits, cx);
+            v.set_seat(None, cx);
+        });
+        self.war_feedback = Some(lang::fill(
+            self.lang.strings().ui.wr_removed,
+            &[("pane", &self.pane_name(leaf, cx).tab)],
+        ));
+        self.war_room_query = EditBuffer::seeded("");
         if self.war_room_pick == Some(seat) {
             self.war_room_pick = None;
         }
@@ -2375,16 +2826,301 @@ mod tests {
 
     fn drag(cx: &mut gpui::VisualTestContext, from: &str, to: &str) {
         let start = bounds(cx, from).center();
-        let end = bounds(cx, to).center();
         cx.simulate_mouse_down(start, MouseButton::Left, gpui::Modifiers::default());
         cx.simulate_mouse_move(
             start + point(px(9.), px(9.)),
             MouseButton::Left,
             gpui::Modifiers::default(),
         );
+        cx.run_until_parked();
+        let end = bounds(cx, to).center();
         cx.simulate_mouse_move(end, MouseButton::Left, gpui::Modifiers::default());
         cx.simulate_mouse_up(end, MouseButton::Left, gpui::Modifiers::default());
         cx.run_until_parked();
+    }
+
+    fn removal_check(cx: &mut gpui::TestAppContext, target: &str) {
+        let (ws, cx, _) = fixture(cx);
+        let leaf = ws.read_with(cx, |ws, cx| {
+            ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap()
+        });
+        ws.update(cx, |ws, cx| {
+            ws.mcp.enabled = true;
+            ws.chart.draw(
+                warroom::SeatId(100),
+                warroom::SeatId(101),
+                warroom::Rung::Read,
+            );
+            ws.chart
+                .grant_bypass(warroom::SeatId(101), warroom::SeatId(100), 3);
+            ws.chart.draw(
+                warroom::SeatId(300),
+                warroom::SeatId(301),
+                warroom::Rung::See,
+            );
+            let other = ws.war_room_seat_leaf(warroom::SeatId(101), cx).unwrap();
+            other.update(cx, |v, cx| {
+                v.access_ask = Some(access::Ask {
+                    change: access::Change::OpenPane,
+                    pid: leaf.read(cx).shell_pid(),
+                    title: None,
+                    why: "fixture".into(),
+                    at: std::time::Instant::now(),
+                    risk: None,
+                    prompts: 3,
+                    reads: None,
+                    ask_id: None,
+                });
+                cx.notify();
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        drag(cx, "war-seat-100", target);
+        ws.read_with(cx, |ws, cx| {
+            assert_eq!(ws.war_orgs.owner(warroom::SeatId(100)), None);
+            let v = leaf.read(cx);
+            assert_eq!(v.seat, None);
+            assert_eq!(v.agent_access, warroom::AgentAccess::OffLimits);
+            assert_eq!(ws.chart.saved().len(), 1, "unrelated relationships survive");
+            let party = warroom::Party {
+                seat: v.seat,
+                access: v.agent_access,
+                is_agent: true,
+            };
+            assert_eq!(
+                warroom::reach(&ws.mcp, &ws.chart, None, &party, false),
+                warroom::Reach::Hidden
+            );
+            assert!(!warroom::may_write_live(
+                &ws.mcp,
+                &ws.chart,
+                Some(warroom::SeatId(101)),
+                &party,
+                false
+            ));
+            assert!(ws
+                .war_room_seat_leaf(warroom::SeatId(101), cx)
+                .unwrap()
+                .read(cx)
+                .access_ask
+                .is_none());
+            assert!(ws.war_feedback.as_ref().unwrap().contains("Lead"));
+            assert!(ws.war_drag.is_none());
+            let saved: StateFile =
+                toml::from_str(&toml::to_string(&ws.build_state(cx)).unwrap()).unwrap();
+            match &saved.tabs[0].node {
+                SavedNode::Leaf {
+                    seat,
+                    off_limits,
+                    agents,
+                    ..
+                } => {
+                    assert_eq!(*seat, None);
+                    assert_eq!(
+                        warroom::AgentAccess::from_saved(*off_limits, agents.as_deref()),
+                        warroom::AgentAccess::OffLimits
+                    );
+                }
+                _ => panic!("fixture is one leaf"),
+            }
+            assert_eq!(
+                warroom::Orgs::restore(saved.war_orgs, &[]).owner(warroom::SeatId(100)),
+                None
+            );
+        });
+        assert!(
+            cx.debug_bounds("war-remove-drop").is_none(),
+            "bin stayed after release"
+        );
+        let pool_id = format!("war-pane-{}", leaf.entity_id().as_u64());
+        drag(cx, &pool_id, "war-room-chart");
+        ws.read_with(cx, |ws, cx| {
+            let v = leaf.read(cx);
+            assert!(
+                v.seat.is_some() && v.seat != Some(warroom::SeatId(100)),
+                "reseating gets a fresh identity"
+            );
+            assert_eq!(
+                v.agent_access,
+                warroom::AgentAccess::OffLimits,
+                "reseating must not reopen access"
+            );
+            assert_eq!(ws.chart.saved().len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    fn pool_drop_revokes_access_and_saved_membership(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        removal_check(cx, "war-room-pool");
+    }
+
+    #[gpui::test]
+    fn bin_drop_revokes_access_and_saved_membership(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        removal_check(cx, "war-remove-drop");
+    }
+
+    #[gpui::test]
+    fn drag_cancel_and_invalid_release_preserve_membership_and_geometry(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let source = bounds(cx, "war-seat-100");
+        let chart = bounds(cx, "war-room-chart");
+        let pool = bounds(cx, "war-pool-tile");
+        for escape in [true, false] {
+            cx.simulate_mouse_down(
+                source.center(),
+                MouseButton::Left,
+                gpui::Modifiers::default(),
+            );
+            cx.simulate_mouse_move(
+                source.center() + point(px(10.), px(10.)),
+                MouseButton::Left,
+                gpui::Modifiers::default(),
+            );
+            cx.run_until_parked();
+            assert!(cx.debug_bounds("war-remove-drop").is_some());
+            assert_eq!(
+                bounds(cx, "war-seat-100"),
+                source,
+                "pickup moved its source"
+            );
+            assert_eq!(bounds(cx, "war-room-chart"), chart);
+            assert_eq!(bounds(cx, "war-pool-tile"), pool);
+            let bin = bounds(cx, "war-remove-drop");
+            cx.simulate_mouse_move(
+                bin.bottom_right() - point(px(3.), px(3.)),
+                MouseButton::Left,
+                gpui::Modifiers::default(),
+            );
+            cx.run_until_parked();
+            let preview = bounds(cx, "war-drag-preview");
+            let panel = bounds(cx, "war-room-panel");
+            assert!(
+                preview.right() <= panel.right(),
+                "preview {preview:?}, panel {panel:?}, bin {bin:?}"
+            );
+            assert!(
+                preview.bottom() <= panel.bottom(),
+                "preview {preview:?}, panel {panel:?}, bin {bin:?}"
+            );
+            if escape {
+                cx.simulate_keystrokes("escape");
+            }
+            let end = if escape {
+                pool.center()
+            } else {
+                bounds(cx, "war-room-header").center()
+            };
+            cx.simulate_mouse_move(end, MouseButton::Left, gpui::Modifiers::default());
+            cx.simulate_mouse_up(end, MouseButton::Left, gpui::Modifiers::default());
+            cx.run_until_parked();
+            ws.read_with(cx, |ws, cx| {
+                assert!(ws.war_room);
+                assert!(ws.war_room_seat_leaf(warroom::SeatId(100), cx).is_some());
+                assert!(ws.war_feedback.is_none());
+            });
+            assert!(cx.debug_bounds("war-remove-drop").is_none());
+        }
+    }
+
+    #[gpui::test]
+    fn card_menu_dismisses_on_press_and_changes_only_its_card(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let at = bounds(cx, "war-seat-101").center();
+        cx.simulate_mouse_down(at, MouseButton::Right, gpui::Modifiers::default());
+        cx.simulate_mouse_up(at, MouseButton::Right, gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("war-context-menu").is_some());
+        let outside = bounds(cx, "war-room-search").center();
+        cx.simulate_mouse_down(outside, MouseButton::Left, gpui::Modifiers::default());
+        assert!(
+            ws.read_with(cx, |ws, _| ws.war_context.is_none()),
+            "waited for release"
+        );
+        cx.simulate_mouse_up(outside, MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_down(at, MouseButton::Right, gpui::Modifiers::default());
+        cx.simulate_mouse_up(at, MouseButton::Right, gpui::Modifiers::default());
+        cx.run_until_parked();
+        click(cx, "war-context-off-limits");
+        ws.read_with(cx, |ws, cx| {
+            assert!(ws.war_context.is_none());
+            assert_eq!(
+                ws.war_room_seat_leaf(warroom::SeatId(101), cx)
+                    .unwrap()
+                    .read(cx)
+                    .agent_access,
+                warroom::AgentAccess::OffLimits
+            );
+            assert_eq!(
+                ws.war_room_seat_leaf(warroom::SeatId(100), cx)
+                    .unwrap()
+                    .read(cx)
+                    .agent_access,
+                warroom::AgentAccess::Open
+            );
+        });
+        cx.simulate_mouse_down(at, MouseButton::Right, gpui::Modifiers::default());
+        cx.simulate_mouse_up(at, MouseButton::Right, gpui::Modifiers::default());
+        cx.simulate_keystrokes("escape");
+        ws.read_with(cx, |ws, _| {
+            assert!(ws.war_room);
+            assert!(ws.war_context.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn terminal_menu_closes_even_when_the_war_room_swallows_the_press(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            ws.close_war_room();
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let at = point(px(700.), px(450.));
+        cx.simulate_mouse_down(at, MouseButton::Right, gpui::Modifiers::default());
+        cx.simulate_mouse_up(at, MouseButton::Right, gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("pane-context-menu").is_some());
+        ws.update(cx, |ws, cx| {
+            ws.war_room = true;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let outside = bounds(cx, "war-room-search").center();
+        cx.simulate_mouse_down(outside, MouseButton::Left, gpui::Modifiers::default());
+        ws.read_with(cx, |ws, cx| {
+            assert!(!ws
+                .war_room_seat_leaf(warroom::SeatId(100), cx)
+                .unwrap()
+                .read(cx)
+                .popup_open())
+        });
+        cx.simulate_mouse_up(outside, MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_down(outside, MouseButton::Right, gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("pane-context-menu").is_none(),
+            "right click leaked into the covered terminal"
+        );
     }
 
     #[gpui::test]

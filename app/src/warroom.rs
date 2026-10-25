@@ -938,6 +938,13 @@ pub struct AskBook {
 }
 
 impl AskBook {
+    /// Removal revokes undelivered answers as well as waiting copy requests.
+    /// A running copy may finish, but its result can no longer enter the book.
+    pub fn forget_seat(&mut self, seat: SeatId) {
+        self.asks
+            .retain(|(_, a)| a.from != Some(seat) && a.to != Some(seat));
+    }
+
     pub fn open(&mut self, id: AskId, ask: CopyAsk) {
         self.asks.push((id, ask));
         while self.asks.len() > BOOK_KEEPS {
@@ -1702,6 +1709,47 @@ mod tests {
         assert!(book.of_asker(AskId(1), 10).is_some());
         assert!(book.of_asker(AskId(1), 11).is_none(), "another pane's ask");
         assert!(book.of_asker(AskId(2), 10).is_none(), "no such ask");
+    }
+
+    #[test]
+    fn removed_seats_cannot_deliver_waiting_running_or_finished_copies() {
+        for seat in [SeatId(1), SeatId(2)] {
+            let mut book = AskBook::default();
+            for (id, stage) in [
+                CopyStage::AwaitingPress,
+                CopyStage::Running,
+                CopyStage::Answered {
+                    answer: "private".into(),
+                    tokens_read: Some(1),
+                    cost_usd: None,
+                },
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                book.open(AskId(id as u64), copy_ask(10, stage));
+            }
+            let mut unrelated = copy_ask(20, CopyStage::Running);
+            unrelated.from = Some(SeatId(3));
+            unrelated.to = Some(SeatId(4));
+            book.open(AskId(9), unrelated);
+            book.forget_seat(seat);
+            for id in 0..3 {
+                assert!(book.of_asker(AskId(id), 10).is_none());
+                assert!(book
+                    .set(
+                        AskId(id),
+                        CopyStage::Answered {
+                            answer: "late".into(),
+                            tokens_read: None,
+                            cost_usd: None
+                        }
+                    )
+                    .is_none());
+            }
+            assert!(!book.busy(10));
+            assert!(book.busy(20));
+        }
     }
 
     #[test]
