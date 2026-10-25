@@ -10446,6 +10446,12 @@ impl Render for TerminalView {
             };
             let s = crate::lang::current().strings();
             let mut menu = div()
+                .id("pane-context-menu")
+                .debug_selector(|| "pane-context-menu".to_string())
+                .on_mouse_down_out(cx.listener(|v, _, _, cx| {
+                    v.ctx_menu = None;
+                    cx.notify();
+                }))
                 .flex()
                 .flex_col()
                 .min_w(px(168.))

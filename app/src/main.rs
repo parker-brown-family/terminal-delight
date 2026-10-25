@@ -4556,6 +4556,10 @@ struct Workspace {
     war_org_edit: Option<(Option<warroom::OrgId>, EditBuffer)>,
     war_relation: Option<war_room_view::RelationEditor>,
     war_move: Option<(Entity<TerminalView>, warroom::OrgId)>,
+    /// Transient membership gesture; GPUI remains the authority on its lifetime.
+    war_drag: Option<Entity<TerminalView>>,
+    war_context: Option<(Entity<TerminalView>, Point<Pixels>)>,
+    war_feedback: Option<String>,
     /// A person's limit for a copy before it needs their press; `None` is the
     /// default, [`warroom::ASK_PRESS_TOKENS`].
     ask_press_tokens: Option<u64>,
@@ -6282,6 +6286,9 @@ impl Workspace {
             war_org_edit: None,
             war_relation: None,
             war_move: None,
+            war_drag: None,
+            war_context: None,
+            war_feedback: None,
             ask_press_tokens: saved.ask_press_tokens,
             mcp_menu: false,
             war_room: false,
