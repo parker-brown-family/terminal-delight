@@ -8493,7 +8493,13 @@ impl Workspace {
                                         ),
                                         None => (
                                             None,
-                                            ask.pid.map(|p| format!("pane {p} (unavailable)")),
+                                            ask.pid.map(|p| {
+                                                let t = lang::current().strings().gc;
+                                                format!(
+                                                    "{} {p} ({})",
+                                                    t.count_pane.one, t.unavailable
+                                                )
+                                            }),
                                         ),
                                     };
                                     // For a bypass: a line runs between seats, so
