@@ -697,6 +697,10 @@ pub struct Snapshot {
     /// The War Room's lines: which seat may reach which, and how far. Empty
     /// means nobody is seated, and every pane behaves as before the War Room.
     pub chart: crate::warroom::Chart,
+    /// The orgs the chart's whole-org lines resolve against. A line to or from
+    /// an org reaches whoever the org holds right now, so the membership is
+    /// read live beside the chart rather than baked into the line.
+    pub orgs: crate::warroom::Orgs,
 }
 
 /// Where an open document is drawn: floating over a pane's terminal, or on a
@@ -824,6 +828,7 @@ impl Snapshot {
         crate::warroom::reach(
             &self.config,
             &self.chart,
+            &self.orgs,
             caller.as_ref(),
             &p.party(),
             self.is_callers(p.pid),
@@ -977,6 +982,7 @@ impl Snapshot {
             engineering_allowed: true,
             documents: vec![],
             chart: crate::warroom::Chart::default(),
+            orgs: crate::warroom::Orgs::default(),
         }
     }
 }
@@ -3638,8 +3644,14 @@ mod tests {
             is_agent,
             access,
         };
-        crate::warroom::reach(c, &crate::warroom::Chart::default(), None, &p, false)
-            >= crate::warroom::Reach::Read
+        crate::warroom::reach(
+            c,
+            &crate::warroom::Chart::default(),
+            &crate::warroom::Orgs::default(),
+            None,
+            &p,
+            false,
+        ) >= crate::warroom::Reach::Read
     }
 
     /// The old write gate, the same way.
@@ -3654,7 +3666,14 @@ mod tests {
             is_agent,
             access,
         };
-        let r = crate::warroom::reach(c, &crate::warroom::Chart::default(), None, &p, own_pane);
+        let r = crate::warroom::reach(
+            c,
+            &crate::warroom::Chart::default(),
+            &crate::warroom::Orgs::default(),
+            None,
+            &p,
+            own_pane,
+        );
         crate::warroom::may_write(c, r, &p, own_pane)
     }
 
@@ -4068,6 +4087,7 @@ mod tests {
             engineering_allowed: true,
             documents: vec![],
             chart: crate::warroom::Chart::default(),
+            orgs: crate::warroom::Orgs::default(),
         }
     }
 
