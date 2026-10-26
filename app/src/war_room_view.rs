@@ -1057,6 +1057,23 @@ impl Workspace {
             .flex_col()
             .gap_2()
             .child(org_header)
+            // The active org titles its own chart, in its own ink — a cool
+            // heading distinct from the room's pink header and the green field,
+            // so the board reads as "this org's chart" instead of cards adrift
+            // in empty space.
+            .children(self.war_org.map(|id| {
+                div()
+                    .id("war-org-title")
+                    .debug_selector(|| "war-org-title".to_string())
+                    .flex_none()
+                    .pb_1()
+                    .border_b_1()
+                    .border_color(th.ansi[6].alpha(0.35))
+                    .text_size(sk.text_px(13.))
+                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                    .text_color(th.ansi[6])
+                    .child(SharedString::from(self.war_room_org_label(id)))
+            }))
             .child(
                 div()
                     .id("war-room-chart")
@@ -1557,7 +1574,9 @@ impl Workspace {
             return;
         }
         self.war_org = Some(id);
-        self.war_room_query = EditBuffer::seeded("");
+        // The pane filter is the person's, not the view's: seating or moving a
+        // pane (which lands here) must not wipe what they typed. Clearing is
+        // theirs to do — the × button and Esc. See also begin_relation/unseat.
         self.war_room_pick = None;
         self.war_relation = None;
         self.war_org_edit = None;
@@ -1974,7 +1993,9 @@ impl Workspace {
                 None
             },
         });
-        self.war_room_query = EditBuffer::seeded("");
+        // Beginning a relationship (a drag onto a card, or Connect) keeps the
+        // person's filter — losing it mid-wiring was the "clicking an agent
+        // clears the filter" complaint.
         self.war_room_pick = None;
         cx.notify();
     }
@@ -3177,7 +3198,6 @@ impl Workspace {
             self.lang.strings().ui.wr_removed,
             &[("pane", &self.pane_name(leaf, cx).tab)],
         ));
-        self.war_room_query = EditBuffer::seeded("");
         if self.war_room_pick == Some(seat) {
             self.war_room_pick = None;
         }
@@ -4429,6 +4449,43 @@ mod tests {
     }
 
     #[gpui::test]
+    fn starting_a_relationship_keeps_the_pane_filter_and_the_top_rung_reads_prompt(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        // The top rung is the one that lets an agent drive another — it must
+        // read "prompt", not the underwhelming "ask", while the saved word is
+        // still "ask" so older charts keep loading.
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(ws.lang.strings().ui.wr_rung_ask, "prompt");
+            assert_eq!(
+                warroom::RungWord::Known(warroom::Rung::Ask).known(),
+                Some(warroom::Rung::Ask)
+            );
+        });
+        cx.simulate_keystrokes("l e a d");
+        cx.run_until_parked();
+        assert_eq!(ws.read_with(cx, |ws, _| ws.war_room_query.text()), "lead");
+        // Opening the relationship builder (Connect, or a connector drop) used
+        // to wipe the filter mid-wiring. It must survive.
+        click(cx, "war-connect");
+        ws.read_with(cx, |ws, _| {
+            assert!(
+                ws.war_relation.is_some(),
+                "Connect did not open the relationship builder"
+            );
+            assert_eq!(
+                ws.war_room_query.text(),
+                "lead",
+                "beginning a relationship wiped the person's filter"
+            );
+        });
+    }
+
+    #[gpui::test]
     fn whole_card_drag_moves_membership_and_the_saved_record_keeps_identity(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -4483,7 +4540,9 @@ mod tests {
         click(cx, &format!("war-open-org-{}", first.0));
         ws.read_with(cx, |ws, _| {
             assert_eq!(ws.war_org, Some(first));
-            assert!(ws.war_room_query.text().is_empty());
+            // The filter is the person's. Opening the org it found keeps what
+            // they typed instead of wiping it — only ×, Esc and closing clear.
+            assert_eq!(ws.war_room_query.text(), "worker");
         });
     }
 
