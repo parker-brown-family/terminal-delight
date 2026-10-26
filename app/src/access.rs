@@ -203,6 +203,9 @@ pub struct Ask {
     /// The shell pid of the pane the ask is about — the number agents name
     /// panes by. `None` for the window-wide changes.
     pub pid: Option<u32>,
+    /// Window entity captured when the proposal arrived. Missing targets stay
+    /// missing; a later pane reusing a PID cannot inherit this approval.
+    pub target_key: Option<u64>,
     /// That pane's name as the person sees it, read by the window when the ask
     /// arrived. `None` until then, and for a window-wide change.
     pub title: Option<String>,
@@ -271,22 +274,21 @@ pub struct Now<'a> {
 
 /// Why there is nothing to ask, or `None` when the ask can stand.
 ///
-/// An ask for what is already so would put a row on the rail whose Yes does
-/// nothing, which teaches a person that the buttons are decoration.
+/// Open-pane proposals deliberately stand even for missing or already-open
+/// targets. Refusing them would disclose target existence, including through
+/// whether a subsequent request finds the caller's one-request queue occupied.
 pub fn nothing_to_ask(change: Change, pid: Option<u32>, now: &Now) -> Option<String> {
     let pane = pane_words(pid);
     match change {
-        Change::OpenPane | Change::ClosePane => match now.pane_off_limits {
+        Change::OpenPane => pid
+            .is_none()
+            .then(|| "this change is about one pane, and none was named".to_string()),
+        Change::ClosePane => match now.pane_off_limits {
             None => Some(match pid {
                 Some(p) => format!("no pane with pid {p} in this window"),
                 None => "this change is about one pane, and none was named".to_string(),
             }),
-            Some(false) if change == Change::OpenPane => Some(format!(
-                "{pane} is not off-limits, so there is nothing to ask"
-            )),
-            Some(true) if change == Change::ClosePane => {
-                Some(format!("{pane} is already off-limits"))
-            }
+            Some(true) => Some(format!("{pane} is already off-limits")),
             Some(_) => None,
         },
         Change::WritesOn => now
@@ -468,6 +470,7 @@ mod tests {
         Ask {
             change,
             pid,
+            target_key: None,
             title: None,
             why: "reason".into(),
             at: Instant::now(),
@@ -552,8 +555,8 @@ mod tests {
                 },
             )
         };
-        assert!(now(None, &cfg).unwrap().contains("no pane with pid 7"));
-        assert!(now(Some(false), &cfg).unwrap().contains("not off-limits"));
+        assert_eq!(now(None, &cfg), None);
+        assert_eq!(now(Some(false), &cfg), None);
         assert_eq!(now(Some(true), &cfg), None);
         let close = |off| {
             nothing_to_ask(

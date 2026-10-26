@@ -2423,6 +2423,7 @@ impl Workspace {
         let ask = access::Ask {
             change: access::Change::Copy,
             pid: Some(a.target_pid),
+            target_key: None,
             title,
             why: access::excerpt(&a.question),
             at: std::time::Instant::now(),
@@ -2936,6 +2937,112 @@ mod tests {
             .unwrap_or_else(|| panic!("{id} not drawn"))
     }
 
+    fn propose_open(
+        ws: &mut Workspace,
+        cx: &mut Context<Workspace>,
+        pid: u32,
+    ) -> serde_json::Value {
+        let mut snapshot = mcp::Snapshot::empty();
+        snapshot.panes = ws.mcp_snapshot(cx);
+        snapshot.config = ws.mcp.clone();
+        snapshot.chart = ws.chart.clone();
+        snapshot.caller = Some(mcp::Caller {
+            session: "fixture".into(),
+            pane: Some(10),
+        });
+        let request = serde_json::json!({"id":1,"method":"tools/call",
+            "params":{"name":"request_access","arguments":{
+                "change":"open_pane","pid":pid,"why":"review the build"}}});
+        let ui = std::cell::RefCell::new((ws, cx));
+        let reply = mcp::handle_line_with(
+            &request.to_string(),
+            &snapshot,
+            |_, _| vec![],
+            |updates| {
+                let mut ui = ui.borrow_mut();
+                let (ws, cx) = &mut *ui;
+                ws.apply_mcp_config(updates, cx)
+            },
+            |_, _| vec![],
+        )
+        .unwrap();
+        serde_json::from_str::<serde_json::Value>(&reply).unwrap()["result"].clone()
+    }
+
+    #[gpui::test]
+    fn opening_proposals_hide_existence_until_the_person_answers(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            ws.mcp.enabled = true;
+            ws.mcp.writable = false;
+            let asker = ws.leaf_by_pane_id(10, cx).unwrap();
+            let target = ws.leaf_by_pane_id(11, cx).unwrap();
+            let pid = target.read(cx).shell_pid().unwrap();
+            let key = asker.entity_id().as_u64();
+            target.update(cx, |v, _| v.agent_access = warroom::AgentAccess::OffLimits);
+            let hidden = propose_open(ws, cx, pid);
+            assert_ne!(hidden["isError"], true, "{hidden}");
+            let pending_hidden = propose_open(ws, cx, pid);
+            assert_eq!(pending_hidden["isError"], true);
+            assert_eq!(
+                target.read(cx).agent_access,
+                warroom::AgentAccess::OffLimits
+            );
+            let proposal = asker.read(cx).access_ask.as_ref().unwrap();
+            assert_eq!(proposal.target_key, Some(target.entity_id().as_u64()));
+            assert!(proposal.title.as_ref().unwrap().contains("Worker"));
+            assert!(ws.rail_answer(key, access::Answer::No, cx));
+            assert_eq!(
+                target.read(cx).agent_access,
+                warroom::AgentAccess::OffLimits
+            );
+
+            // Same claimed PID, same caller/chart, but no target in the window.
+            let tab = ws.tabs.pop().unwrap();
+            let missing = propose_open(ws, cx, pid);
+            assert_eq!(missing, hidden, "the protocol must not disclose existence");
+            assert_eq!(
+                propose_open(ws, cx, pid),
+                pending_hidden,
+                "a second request must not disclose existence either"
+            );
+            let proposal = asker.read(cx).access_ask.as_ref().unwrap();
+            assert!(proposal.target_key.is_none());
+            assert!(proposal.title.as_ref().unwrap().contains("unavailable"));
+            // Even the original PID appearing afterward cannot inherit a Yes.
+            ws.tabs.push(tab);
+            assert!(ws.rail_answer(key, access::Answer::Yes, cx));
+            assert_eq!(
+                target.read(cx).agent_access,
+                warroom::AgentAccess::OffLimits
+            );
+
+            assert_eq!(propose_open(ws, cx, pid), hidden);
+            // Model a stale/replaced entity while retaining its claimed PID.
+            asker.update(cx, |v, _| {
+                v.access_ask.as_mut().unwrap().target_key = Some(key)
+            });
+            assert!(ws.rail_answer(key, access::Answer::Yes, cx));
+            assert_eq!(
+                target.read(cx).agent_access,
+                warroom::AgentAccess::OffLimits
+            );
+
+            assert_eq!(propose_open(ws, cx, pid), hidden);
+            assert!(ws.rail_answer(key, access::Answer::Yes, cx));
+            assert_eq!(target.read(cx).agent_access, warroom::AgentAccess::Open);
+            assert_eq!(
+                propose_open(ws, cx, pid),
+                hidden,
+                "already-open is also indistinguishable"
+            );
+            assert!(ws.rail_answer(key, access::Answer::No, cx));
+        });
+    }
+
     fn click(cx: &mut gpui::VisualTestContext, id: &str) {
         let at = bounds(cx, id).center();
         cx.simulate_mouse_down(at, MouseButton::Left, gpui::Modifiers::default());
@@ -2982,6 +3089,7 @@ mod tests {
                 v.access_ask = Some(access::Ask {
                     change: access::Change::OpenPane,
                     pid: leaf.read(cx).shell_pid(),
+                    target_key: Some(leaf.entity_id().as_u64()),
                     title: None,
                     why: "fixture".into(),
                     at: std::time::Instant::now(),
@@ -3182,6 +3290,7 @@ mod tests {
                     v.access_ask = Some(access::Ask {
                         change: access::Change::AskLine,
                         pid: Some(target_pid),
+                        target_key: None,
                         title: None,
                         why: "synthetic bypass request".into(),
                         at: std::time::Instant::now(),
