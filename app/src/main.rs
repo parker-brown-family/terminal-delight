@@ -2868,6 +2868,12 @@ struct StateFile {
     /// seated, and every pane behaves as it did before the War Room.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     lines: Vec<warroom::Line>,
+    /// The War Room's lines to or from a whole org (see [`warroom::OrgLine`]).
+    /// Absent on every pre-cross-org file → no org lines, which is the
+    /// fail-closed truth: an org grants nothing until a person draws to or from
+    /// it. Written only beside `war_orgs`, so a legacy chart never grows one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    org_lines: Vec<warroom::OrgLine>,
     /// Absent means a legacy unnamed chart; Some([]) means explicitly no orgs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     war_orgs: Option<Vec<warroom::Org>>,
@@ -2979,6 +2985,7 @@ impl Default for StateFile {
             scope: None,
             mcp: None,
             lines: vec![],
+            org_lines: vec![],
             war_orgs: None,
             war_org: None,
             ask_press_tokens: None,
@@ -4556,6 +4563,13 @@ struct Workspace {
     war_org_edit: Option<(Option<warroom::OrgId>, EditBuffer)>,
     war_relation: Option<war_room_view::RelationEditor>,
     war_move: Option<(Entity<TerminalView>, warroom::OrgId)>,
+    /// An org a person has asked to delete, held until they confirm the count of
+    /// relationships it will take with it. Deleting is destructive and nothing
+    /// is kept dormant, so it waits for a yes.
+    war_delete_org: Option<warroom::OrgId>,
+    /// The System Map, the higher-level view across every org. `Some` holds its
+    /// cross-org relationship draft while it is open.
+    war_map: Option<war_room_view::SystemMap>,
     /// Transient membership gesture; GPUI remains the authority on its lifetime.
     war_drag: Option<Entity<TerminalView>>,
     war_context: Option<(Entity<TerminalView>, Point<Pixels>)>,
@@ -6280,12 +6294,14 @@ impl Workspace {
             osd_at: None,
             osd_eggs: OsdEggs::default(),
             mcp: saved.mcp.clone().unwrap_or_default(),
-            chart: warroom::Chart::from_saved(saved.lines.clone()),
+            chart: warroom::Chart::from_saved(saved.lines.clone(), saved.org_lines.clone()),
             war_orgs: warroom::Orgs::default(),
             war_org: None,
             war_org_edit: None,
             war_relation: None,
             war_move: None,
+            war_delete_org: None,
+            war_map: None,
             war_drag: None,
             war_context: None,
             war_feedback: None,
@@ -7946,6 +7962,7 @@ impl Workspace {
             scope: None,
             mcp: Some(self.mcp.clone()),
             lines: self.chart.saved().to_vec(),
+            org_lines: self.chart.org_lines().to_vec(),
             war_orgs: Some(self.war_orgs.saved().to_vec()),
             war_org: self.war_org,
             ask_press_tokens: self.ask_press_tokens,
@@ -8196,6 +8213,7 @@ impl Workspace {
                 if warroom::reach(
                     &self.mcp,
                     &self.chart,
+                    &self.war_orgs,
                     caller_party.as_ref(),
                     &p.party(),
                     own,
@@ -8429,6 +8447,7 @@ impl Workspace {
                                 let exposed = warroom::may_write_live(
                                     &self.mcp,
                                     &self.chart,
+                                    &self.war_orgs,
                                     sender_seat,
                                     &p.party(),
                                     own,
@@ -8513,6 +8532,7 @@ impl Workspace {
                                             warroom::reach(
                                                 &self.mcp,
                                                 &self.chart,
+                                                &self.war_orgs,
                                                 Some(&asker_party),
                                                 &t,
                                                 false,
@@ -40412,16 +40432,21 @@ mod tests {
         let legacy: StateFile = toml::from_str("active = 0\ntabs = []\n").unwrap();
         assert!(legacy.lines.is_empty());
         assert_eq!(legacy.ask_press_tokens, None);
-        assert!(warroom::Chart::from_saved(legacy.lines.clone())
-            .saved()
-            .is_empty());
+        assert!(
+            warroom::Chart::from_saved(legacy.lines.clone(), legacy.org_lines.clone())
+                .saved()
+                .is_empty()
+        );
+        assert!(legacy.org_lines.is_empty());
         let with = "active = 0\ntabs = []\nask_press_tokens = 250000\n\n\
                     [[lines]]\nfrom = 1\nto = 2\nrung = \"ask\"\n\n\
                     [[lines]]\nfrom = 2\nto = 3\nrung = \"assign\"\nprompts_left = 3\n";
         let back: StateFile = toml::from_str(with).unwrap();
         assert_eq!(back.ask_press_tokens, Some(250_000));
         assert_eq!(
-            warroom::Chart::from_saved(back.lines.clone()).saved().len(),
+            warroom::Chart::from_saved(back.lines.clone(), back.org_lines.clone())
+                .saved()
+                .len(),
             2
         );
         let again = toml::to_string(&back).unwrap();

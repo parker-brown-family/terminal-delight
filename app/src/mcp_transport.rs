@@ -293,6 +293,7 @@ fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot
         engineering_allowed: ws.coordination_full_scope(),
         documents: ws.mcp_documents(cx),
         chart: ws.chart.clone(),
+        orgs: ws.war_orgs.clone(),
     }
 }
 
@@ -604,6 +605,7 @@ mod tests {
             engineering_allowed: false,
             documents: vec![],
             chart: crate::warroom::Chart::default(),
+            orgs: crate::warroom::Orgs::default(),
         }
     }
 

@@ -155,6 +155,16 @@ impl Orgs {
             org.seats.retain(|s| *s != seat);
         }
     }
+
+    /// Delete an org, returning the seats it held so the caller can decide what
+    /// becomes of them. The grouping is gone; the chart's lines are the caller's
+    /// to erase.
+    pub fn delete(&mut self, id: OrgId) -> Vec<SeatId> {
+        match self.orgs.iter().position(|o| o.id == id) {
+            Some(pos) => self.orgs.remove(pos).seats,
+            None => vec![],
+        }
+    }
 }
 
 /// An unfinished relationship grants nothing until both endpoints and a rung
@@ -272,11 +282,102 @@ impl Line {
     }
 }
 
-/// Every line in one window. At most one line runs from a seat to another; a
-/// new one replaces the old.
+/// One end of a relationship a person drew. A relationship points at a single
+/// seated pane, or at a whole org — which stands for every seat in that org,
+/// resolved live when the rules are asked, so a pane joining or leaving the org
+/// changes what the line reaches with no edit to the line.
+///
+/// Saved as a string scalar — `"seat:<id>"` or `"org:<id>"` — rather than a
+/// bare integer or a table. This is a fresh field (no seat-to-seat line ever
+/// used it), so nothing legacy has to be matched, and a scalar on both arms
+/// keeps an `[[org_lines]]` entry a flat table of values that TOML round-trips
+/// with no value-after-table ordering trap. A string this build cannot parse is
+/// a hard load error rather than a silent miss: an endpoint nobody can read is
+/// not an endpoint that reaches nothing by accident.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum End {
+    Seat(SeatId),
+    Org { org: OrgId },
+}
+
+impl Serialize for End {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let word = match self {
+            End::Seat(seat) => format!("seat:{}", seat.0),
+            End::Org { org } => format!("org:{}", org.0),
+        };
+        s.serialize_str(&word)
+    }
+}
+
+impl<'de> Deserialize<'de> for End {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let word = String::deserialize(d)?;
+        if let Some(n) = word.strip_prefix("seat:") {
+            n.parse::<u64>()
+                .map(|n| End::Seat(SeatId(n)))
+                .map_err(serde::de::Error::custom)
+        } else if let Some(n) = word.strip_prefix("org:") {
+            n.parse::<u64>()
+                .map(|n| End::Org { org: OrgId(n) })
+                .map_err(serde::de::Error::custom)
+        } else {
+            Err(serde::de::Error::custom(format!(
+                "a relationship end reads \"seat:<id>\" or \"org:<id>\", not {word:?}"
+            )))
+        }
+    }
+}
+
+impl End {
+    /// Does this end stand for `seat`? A seat end names it; an org end names it
+    /// when `orgs` place the seat in that org. Membership is direct containment,
+    /// not [`Orgs::owner`], so a seat sitting in two orgs is still covered by a
+    /// line to either — the line reaches every member it names.
+    pub fn covers(&self, seat: SeatId, orgs: &Orgs) -> bool {
+        match self {
+            End::Seat(s) => *s == seat,
+            End::Org { org } => orgs.get(*org).is_some_and(|o| o.seats.contains(&seat)),
+        }
+    }
+
+    /// The org this end names, if any.
+    pub fn org(&self) -> Option<OrgId> {
+        match self {
+            End::Seat(_) => None,
+            End::Org { org } => Some(*org),
+        }
+    }
+
+    /// The seat this end names, if any.
+    pub fn seat(&self) -> Option<SeatId> {
+        match self {
+            End::Seat(s) => Some(*s),
+            End::Org { .. } => None,
+        }
+    }
+}
+
+/// A relationship a person drew where at least one end is a whole org — a seat
+/// reaching a whole org, a whole org reaching a seat, or an org reaching an org.
+/// Unlike a seat-to-seat [`Line`] it is never a bypass: a bypass is a person's
+/// Yes on one pane asking one pane, and an org stands for many. It grants its
+/// rung to every (caller, target) pair its two ends resolve to over the current
+/// membership, and a word this build cannot read grants nothing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrgLine {
+    pub from: End,
+    pub to: End,
+    pub rung: RungWord,
+}
+
+/// Every line in one window: the seat-to-seat lines, and the lines a person
+/// drew to or from a whole org. At most one line of each kind runs between a
+/// given pair of endpoints; a new one replaces the old.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Chart {
     lines: Vec<Line>,
+    org_lines: Vec<OrgLine>,
 }
 
 /// A seat's place in the chart, read from its drawn lines (bypasses never
@@ -295,16 +396,23 @@ pub enum Role {
 }
 
 impl Chart {
-    pub fn from_saved(lines: Vec<Line>) -> Self {
+    pub fn from_saved(lines: Vec<Line>, org_lines: Vec<OrgLine>) -> Self {
         let mut chart = Self::default();
         for l in lines {
             chart.put(l);
+        }
+        for l in org_lines {
+            chart.put_org(l);
         }
         chart
     }
 
     pub fn saved(&self) -> &[Line] {
         &self.lines
+    }
+
+    pub fn org_lines(&self) -> &[OrgLine] {
+        &self.org_lines
     }
 
     pub fn line(&self, from: SeatId, to: SeatId) -> Option<&Line> {
@@ -318,6 +426,15 @@ impl Chart {
         self.lines
             .retain(|l| !(l.from == line.from && l.to == line.to));
         self.lines.push(line);
+    }
+
+    fn put_org(&mut self, line: OrgLine) {
+        if line.from == line.to {
+            return;
+        }
+        self.org_lines
+            .retain(|l| !(l.from == line.from && l.to == line.to));
+        self.org_lines.push(line);
     }
 
     /// A person drew (or changed) a line. Callers: the War Room panel only.
@@ -350,9 +467,56 @@ impl Chart {
         self.lines.retain(|l| !(l.from == from && l.to == to));
     }
 
-    /// A seat was taken off the chart: every line to or from it goes.
+    /// A person drew (or changed) a line to or from a whole org. Callers: the
+    /// War Room panel and the System Map only.
+    pub fn draw_org(&mut self, from: End, to: End, rung: Rung) {
+        self.put_org(OrgLine {
+            from,
+            to,
+            rung: RungWord::Known(rung),
+        });
+    }
+
+    pub fn erase_org(&mut self, from: End, to: End) {
+        self.org_lines.retain(|l| !(l.from == from && l.to == to));
+    }
+
+    /// A seat was taken off the chart: every line to or from it goes, including
+    /// an org line that names it as an endpoint. An org line that merely reaches
+    /// the seat *through its org* stays — it still reaches the org's other
+    /// members, and the seat leaving the org already dropped it from that reach.
     pub fn forget_seat(&mut self, seat: SeatId) {
         self.lines.retain(|l| l.from != seat && l.to != seat);
+        self.org_lines
+            .retain(|l| l.from.seat() != Some(seat) && l.to.seat() != Some(seat));
+    }
+
+    /// An org was deleted: every org line that names it at either end goes.
+    /// Seat-to-seat lines are untouched — they name seats, which outlive the
+    /// org. Nothing is kept dormant: a deleted org's grants are gone.
+    pub fn forget_org(&mut self, org: OrgId) {
+        self.org_lines
+            .retain(|l| l.from.org() != Some(org) && l.to.org() != Some(org));
+    }
+
+    /// How many org lines name `org` at either end — the number a delete confirm
+    /// states before erasing them, so a person deletes a count they can see.
+    pub fn org_lines_touching(&self, org: OrgId) -> usize {
+        self.org_lines
+            .iter()
+            .filter(|l| l.from.org() == Some(org) || l.to.org() == Some(org))
+            .count()
+    }
+
+    /// The strongest rung any org line grants from `from` to `to` over the
+    /// current membership, fail-closed: a word this build cannot read grants
+    /// nothing, so it never raises the reach.
+    fn org_rung(&self, from: SeatId, to: SeatId, orgs: &Orgs) -> Option<Rung> {
+        self.org_lines
+            .iter()
+            .filter(|l| l.from.covers(from, orgs) && l.to.covers(to, orgs))
+            .filter_map(|l| l.rung.known())
+            .max()
     }
 
     /// Spend one prompt of a bypass. A drawn line spends nothing. At zero the
@@ -511,6 +675,7 @@ fn ceiling(access: AgentAccess) -> Reach {
 pub fn reach(
     cfg: &McpConfig,
     chart: &Chart,
+    orgs: &Orgs,
     caller: Option<&Party>,
     target: &Party,
     own: bool,
@@ -524,10 +689,15 @@ pub fn reach(
     if own {
         return Reach::Read;
     }
-    let line = caller
-        .and_then(|c| c.seat)
-        .and_then(|from| chart.line(from, seat));
-    match line.and_then(|l| l.rung.known()) {
+    let Some(from) = caller.and_then(|c| c.seat) else {
+        return Reach::Hidden;
+    };
+    // The strongest grant wins, drawn seat-to-seat line and whole-org line
+    // alike; a rung word this build cannot read is absent here, not zero, so it
+    // never raises the reach. No grant at all is hidden.
+    let direct = chart.line(from, seat).and_then(|l| l.rung.known());
+    let via_org = chart.org_rung(from, seat, orgs);
+    match direct.into_iter().chain(via_org).max() {
         Some(rung) => Reach::from(rung).min(ceiling(target.access)),
         None => Reach::Hidden,
     }
@@ -661,6 +831,7 @@ impl Refusal {
 pub fn decide_ask(
     cfg: &McpConfig,
     chart: &Chart,
+    orgs: &Orgs,
     caller: &Party,
     target: &Party,
     same_pane: bool,
@@ -681,9 +852,12 @@ pub fn decide_ask(
     if !target.is_agent {
         return Err(Refusal::NotAnAgent);
     }
-    if reach(cfg, chart, Some(caller), target, false) < Reach::Ask {
+    if reach(cfg, chart, orgs, Some(caller), target, false) < Reach::Ask {
         return Err(Refusal::NoLine);
     }
+    // A direct seat-to-seat bypass spends its prompts; an ask that is permitted
+    // only through a whole-org line is a drawn, unlimited relationship, so it
+    // reads as a line — there is no per-pane bypass count to spend.
     let line = caller
         .seat
         .zip(target.seat)
@@ -805,7 +979,16 @@ pub fn visible_to_some_agent(cfg: &McpConfig, target: &Party) -> bool {
 /// A seated pane is hidden from it — lines name their callers, and this one
 /// has none.
 pub fn anonymous_reach(cfg: &McpConfig, target: &Party) -> Reach {
-    reach(cfg, &Chart::default(), None, target, false)
+    // No caller, so no seat: neither a seat-to-seat line nor an org a caller
+    // sits in can apply, and the orgs are irrelevant.
+    reach(
+        cfg,
+        &Chart::default(),
+        &Orgs::default(),
+        None,
+        target,
+        false,
+    )
 }
 
 /// Whether one of TD's own write verbs (a note, an appearance change, a
@@ -834,6 +1017,7 @@ pub fn may_write(cfg: &McpConfig, reach: Reach, target: &Party, own: bool) -> bo
 pub fn may_write_live(
     cfg: &McpConfig,
     chart: &Chart,
+    orgs: &Orgs,
     caller_seat: Option<SeatId>,
     target: &Party,
     own: bool,
@@ -843,7 +1027,7 @@ pub fn may_write_live(
         is_agent: true,
         access: target.access,
     });
-    let r = reach(cfg, chart, caller.as_ref(), target, own);
+    let r = reach(cfg, chart, orgs, caller.as_ref(), target, own);
     may_write(cfg, r, target, own)
 }
 
@@ -1104,6 +1288,378 @@ mod tests {
         chart.draw(SeatId(from), SeatId(to), rung);
     }
 
+    // ---- cross-org and whole-org relationships (round 2) ----
+
+    /// Build named orgs with their members. Returns the orgs and the ids in the
+    /// order the specs were given.
+    fn orgset(specs: &[(&str, &[u64])]) -> (Orgs, Vec<OrgId>) {
+        let mut orgs = Orgs::default();
+        let ids = specs
+            .iter()
+            .map(|(name, seats)| {
+                let id = orgs.create(name).expect("a named org is created");
+                for s in *seats {
+                    assert!(orgs.assign(SeatId(*s), id), "a seat assigns to its org");
+                }
+                id
+            })
+            .collect();
+        (orgs, ids)
+    }
+
+    /// How far an open seated caller reaches a seated target over `chart` and
+    /// `orgs`, the target wearing `access`.
+    fn reach_between(chart: &Chart, orgs: &Orgs, from: u64, to: u64, access: AgentAccess) -> Reach {
+        reach(
+            &on(),
+            chart,
+            orgs,
+            Some(&agent(Some(from), AgentAccess::Open)),
+            &agent(Some(to), access),
+            false,
+        )
+    }
+
+    #[test]
+    fn an_org_line_round_trips_every_end_as_a_scalar_string() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        struct W {
+            org_lines: Vec<OrgLine>,
+        }
+        let w = W {
+            org_lines: vec![
+                OrgLine {
+                    from: End::Seat(SeatId(7)),
+                    to: End::Org { org: OrgId(99) },
+                    rung: RungWord::Known(Rung::Ask),
+                },
+                OrgLine {
+                    from: End::Org { org: OrgId(1) },
+                    to: End::Org { org: OrgId(2) },
+                    rung: RungWord::Known(Rung::Read),
+                },
+            ],
+        };
+        let text = toml::to_string(&w).expect("org lines serialize");
+        assert!(text.contains("from = \"seat:7\""), "{text}");
+        assert!(text.contains("to = \"org:99\""), "{text}");
+        assert_eq!(toml::from_str::<W>(&text).expect("and read back"), w);
+    }
+
+    #[test]
+    fn a_line_to_a_whole_org_reaches_every_member_and_nobody_else() {
+        let (orgs, ids) = orgset(&[("workers", &[2, 3]), ("others", &[4])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[0] }, Rung::Ask);
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 2, AgentAccess::Open),
+            Reach::Ask
+        );
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 3, AgentAccess::Open),
+            Reach::Ask
+        );
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 4, AgentAccess::Open),
+            Reach::Hidden
+        );
+    }
+
+    #[test]
+    fn a_line_from_a_whole_org_lets_every_member_reach_the_target() {
+        let (orgs, ids) = orgset(&[("leads", &[1, 2])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Org { org: ids[0] }, End::Seat(SeatId(3)), Rung::Read);
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 3, AgentAccess::Open),
+            Reach::Read
+        );
+        assert_eq!(
+            reach_between(&chart, &orgs, 2, 3, AgentAccess::Open),
+            Reach::Read
+        );
+        assert_eq!(
+            reach_between(&chart, &orgs, 9, 3, AgentAccess::Open),
+            Reach::Hidden
+        );
+    }
+
+    #[test]
+    fn an_org_to_org_line_connects_every_pair_one_way() {
+        let (orgs, ids) = orgset(&[("alpha", &[1, 2]), ("beta", &[3, 4])]);
+        let mut chart = Chart::default();
+        chart.draw_org(
+            End::Org { org: ids[0] },
+            End::Org { org: ids[1] },
+            Rung::See,
+        );
+        for from in [1, 2] {
+            for to in [3, 4] {
+                assert_eq!(
+                    reach_between(&chart, &orgs, from, to, AgentAccess::Open),
+                    Reach::Seen
+                );
+            }
+        }
+        assert_eq!(
+            reach_between(&chart, &orgs, 3, 1, AgentAccess::Open),
+            Reach::Hidden
+        );
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 2, AgentAccess::Open),
+            Reach::Hidden
+        );
+    }
+
+    #[test]
+    fn the_strongest_grant_wins_across_a_direct_line_and_an_org_line() {
+        let (orgs, ids) = orgset(&[("team", &[2])]);
+        let mut chart = Chart::default();
+        line(&mut chart, 1, 2, Rung::See);
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[0] }, Rung::Ask);
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 2, AgentAccess::Open),
+            Reach::Ask
+        );
+    }
+
+    #[test]
+    fn two_org_lines_to_the_same_pair_take_the_stronger() {
+        let (orgs, ids) = orgset(&[("a", &[1]), ("b", &[2])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Org { org: ids[0] }, End::Seat(SeatId(2)), Rung::See);
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[1] }, Rung::Read);
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 2, AgentAccess::Open),
+            Reach::Read
+        );
+    }
+
+    #[test]
+    fn an_unknown_rung_word_on_an_org_line_grants_nothing() {
+        let (orgs, ids) = orgset(&[("team", &[2])]);
+        let mut chart = Chart::from_saved(
+            vec![],
+            vec![OrgLine {
+                from: End::Seat(SeatId(1)),
+                to: End::Org { org: ids[0] },
+                rung: RungWord::Unknown("command".into()),
+            }],
+        );
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 2, AgentAccess::Open),
+            Reach::Hidden
+        );
+        // beside a readable direct line it never raises the reach
+        line(&mut chart, 1, 2, Rung::Read);
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 2, AgentAccess::Open),
+            Reach::Read
+        );
+    }
+
+    #[test]
+    fn a_whole_org_ask_reaches_a_read_only_member_but_cannot_write_it() {
+        // Read-only caps WRITES, not asks: ceiling(ReadOnly) is Ask, so a
+        // whole-org Ask still reaches a read-only member — it just cannot write.
+        // Off-limits beats every line and hides the pane outright.
+        let (orgs, ids) = orgset(&[("team", &[2])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[0] }, Rung::Ask);
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 2, AgentAccess::ReadOnly),
+            Reach::Ask
+        );
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 2, AgentAccess::OffLimits),
+            Reach::Hidden
+        );
+        assert!(!may_write_live(
+            &on(),
+            &chart,
+            &orgs,
+            Some(SeatId(1)),
+            &agent(Some(2), AgentAccess::ReadOnly),
+            false
+        ));
+    }
+
+    #[test]
+    fn a_whole_org_line_follows_the_membership_live() {
+        let (mut orgs, ids) = orgset(&[("team", &[2])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[0] }, Rung::Ask);
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 3, AgentAccess::Open),
+            Reach::Hidden
+        );
+        orgs.assign(SeatId(3), ids[0]);
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 3, AgentAccess::Open),
+            Reach::Ask
+        );
+        orgs.remove(SeatId(3));
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 3, AgentAccess::Open),
+            Reach::Hidden
+        );
+    }
+
+    #[test]
+    fn a_seat_in_two_orgs_is_reached_by_a_line_to_either() {
+        // assign() moves a seat, so a shared membership is built through restore.
+        let orgs = Orgs::restore(
+            Some(vec![
+                Org {
+                    id: OrgId(10),
+                    name: Some("a".into()),
+                    seats: vec![SeatId(2)],
+                },
+                Org {
+                    id: OrgId(20),
+                    name: Some("b".into()),
+                    seats: vec![SeatId(2)],
+                },
+            ]),
+            &[],
+        );
+        let mut one = Chart::default();
+        one.draw_org(
+            End::Seat(SeatId(1)),
+            End::Org { org: OrgId(10) },
+            Rung::Read,
+        );
+        assert_eq!(
+            reach_between(&one, &orgs, 1, 2, AgentAccess::Open),
+            Reach::Read
+        );
+        let mut other = Chart::default();
+        other.draw_org(End::Seat(SeatId(1)), End::Org { org: OrgId(20) }, Rung::See);
+        assert_eq!(
+            reach_between(&other, &orgs, 1, 2, AgentAccess::Open),
+            Reach::Seen
+        );
+    }
+
+    #[test]
+    fn forgetting_a_seat_drops_org_lines_that_name_it_as_an_endpoint() {
+        let (orgs, ids) = orgset(&[("team", &[2, 3])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[0] }, Rung::Ask);
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 2, AgentAccess::Open),
+            Reach::Ask
+        );
+        chart.forget_seat(SeatId(1));
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 2, AgentAccess::Open),
+            Reach::Hidden
+        );
+        assert!(chart.org_lines().is_empty());
+    }
+
+    #[test]
+    fn forgetting_a_member_seat_leaves_the_org_line_reaching_the_rest() {
+        let (mut orgs, ids) = orgset(&[("team", &[2, 3])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[0] }, Rung::Ask);
+        orgs.remove(SeatId(2));
+        chart.forget_seat(SeatId(2));
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 3, AgentAccess::Open),
+            Reach::Ask
+        );
+        assert_eq!(chart.org_lines().len(), 1, "the org line stays");
+    }
+
+    #[test]
+    fn deleting_an_org_erases_every_line_that_names_it_and_counts_them_first() {
+        let (_orgs, ids) = orgset(&[("team", &[2]), ("other", &[4])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[0] }, Rung::Ask);
+        chart.draw_org(End::Org { org: ids[0] }, End::Seat(SeatId(9)), Rung::See);
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[1] }, Rung::Read);
+        assert_eq!(chart.org_lines_touching(ids[0]), 2);
+        chart.forget_org(ids[0]);
+        assert_eq!(chart.org_lines_touching(ids[0]), 0);
+        assert_eq!(
+            chart.org_lines().len(),
+            1,
+            "the line to the other org survives"
+        );
+    }
+
+    #[test]
+    fn an_anonymous_reader_is_never_granted_by_a_whole_org_line() {
+        let (orgs, ids) = orgset(&[("team", &[2])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Org { org: ids[0] }, End::Seat(SeatId(2)), Rung::Ask);
+        assert_eq!(
+            reach(
+                &on(),
+                &chart,
+                &orgs,
+                None,
+                &agent(Some(2), AgentAccess::Open),
+                false
+            ),
+            Reach::Hidden
+        );
+    }
+
+    #[test]
+    fn redrawing_an_org_line_replaces_the_old_rung() {
+        let (orgs, ids) = orgset(&[("team", &[2])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[0] }, Rung::Ask);
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[0] }, Rung::See);
+        assert_eq!(chart.org_lines().len(), 1);
+        assert_eq!(
+            reach_between(&chart, &orgs, 1, 2, AgentAccess::Open),
+            Reach::Seen
+        );
+    }
+
+    #[test]
+    fn an_ask_permitted_only_through_an_org_line_is_a_line_not_a_bypass() {
+        let (orgs, ids) = orgset(&[("team", &[2])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[0] }, Rung::Ask);
+        let via = decide_ask(
+            &on(),
+            &chart,
+            &orgs,
+            &agent(Some(1), AgentAccess::Open),
+            &agent(Some(2), AgentAccess::Open),
+            false,
+            10,
+        );
+        assert_eq!(via, Ok("line"));
+    }
+
+    #[test]
+    fn a_whole_org_read_grants_a_write_to_an_open_member_only() {
+        let (orgs, ids) = orgset(&[("team", &[2])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[0] }, Rung::Read);
+        assert!(may_write_live(
+            &on(),
+            &chart,
+            &orgs,
+            Some(SeatId(1)),
+            &agent(Some(2), AgentAccess::Open),
+            false
+        ));
+        assert!(!may_write_live(
+            &on(),
+            &chart,
+            &orgs,
+            Some(SeatId(1)),
+            &agent(Some(2), AgentAccess::ReadOnly),
+            false
+        ));
+    }
+
     /// The effect-time recheck follows the CURRENT chart and the sender's CURRENT
     /// seat, not anything captured when the write was queued: a revoked line, and
     /// a sender that has left its seat, both stop the write; a present line and
@@ -1118,21 +1674,21 @@ mod tests {
         let mut with_line = Chart::default();
         line(&mut with_line, 1, 2, Rung::Read);
         assert!(
-            may_write_live(&cfg, &with_line, sender, &target, false),
+            may_write_live(&cfg, &with_line, &Orgs::default(), sender, &target, false),
             "a current read line admits the write"
         );
 
         let revoked = Chart::default();
         assert!(
-            !may_write_live(&cfg, &revoked, sender, &target, false),
+            !may_write_live(&cfg, &revoked, &Orgs::default(), sender, &target, false),
             "a line revoked while the write was queued stops it at the effect"
         );
         assert!(
-            !may_write_live(&cfg, &with_line, None, &target, false),
+            !may_write_live(&cfg, &with_line, &Orgs::default(), None, &target, false),
             "a sender that no longer holds a seat is refused, even with the line still drawn"
         );
         assert!(
-            may_write_live(&cfg, &revoked, None, &target, true),
+            may_write_live(&cfg, &revoked, &Orgs::default(), None, &target, true),
             "the sender's own pane writes without a line, whatever the chart says"
         );
     }
@@ -1148,7 +1704,14 @@ mod tests {
             agent(Some(2), AgentAccess::Open),
         ] {
             assert_eq!(
-                reach(&off, &chart, Some(&caller), &target, false),
+                reach(
+                    &off,
+                    &chart,
+                    &Orgs::default(),
+                    Some(&caller),
+                    &target,
+                    false
+                ),
                 Reach::Hidden
             );
         }
@@ -1161,16 +1724,37 @@ mod tests {
         let caller = agent(Some(1), AgentAccess::Open);
         let target = agent(Some(2), AgentAccess::OffLimits);
         assert_eq!(
-            reach(&on(), &chart, Some(&caller), &target, false),
+            reach(
+                &on(),
+                &chart,
+                &Orgs::default(),
+                Some(&caller),
+                &target,
+                false
+            ),
             Reach::Hidden
         );
         let unseated = agent(None, AgentAccess::OffLimits);
         assert_eq!(
-            reach(&on(), &chart, Some(&caller), &unseated, false),
+            reach(
+                &on(),
+                &chart,
+                &Orgs::default(),
+                Some(&caller),
+                &unseated,
+                false
+            ),
             Reach::Hidden
         );
         assert_eq!(
-            reach(&on(), &chart, Some(&caller), &unseated, true),
+            reach(
+                &on(),
+                &chart,
+                &Orgs::default(),
+                Some(&caller),
+                &unseated,
+                true
+            ),
             Reach::Hidden,
             "even its own agent's census"
         );
@@ -1184,12 +1768,18 @@ mod tests {
             is_agent: false,
             access: AgentAccess::Open,
         };
-        assert_eq!(reach(&on(), &chart, None, &shell, false), Reach::Hidden);
+        assert_eq!(
+            reach(&on(), &chart, &Orgs::default(), None, &shell, false),
+            Reach::Hidden
+        );
         let all = McpConfig {
             expose: Expose::All,
             ..on()
         };
-        assert_eq!(reach(&all, &chart, None, &shell, false), Reach::Read);
+        assert_eq!(
+            reach(&all, &chart, &Orgs::default(), None, &shell, false),
+            Reach::Read
+        );
     }
 
     #[test]
@@ -1198,16 +1788,30 @@ mod tests {
         let caller = agent(Some(1), AgentAccess::Open);
         let target = agent(Some(2), AgentAccess::Open);
         assert_eq!(
-            reach(&on(), &chart, Some(&caller), &target, false),
+            reach(
+                &on(),
+                &chart,
+                &Orgs::default(),
+                Some(&caller),
+                &target,
+                false
+            ),
             Reach::Hidden
         );
         let unseated_caller = agent(None, AgentAccess::Open);
         assert_eq!(
-            reach(&on(), &chart, Some(&unseated_caller), &target, false),
+            reach(
+                &on(),
+                &chart,
+                &Orgs::default(),
+                Some(&unseated_caller),
+                &target,
+                false
+            ),
             Reach::Hidden
         );
         assert_eq!(
-            reach(&on(), &chart, None, &target, false),
+            reach(&on(), &chart, &Orgs::default(), None, &target, false),
             Reach::Hidden,
             "an unknown caller"
         );
@@ -1219,11 +1823,25 @@ mod tests {
         line(&mut chart, 1, 2, Rung::See);
         let caller = agent(Some(1), AgentAccess::Open);
         let target = agent(Some(2), AgentAccess::Open);
-        let r = reach(&on(), &chart, Some(&caller), &target, false);
+        let r = reach(
+            &on(),
+            &chart,
+            &Orgs::default(),
+            Some(&caller),
+            &target,
+            false,
+        );
         assert_eq!(r, Reach::Seen);
         assert!(!may_write(&on(), r, &target, false));
         assert_eq!(
-            reach(&on(), &chart, Some(&target), &caller, false),
+            reach(
+                &on(),
+                &chart,
+                &Orgs::default(),
+                Some(&target),
+                &caller,
+                false
+            ),
             Reach::Hidden,
             "a line runs one way"
         );
@@ -1236,7 +1854,14 @@ mod tests {
         line(&mut chart, 1, 2, Rung::Ask);
         let caller = agent(Some(1), AgentAccess::Open);
         let target = agent(None, AgentAccess::Open);
-        let r = reach(&on(), &chart, Some(&caller), &target, false);
+        let r = reach(
+            &on(),
+            &chart,
+            &Orgs::default(),
+            Some(&caller),
+            &target,
+            false,
+        );
         assert_eq!(r, Reach::Read);
         assert!(
             r < Reach::Ask,
@@ -1251,7 +1876,14 @@ mod tests {
         let caller = agent(Some(1), AgentAccess::Open);
         let target = agent(Some(2), AgentAccess::ReadOnly);
         assert_eq!(
-            reach(&on(), &chart, Some(&caller), &target, false),
+            reach(
+                &on(),
+                &chart,
+                &Orgs::default(),
+                Some(&caller),
+                &target,
+                false
+            ),
             Reach::Ask
         );
     }
@@ -1264,11 +1896,18 @@ mod tests {
             lines: Vec<Line>,
         }
         let f: F = toml::from_str(saved).unwrap();
-        let chart = Chart::from_saved(f.lines);
+        let chart = Chart::from_saved(f.lines, vec![]);
         let caller = agent(Some(1), AgentAccess::Open);
         let target = agent(Some(2), AgentAccess::Open);
         assert_eq!(
-            reach(&on(), &chart, Some(&caller), &target, false),
+            reach(
+                &on(),
+                &chart,
+                &Orgs::default(),
+                Some(&caller),
+                &target,
+                false
+            ),
             Reach::Hidden
         );
         let again = toml::to_string(&F {
@@ -1285,7 +1924,10 @@ mod tests {
     fn the_own_pane_is_never_lost_from_its_own_census() {
         let chart = Chart::default();
         let me = agent(Some(7), AgentAccess::ReadOnly);
-        assert_eq!(reach(&on(), &chart, Some(&me), &me, true), Reach::Read);
+        assert_eq!(
+            reach(&on(), &chart, &Orgs::default(), Some(&me), &me, true),
+            Reach::Read
+        );
         assert!(
             may_write(&on(), Reach::Read, &me, true),
             "the agent inside keeps its own verbs"
@@ -1301,7 +1943,14 @@ mod tests {
             (AgentAccess::OffLimits, false, true),
         ] {
             let target = agent(None, access);
-            let r = reach(&cfg, &Chart::default(), None, &target, false);
+            let r = reach(
+                &cfg,
+                &Chart::default(),
+                &Orgs::default(),
+                None,
+                &target,
+                false,
+            );
             assert_eq!(
                 may_write(&cfg, r, &target, false),
                 other,
@@ -1470,7 +2119,7 @@ mod tests {
         let me = agent(Some(1), AgentAccess::Open);
         let worker = agent(Some(2), AgentAccess::Open);
         let decide = |cfg: &McpConfig, t: &Party, same: bool, q: usize| {
-            decide_ask(cfg, &chart, &me, t, same, q)
+            decide_ask(cfg, &chart, &Orgs::default(), &me, t, same, q)
         };
         assert_eq!(decide(&on(), &worker, false, 12), Ok("line"));
         assert_eq!(
