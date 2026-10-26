@@ -33,10 +33,6 @@ pub const CLEAN_THEME_TOML: &str = include_str!("../themes/clean.toml");
 /// ~/.config/terminal-delight/theme.toml stays hot-reloaded as id "custom".
 pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
     (CLEAN, CLEAN_THEME_TOML),
-    (
-        "tactical-overdrive",
-        include_str!("../themes/tactical-overdrive.toml"),
-    ),
     ("deco", include_str!("../themes/deco.toml")),
     ("hacker", DEFAULT_THEME_TOML),
     ("intrusive", include_str!("../themes/intrusive.toml")),
@@ -1510,13 +1506,16 @@ impl Grade {
 // materials as colour designs, so those two go to the house design. Field was
 // folded into Tactical for 0.4.0: the two differed only in how much glow and
 // bezel they drew, and the colours they once carried now come from the palette.
+// Tactical itself was retired on 2026-10-25 ("Remove the tactical design") and
+// reads back as Hacker, the other design that ships with the tube on; its OPS
+// trim was only ever a skin preference, and the skin is now the window's own.
 // Keep saved palette/grade fields while retiring the picker entries; without
 // this an unknown id resolves to the custom file, which nobody chose.
 fn read_design_id<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     let id = String::deserialize(d)?;
     Ok(match id.as_str() {
         "chalk-flower" | "chalk-night" => "hacker".into(),
-        "field-command" => "tactical-overdrive".into(),
+        "field-command" | "tactical-overdrive" => "hacker".into(),
         // Quiet was folded into Clean on 2026-10-21 ("CLEAN BULLDOZES QUIET!"):
         // under any palette its light colours never showed, and every dial it
         // owned was already zero.
@@ -2128,8 +2127,9 @@ pub fn builtin_ids() -> Vec<&'static str> {
     BUILTIN_THEMES.iter().map(|(k, _)| *k).collect()
 }
 
-/// How many buttons the DESIGN picker draws: every builtin, plus the one
-/// hot-reloaded "custom" slot [`all_themes`] always appends.
+/// The most buttons the DESIGN picker can draw: every builtin, plus the
+/// hot-reloaded "custom" slot [`all_themes`] appends, which the picker shows
+/// only on a window already wearing it. The worst case, so the tray fits it.
 ///
 /// Exposed so the design tray's fit can be asserted against the real inventory
 /// rather than against a count typed beside the layout — adding a builtin theme
@@ -2151,8 +2151,8 @@ pub fn all_themes(cx: &App) -> Vec<(String, String, String)> {
     out
 }
 
-/// Short picker caption for a theme id: the segment before the first '-'
-/// ("tactical-overdrive" → "tactical"), which is unique across the built-ins.
+/// Short picker caption for a theme id: the segment before the first '-',
+/// which is unique across the built-ins.
 fn short_label(id: &str) -> String {
     id.split('-').next().unwrap_or(id).to_string()
 }
@@ -3748,18 +3748,20 @@ mod tests {
     }
 
     #[test]
-    fn a_saved_field_design_comes_back_as_tactical() {
-        assert!(!builtin_ids().contains(&"field-command"));
-        let mut saved = serde_json::to_value(ThemeChoice::default()).unwrap();
-        saved["id"] = "field-command".into();
-        let restored: ThemeChoice = serde_json::from_value(saved).unwrap();
-        assert_eq!(restored.id, "tactical-overdrive");
-        // A pane's own pinned group is saved separately from the outer choice,
-        // and has to come back the same way.
-        let mut group = serde_json::to_value(ThemeGroup::of(&ThemeChoice::default())).unwrap();
-        group["id"] = "field-command".into();
-        let restored: ThemeGroup = serde_json::from_value(group).unwrap();
-        assert_eq!(restored.id, "tactical-overdrive");
+    fn a_saved_field_or_tactical_design_comes_back_as_hacker() {
+        for retired in ["field-command", "tactical-overdrive"] {
+            assert!(!builtin_ids().contains(&retired));
+            let mut saved = serde_json::to_value(ThemeChoice::default()).unwrap();
+            saved["id"] = retired.into();
+            let restored: ThemeChoice = serde_json::from_value(saved).unwrap();
+            assert_eq!(restored.id, "hacker", "{retired}");
+            // A pane's own pinned group is saved separately from the outer
+            // choice, and has to come back the same way.
+            let mut group = serde_json::to_value(ThemeGroup::of(&ThemeChoice::default())).unwrap();
+            group["id"] = retired.into();
+            let restored: ThemeGroup = serde_json::from_value(group).unwrap();
+            assert_eq!(restored.id, "hacker", "{retired}");
+        }
         for id in builtin_ids() {
             let mut saved = serde_json::to_value(ThemeChoice::default()).unwrap();
             saved["id"] = id.into();
@@ -3890,8 +3892,8 @@ mod tests {
     }
 
     /// Every shipped design says what its tube is, so one nobody has touched
-    /// looks as designed whichever design was worn before it: Hacker, Intrusive
-    /// and Tactical ship the CRT on, Clean and Deco ship it off.
+    /// looks as designed whichever design was worn before it: Hacker and
+    /// Intrusive ship the CRT on, Clean and Deco ship it off.
     #[test]
     fn every_design_declares_its_tube() {
         for (id, src) in BUILTIN_THEMES {
@@ -3909,7 +3911,7 @@ mod tests {
             assert_eq!(&th.name, id, "theme file name must match registry id");
             icons.push(th.icon);
         }
-        assert_eq!(BUILTIN_THEMES.len(), 5);
+        assert_eq!(BUILTIN_THEMES.len(), 4);
         // The tray is glyph-only, so two themes sharing an icon are two themes
         // nobody can tell apart. This test has always collected the icons; it now
         // also reads them, which is what its name has always claimed.

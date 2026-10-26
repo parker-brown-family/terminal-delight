@@ -34,6 +34,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   remain authoritative. Fresh windows use ANSI program colours, Markdown syntax
   and desktop palette inheritance, with bottom anchoring, contrast sticky notes
   and terminal-state tint off. A saved new-window template still takes priority.
+- **DESIGN and SKIN move independently; Tactical and Console are retired.**
+  Picking a design, resetting one, or painting DESKTOP never changes the skin.
+  A window that never picked a skin keeps the one it was drawing when its
+  design changes. Designs no longer remember a skin, so a saved per-design skin
+  is ignored and no longer lights a design's dot. A saved Tactical design opens
+  as Hacker, a saved Console skin as Ops. The DESIGN and SKIN rows no longer
+  offer `custom`; `theme.toml` and `skin.toml` still load, `ctl skin custom`
+  still selects the skin file, and a window already wearing either still shows
+  its tile.
 - **`open_document` with placement `here` can answer `held`.** When a square
   is already open over the calling pane, nothing opens, the file becomes the
   pane's handover, and the answer begins `held` (MCP: a success with
