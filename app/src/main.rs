@@ -8470,13 +8470,10 @@ impl Workspace {
                                         }
                                     }
                                 };
-                            // An ask, checked against what this window knows
-                            // before anything is stored: the pane it names is
-                            // here, and what it asks for is not already so. A
-                            // row whose Yes would do nothing teaches a person
-                            // the buttons are decoration. The pane's name is
-                            // read now, for the person — the agent named it by
-                            // pid, and a pid is not how anyone thinks of a pane.
+                            // Resolve the target for the person, never for the
+                            // proposing agent. Open-pane requests also occupy
+                            // the queue for absent and already-open targets;
+                            // otherwise a follow-up request becomes an oracle.
                             let ask_change: Result<Option<access::Ask>, String> = match &patch.ask {
                                 None => Ok(None),
                                 Some(ask) => {
@@ -8485,7 +8482,8 @@ impl Workspace {
                                         .and_then(|p| self.leaf_by_shell_pid(p, cx))
                                         .filter(|target| {
                                             let v = target.read(cx);
-                                            !v.agent_access.is_off_limits()
+                                            ask.change == access::Change::OpenPane
+                                                || !v.agent_access.is_off_limits()
                                                 || v.shell_pid() == Some(*pid)
                                         });
                                     let (off, title) = match &named {
@@ -8493,7 +8491,16 @@ impl Workspace {
                                             Some(t.read(cx).agent_access.is_off_limits()),
                                             Some(self.pane_name(t, cx).full()),
                                         ),
-                                        None => (None, None),
+                                        None => (
+                                            None,
+                                            ask.pid.map(|p| {
+                                                let t = lang::current().strings().gc;
+                                                format!(
+                                                    "{} {p} ({})",
+                                                    t.count_pane.one, t.unavailable
+                                                )
+                                            }),
+                                        ),
                                     };
                                     // For a bypass: a line runs between seats, so
                                     // both panes must be seated, and asking is
@@ -8546,6 +8553,9 @@ impl Workspace {
                                             Some(why) => Err(why),
                                             None => Ok(Some(access::Ask {
                                                 title,
+                                                target_key: named
+                                                    .as_ref()
+                                                    .map(|p| p.entity_id().as_u64()),
                                                 risk: Some(warroom::risk(&facts)),
                                                 ..ask.clone()
                                             })),
@@ -24601,6 +24611,7 @@ impl Workspace {
                 let to = ask
                     .pid
                     .and_then(|pid| self.leaf_by_shell_pid(pid, cx))
+                    .filter(|t| Some(t.entity_id().as_u64()) == ask.target_key)
                     .and_then(|t| t.read(cx).seat);
                 match from.zip(to) {
                     None => access::Outcome::Gone,
@@ -24620,9 +24631,13 @@ impl Workspace {
             access::Answer::Yes => match access::grant_config(ask.change, &mut self.mcp) {
                 Some(outcome) => outcome,
                 None => {
-                    // A pane change: the pane is found by the pid the agent
-                    // named, as it is everywhere an agent names a pane.
-                    match ask.pid.and_then(|pid| self.leaf_by_shell_pid(pid, cx)) {
+                    // A Yes applies only to the pane captured when asked.
+                    // An absent or replaced target cannot acquire approval.
+                    match ask
+                        .pid
+                        .and_then(|pid| self.leaf_by_shell_pid(pid, cx))
+                        .filter(|t| Some(t.entity_id().as_u64()) == ask.target_key)
+                    {
                         None => access::Outcome::Gone,
                         Some(target) => target.update(cx, |v, cx| {
                             let (mark, outcome) =

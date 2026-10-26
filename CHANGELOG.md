@@ -7,6 +7,18 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Agaro Permission Follow-Through for 0.5.0 Development
+
+- Agents can propose opening an off-limits pane without learning whether the
+  supplied PID exists. Real, missing and already-open targets occupy the same
+  one-request queue. Only a person's Yes can change access; a missing or
+  replaced target cannot acquire a stale approval.
+- A paired MCP/control-socket regression test preserves the existing refusal
+  of unbound document opens. Ordinary windows require UI actions for commands
+  that act as the person; scripted rigs retain their explicit launch opt-in.
+- MCP documentation now describes read-only tool hints, sticky-note writer
+  provenance and the ordinary-window control-socket fence.
+
 ### Upgrading from 0.4.0 (0.5.0 development)
 
 - **Markdown review notes now keep their source evidence.** A new note records the

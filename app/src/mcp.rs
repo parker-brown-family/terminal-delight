@@ -2741,10 +2741,12 @@ where
         Err(e) => return tool_err(&e),
     };
     if let Some(pid) = pid {
-        if !snap.panes.iter().any(|p| {
-            p.pid == pid
-                && (snap.reach_of(p) >= crate::warroom::Reach::Seen || snap.is_callers(pid))
-        }) {
+        if change != Change::OpenPane
+            && !snap.panes.iter().any(|p| {
+                p.pid == pid
+                    && (snap.reach_of(p) >= crate::warroom::Reach::Seen || snap.is_callers(pid))
+            })
+        {
             return tool_err(&format!("no pane with pid {pid}"));
         }
     }
@@ -2752,6 +2754,7 @@ where
         ask: Some(Ask {
             change,
             pid,
+            target_key: None,
             title: None,
             why,
             at: std::time::Instant::now(),
@@ -3533,6 +3536,7 @@ mod tests {
             ask: Some(crate::access::Ask {
                 change: crate::access::Change::WritesOn,
                 pid: None,
+                target_key: None,
                 title: None,
                 why: "Need a note".into(),
                 at: std::time::Instant::now(),
@@ -4971,6 +4975,41 @@ mod tests {
     }
 
     // ---- request_access: an agent asks, and only a person answers ----
+
+    #[test]
+    fn opening_a_hidden_or_missing_pane_queues_the_same_proposal() {
+        let mut hidden = asking_snap();
+        hidden.panes[0].access = crate::warroom::AgentAccess::OffLimits;
+        let mut missing = asking_snap();
+        missing.panes.remove(0);
+        let args = json!({"change":"open_pane", "pid":200, "why":"review the build"});
+        let (hidden_reply, hidden_updates) = ask(&hidden, args.clone());
+        let (missing_reply, missing_updates) = ask(&missing, args);
+        assert_eq!(
+            hidden_reply, missing_reply,
+            "target existence stays private"
+        );
+        assert_ne!(
+            hidden_reply["isError"], true,
+            "the person must receive the proposal"
+        );
+        for updates in [hidden_updates, missing_updates] {
+            assert_eq!(updates.len(), 1, "both occupy the same request queue");
+            assert_eq!(updates[0].0, Target::Pane(100));
+            assert_eq!(updates[0].1.ask.as_ref().unwrap().pid, Some(200));
+        }
+        for change in ["close_pane", "ask_line"] {
+            let args = json!({"change":change, "pid":200, "why":"review the build"});
+            let (hidden_reply, hidden_updates) = ask(&hidden, args.clone());
+            let (missing_reply, missing_updates) = ask(&missing, args);
+            assert_eq!(hidden_reply, missing_reply);
+            assert_eq!(hidden_reply["isError"], true);
+            assert!(
+                hidden_updates.is_empty() && missing_updates.is_empty(),
+                "only opening proposals bypass visibility"
+            );
+        }
+    }
 
     /// A snapshot whose caller is the agent in pane id 9 (shell pid 100), with
     /// a sibling at pid 200. Writes OFF: asking must not need them.

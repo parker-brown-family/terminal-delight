@@ -3225,6 +3225,52 @@ mod tests {
 
     // ---- the control-socket fence: person-acting verbs need an operator window ----
 
+    /// Nearest equivalents: MCP opens in the bound caller; ctl opens in the
+    /// focused pane. An unbound shared-daemon caller is entitled to neither.
+    /// The same caller and empty chart must never gain authority by switching
+    /// transports. Bench typing and adoption have no MCP counterpart.
+    #[test]
+    fn unbound_document_open_is_refused_through_mcp_and_ctl() {
+        let mut snapshot = mcp::Snapshot::empty();
+        snapshot.config.enabled = true;
+        snapshot.config.writable = true;
+        assert!(snapshot.caller.is_none());
+        let opened = std::cell::Cell::new(false);
+        let request = serde_json::json!({"id":1,"method":"tools/call",
+            "params":{"name":"open_document","arguments":{"path":"/tmp/report.md"}}});
+        let reply = mcp::handle_line_full(
+            &request.to_string(),
+            &snapshot,
+            |_, _| vec![],
+            |_| vec![],
+            |_, _| vec![],
+            |_| {
+                opened.set(true);
+                Ok("opened".into())
+            },
+        )
+        .unwrap();
+        let reply: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(reply["result"]["isError"], true);
+        assert!(reply["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("did not say who is calling"));
+        assert!(!opened.get(), "MCP cannot open without a bound caller");
+        let (replies, queued) = serve_fence(
+            "transport-open-parity",
+            PolicyControl::Refused,
+            &["doc here /tmp/report.md", "doc beside /tmp/report.md"],
+        );
+        assert!(replies
+            .iter()
+            .all(|r| r.starts_with("err") && r.contains("refused")));
+        assert!(
+            queued.is_empty(),
+            "ctl must not turn an unbound agent into the person"
+        );
+    }
+
     /// Run a fence server that answers `verbs.len()` connections under `policy`,
     /// and report both the replies and whatever reached the UI queue. The caller
     /// is this test process; the gate never looks at it, which is the whole point.

@@ -86,10 +86,12 @@ a pane from other agents rather than silencing the one inside it, and the same
 holds for a read-only pane. Own-document open/read also remain available. The ctl connection obtains the peer PID through `SO_PEERCRED`; its claimed pane survives only when the current pane shell is that process or its ancestor. Forged or unavailable ancestry removes own-pane authority. The same menu
 row lifts it (**Open**). The position is saved with the layout.
 
-Only a person sets or lifts it. There is no `ctl` verb and no MCP verb for it.
-The control socket's bench-input verbs, synthetic click/hover, probe and scripted
-face selection refuse off-limits panes. This is enforced on selection and again
-at synthetic pointer dispatch. Document ctl verbs and tab edits also refuse hidden targets; queued bench input waits while its pane is off-limits. Hidden and absent write targets answer alike. The MCP gate is
+Only a person sets or lifts it. MCP can propose a change with `request_access`;
+it cannot approve one. In ordinary windows, the control socket refuses every
+person-acting bench, document, adoption and tab-edit command, regardless of
+caller ancestry. A shared daemon or an unknown caller gets no exception.
+Operator rigs must launch their own window with `TD_MCP_SCRIPTED=1`; those
+windows retain off-limits selection and dispatch checks. Hidden and absent write targets answer alike. The MCP gate is
 `warroom::reach` for reading and `warroom::may_write` for writing; the idea is
 Splinterm's per-pane grant, with TD's own shape.
 
@@ -218,9 +220,16 @@ How it behaves:
   first is on the rail, so one agent cannot fill the rail or hide an earlier
   ask behind a later one. An ask dies with its pane. Asks are not saved; a
   window restart drops them.
-- **An ask for what is already so is refused** before it reaches the rail
-  ("pane 4412 is not off-limits, so there is nothing to ask"), so a Yes always
-  does something.
+- **Opening requests do not disclose whether a pane exists.** A valid
+  `open_pane` proposal occupies the same queue and gets the same acknowledgement
+  for a hidden, missing or already-open target. The person sees the target's
+  name, or its PID marked unavailable. This also prevents a second request's
+  pending status from revealing existence. Other changes still refuse an ask
+  for what is already so.
+- **A Yes applies to the original target.** A pane that closes or is replaced
+  while the proposal waits cannot transfer its approval to another pane. A
+  request for an unavailable target grants nothing, even if that PID later
+  belongs to a pane. The answer after the person's decision reports the outcome.
 - **The answer reaches the agent as one signed line** typed into its own
   terminal: `[workbench:<tag>] request_access open_pane 4412: yes, pane 4412 is
   open to agents`. It goes through the bench's own path, so it is typed when that
@@ -391,6 +400,20 @@ exposed window. In a restricted window it refuses the read and points to
 `coordination_overview`, preventing the old aggregate from bypassing exposure.
 
 ### Pane reads and appearance
+
+`tools/list` declares `annotations.readOnlyHint: true` on the twelve tools whose
+handlers only read: `list_panes`, `pane_events`, `get_pane_config`, `ask_answer`,
+the four `coordination_*` tools, `engineering_state`, `document_notes`,
+`surface_catalogue` and `grep`. Write tools leave this hint undeclared. These
+hints help clients describe tools; they do not grant access or replace the
+server's permission checks. The other risk hints remain undeclared.
+
+When a listed pane has a sticky note, `note.by` is `"person"` or `"agent"` when
+the writer is known. Older notes omit it because their writer is unknown.
+Keyboard edits make the resulting note the person's; `leave_note` and the
+duplicate-tab notice mark theirs as agent-written. The agent mark draws a robot
+stamp. Restoring or copying a note preserves its recorded writer. Document
+annotations are a separate feature; `ctl doc note` does not write sticky notes.
 
 | Tool | Arguments | Returns |
 |------|-----------|---------|

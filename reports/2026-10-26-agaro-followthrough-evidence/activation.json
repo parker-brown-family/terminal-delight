@@ -1,0 +1,15 @@
+{
+  "applied": true,
+  "new_gui": {
+    "pid": 3846285,
+    "start_tick": 107384739,
+    "exe": "/home/parker/.local/lib/terminal-delight/td-047661b5-0.5-agaro-permissions"
+  },
+  "host_preserved": true,
+  "host_panes": 31,
+  "sha256": "8fb5ee87a19af83988ca3cab46fb24bdb8cdb09ea46487f4e567fe8152debd5e",
+  "exposed_panes": 23,
+  "closed_panes": [],
+  "launcher": "/home/parker/.local/lib/terminal-delight/td-047661b5-0.5-agaro-permissions",
+  "split_documents_restored": 1
+}
