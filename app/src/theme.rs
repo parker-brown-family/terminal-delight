@@ -1870,7 +1870,7 @@ impl Dynamic {
     /// both pickers ([`crate::palette::offered`]).
     ///
     /// These are exactly the variants the Omarchy theme set ships
-    /// (`omarchy-terminal-delight-theme/variants.toml` → the
+    /// (`omarchy-terminal-delight-tools/variants.toml` → the
     /// `terminal-delight-<key>` themes in `~/.config/omarchy/themes`).
     ///
     /// Nothing offers them now, and the list stays because files still name
@@ -3207,7 +3207,7 @@ mod tests {
     #[test]
     fn named_sets_are_the_variants_the_desktop_ships() {
         // ONE vocabulary: this list is `variants.toml` in
-        // omarchy-terminal-delight-theme, which installs
+        // omarchy-terminal-delight-tools, which installs
         // ~/.config/omarchy/themes/terminal-delight-<key>. If the desktop set
         // changes, this test is the place that says so out loud.
         let names: Vec<&str> = Dynamic::NAMED.iter().map(|d| d.label()).collect();
