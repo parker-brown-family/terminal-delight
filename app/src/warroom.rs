@@ -793,9 +793,9 @@ pub struct CheapAnswer {
     pub via: String,
 }
 
-/// The window-side filter for a walk that cannot know who is asking (the
-/// grep walk, the agent wall's count): the pane's position and the window's
-/// switches only. The protocol layer narrows it further by the caller's lines.
+/// The window-side filter for an operator-facing aggregate (the agent wall's
+/// count): the pane's position and the window's switches only. A caller's read
+/// must use `reach` instead, so its current relationships also govern the read.
 pub fn visible_to_some_agent(cfg: &McpConfig, target: &Party) -> bool {
     !target.access.is_off_limits() && policy_admits(cfg, target.is_agent)
 }
@@ -938,6 +938,17 @@ pub struct AskBook {
 }
 
 impl AskBook {
+    pub fn remove(&mut self, id: AskId) -> Option<CopyAsk> {
+        let index = self.asks.iter().position(|(i, _)| *i == id)?;
+        Some(self.asks.remove(index).1)
+    }
+
+    /// An explicit change to this directed relationship cancels its old asks.
+    pub fn forget_pair(&mut self, from: SeatId, to: SeatId) {
+        self.asks
+            .retain(|(_, a)| a.from != Some(from) || a.to != Some(to));
+    }
+
     /// Removal revokes undelivered answers as well as waiting copy requests.
     /// A running copy may finish, but its result can no longer enter the book.
     pub fn forget_seat(&mut self, seat: SeatId) {

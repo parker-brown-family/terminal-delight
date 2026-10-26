@@ -889,8 +889,11 @@ impl Snapshot {
     /// The error says which of the two ways to name a pane were available, so a
     /// caller whose chain the host could not read is told that rather than
     /// being told to try harder.
-    fn target_pane(&self, named: Option<u64>) -> Result<u32, String> {
-        if let Some(pid) = named {
+    fn target_pane(&self, named: Option<&Value>) -> Result<u32, String> {
+        if let Some(value) = named {
+            let pid = value.as_u64().ok_or_else(|| {
+                "pid must be an unsigned integer; omit it to target your own pane".to_string()
+            })?;
             return u32::try_from(pid).map_err(|_| "pid is out of range".to_string());
         }
         let Some(caller) = &self.caller else {
@@ -2573,7 +2576,7 @@ where
              TD_MCP_WRITE=1) to let an agent leave a note. An agent can ask the person for them with request_access, change writes_on.",
         );
     }
-    let pid = match snap.target_pane(args.get("pid").and_then(Value::as_u64)) {
+    let pid = match snap.target_pane(args.get("pid")) {
         Ok(pid) => u64::from(pid),
         Err(why) => return tool_err(&why),
     };
@@ -2633,7 +2636,7 @@ where
              TD_MCP_WRITE=1) to let an agent declare a deliverable. An agent can ask the person for them with request_access, change writes_on.",
         );
     }
-    let pid = match snap.target_pane(args.get("pid").and_then(Value::as_u64)) {
+    let pid = match snap.target_pane(args.get("pid")) {
         Ok(pid) => u64::from(pid),
         Err(why) => return tool_err(&why),
     };
@@ -2758,6 +2761,7 @@ where
             ask_id: None,
         }),
         own_pane: snap.is_callers(asker),
+        caller_pane: snap.caller_pane_id(),
         ..Default::default()
     };
     match apply(&[(Target::Pane(asker), patch)]).into_iter().next() {
@@ -3786,6 +3790,31 @@ mod tests {
                 (Target::Pane(200), false),
             ]
         );
+    }
+
+    #[test]
+    fn an_invalid_explicit_pid_never_defaults_to_the_callers_pane() {
+        let mut s = snap_writable(vec![agent_pane(100, true)]);
+        s.caller = Some(Caller {
+            session: "fixture".into(),
+            pane: Some(100 % 97),
+        });
+        for name in ["leave_note", "declare_deliverable"] {
+            for pid in [
+                json!(-1),
+                json!(null),
+                json!("100"),
+                json!(1.5),
+                json!(u64::MAX),
+            ] {
+                let request = json!({"id":1,"method":"tools/call","params":{"name":name,"arguments":{"pid":pid,"text":"wrong destination","href":"/tmp/synthetic.html"}}}).to_string();
+                let apply = |_: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+                    panic!("invalid pid reached mutation: {request}")
+                };
+                let reply = handle_line_with(&request, &s, no_tail, &apply, no_search).unwrap();
+                assert!(reply.contains("isError"), "{request}: {reply}");
+            }
+        }
     }
 
     /// A surface the write gate refuses is not left on disk either. The
@@ -4996,6 +5025,11 @@ mod tests {
             "the asker's pane, not the one asked about"
         );
         assert!(patch.own_pane);
+        assert_eq!(
+            patch.caller_pane,
+            s.caller_pane_id(),
+            "request_access carries its verified caller to the UI"
+        );
         let a = patch.ask.as_ref().expect("the ask rode the patch");
         assert_eq!(a.change, crate::access::Change::OpenPane);
         assert_eq!(a.pid, Some(200));
@@ -5004,6 +5038,7 @@ mod tests {
             ConfigPatch {
                 ask: None,
                 own_pane: false,
+                caller_pane: None,
                 ..patch.clone()
             },
             ConfigPatch::default(),

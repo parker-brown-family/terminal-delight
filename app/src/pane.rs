@@ -4424,6 +4424,11 @@ impl TerminalView {
         self.pane_id
     }
 
+    #[cfg(test)]
+    pub(crate) fn fixture_set_pane_id(&mut self, id: u64) {
+        self.pane_id = Some(id);
+    }
+
     /// Everything this WINDOW decided about the pane, lifted off it so it can be
     /// put back on a replacement replica. See [`Presentation`].
     pub fn presentation(&self) -> Presentation {
