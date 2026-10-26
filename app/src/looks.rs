@@ -14,9 +14,13 @@
 //!    writes to it; picking it again brings it back exactly as you left it.
 //! 2. **Some settings are yours everywhere** and never move with a design:
 //!    sizes, the picture grade, the palette, program colour, syntax, note
-//!    paper. Only the LOOK dials below are remembered per design — plus, for
-//!    the window, the skin pin and the UI CONFIG switches. Any look dial can be
-//!    PINNED, which moves it to "yours everywhere".
+//!    paper, and the skin. Only the LOOK dials below are remembered per
+//!    design — plus, for the window, the UI CONFIG switches. Any look dial can
+//!    be PINNED, which moves it to "yours everywhere". The skin was remembered
+//!    per design until 2026-10-25, when Parker, wearing Chalk under Tactical,
+//!    picked Hacker and watched the skin change with it: *"These are intended
+//!    to move independently."* DESIGN and SKIN are two rows, and a click on
+//!    one never moves the other.
 //! 3. **A design you never touched looks as designed**: the house look with
 //!    the design file's own `[look]` table over it (Hacker's tube is on).
 //! 4. **Getting back**: pick it. A dot marks a tuned design; a reset is per
@@ -185,27 +189,23 @@ pub fn look_key(k: GradeKey) -> Option<&'static str> {
 pub struct DesignMemory {
     #[serde(default, skip_serializing_if = "LookDials::is_empty")]
     pub look: LookDials,
-    /// The skin pinned while wearing it. `None` follows the design.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skin: Option<String>,
+    // A `skin` written here by a build before 2026-10-25 is ignored on read:
+    // the skin is the window's, not the design's (rule 2 above).
     /// UI CONFIG as it was left: the set picked and the switches flipped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<UiChoice>,
 }
 
 impl DesignMemory {
-    /// Nothing worth keeping: no dial changed, no skin pinned, UI as designed.
+    /// Nothing worth keeping: no dial changed, UI as designed.
     pub fn is_empty(&self) -> bool {
-        self.look.is_empty()
-            && self.skin.is_none()
-            && self.ui.as_ref().is_none_or(|u| *u == UiChoice::default())
+        self.look.is_empty() && self.ui.as_ref().is_none_or(|u| *u == UiChoice::default())
     }
 
     /// How many things differ from the design as shipped — the count a reset
     /// names.
     pub fn count(&self) -> usize {
         self.look.count()
-            + usize::from(self.skin.is_some())
             + self.ui.as_ref().map_or(0, |u| {
                 u.outer.len() + u.panes.len() + usize::from(u.set.is_some())
             })
@@ -237,11 +237,11 @@ impl Looks {
     }
 }
 
-/// What a window is wearing, in the pieces a design switch moves.
+/// What a window is wearing, in the pieces a design switch moves. The skin
+/// is not one of them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Wearing {
     pub grade: Grade,
-    pub skin: Option<String>,
     pub ui: UiChoice,
 }
 
@@ -259,7 +259,6 @@ pub fn switch(
         look: LookDials::of(&now.grade)
             .changes(&stock(from))
             .without(&looks.pinned),
-        skin: now.skin.clone(),
         ui: Some(now.ui.clone()),
     };
     looks.keep(from, left);
@@ -271,7 +270,6 @@ pub fn switch(
         .apply(&mut grade, &looks.pinned);
     Wearing {
         grade,
-        skin: memory.skin,
         ui: memory.ui.unwrap_or_default(),
     }
 }
@@ -289,7 +287,6 @@ pub fn changes_in(
             look: LookDials::of(&now.grade)
                 .changes(&stock(design))
                 .without(&looks.pinned),
-            skin: now.skin.clone(),
             ui: Some(now.ui.clone()),
         }
         .count(),
@@ -319,7 +316,6 @@ mod tests {
         stock(id).apply(&mut grade, &BTreeSet::new());
         Wearing {
             grade,
-            skin: None,
             ui: UiChoice::default(),
         }
     }
@@ -331,13 +327,11 @@ mod tests {
         let mut hacker = wearing("hacker");
         hacker.grade.warp = 1.37;
         hacker.grade.phosphor = 2.5;
-        hacker.skin = Some("deco".into());
         hacker.ui.flip(Key::Counts, false);
 
         let clean = switch(&mut looks, "hacker", &hacker, "clean", stock);
         assert!(!clean.grade.crt, "Clean as designed: tube off");
         assert!(near(clean.grade.warp, stock("clean").warp.unwrap()));
-        assert_eq!(clean.skin, None, "follows Clean's own trim");
         assert_eq!(clean.ui, UiChoice::default(), "Clean's UI as designed");
 
         let mut tweaked = clean.clone();
@@ -345,7 +339,6 @@ mod tests {
         let back = switch(&mut looks, "clean", &tweaked, "hacker", stock);
         assert!(back.grade.crt);
         assert!(near(back.grade.warp, 1.37) && near(back.grade.phosphor, 2.5));
-        assert_eq!(back.skin.as_deref(), Some("deco"));
         assert_eq!(back.ui.flipped(Key::Counts), Some(false));
         assert_eq!(
             back.ui.flipped(Key::AgentCounter),
@@ -398,7 +391,7 @@ mod tests {
         let mut looks = Looks::default();
         let mut hacker = wearing("hacker");
         hacker.grade.warp = 0.5;
-        hacker.skin = Some("ops".into());
+        hacker.ui.flip(Key::Counts, false);
         assert_eq!(changes_in(&looks, "hacker", Some(&hacker), stock), 2);
         switch(&mut looks, "hacker", &hacker, "clean", stock);
         assert_eq!(changes_in(&looks, "hacker", None, stock), 2);
@@ -428,6 +421,20 @@ mod tests {
         ] {
             assert_eq!(look_key(k), None, "{k:?} is yours everywhere");
         }
+    }
+
+    /// A session written while designs remembered skins still loads, and the
+    /// skin it carried is neither kept nor counted as a change: the dot on a
+    /// design must not light for a skin, which is the window's.
+    #[test]
+    fn a_skin_an_old_build_remembered_per_design_is_dropped() {
+        let old = "[designs.tactical-overdrive]\nskin = \"chalk\"\n\n\
+                   [designs.hacker]\nskin = \"ops\"\n[designs.hacker.look]\nwarp = 0.5\n";
+        let looks: Looks = toml::from_str(old).unwrap();
+        assert_eq!(changes_in(&looks, "hacker", None, stock), 1, "warp only");
+        assert_eq!(changes_in(&looks, "tactical-overdrive", None, stock), 0);
+        let wire = toml::to_string(&looks).unwrap();
+        assert!(!wire.contains("skin"), "{wire}");
     }
 
     /// The memory round-trips through the session file and writes only what

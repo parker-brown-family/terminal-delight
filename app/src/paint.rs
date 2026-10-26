@@ -316,6 +316,7 @@ pub fn stamp(g: &mut ThemeGroup, pick: &Pick) {
 /// this one's key.
 pub fn apply_outer(cx: &mut App, pick: &Pick) {
     let cur = theme::outer_choice(cx);
+    let design = cur.id.clone();
     let next = match pick {
         Pick::Default => {
             let mut house = theme::house_outer();
@@ -328,6 +329,10 @@ pub fn apply_outer(cx: &mut App, pick: &Pick) {
             cur.with_group(g)
         }
     };
+    // DESKTOP puts the house design back; the skin stays where it is.
+    if next.id != design {
+        crate::skin::hold(cx);
+    }
     theme::select_outer(cx, next);
 }
 

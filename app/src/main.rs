@@ -27212,7 +27212,7 @@ impl Render for SlotTooltip {
 }
 
 /// Hover popup for a theme button. Shows the full theme name (the in-button
-/// caption is truncated — e.g. `tactical` for `tactical-overdrive`). For the
+/// caption is the id's first segment, and may be truncated). For the
 /// hot-reloaded `custom` slot it also shows the resolved file path on THIS
 /// machine and a clickable "Open in editor" line.
 struct ThemeTooltip {
@@ -28163,23 +28163,13 @@ impl Workspace {
     fn wearing(&self, cx: &App) -> looks::Wearing {
         looks::Wearing {
             grade: theme::outer_choice(cx).grade,
-            skin: skin::is_pinned(cx).then(|| skin::active_id(cx)),
             ui: uiconfig::choice(cx),
         }
     }
 
-    /// Put a look on the window: its choice, its skin pin, its UI CONFIG.
-    fn wear(
-        &mut self,
-        choice: ThemeChoice,
-        skin_pin: Option<String>,
-        ui: uiconfig::UiChoice,
-        cx: &mut Context<Self>,
-    ) {
-        let id = skin_pin.unwrap_or_else(|| skin::FOLLOW_THEME.to_string());
-        if let Err(e) = skin::select(cx, &id) {
-            eprintln!("terminal-delight: {e}");
-        }
+    /// Put a look on the window: its choice and its UI CONFIG. The skin is not
+    /// part of a look (see `looks`, rule 2) and is left as it is.
+    fn wear(&mut self, choice: ThemeChoice, ui: uiconfig::UiChoice, cx: &mut Context<Self>) {
         uiconfig::set_choice(cx, ui);
         theme::select_outer(cx, choice);
         self.ui_changed(cx);
@@ -28187,11 +28177,10 @@ impl Workspace {
 
     /// Everything one undo restores.
     fn look_undo_point(&self, cx: &App) -> LookUndo {
-        let now = self.wearing(cx);
         LookUndo {
             choice: theme::outer_choice(cx),
-            skin: now.skin,
-            ui: now.ui,
+            skin: skin::is_pinned(cx).then(|| skin::active_id(cx)),
+            ui: uiconfig::choice(cx),
             looks: self.looks.clone(),
         }
     }
@@ -28205,6 +28194,7 @@ impl Workspace {
             return;
         }
         self.look_undo = Some(self.look_undo_point(cx));
+        skin::hold(cx);
         let now = self.wearing(cx);
         let next = looks::switch(&mut self.looks, &cur.id, &now, &to, |id| {
             theme::design_stock(cx, id)
@@ -28214,7 +28204,7 @@ impl Workspace {
             grade: next.grade,
             ..cur
         };
-        self.wear(choice, next.skin, next.ui, cx);
+        self.wear(choice, next.ui, cx);
     }
 
     /// "Reset to as designed": forget what a design remembers, and if it is
@@ -28228,7 +28218,6 @@ impl Workspace {
             theme::design_stock(cx, id).apply(&mut grade, &self.looks.pinned);
             self.wear(
                 ThemeChoice { grade, ..cur },
-                None,
                 uiconfig::UiChoice::default(),
                 cx,
             );
@@ -28242,7 +28231,13 @@ impl Workspace {
     fn undo_look(&mut self, cx: &mut Context<Self>) {
         if let Some(u) = self.look_undo.take() {
             self.looks = u.looks;
-            self.wear(u.choice, u.skin, u.ui, cx);
+            // Exactly as it was, including a skin that was following the
+            // design until the switch held it.
+            let id = u.skin.unwrap_or_else(|| skin::FOLLOW_THEME.to_string());
+            if let Err(e) = skin::select(cx, &id) {
+                eprintln!("terminal-delight: {e}");
+            }
+            self.wear(u.choice, u.ui, cx);
         }
     }
 
@@ -29749,9 +29744,8 @@ impl Render for Workspace {
                 MenuScope::Outer => false,
             };
             let selection = PaletteSelection::of(cx, &cur);
-            // THEME picker (retained — hacker/custom/quiet/tactical are the base
-            // theming). The dynamics glyph column is an orthogonal dimension
-            // layered on top of whichever theme is active here.
+            // DESIGN picker. The dynamics glyph column is an orthogonal
+            // dimension layered on top of whichever design is active here.
             // UI CONFIG's `option_rows` off: each row shows only what it is set
             // to, until a hover (`FOLD_OPEN_MS`) or a click opens it.
             let folded = !uiconfig::shown(cx, uiconfig::Key::OptionRows);
@@ -29768,11 +29762,17 @@ impl Render for Workspace {
                 if closed_design && !active {
                     continue;
                 }
+                // The hot-reloaded user file is not offered here (Parker,
+                // 2026-10-25: "REMOVE the CUSTOM on both"). A window already
+                // wearing it — an old session — still shows it, so the row
+                // never reads as wearing nothing.
+                if id == "custom" && !active {
+                    continue;
+                }
                 let cur_c = cur.clone();
                 let tip_path = (id == "custom").then(theme::theme_path);
                 let tlbl = match lbl.as_str() {
                     "clean" => t.thm_clean,
-                    "tactical" => t.thm_tactical,
                     "hacker" => t.thm_hacker,
                     "intrusive" => t.thm_intrusive,
                     "custom" => t.thm_custom,
@@ -29781,7 +29781,6 @@ impl Render for Workspace {
                 };
                 let help = match lbl.as_str() {
                     "clean" => t.ui.pal_help_theme_clean,
-                    "tactical" => t.ui.pal_help_theme_tactical,
                     "intrusive" => t.ui.pal_help_theme_intrusive,
                     "deco" => t.ui.pal_help_theme_deco,
                     "hacker" => t.ui.pal_help_theme_hacker,
@@ -29874,6 +29873,13 @@ impl Render for Workspace {
                 if closed_skin && !lit {
                     continue;
                 }
+                // Your own skin.toml is not offered here either; the skin
+                // workshop selects it through `ctl skin custom`. While it is
+                // what is drawing, it still shows, for the same reason as the
+                // DESIGN row's.
+                if id == skin::USER_FILE && !lit {
+                    continue;
+                }
                 let click_id = id.clone();
                 // The id is the skin's file name and stays as it is; only the
                 // caption under the icon speaks the reader's language, and a
@@ -29881,7 +29887,6 @@ impl Render for Workspace {
                 let caption = match id.as_str() {
                     "default" => t.ui.pal_skin_default,
                     "deco" => t.ui.pal_skin_deco,
-                    "console" => t.ui.pal_skin_console,
                     "chalk" => t.ui.pal_skin_chalk,
                     "ops" => t.ui.pal_skin_ops,
                     "clean" => t.ui.pal_skin_clean,
@@ -29897,7 +29902,6 @@ impl Render for Workspace {
                                 match id.as_str() {
                                     "default" => t.ui.pal_help_skin_default,
                                     "deco" => t.ui.pal_help_skin_deco,
-                                    "console" => t.ui.pal_help_skin_console,
                                     "chalk" => t.ui.pal_help_skin_chalk,
                                     "ops" => t.ui.pal_help_skin_ops,
                                     "clean" => t.ui.pal_help_skin_clean,
@@ -30817,7 +30821,6 @@ impl Render for Workspace {
                     let n = self.design_changes(&id, cx);
                     let name = match id.as_str() {
                         "clean" => t.thm_clean,
-                        "tactical-overdrive" => t.thm_tactical,
                         "hacker" => t.thm_hacker,
                         "intrusive" => t.thm_intrusive,
                         "custom" => t.thm_custom,
@@ -35896,6 +35899,67 @@ mod tests {
         assert!(restored.theme == saved.theme);
         let legacy: StateFile = toml::from_str("active = 0\ntabs = []\n").unwrap();
         assert!(legacy.skin.is_none());
+    }
+
+    /// Parker, 2026-10-25, wearing Chalk under Tactical: he picked Hacker and
+    /// the skin changed too. *"These are intended to move independently."*
+    /// Every way a window's design changes — the DESIGN row, a reset, an undo,
+    /// DESKTOP in the paint overlay — leaves the skin that is drawing alone,
+    /// whether it was picked or only followed the design.
+    #[gpui::test]
+    fn changing_the_design_never_changes_the_skin(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        // Scratch and demo: it neither reads nor writes the real session.
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(1200.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        cx.update(|cx| {
+            ws.update(cx, |ws, cx| {
+                // Never picked: Clean draws its own trim, and leaving Clean
+                // keeps it.
+                assert_eq!(theme::outer_choice(cx).id, theme::CLEAN);
+                assert_eq!(skin::active_id(cx), "clean");
+                ws.switch_outer_design("hacker".into(), cx);
+                assert_eq!(theme::outer_choice(cx).id, "hacker");
+                assert_eq!(skin::active_id(cx), "clean", "a followed skin is held");
+
+                // Picked: Chalk under Deco, then Hacker, then Intrusive.
+                ws.switch_outer_design("deco".into(), cx);
+                skin::select(cx, "chalk").unwrap();
+                for design in ["hacker", "intrusive", theme::CLEAN, "deco"] {
+                    ws.switch_outer_design(design.into(), cx);
+                    assert_eq!(skin::active_id(cx), "chalk", "under {design}");
+                }
+                // No design counts the skin as a change of its own.
+                for design in ["hacker", "intrusive", theme::CLEAN, "deco"] {
+                    assert_eq!(ws.design_changes(design, cx), 0, "{design}");
+                }
+
+                // A reset and an undo move the design, not the skin.
+                ws.reset_design("deco", cx);
+                assert_eq!(skin::active_id(cx), "chalk", "after a reset");
+                ws.switch_outer_design("hacker".into(), cx);
+                ws.undo_look(cx);
+                assert_eq!(theme::outer_choice(cx).id, "deco");
+                assert_eq!(skin::active_id(cx), "chalk", "after an undo");
+            });
+            // DESKTOP puts the house design back; the skin stays.
+            paint::apply_outer(cx, &paint::Pick::Default);
+            assert_eq!(theme::outer_choice(cx).id, theme::CLEAN);
+            assert_eq!(skin::active_id(cx), "chalk", "after DESKTOP");
+        });
     }
 
     use super::*;
@@ -44468,7 +44532,7 @@ warp = 1.5
             win: Some((12.0, 34.0, 1280.0, 720.0)),
             scale: Some(1.0),
             theme: Some(ThemeChoice {
-                id: "tactical-overdrive".into(),
+                id: "deco".into(),
                 seed: Some("#31d7ff".into()),
                 ..Default::default()
             }),
@@ -44508,7 +44572,7 @@ warp = 1.5
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
-        assert_eq!(back.theme.as_ref().unwrap().id, "tactical-overdrive");
+        assert_eq!(back.theme.as_ref().unwrap().id, "deco");
         assert_eq!(back.win, Some((12.0, 34.0, 1280.0, 720.0)));
         let SavedNode::Leaf { appearance, .. } = &back.tabs[0].node else {
             panic!("leaf override lost");
