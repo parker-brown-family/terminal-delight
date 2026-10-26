@@ -1,0 +1,8 @@
+{
+  "self_contained": true,
+  "unique_ids": 21,
+  "figures": 3,
+  "svg_labels_and_viewboxes": true,
+  "browser_render": "not performed: local-file browser access is unavailable in this tool session",
+  "notes": "bundled unchanged decision-brief assets; HTML islands and script syntax checked"
+}

@@ -1702,6 +1702,7 @@ impl Workspace {
         let seat = old.unwrap_or_else(warroom::SeatId::mint);
         if old.is_some() {
             self.chart.forget_seat(seat);
+            self.war_room_forget_pending(leaf, seat, cx);
         }
         self.war_orgs.assign(seat, org);
         leaf.update(cx, |v, cx| v.set_seat(Some(seat), cx));
@@ -1796,6 +1797,7 @@ impl Workspace {
                 return;
             }
             self.chart.draw(from, to, rung);
+            self.war_room_forget_pair(from, to, cx);
             self.war_relation = None;
             self.save(cx);
             cx.notify();
@@ -2070,6 +2072,7 @@ impl Workspace {
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
                         ws.chart.erase(from, to);
+                        ws.war_room_forget_pair(from, to, cx);
                         ws.war_relation = None;
                         ws.save(cx);
                         cx.notify();
@@ -2103,15 +2106,95 @@ impl Workspace {
             mcp::AskCall::Answer {
                 caller_pane,
                 ask_id,
-            } => match self.asks.of_asker(*ask_id, *caller_pane) {
-                Some(a) => mcp::AskReply::Copy(warroom::CopyStatus {
-                    ask_id: *ask_id,
-                    reads: a.reads,
-                    press_limit: self.press_limit(),
-                    stage: a.stage.clone(),
-                }),
+            } => match self.asks.of_asker(*ask_id, *caller_pane).cloned() {
+                Some(a) => {
+                    if let Some(refusal) = self.copy_refusal(&a, cx) {
+                        self.forget_copy(*ask_id, cx);
+                        return mcp::AskReply::Refused(refusal);
+                    }
+                    mcp::AskReply::Copy(warroom::CopyStatus {
+                        ask_id: *ask_id,
+                        reads: a.reads,
+                        press_limit: self.press_limit(),
+                        stage: a.stage.clone(),
+                    })
+                }
                 None => mcp::AskReply::Refused(warroom::Refusal::NoSuchAsk),
             },
+        }
+    }
+
+    /// A copy's admission is not permission to deliver after revocation. A
+    /// spent bypass remains a receipt for this one already-admitted question;
+    /// explicit relationship edits and membership moves erase those receipts.
+    fn copy_refusal(&self, a: &warroom::CopyAsk, cx: &App) -> Option<warroom::Refusal> {
+        let Some(caller) = self.leaf_by_pane_id(a.asker_pane, cx) else {
+            return Some(warroom::Refusal::Gone);
+        };
+        let Some(target) = self.leaf_by_shell_pid(a.target_pid, cx) else {
+            return Some(warroom::Refusal::Gone);
+        };
+        let (c, t) = (caller.read(cx), target.read(cx));
+        if a.from.is_none() || a.to.is_none() || c.seat != a.from || t.seat != a.to {
+            return Some(warroom::Refusal::Gone);
+        }
+        if !c.mode.is_agent() || askcopy::Program::of_mode(t.mode.label()) != Some(a.program) {
+            return Some(warroom::Refusal::NotAnAgent);
+        }
+        let mut receipt = warroom::Chart::default();
+        let chart = if a.via == "bypass" {
+            // This transient chart checks the already-spent prompt against
+            // today's global and target ceilings without spending it twice.
+            receipt.grant_bypass(a.from.unwrap(), a.to.unwrap(), 1);
+            &receipt
+        } else {
+            &self.chart
+        };
+        warroom::decide_ask(
+            &self.mcp,
+            chart,
+            &c.party(),
+            &t.party(),
+            false,
+            a.question_len,
+        )
+        .err()
+    }
+
+    fn forget_copy(&mut self, id: warroom::AskId, cx: &mut Context<Self>) {
+        if let Some(a) = self.asks.remove(id) {
+            if let Some(asker) = self.leaf_by_pane_id(a.asker_pane, cx) {
+                asker.update(cx, |v, cx| {
+                    if v.access_ask
+                        .as_ref()
+                        .is_some_and(|ask| ask.ask_id == Some(id))
+                    {
+                        v.access_ask = None;
+                        cx.notify();
+                    }
+                });
+            }
+        }
+    }
+
+    fn war_room_forget_pair(
+        &mut self,
+        from: warroom::SeatId,
+        to: warroom::SeatId,
+        cx: &mut Context<Self>,
+    ) {
+        self.asks.forget_pair(from, to);
+        if let Some(asker) = self.war_room_seat_leaf(from, cx) {
+            asker.update(cx, |v, cx| {
+                if v.access_ask
+                    .as_ref()
+                    .and_then(|a| a.ask_id)
+                    .is_some_and(|id| self.asks.get(id).is_none())
+                {
+                    v.access_ask = None;
+                    cx.notify();
+                }
+            });
         }
     }
 
@@ -2366,6 +2449,10 @@ impl Workspace {
         let Some(a) = self.asks.get(id).cloned() else {
             return;
         };
+        if self.copy_refusal(&a, cx).is_some() {
+            self.forget_copy(id, cx);
+            return;
+        }
         self.asks.set(id, warroom::CopyStage::Running);
         self.record_copy(id, stage, |_| {});
         let facts = self.pane_facts(cx);
@@ -2420,6 +2507,13 @@ impl Workspace {
         out: Result<askcopy::Answer, askcopy::End>,
         cx: &mut Context<Self>,
     ) {
+        let Some(a) = self.asks.get(id) else {
+            return;
+        };
+        if self.copy_refusal(a, cx).is_some() {
+            self.forget_copy(id, cx);
+            return;
+        }
         let (stage, word) = match out {
             Ok(a) => (
                 warroom::CopyStage::Answered {
@@ -2469,6 +2563,14 @@ impl Workspace {
         }) else {
             return access::Outcome::Gone;
         };
+        if self
+            .asks
+            .get(id)
+            .is_some_and(|a| self.copy_refusal(a, cx).is_some())
+        {
+            self.forget_copy(id, cx);
+            return access::Outcome::Gone;
+        }
         match answer {
             access::Answer::Yes => {
                 let alive = self
@@ -2522,10 +2624,34 @@ impl Workspace {
         };
         self.chart.forget_seat(seat);
         self.war_orgs.remove(seat);
-        self.asks.forget_seat(seat);
+        self.war_room_forget_pending(leaf, seat, cx);
         self.war_relation = None;
         self.war_move = None;
         self.war_context = None;
+        leaf.update(cx, |v, cx| {
+            v.set_agent_access(warroom::AgentAccess::OffLimits, cx);
+            v.set_seat(None, cx);
+        });
+        self.war_feedback = Some(lang::fill(
+            self.lang.strings().ui.wr_removed,
+            &[("pane", &self.pane_name(leaf, cx).tab)],
+        ));
+        self.war_room_query = EditBuffer::seeded("");
+        if self.war_room_pick == Some(seat) {
+            self.war_room_pick = None;
+        }
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// Membership changes invalidate both directions and every waiting card.
+    fn war_room_forget_pending(
+        &mut self,
+        leaf: &Entity<TerminalView>,
+        seat: warroom::SeatId,
+        cx: &mut Context<Self>,
+    ) {
+        self.asks.forget_seat(seat);
         let pid = leaf.read(cx).shell_pid();
         for tab in &self.tabs {
             let mut leaves = Vec::new();
@@ -2545,20 +2671,6 @@ impl Workspace {
                 }
             }
         }
-        leaf.update(cx, |v, cx| {
-            v.set_agent_access(warroom::AgentAccess::OffLimits, cx);
-            v.set_seat(None, cx);
-        });
-        self.war_feedback = Some(lang::fill(
-            self.lang.strings().ui.wr_removed,
-            &[("pane", &self.pane_name(leaf, cx).tab)],
-        ));
-        self.war_room_query = EditBuffer::seeded("");
-        if self.war_room_pick == Some(seat) {
-            self.war_room_pick = None;
-        }
-        self.save(cx);
-        cx.notify();
     }
 
     /// Selection never grants a relationship or changes a card's dimensions.
@@ -2779,6 +2891,7 @@ mod tests {
                     pane.update(cx, |v, cx| {
                         v.mode = pane::PaneMode::Codex;
                         v.seat = Some(seat);
+                        v.fixture_set_pane_id(10 + i as u64);
                         cx.notify();
                     });
                     ws.war_orgs.assign(seat, org);
@@ -2947,6 +3060,318 @@ mod tests {
                 "reseating must not reopen access"
             );
             assert_eq!(ws.chart.saved().len(), 1);
+        });
+    }
+
+    fn pending_copy(ws: &Workspace, cx: &App, stage: warroom::CopyStage) -> warroom::CopyAsk {
+        let target = ws.war_room_seat_leaf(warroom::SeatId(101), cx).unwrap();
+        warroom::CopyAsk {
+            asker_pane: 10,
+            from: Some(warroom::SeatId(100)),
+            to: Some(warroom::SeatId(101)),
+            target_pid: target.read(cx).shell_pid().unwrap(),
+            via: "line",
+            reads: Some(1),
+            model: None,
+            question: "synthetic question".into(),
+            question_len: 18,
+            question_sha256: "fixture".into(),
+            program: askcopy::Program::Codex,
+            conversation: "synthetic-conversation".into(),
+            stage,
+        }
+    }
+
+    #[gpui::test]
+    fn org_transfer_revokes_pending_copies_and_permission_cards(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        for moving in [100, 101] {
+            ws.update(cx, |ws, cx| {
+                let original = ws.war_orgs.owner(warroom::SeatId(100)).unwrap();
+                let leaf = ws.war_room_seat_leaf(warroom::SeatId(moving), cx).unwrap();
+                let destination = if original == other {
+                    ws.war_orgs.create("Third crew").unwrap()
+                } else {
+                    other
+                };
+                ws.chart.draw(
+                    warroom::SeatId(100),
+                    warroom::SeatId(101),
+                    warroom::Rung::Ask,
+                );
+                for (i, stage) in [
+                    warroom::CopyStage::AwaitingPress,
+                    warroom::CopyStage::Running,
+                    warroom::CopyStage::Answered {
+                        answer: "PRIVATE_CANARY".into(),
+                        tokens_read: None,
+                        cost_usd: None,
+                    },
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    ws.asks
+                        .open(warroom::AskId(i as u64 + 1), pending_copy(ws, cx, stage));
+                }
+                let mut unrelated = pending_copy(ws, cx, warroom::CopyStage::Running);
+                unrelated.from = Some(warroom::SeatId(300));
+                unrelated.to = Some(warroom::SeatId(301));
+                ws.asks.open(warroom::AskId(99), unrelated);
+                let asker = ws.leaf_by_pane_id(10, cx).unwrap();
+                let target_pid = ws.asks.get(warroom::AskId(1)).unwrap().target_pid;
+                asker.update(cx, |v, _| {
+                    v.access_ask = Some(access::Ask {
+                        change: access::Change::AskLine,
+                        pid: Some(target_pid),
+                        title: None,
+                        why: "synthetic bypass request".into(),
+                        at: std::time::Instant::now(),
+                        risk: None,
+                        prompts: 1,
+                        reads: None,
+                        ask_id: None,
+                    })
+                });
+                ws.war_room_assign(&leaf, destination, false, cx);
+                assert!(
+                    ws.asks.get(warroom::AskId(1)).is_some(),
+                    "unconfirmed move changed authority"
+                );
+                ws.war_room_assign(&leaf, destination, true, cx);
+                for id in 1..=3 {
+                    assert!(
+                        ws.asks.get(warroom::AskId(id)).is_none(),
+                        "org transfer retained copy {id}"
+                    );
+                }
+                assert!(
+                    asker.read(cx).access_ask.is_none(),
+                    "old bypass prompt survived transfer"
+                );
+                ws.copy_finished(
+                    warroom::AskId(2),
+                    Ok(askcopy::Answer {
+                        text: "LATE_PRIVATE_CANARY".into(),
+                        tokens_read: None,
+                        cost_usd: None,
+                    }),
+                    cx,
+                );
+                assert!(
+                    ws.asks.get(warroom::AskId(2)).is_none(),
+                    "late completion restored a revoked answer"
+                );
+                assert!(
+                    ws.asks.get(warroom::AskId(99)).is_some(),
+                    "unrelated copy was cancelled"
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn queued_write_rechecks_relationship_and_caller_identity(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            ws.mcp.enabled = true;
+            ws.mcp.writable = true;
+            let target = ws.leaf_by_pane_id(11, cx).unwrap();
+            let pid = target.read(cx).shell_pid().unwrap();
+            let patch = mcp::ConfigPatch {
+                caller_pane: Some(10),
+                brightness: Some(37.),
+                ..Default::default()
+            };
+            ws.chart.draw(
+                warroom::SeatId(100),
+                warroom::SeatId(101),
+                warroom::Rung::Read,
+            );
+            assert!(
+                ws.apply_mcp_config(&[(mcp::Target::Pane(pid), patch.clone())], cx)[0]
+                    .1
+                    .is_ok()
+            );
+            ws.chart.erase(warroom::SeatId(100), warroom::SeatId(101));
+            let before = target.read(cx).appearance.clone();
+            assert!(
+                ws.apply_mcp_config(&[(mcp::Target::Pane(pid), patch.clone())], cx)[0]
+                    .1
+                    .is_err()
+            );
+            assert!(
+                before == target.read(cx).appearance,
+                "denied write changed appearance"
+            );
+            // A request was once its caller's own pane. The old boolean must
+            // not confer that exemption on a different live target.
+            let stale_own = mcp::ConfigPatch {
+                own_pane: true,
+                ..patch
+            };
+            assert!(
+                ws.apply_mcp_config(&[(mcp::Target::Pane(pid), stale_own)], cx)[0]
+                    .1
+                    .is_err(),
+                "captured own flag bypassed live identity"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn copy_collection_checks_live_policy_seats_and_the_original_asker(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            let asker = ws.leaf_by_pane_id(10, cx).unwrap();
+            let target = ws.leaf_by_pane_id(11, cx).unwrap();
+            for case in [
+                "valid",
+                "wrong-asker",
+                "line-removed",
+                "off-limits",
+                "mcp-off",
+                "asker-reseated",
+                "target-reseated",
+                "spent-bypass",
+                "read-only",
+            ] {
+                ws.mcp.enabled = true;
+                asker.update(cx, |v, _| v.seat = Some(warroom::SeatId(100)));
+                target.update(cx, |v, _| {
+                    v.seat = Some(warroom::SeatId(101));
+                    v.agent_access = warroom::AgentAccess::Open;
+                });
+                ws.chart.draw(
+                    warroom::SeatId(100),
+                    warroom::SeatId(101),
+                    warroom::Rung::Ask,
+                );
+                let mut ask = pending_copy(
+                    ws,
+                    cx,
+                    warroom::CopyStage::Answered {
+                        answer: "SECRET_ANSWER".into(),
+                        tokens_read: None,
+                        cost_usd: None,
+                    },
+                );
+                match case {
+                    "line-removed" => ws.chart.erase(warroom::SeatId(100), warroom::SeatId(101)),
+                    "off-limits" => {
+                        target.update(cx, |v, _| v.agent_access = warroom::AgentAccess::OffLimits)
+                    }
+                    "read-only" => {
+                        target.update(cx, |v, _| v.agent_access = warroom::AgentAccess::ReadOnly)
+                    }
+                    "mcp-off" => ws.mcp.enabled = false,
+                    "asker-reseated" => {
+                        asker.update(cx, |v, _| v.seat = Some(warroom::SeatId(900)))
+                    }
+                    "target-reseated" => {
+                        target.update(cx, |v, _| v.seat = Some(warroom::SeatId(901)))
+                    }
+                    "spent-bypass" => {
+                        ask.via = "bypass";
+                        ws.chart.erase(warroom::SeatId(100), warroom::SeatId(101));
+                    }
+                    _ => {}
+                }
+                let id = warroom::AskId(500);
+                ws.asks.open(id, ask);
+                let reply = ws.ask_bridge(
+                    &mcp::AskCall::Answer {
+                        caller_pane: if case == "wrong-asker" { 11 } else { 10 },
+                        ask_id: id,
+                    },
+                    cx,
+                );
+                let allowed = matches!(case, "valid" | "spent-bypass" | "read-only");
+                assert_eq!(
+                    matches!(reply, mcp::AskReply::Copy(_)),
+                    allowed,
+                    "{case}: {reply:?}"
+                );
+                ws.asks.forget_seat(warroom::SeatId(100));
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn revoked_copy_cannot_start_finish_or_survive_a_relationship_edit(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            ws.mcp.enabled = true;
+            let target = ws.leaf_by_pane_id(11, cx).unwrap();
+            ws.chart.draw(
+                warroom::SeatId(100),
+                warroom::SeatId(101),
+                warroom::Rung::Ask,
+            );
+            ws.asks.open(
+                warroom::AskId(1),
+                pending_copy(ws, cx, warroom::CopyStage::AwaitingPress),
+            );
+            target.update(cx, |v, _| v.agent_access = warroom::AgentAccess::OffLimits);
+            assert_eq!(
+                ws.answer_copy(Some(warroom::AskId(1)), access::Answer::Yes, cx),
+                access::Outcome::Gone
+            );
+            assert!(ws.asks.get(warroom::AskId(1)).is_none());
+            target.update(cx, |v, _| v.agent_access = warroom::AgentAccess::Open);
+            ws.asks.open(
+                warroom::AskId(2),
+                pending_copy(ws, cx, warroom::CopyStage::Running),
+            );
+            ws.chart.erase(warroom::SeatId(100), warroom::SeatId(101));
+            ws.copy_finished(
+                warroom::AskId(2),
+                Ok(askcopy::Answer {
+                    text: "REVOKED_CANARY".into(),
+                    tokens_read: None,
+                    cost_usd: None,
+                }),
+                cx,
+            );
+            assert!(ws.asks.get(warroom::AskId(2)).is_none());
+            let mut bypass = pending_copy(ws, cx, warroom::CopyStage::Running);
+            bypass.via = "bypass";
+            ws.asks.open(warroom::AskId(3), bypass.clone());
+            std::mem::swap(&mut bypass.from, &mut bypass.to);
+            ws.asks.open(warroom::AskId(4), bypass);
+            ws.war_relation = Some(RelationEditor {
+                draft: warroom::RelationDraft {
+                    from: Some(warroom::SeatId(100)),
+                    to: Some(warroom::SeatId(101)),
+                    rung: Some(warroom::Rung::See),
+                },
+                choosing: None,
+            });
+            ws.war_room_save_relation(cx);
+            assert!(
+                ws.asks.get(warroom::AskId(3)).is_none(),
+                "relationship edit preserved a bypass receipt"
+            );
+            assert!(
+                ws.asks.get(warroom::AskId(4)).is_some(),
+                "reverse direction was cancelled"
+            );
         });
     }
 

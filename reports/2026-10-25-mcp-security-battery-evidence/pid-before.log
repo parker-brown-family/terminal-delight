@@ -1,0 +1,24 @@
+   Compiling terminal-delight v0.4.0-rc.3 (/home/parker/Work/td-authority-lab/mcp-security-battery/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 39.76s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (/home/parker/Work/td-authority-lab/war-room-target/debug/deps/terminal_delight-d0b31d40af54f88b)
+
+running 1 test
+test mcp::tests::an_invalid_explicit_pid_never_defaults_to_the_callers_pane ... FAILED
+
+failures:
+
+---- mcp::tests::an_invalid_explicit_pid_never_defaults_to_the_callers_pane stdout ----
+
+thread 'mcp::tests::an_invalid_explicit_pid_never_defaults_to_the_callers_pane' (593104) panicked at src/mcp.rs:3799:73:
+invalid pid reached mutation: {"id":1,"method":"tools/call","params":{"name":"leave_note","arguments":{"pid":-1,"text":"wrong destination","href":"/tmp/synthetic.html"}}}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    mcp::tests::an_invalid_explicit_pid_never_defaults_to_the_callers_pane
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2745 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin terminal-delight`

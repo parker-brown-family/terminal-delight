@@ -8410,7 +8410,7 @@ impl Workspace {
                                 // current seat, so a line revoked or reseated while
                                 // the write was queued stops it. Own-ness is the
                                 // sender BEING this pane, resolved by identity.
-                                let own = patch.own_pane || sender_shell == Some(*pid);
+                                let own = sender_shell == Some(*pid);
                                 let exposed = warroom::may_write_live(
                                     &self.mcp,
                                     &self.chart,
@@ -40515,7 +40515,7 @@ mod tests {
             writes.contains("warroom::may_write_live(")
                 && writes.contains("&self.chart")
                 && writes.contains("p.party()")
-                && writes.contains("patch.own_pane"),
+                && writes.contains("sender_shell == Some(*pid)"),
             "the write gate rechecks the LIVE chart with the pane's position and the own-pane \
              exception at the effect: {writes}"
         );

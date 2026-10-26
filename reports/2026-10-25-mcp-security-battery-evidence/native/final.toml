@@ -1,0 +1,214 @@
+active = 0
+agent_tint = false
+anchor_top = false
+focus_inherit = false
+groups = []
+lang = "en"
+last_workspace = "special-secqa629586"
+left_bar = false
+left_bar_w = 208.0
+panes = 6
+projects = []
+rail_pinned = false
+scale = 1.0
+skin = "custom"
+slot_remaining = true
+undo_hinted = false
+war_org = 1
+warp = 1.4299999475479126
+win = [0.0, 0.0, 1576.0, 950.0]
+
+[[lines]]
+from = 101
+rung = "ask"
+to = 102
+
+[[lines]]
+from = 101
+rung = "ask"
+to = 104
+
+[[lines]]
+from = 101
+rung = "ask"
+to = 105
+
+[mcp]
+enabled = true
+events = false
+expose = "all"
+writable = true
+
+[[tabs]]
+name = "QA A"
+
+[tabs.node.Leaf]
+cwd = "/tmp/mcp-security-native-2/A"
+pane_id = 1
+resume = "claude --continue"
+seat = 101
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.27000001072883606
+bench_size = 0.7599999904632568
+brightness = 0.12999999523162842
+colour = 0.699999988079071
+contrast = 0.7099999785423279
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.9200000166893005
+phosphor = 1.9800000190734863
+scale = 1.0
+text = 0.8799999952316284
+text_size = 1.0700000524520874
+warp = 1.4299999475479126
+
+[tabs.node.Leaf.note]
+by = "agent"
+pinned = false
+seed = 1504021887
+text = "OWN_NOTE_A"
+
+[[tabs]]
+name = "QA B"
+
+[tabs.node.Leaf]
+cwd = "/tmp/mcp-security-native-2/B"
+pane_id = 2
+resume = "claude --continue"
+seat = 102
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.27000001072883606
+bench_size = 0.7599999904632568
+brightness = 0.12999999523162842
+colour = 0.699999988079071
+contrast = 0.7099999785423279
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.9200000166893005
+phosphor = 1.9800000190734863
+scale = 1.0
+text = 0.8799999952316284
+text_size = 1.0700000524520874
+warp = 1.4299999475479126
+
+[tabs.node.Leaf.note]
+by = "agent"
+pinned = false
+seed = 1663524883
+text = "NOTE_FROM_A"
+title = "QA"
+
+[[tabs]]
+name = "QA C"
+
+[tabs.node.Leaf]
+cwd = "/tmp/mcp-security-native-2/C"
+pane_id = 3
+resume = "claude --continue"
+seat = 103
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.27000001072883606
+bench_size = 0.7599999904632568
+brightness = 0.12999999523162842
+colour = 0.699999988079071
+contrast = 0.7099999785423279
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.9200000166893005
+phosphor = 1.9800000190734863
+scale = 1.0
+text = 0.8799999952316284
+text_size = 1.0700000524520874
+warp = 1.4299999475479126
+
+[[tabs]]
+name = "QA D"
+
+[tabs.node.Leaf]
+agents = "read-only"
+cwd = "/tmp/mcp-security-native-2/D"
+pane_id = 4
+resume = "claude --continue"
+seat = 104
+
+[[tabs]]
+name = "QA E"
+
+[tabs.node.Leaf]
+cwd = "/tmp/mcp-security-native-2/E"
+off_limits = true
+pane_id = 5
+resume = "claude --continue"
+seat = 105
+
+[tabs.node.Leaf.appearance.grade]
+background = 0.27000001072883606
+bench_size = 0.7599999904632568
+brightness = 0.12999999523162842
+colour = 0.699999988079071
+contrast = 0.7099999785423279
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.9200000166893005
+phosphor = 1.9800000190734863
+scale = 1.0
+text = 0.8799999952316284
+text_size = 1.0700000524520874
+warp = 1.4299999475479126
+
+[tabs.node.Leaf.note]
+by = "agent"
+pinned = false
+seed = 393472077
+text = "OWN_NOTE_E"
+
+[[tabs]]
+name = "QA F"
+
+[tabs.node.Leaf]
+cwd = "/tmp/mcp-security-native-2/F"
+pane_id = 6
+resume = "claude --continue"
+
+[theme]
+color = "default"
+follow_omarchy = true
+id = "clean"
+palette = "terminal-delight"
+syntax = true
+syntax_scheme = "markdown"
+
+[theme.grade]
+background = 0.27000001072883606
+bench_size = 0.7599999904632568
+brightness = 0.12999999523162842
+colour = 0.699999988079071
+contrast = 0.7099999785423279
+crawl_angle = 12.0
+crawl_depth = 2.5
+crt = false
+gamma = 0.9200000166893005
+phosphor = 1.9800000190734863
+scale = 1.0
+text = 0.8799999952316284
+text_size = 1.0700000524520874
+warp = 1.4299999475479126
+
+[ui]
+
+[[war_orgs]]
+id = 1
+name = "QA One"
+seats = [101, 102, 104, 105]
+
+[[war_orgs]]
+id = 2
+name = "QA Two"
+seats = [103]

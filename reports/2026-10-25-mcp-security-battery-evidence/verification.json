@@ -1,0 +1,105 @@
+{
+  "base_commit": "cba36a6f8ad94bc9617888ec6d4635fc237bfbe7",
+  "source_sha256": {
+    "app/src/main.rs": "c7feade5bbd19ab4c2d6a5664b22a43901820cacbaf8c13cc7278673ee0e5130",
+    "app/src/mcp.rs": "0c59de97c77ebfd7e79f72ebea3bbed84b6948db697b7fb6d8417382945bd9bf",
+    "app/src/pane.rs": "69e1a7642ba0fea91c609f93877fad4871493fde43b5dc59503b692b9d9737e3",
+    "app/src/war_room_view.rs": "581c3701b38e937d5d99bd722f617e47c2e76a2221e6ce9a787136ad25ebcc14",
+    "app/src/warroom.rs": "d6f9ecd03253e07d791614d448e32ba5c6479c6acddbbf04ed9abddbdf7574af"
+  },
+  "suites": {
+    "rio": {
+      "passed": 2851,
+      "failed": 0,
+      "ignored": 17,
+      "result_sets": 8
+    },
+    "alacritty": {
+      "passed": 2798,
+      "failed": 0,
+      "ignored": 17,
+      "result_sets": 8
+    },
+    "restricted": {
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0,
+      "result_sets": 1
+    }
+  },
+  "native": {
+    "assertions": 45,
+    "passed": 45,
+    "run": {
+      "session": "secqa629586",
+      "window": 629638,
+      "binary": "/home/parker/Work/td-authority-lab/war-room-release-target/release/terminal-delight",
+      "sha256": "aa1fcf2e97296d91c71233c07bfed4fa99a4aa6ec76a3b1e207cd4a9cfc0176e",
+      "actors": {
+        "A": {
+          "pid": 630642,
+          "shell_pid": 629864,
+          "pane": 1,
+          "session": "secqa629586"
+        },
+        "B": {
+          "pid": 630644,
+          "shell_pid": 629873,
+          "pane": 2,
+          "session": "secqa629586"
+        },
+        "C": {
+          "pid": 630647,
+          "shell_pid": 629879,
+          "pane": 3,
+          "session": "secqa629586"
+        },
+        "D": {
+          "pid": 630643,
+          "shell_pid": 629887,
+          "pane": 4,
+          "session": "secqa629586"
+        },
+        "E": {
+          "pid": 630658,
+          "shell_pid": 629893,
+          "pane": 5,
+          "session": "secqa629586"
+        },
+        "F": {
+          "pid": 630645,
+          "shell_pid": 629901,
+          "pane": 6,
+          "session": "secqa629586"
+        }
+      }
+    },
+    "cleanup": {
+      "launcher_exit": 0,
+      "window_alive": false,
+      "actor_pids_alive": [],
+      "session_layout_removed": true
+    }
+  },
+  "scope": "Public MCP stdio and Unix socket, synthetic native agents, GPUI transition tests, real Restricted OS probes. No provider-model calls.",
+  "manual_cross_window": {
+    "assertions": 6,
+    "passed": 6,
+    "receipt": "manual-cross-window.json"
+  },
+  "commands": [
+    "cargo test --locked --manifest-path app/Cargo.toml --no-fail-fast -- --test-threads=1",
+    "cargo test --locked --manifest-path app/Cargo.toml --features core-alacritty --no-fail-fast -- --test-threads=1",
+    "cargo test --locked --manifest-path app/Cargo.toml --test restricted -- --ignored --test-threads=1",
+    "cargo clippy --locked --manifest-path app/Cargo.toml -- -D warnings",
+    "cargo clippy --locked --manifest-path app/Cargo.toml --features core-alacritty -- -D warnings",
+    "cargo fmt --manifest-path app/Cargo.toml -- --check",
+    "python3 mcp-security-battery.py --binary PATH --repo CHECKOUT --output NEW_DIRECTORY"
+  ],
+  "limitations": [
+    "Real Claude/Codex provider copies and helper-agent sandbox inheritance untested in this battery.",
+    "Unrestricted same-user processes are outside the OS isolation guarantee.",
+    "Draft native handoffs and shared-daemon qualification are separate existing follow-ups.",
+    "Running copy process may finish after revocation; undelivered results are removed."
+  ]
+}

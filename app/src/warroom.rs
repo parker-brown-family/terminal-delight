@@ -938,6 +938,17 @@ pub struct AskBook {
 }
 
 impl AskBook {
+    pub fn remove(&mut self, id: AskId) -> Option<CopyAsk> {
+        let index = self.asks.iter().position(|(i, _)| *i == id)?;
+        Some(self.asks.remove(index).1)
+    }
+
+    /// An explicit change to this directed relationship cancels its old asks.
+    pub fn forget_pair(&mut self, from: SeatId, to: SeatId) {
+        self.asks
+            .retain(|(_, a)| a.from != Some(from) || a.to != Some(to));
+    }
+
     /// Removal revokes undelivered answers as well as waiting copy requests.
     /// A running copy may finish, but its result can no longer enter the book.
     pub fn forget_seat(&mut self, seat: SeatId) {
