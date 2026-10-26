@@ -191,7 +191,8 @@ are separate projects on purpose — you can take one without the other.
 | Repo | What it is |
 |---|---|
 | [**terminal-delight**](https://github.com/parker-brown-family/terminal-delight) | the terminal itself — GPU-native, Rust, tiling panes, per-pane grading |
-| [**omarchy-terminal-delight-theme**](https://github.com/parker-brown-family/omarchy-terminal-delight-theme) | the desktop half — the Omarchy theme, the variant set, the compositor curve, and `td-tint` |
+| [**omarchy-terminal-delight-theme**](https://github.com/parker-brown-family/omarchy-terminal-delight-theme) | the Omarchy theme — colours, wallpapers and a preview, and no code |
+| [**omarchy-terminal-delight-tools**](https://github.com/parker-brown-family/omarchy-terminal-delight-tools) | the desktop half — the variant set, the compositor curve, and `td-tint` |
 
 The seam between them is `td-tint`, which ships with the theme: it writes a
 variant's OSC palette down another terminal's tty and puts the matching
