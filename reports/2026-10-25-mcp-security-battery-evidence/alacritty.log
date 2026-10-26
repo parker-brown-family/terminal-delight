@@ -1,10 +1,10 @@
    Compiling terminal-delight v0.4.0-rc.3 (/home/parker/Work/td-authority-lab/mcp-security-battery/app)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 27s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 13s
 warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
 note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
      Running unittests src/main.rs (/home/parker/Work/td-authority-lab/war-room-target/debug/deps/terminal_delight-3e90b7984d8b357d)
 
-running 2693 tests
+running 2694 tests
 test access::tests::a_copy_card_names_what_it_reads_and_its_answer_names_the_ask ... ok
 test access::tests::a_copy_starts_only_under_the_limit_or_on_a_press ... ok
 test access::tests::a_pane_title_cannot_put_a_second_line_on_the_rail ... ok
@@ -2470,6 +2470,7 @@ test war_room_view::tests::fuzzy_words_find_project_tab_and_pane_in_any_word_ord
 test war_room_view::tests::names_are_typed_without_creating_relationships_and_close_restores_terminal_focus ... ok
 test war_room_view::tests::org_transfer_revokes_pending_copies_and_permission_cards ... ok
 test war_room_view::tests::pool_drop_revokes_access_and_saved_membership ... ok
+test war_room_view::tests::queued_grep_cannot_read_fresh_content_after_relationship_revocation ... ok
 test war_room_view::tests::queued_write_rechecks_relationship_and_caller_identity ... ok
 test war_room_view::tests::revoked_copy_cannot_start_finish_or_survive_a_relationship_edit ... ok
 test war_room_view::tests::terminal_menu_closes_even_when_the_war_room_swallows_the_press ... ok
@@ -2699,7 +2700,7 @@ test workbench::tests::whose_voice_opened_the_turn_decides_whether_an_opened_car
 test workbench::tests::word_motion_and_the_kills_agree_with_every_editor_on_this_desk ... ok
 test workbench::tests::word_motion_does_not_split_a_multi_byte_character ... ok
 
-test result: ok. 2682 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 69.79s
+test result: ok. 2683 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 105.96s
 
      Running tests/bench_adversarial.rs (/home/parker/Work/td-authority-lab/war-room-target/debug/deps/bench_adversarial-804b583d1c687277)
 
@@ -2714,7 +2715,7 @@ test an_escalation_level_at_the_edges_of_its_spelling ... ok
 test an_escalation_of_the_wrong_json_type_is_survived ... ok
 test doubts_at_the_edges ... ok
 
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
 
      Running tests/broken_pipe.rs (/home/parker/Work/td-authority-lab/war-room-target/debug/deps/broken_pipe-35f06d151acb62c4)
 
@@ -2722,7 +2723,7 @@ running 2 tests
 test a_closed_reader_is_not_a_panic ... ok
 test the_repro_from_the_bug_report_stays_fixed ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
 
      Running tests/dispatch_cli.rs (/home/parker/Work/td-authority-lab/war-room-target/debug/deps/dispatch_cli-637138c4d0932514)
 
@@ -2732,7 +2733,7 @@ test a_verb_this_build_does_not_carry_is_still_refused ... ok
 test serve_without_a_session_is_refused_by_its_own_handler ... ok
 test version_still_answers_without_touching_the_disk ... ok
 
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
 
      Running tests/host_socket.rs (/home/parker/Work/td-authority-lab/war-room-target/debug/deps/host_socket-ed15e10f0a28ec45)
 
@@ -2746,7 +2747,7 @@ test a_window_can_start_a_terminal_take_it_over_and_type_into_it ... ok
 test asking_the_host_questions_never_takes_a_pane_away_from_a_window ... ok
 test the_host_writes_the_session_file_and_fills_in_where_the_panes_are ... ok
 
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.99s
 
      Running tests/restricted.rs (/home/parker/Work/td-authority-lab/war-room-target/debug/deps/restricted-ae82b68caa8df2f3)
 
@@ -2863,7 +2864,7 @@ ok
 test the_pages_own_notes_ui_is_not_in_the_picture ... snapshot_engine::chrome: driving /usr/bin/chromium
 ok
 
-test result: ok. 84 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 29.01s
+test result: ok. 84 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 84.04s
 
      Running tests/workbench_surface.rs (/home/parker/Work/td-authority-lab/war-room-target/debug/deps/workbench_surface-247bcb5c6fe59f31)
 
@@ -2878,5 +2879,5 @@ test a_transcript_with_nothing_to_show_derives_nothing_and_says_so_calmly ... ok
 test every_bench_verb_this_build_carries_is_spelled_the_way_it_is_documented ... ok
 test the_catalogue_names_every_kind_the_bench_can_draw ... ok
 
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
 

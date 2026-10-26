@@ -13,11 +13,11 @@
           },
           {
             "type": "text",
-            "text": "tab 0 \u00b7 pane 1 \u00b7 MOCK A \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-2/A \u00b7 claude --continue\ntab 1 \u00b7 pane 2 \u00b7 MOCK B \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-2/B \u00b7 claude --continue\ntab 3 \u00b7 pane 4 \u00b7 MOCK D \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-2/D \u00b7 claude --continue\ntab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-2/F \u00b7 claude --continue\n(2 more pane(s) here that you cannot see)"
+            "text": "tab 0 \u00b7 pane 1 \u00b7 MOCK A \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-3/A \u00b7 claude --continue\ntab 1 \u00b7 pane 2 \u00b7 MOCK B \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-3/B \u00b7 claude --continue\ntab 3 \u00b7 pane 4 \u00b7 MOCK D \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-3/D \u00b7 claude --continue\ntab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-3/F \u00b7 claude --continue\n(2 more pane(s) here that you cannot see)"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
@@ -27,9 +27,9 @@
               "title": "MOCK A",
               "mode": "CLAUDE",
               "is_agent": true,
-              "pid": 629864,
+              "pid": 1004569,
               "pane_id": 1,
-              "cwd": "/tmp/mcp-security-native-2/A",
+              "cwd": "/tmp/mcp-security-native-3/A",
               "session": "claude --continue",
               "reach": "read"
             },
@@ -38,9 +38,9 @@
               "title": "MOCK B",
               "mode": "CLAUDE",
               "is_agent": true,
-              "pid": 629873,
+              "pid": 1004577,
               "pane_id": 2,
-              "cwd": "/tmp/mcp-security-native-2/B",
+              "cwd": "/tmp/mcp-security-native-3/B",
               "session": "claude --continue",
               "reach": "ask"
             },
@@ -49,9 +49,9 @@
               "title": "MOCK D",
               "mode": "CLAUDE",
               "is_agent": true,
-              "pid": 629887,
+              "pid": 1004589,
               "pane_id": 4,
-              "cwd": "/tmp/mcp-security-native-2/D",
+              "cwd": "/tmp/mcp-security-native-3/D",
               "session": "claude --continue",
               "reach": "ask"
             },
@@ -60,9 +60,9 @@
               "title": "MOCK F",
               "mode": "CLAUDE",
               "is_agent": true,
-              "pid": 629901,
+              "pid": 1004605,
               "pane_id": 6,
-              "cwd": "/tmp/mcp-security-native-2/F",
+              "cwd": "/tmp/mcp-security-native-3/F",
               "session": "claude --continue",
               "reach": "read"
             }
@@ -76,8 +76,8 @@
             "panes[].note.text"
           ],
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -102,14 +102,14 @@
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
           "query": "QA_CANARY_",
           "panes": [
             {
-              "pid": 629864,
+              "pid": 1004569,
               "tab": 0,
               "title": "MOCK A",
               "mode": "CLAUDE",
@@ -122,7 +122,7 @@
               ]
             },
             {
-              "pid": 629873,
+              "pid": 1004577,
               "tab": 1,
               "title": "MOCK B",
               "mode": "CLAUDE",
@@ -135,7 +135,7 @@
               ]
             },
             {
-              "pid": 629887,
+              "pid": 1004589,
               "tab": 3,
               "title": "MOCK D",
               "mode": "CLAUDE",
@@ -148,7 +148,7 @@
               ]
             },
             {
-              "pid": 629901,
+              "pid": 1004605,
               "tab": 5,
               "title": "MOCK F",
               "mode": "CLAUDE",
@@ -167,8 +167,8 @@
             "panes[].matches[].text"
           ],
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -193,14 +193,14 @@
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
           "query": "QA_CANARY_",
           "panes": [
             {
-              "pid": 629864,
+              "pid": 1004569,
               "tab": 0,
               "title": "MOCK A",
               "mode": "CLAUDE",
@@ -213,7 +213,7 @@
               ]
             },
             {
-              "pid": 629873,
+              "pid": 1004577,
               "tab": 1,
               "title": "MOCK B",
               "mode": "CLAUDE",
@@ -226,7 +226,7 @@
               ]
             },
             {
-              "pid": 629887,
+              "pid": 1004589,
               "tab": 3,
               "title": "MOCK D",
               "mode": "CLAUDE",
@@ -239,7 +239,7 @@
               ]
             },
             {
-              "pid": 629901,
+              "pid": 1004605,
               "tab": 5,
               "title": "MOCK F",
               "mode": "CLAUDE",
@@ -258,8 +258,8 @@
             "panes[].matches[].text"
           ],
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -276,19 +276,19 @@
         "content": [
           {
             "type": "text",
-            "text": "posted \u2014 the note is on pane 629873's glass"
+            "text": "posted \u2014 the note is on pane 1004577's glass"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
-          "pid": 629873,
+          "pid": 1004577,
           "posted": true,
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -305,18 +305,18 @@
         "content": [
           {
             "type": "text",
-            "text": "no pane with pid 629879"
+            "text": "no pane with pid 1004582"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "isError": true,
         "structuredContent": {
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -333,18 +333,18 @@
         "content": [
           {
             "type": "text",
-            "text": "pane 629887 takes no writes from here \u2014 it is read-only to you; only a person, or the agent in that pane, may write it"
+            "text": "pane 1004589 takes no writes from here \u2014 it is read-only to you; only a person, or the agent in that pane, may write it"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "isError": true,
         "structuredContent": {
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -361,18 +361,18 @@
         "content": [
           {
             "type": "text",
-            "text": "no pane with pid 629893"
+            "text": "no pane with pid 1004597"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "isError": true,
         "structuredContent": {
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -393,11 +393,11 @@
           },
           {
             "type": "text",
-            "text": "tab 1 \u00b7 pane 2 \u00b7 MOCK B \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-2/B \u00b7 claude --continue \u00b7 \ud83d\udcdd QA \u2014 NOTE_FROM_A\ntab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-2/F \u00b7 claude --continue\n(4 more pane(s) here that you cannot see)"
+            "text": "tab 1 \u00b7 pane 2 \u00b7 MOCK B \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-3/B \u00b7 claude --continue \u00b7 \ud83d\udcdd QA \u2014 NOTE_FROM_A\ntab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-3/F \u00b7 claude --continue\n(4 more pane(s) here that you cannot see)"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
@@ -407,9 +407,9 @@
               "title": "MOCK B",
               "mode": "CLAUDE",
               "is_agent": true,
-              "pid": 629873,
+              "pid": 1004577,
               "pane_id": 2,
-              "cwd": "/tmp/mcp-security-native-2/B",
+              "cwd": "/tmp/mcp-security-native-3/B",
               "session": "claude --continue",
               "note": {
                 "title": "QA",
@@ -424,9 +424,9 @@
               "title": "MOCK F",
               "mode": "CLAUDE",
               "is_agent": true,
-              "pid": 629901,
+              "pid": 1004605,
               "pane_id": 6,
-              "cwd": "/tmp/mcp-security-native-2/F",
+              "cwd": "/tmp/mcp-security-native-3/F",
               "session": "claude --continue",
               "reach": "read"
             }
@@ -440,8 +440,8 @@
             "panes[].note.text"
           ],
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -462,11 +462,11 @@
           },
           {
             "type": "text",
-            "text": "tab 3 \u00b7 pane 4 \u00b7 MOCK D \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-2/D \u00b7 claude --continue\ntab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-2/F \u00b7 claude --continue\n(4 more pane(s) here that you cannot see)"
+            "text": "tab 3 \u00b7 pane 4 \u00b7 MOCK D \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-3/D \u00b7 claude --continue\ntab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-3/F \u00b7 claude --continue\n(4 more pane(s) here that you cannot see)"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
@@ -476,9 +476,9 @@
               "title": "MOCK D",
               "mode": "CLAUDE",
               "is_agent": true,
-              "pid": 629887,
+              "pid": 1004589,
               "pane_id": 4,
-              "cwd": "/tmp/mcp-security-native-2/D",
+              "cwd": "/tmp/mcp-security-native-3/D",
               "session": "claude --continue",
               "reach": "read"
             },
@@ -487,9 +487,9 @@
               "title": "MOCK F",
               "mode": "CLAUDE",
               "is_agent": true,
-              "pid": 629901,
+              "pid": 1004605,
               "pane_id": 6,
-              "cwd": "/tmp/mcp-security-native-2/F",
+              "cwd": "/tmp/mcp-security-native-3/F",
               "session": "claude --continue",
               "reach": "read"
             }
@@ -503,8 +503,8 @@
             "panes[].note.text"
           ],
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -521,19 +521,19 @@
         "content": [
           {
             "type": "text",
-            "text": "posted \u2014 the note is on pane 629864's glass"
+            "text": "posted \u2014 the note is on pane 1004569's glass"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
-          "pid": 629864,
+          "pid": 1004569,
           "posted": true,
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -550,19 +550,19 @@
         "content": [
           {
             "type": "text",
-            "text": "posted \u2014 the note is on pane 629893's glass"
+            "text": "posted \u2014 the note is on pane 1004597's glass"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
-          "pid": 629893,
+          "pid": 1004597,
           "posted": true,
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -587,11 +587,11 @@
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
-          "ask_id": 1792985755411,
+          "ask_id": 1792986929891,
           "seat": {
             "title": "MOCK B",
             "role": "worker",
@@ -613,8 +613,8 @@
             "recent_tools[].summary"
           ],
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -631,18 +631,18 @@
         "content": [
           {
             "type": "text",
-            "text": "no pane with pid 629873"
+            "text": "no pane with pid 1004577"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "isError": true,
         "structuredContent": {
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -663,14 +663,14 @@
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "isError": true,
         "structuredContent": {
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -687,18 +687,18 @@
         "content": [
           {
             "type": "text",
-            "text": "no pane with pid 629873"
+            "text": "no pane with pid 1004577"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "isError": true,
         "structuredContent": {
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -719,11 +719,11 @@
           },
           {
             "type": "text",
-            "text": "tab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-2/F \u00b7 claude --continue\n(5 more pane(s) here that you cannot see)"
+            "text": "tab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-3/F \u00b7 claude --continue\n(5 more pane(s) here that you cannot see)"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
@@ -733,9 +733,9 @@
               "title": "MOCK F",
               "mode": "CLAUDE",
               "is_agent": true,
-              "pid": 629901,
+              "pid": 1004605,
               "pane_id": 6,
-              "cwd": "/tmp/mcp-security-native-2/F",
+              "cwd": "/tmp/mcp-security-native-3/F",
               "session": "claude --continue",
               "reach": "read"
             }
@@ -749,8 +749,8 @@
             "panes[].note.text"
           ],
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -771,11 +771,11 @@
           },
           {
             "type": "text",
-            "text": "tab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-2/F \u00b7 claude --continue\n(5 more pane(s) here that you cannot see)"
+            "text": "tab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-3/F \u00b7 claude --continue\n(5 more pane(s) here that you cannot see)"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
@@ -785,9 +785,9 @@
               "title": "MOCK F",
               "mode": "CLAUDE",
               "is_agent": true,
-              "pid": 629901,
+              "pid": 1004605,
               "pane_id": 6,
-              "cwd": "/tmp/mcp-security-native-2/F",
+              "cwd": "/tmp/mcp-security-native-3/F",
               "session": "claude --continue",
               "reach": "read"
             }
@@ -801,8 +801,8 @@
             "panes[].note.text"
           ],
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -823,11 +823,11 @@
           },
           {
             "type": "text",
-            "text": "tab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-2/F \u00b7 claude --continue\n(5 more pane(s) here that you cannot see)"
+            "text": "tab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-3/F \u00b7 claude --continue\n(5 more pane(s) here that you cannot see)"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
@@ -837,9 +837,9 @@
               "title": "MOCK F",
               "mode": "CLAUDE",
               "is_agent": true,
-              "pid": 629901,
+              "pid": 1004605,
               "pane_id": 6,
-              "cwd": "/tmp/mcp-security-native-2/F",
+              "cwd": "/tmp/mcp-security-native-3/F",
               "session": "claude --continue",
               "reach": "read"
             }
@@ -853,8 +853,8 @@
             "panes[].note.text"
           ],
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -869,7 +869,7 @@
       "id": 1,
       "error": {
         "code": -32001,
-        "message": "wrong window: this is terminal-delight session \"secqa629586\" (window 629638), and you asked for session \"wrong-window\". Nothing was read or written. Your relay resolved the wrong instance."
+        "message": "wrong window: this is terminal-delight session \"secqa1003957\" (window 1004030), and you asked for session \"wrong-window\". Nothing was read or written. Your relay resolved the wrong instance."
       }
     }
   },
@@ -917,16 +917,16 @@
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
           "asked": "events_on",
           "pid": null,
-          "from": 629879,
+          "from": 1004582,
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -952,14 +952,14 @@
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "isError": true,
         "structuredContent": {
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -980,14 +980,14 @@
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "isError": true,
         "structuredContent": {
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -1008,14 +1008,14 @@
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "isError": true,
         "structuredContent": {
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -1036,14 +1036,14 @@
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "isError": true,
         "structuredContent": {
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -1064,14 +1064,14 @@
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "isError": true,
         "structuredContent": {
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -1088,18 +1088,18 @@
         "content": [
           {
             "type": "text",
-            "text": "no pane with pid 629873"
+            "text": "no pane with pid 1004577"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "isError": true,
         "structuredContent": {
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -1116,18 +1116,18 @@
         "content": [
           {
             "type": "text",
-            "text": "no pane with pid 629873"
+            "text": "no pane with pid 1004577"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "isError": true,
         "structuredContent": {
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }
@@ -1198,11 +1198,11 @@
           },
           {
             "type": "text",
-            "text": "tab 1 \u00b7 pane 2 \u00b7 MOCK B \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-2/B \u00b7 claude --continue \u00b7 \ud83d\udcdd QA \u2014 NOTE_FROM_A\ntab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-2/F \u00b7 claude --continue\n(4 more pane(s) here that you cannot see)"
+            "text": "tab 1 \u00b7 pane 2 \u00b7 MOCK B \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-3/B \u00b7 claude --continue \u00b7 \ud83d\udcdd QA \u2014 NOTE_FROM_A\ntab 5 \u00b7 pane 6 \u00b7 MOCK F \u00b7 CLAUDE \u00b7 /tmp/mcp-security-native-3/F \u00b7 claude --continue\n(4 more pane(s) here that you cannot see)"
           },
           {
             "type": "text",
-            "text": "\u2014 terminal-delight \u00b7 session secqa629586 \u00b7 window 629638 \u00b7 terminal-delight"
+            "text": "\u2014 terminal-delight \u00b7 session secqa1003957 \u00b7 window 1004030 \u00b7 terminal-delight"
           }
         ],
         "structuredContent": {
@@ -1212,9 +1212,9 @@
               "title": "MOCK B",
               "mode": "CLAUDE",
               "is_agent": true,
-              "pid": 629873,
+              "pid": 1004577,
               "pane_id": 2,
-              "cwd": "/tmp/mcp-security-native-2/B",
+              "cwd": "/tmp/mcp-security-native-3/B",
               "session": "claude --continue",
               "note": {
                 "title": "QA",
@@ -1229,9 +1229,9 @@
               "title": "MOCK F",
               "mode": "CLAUDE",
               "is_agent": true,
-              "pid": 629901,
+              "pid": 1004605,
               "pane_id": 6,
-              "cwd": "/tmp/mcp-security-native-2/F",
+              "cwd": "/tmp/mcp-security-native-3/F",
               "session": "claude --continue",
               "reach": "read"
             }
@@ -1245,8 +1245,8 @@
             "panes[].note.text"
           ],
           "instance": {
-            "session": "secqa629586",
-            "window": 629638,
+            "session": "secqa1003957",
+            "window": 1004030,
             "build": "terminal-delight"
           }
         }

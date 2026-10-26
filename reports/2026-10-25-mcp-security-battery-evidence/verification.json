@@ -1,21 +1,22 @@
 {
   "base_commit": "cba36a6f8ad94bc9617888ec6d4635fc237bfbe7",
   "source_sha256": {
-    "app/src/main.rs": "c7feade5bbd19ab4c2d6a5664b22a43901820cacbaf8c13cc7278673ee0e5130",
+    "app/src/main.rs": "0197947535647c7bbb4997c5b0be6d9138aefc12733ec4f00b1f730f7d0aeafc",
     "app/src/mcp.rs": "0c59de97c77ebfd7e79f72ebea3bbed84b6948db697b7fb6d8417382945bd9bf",
+    "app/src/mcp_transport.rs": "fcbd5e86d802d173ef75d4c946096e90d520e38a7494f8efa0a7f7c1de389c3d",
     "app/src/pane.rs": "69e1a7642ba0fea91c609f93877fad4871493fde43b5dc59503b692b9d9737e3",
-    "app/src/war_room_view.rs": "581c3701b38e937d5d99bd722f617e47c2e76a2221e6ce9a787136ad25ebcc14",
-    "app/src/warroom.rs": "d6f9ecd03253e07d791614d448e32ba5c6479c6acddbbf04ed9abddbdf7574af"
+    "app/src/war_room_view.rs": "1765c7ad02c11eef565a73c4bd7e08a43a67c292a28ae4fc52de0ca1e3432015",
+    "app/src/warroom.rs": "4e309b38c12eac2954b3c983669fd733de23ea83ccc33bd742381ec155107bae"
   },
   "suites": {
     "rio": {
-      "passed": 2851,
+      "passed": 2852,
       "failed": 0,
       "ignored": 17,
       "result_sets": 8
     },
     "alacritty": {
-      "passed": 2798,
+      "passed": 2799,
       "failed": 0,
       "ignored": 17,
       "result_sets": 8
@@ -31,46 +32,46 @@
     "assertions": 45,
     "passed": 45,
     "run": {
-      "session": "secqa629586",
-      "window": 629638,
+      "session": "secqa1003957",
+      "window": 1004030,
       "binary": "/home/parker/Work/td-authority-lab/war-room-release-target/release/terminal-delight",
-      "sha256": "aa1fcf2e97296d91c71233c07bfed4fa99a4aa6ec76a3b1e207cd4a9cfc0176e",
+      "sha256": "aa85f6453ee386a459af1a07384387d9328a91d74f6efbcf57a5decc22b34a01",
       "actors": {
         "A": {
-          "pid": 630642,
-          "shell_pid": 629864,
+          "pid": 1005336,
+          "shell_pid": 1004569,
           "pane": 1,
-          "session": "secqa629586"
+          "session": "secqa1003957"
         },
         "B": {
-          "pid": 630644,
-          "shell_pid": 629873,
+          "pid": 1005335,
+          "shell_pid": 1004577,
           "pane": 2,
-          "session": "secqa629586"
+          "session": "secqa1003957"
         },
         "C": {
-          "pid": 630647,
-          "shell_pid": 629879,
+          "pid": 1005355,
+          "shell_pid": 1004582,
           "pane": 3,
-          "session": "secqa629586"
+          "session": "secqa1003957"
         },
         "D": {
-          "pid": 630643,
-          "shell_pid": 629887,
+          "pid": 1005318,
+          "shell_pid": 1004589,
           "pane": 4,
-          "session": "secqa629586"
+          "session": "secqa1003957"
         },
         "E": {
-          "pid": 630658,
-          "shell_pid": 629893,
+          "pid": 1005359,
+          "shell_pid": 1004597,
           "pane": 5,
-          "session": "secqa629586"
+          "session": "secqa1003957"
         },
         "F": {
-          "pid": 630645,
-          "shell_pid": 629901,
+          "pid": 1005317,
+          "shell_pid": 1004605,
           "pane": 6,
-          "session": "secqa629586"
+          "session": "secqa1003957"
         }
       }
     },

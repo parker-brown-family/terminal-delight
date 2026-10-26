@@ -4,7 +4,7 @@ anchor_top = false
 focus_inherit = false
 groups = []
 lang = "en"
-last_workspace = "special-secqa629586"
+last_workspace = "special-secqa1003957"
 left_bar = false
 left_bar_w = 208.0
 panes = 6
@@ -43,7 +43,7 @@ writable = true
 name = "QA A"
 
 [tabs.node.Leaf]
-cwd = "/tmp/mcp-security-native-2/A"
+cwd = "/tmp/mcp-security-native-3/A"
 pane_id = 1
 resume = "claude --continue"
 seat = 101
@@ -67,14 +67,14 @@ warp = 1.4299999475479126
 [tabs.node.Leaf.note]
 by = "agent"
 pinned = false
-seed = 1504021887
+seed = 565393493
 text = "OWN_NOTE_A"
 
 [[tabs]]
 name = "QA B"
 
 [tabs.node.Leaf]
-cwd = "/tmp/mcp-security-native-2/B"
+cwd = "/tmp/mcp-security-native-3/B"
 pane_id = 2
 resume = "claude --continue"
 seat = 102
@@ -98,7 +98,7 @@ warp = 1.4299999475479126
 [tabs.node.Leaf.note]
 by = "agent"
 pinned = false
-seed = 1663524883
+seed = 4232606192
 text = "NOTE_FROM_A"
 title = "QA"
 
@@ -106,7 +106,7 @@ title = "QA"
 name = "QA C"
 
 [tabs.node.Leaf]
-cwd = "/tmp/mcp-security-native-2/C"
+cwd = "/tmp/mcp-security-native-3/C"
 pane_id = 3
 resume = "claude --continue"
 seat = 103
@@ -132,7 +132,7 @@ name = "QA D"
 
 [tabs.node.Leaf]
 agents = "read-only"
-cwd = "/tmp/mcp-security-native-2/D"
+cwd = "/tmp/mcp-security-native-3/D"
 pane_id = 4
 resume = "claude --continue"
 seat = 104
@@ -141,7 +141,7 @@ seat = 104
 name = "QA E"
 
 [tabs.node.Leaf]
-cwd = "/tmp/mcp-security-native-2/E"
+cwd = "/tmp/mcp-security-native-3/E"
 off_limits = true
 pane_id = 5
 resume = "claude --continue"
@@ -166,14 +166,14 @@ warp = 1.4299999475479126
 [tabs.node.Leaf.note]
 by = "agent"
 pinned = false
-seed = 393472077
+seed = 3830200533
 text = "OWN_NOTE_E"
 
 [[tabs]]
 name = "QA F"
 
 [tabs.node.Leaf]
-cwd = "/tmp/mcp-security-native-2/F"
+cwd = "/tmp/mcp-security-native-3/F"
 pane_id = 6
 resume = "claude --continue"
 

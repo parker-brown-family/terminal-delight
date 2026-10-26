@@ -53,9 +53,14 @@ enum UiReq {
     Snapshot(mpsc::Sender<mcp::Snapshot>),
     /// Apply a parsed `set_pane_config` batch and report the per-target outcome.
     Apply(Vec<mcp::ConfigUpdate>, mpsc::Sender<Vec<mcp::ApplyOutcome>>),
-    /// `grep`: search every exposed pane's scrollback for an exact substring
-    /// (needle, lines-per-pane cap) and report the per-pane matches.
-    Search(String, usize, mpsc::Sender<Vec<mcp::PaneMatches>>),
+    /// `grep`: carry the verified caller to the grid read, so queued searches
+    /// cannot keep using a relationship that was revoked after the snapshot.
+    Search(
+        String,
+        usize,
+        Option<u64>,
+        mpsc::Sender<Vec<mcp::PaneMatches>>,
+    ),
     /// `open_document`: open a document in the caller's pane or tab. The
     /// reply is the router's own line, which for a split arrives only once the
     /// workspace has handled the pane's request — after this tick — so the
@@ -204,8 +209,8 @@ pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::
                             }
                         }
                     }
-                    Ok(UiReq::Search(needle, cap, reply)) => {
-                        match this.update(cx, |ws, cx| ws.mcp_search(&needle, cap, cx)) {
+                    Ok(UiReq::Search(needle, cap, caller, reply)) => {
+                        match this.update(cx, |ws, cx| ws.mcp_search(&needle, cap, caller, cx)) {
                             Ok(hits) => {
                                 let _ = reply.send(hits);
                             }
@@ -376,7 +381,8 @@ pub(crate) fn respond_as(
             // grep never invoke this closure.
             let search = |needle: &str, cap: usize| -> Vec<mcp::PaneMatches> {
                 let (tx, rx) = mpsc::channel();
-                if !bridge_send(UiReq::Search(needle.to_string(), cap, tx)) {
+                let caller = snap.caller.as_ref().and_then(|c| c.pane);
+                if !bridge_send(UiReq::Search(needle.to_string(), cap, caller, tx)) {
                     return Vec::new();
                 }
                 rx.recv_timeout(SNAPSHOT_BUDGET).unwrap_or_default()

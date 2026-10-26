@@ -8174,18 +8174,33 @@ impl Workspace {
         Self::grade_report(&theme::outer_choice(cx).grade)
     }
 
-    /// Search every EXPOSED pane's recent scrollback for `needle` (exact,
-    /// case-insensitive) — the main-thread half of the MCP `grep` tool. Mirrors
-    /// `mcp_snapshot`'s walk + policy filter, so the operator's expose toggle
-    /// governs on-screen-content disclosure exactly as it gates `list_panes`.
-    fn mcp_search(&self, needle: &str, cap: usize, cx: &App) -> Vec<mcp::PaneMatches> {
+    /// Search recent scrollback using the caller's CURRENT reach. The protocol
+    /// also caps the result by its admission snapshot; neither an old grant nor
+    /// a grant added while the request waited may expand what it returns.
+    fn mcp_search(
+        &self,
+        needle: &str,
+        cap: usize,
+        caller_pane: Option<u64>,
+        cx: &App,
+    ) -> Vec<mcp::PaneMatches> {
+        let caller = caller_pane.and_then(|id| self.leaf_by_pane_id(id, cx));
+        let caller_party = caller.as_ref().map(|leaf| leaf.read(cx).party());
         let mut out = vec![];
         for (ti, tab) in self.tabs.iter().enumerate() {
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
                 let p = leaf.read(cx);
-                if !warroom::visible_to_some_agent(&self.mcp, &p.party()) {
+                let own = caller.as_ref().is_some_and(|caller| caller == leaf);
+                if warroom::reach(
+                    &self.mcp,
+                    &self.chart,
+                    caller_party.as_ref(),
+                    &p.party(),
+                    own,
+                ) < warroom::Reach::Read
+                {
                     continue;
                 }
                 let hits = p.grep_grid(needle, cap);
@@ -40491,7 +40506,7 @@ mod tests {
         // Every window-side decision hands the rules the pane's own party —
         // its position and seat — rather than a mark it remembered to read.
         for (gate, sites) in [
-            ("warroom::visible_to_some_agent(", 3),
+            ("warroom::visible_to_some_agent(", 2),
             ("warroom::anonymous_reach(", 1),
             ("warroom::may_write_live(", 1),
         ] {

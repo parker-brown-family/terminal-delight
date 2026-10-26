@@ -2861,7 +2861,13 @@ mod tests {
             skin::init_embedded(cx);
         });
         let seed = || session::PaneRestore {
-            program: Some(("/bin/cat".into(), vec![])),
+            program: Some((
+                "/bin/sh".into(),
+                vec![
+                    "-c".into(),
+                    "printf 'QA_GRID_CANARY\\n'; exec /bin/cat".into(),
+                ],
+            )),
             ..Default::default()
         };
         let window = {
@@ -3080,6 +3086,55 @@ mod tests {
             conversation: "synthetic-conversation".into(),
             stage,
         }
+    }
+
+    #[gpui::test]
+    fn queued_grep_cannot_read_fresh_content_after_relationship_revocation(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let target = ws.read_with(cx, |ws, cx| ws.leaf_by_pane_id(11, cx).unwrap());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while target.read_with(cx, |v, _| v.grep_grid("QA_GRID_CANARY", 2000).is_empty()) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "fixture never printed its positive-control canary"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            cx.run_until_parked();
+        }
+        ws.update(cx, |ws, cx| {
+            ws.mcp.enabled = true;
+            ws.chart.draw(warroom::SeatId(100), warroom::SeatId(101), warroom::Rung::Read);
+            let pid = target.read(cx).shell_pid().unwrap();
+            let mut snap = mcp::Snapshot::empty();
+            snap.panes = ws.mcp_snapshot(cx);
+            snap.config = ws.mcp.clone();
+            snap.chart = ws.chart.clone();
+            snap.caller = Some(mcp::Caller { session: "fixture".into(), pane: Some(10) });
+            let request = serde_json::json!({"id":1,"method":"tools/call","params":{"name":"grep","arguments":{"query":"QA_GRID_CANARY"}}}).to_string();
+            let contains_target = |ws: &Workspace| {
+                let search = |q: &str, cap: usize| ws.mcp_search(q, cap, Some(10), cx);
+                let reply = mcp::handle_line_with(&request, &snap, |_: &mcp::PaneInfo, _: usize| vec![], mcp::no_apply, search).unwrap();
+                let value: serde_json::Value = serde_json::from_str(&reply).unwrap();
+                value["result"]["structuredContent"]["panes"].as_array().unwrap().iter().any(|p| p["pid"] == pid)
+            };
+            assert!(contains_target(ws), "unchanged grant failed its positive control");
+            ws.chart.erase(warroom::SeatId(100), warroom::SeatId(101));
+            assert!(!contains_target(ws), "queued grep used a revoked snapshot grant to read the live grid");
+            ws.chart.draw(warroom::SeatId(100), warroom::SeatId(101), warroom::Rung::See);
+            assert!(!contains_target(ws), "a census-only line disclosed scrollback");
+            ws.chart.draw(warroom::SeatId(100), warroom::SeatId(101), warroom::Rung::Read);
+            assert!(contains_target(ws), "restoring read must restore the positive control");
+            ws.mcp.enabled = false;
+            assert!(!contains_target(ws), "disabling MCP did not revoke the queued read");
+            ws.mcp.enabled = true;
+            assert!(!ws.mcp_search("QA_GRID_CANARY", 2000, None, cx).iter().any(|p| p.pid == pid));
+            assert!(!ws.mcp_search("QA_GRID_CANARY", 2000, Some(999), cx).iter().any(|p| p.pid == pid));
+        });
     }
 
     #[gpui::test]

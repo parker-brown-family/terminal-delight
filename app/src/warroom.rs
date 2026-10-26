@@ -793,9 +793,9 @@ pub struct CheapAnswer {
     pub via: String,
 }
 
-/// The window-side filter for a walk that cannot know who is asking (the
-/// grep walk, the agent wall's count): the pane's position and the window's
-/// switches only. The protocol layer narrows it further by the caller's lines.
+/// The window-side filter for an operator-facing aggregate (the agent wall's
+/// count): the pane's position and the window's switches only. A caller's read
+/// must use `reach` instead, so its current relationships also govern the read.
 pub fn visible_to_some_agent(cfg: &McpConfig, target: &Party) -> bool {
     !target.access.is_off_limits() && policy_admits(cfg, target.is_agent)
 }
