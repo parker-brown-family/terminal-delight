@@ -4570,6 +4570,10 @@ struct Workspace {
     /// The System Map, the higher-level view across every org. `Some` holds its
     /// cross-org relationship draft while it is open.
     war_map: Option<war_room_view::SystemMap>,
+    /// A pane dropped on a *different* org, held while the person chooses whether
+    /// to move the agent in or build a relationship (with the org, or a member).
+    /// `Some` means the drop popup is open.
+    war_drop: Option<war_room_view::DropChoice>,
     /// Transient membership gesture; GPUI remains the authority on its lifetime.
     war_drag: Option<Entity<TerminalView>>,
     war_context: Option<(Entity<TerminalView>, Point<Pixels>)>,
@@ -6302,6 +6306,7 @@ impl Workspace {
             war_move: None,
             war_delete_org: None,
             war_map: None,
+            war_drop: None,
             war_drag: None,
             war_context: None,
             war_feedback: None,
