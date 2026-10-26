@@ -1,0 +1,44 @@
+{
+  "session": "secqa3650631",
+  "window": 3650681,
+  "binary": "/home/parker/Work/td-authority-lab/war-room-release-target/release/terminal-delight",
+  "sha256": "8fb5ee87a19af83988ca3cab46fb24bdb8cdb09ea46487f4e567fe8152debd5e",
+  "actors": {
+    "A": {
+      "pid": 3651820,
+      "shell_pid": 3651065,
+      "pane": 1,
+      "session": "secqa3650631"
+    },
+    "B": {
+      "pid": 3651832,
+      "shell_pid": 3651071,
+      "pane": 2,
+      "session": "secqa3650631"
+    },
+    "C": {
+      "pid": 3651818,
+      "shell_pid": 3651077,
+      "pane": 3,
+      "session": "secqa3650631"
+    },
+    "D": {
+      "pid": 3651819,
+      "shell_pid": 3651083,
+      "pane": 4,
+      "session": "secqa3650631"
+    },
+    "E": {
+      "pid": 3651817,
+      "shell_pid": 3651089,
+      "pane": 5,
+      "session": "secqa3650631"
+    },
+    "F": {
+      "pid": 3651821,
+      "shell_pid": 3651095,
+      "pane": 6,
+      "session": "secqa3650631"
+    }
+  }
+}

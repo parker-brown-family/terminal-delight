@@ -1,0 +1,340 @@
+{
+  "file": "reports/2026-10-26-agaro-followthrough.html",
+  "subject": "Taking over Agaro research and finishing the remaining Terminal Delight permission fixes",
+  "reader": "Parker, who uses Terminal Delight but does not read Rust; wants to know whether Agaro can close and what the hardening changes",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.81
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.68
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "argument",
+      "probabilities": {
+        "journey": 0.16,
+        "catalogue": 0.02,
+        "argument": 0.74,
+        "report": 0.08,
+        "none_of_the_above": 0
+      },
+      "confidence": 0.68
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Agaro handoff",
+      "text": "You can end the Agaro session. Its research is saved, and I have taken over its two permission concerns. One had already been fixed. The other prevented an agent from asking you to open a hidden pane. That request now reaches your attention rail, while the agent still learns nothing about the target until you answer.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.26,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.09,
+            "1": 0.58,
+            "2": 0.32,
+            "3": 0.01
+          },
+          "confidence": 0.57
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.17
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.14
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0.03,
+            "turn": 0.26,
+            "consequence": 0.07,
+            "resolution": 0.62,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.56
+        }
+      },
+      "latency_ms": 371.4694520458579,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "01 The saved work survives the session",
+      "text": "I matched the Agaro pane by its sticky note, its tab and the handoff text in its scrollback. Its final tool calls confirmed that the handoff and research were saved. The pane now says HANDOFF TAKEN . You can end that session. \nThe read-only tool hints and robot stamp were already merged. They stay intact. The remaining work was to test the same permission decision through both agent interfaces and repair the opening request.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.82,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.23,
+            "2": 0.68,
+            "3": 0.07
+          },
+          "confidence": 0.68
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.26
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.92,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.18,
+            "1": 0.73,
+            "2": 0.08,
+            "3": 0.01
+          },
+          "confidence": 0.72
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.82
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0.12,
+            "complication": 0.11,
+            "turn": 0.13,
+            "consequence": 0.1,
+            "resolution": 0.35,
+            "aside": 0.18,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.24
+        }
+      },
+      "latency_ms": 375.8432390168309,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "02 The alternate route was already closed",
+      "text": "The handoff said an agent using a shared background process could bypass the control socket, the local interface used by desktop scripts. Current source contradicts that claim: ordinary windows already refuse every command that acts as the person, regardless of caller ancestry. I kept that implementation and added the missing paired test. \n 01 \u00b7 Same unbound caller, same refusal \n Switching interfaces grants no authority. The paired test exercises the MCP handler and real socket handler. Both requests try to open a document. MCP opens it in the calling pane; the desktop interface uses the focused pane. An agent with no verified pane identity is refused by both. Source: unbound_document_open_is_refused_through_mcp_and_ctl .",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.88,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.21,
+            "2": 0.67,
+            "3": 0.11
+          },
+          "confidence": 0.66
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.2
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.74,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.33,
+            "1": 0.6,
+            "2": 0.07,
+            "3": 0
+          },
+          "confidence": 0.6
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.19
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.06,
+            "turn": 0.67,
+            "consequence": 0.15,
+            "resolution": 0.06,
+            "aside": 0.06,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.61
+        }
+      },
+      "latency_ms": 423.7592660356313,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "03 Asking now works without revealing a hidden pane",
+      "text": "The opening request failed because it required the target to be visible first. Removing that check alone would leave another leak: a second request could reveal whether the first occupied the queue. The repair queues every valid opening proposal alike. \n 02 \u00b7 Existence stays behind the person's decision \n\n Real, off-limits pane \nPerson sees its name. \n Missing pane \nPerson sees \u201cunavailable\u201d. \n Already-open pane \nPerson can dismiss it. \n One pending proposal \nSame acknowledgement.\nSame refusal on a second request. \n Your Yes or No \nYes applies only to the original pane.\nA missing or replaced target grants nothing. \n A proposal creates no permission. All three states take the same queue slot. The GPUI state test also checks No, Yes and a stale target. Source: opening_proposals_hide_existence_until_the_person_answers . This diagram describes the mechanism, not a screenshot. \nThe cost is one harmless proposal for an unavailable target. It uses the existing rail and one-request limit. No new messaging service or permission framework was added.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.63,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.37,
+            "2": 0.58,
+            "3": 0.03
+          },
+          "confidence": 0.56
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.25
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.15,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.09,
+            "1": 0.67,
+            "2": 0.23,
+            "3": 0.01
+          },
+          "confidence": 0.66
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.18
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.03,
+            "turn": 0.63,
+            "consequence": 0.32,
+            "resolution": 0.02,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.57
+        }
+      },
+      "latency_ms": 389.0836101491004,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "04 The checks stay with the change",
+      "text": "2,857 Rio tests and 2,804 Alacritty tests passed. Both strict lint runs and formatting passed. The native fixture passed 54 security assertions, followed by five manual probes. Seventeen existing tests remain ignored on each terminal core. \nThe original hidden-pane regression was run before the repair and failed because no proposal reached the person. Tests now check both the response and its effect on real window state. The native battery uses disposable windows and synthetic agents; it does not prompt your working agents. \nYour daily window now runs the tested 0.5.0 development build, including the latest design and skin changes. The upgrade preserved all 31 terminal panes, the terminal host and the open split document. The permission repair PR records integration status; this is a local development installation, not a published release. \n Validation receipt \u00b7 Implementation record \u00b7 Transport test source \u00b7 UI test source \n What happened to the other doubts? | \n | Handoff concern | Disposition \n | Unknown writers on old notes | Preserved intentionally. Restore never invents a person as author. \n | Uninspected note-writing routes | Audited keyboard edits, MCP posting, duplication and restore. Control document annotations do not write sticky notes. \n | Stamp appearance judged from one photograph | No evidence of a defect; existing appearance retained for your feedback. \n | MCP prose behind the implementation | Updated tool hints, note.by, opening proposals and the control-socket restriction. \n | Hidden panes mistaken for held panes during upgrade | The shared helper already uses saved-layout membership. All seven guard tests pass. \n | Shared renderer checkout drift | Build uses the isolated renderer checkout. Existing checkout-drift issue remains open. \n | Pane titles reset after a GUI replacement | Existing host title-restoration issue remains open; identification used content as well as title. \n | Unexplained earlier GUI relaunch | Cause remains unknown. The handoff's observation is retained; no crash or culprit is inferred. Timestamped logging remains the existing diagnostic follow-up. \n Visual limit: native screenshot capture timed out, and the desktop reported no focused window. The permission states were tested in GPUI and the real native process; a visual verdict on the rail is uncollected. The report itself passed narrow/wide browser checks and note save/reopen tests. \nNative agent-to-agent delivery remains on its separate draft branch. This completion does not claim that the broader handoff feature or release qualification is finished. \n\n . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 2.03,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0,
+            "1": 0.07,
+            "2": 0.81,
+            "3": 0.11
+          },
+          "confidence": 0.82
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.53
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.37,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.08,
+            "1": 0.49,
+            "2": 0.42,
+            "3": 0.01
+          },
+          "confidence": 0.48
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.72
+        },
+        "role": {
+          "type": "choice",
+          "choice": "aside",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.01,
+            "turn": 0.01,
+            "consequence": 0.36,
+            "resolution": 0.12,
+            "aside": 0.49,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.4
+        }
+      },
+      "latency_ms": 387.68306793645024,
+      "failure": null
+    }
+  ]
+}
