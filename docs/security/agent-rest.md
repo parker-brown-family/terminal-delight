@@ -32,6 +32,7 @@ In front of it, everything rest requires, plus (`agentrest::may_sleep`, `agentre
 
 - Claude only (Codex keeps its helpers in its own service, so ending its window saves almost nothing);
 - the conversation id comes from Claude's own registry, not from a guess;
+- that conversation is saved where the wake will look, `~/.claude/projects/<slug of the pane's cwd>/<id>.jsonl`, and is not empty (`agentrest_io::conversation_saved`). Claude writes a conversation down only once something is said in it, so a Claude that was started and never spoken to, or was `/clear`ed into a fresh id, still rests but never sleeps. Before this check, on 2026-10-27, an idle Claude nobody had typed to was ended and its wake answered "No conversation found with session ID";
 - the launch line can be rebuilt exactly (`agentrest::wake_argv`): no initial prompt that would be sent again, no option this build does not know, not a print or background run;
 - no write to the pane since the look; the pid is still in the pane's own group.
 
