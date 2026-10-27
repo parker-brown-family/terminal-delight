@@ -12,9 +12,10 @@ use super::*;
 use crate::surfacefeed::now_ms;
 use gpui::{anchored, deferred, PathBuilder};
 
-/// A seat's box at scale 1: place, title, program, state, age and tokens.
+/// A seat's box at scale 1: place, title, latest message, program and model,
+/// state and role, age and tokens, and the newest artifact.
 const SEAT_W: f32 = 248.;
-const SEAT_H: f32 = 126.;
+const SEAT_H: f32 = 156.;
 const COL_GAP: f32 = 30.;
 const ROW_GAP: f32 = 56.;
 const PAD: f32 = 14.;
@@ -27,6 +28,14 @@ struct PaneFacts {
     project: String,
     program: String,
     model: Option<String>,
+    /// The effort the agent runs at, verbatim from its transcript (`MAX`, `xhigh`).
+    effort: Option<String>,
+    /// The agent's own latest message on its workbench: its brief, or the
+    /// start of its plain reply when it wrote no brief.
+    message: Option<String>,
+    /// Its newest artifact, how many more it has handed over, and whether a
+    /// person has left feedback on the newest. `None`: nothing handed over yet.
+    artifact: Option<(String, usize, crate::feedback::Feedback)>,
     size: Option<u64>,
     started_ms: Option<i64>,
     state: hud::AgentState,
@@ -327,6 +336,18 @@ impl Workspace {
                     project: project.clone(),
                     program: v.mode.label().to_string(),
                     model: vit.and_then(|x| x.model.clone()),
+                    effort: vit.and_then(|x| x.effort.clone()),
+                    message: v
+                        .bench
+                        .latest_response()
+                        .map(|r| r.brief.clone().unwrap_or_else(|| r.layman.clone())),
+                    artifact: v.handovers().newest().map(|h| {
+                        (
+                            h.label.clone(),
+                            v.handovers().len().saturating_sub(1),
+                            crate::feedback::of(&h.href),
+                        )
+                    }),
                     size: vit.and_then(|x| x.tokens),
                     started_ms: vit.and_then(|x| x.started_ms),
                     state: v.agent_status().state,
@@ -505,23 +526,29 @@ impl Workspace {
                 threshing_floor::Role::Worker => ui.floor_role_worker,
                 threshing_floor::Role::Alone => ui.floor_role_alone,
             };
-            let second = match (&f.model, f.access) {
-                // Off-limits is the strongest position and must show on the card,
-                // not fall through to a plain model/role line that reads normal:
-                // the person set it to hide the pane from every agent, line or no.
-                (_, threshing_floor::AgentAccess::OffLimits) => format!(
-                    "{} · {}",
-                    f.program,
-                    self.lang.strings().parts.pane_off_limits_badge
-                ),
-                (_, threshing_floor::AgentAccess::ReadOnly) => format!(
-                    "{} · {}",
-                    f.program,
-                    self.lang.strings().parts.pane_read_only_badge
-                ),
-                (Some(m), _) => format!("{} · {m}", f.program),
-                (None, _) => format!("{} · {role}", f.program),
+            let second = model_line(
+                &f.program,
+                f.model.as_deref(),
+                f.effort.as_deref(),
+                ui.floor_model_unknown,
+            );
+            // Off-limits is the strongest position and must show on the card,
+            // beside the state where the eye already goes: the person set it to
+            // hide the pane from every agent, line or no.
+            let badge = match f.access {
+                threshing_floor::AgentAccess::OffLimits => {
+                    Some(self.lang.strings().parts.pane_off_limits_badge)
+                }
+                threshing_floor::AgentAccess::ReadOnly => {
+                    Some(self.lang.strings().parts.pane_read_only_badge)
+                }
+                _ => None,
             };
+            let state_line = match badge {
+                Some(b) => format!("\u{25cf} {} · {role} · {b}", f.state.label_in(lang)),
+                None => format!("\u{25cf} {} · {role}", f.state.label_in(lang)),
+            };
+            let produced = f.artifact.is_some();
             let pane_drag = PaneDrag {
                 leaf: f.leaf.clone(),
                 title: f.name.tab.clone(),
@@ -548,10 +575,14 @@ impl Workspace {
                     .py(px(6. * s))
                     .rounded(sk.rad_raw(7.))
                     .border_1()
+                    // Nothing handed over yet wears the theme's accent: a fact
+                    // about the work, drawn as an accent and never as an alarm.
                     .border_color(if picked {
                         th.complement
-                    } else {
+                    } else if produced {
                         th.text.alpha(0.28)
+                    } else {
+                        th.accent.alpha(0.8)
                     })
                     .bg(darken(th.surface, 0.35))
                     .flex()
@@ -641,6 +672,22 @@ impl Workspace {
                     )
                     .child(
                         div()
+                            .id(SharedString::from(format!("floor-message-{}", seat.0)))
+                            .debug_selector(move || format!("floor-message-{}", seat.0))
+                            .text_size(sk.text_px(8.5))
+                            .text_color(th.text.alpha(0.65))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(SharedString::from(
+                                f.message
+                                    .as_deref()
+                                    .and_then(|m| m.lines().find(|l| !l.trim().is_empty()))
+                                    .unwrap_or("")
+                                    .to_string(),
+                            )),
+                    )
+                    .child(
+                        div()
                             .text_size(sk.text_px(8.5))
                             .text_color(th.text.alpha(0.6))
                             .overflow_hidden()
@@ -651,12 +698,12 @@ impl Workspace {
                         div()
                             .text_size(sk.text_px(8.5))
                             .text_color(state_ink)
-                            .child(SharedString::from(format!(
-                                "\u{25cf} {}",
-                                f.state.label_in(lang)
-                            ))),
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(SharedString::from(state_line)),
                     )
                     .child(self.threshing_floor_metrics(f, &sk, th))
+                    .child(self.threshing_floor_artifact_row(f, seat, &sk, th, cx))
                     .child(
                         div()
                             .id(SharedString::from(format!("floor-connect-{}", seat.0)))
@@ -1578,6 +1625,97 @@ impl Workspace {
         }
         cx.notify();
         true
+    }
+
+    /// The card's last row: the agent's newest artifact by name, how many more
+    /// it has handed over, and whether a person has left feedback on it. A click
+    /// opens it in that agent's pane, the way the artifact rail does. An agent
+    /// that has handed nothing over says so in the accent.
+    fn threshing_floor_artifact_row(
+        &self,
+        f: &PaneFacts,
+        seat: threshing_floor::SeatId,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let ui = self.lang.strings().ui;
+        let s = th.grade.scale;
+        let Some((label, more, feedback)) = &f.artifact else {
+            return div()
+                .id(SharedString::from(format!("floor-no-artifact-{}", seat.0)))
+                .debug_selector(move || format!("floor-no-artifact-{}", seat.0))
+                .mr(px(30. * s))
+                .text_size(sk.text_px(8.5))
+                .text_color(th.accent)
+                .child(SharedString::from(ui.floor_no_artifact.to_string()))
+                .into_any_element();
+        };
+        let pill = |word: &str, ink: Hsla, ground: Hsla| {
+            div()
+                .flex_none()
+                .px(px(5. * s))
+                .rounded(sk.rad_raw(8.))
+                .bg(ground)
+                .text_color(ink)
+                .text_size(sk.text_px(7.))
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(SharedString::from(word.to_string()))
+        };
+        let pill = match feedback {
+            crate::feedback::Feedback::Annotated => Some(
+                pill(ui.floor_annotated, th.human, th.human.alpha(0.16))
+                    .debug_selector(move || format!("floor-annotated-{}", seat.0)),
+            ),
+            crate::feedback::Feedback::None => Some(
+                pill(
+                    ui.floor_no_feedback,
+                    th.text.alpha(0.6),
+                    th.text.alpha(0.08),
+                )
+                .debug_selector(move || format!("floor-no-feedback-{}", seat.0)),
+            ),
+            // Nothing is claimed for an artifact that takes no notes here.
+            crate::feedback::Feedback::Unknown => None,
+        };
+        let leaf = f.leaf.clone();
+        div()
+            .id(SharedString::from(format!("floor-artifact-{}", seat.0)))
+            .debug_selector(move || format!("floor-artifact-{}", seat.0))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(5. * s))
+            .mr(px(30. * s))
+            .min_w(px(0.))
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_size(sk.text_px(8.5))
+            .cursor_pointer()
+            .child(
+                div()
+                    .min_w(px(0.))
+                    .truncate()
+                    .text_color(th.text)
+                    .child(SharedString::from(label.clone())),
+            )
+            .when(*more > 0, |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .text_color(th.text.alpha(0.55))
+                        .child(SharedString::from(format!("+{more}"))),
+                )
+            })
+            .when_some(pill, |d, p| d.child(p))
+            .on_click(cx.listener(move |ws, _, _, cx| {
+                cx.stop_propagation();
+                ws.close_threshing_floor();
+                leaf.update(cx, |v, cx| v.open_newest_handover(cx));
+                ws.pending_jump = Some(leaf.entity_id());
+                cx.notify();
+            }))
+            .into_any_element()
     }
 
     fn threshing_floor_metrics(
@@ -3885,6 +4023,17 @@ fn seat_title(t: &TerminalView) -> String {
         .unwrap_or_else(|| t.shown_title())
 }
 
+/// The card's harness-and-model line, as Parker spelled it: `CLAUDE · OPUS 5.5
+/// MAX`, `CODEX · SOL 6.1 XHIGH`. An unknown model says so rather than leaving
+/// the line short, and an effort the transcript never named is left off.
+fn model_line(program: &str, model: Option<&str>, effort: Option<&str>, unknown: &str) -> String {
+    match (model, effort.map(str::trim).filter(|e| !e.is_empty())) {
+        (Some(m), Some(e)) => format!("{program} · {m} {}", e.to_uppercase()),
+        (Some(m), None) => format!("{program} · {m}"),
+        (None, _) => format!("{program} · {unknown}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4809,6 +4958,102 @@ mod tests {
             });
             assert!(cx.debug_bounds("floor-remove-drop").is_none());
         }
+    }
+
+    /// Parker's spelling of the model line, 2026-10-27: harness, model with
+    /// its version, then effort.
+    #[test]
+    fn the_model_line_reads_harness_model_version_and_effort() {
+        let u = "model unknown";
+        assert_eq!(
+            model_line("CLAUDE", Some("OPUS 5.5"), Some("max"), u),
+            "CLAUDE · OPUS 5.5 MAX"
+        );
+        assert_eq!(
+            model_line("CODEX", Some("SOL 6.1"), Some("xhigh"), u),
+            "CODEX · SOL 6.1 XHIGH"
+        );
+        assert_eq!(
+            model_line("CLAUDE", Some("HAIKU 5.1"), Some("  "), u),
+            "CLAUDE · HAIKU 5.1",
+            "an effort the transcript never named is left off"
+        );
+        assert_eq!(
+            model_line("CODEX", None, Some("high"), u),
+            "CODEX · model unknown",
+            "an unknown model says so, effort or no"
+        );
+    }
+
+    /// A seat that has handed nothing over says so in the accent; once it hands
+    /// a brief over, the card names the newest, counts the rest, and says a
+    /// person annotated it only because a concur is saved in the file.
+    #[gpui::test]
+    fn a_card_names_its_newest_artifact_and_whether_a_person_annotated_it(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        assert!(cx.debug_bounds("floor-no-artifact-101").is_some());
+        assert!(cx.debug_bounds("floor-artifact-101").is_none());
+        let dir = std::env::temp_dir().join(format!("td-floor-card-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let older = dir.join("older.html");
+        std::fs::write(&older, "<html><body>an earlier page</body></html>").unwrap();
+        let brief = dir.join("brief.html");
+        let islands = |concurs: &str| {
+            format!(
+                "<html><body><p id=\"x\">x</p>\
+                 <script type=\"application/json\" id=\"report-notes\" data-format=\"1\">{{}}</script>\
+                 <script type=\"application/json\" id=\"report-concurs\" data-format=\"1\">{concurs}</script>\
+                 </body></html>"
+            )
+        };
+        std::fs::write(&brief, islands("{}")).unwrap();
+        cx.update(|_, cx| {
+            let leaf = ws
+                .read(cx)
+                .threshing_floor_seat_leaf(threshing_floor::SeatId(101), cx)
+                .unwrap();
+            leaf.update(cx, |v, cx| {
+                v.hand_over(
+                    None,
+                    older.display().to_string(),
+                    crate::handover::Source::Declared,
+                    cx,
+                );
+                v.hand_over(
+                    Some("The brief".into()),
+                    brief.display().to_string(),
+                    crate::handover::Source::Declared,
+                    cx,
+                );
+            });
+            ws.update(cx, |_, cx| cx.notify());
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("floor-no-artifact-101").is_none());
+        assert!(cx.debug_bounds("floor-artifact-101").is_some());
+        assert!(
+            cx.debug_bounds("floor-no-feedback-101").is_some(),
+            "handed over and not yet annotated"
+        );
+        assert!(
+            cx.debug_bounds("floor-no-artifact-100").is_some(),
+            "the other seat has still handed nothing over"
+        );
+        std::fs::write(&brief, islands(r#"{"ask-1":"2026-10-27 12:00"}"#)).unwrap();
+        ws.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("floor-annotated-101").is_some(),
+            "a concur saved in the file is a person's feedback"
+        );
+        assert!(cx.debug_bounds("floor-no-feedback-101").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[gpui::test]
