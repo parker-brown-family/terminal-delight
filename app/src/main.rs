@@ -28,6 +28,9 @@
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
 mod access;
+mod agentcfg;
+mod agentrest;
+mod agentrest_io;
 mod art;
 mod artifact_archive;
 mod artifact_rail;
@@ -83,6 +86,7 @@ mod notify;
 mod paint;
 mod palette;
 mod pane;
+mod panegroup;
 mod paneident;
 mod paper;
 mod picturewire;
@@ -4709,6 +4713,19 @@ struct Workspace {
     /// Each field is an `Option` all the way here: see [`launchpref`] for why
     /// *nobody chose* must not be stored as the thing that would have happened.
     launch_defaults: launchpref::Prefs,
+    /// How idle agents rest and sleep (`agents.toml`), read once and written
+    /// through on every change from CONFIG › Agents.
+    agents_prefs: agentcfg::Prefs,
+    /// Whether the CONFIG › Agents page is open.
+    agents_menu: bool,
+    /// Which agents-page slider is being dragged, if any: 0 rest, 1 sleep.
+    agents_drag: Option<u8>,
+    /// Where the two sliders' tracks were drawn, for mapping a pointer.
+    agents_tracks: [std::sync::Arc<std::sync::Mutex<Option<Bounds<Pixels>>>>; 2],
+    /// What the last rest-and-sleep tick did, for the Agents page's readout.
+    rest_census: RestCensus,
+    /// The sleepers and pins last written for the next window.
+    rest_store_saved: agentrest_io::Store,
     /// Whether the LAUNCH AGENT CONFIG block on the usage card is unfolded.
     ///
     /// Closed on a fresh window, because the card's job is *what has this plan
@@ -5216,6 +5233,14 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     cx.subscribe_in(
         pane,
         window,
+        |ws, pane, _ev: &pane::WakeAsleep, window, cx| {
+            ws.wake_sleeper(pane, window, cx);
+        },
+    )
+    .detach();
+    cx.subscribe_in(
+        pane,
+        window,
         |ws, pane, _ev: &pane::OpenAgentLauncher, window, cx| {
             let cwd = pane.read(cx).current_cwd();
             ws.open_agent_launcher(cwd, Some(pane.entity_id()), window, cx);
@@ -5370,6 +5395,25 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
 #[derive(Clone)]
 struct AttachCtx {
     link: Arc<hostctl::HostLink>,
+}
+
+/// How often the rest-and-sleep policy looks at every pane.
+const REST_SWEEP_SECS: u64 = 15;
+
+/// What the last rest-and-sleep tick found across the window, for the
+/// CONFIG › Agents page.
+#[derive(Debug, Clone, Default)]
+struct RestCensus {
+    resting: u32,
+    asleep: u32,
+    /// Bytes pushed out of the panes resting now.
+    given_back: u64,
+    /// Bytes agent panes hold in RAM and swap, among those measured.
+    held: u64,
+    /// Agent panes whose memory could not be read.
+    unmeasured: u32,
+    /// Why panes are not resting, by kind.
+    refusals: Vec<(agentrest::RefusalClass, u32)>,
 }
 
 /// What to do with one saved leaf when a host is holding the terminals.
@@ -5892,8 +5936,12 @@ fn make_pane_attached(
     let stream = ctx.link.open_pane_stream(info.pane)?;
     let link = ctx.link.clone();
     let pane_id = info.pane;
+    // One gate, held by the stream (every write thaws through it) and by the
+    // view (the policy freezes through it).
+    let gate: std::sync::Arc<panegroup::Gate> = Default::default();
     let streams = term::AttachStreams {
         bytes: stream,
+        gate: Some(gate.clone()),
         announce_resize: Box::new(move |size: vt::WindowSize| {
             link.announce_resize(
                 pane_id,
@@ -5907,7 +5955,10 @@ fn make_pane_attached(
         }),
     };
     // The pid is the host's, and only an attribute: this window did not start
-    // that process and will never signal it.
+    // that process and never signals it. The one signal the window ever sends
+    // under a pane is rest-and-sleep's SIGTERM to an idle agent the shell runs
+    // (`agentrest_io`), never to the shell, and never SIGKILL — see
+    // docs/security/agent-rest.md.
     let (session, guard) = term::attach_in(
         grid.with_cell(geom.cell_width, geom.cell_height),
         streams,
@@ -5922,6 +5973,7 @@ fn make_pane_attached(
     });
     pane.update(cx, |view, cx| {
         view.appearance = PaneTheme::house();
+        view.rest.gate = gate;
         // The host has been watching this terminal; a window that has just
         // arrived has not. Where it has classified the pane, that is the better
         // answer — and where it has not, the pane is left alone rather than
@@ -5931,6 +5983,17 @@ fn make_pane_attached(
         }
     });
     wire_pane(&pane, window, cx);
+    // Give the pane its own memory group now rather than at the next rest
+    // tick: a woken agent's script waits for it, so the agent is born there.
+    if agentrest::enabled_by_env() {
+        let (pane_no, shell) = (pane_id.0, info.shell_pid as i32);
+        let session = crate::instance::key().to_owned();
+        cx.background_executor()
+            .spawn(async move {
+                let _ = panegroup::adopt(&session, pane_no, shell);
+            })
+            .detach();
+    }
     Ok(pane)
 }
 
@@ -6362,6 +6425,12 @@ impl Workspace {
             usage_status: None,
             usage_refreshing: false,
             launch_defaults: launchpref::load(),
+            agents_prefs: agentcfg::load(),
+            agents_menu: false,
+            agents_drag: None,
+            agents_tracks: Default::default(),
+            rest_census: RestCensus::default(),
+            rest_store_saved: Default::default(),
             launch_defaults_open: false,
             usage_history_open: false,
             agent_vitals: std::collections::HashMap::new(),
@@ -7204,6 +7273,7 @@ impl Workspace {
         Self::watch_for_divergence(ctx.clone(), window, cx);
         self.listen_to_the_host(ctx.clone(), cx);
         Self::reconcile_modes(ctx.clone(), cx);
+        Self::rest_idle_agents(cx);
         Self::watch_the_save(cx);
     }
 
@@ -7400,6 +7470,339 @@ impl Workspace {
                 }
             }
         }
+        cx.notify();
+    }
+
+    /// Rest and sleep, on a clock (see `agentrest`).
+    ///
+    /// Every hosted pane is given a memory group of its own on its first turn,
+    /// so its header can say what it costs. Then each idle agent is looked at:
+    /// one untouched and quiet past the rest threshold, with nothing else
+    /// running under it, is frozen and its memory pushed out; one that has
+    /// rested past the sleep threshold is ended and its conversation kept.
+    /// The window only gathers and applies; everything that reads `/proc`,
+    /// talks to systemd or waits on a process runs on the background executor.
+    fn rest_idle_agents(cx: &mut Context<Self>) {
+        if !agentrest::enabled_by_env() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let session = crate::instance::key().to_owned();
+            let mut first = true;
+            loop {
+                let wait = if first { 3 } else { REST_SWEEP_SECS };
+                cx.background_executor()
+                    .timer(Duration::from_secs(wait))
+                    .await;
+                let looked = Instant::now();
+                let gathered = this.update(cx, |ws: &mut Workspace, cx| {
+                    if first {
+                        ws.restore_rest_store(&session, cx);
+                    }
+                    ws.rest_jobs(cx)
+                });
+                first = false;
+                let Ok((jobs, live)) = gathered else {
+                    break;
+                };
+                let key = session.clone();
+                let outcomes = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let outcomes: Vec<agentrest_io::Outcome> =
+                            jobs.into_iter().map(agentrest_io::run).collect();
+                        // A frozen scope no live pane of this window owns holds
+                        // a hangup it can never receive: thaw it so its
+                        // processes can end. Only this window freezes, and only
+                        // its own live panes may stay frozen.
+                        for orphan in panegroup::orphans(&key, &live) {
+                            if panegroup::frozen(&orphan) == Some(true) {
+                                panegroup::thaw_dir(&orphan.dir);
+                            }
+                        }
+                        outcomes
+                    })
+                    .await;
+                let applied = this.update(cx, |ws: &mut Workspace, cx| {
+                    ws.apply_rest(&session, looked, outcomes, cx)
+                });
+                if applied.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Every pane view in every tab.
+    fn every_view(&self) -> Vec<Entity<TerminalView>> {
+        let mut out = Vec::new();
+        for tab in &self.tabs {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            out.extend(leaves.into_iter().cloned());
+        }
+        out
+    }
+
+    /// One job per hosted pane, with what only the window knows filled in.
+    fn rest_jobs(&self, cx: &App) -> (Vec<agentrest_io::Job>, Vec<(u64, i32)>) {
+        use agentrest::{Agent, Dormancy};
+        use agentrest_io::Stage;
+        let prefs = &self.agents_prefs;
+        let thresholds = prefs.thresholds();
+        let now = Instant::now();
+        let mut jobs = Vec::new();
+        let mut live = Vec::new();
+        for e in self.every_view() {
+            let v = e.read(cx);
+            let (Some(pane), Some(shell)) = (v.pane_id(), v.shell_pid()) else {
+                continue;
+            };
+            let shell = shell as i32;
+            live.push((pane, shell));
+            let agent = match v.mode {
+                pane::PaneMode::Claude => Some(Agent::Claude),
+                pane::PaneMode::Codex => Some(Agent::Codex),
+                _ => None,
+            };
+            let stage = match &v.rest.dormancy {
+                Dormancy::Awake | Dormancy::Resting { .. } if v.rest.sleep_now => Stage::SleepNow,
+                Dormancy::Awake => Stage::Awake,
+                Dormancy::Resting { since } => Stage::Resting {
+                    rested: now.saturating_duration_since(*since),
+                },
+                Dormancy::Asleep(_) => Stage::Asleep,
+            };
+            let screen_at_prompt = match v.agent_status().state {
+                hud::AgentState::Idle | hud::AgentState::Finished => Some(true),
+                hud::AgentState::Working | hud::AgentState::Blocked | hud::AgentState::Error => {
+                    Some(false)
+                }
+                _ => None,
+            };
+            let look = agentrest::Look {
+                enabled: prefs.rest_on(),
+                agent,
+                focused: v.focused_last_frame(),
+                keep_awake: v.rest.keep_awake,
+                since_touch: Some(now.saturating_duration_since(v.rest.last_touch)),
+                since_output: Some(now.saturating_duration_since(v.rest.last_output)),
+                screen_at_prompt,
+                ..Default::default()
+            };
+            jobs.push(agentrest_io::Job {
+                pane,
+                shell,
+                session: crate::instance::key().to_owned(),
+                gate: v.rest.gate.clone(),
+                group: v.rest.group.clone(),
+                agent,
+                stage,
+                look,
+                cpu_prev: v.rest.cpu_prev,
+                thresholds,
+                rest_on: prefs.rest_on(),
+                sleep_on: prefs.sleep_on(),
+                epoch: v.rest.gate.writes(),
+            });
+        }
+        (jobs, live)
+    }
+
+    /// Carry out what the background half found, pane by pane.
+    fn apply_rest(
+        &mut self,
+        session: &str,
+        looked: Instant,
+        outcomes: Vec<agentrest_io::Outcome>,
+        cx: &mut Context<Self>,
+    ) {
+        use agentrest::Dormancy;
+        use agentrest_io::Act;
+        let now = Instant::now();
+        let views = self.every_view();
+        let mut census = RestCensus::default();
+        let mut reasons: std::collections::BTreeMap<agentrest::RefusalClass, u32> =
+            Default::default();
+        for o in outcomes {
+            let Some(e) = views.iter().find(|e| e.read(cx).pane_id() == Some(o.pane)) else {
+                continue;
+            };
+            e.update(cx, |v, cx| {
+                match &o.group {
+                    Ok(g) => {
+                        v.rest.group = Some(g.clone());
+                        v.rest.group_error = None;
+                    }
+                    Err(err) => v.rest.group_error = Some(err.clone()),
+                }
+                v.rest.usage = o.usage;
+                if o.cpu.is_some() {
+                    v.rest.cpu_prev = o.cpu;
+                }
+                match &o.act {
+                    Act::Rested { before } => {
+                        // Touched while the freeze was on its way: undo it now
+                        // rather than at the next keystroke.
+                        if v.rest.last_touch > looked || v.rest.dormancy != Dormancy::Awake {
+                            v.rest.gate.release();
+                        } else {
+                            v.rest.dormancy = Dormancy::Resting { since: now };
+                            v.rest.rest_from = *before;
+                        }
+                    }
+                    Act::FoundResting => {
+                        if v.rest.dormancy == Dormancy::Awake {
+                            v.rest.dormancy = Dormancy::Resting { since: now };
+                        }
+                    }
+                    Act::Woke => {
+                        if v.rest.dormancy.is_resting() {
+                            v.rest.dormancy = Dormancy::Awake;
+                        }
+                    }
+                    Act::Slept(asleep) => {
+                        v.rest.gate.set_blocked(true);
+                        v.rest.dormancy = Dormancy::Asleep(asleep.clone());
+                    }
+                    Act::Nothing => {}
+                }
+                v.rest.refusal = o.refusal.clone();
+                // A request is answered once, slept or refused, never retried.
+                v.rest.sleep_now = false;
+                cx.notify();
+            });
+            let v = e.read(cx);
+            match &v.rest.dormancy {
+                Dormancy::Resting { .. } => {
+                    census.resting += 1;
+                    census.given_back += v.rest.given_back().unwrap_or(0);
+                }
+                Dormancy::Asleep(_) => census.asleep += 1,
+                Dormancy::Awake => {}
+            }
+            if v.counts_as_agent() {
+                match v.rest.usage.resident {
+                    Some(r) => census.held += r + v.rest.usage.swapped.unwrap_or(0),
+                    None => census.unmeasured += 1,
+                }
+            }
+            if let Some(class) = v.rest.refusal.as_ref().and_then(|r| r.class()) {
+                *reasons.entry(class).or_default() += 1;
+            }
+        }
+        census.refusals = reasons.into_iter().collect();
+        self.rest_census = census;
+        let store = self.rest_store(cx);
+        if store != self.rest_store_saved {
+            agentrest_io::save_store(session, &store);
+            self.rest_store_saved = store;
+        }
+        cx.notify();
+    }
+
+    /// What must outlive this window, read off the panes.
+    fn rest_store(&self, cx: &App) -> agentrest_io::Store {
+        let mut store = agentrest_io::Store::default();
+        for e in self.every_view() {
+            let v = e.read(cx);
+            let Some(pane) = v.pane_id() else { continue };
+            if let Some(asleep) = v.rest.dormancy.asleep() {
+                store.asleep.insert(pane.to_string(), asleep.clone());
+            }
+            if v.rest.keep_awake {
+                store.keep_awake.insert(pane);
+            }
+        }
+        store
+    }
+
+    /// A new window takes up the sleepers and the pins the last one left.
+    /// A record whose pane is running an agent again is dropped: somebody woke
+    /// it another way, and the record would now be wrong.
+    fn restore_rest_store(&mut self, session: &str, cx: &mut Context<Self>) {
+        let store = agentrest_io::load_store(session);
+        for e in self.every_view() {
+            e.update(cx, |v, cx| {
+                let Some(pane) = v.pane_id() else { return };
+                v.rest.keep_awake = store.keep_awake.contains(&pane);
+                if let Some(asleep) = store.asleep.get(&pane.to_string()) {
+                    if !v.mode.is_agent() {
+                        v.rest.gate.set_blocked(true);
+                        v.rest.dormancy = agentrest::Dormancy::Asleep(asleep.clone());
+                        cx.notify();
+                    }
+                }
+            });
+        }
+        self.rest_store_saved = store;
+    }
+
+    /// A key or a click on an asleep pane: bring its agent back, in a fresh
+    /// pane in the same place, through the same spawn-time path a restore uses.
+    /// The window never types into the shell that held the sleeper.
+    fn wake_sleeper(
+        &mut self,
+        old: &Entity<TerminalView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ctx) = self.attach.clone() else {
+            return;
+        };
+        let (asleep, cwd, keep_awake) = {
+            let v = old.read(cx);
+            let Some(asleep) = v.rest.dormancy.asleep().cloned() else {
+                return;
+            };
+            (asleep, v.runtime().cwd, v.rest.keep_awake)
+        };
+        // Never two processes on one conversation.
+        if let Some(pid) = agentrest_io::conversation_holder(&asleep.session) {
+            eprintln!(
+                "terminal-delight: not waking: conversation {} is open in process {pid}",
+                asleep.session
+            );
+            old.update(cx, |v, cx| {
+                v.rest.refusal = Some(agentrest::Refusal::AgentBusy(Some("open elsewhere".into())));
+                cx.notify();
+            });
+            return;
+        }
+        let Some(file) = asleep.wake_file.to_str() else {
+            return;
+        };
+        let restore = session::PaneRestore {
+            cwd,
+            resume: Some(format!("bash {}", agentrest::shell_quote(file))),
+            ..Default::default()
+        };
+        let carried = old.read(cx).presentation();
+        let fresh = match make_pane_host_spawned(restore, &ctx, window, cx) {
+            Ok(fresh) => fresh,
+            Err(err) => {
+                eprintln!("terminal-delight: could not wake the agent: {err}");
+                return;
+            }
+        };
+        fresh.update(cx, |v, cx| {
+            v.adopt_presentation(carried, cx);
+            v.rest.keep_awake = keep_awake;
+        });
+        let old_id = old.entity_id();
+        for tab in &mut self.tabs {
+            if tab.root.replace_leaf(
+                &|e: &Entity<TerminalView>| e.entity_id() == old_id,
+                fresh.clone(),
+            ) {
+                break;
+            }
+        }
+        // The shell that held the sleeper is no longer shown; end it.
+        self.hangup(std::slice::from_ref(old), cx);
+        window.focus(&fresh.focus_handle(cx), cx);
+        self.save(cx);
         cx.notify();
     }
 
@@ -17188,6 +17591,399 @@ impl Workspace {
         )
     }
 
+    /// A threshold as the Agents page writes it: `10 min`, `2 h`, `1 h 30 min`.
+    fn agents_minutes_label(&self, minutes: u32) -> String {
+        let ui = self.lang.strings().ui;
+        match (minutes / 60, minutes % 60) {
+            (0, m) => format!("{m} {}", ui.ag_unit_min),
+            (h, 0) => format!("{h} {}", ui.ag_unit_h),
+            (h, m) => format!("{h} {} {m} {}", ui.ag_unit_h, ui.ag_unit_min),
+        }
+    }
+
+    /// One threshold slider: smooth to drag, and a press lands on the nearest
+    /// of the thresholds through a wide target (Parker, 2026-10-26: *"CLICKING
+    /// will hit the threshold value and SLIDING allows specific adjustments"*).
+    fn agents_slider(
+        &self,
+        which: u8,
+        label: &str,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let (scale, detents) = Self::agents_scale(which);
+        let minutes = if which == 0 {
+            self.agents_prefs.rest_after_min()
+        } else {
+            self.agents_prefs.sleep_after_rest_min()
+        };
+        let frac = scale.position_of(f64::from(minutes)) as f32;
+        let store = self.agents_tracks[usize::from(which)].clone();
+        let id = if which == 0 {
+            "agents-rest-track"
+        } else {
+            "agents-sleep-track"
+        };
+        let track = div()
+            .id(id)
+            .w(px(250.))
+            .h(px(14.))
+            .relative()
+            .cursor_pointer()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.agents_drag = Some(which);
+                    if let Some(pos) = ws.agents_track_pos(which, ev.position.x) {
+                        let (scale, detents) = Self::agents_scale(which);
+                        let landed = agentrest::click(detents, scale.minutes_at(pos));
+                        ws.set_agents_minutes(which, landed);
+                    }
+                    cx.notify();
+                }),
+            )
+            .child(
+                canvas(
+                    move |bounds, _, _| {
+                        *store.lock().unwrap() = Some(bounds);
+                    },
+                    |_, _, _, _| {},
+                )
+                .size_full(),
+            )
+            .child(sk.scrubber(frac));
+        let ticks = detents
+            .iter()
+            .fold(div().relative().w(px(250.)).h(px(12.)), |row, d| {
+                let x = scale.position_of(f64::from(d.minutes)) as f32;
+                row.child(
+                    div()
+                        .absolute()
+                        .left(px(x * 250. - 10.))
+                        .w(px(20.))
+                        .flex()
+                        .justify_center()
+                        .text_size(sk.text_px(7.5))
+                        .text_color(if d.minutes == minutes {
+                            th.accent
+                        } else {
+                            th.text.alpha(0.45)
+                        })
+                        .child(SharedString::from(self.agents_minutes_label(d.minutes))),
+                )
+            });
+        div()
+            .flex()
+            .flex_row()
+            .items_start()
+            .gap_3()
+            .px_2()
+            .child(
+                div()
+                    .w(px(118.))
+                    .flex()
+                    .flex_col()
+                    .child(SharedString::from(label.to_string()))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.accent)
+                            .child(SharedString::from(self.agents_minutes_label(minutes))),
+                    ),
+            )
+            .child(div().flex().flex_col().gap_0p5().child(track).child(ticks))
+    }
+
+    /// CONFIG › Agents: every agent setting in one place. The new ones — rest,
+    /// sleep and their thresholds — live here; the ones another page already
+    /// owns are drawn by that page's own function (launch defaults, the MCP
+    /// switches, agent colours) or opened from here (notices), so no setting
+    /// has two implementations.
+    fn render_agents_overlay(
+        &self,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        if !self.agents_menu {
+            return None;
+        }
+        let sk = skin::for_theme(cx, th, th.grade.scale);
+        let ui = self.lang.strings().ui;
+        let p = self.agents_prefs.clone();
+        let sk1 = skin::for_theme(cx, th, 1.);
+        let switch_row = |glyph: &str, name: &str, blurb: &str, on: bool, id: &'static str| {
+            div()
+                .id(SharedString::from(id))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_2()
+                .py_2()
+                .rounded(sk.radius())
+                .border_1()
+                .border_color(if on {
+                    th.accent.alpha(0.55)
+                } else {
+                    th.text.alpha(0.12)
+                })
+                .when(sk.m.frost > 0., |d| sk.action(d, on))
+                .child(
+                    div()
+                        .text_size(sk.text_px(15.))
+                        .child(SharedString::from(glyph.to_string())),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(if on { th.text } else { th.text.alpha(0.75) })
+                                .child(SharedString::from(name.to_string())),
+                        )
+                        .child(
+                            div()
+                                .text_size(sk.text_px(8.5))
+                                .text_color(th.text.alpha(0.6))
+                                .child(SharedString::from(blurb.to_string())),
+                        ),
+                )
+                .child(slider_switch(on, th, &sk1))
+        };
+        let section = |title: &str| {
+            div()
+                .pt_2()
+                .text_size(sk.text_px(9.))
+                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                .text_color(th.complement)
+                .child(SharedString::from(title.to_string()))
+        };
+        let c = &self.rest_census;
+        let mut now = lang::fill(
+            ui.ag_now,
+            &[
+                ("resting", &c.resting.to_string()),
+                ("asleep", &c.asleep.to_string()),
+                ("back", &agentrest::short_bytes(c.given_back)),
+                ("held", &agentrest::short_bytes(c.held)),
+            ],
+        );
+        if c.unmeasured > 0 {
+            now = format!(
+                "{now} \u{b7} {}",
+                lang::fill(ui.ag_unmeasured, &[("n", &c.unmeasured.to_string())])
+            );
+        }
+        let why = c
+            .refusals
+            .iter()
+            .map(|(class, n)| {
+                let word = match class {
+                    agentrest::RefusalClass::Busy => ui.ag_why_busy,
+                    agentrest::RefusalClass::Touched => ui.ag_why_touched,
+                    agentrest::RefusalClass::Running => ui.ag_why_running,
+                    agentrest::RefusalClass::KeptAwake => ui.ag_why_kept,
+                    agentrest::RefusalClass::Unknown => ui.ag_why_unknown,
+                    agentrest::RefusalClass::Off => ui.ag_why_off,
+                };
+                format!("{word} {n}")
+            })
+            .collect::<Vec<_>>()
+            .join(" \u{b7} ");
+        let [m0, m1, m2, m3, m4] = self.mcp_switch_buttons(&sk, th, "agents", cx);
+        let local = launcher::LocalAdapter::config_path();
+        let panel = div()
+            .id("agents-panel")
+            .w(px(520.))
+            .max_h(px(self.tray_card_h()))
+            .overflow_x_hidden()
+            .overflow_y_scroll()
+            .p_3()
+            .rounded(sk.radius_lg())
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
+            .bg(darken(th.surface, 0.6))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .text_size(sk.text_px(10.))
+            .text_color(th.text)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            )
+            .map(|d| sk.chrome(sk.finish(d)))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .text_size(sk.text_px(13.))
+                    .child(div().text_size(sk.text_px(18.)).child("\u{1f916}"))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.complement)
+                            .child(ui.ag_hdr),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(sk.text_px(8.5))
+                    .text_color(th.accent.alpha(0.85))
+                    .child(ui.ag_blurb),
+            )
+            .child(section(ui.ag_rest_hdr))
+            .child(
+                switch_row(
+                    "\u{1f319}",
+                    ui.ag_rest_name,
+                    ui.ag_rest_blurb,
+                    p.rest_on(),
+                    "agents-rest",
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.agents_prefs.rest = Some(!ws.agents_prefs.rest_on());
+                        agentcfg::save(&ws.agents_prefs);
+                        cx.notify();
+                    }),
+                ),
+            )
+            .child(self.agents_slider(0, ui.ag_rest_after, th, &sk, cx))
+            .child(
+                switch_row(
+                    "\u{1f4a4}",
+                    ui.ag_sleep_name,
+                    ui.ag_sleep_blurb,
+                    p.sleep_on(),
+                    "agents-sleep",
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        let on = !ws.agents_prefs.sleep_on();
+                        ws.agents_prefs.sleep = Some(on);
+                        // Sleep needs rest: switching sleep on switches rest on.
+                        if on {
+                            ws.agents_prefs.rest = Some(true);
+                        }
+                        agentcfg::save(&ws.agents_prefs);
+                        cx.notify();
+                    }),
+                ),
+            )
+            .child(self.agents_slider(1, ui.ag_sleep_after, th, &sk, cx))
+            .child(
+                div()
+                    .px_2()
+                    .text_size(sk.text_px(8.5))
+                    .text_color(th.text.alpha(0.7))
+                    .child(SharedString::from(now)),
+            )
+            .when(!why.is_empty(), |d| {
+                d.child(
+                    div()
+                        .px_2()
+                        .text_size(sk.text_px(8.))
+                        .text_color(th.text.alpha(0.5))
+                        .child(SharedString::from(format!("{} {why}", ui.ag_not_resting))),
+                )
+            })
+            .child(self.render_launch_defaults(th, cx))
+            .child(section(ui.ag_more_hdr))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .child(SharedString::from(ui.ag_mcp.to_string()))
+                    .child(m0)
+                    .child(m1)
+                    .child(m2)
+                    .child(m3)
+                    .child(m4),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .child(SharedString::from(ui.ag_tint.to_string()))
+                    .child(self.terminal_state_toggle(&sk, cx)),
+            )
+            .child(
+                div()
+                    .id("agents-notices")
+                    .mx_2()
+                    .px_2()
+                    .py_1()
+                    .rounded(sk.radius())
+                    .border_1()
+                    .border_color(th.text.alpha(0.18))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(th.accent.alpha(0.14)))
+                    .child(SharedString::from(format!("\u{1f514} {}", ui.ag_notices)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.agents_menu = false;
+                            ws.notif = notifpref::load();
+                            ws.notif_menu = true;
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .px_2()
+                    .text_size(sk.text_px(8.))
+                    .text_color(th.text.alpha(0.5))
+                    .child(SharedString::from(lang::fill(
+                        ui.ag_local,
+                        &[("path", &local.display().to_string())],
+                    ))),
+            );
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .bg(th.bg.alpha(0.70))
+                .flex()
+                .items_center()
+                .justify_center()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        if ws.agents_drag.take().is_some() {
+                            agentcfg::save(&ws.agents_prefs);
+                        }
+                        ws.agents_menu = false;
+                        cx.notify();
+                    }),
+                )
+                .child(panel),
+        )
+    }
+
     fn render_lang_picker(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
         let sk = skin::for_theme(cx, th, th.grade.scale);
         let lp = self.lang_picker.as_ref()?;
@@ -18774,6 +19570,38 @@ impl Workspace {
     const CARD_MIN: f32 = 0.7;
     const CARD_MAX: f32 = 1.6;
     /// Window-x → 0..1 fraction along the dashboard card-size slider track.
+    /// The track and the click thresholds of an Agents-page slider: 0 rest,
+    /// 1 sleep.
+    fn agents_scale(which: u8) -> (agentrest::Scale, &'static [agentrest::Detent]) {
+        if which == 0 {
+            (agentrest::REST_SCALE, agentrest::REST_DETENTS)
+        } else {
+            (agentrest::SLEEP_SCALE, agentrest::SLEEP_DETENTS)
+        }
+    }
+
+    /// Where along an Agents-page track `x` falls, `0..=1`.
+    fn agents_track_pos(&self, which: u8, x: Pixels) -> Option<f64> {
+        let store = self.agents_tracks.get(usize::from(which))?;
+        let b = (*store.lock().unwrap())?;
+        let w = f32::from(b.size.width);
+        if w <= 0.0 {
+            return None;
+        }
+        Some(f64::from(
+            ((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0),
+        ))
+    }
+
+    /// Set a threshold. Written to `agents.toml` when the press or drag ends.
+    fn set_agents_minutes(&mut self, which: u8, minutes: u32) {
+        if which == 0 {
+            self.agents_prefs.rest_after_min = Some(minutes);
+        } else {
+            self.agents_prefs.sleep_after_rest_min = Some(minutes);
+        }
+    }
+
     fn card_scale_from_pos(&self, x: Pixels) -> Option<f32> {
         let b = (*self.card_scale_bounds.lock().unwrap())?;
         let w = f32::from(b.size.width);
@@ -19295,6 +20123,7 @@ impl Workspace {
             || self.dead_menu
             || self.plugins_menu
             || self.notif_menu
+            || self.agents_menu
             || self.bug_menu
             || self.savings_menu
     }
@@ -19420,6 +20249,10 @@ impl Workspace {
         }
         if self.notif_menu {
             self.notif_menu = false;
+            return true;
+        }
+        if self.agents_menu {
+            self.agents_menu = false;
             return true;
         }
         if self.bug_menu {
@@ -20406,9 +21239,13 @@ impl Workspace {
                 || self.tab_light_drag
                 || self.focus_zoom_drag
                 || self.card_scale_drag
+                || self.agents_drag.is_some()
                 || self.focus_sel_drag
                 || self.drag_split.is_some())
         {
+            if self.agents_drag.take().is_some() {
+                agentcfg::save(&self.agents_prefs);
+            }
             self.scrubbing = false;
             self.wheel_drag = None;
             self.light_drag = false;
@@ -20473,6 +21310,14 @@ impl Workspace {
         if self.card_scale_drag && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(frac) = self.card_scale_from_pos(ev.position.x) {
                 self.set_card_scale(frac, cx);
+            }
+        }
+        // The Agents page's thresholds: a drag is smooth, to the minute.
+        if let (Some(which), Some(MouseButton::Left)) = (self.agents_drag, ev.pressed_button) {
+            if let Some(pos) = self.agents_track_pos(which, ev.position.x) {
+                let (scale, _) = Self::agents_scale(which);
+                self.set_agents_minutes(which, agentrest::drag(&scale, pos));
+                cx.notify();
             }
         }
         // Extend the FOCUS reader selection as the cursor drags — the head moves to
@@ -20595,6 +21440,11 @@ impl Workspace {
             return;
         }
         if std::mem::take(&mut self.card_scale_drag) {
+            cx.notify();
+            return;
+        }
+        if self.agents_drag.take().is_some() {
+            agentcfg::save(&self.agents_prefs);
             cx.notify();
             return;
         }
@@ -23267,7 +24117,9 @@ impl Workspace {
             tab.root.leaves(&mut leaves);
             for e in leaves {
                 let p = e.read(cx);
-                if !p.mode.is_agent() {
+                // An asleep pane's foreground is a shell, and it is still an
+                // agent: counting it by mode alone would make it vanish.
+                if !p.counts_as_agent() {
                     continue;
                 }
                 match p.agent_status().state {
@@ -23276,6 +24128,8 @@ impl Workspace {
                     hud::AgentState::Error => t.errored += 1,
                     hud::AgentState::Finished => t.finished += 1,
                     hud::AgentState::Idle => t.idle += 1,
+                    hud::AgentState::Resting => t.resting += 1,
+                    hud::AgentState::Asleep => t.asleep += 1,
                     hud::AgentState::Unknown => t.unknown += 1,
                 }
             }
@@ -24049,12 +24903,18 @@ impl Workspace {
         // as blank space, which reads as a broken feature rather than as a
         // missing character. The pause is `U+2016` for the same reason —
         // `U+23F8`, which `hud::AgentState::badge` returns, is absent too.
-        let cells: [(hud::AgentState, u32, &str); 6] = [
+        //
+        // Rest and sleep are Nerd Font glyphs for the same reason: the moon
+        // (`U+F0594`) and the zzz (`U+F04B2`) are in the font TD resolves, and
+        // the plain `☾` is only in a symbols font the bar may not reach.
+        let cells: [(hud::AgentState, u32, &str); 8] = [
             (hud::AgentState::Working, tally.working, "\u{25b6}"),
             (hud::AgentState::Blocked, tally.blocked, "\u{2016}"),
             (hud::AgentState::Error, tally.errored, "\u{2715}"),
             (hud::AgentState::Finished, tally.finished, "\u{2713}"),
             (hud::AgentState::Idle, tally.idle, "\u{25cb}"),
+            (hud::AgentState::Resting, tally.resting, "\u{f0594}"),
+            (hud::AgentState::Asleep, tally.asleep, "\u{f04b2}"),
             // The bar is on screen constantly, which makes it the one place a
             // parser gap must not be invisible.
             (hud::AgentState::Unknown, tally.unknown, "?"),
@@ -24127,6 +24987,14 @@ impl Workspace {
                     })
                     .text_size(sk.text_px(10.0 * s))
                     .text_color(col)
+                    .when_some(
+                        glyph
+                            .chars()
+                            .next()
+                            .filter(|c| ('\u{f0000}'..='\u{fffff}').contains(c))
+                            .and_then(|c| pane::chrome_glyph_font(c, th)),
+                        |d, family| d.font_family(family),
+                    )
                     .child(glyph.to_string())
                     .child(
                         div()
@@ -27552,6 +28420,10 @@ fn agent_state_glow(th: &theme::Theme, idle: Hsla, state: hud::AgentState) -> Hs
         hud::AgentState::Error => hsla(0., 0.75, 0.60, 1.),
         hud::AgentState::Finished => hsla(0.34, 0.85, 0.58, 1.),
         hud::AgentState::Idle => idle,
+        // Rest and sleep are cool and dim: the window put them there, and
+        // neither wants a person.
+        hud::AgentState::Resting => hsla(0.62, 0.55, 0.70, 1.),
+        hud::AgentState::Asleep => hsla(0.72, 0.35, 0.66, 1.),
         // An unreadable screen is drawn as quiet, never as activity.
         hud::AgentState::Unknown => idle,
     }
@@ -28501,6 +29373,7 @@ impl Render for Workspace {
                 || self.art_rail
                 || self.plugins_menu
                 || self.notif_menu
+                || self.agents_menu
                 || self.bug_menu
                 || self.savings_menu
                 || self.dead_menu
@@ -31371,6 +32244,7 @@ impl Render for Workspace {
         let agent_launcher_overlay = self.render_agent_launcher(&th, cx);
         let plugins_overlay = self.render_plugins_overlay(&th, cx);
         let notif_overlay = self.render_notif_overlay(&th, cx);
+        let agents_overlay = self.render_agents_overlay(&th, cx);
         let bug_overlay = self.render_bug_overlay(&th, cx);
         // The marquee, while it lives. It ages out on its own — nothing
         // clears it — and it keeps asking for frames so the bulbs chase and
@@ -31455,6 +32329,7 @@ impl Render for Workspace {
             let mut visible_agent_total = 0u32;
             let (mut v_work, mut v_block, mut v_err, mut v_done, mut v_idle, mut v_unknown) =
                 (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
+            let (mut v_rest, mut v_asleep) = (0u32, 0u32);
             let mut visible_program_total = 0u32;
             let mut programs_present: Vec<(String, Hsla, u32)> = Vec::new();
             // (group key, display name, band colour, pane count) in first-seen order.
@@ -31487,7 +32362,7 @@ impl Render for Workspace {
                     let program_matches = program_filt
                         .as_deref()
                         .is_none_or(|program| program == mode_lbl.as_str());
-                    if p.mode.is_agent() {
+                    if p.counts_as_agent() {
                         let st = p.agent_status();
                         turn_tok_total += st.turn_tokens.unwrap_or(0);
                         sess_tok_total += p.session_tokens();
@@ -31499,6 +32374,8 @@ impl Render for Workspace {
                                 hud::AgentState::Error => v_err += 1,
                                 hud::AgentState::Finished => v_done += 1,
                                 hud::AgentState::Idle => v_idle += 1,
+                                hud::AgentState::Resting => v_rest += 1,
+                                hud::AgentState::Asleep => v_asleep += 1,
                                 hud::AgentState::Unknown => v_unknown += 1,
                             }
                         }
@@ -31774,6 +32651,8 @@ impl Render for Workspace {
                 (hud::AgentState::Error, v_err),
                 (hud::AgentState::Finished, v_done),
                 (hud::AgentState::Idle, v_idle),
+                (hud::AgentState::Resting, v_rest),
+                (hud::AgentState::Asleep, v_asleep),
                 // Unknown gets its own chip rather than being folded into idle:
                 // a filter you cannot select is a state you cannot inspect, and
                 // this is the one people will want to inspect first.
@@ -33101,6 +33980,11 @@ impl Render for Workspace {
                             live.insert(id);
                         }
                     }
+                    // A sleeping agent is not dead: offering it for resurrection
+                    // would put a second process on its conversation when it wakes.
+                    if let Some(asleep) = p.rest.dormancy.asleep() {
+                        live.insert(asleep.session.clone());
+                    }
                 }
             }
             let mut dead = recover::scan_dead(&live, &home_path, 80);
@@ -34039,6 +34923,18 @@ impl Render for Workspace {
                             ws.more_menu = false;
                             ws.notif = notifpref::load();
                             ws.notif_menu = true;
+                            cx.notify();
+                        }),
+                    ),
+                )
+                .child(
+                    entry("\u{1f916}", s.ui.cfg_agents, "more-agents").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.more_menu = false;
+                            ws.agents_prefs = agentcfg::load();
+                            ws.agents_menu = true;
                             cx.notify();
                         }),
                     ),
@@ -35884,6 +36780,7 @@ impl Render for Workspace {
                     .children(dead_overlay)
                     .children(plugins_overlay)
                     .children(notif_overlay)
+                    .children(agents_overlay)
                     .children(bug_overlay)
                     .children(marquee)
                     .children(savings_overlay)
@@ -39272,6 +40169,37 @@ mod tests {
     /// two, and the survivor is the one carrying the numbers. It lived in the
     /// tree's bottom slot until Parker put it where the glyph had been:
     /// *"Agents counter is in the top right"*.
+    /// Every state an agent can be in has a cell in the top-right counter.
+    /// The match makes a new variant a compile error here; the scan makes a
+    /// missing cell a failure.
+    #[test]
+    fn the_counter_has_a_cell_for_every_agent_state() {
+        use hud::AgentState::*;
+        let all = [
+            Working, Blocked, Error, Finished, Idle, Resting, Asleep, Unknown,
+        ];
+        for st in all {
+            match st {
+                Working | Blocked | Error | Finished | Idle | Resting | Asleep | Unknown => {}
+            }
+        }
+        let src = shipped_src();
+        let at = src.find("fn render_agent_counter(").expect("the counter");
+        let cells = &src[at..at + src[at..].find("let acc = th.accent;").expect("cells end")];
+        for st in all {
+            assert!(
+                cells.contains(&format!("(hud::AgentState::{st:?},")),
+                "the counter has no cell for {st:?}"
+            );
+        }
+        let tally = src.find("fn slot_tally(").expect("the tally");
+        let body = &src[tally..tally + src[tally..].find("\n    }\n").expect("its end")];
+        assert!(
+            body.contains("p.counts_as_agent()"),
+            "an asleep pane runs a shell, so counting by mode alone loses it"
+        );
+    }
+
     #[test]
     fn the_counter_opens_the_war_room() {
         let src = shipped_src();

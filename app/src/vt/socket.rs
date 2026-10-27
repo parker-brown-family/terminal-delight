@@ -26,6 +26,10 @@ use super::WindowSize;
 pub struct SocketSource {
     stream: UnixStream,
     announce_resize: Box<dyn FnMut(WindowSize) + Send>,
+    /// A resting pane's freezer hand: every write passes it first, so no byte
+    /// can reach a frozen agent. A resize deliberately does not — re-tiling a
+    /// tab is not a person touching the panes in it.
+    gate: Option<Arc<crate::panegroup::Gate>>,
 }
 
 impl SocketSource {
@@ -51,7 +55,14 @@ impl SocketSource {
         Ok(Self {
             stream,
             announce_resize: Box::new(announce_resize),
+            gate: None,
         })
+    }
+
+    /// Thaw through `gate` before every write.
+    pub fn with_gate(mut self, gate: Option<Arc<crate::panegroup::Gate>>) -> Self {
+        self.gate = gate;
+        self
     }
 }
 
@@ -65,6 +76,15 @@ impl Source for SocketSource {
     }
 
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if let Some(gate) = &self.gate {
+            // An asleep pane's shell hears nothing: the bytes are dropped here,
+            // where every path to the terminal meets, and reported as written so
+            // the loop does not retry them.
+            if gate.blocks() {
+                return Ok(buf.len());
+            }
+            gate.on_input();
+        }
         self.stream.write(buf)
     }
 
@@ -88,6 +108,49 @@ pub struct CountingTap(pub Arc<AtomicU64>);
 impl Tap for CountingTap {
     fn tap(&mut self, bytes: &[u8]) {
         self.0.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+
+    #[test]
+    fn every_write_passes_the_gate_and_a_resize_does_not() {
+        let (ours, _theirs) = UnixStream::pair().unwrap();
+        let gate: Arc<crate::panegroup::Gate> = Default::default();
+        let mut source = SocketSource::with_resize(ours, |_| {})
+            .unwrap()
+            .with_gate(Some(gate.clone()));
+        source.write(b"a").unwrap();
+        source.write(b"bc").unwrap();
+        assert_eq!(gate.writes(), 2);
+        source
+            .resize(WindowSize {
+                num_lines: 10,
+                num_cols: 10,
+                cell_width: 8,
+                cell_height: 16,
+            })
+            .unwrap();
+        assert_eq!(gate.writes(), 2, "re-tiling a tab is not a touch");
+    }
+
+    #[test]
+    fn an_asleep_panes_stream_carries_nothing() {
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
+        let gate: Arc<crate::panegroup::Gate> = Default::default();
+        let mut source = SocketSource::with_resize(ours, |_| {})
+            .unwrap()
+            .with_gate(Some(gate.clone()));
+        gate.set_blocked(true);
+        assert_eq!(source.write(b"echo hi\r").unwrap(), 8, "reported written");
+        gate.set_blocked(false);
+        source.write(b"z").unwrap();
+        theirs.set_nonblocking(true).unwrap();
+        let mut buf = [0u8; 32];
+        let n = theirs.read(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"z", "only the awake write arrived");
     }
 }
 

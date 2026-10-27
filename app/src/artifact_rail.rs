@@ -150,6 +150,8 @@ fn state_glyph(state: hud::AgentState) -> &'static str {
         hud::AgentState::Error => "\u{2715}",
         hud::AgentState::Finished => "\u{2713}",
         hud::AgentState::Idle => "\u{25cb}",
+        hud::AgentState::Resting => "\u{263e}",
+        hud::AgentState::Asleep => "z",
         hud::AgentState::Unknown => "?",
     }
 }

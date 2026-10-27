@@ -168,6 +168,7 @@ impl Pane {
             term::AttachStreams {
                 bytes: client,
                 announce_resize: Box::new(move |size| heard.lock().unwrap().push(size)),
+                gate: None,
             },
             Some(4242),
         )

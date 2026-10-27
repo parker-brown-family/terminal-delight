@@ -2281,7 +2281,7 @@ fn first_sentence(text: &str) -> &str {
 ///
 /// The month names and the order of day, month and year are the reader's
 /// language's (`surface_stamp`); the digits are the same everywhere.
-fn stamp_local(ms: u64, l: Lang) -> Option<String> {
+pub(crate) fn stamp_local(ms: u64, l: Lang) -> Option<String> {
     let t = &l.strings().parts;
     let month_names = [
         t.surface_month_jan,
