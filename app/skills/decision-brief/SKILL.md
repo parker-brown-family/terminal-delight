@@ -28,7 +28,8 @@ per turn is noise. One brief per decision is the rate.
 ```
 you build the brief    →  present it on your bench as an artifact
 the person clicks it   →  the brief floats over the bench, inside the window
-they note any element  →  a stamp of CONCUR on a decision is one click
+they submit a comment →  the original HTML is saved immediately
+they stamp CONCUR     →  the same file is saved immediately
 ↪ send to agent        →  the notes map lands in your prompt, not sent
 they press Enter       →  you read the map and act on it
 ```
@@ -68,9 +69,11 @@ a stable anchor. Set `window.NOTES_FILE` to the file's own name.
 > means you hit it.
 
 Leave the `#report-notes` and `#report-concurs` islands in, with their
-`data-format="1"`. Terminal Delight writes notes into them in place, and so does
-the brief's own save button. Never hand-edit those islands when you revise the
-brief.
+`data-format="1"`. Terminal Delight overwrites the original HTML on every comment
+submission, deletion and concurrence. No Save button and no downloaded copy.
+Send to Agent only sends the map. Never hand-edit the islands when revising.
+A standalone browser keeps edits in localStorage; open in Terminal Delight to
+save the original file.
 
 **2 · The budget drives the structure.** Verdict first, then read-first, then the
 figures, then the grill. A reader who stops anywhere has enough to act at that

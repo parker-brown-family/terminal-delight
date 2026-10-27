@@ -1,8 +1,9 @@
 # Notes format fixtures
 
 A decision brief keeps its reader's notes inside its own HTML file, and more than one
-program writes them there: the brief's own `notes.js`, when the reader clicks
-💾 save into file, and Terminal Delight, which edits a brief's notes in place. These
+program serializes them: `notes.js` exports HTML snapshots for tooling, and Terminal
+Delight saves each submitted annotation into the original HTML. There is no Save button
+and no downloaded copy. Browser-only edits live in localStorage. These
 fixtures hold every writer to the same bytes. They change in the same commit as any
 change to `assets/notes.js`, `assets/notes.css` or `reference/notes-markup.html`, and
 Terminal Delight vendors this directory byte for byte, with a `SOURCE` file naming the
@@ -111,8 +112,8 @@ node decision-brief/tests/notes-js.test.mjs
 
 `check.mjs` checks every case four ways: the page's anchors and facts, the writer's
 bytes (and that nothing outside its three regions moved), the written file reopened
-fresh, and the page's own save made through its buttons, whose downloaded islands and
-mirror must equal the writer's. The page's save re-serialises the rest of the document,
+fresh, and the page's HTML snapshot, whose islands and
+mirror must equal the writer's. The snapshot re-serialises the rest of the document,
 so the rest is not compared. `tests/notes-js.test.mjs` drives notes.js through the
 ordinary path and through issues #24 and #25.
 

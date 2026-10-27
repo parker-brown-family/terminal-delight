@@ -11,7 +11,7 @@
  *
  * Three outputs, in the order they matter:
  *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
- *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   2. original HTML — Terminal Delight saves every submitted annotation in place
  *   3. localStorage — live persistence between reloads
  *
  * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
@@ -465,9 +465,10 @@
     }
   }
 
-  /* ---- bake notes into a downloadable copy of this file ----
-     localStorage is invisible to an agent. This is what makes
-     "read my notes in <file>" work. */
+  /* ---- portable HTML snapshot ----
+     Terminal Delight owns writes to the original path. A standalone browser can
+     keep edits in localStorage but cannot silently overwrite the source file.
+     Snapshot consumers receive HTML; this script never downloads a second file. */
 
   /* JSON leaves "<" alone, so a note reading "<\/script>" used to end the island early:
      the rest spilled into the page and the reopened brief showed no notes at all
@@ -494,10 +495,10 @@
     return last;
   }
 
-  function embedNotes() {
+  function snapshotNotes() {
     var rev = new Date().toISOString();
     var doc = document.documentElement.cloneNode(true);
-    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn, .notes-persistence'), function (n) { n.remove(); });
     Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
       n.classList.remove('notable', 'has-note');
     });
@@ -535,15 +536,7 @@
     SYNC.concurs = { rev: rev, seen: union(SYNC.concurs.seen, idsOf('concurs', C)) };
     try { localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
 
-    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = FILE;
-    a.click();
-    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
-
-    var b = document.getElementById('btn-embed');
-    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+    return '<!DOCTYPE html>\n' + doc.outerHTML;
   }
 
   function clearNotes() {
@@ -553,6 +546,18 @@
 
   /* ---- wiring ---- */
   function init() {
+    // Older markup may still carry Save. Native TD also hides old page chrome.
+    var obsoleteSave = document.getElementById('btn-embed');
+    if (obsoleteSave) obsoleteSave.remove();
+    var status = document.createElement('span');
+    status.className = 'notes-persistence';
+    status.textContent = 'Browser storage only · open in Terminal Delight to save the original HTML';
+    var bar = document.getElementById('notebar');
+    if (bar) bar.appendChild(status);
+    // A snapshot is an export for tooling; it neither writes nor downloads a file.
+    document.addEventListener('decision-brief:snapshot', function (e) {
+      if (e.detail) e.detail.html = snapshotNotes();
+    });
     var ta = document.getElementById('note-text');
     if (ta) {
       ta.addEventListener('keydown', function (e) {
@@ -565,7 +570,6 @@
       var a = t.dataset.noteAction;
       if (a === 'add') add();
       else if (a === 'export') exportNotes();
-      else if (a === 'embed') embedNotes();
       else if (a === 'clear') clearNotes();
       else if (a === 'copy') copyExport(t);
     });

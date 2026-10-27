@@ -208,8 +208,6 @@ dialog#d-export { max-width: 780px; }
   <span class="cnt"><b id="note-count">0</b> notes</span>
   <button id="btn-export" class="primary" data-note-action="export"
           title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
-  <button id="btn-embed" data-note-action="embed"
-          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
   <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
 </div>
 
@@ -225,11 +223,11 @@ dialog#d-export { max-width: 780px; }
     <ul id="note-list"></ul>
     <p id="note-none">No notes on this yet.</p>
     <textarea id="note-text"
-      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+      placeholder="Your comment. Submitting saves it into the original HTML in Terminal Delight."></textarea>
     <div class="note-actions">
-      <button class="save" data-note-action="add">Add note</button>
+      <button class="save" data-note-action="add">Submit comment</button>
       <button data-close>Close</button>
-      <span class="hintk">Ctrl+Enter to add</span>
+      <span class="hintk">Ctrl+Enter to submit</span>
     </div>
   </div>
 </dialog>
@@ -257,7 +255,7 @@ dialog#d-export { max-width: 780px; }
   </div>
 </dialog>
 
-<!-- Notes and concurs are baked in here by "save into file". Leave them empty and leave them in,
+<!-- Terminal Delight saves submitted annotations here in the original file. Leave them empty and leave them in,
      with their data-format: it names the format notes.js writes, and other writers check it. -->
 <script type="application/json" id="report-notes" data-format="1" data-rev="2026-09-24T20:05:00.000Z">{
  "verdict-reference-writer": [
@@ -282,7 +280,7 @@ dialog#d-export { max-width: 780px; }
 <script type="application/json" id="report-concurs" data-format="1">{"ask-keep-the-plain-text":"2026-09-01 00:00"}</script>
 
 <script>
-  /* Set before notes.js runs. Used for the storage key and the download filename. */
+  /* Set before notes.js runs. Used for the storage key and the note map header. */
   window.NOTES_FILE = 'brief.html';
 </script>
 <script>
@@ -299,7 +297,7 @@ dialog#d-export { max-width: 780px; }
  *
  * Three outputs, in the order they matter:
  *   1. copy map    — anchored note map, ~1% of the tokens of the whole document
- *   2. save into   — bakes notes into a downloadable copy so an agent can READ them
+ *   2. original HTML — Terminal Delight saves every submitted annotation in place
  *   3. localStorage — live persistence between reloads
  *
  * Why the map exists: pasting a whole annotated report into a prompt costs thousands of
@@ -753,9 +751,10 @@ dialog#d-export { max-width: 780px; }
     }
   }
 
-  /* ---- bake notes into a downloadable copy of this file ----
-     localStorage is invisible to an agent. This is what makes
-     "read my notes in <file>" work. */
+  /* ---- portable HTML snapshot ----
+     Terminal Delight owns writes to the original path. A standalone browser can
+     keep edits in localStorage but cannot silently overwrite the source file.
+     Snapshot consumers receive HTML; this script never downloads a second file. */
 
   /* JSON leaves "<" alone, so a note reading "<\/script>" used to end the island early:
      the rest spilled into the page and the reopened brief showed no notes at all
@@ -782,10 +781,10 @@ dialog#d-export { max-width: 780px; }
     return last;
   }
 
-  function embedNotes() {
+  function snapshotNotes() {
     var rev = new Date().toISOString();
     var doc = document.documentElement.cloneNode(true);
-    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn, .notes-persistence'), function (n) { n.remove(); });
     Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
       n.classList.remove('notable', 'has-note');
     });
@@ -823,15 +822,7 @@ dialog#d-export { max-width: 780px; }
     SYNC.concurs = { rev: rev, seen: union(SYNC.concurs.seen, idsOf('concurs', C)) };
     try { localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
 
-    var blob = new Blob(['<!DOCTYPE html>\n' + doc.outerHTML], { type: 'text/html' });
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = FILE;
-    a.click();
-    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
-
-    var b = document.getElementById('btn-embed');
-    if (b) { var o = b.innerHTML; b.innerHTML = 'saved &#x2713;'; setTimeout(function () { b.innerHTML = o; }, 2200); }
+    return '<!DOCTYPE html>\n' + doc.outerHTML;
   }
 
   function clearNotes() {
@@ -841,6 +832,18 @@ dialog#d-export { max-width: 780px; }
 
   /* ---- wiring ---- */
   function init() {
+    // Older markup may still carry Save. Native TD also hides old page chrome.
+    var obsoleteSave = document.getElementById('btn-embed');
+    if (obsoleteSave) obsoleteSave.remove();
+    var status = document.createElement('span');
+    status.className = 'notes-persistence';
+    status.textContent = 'Browser storage only · open in Terminal Delight to save the original HTML';
+    var bar = document.getElementById('notebar');
+    if (bar) bar.appendChild(status);
+    // A snapshot is an export for tooling; it neither writes nor downloads a file.
+    document.addEventListener('decision-brief:snapshot', function (e) {
+      if (e.detail) e.detail.html = snapshotNotes();
+    });
     var ta = document.getElementById('note-text');
     if (ta) {
       ta.addEventListener('keydown', function (e) {
@@ -853,7 +856,6 @@ dialog#d-export { max-width: 780px; }
       var a = t.dataset.noteAction;
       if (a === 'add') add();
       else if (a === 'export') exportNotes();
-      else if (a === 'embed') embedNotes();
       else if (a === 'clear') clearNotes();
       else if (a === 'copy') copyExport(t);
     });
