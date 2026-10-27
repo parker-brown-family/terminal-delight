@@ -202,6 +202,33 @@ pub(crate) struct SystemMap {
     choosing: Option<RelationEnd>,
 }
 
+/// What a pane card dropped onto a *different* org can become. Dropping used to
+/// move the agent silently; this opens a choice at the drop so the same gesture
+/// can build a relationship instead. `seat` is the dragged agent's own seat (it
+/// must be seated to relate — a loose pane just moves in); `org` is where it
+/// landed. `Some` means the popup is open. Routing only: every route below
+/// reuses an existing mutation.
+pub(crate) struct DropChoice {
+    leaf: Entity<TerminalView>,
+    seat: warroom::SeatId,
+    org: warroom::OrgId,
+    stage: DropStage,
+}
+
+/// The drop popup walks three routes. `Choosing` is the fork; the two relate
+/// routes each gather a rung — and, for a member, which member of the target
+/// org — before the line is drawn.
+enum DropStage {
+    Choosing,
+    RelateOrg {
+        rung: Option<warroom::Rung>,
+    },
+    RelateMember {
+        member: Option<warroom::SeatId>,
+        rung: Option<warroom::Rung>,
+    },
+}
+
 /// Spaces match independent words anywhere in the name. Colons address
 /// project:tab:pane; empty segments leave that field unrestricted.
 fn pane_search_score(project: &str, name: &warroom::PaneName, query: &str) -> Option<i64> {
@@ -1478,7 +1505,8 @@ impl Workspace {
                 cx.notify();
                 return true;
             }
-            if self.war_move.take().is_some()
+            if self.war_drop.take().is_some()
+                || self.war_move.take().is_some()
                 || self.war_org_edit.take().is_some()
                 || self.war_relation.take().is_some()
             {
@@ -1581,6 +1609,7 @@ impl Workspace {
         self.war_relation = None;
         self.war_org_edit = None;
         self.war_delete_org = None;
+        self.war_drop = None;
         self.save(cx);
         cx.notify();
     }
@@ -1637,6 +1666,7 @@ impl Workspace {
         }
         self.war_relation = None;
         self.war_move = None;
+        self.war_drop = None;
         self.war_room_pick = None;
         self.save(cx);
         cx.notify();
@@ -1743,7 +1773,7 @@ impl Workspace {
                             .shadow(drop_glow(ink, true))
                     })
                     .on_drop(cx.listener(move |ws, drag: &PaneDrag, _, cx| {
-                        ws.war_room_assign(&drag.leaf, id, false, cx);
+                        ws.war_room_drop_on_org(&drag.leaf, id, cx);
                     }))
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
@@ -1870,6 +1900,190 @@ impl Workspace {
                     ),
             );
         }
+        if let Some(drop) = &self.war_drop {
+            let org_label = self.war_room_org_label(drop.org);
+            let pane = self.pane_name(&drop.leaf, cx).full();
+            let rung_word = |rung: warroom::Rung| match rung {
+                warroom::Rung::See => ui.wr_rung_see,
+                warroom::Rung::Read => ui.wr_rung_read,
+                warroom::Rung::Ask => ui.wr_rung_ask,
+            };
+            // Amber, like the move hint: these routes build a grant — the colour
+            // of "yours to argue with", never the delete confirm's red.
+            let mut panel = div()
+                .id("war-drop-choice")
+                .debug_selector(|| "war-drop-choice".to_string())
+                .p_2()
+                .border_1()
+                .border_color(th.ansi[3])
+                .rounded(sk.rad_raw(5.))
+                .flex()
+                .flex_col()
+                .gap_1();
+            let cancel = Self::bezel_btn(sk, ui.dlg_cancel, false)
+                .id("war-drop-cancel")
+                .debug_selector(|| "war-drop-cancel".to_string())
+                .on_click(cx.listener(|ws, _, _, cx| {
+                    cx.stop_propagation();
+                    ws.war_drop = None;
+                    cx.notify();
+                }));
+            let back = Self::bezel_btn(sk, ui.wr_drop_back, false)
+                .id("war-drop-back")
+                .debug_selector(|| "war-drop-back".to_string())
+                .on_click(cx.listener(|ws, _, _, cx| {
+                    cx.stop_propagation();
+                    ws.war_drop_back(cx);
+                }));
+            match &drop.stage {
+                DropStage::Choosing => {
+                    let members = self.war_drop_members(drop);
+                    panel = panel
+                        .child(SharedString::from(lang::fill(
+                            ui.wr_drop_title,
+                            &[("pane", &pane), ("org", &org_label)],
+                        )))
+                        .child(
+                            Self::bezel_btn(
+                                sk,
+                                &lang::fill(ui.wr_drop_move, &[("org", &org_label)]),
+                                false,
+                            )
+                            .id("war-drop-move")
+                            .debug_selector(|| "war-drop-move".to_string())
+                            .on_click(cx.listener(|ws, _, _, cx| {
+                                cx.stop_propagation();
+                                ws.war_drop_move(cx);
+                            })),
+                        )
+                        .child(
+                            Self::bezel_btn(
+                                sk,
+                                &lang::fill(ui.wr_drop_relate_org, &[("org", &org_label)]),
+                                false,
+                            )
+                            .id("war-drop-relate-org")
+                            .debug_selector(|| "war-drop-relate-org".to_string())
+                            .on_click(cx.listener(|ws, _, _, cx| {
+                                cx.stop_propagation();
+                                ws.war_drop_relate_org(cx);
+                            })),
+                        );
+                    if !members.is_empty() {
+                        panel = panel.child(
+                            Self::bezel_btn(sk, ui.wr_drop_relate_member, false)
+                                .id("war-drop-relate-member")
+                                .debug_selector(|| "war-drop-relate-member".to_string())
+                                .on_click(cx.listener(|ws, _, _, cx| {
+                                    cx.stop_propagation();
+                                    ws.war_drop_relate_member(cx);
+                                })),
+                        );
+                    }
+                    panel = panel.child(cancel);
+                }
+                DropStage::RelateOrg { rung } => {
+                    let to = format!("{} \u{00b7} {}", org_label, ui.wr_map_whole_org);
+                    let sentence = match rung {
+                        Some(rung) => lang::fill(
+                            ui.wr_rel_sentence,
+                            &[("from", &pane), ("to", &to), ("rung", rung_word(*rung))],
+                        ),
+                        None => ui.wr_rel_choose.to_string(),
+                    };
+                    let ready = rung.is_some();
+                    panel = panel
+                        .child(SharedString::from(sentence))
+                        .child(self.war_drop_rung_row(sk, th, *rung, cx))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .flex_wrap()
+                                .gap_2()
+                                .child(
+                                    Self::bezel_btn(sk, ui.wr_drop_draw, ready)
+                                        .id("war-drop-draw")
+                                        .debug_selector(|| "war-drop-draw".to_string())
+                                        .opacity(if ready { 1. } else { 0.4 })
+                                        .on_click(cx.listener(|ws, _, _, cx| {
+                                            cx.stop_propagation();
+                                            ws.war_drop_draw(cx);
+                                        })),
+                                )
+                                .child(back)
+                                .child(cancel),
+                        );
+                }
+                DropStage::RelateMember { member, rung } => match member {
+                    None => {
+                        let mut list = div()
+                            .id("war-drop-members")
+                            .max_h(px(130.))
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .gap_1();
+                        for seat in self.war_drop_members(drop) {
+                            list = list.child(
+                                Self::bezel_btn(sk, &self.war_room_seat_label(seat, cx), false)
+                                    .id(SharedString::from(format!("war-drop-member-{}", seat.0)))
+                                    .on_click(cx.listener(move |ws, _, _, cx| {
+                                        cx.stop_propagation();
+                                        ws.war_drop_pick_member(seat, cx);
+                                    })),
+                            );
+                        }
+                        panel = panel
+                            .child(SharedString::from(lang::fill(
+                                ui.wr_drop_pick,
+                                &[("org", &org_label)],
+                            )))
+                            .child(list)
+                            .child(div().flex().flex_row().gap_2().child(back).child(cancel));
+                    }
+                    Some(to) => {
+                        let to = *to;
+                        let to_label = self.war_room_seat_label(to, cx);
+                        let sentence = match rung {
+                            Some(rung) => lang::fill(
+                                ui.wr_rel_sentence,
+                                &[
+                                    ("from", &pane),
+                                    ("to", &to_label),
+                                    ("rung", rung_word(*rung)),
+                                ],
+                            ),
+                            None => ui.wr_rel_choose.to_string(),
+                        };
+                        let ready = rung.is_some();
+                        panel = panel
+                            .child(SharedString::from(sentence))
+                            .child(self.war_drop_rung_row(sk, th, *rung, cx))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .flex_wrap()
+                                    .gap_2()
+                                    .child(
+                                        Self::bezel_btn(sk, ui.wr_drop_draw, ready)
+                                            .id("war-drop-draw")
+                                            .debug_selector(|| "war-drop-draw".to_string())
+                                            .opacity(if ready { 1. } else { 0.4 })
+                                            .on_click(cx.listener(|ws, _, _, cx| {
+                                                cx.stop_propagation();
+                                                ws.war_drop_draw(cx);
+                                            })),
+                                    )
+                                    .child(back)
+                                    .child(cancel),
+                            );
+                    }
+                },
+            }
+            controls = controls.child(panel);
+        }
         if let Some((_, buffer)) = &self.war_org_edit {
             controls = controls.child(
                 div()
@@ -1946,6 +2160,193 @@ impl Workspace {
         leaf.update(cx, |v, cx| v.set_seat(Some(seat), cx));
         self.war_move = None;
         self.war_room_set_org(org, cx);
+    }
+
+    /// A pane card was dropped on an org button. If the pane is already in that
+    /// org this just opens it; a loose (seatless) pane simply moves in; a seated
+    /// pane from a *different* org opens the move/relate choice, so the drop can
+    /// build a relationship instead of silently moving. Routing only.
+    fn war_room_drop_on_org(
+        &mut self,
+        leaf: &Entity<TerminalView>,
+        org: warroom::OrgId,
+        cx: &mut Context<Self>,
+    ) {
+        if self.war_orgs.get(org).is_none() || !leaf.read(cx).mode.is_agent() {
+            return;
+        }
+        let seat = leaf.read(cx).seat;
+        // Already a member of this org: nothing to move or relate — just select.
+        if seat.is_some_and(|s| self.war_orgs.owner(s) == Some(org)) {
+            self.war_room_set_org(org, cx);
+            return;
+        }
+        // A loose pane has no seat to relate from; dropping it means "seat here".
+        let Some(seat) = seat else {
+            self.war_room_assign(leaf, org, false, cx);
+            return;
+        };
+        // Seated, and a different org: offer the choice. Clear the sibling
+        // popups so only one is ever open at a time.
+        self.war_delete_org = None;
+        self.war_org_edit = None;
+        self.war_move = None;
+        self.war_relation = None;
+        self.war_drop = Some(DropChoice {
+            leaf: leaf.clone(),
+            seat,
+            org,
+            stage: DropStage::Choosing,
+        });
+        cx.notify();
+    }
+
+    /// The MOVE route: hand off to the same assign the drop used to do, which
+    /// raises its own confirm when the pane would lose connections.
+    fn war_drop_move(&mut self, cx: &mut Context<Self>) {
+        if let Some(drop) = self.war_drop.take() {
+            self.war_room_assign(&drop.leaf, drop.org, false, cx);
+        }
+    }
+
+    fn war_drop_relate_org(&mut self, cx: &mut Context<Self>) {
+        if let Some(drop) = &mut self.war_drop {
+            drop.stage = DropStage::RelateOrg { rung: None };
+            cx.notify();
+        }
+    }
+
+    fn war_drop_relate_member(&mut self, cx: &mut Context<Self>) {
+        if let Some(drop) = &mut self.war_drop {
+            drop.stage = DropStage::RelateMember {
+                member: None,
+                rung: None,
+            };
+            cx.notify();
+        }
+    }
+
+    fn war_drop_pick_member(&mut self, member: warroom::SeatId, cx: &mut Context<Self>) {
+        if let Some(drop) = &mut self.war_drop {
+            if let DropStage::RelateMember { member: slot, rung } = &mut drop.stage {
+                // Re-picking clears a rung chosen for the previous member.
+                if *slot != Some(member) {
+                    *rung = None;
+                }
+                *slot = Some(member);
+            }
+            cx.notify();
+        }
+    }
+
+    fn war_drop_set_rung(&mut self, rung: warroom::Rung, cx: &mut Context<Self>) {
+        if let Some(drop) = &mut self.war_drop {
+            match &mut drop.stage {
+                DropStage::RelateOrg { rung: slot } => *slot = Some(rung),
+                DropStage::RelateMember { rung: slot, .. } => *slot = Some(rung),
+                DropStage::Choosing => {}
+            }
+            cx.notify();
+        }
+    }
+
+    fn war_drop_back(&mut self, cx: &mut Context<Self>) {
+        if let Some(drop) = &mut self.war_drop {
+            drop.stage = DropStage::Choosing;
+            cx.notify();
+        }
+    }
+
+    /// Members of the drop's target org the dragged agent could relate to: every
+    /// seat in the org except itself. Empty means the member route is not
+    /// offered (nothing to point at).
+    fn war_drop_members(&self, drop: &DropChoice) -> Vec<warroom::SeatId> {
+        self.war_orgs
+            .get(drop.org)
+            .map(|o| {
+                o.seats
+                    .iter()
+                    .copied()
+                    .filter(|s| *s != drop.seat)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Draw the relationship the drop popup composed: a whole-org line from the
+    /// agent to the target org, or a seat-to-seat line to a chosen member. The
+    /// agent stays where it is — relating is not moving. Same two Chart calls
+    /// the System Map makes, so the grant is identical however it was drawn.
+    fn war_drop_draw(&mut self, cx: &mut Context<Self>) {
+        let Some(drop) = self.war_drop.as_ref() else {
+            return;
+        };
+        let from = drop.seat;
+        match &drop.stage {
+            DropStage::RelateOrg { rung: Some(rung) } => {
+                self.chart.draw_org(
+                    warroom::End::Seat(from),
+                    warroom::End::Org { org: drop.org },
+                    *rung,
+                );
+            }
+            DropStage::RelateMember {
+                member: Some(to),
+                rung: Some(rung),
+            } if *to != from => {
+                self.chart.draw(from, *to, *rung);
+            }
+            _ => return,
+        }
+        self.war_drop = None;
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// The three rungs for the drop popup, drawn like the relationship editor's:
+    /// see < read < ask, with `ask` — the only rung that lets one agent prompt
+    /// another — in the action amber with a ▲, so the powerful one is never
+    /// granted by reflex. Each sets the current stage's rung.
+    fn war_drop_rung_row(
+        &self,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        current: Option<warroom::Rung>,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let ui = self.lang.strings().ui;
+        let mut levels = div().flex().flex_row().flex_wrap().items_center().gap_2();
+        for (rung, label) in [
+            (warroom::Rung::See, ui.wr_rung_see),
+            (warroom::Rung::Read, ui.wr_rung_read),
+            (warroom::Rung::Ask, ui.wr_rung_ask),
+        ] {
+            let selected = current == Some(rung);
+            let is_ask = matches!(rung, warroom::Rung::Ask);
+            let shown = if is_ask {
+                format!("\u{25B2} {label}")
+            } else {
+                label.to_string()
+            };
+            let mut btn = Self::bezel_btn(sk, &shown, selected)
+                .id(SharedString::from(format!("war-drop-rung-{rung:?}")))
+                .debug_selector(move || format!("war-drop-rung-{rung:?}"));
+            if is_ask {
+                btn = btn
+                    .border_color(th.ansi[3])
+                    .font_weight(gpui::FontWeight::BOLD);
+                if !selected {
+                    btn = btn.text_color(th.ansi[3]);
+                }
+            } else if !selected {
+                btn = btn.opacity(0.7);
+            }
+            levels = levels.child(btn.on_click(cx.listener(move |ws, _, _, cx| {
+                cx.stop_propagation();
+                ws.war_drop_set_rung(rung, cx);
+            })));
+        }
+        levels
     }
 
     fn war_room_seat_leaf(&self, seat: warroom::SeatId, cx: &App) -> Option<Entity<TerminalView>> {
@@ -3166,6 +3567,7 @@ impl Workspace {
         self.war_org_edit = None;
         self.war_move = None;
         self.war_delete_org = None;
+        self.war_drop = None;
         self.war_drag = None;
         self.war_context = None;
         self.war_feedback = None;
@@ -3189,6 +3591,7 @@ impl Workspace {
         self.war_room_forget_pending(leaf, seat, cx);
         self.war_relation = None;
         self.war_move = None;
+        self.war_drop = None;
         self.war_context = None;
         leaf.update(cx, |v, cx| {
             v.set_agent_access(warroom::AgentAccess::OffLimits, cx);
@@ -4503,12 +4906,11 @@ mod tests {
             cx.notify();
         });
         cx.run_until_parked();
+        // Dropping on a different org now offers a choice rather than moving
+        // silently: the drag opens the popup, and nothing has changed yet.
         drag(cx, "war-seat-100", &format!("war-org-{}", other.0));
         ws.read_with(cx, |ws, _| {
-            assert!(
-                ws.war_move.is_some(),
-                "a connected move needs a visible choice"
-            );
+            assert!(ws.war_drop.is_some(), "the drop opens a choice, not a move");
             assert_ne!(ws.war_orgs.owner(warroom::SeatId(100)), Some(other));
             assert_eq!(
                 ws.chart.saved().len(),
@@ -4516,9 +4918,22 @@ mod tests {
                 "dragging silently erased a connection"
             );
         });
+        // Choosing Move on a connected pane still raises the connection-loss
+        // confirm before anything is lost.
+        click(cx, "war-drop-move");
+        ws.read_with(cx, |ws, _| {
+            assert!(
+                ws.war_move.is_some(),
+                "a connected move needs a visible confirm"
+            );
+            assert_ne!(ws.war_orgs.owner(warroom::SeatId(100)), Some(other));
+            assert_eq!(ws.chart.saved().len(), 1);
+        });
         click(cx, "war-move-cancel");
         assert_eq!(ws.read_with(cx, |ws, _| ws.chart.saved().len()), 1);
+        // Drive it all the way through: choose Move, then confirm the loss.
         drag(cx, "war-seat-100", &format!("war-org-{}", other.0));
+        click(cx, "war-drop-move");
         click(cx, "war-move-confirm");
         assert_eq!(bounds(cx, "war-seat-100").size, original);
         ws.read_with(cx, |ws, cx| {
@@ -4874,5 +5289,179 @@ mod tests {
         assert_eq!(pts[0].0, seat_xy(0, 0).0 + SEAT_W);
         assert_eq!(pts[1].0, seat_xy(1, 0).0);
         assert!(pts.iter().all(|p| p.0 >= 0. && p.1 >= 0.));
+    }
+
+    #[gpui::test]
+    fn dropping_a_pane_on_a_different_org_opens_the_move_relate_popup(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            let lead = ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap();
+            ws.war_room_drop_on_org(&lead, other, cx);
+            let drop = ws
+                .war_drop
+                .as_ref()
+                .expect("a drop onto a different org opens a choice, not a silent move");
+            assert_eq!(drop.seat, warroom::SeatId(100));
+            assert_eq!(drop.org, other);
+            assert!(matches!(drop.stage, DropStage::Choosing));
+            // one popup at a time: the siblings were cleared.
+            assert!(ws.war_move.is_none() && ws.war_relation.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn the_move_route_in_the_drop_popup_reseats_the_pane(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            let lead = ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap();
+            ws.war_room_drop_on_org(&lead, other, cx);
+            ws.war_drop_move(cx);
+            // An unconnected pane moves straight through; no confirm, popup closed.
+            assert_eq!(ws.war_orgs.owner(warroom::SeatId(100)), Some(other));
+            assert!(ws.war_drop.is_none());
+            assert!(ws.war_move.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn the_relate_to_org_route_draws_a_whole_org_line_and_reaches_a_member(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            let cinema = ws.war_orgs.owner(warroom::SeatId(100)).unwrap();
+            // Give the target org a member so the whole-org grant reaches someone.
+            ws.war_orgs.assign(warroom::SeatId(101), other);
+            let lead = ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap();
+            ws.war_room_drop_on_org(&lead, other, cx);
+            ws.war_drop_relate_org(cx);
+            ws.war_drop_set_rung(warroom::Rung::Ask, cx);
+            ws.war_drop_draw(cx);
+            // A whole-org line from the agent to the org — and the agent did not move.
+            let lines = ws.chart.org_lines();
+            assert_eq!(lines.len(), 1);
+            assert_eq!(lines[0].from, warroom::End::Seat(warroom::SeatId(100)));
+            assert_eq!(lines[0].to, warroom::End::Org { org: other });
+            assert_eq!(lines[0].rung.known(), Some(warroom::Rung::Ask));
+            assert_eq!(ws.war_orgs.owner(warroom::SeatId(100)), Some(cinema));
+            assert!(ws.war_drop.is_none());
+            // The agent now reaches the other org's member at ask.
+            ws.mcp.enabled = true;
+            let caller = warroom::Party {
+                seat: Some(warroom::SeatId(100)),
+                is_agent: true,
+                access: warroom::AgentAccess::Open,
+            };
+            let member = warroom::Party {
+                seat: Some(warroom::SeatId(101)),
+                is_agent: true,
+                access: warroom::AgentAccess::Open,
+            };
+            assert_eq!(
+                warroom::reach(
+                    &ws.mcp,
+                    &ws.chart,
+                    &ws.war_orgs,
+                    Some(&caller),
+                    &member,
+                    false
+                ),
+                warroom::Reach::Ask
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn the_relate_to_a_member_route_draws_a_cross_org_seat_line(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            // Seat 101 into the other org, so relating to it is a cross-org line.
+            ws.war_orgs.assign(warroom::SeatId(101), other);
+            let lead = ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap();
+            ws.war_room_drop_on_org(&lead, other, cx);
+            ws.war_drop_relate_member(cx);
+            ws.war_drop_pick_member(warroom::SeatId(101), cx);
+            ws.war_drop_set_rung(warroom::Rung::Read, cx);
+            ws.war_drop_draw(cx);
+            let line = ws
+                .chart
+                .line(warroom::SeatId(100), warroom::SeatId(101))
+                .expect("a cross-org seat-to-seat line");
+            assert_eq!(line.rung.known(), Some(warroom::Rung::Read));
+            // Relating is not moving: the agent stayed in its own org.
+            assert_ne!(ws.war_orgs.owner(warroom::SeatId(100)), Some(other));
+            assert!(ws.war_drop.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn the_member_route_is_hidden_until_the_target_org_has_a_member(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            let lead = ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap();
+            // Empty target org: nobody to relate an individual to.
+            ws.war_room_drop_on_org(&lead, other, cx);
+            let empty = {
+                let drop = ws.war_drop.as_ref().unwrap();
+                ws.war_drop_members(drop).is_empty()
+            };
+            assert!(empty, "no member route for an empty org");
+            // Give it a member and reopen: the route is offered.
+            ws.war_drop = None;
+            ws.war_orgs.assign(warroom::SeatId(101), other);
+            ws.war_room_drop_on_org(&lead, other, cx);
+            let members = {
+                let drop = ws.war_drop.as_ref().unwrap();
+                ws.war_drop_members(drop)
+            };
+            assert!(members == vec![warroom::SeatId(101)]);
+        });
+    }
+
+    #[gpui::test]
+    fn the_drop_popup_paints_its_choices_and_the_draw_step(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            let lead = ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap();
+            ws.war_room_drop_on_org(&lead, other, cx);
+        });
+        cx.update(|w, cx| {
+            w.refresh();
+            w.draw(cx).clear();
+        });
+        // The choice popup and its two always-present routes drew.
+        bounds(cx, "war-drop-choice");
+        bounds(cx, "war-drop-move");
+        bounds(cx, "war-drop-relate-org");
+        bounds(cx, "war-drop-cancel");
+        // Step into the whole-org route: the rung picker and Draw appear.
+        ws.update(cx, |ws, cx| ws.war_drop_relate_org(cx));
+        cx.update(|w, cx| {
+            w.refresh();
+            w.draw(cx).clear();
+        });
+        bounds(cx, "war-drop-rung-Ask");
+        bounds(cx, "war-drop-draw");
+        bounds(cx, "war-drop-back");
     }
 }
