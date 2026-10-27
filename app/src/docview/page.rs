@@ -1296,7 +1296,9 @@ impl PageDoc {
 
     /// Save the waiting edits into the file.
     ///
-    /// Off the main thread, in the order the program design fixed: read the
+    /// Commit before returning from submission, so closing the document cannot
+    /// cancel a queued write. Browser read-back remains off the main thread.
+    /// Read the
     /// file fresh; refuse if its layout changed since the page was drawn;
     /// apply the edits to the islands it holds now, never to a map kept in
     /// memory; check in memory that only the notes regions moved; commit —
@@ -1322,6 +1324,10 @@ impl PageDoc {
                 return;
             }
         };
+        // A previous read-back must not overwrite this submission's result,
+        // including a failed write. Dropping its UI task cancels confirmation;
+        // the previous disk commit has already completed.
+        self.saving = None;
         let edits = layer.begin_save();
         let label = layer.label().to_string();
         let concurs = r.layout.capability.concur == ConcurSupport::Supported;
@@ -1344,42 +1350,25 @@ impl PageDoc {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let made = edits.len();
+        // This is the durability boundary of Submit: no Task owned by the
+        // view may be the only thing keeping a submitted comment alive.
+        let (plan, written) = match write_notes(&path, &edits, &anchors, &label, concurs, rendered)
+        {
+            Ok(w) => w,
+            Err(why) => {
+                layer.refused(why);
+                cx.notify();
+                return;
+            }
+        };
+        layer.saved(made, plan.notes.clone(), plan.concurs.clone(), &file);
         cx.notify();
         self.saving = Some(cx.spawn(async move |this, cx| {
-            let write = cx
-                .background_spawn({
-                    let path = path.clone();
-                    async move { write_notes(&path, &edits, &anchors, &label, concurs, rendered) }
-                })
-                .await;
-            let (plan, written) = match write {
-                Ok(w) => w,
-                Err(why) => {
-                    this.update(cx, |view, cx| {
-                        if let Some(p) = page_of(view) {
-                            if let Some(l) = p.notes.as_mut() {
-                                l.refused(why);
-                            }
-                            if let Some(t) = p.saving.take() {
-                                t.detach();
-                            }
-                        }
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-            };
-            this.update(cx, |view, cx| {
-                // The watcher will see this write; it is the view's own.
+            this.update(cx, |view, _| {
                 view.own_write = Some(super::FileStamp {
                     mtime: written.mtime,
                     len: written.len,
                 });
-                if let Some(l) = page_of(view).and_then(|p| p.notes.as_mut()) {
-                    l.saved(made, plan.notes.clone(), plan.concurs.clone(), &file);
-                }
-                cx.notify();
             })
             .ok();
             let back = cx
@@ -1453,10 +1442,8 @@ impl PageDoc {
     /// anything else changed, and the page is drawn again, the old picture
     /// up until the new one covers it, the waiting edits carried over.
     pub fn changed_on_disk(&mut self, cx: &mut Context<DocumentView>) {
-        // A save running sees any other writer itself, and refuses.
-        if self.saving.is_some() {
-            return;
-        }
+        // The commit finished before submission returned. A pending browser
+        // confirmation must not hide an agent's subsequent edit to the body.
         let (Some(r), Some((g, zoom))) = (self.current.as_ref(), self.asked) else {
             return;
         };
@@ -1543,6 +1530,7 @@ impl PageDoc {
                 layer.toggle_concur(&nid, now)?;
             }
         }
+        self.save(cx);
         cx.notify();
         Ok(())
     }
@@ -1592,14 +1580,18 @@ impl PageDoc {
         cx: &mut Context<DocumentView>,
     ) -> bool {
         if let Some(layer) = self.notes.as_mut() {
+            let before = layer.unsaved();
             if layer.key(ks, SystemTime::now()) {
+                if layer.unsaved() != before {
+                    self.save(cx);
+                }
                 cx.notify();
                 return true;
             }
         }
         let m = &ks.modifiers;
         if crate::keylayer::send_chord(&ks.key, m.control, m.shift, m.alt) {
-            if let Some(notes) = self.send_by_key(cx) {
+            if let Some(notes) = self.send_by_key() {
                 cx.emit(notes);
             }
             return true;
@@ -1615,16 +1607,11 @@ impl PageDoc {
         floating && self.guard_close(cx)
     }
 
-    /// ↪ by its chord: what a press on the bar's button sends, saving first
-    /// as the press does, or `None` when the bar draws no button or has
-    /// nothing to send.
-    fn send_by_key(&mut self, cx: &mut Context<DocumentView>) -> Option<super::SendNotes> {
+    /// ↪ by its chord: sends the map without writing the document.
+    fn send_by_key(&self) -> Option<super::SendNotes> {
         self.beside.as_ref()?;
         let anchors = &self.current.as_ref()?.layout.anchors;
         let sending = self.notes.as_ref()?.send(anchors)?;
-        if sending.saves {
-            self.save(cx);
-        }
         Some(super::SendNotes {
             map: sending.map,
             unsaved: sending.unsaved,
@@ -1682,20 +1669,16 @@ impl PageDoc {
                 beside,
                 cx,
             ) {
+                LayerPress::Edited => {
+                    self.save(cx);
+                    cx.notify();
+                    return Pressed::Took;
+                }
                 LayerPress::Took => {
                     cx.notify();
                     return Pressed::Took;
                 }
-                LayerPress::Save => {
-                    self.save(cx);
-                    return Pressed::Took;
-                }
                 LayerPress::Send(sending) => {
-                    // The save starts first, so its "saving…" is on the bar
-                    // before the send's answer comes back beside it.
-                    if sending.saves {
-                        self.save(cx);
-                    }
                     return Pressed::Send(super::SendNotes {
                         map: sending.map,
                         unsaved: sending.unsaved,
@@ -1729,6 +1712,9 @@ impl PageDoc {
                     if let Err(why) = layer.toggle_concur(&nid, SystemTime::now()) {
                         layer.say(Said::Refused(Words::as_is(why)));
                     }
+                }
+                if self.notes.as_ref().is_some_and(|l| l.can_save().is_ok()) {
+                    self.save(cx);
                 }
                 cx.notify();
                 return Pressed::Took;
@@ -2244,7 +2230,7 @@ impl PageDoc {
     }
 }
 
-/// A save, off the main thread: read fresh, check the layout, plan, verify,
+/// The durable write: read fresh, check the layout, plan, verify,
 /// commit. The error is the sentence the bar says; nothing was written.
 fn write_notes(
     path: &Path,

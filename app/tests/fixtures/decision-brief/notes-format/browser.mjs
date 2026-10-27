@@ -131,10 +131,19 @@ export async function applyEdits(page, edits) {
   }
 }
 
-// Click 💾 and return the downloaded bytes. The page clock is set first, because the
-// revision a save stamps is the time it happened.
+// Export a snapshot without writing or downloading a second file. Historical
+// fixture releases still use their original download button.
 export async function saveIntoFile(page, rev) {
   if (rev) await page.clock.setFixedTime(new Date(rev));
+  if (!await page.locator('#btn-embed').count()) {
+    const html = await page.evaluate(() => {
+      const detail = {};
+      document.dispatchEvent(new CustomEvent('decision-brief:snapshot', { detail }));
+      return detail.html;
+    });
+    if (!html) throw new Error('notes snapshot returned no HTML');
+    return { bytes: Buffer.from(html), suggested: null };
+  }
   const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#btn-embed')]);
   const path = await dl.path();
   const { readFileSync } = await import('node:fs');
