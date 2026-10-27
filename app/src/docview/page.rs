@@ -1324,6 +1324,10 @@ impl PageDoc {
                 return;
             }
         };
+        // A previous read-back must not overwrite this submission's result,
+        // including a failed write. Dropping its UI task cancels confirmation;
+        // the previous disk commit has already completed.
+        self.saving = None;
         let edits = layer.begin_save();
         let label = layer.label().to_string();
         let concurs = r.layout.capability.concur == ConcurSupport::Supported;

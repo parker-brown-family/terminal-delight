@@ -842,6 +842,52 @@ fn a_submitted_comment_survives_immediate_close_and_reopen(cx: &mut TestAppConte
     );
 }
 
+/// A prior successful write's delayed confirmation must not hide a newer
+/// write failure. Both submissions happen before yielding to the executor.
+#[gpui::test]
+fn a_failed_submission_keeps_its_error_after_an_older_confirmation(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "autosave-confirmation");
+    let at = pane.point_at(&brief);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let square = pane.float_view().unwrap();
+    let (nid, _) = BRIEF_ANCHORS[0];
+    square.update(pane.cx, |v, cx| {
+        v.notes_command(
+            crate::docview::NotesCommand::Add {
+                nid: nid.into(),
+                text: "Already committed.".into(),
+            },
+            cx,
+        )
+        .unwrap();
+        let mut bytes = std::fs::read(&brief).unwrap();
+        bytes.extend_from_slice(b"<!-- an external body change -->");
+        std::fs::write(&brief, &bytes).unwrap();
+        v.notes_command(
+            crate::docview::NotesCommand::Add {
+                nid: nid.into(),
+                text: "This write must fail.".into(),
+            },
+            cx,
+        )
+        .unwrap();
+    });
+    let before = pane.doc_notes().unwrap();
+    assert_eq!(before["unsaved"], 1);
+    assert!(!before["said"].as_str().unwrap().contains('✓'));
+    pane.redraw();
+    let after = pane.doc_notes().unwrap();
+    assert_eq!(after["unsaved"], 1);
+    assert_eq!(
+        after["said"], before["said"],
+        "stale confirmation must not hide the write error"
+    );
+    let bytes = std::fs::read_to_string(&brief).unwrap();
+    assert!(bytes.contains("Already committed."));
+    assert!(!bytes.contains("This write must fail."));
+}
+
 /// A square holding a note not yet saved into its brief is kept once when it
 /// is closed, and says why in the brief's bar; asked a second time, it goes.
 /// Escape, the ✕ and an Alt+click that would put another document in its
