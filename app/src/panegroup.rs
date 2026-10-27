@@ -293,37 +293,51 @@ fn keyed(text: &str, key: &str) -> Option<u64> {
     })
 }
 
-/// PSS and SwapPss of one process, in bytes, from `smaps_rollup`.
-fn pss_of(pid: i32) -> Option<(u64, u64)> {
-    let text = std::fs::read_to_string(format!("/proc/{pid}/smaps_rollup")).ok()?;
-    let kb = |key: &str| -> Option<u64> {
+/// PSS and SwapPss are independent measurements: an absent swap field must
+/// not erase a valid RAM reading, and it must not become a measured zero.
+fn parse_pss(text: &str) -> (Option<u64>, Option<u64>) {
+    let bytes = |key: &str| -> Option<u64> {
         text.lines().find_map(|l| {
             let rest = l.strip_prefix(key)?.strip_prefix(':')?;
-            rest.split_whitespace().next()?.parse::<u64>().ok()
+            rest.split_whitespace()
+                .next()?
+                .parse::<u64>()
+                .ok()?
+                .checked_mul(1024)
         })
     };
-    Some((kb("Pss")? * 1024, kb("SwapPss").unwrap_or(0) * 1024))
+    (bytes("Pss"), bytes("SwapPss"))
+}
+
+fn pss_of(pid: i32) -> Option<(Option<u64>, Option<u64>)> {
+    let text = std::fs::read_to_string(format!("/proc/{pid}/smaps_rollup")).ok()?;
+    Some(parse_pss(&text))
 }
 
 /// What the group's processes hold now. A process that ends between listing
-/// and reading is simply gone; any other unreadable process makes the whole
-/// reading unknown rather than smaller.
+/// and reading is simply gone; any other unreadable measurement stays unknown.
 pub fn usage(group: &PaneGroup) -> Usage {
-    let mut ram = Some(0u64);
-    let mut swap = Some(0u64);
-    for pid in procs(group) {
-        match pss_of(pid) {
-            Some((p, s)) => {
-                ram = ram.map(|r| r + p);
-                swap = swap.map(|w| w + s);
+    let (ram, swap) = match measured_procs(group) {
+        None => (None, None),
+        Some(pids) => {
+            let mut ram = Some(0u64);
+            let mut swap = Some(0u64);
+            for pid in pids {
+                match pss_of(pid) {
+                    Some((p, s)) => {
+                        ram = ram.zip(p).and_then(|(a, b)| a.checked_add(b));
+                        swap = swap.zip(s).and_then(|(a, b)| a.checked_add(b));
+                    }
+                    None if !Path::new(&format!("/proc/{pid}")).exists() => {}
+                    None => {
+                        ram = None;
+                        swap = None;
+                    }
+                }
             }
-            None if !Path::new(&format!("/proc/{pid}")).exists() => {}
-            None => {
-                ram = None;
-                swap = None;
-            }
+            (ram, swap)
         }
-    }
+    };
     Usage {
         resident: ram,
         swapped: swap,
@@ -334,11 +348,20 @@ pub fn usage(group: &PaneGroup) -> Usage {
     }
 }
 
-/// The processes in the group, as the kernel lists them.
-pub fn procs(group: &PaneGroup) -> Vec<i32> {
+/// Unlike an empty readable list, an unavailable or malformed list is unknown.
+fn measured_procs(group: &PaneGroup) -> Option<Vec<i32>> {
     std::fs::read_to_string(group.dir.join("cgroup.procs"))
-        .map(|t| t.lines().filter_map(|l| l.trim().parse().ok()).collect())
-        .unwrap_or_default()
+        .ok()?
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.trim().parse::<i32>().ok().filter(|pid| *pid > 0))
+        .collect()
+}
+
+/// The processes available for process-control checks. An unreadable list
+/// grants no process to act on; memory accounting uses the checked read above.
+pub fn procs(group: &PaneGroup) -> Vec<i32> {
+    measured_procs(group).unwrap_or_default()
 }
 
 /// Whether the kernel reports the group frozen; `None` when unreadable.
@@ -690,6 +713,37 @@ mod tests {
             c, "1",
             "another session's pane is not this window's to thaw"
         );
+    }
+
+    #[test]
+    fn memory_distinguishes_empty_unavailable_and_malformed_process_lists() {
+        let dir = std::env::temp_dir().join(format!("td-memory-list-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let group = PaneGroup {
+            unit: "fixture".into(),
+            dir: dir.clone(),
+        };
+        let missing = usage(&group);
+        std::fs::write(dir.join("cgroup.procs"), "").unwrap();
+        let empty = usage(&group);
+        std::fs::write(dir.join("cgroup.procs"), "not-a-pid\n").unwrap();
+        let malformed = usage(&group);
+        std::fs::write(dir.join("cgroup.procs"), std::process::id().to_string()).unwrap();
+        let live = usage(&group);
+        std::fs::remove_dir_all(dir).unwrap();
+        assert_eq!((missing.resident, missing.swapped), (None, None));
+        assert_eq!((malformed.resident, malformed.swapped), (None, None));
+        assert_eq!((empty.resident, empty.swapped), (Some(0), Some(0)));
+        assert!(live.resident.is_some_and(|n| n > 0));
+    }
+
+    #[test]
+    fn memory_preserves_missing_swap_without_losing_ram() {
+        assert_eq!(parse_pss("Pss: 23 kB\n"), (Some(23 * 1024), None));
+        assert_eq!(parse_pss("SwapPss: 0 kB\n"), (None, Some(0)));
+        assert_eq!(parse_pss("Pss: 0 kB\nSwapPss: 0 kB\n"), (Some(0), Some(0)));
+        assert_eq!(parse_pss("Pss: bad\nSwapPss: 8 kB\n"), (None, Some(8192)));
+        assert_eq!(parse_pss("Pss: 18446744073709551615 kB\n"), (None, None));
     }
 
     #[test]

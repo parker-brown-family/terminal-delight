@@ -7,6 +7,16 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Agent Memory Hover for 0.5.0 Development
+
+- Hover the top-right agent counter to see RAM and swap for awake, resting and
+  sleeping panes, the observed RAM decrease since rest, measurement coverage
+  and sample age. The card uses cached measurements and keeps the War Room click.
+- Unavailable process lists, swap readings and comparison baselines remain
+  unmeasured. Partial totals say how many panes were measured. Memory figures
+  use binary units (KiB, MiB and GiB); shared services outside pane scopes are
+  excluded.
+
 ### Agaro Permission Follow-Through for 0.5.0 Development
 
 - Agents can propose opening an off-limits pane without learning whether the

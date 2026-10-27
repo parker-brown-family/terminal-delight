@@ -486,9 +486,11 @@ impl PaneRest {
         }
     }
 
-    /// How much has left RAM since the pane went to rest, while it rests.
+    /// Observed RAM decrease from this pane's last before-rest reading.
+    /// Sleeping keeps the same shell and comparison; waking a new pane starts
+    /// with no baseline. This is a measured decrease, not a counterfactual.
     pub fn given_back(&self) -> Option<u64> {
-        if !self.dormancy.is_resting() {
+        if matches!(self.dormancy, Dormancy::Awake) {
             return None;
         }
         Some(self.rest_from?.saturating_sub(self.usage.resident?))
@@ -507,16 +509,105 @@ impl PaneRest {
     }
 }
 
-/// Bytes as a person reads them in a pane header: `980 KB`, `412 MB`, `1.2 GB`.
+/// A subtotal paired with its coverage. `None` means no value was measured;
+/// a partial subtotal never stands alone as the whole population's memory.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MemoryTotal {
+    pub bytes: Option<u64>,
+    pub measured: u32,
+    pub panes: u32,
+}
+
+impl MemoryTotal {
+    pub fn add(&mut self, value: Option<u64>) {
+        self.panes += 1;
+        if let Some(value) = value {
+            self.bytes = if self.measured == 0 {
+                Some(value)
+            } else {
+                self.bytes.and_then(|sum| sum.checked_add(value))
+            };
+            self.measured += 1;
+        }
+    }
+
+    /// Coverage travels with the number, including a measured zero. An empty
+    /// population is a dash; a population with no readings is unmeasured.
+    pub fn label(&self, unmeasured: &str) -> String {
+        if self.panes == 0 {
+            return "—".into();
+        }
+        let value = self
+            .bytes
+            .map(short_bytes)
+            .unwrap_or_else(|| unmeasured.into());
+        format!("{value} ({}/{})", self.measured, self.panes)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MemoryRow {
+    pub ram: MemoryTotal,
+    pub swap: MemoryTotal,
+}
+
+impl MemoryRow {
+    fn add(&mut self, usage: crate::panegroup::Usage) {
+        self.ram.add(usage.resident);
+        self.swap.add(usage.swapped);
+    }
+
+    pub fn panes(&self) -> u32 {
+        self.ram.panes
+    }
+}
+
+/// Cached pane measurements grouped by dormancy. Summing this structure does
+/// no I/O and cannot thaw a pane. Shared services outside pane scopes are not
+/// assigned to individual agents.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MemoryCensus {
+    pub awake: MemoryRow,
+    pub resting: MemoryRow,
+    pub asleep: MemoryRow,
+    pub held: MemoryTotal,
+    pub decrease: MemoryTotal,
+}
+
+impl MemoryCensus {
+    pub fn add(&mut self, rest: &PaneRest) {
+        let row = match rest.dormancy {
+            Dormancy::Awake => &mut self.awake,
+            Dormancy::Resting { .. } => &mut self.resting,
+            Dormancy::Asleep(_) => &mut self.asleep,
+        };
+        row.add(rest.usage);
+        self.held.add(
+            rest.usage
+                .resident
+                .zip(rest.usage.swapped)
+                .and_then(|(ram, swap)| ram.checked_add(swap)),
+        );
+        if !matches!(rest.dormancy, Dormancy::Awake) {
+            self.decrease.add(rest.given_back());
+        }
+    }
+}
+
+/// Binary memory units, matching the kernel's KiB-based readings.
 pub fn short_bytes(b: u64) -> String {
     const K: f64 = 1024.0;
-    let b = b as f64;
-    if b < K * K {
-        format!("{:.0} KB", b / K)
-    } else if b < K * K * K {
-        format!("{:.0} MB", b / K / K)
+    let n = b as f64;
+    if b < 1024 {
+        format!("{b} B")
+    } else if n < K * K {
+        format!("{:.0} KiB", n / K)
+    } else if n < 10. * K * K {
+        format!("{:.1} MiB", n / K / K)
+    } else if n < K * K * K {
+        format!("{:.0} MiB", n / K / K)
     } else {
-        format!("{:.1} GB", b / K / K / K)
+        format!("{:.1} GiB", n / K / K / K)
     }
 }
 
@@ -832,6 +923,110 @@ pub fn drag(scale: &Scale, pos: f64) -> u32 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn memory_totals_keep_empty_unknown_partial_and_measured_zero_distinct() {
+        let mut total = MemoryTotal::default();
+        assert_eq!(total.label("unmeasured"), "—");
+        total.add(None);
+        assert_eq!(total.label("unmeasured"), "unmeasured (0/1)");
+        total.add(Some(0));
+        assert_eq!(total.label("unmeasured"), "0 B (1/2)");
+        total.add(Some(1024));
+        assert_eq!(total.label("unmeasured"), "1 KiB (2/3)");
+    }
+
+    #[test]
+    fn memory_census_groups_states_and_retains_comparison_coverage() {
+        use crate::panegroup::Usage;
+        let now = std::time::Instant::now();
+        let mut rest = PaneRest::new(now);
+        let mut census = MemoryCensus::default();
+        census.add(&rest); // Awake, no reading yet.
+        rest.dormancy = Dormancy::Resting { since: now };
+        rest.rest_from = Some(256);
+        rest.usage = Usage {
+            resident: Some(32),
+            swapped: Some(64),
+            ..Default::default()
+        };
+        census.add(&rest);
+        rest.rest_from = None; // A resting pane inherited from another window.
+        rest.usage = Usage {
+            resident: Some(0),
+            swapped: None,
+            ..Default::default()
+        };
+        census.add(&rest);
+        rest.dormancy = Dormancy::Asleep(Asleep {
+            since_ms: 1,
+            session: "fixture".into(),
+            wake_file: "/unused".into(),
+            model: None,
+        });
+        rest.rest_from = Some(128);
+        rest.usage = Usage {
+            resident: Some(4),
+            swapped: Some(0),
+            ..Default::default()
+        };
+        census.add(&rest);
+        assert_eq!(
+            (
+                census.awake.panes(),
+                census.resting.panes(),
+                census.asleep.panes()
+            ),
+            (1, 2, 1)
+        );
+        assert_eq!(
+            census.resting.ram,
+            MemoryTotal {
+                bytes: Some(32),
+                measured: 2,
+                panes: 2
+            }
+        );
+        assert_eq!(
+            census.resting.swap,
+            MemoryTotal {
+                bytes: Some(64),
+                measured: 1,
+                panes: 2
+            }
+        );
+        assert_eq!(
+            census.held,
+            MemoryTotal {
+                bytes: Some(100),
+                measured: 2,
+                panes: 4
+            }
+        );
+        assert_eq!(
+            census.decrease,
+            MemoryTotal {
+                bytes: Some(348),
+                measured: 2,
+                panes: 3
+            }
+        );
+        rest.dormancy = Dormancy::Awake;
+        assert_eq!(rest.given_back(), None, "awake panes cannot retain savings");
+        assert_eq!(
+            PaneRest::new(now).rest_from,
+            None,
+            "a new pane has no earlier reading"
+        );
+    }
+
+    #[test]
+    fn memory_units_match_the_binary_kernel_measurements() {
+        assert_eq!(short_bytes(0), "0 B");
+        assert_eq!(short_bytes(1024), "1 KiB");
+        assert_eq!(short_bytes(5446 * 1024), "5.3 MiB");
+        assert_eq!(short_bytes(1332 * 1024 * 1024), "1.3 GiB");
+    }
+
     fn s(words: &[&str]) -> Vec<String> {
         words.iter().map(|w| w.to_string()).collect()
     }
@@ -1130,9 +1325,9 @@ mod tests {
 
     #[test]
     fn sizes_and_ages_read_short() {
-        assert_eq!(short_bytes(980 * 1024), "980 KB");
-        assert_eq!(short_bytes(412 << 20), "412 MB");
-        assert_eq!(short_bytes((12 << 30) / 10), "1.2 GB");
+        assert_eq!(short_bytes(980 * 1024), "980 KiB");
+        assert_eq!(short_bytes(412 << 20), "412 MiB");
+        assert_eq!(short_bytes((12 << 30) / 10), "1.2 GiB");
         assert_eq!(short_age(Duration::from_secs(40)), "40s");
         assert_eq!(short_age(Duration::from_secs(14 * 60)), "14m");
         assert_eq!(short_age(Duration::from_secs(2 * 3600 + 5)), "2h");
