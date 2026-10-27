@@ -2322,7 +2322,7 @@ mod tests {
     }
 
     /// A Codex rollout's size is its last call's input, cached input
-    /// included, and its model is the last turn's — the War Room prices a
+    /// included, and its model is the last turn's — the Threshing Floor prices a
     /// copy from these. Before any call there is no size, not a size of zero.
     #[test]
     fn a_codex_rollout_gives_its_last_call_size_and_model() {

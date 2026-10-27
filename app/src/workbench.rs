@@ -4412,7 +4412,7 @@ impl Bench {
     /// reply as well would draw both, which is the defect [`LiveTurn`] exists
     /// to end.
     /// The newest response the agent posted, whatever the person has selected
-    /// or whichever shelf is up — what the War Room quotes as the agent's own
+    /// or whichever shelf is up — what the Threshing Floor quotes as the agent's own
     /// latest summary. [`Self::showing`] cannot serve: it answers for the screen.
     pub fn latest_response(&self) -> Option<&crate::surface::Response> {
         self.surfaces.iter().rev().find_map(|s| match &s.kind {
@@ -4964,7 +4964,7 @@ mod tests {
         }))
     }
 
-    /// The War Room quotes the agent's own newest summary, whichever card the
+    /// The Threshing Floor quotes the agent's own newest summary, whichever card the
     /// person has open: `showing` answers for the screen, this for the agent.
     #[test]
     fn latest_response_ignores_the_selected_card() {

@@ -1,6 +1,6 @@
 //! One read-only copy of an agent, asked one question.
 //!
-//! When the cheap reads cannot answer an ask, the War Room can fork the asked
+//! When the cheap reads cannot answer an ask, the Threshing Floor can fork the asked
 //! agent's own conversation into a throwaway copy that can only read, ask it
 //! once, and kill it. The copy remembers everything the worker does, and none
 //! of what it does reaches the worker: Claude's copy saves no transcript, and
@@ -42,8 +42,8 @@ use serde_json::{json, Value};
 
 use crate::model_catalog::Transport;
 use crate::paneident::Bound;
+use crate::threshing_floor::Refusal;
 use crate::vitals::Bond;
-use crate::warroom::Refusal;
 
 /// The agent programs a copy can be made of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,7 +223,7 @@ pub fn conversation_for(bound: &HashMap<u32, Bound>, shell_pid: u32) -> Result<S
 /// What a copy of one pane would be: the conversation it would fork, what it
 /// would read per model call (`None`: unknown), and the model it would run
 /// on. Measured when the copy is asked for, off the window's thread, from the
-/// very transcript the copy forks — not from the War Room's readings, which
+/// very transcript the copy forks — not from the Threshing Floor's readings, which
 /// are only taken while a panel is open and can be minutes old.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Price {

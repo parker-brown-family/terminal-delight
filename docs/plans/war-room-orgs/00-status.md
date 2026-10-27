@@ -1,4 +1,4 @@
-# War Room Orgs
+# Threshing Floor Orgs
 
 **Difficulty: 4/10** — one UI surface, with a small saved grouping record and a migration that must preserve existing connections. One combined plan and one approval.
 **Turned out to be: 5/10.** Saved membership and legacy migration stayed small; keyboard focus and native drag coverage needed more care than the initial estimate.

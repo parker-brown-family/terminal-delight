@@ -7,6 +7,18 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### The Threshing Floor for 0.5.0 Development
+
+- The War Room is now called the Threshing Floor, everywhere a person reads it:
+  the panel, its help row, the docs and the site, in all nine languages. The
+  name is meant to be calm: a threshing floor is where a harvest is sorted.
+- Orgs saved before the rename load unchanged, and are still saved under the
+  same keys, so a build on either side of the rename reads the same window
+  state. The ask record is now written under `threshing-floor/<session>/`; the
+  record older builds kept under `warroom/<session>/` is still read and counted,
+  and never moved.
+- `TD_WAR_ROOM_DEMO` is now `TD_THRESHING_FLOOR_DEMO`.
+
 ### Agent Memory Hover for 0.5.0 Development
 
 - MENU GLYPHS includes a saved 🤖 Agents shortcut toggle. The toolbar button
@@ -14,7 +26,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   Standard and All show it, while Clean folds it into CONFIG.
 - Hover the top-right agent counter to see RAM and swap for awake, resting and
   sleeping panes, the observed RAM decrease since rest, measurement coverage
-  and sample age. The card uses cached measurements and keeps the War Room click.
+  and sample age. The card uses cached measurements and keeps the Threshing Floor click.
 - Unavailable process lists, swap readings and comparison baselines remain
   unmeasured. Partial totals say how many panes were measured. Memory figures
   use binary units (KiB, MiB and GiB); shared services outside pane scopes are
@@ -77,21 +89,21 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - **`ctl mcp …` no longer changes MCP policy from a script.** `ctl mcp on|off`,
   `ctl mcp writes on|off` and `ctl mcp expose agents|all` now answer `err` and
   change nothing, unless the window was started with `TD_MCP_SCRIPTED=1`. A
-  keybinding or bar widget that used them should open the War Room (the agent
+  keybinding or bar widget that used them should open the Threshing Floor (the agent
   counter, top right) instead; a script that launches its own window sets the
   variable where it launches it. `ctl mcp status` still answers.
 - **`list_panes` says `reach` where it said `exposed`.** Each pane's `reach` is
   how far the caller reaches it: `seen`, `read` or `ask`. Beside the panes, a
   `hidden` count says how many the caller cannot see, without naming them. A
-  pane nobody has seated in the War Room is `read`, as every listed pane was.
-- **The agent counter opens the War Room, not the agent wall.** Ctrl+Shift+A
+  pane nobody has seated in the Threshing Floor is `read`, as every listed pane was.
+- **The agent counter opens the Threshing Floor, not the agent wall.** Ctrl+Shift+A
   is now the wall's only door, and the wall's row on the key sheet is gone.
 - **A second `request_access` from one pane is refused while its first is on
   the rail.** It used to replace the first ask, which could hide it from the
   person who was about to answer it.
 - **The pushed events leave out seated panes.** The feed cannot tell who is
   listening, so `agent_appeared`, `tool_call` and `agent_vanished` now carry only
-  panes nobody seated in the War Room. A watcher that counts agents from the feed
+  panes nobody seated in the Threshing Floor. A watcher that counts agents from the feed
   sees only unseated ones.
 - **The layout file gains `seat` and `agents` on a pane, `[[lines]]`, and
   `ask_press_tokens`.** A 0.4 window reads a read-only pane as open and does not
@@ -148,12 +160,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 ### Security for 0.5.0 development
 
 - **No agent prompts another without a line a person drew.** `ask_agent` asks
-  only along a War Room line that reaches `ask`, or a bypass a person granted on
+  only along a Threshing Floor line that reaches `ask`, or a bypass a person granted on
   the rail, and a pane nobody seated is never asked. A seated pane is hidden from
   every agent except along a line from that agent's own seat. Off-limits beats
   every line, and read-only caps a line at ask. Only a person draws, changes or
   erases a line: no MCP or `ctl` verb can, and the answering code is named by no
-  agent-facing surface (`only_the_war_room_and_the_rail_draw_lines`,
+  agent-facing surface (`only_the_threshing_floor_and_the_rail_draw_lines`,
   `no_agent_facing_surface_can_answer_an_ask`).
 - **A copy of another agent can only read, and waits for your Yes.** A copy
   forks only a conversation its own agent named, and no other pane names. Claude's
@@ -165,7 +177,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   transcript, and its process group is killed when it answers, fails, or passes
   five minutes. By default every copy waits on the rail for a person's Yes.
 - **The record of asks keeps no words.** Every ask writes a line per stage to
-  `$XDG_STATE_HOME/terminal-delight/warroom/<session>/asks.jsonl`, with the
+  `$XDG_STATE_HOME/terminal-delight/threshing-floor/<session>/asks.jsonl`, with the
   question's length and SHA-256, never the question and never the answer.
 - **Your shell can no longer change MCP policy over the control socket.** Any
   program running as you, an agent included, could turn MCP writes on in one
@@ -202,7 +214,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added for 0.5.0 development
 
-- **Named War Room orgs and a relationship builder.** Create and rename orgs;
+- **Named Threshing Floor orgs and a relationship builder.** Create and rename orgs;
   drag fixed-size pane cards into an org with a lightweight text preview.
   Drag a card's connector to another member, choose See, Read or Ask, then save
   the directed relationship. Clicking a line edits or erases it. Membership
@@ -212,13 +224,13 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   selected-agent context panel is removed. The fixed frame holds the org chart
   on the left and the pane pool on the right. Headers and filters stay visible
   while each tile scrolls its own contents, with overflow clipped at its bounds.
-- **War Room pane search and session cards.** Type fuzzy words across project,
+- **Threshing Floor pane search and session cards.** Type fuzzy words across project,
   tab and pane title, or use `project:tab:pane` to search each field separately.
   Every pane has a card with session age and current context tokens. Age comes
   from the conversation's first recorded timestamp and survives a resume;
   unavailable measurements say unknown. Escape clears the search, then closes
   the panel. Searching clears any half-drawn line.
-- **The War Room: an org chart of agents that decides who may ask whom.** The
+- **The Threshing Floor: an org chart of agents that decides who may ask whom.** The
   agent counter, top right, opens it over the panes (and the `…` menu lists it
   when the counter is hidden). Add an agent to an org, then connect members with
   the relationship builder. A line carries a rung: `ask` (may ask it a question),

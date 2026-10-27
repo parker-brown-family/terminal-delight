@@ -1,4 +1,4 @@
-# War Room cross-org relationships + System Map — status / ExecPlan
+# Threshing Floor cross-org relationships + System Map — status / ExecPlan
 
 Difficulty: **8/10**. The data model carries authority semantics (an agent gaining
 reach it should not is a security surface), persistence must stay back-compatible,
@@ -46,19 +46,19 @@ the warm `war-room-relate-ux` target once the PR-1 gate frees it).
   passes `&Orgs::default()` (no caller seat → org fan-out cannot apply).
 
 ## Persistence (app/src/main.rs)
-- `StateFile.org_lines: Vec<warroom::OrgLine>` `#[serde(default, skip_serializing_if =
+- `StateFile.org_lines: Vec<threshing_floor::OrgLine>` `#[serde(default, skip_serializing_if =
   "Vec::is_empty")]`; Default `vec![]`. Load at ~6283 (Chart::from_saved), save at
   ~7948.
 
 ## Call sites to thread `orgs` through
-main.rs:8196, 8513; mcp.rs:824 (snapshot needs orgs); war_room_view.rs:3119 (test);
-warroom.rs internal 684/846 + tests. anonymous_reach callers unchanged.
+main.rs:8196, 8513; mcp.rs:824 (snapshot needs orgs); threshing_floor_view.rs:3119 (test);
+threshing_floor.rs internal 684/846 + tests. anonymous_reach callers unchanged.
 
-## UI (app/src/war_room_view.rs)
-- Relax same-org locks: `RelationDraft.ready`, `war_room_begin_relation`,
-  `war_room_choose_endpoint`, `war_room_save_relation`.
+## UI (app/src/threshing_floor_view.rs)
+- Relax same-org locks: `RelationDraft.ready`, `threshing_floor_begin_relation`,
+  `threshing_floor_choose_endpoint`, `threshing_floor_save_relation`.
 - Builder can target a whole org / a seat in another org. [enables data model]
-- Org delete button + counted confirm modal (reuse war_move modal pattern).
+- Org delete button + counted confirm modal (reuse floor_move modal pattern).
 - Labelled wire: `wire_route` already returns a `label_at`; render "may <rung> →".
 - System Map (all orgs, cross-org lines, org-as-target) + drag-to-popup editor. [Tier 2]
 
@@ -67,10 +67,10 @@ warroom.rs internal 684/846 + tests. anonymous_reach callers unchanged.
       prompt rename + filter + org title + counter. fmt/clippy/24 tests green.
 - [x] Data model: End/OrgLine/Chart ops, resolution (max-wins fail-closed), persistence
       (StateFile.org_lines), threading orgs through reach/decide_ask/may_write_live + all
-      callers (main/mcp/mcp_transport/view). 16 adversarial warroom::tests pass.
-- [x] Org deletion + counted confirm (war_delete_org, war_room_delete_org,
-      war_room_org_relationship_count, Orgs::delete). Members become loose; nothing dormant.
-- [x] System Map view (war_map / SystemMap): toggle, cross-org + whole-org relationship
+      callers (main/mcp/mcp_transport/view). 16 adversarial threshing_floor::tests pass.
+- [x] Org deletion + counted confirm (floor_delete_org, threshing_floor_delete_org,
+      threshing_floor_org_relationship_count, Orgs::delete). Members become loose; nothing dormant.
+- [x] System Map view (floor_map / SystemMap): toggle, cross-org + whole-org relationship
       builder (draw/draw_org), relationship list (erase/erase_org), org reference boxes.
 - [x] Labelled wire (ask-3): wire chip reads "may {rung} →" via wr_rel_wire, inked by rung
       (ask=amber). Cross-org seat→seat handled by the System Map (per-org builder stays
@@ -80,8 +80,8 @@ warroom.rs internal 684/846 + tests. anonymous_reach callers unchanged.
       a foreign org) — the fiddliest gpui; a refinement over the working System Map.
 
 ## Branch state (PR 2)
-feat/war-room-system-map off dev tip 3328924a. Files touched: warroom.rs, main.rs, mcp.rs,
-mcp_transport.rs, war_room_view.rs, lang/chrome.rs. Target: ~/.cache/td-targets/war-room-system-map.
+feat/war-room-system-map off dev tip 3328924a. Files touched: threshing_floor.rs, main.rs, mcp.rs,
+mcp_transport.rs, threshing_floor_view.rs, lang/chrome.rs. Target: ~/.cache/td-targets/war-room-system-map.
 
 ## Surprises & discoveries
 - Cross-org SEAT→SEAT needs only relaxing `ready()`/builder locks — no new type. Only

@@ -1,20 +1,21 @@
-//! The War Room panel: seats a person placed, the lines between them, what
+//! The Threshing Floor panel: seats a person placed, the lines between them, what
 //! each seat is doing, and the window's MCP switches.
 //!
-//! The rules it draws live in `warroom`; this file only gathers what the
+//! The rules it draws live in `threshing_floor`; this file only gathers what the
 //! window already knows about each seat (the agent counter's state, the size,
 //! age and model vitals read from the transcript) and turns a person's gestures
 //! into membership and directed lines. Seating
 //! and drawing happen here and nowhere else — see
-//! `only_the_war_room_and_the_rail_draw_lines`.
+//! `only_the_threshing_floor_and_the_rail_draw_lines`.
 
 use super::*;
 use crate::surfacefeed::now_ms;
 use gpui::{anchored, deferred, PathBuilder};
 
-/// A seat's box at scale 1: place, title, program, state, age and tokens.
+/// A seat's box at scale 1: place, title, latest message, program and model,
+/// state and role, age and tokens, and the newest artifact.
 const SEAT_W: f32 = 248.;
-const SEAT_H: f32 = 126.;
+const SEAT_H: f32 = 156.;
 const COL_GAP: f32 = 30.;
 const ROW_GAP: f32 = 56.;
 const PAD: f32 = 14.;
@@ -22,15 +23,23 @@ const PAD: f32 = 14.;
 /// Everything one seat shows, gathered from facts the window already has.
 struct PaneFacts {
     leaf: Entity<TerminalView>,
-    seat: Option<warroom::SeatId>,
-    name: warroom::PaneName,
+    seat: Option<threshing_floor::SeatId>,
+    name: threshing_floor::PaneName,
     project: String,
     program: String,
     model: Option<String>,
+    /// The effort the agent runs at, verbatim from its transcript (`MAX`, `xhigh`).
+    effort: Option<String>,
+    /// The agent's own latest message on its workbench: its brief, or the
+    /// start of its plain reply when it wrote no brief.
+    message: Option<String>,
+    /// Its newest artifact, how many more it has handed over, and whether a
+    /// person has left feedback on the newest. `None`: nothing handed over yet.
+    artifact: Option<(String, usize, crate::feedback::Feedback)>,
     size: Option<u64>,
     started_ms: Option<i64>,
     state: hud::AgentState,
-    access: warroom::AgentAccess,
+    access: threshing_floor::AgentAccess,
 }
 
 /// A wire the canvas is ready to stroke: its polyline, whether it bypasses a
@@ -41,13 +50,13 @@ type WireStroke = (Vec<(f32, f32)>, bool, bool);
 /// One drawn connection: a polyline in chart coordinates, how it is inked,
 /// and where its label chip sits.
 struct Wire {
-    from: warroom::SeatId,
-    to: warroom::SeatId,
+    from: threshing_floor::SeatId,
+    to: threshing_floor::SeatId,
     points: Vec<(f32, f32)>,
     bypass: bool,
     /// The rung this line grants, when this build can read it — what the label
     /// chip is inked by, so the clearance reads at a glance.
-    rung: Option<warroom::Rung>,
+    rung: Option<threshing_floor::Rung>,
     label_at: (f32, f32),
     label: String,
 }
@@ -62,7 +71,7 @@ struct PaneDrag {
 
 #[derive(Clone)]
 struct RelationDrag {
-    from: warroom::SeatId,
+    from: threshing_floor::SeatId,
     title: String,
     ink: Hsla,
     bg: Hsla,
@@ -94,8 +103,8 @@ impl Render for DragPreview {
         };
         div().child(
             div()
-                .id("war-drag-preview")
-                .debug_selector(|| "war-drag-preview".to_string())
+                .id("floor-drag-preview")
+                .debug_selector(|| "floor-drag-preview".to_string())
                 .relative()
                 .left(self.offset.x + dx)
                 .top(self.offset.y + dy)
@@ -186,19 +195,19 @@ enum RelationEnd {
 }
 
 pub(crate) struct RelationEditor {
-    draft: warroom::RelationDraft,
+    draft: threshing_floor::RelationDraft,
     choosing: Option<RelationEnd>,
 }
 
 /// The System Map's own relationship draft. Unlike [`RelationEditor`], each end
-/// is a whole-org or a single agent ([`warroom::End`]), and the two may sit in
+/// is a whole-org or a single agent ([`threshing_floor::End`]), and the two may sit in
 /// different orgs — this is the surface where cross-org and whole-org
 /// relationships are drawn. `Some` means the map is open.
 #[derive(Default)]
 pub(crate) struct SystemMap {
-    from: Option<warroom::End>,
-    to: Option<warroom::End>,
-    rung: Option<warroom::Rung>,
+    from: Option<threshing_floor::End>,
+    to: Option<threshing_floor::End>,
+    rung: Option<threshing_floor::Rung>,
     choosing: Option<RelationEnd>,
 }
 
@@ -210,8 +219,8 @@ pub(crate) struct SystemMap {
 /// reuses an existing mutation.
 pub(crate) struct DropChoice {
     leaf: Entity<TerminalView>,
-    seat: warroom::SeatId,
-    org: warroom::OrgId,
+    seat: threshing_floor::SeatId,
+    org: threshing_floor::OrgId,
     stage: DropStage,
 }
 
@@ -221,17 +230,17 @@ pub(crate) struct DropChoice {
 enum DropStage {
     Choosing,
     RelateOrg {
-        rung: Option<warroom::Rung>,
+        rung: Option<threshing_floor::Rung>,
     },
     RelateMember {
-        member: Option<warroom::SeatId>,
-        rung: Option<warroom::Rung>,
+        member: Option<threshing_floor::SeatId>,
+        rung: Option<threshing_floor::Rung>,
     },
 }
 
 /// Spaces match independent words anywhere in the name. Colons address
 /// project:tab:pane; empty segments leave that field unrestricted.
-fn pane_search_score(project: &str, name: &warroom::PaneName, query: &str) -> Option<i64> {
+fn pane_search_score(project: &str, name: &threshing_floor::PaneName, query: &str) -> Option<i64> {
     let query = query.trim().to_lowercase();
     let score = |hay: &str, query: &str| -> Option<i64> {
         let hay = hay.to_lowercase();
@@ -275,28 +284,28 @@ fn session_age(started_ms: Option<i64>, now_ms: i64) -> Option<String> {
 }
 
 impl Workspace {
-    /// The War Room, when it is open. Drawn flat over the panes (see the
+    /// The Threshing Floor, when it is open. Drawn flat over the panes (see the
     /// warped-surface table), closed by a click outside it or by Esc.
-    pub(crate) fn render_war_room(
+    pub(crate) fn render_threshing_floor(
         &self,
         th: &theme::Theme,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Div> {
-        if !self.war_room {
+        if !self.threshing_floor {
             return None;
         }
         let sk = skin::for_theme(cx, th, th.grade.scale);
         let ui = self.lang.strings().ui;
         let lang = self.lang;
-        let dragging = self.war_drag.as_ref().filter(|_| cx.has_active_drag());
+        let dragging = self.floor_drag.as_ref().filter(|_| cx.has_active_drag());
         let removing = dragging.is_some_and(|leaf| leaf.read(cx).seat.is_some());
         let drag_active = dragging.is_some();
-        let chart_active = drag_active && self.war_org.is_some();
+        let chart_active = drag_active && self.floor_org.is_some();
 
         // ---- gather: seated panes, and every pane off the chart ----
         let mut seats: Vec<PaneFacts> = Vec::new();
         let mut loose: Vec<PaneFacts> = Vec::new();
-        let query = self.war_room_query.text();
+        let query = self.threshing_floor_query.text();
         let mut total = 0;
         for (ti, tab) in self.tabs.iter().enumerate() {
             let project = self
@@ -311,7 +320,7 @@ impl Workspace {
             for leaf in leaves {
                 total += 1;
                 let v = leaf.read(cx);
-                let name = warroom::PaneName::new(&spine, &v.header_title());
+                let name = threshing_floor::PaneName::new(&spine, &v.header_title());
                 if pane_search_score(&project, &name, &query).is_none() {
                     continue;
                 }
@@ -327,13 +336,25 @@ impl Workspace {
                     project: project.clone(),
                     program: v.mode.label().to_string(),
                     model: vit.and_then(|x| x.model.clone()),
+                    effort: vit.and_then(|x| x.effort.clone()),
+                    message: v
+                        .bench
+                        .latest_response()
+                        .map(|r| r.brief.clone().unwrap_or_else(|| r.layman.clone())),
+                    artifact: v.handovers().newest().map(|h| {
+                        (
+                            h.label.clone(),
+                            v.handovers().len().saturating_sub(1),
+                            crate::feedback::of(&h.href),
+                        )
+                    }),
                     size: vit.and_then(|x| x.tokens),
                     started_ms: vit.and_then(|x| x.started_ms),
                     state: v.agent_status().state,
                     access: v.agent_access,
                 };
-                let org = facts.seat.and_then(|seat| self.war_orgs.owner(seat));
-                if org.is_some() && org == self.war_org {
+                let org = facts.seat.and_then(|seat| self.floor_orgs.owner(seat));
+                if org.is_some() && org == self.floor_org {
                     seats.push(facts);
                 } else if org.is_none() || !query.trim().is_empty() {
                     loose.push(facts);
@@ -347,24 +368,26 @@ impl Workspace {
         let s = th.grade.scale.clamp(0.7, 1.6);
         let (sw, sh, cg, rg, pad) = (SEAT_W * s, SEAT_H * s, COL_GAP * s, ROW_GAP * s, PAD * s);
         let missing: Vec<_> = self
-            .war_org
-            .and_then(|id| self.war_orgs.get(id))
+            .floor_org
+            .and_then(|id| self.floor_orgs.get(id))
             .into_iter()
             .flat_map(|o| o.seats.iter())
             .copied()
-            .filter(|seat| query.trim().is_empty() && self.war_room_seat_leaf(*seat, cx).is_none())
+            .filter(|seat| {
+                query.trim().is_empty() && self.threshing_floor_seat_leaf(*seat, cx).is_none()
+            })
             .collect();
-        let mut keys: Vec<(warroom::SeatId, String, String)> = seats
+        let mut keys: Vec<(threshing_floor::SeatId, String, String)> = seats
             .iter()
             .filter_map(|f| f.seat.map(|seat| (seat, f.project.clone(), f.name.full())))
             .collect();
         keys.extend(
             missing
                 .iter()
-                .map(|seat| (*seat, String::new(), ui.wr_unavailable.to_string())),
+                .map(|seat| (*seat, String::new(), ui.floor_unavailable.to_string())),
         );
-        let placed = warroom::layout(&keys, &self.chart);
-        let at = |seat: warroom::SeatId| -> Option<(f32, f32)> {
+        let placed = threshing_floor::layout(&keys, &self.chart);
+        let at = |seat: threshing_floor::SeatId| -> Option<(f32, f32)> {
             placed.iter().find(|p| p.seat == seat).map(|p| {
                 (
                     pad + p.col as f32 * (sw + cg),
@@ -377,10 +400,10 @@ impl Workspace {
         let chart_w = (pad * 2. + cols as f32 * (sw + cg) - cg).max(420. * s);
         let chart_h = (pad * 2. + rows as f32 * (sh + rg) - rg).max(sh + pad * 2.);
 
-        let rung_word = |r: warroom::Rung| match r {
-            warroom::Rung::See => ui.wr_rung_see,
-            warroom::Rung::Read => ui.wr_rung_read,
-            warroom::Rung::Ask => ui.wr_rung_ask,
+        let rung_word = |r: threshing_floor::Rung| match r {
+            threshing_floor::Rung::See => ui.floor_rung_see,
+            threshing_floor::Rung::Read => ui.floor_rung_read,
+            threshing_floor::Rung::Ask => ui.floor_rung_ask,
         };
         let wires: Vec<Wire> = self
             .chart
@@ -394,13 +417,13 @@ impl Workspace {
                 // shows on the line. A bypass keeps its remaining-count; a word
                 // this build cannot read is drawn as "?", granting nothing.
                 let label = match (l.rung.known(), l.prompts_left) {
-                    (Some(r), None) => lang::fill(ui.wr_rel_wire, &[("rung", rung_word(r))]),
+                    (Some(r), None) => lang::fill(ui.floor_rel_wire, &[("rung", rung_word(r))]),
                     (Some(r), Some(n)) => format!(
                         "{} · {}",
-                        lang::fill(ui.wr_rel_wire, &[("rung", rung_word(r))]),
-                        lang::fill(ui.wr_bypass, &[("n", &n.to_string())])
+                        lang::fill(ui.floor_rel_wire, &[("rung", rung_word(r))]),
+                        lang::fill(ui.floor_bypass, &[("n", &n.to_string())])
                     ),
-                    (None, _) => lang::fill(ui.wr_rel_wire, &[("rung", ui.wr_unknown)]),
+                    (None, _) => lang::fill(ui.floor_rel_wire, &[("rung", ui.floor_unknown)]),
                 };
                 let (points, label_at) = wire_route((fx, fy), (tx, ty), sw, sh, cg, rg);
                 Some(Wire {
@@ -422,7 +445,7 @@ impl Workspace {
             .count();
         let needs = seats.iter().filter(|f| f.state.needs_you()).count();
         let counts = lang::fill(
-            ui.wr_counts,
+            ui.floor_counts,
             &[
                 ("seats", &seats.len().to_string()),
                 ("working", &working.to_string()),
@@ -438,9 +461,9 @@ impl Workspace {
         // nothing — draw it faint and dashed rather than live accent, or the chart
         // reads as a working Read/Ask into a pane the person has walled off.
         let hidden_ink = th.faint;
-        let off_limits: std::collections::HashSet<warroom::SeatId> = seats
+        let off_limits: std::collections::HashSet<threshing_floor::SeatId> = seats
             .iter()
-            .filter(|f| matches!(f.access, warroom::AgentAccess::OffLimits))
+            .filter(|f| matches!(f.access, threshing_floor::AgentAccess::OffLimits))
             .filter_map(|f| f.seat)
             .collect();
         let paths: Vec<WireStroke> = wires
@@ -467,7 +490,7 @@ impl Workspace {
         .absolute()
         .inset_0();
 
-        let pick = self.war_room_pick;
+        let pick = self.threshing_floor_pick;
         let mut chart = div()
             .relative()
             .flex_none()
@@ -483,10 +506,10 @@ impl Workspace {
                     .w(px(chart_w - pad * 2.))
                     .text_color(th.text.alpha(0.6))
                     .child(SharedString::from(
-                        if self.war_org.is_some() {
-                            ui.wr_org_drop
+                        if self.floor_org.is_some() {
+                            ui.floor_org_drop
                         } else {
-                            ui.wr_org_empty
+                            ui.floor_org_empty
                         }
                         .to_string(),
                     )),
@@ -498,28 +521,34 @@ impl Workspace {
             let picked = pick == Some(seat);
             let state_ink = agent_state_glow(th, th.accent, f.state);
             let role = match self.chart.role_of(seat) {
-                warroom::Role::Orchestrator => ui.wr_role_orchestrator,
-                warroom::Role::Manager => ui.wr_role_manager,
-                warroom::Role::Worker => ui.wr_role_worker,
-                warroom::Role::Alone => ui.wr_role_alone,
+                threshing_floor::Role::Orchestrator => ui.floor_role_orchestrator,
+                threshing_floor::Role::Manager => ui.floor_role_manager,
+                threshing_floor::Role::Worker => ui.floor_role_worker,
+                threshing_floor::Role::Alone => ui.floor_role_alone,
             };
-            let second = match (&f.model, f.access) {
-                // Off-limits is the strongest position and must show on the card,
-                // not fall through to a plain model/role line that reads normal:
-                // the person set it to hide the pane from every agent, line or no.
-                (_, warroom::AgentAccess::OffLimits) => format!(
-                    "{} · {}",
-                    f.program,
-                    self.lang.strings().parts.pane_off_limits_badge
-                ),
-                (_, warroom::AgentAccess::ReadOnly) => format!(
-                    "{} · {}",
-                    f.program,
-                    self.lang.strings().parts.pane_read_only_badge
-                ),
-                (Some(m), _) => format!("{} · {m}", f.program),
-                (None, _) => format!("{} · {role}", f.program),
+            let second = model_line(
+                &f.program,
+                f.model.as_deref(),
+                f.effort.as_deref(),
+                ui.floor_model_unknown,
+            );
+            // Off-limits is the strongest position and must show on the card,
+            // beside the state where the eye already goes: the person set it to
+            // hide the pane from every agent, line or no.
+            let badge = match f.access {
+                threshing_floor::AgentAccess::OffLimits => {
+                    Some(self.lang.strings().parts.pane_off_limits_badge)
+                }
+                threshing_floor::AgentAccess::ReadOnly => {
+                    Some(self.lang.strings().parts.pane_read_only_badge)
+                }
+                _ => None,
             };
+            let state_line = match badge {
+                Some(b) => format!("\u{25cf} {} · {role} · {b}", f.state.label_in(lang)),
+                None => format!("\u{25cf} {} · {role}", f.state.label_in(lang)),
+            };
+            let produced = f.artifact.is_some();
             let pane_drag = PaneDrag {
                 leaf: f.leaf.clone(),
                 title: f.name.tab.clone(),
@@ -535,8 +564,8 @@ impl Workspace {
             let drop_ink = th.accent;
             chart = chart.child(
                 div()
-                    .id(SharedString::from(format!("war-seat-{}", seat.0)))
-                    .debug_selector(move || format!("war-seat-{}", seat.0))
+                    .id(SharedString::from(format!("floor-seat-{}", seat.0)))
+                    .debug_selector(move || format!("floor-seat-{}", seat.0))
                     .absolute()
                     .left(px(x))
                     .top(px(y))
@@ -546,10 +575,14 @@ impl Workspace {
                     .py(px(6. * s))
                     .rounded(sk.rad_raw(7.))
                     .border_1()
+                    // Nothing handed over yet wears the theme's accent: a fact
+                    // about the work, drawn as an accent and never as an alarm.
                     .border_color(if picked {
                         th.complement
-                    } else {
+                    } else if produced {
                         th.text.alpha(0.28)
+                    } else {
+                        th.accent.alpha(0.8)
                     })
                     .bg(darken(th.surface, 0.35))
                     .flex()
@@ -561,8 +594,9 @@ impl Workspace {
                     .on_drag(pane_drag, {
                         let ws = cx.entity().downgrade();
                         move |d: &PaneDrag, position, window: &mut Window, cx: &mut App| {
-                            let _ =
-                                ws.update(cx, |ws, cx| ws.war_room_begin_drag(&d.leaf, window, cx));
+                            let _ = ws.update(cx, |ws, cx| {
+                                ws.threshing_floor_begin_drag(&d.leaf, window, cx)
+                            });
                             cx.new(|_| DragPreview {
                                 title: d.title.clone(),
                                 offset: position,
@@ -577,7 +611,7 @@ impl Workspace {
                             let leaf = f.leaf.clone();
                             move |ws, ev: &MouseDownEvent, window, cx| {
                                 cx.stop_propagation();
-                                ws.war_context = Some((leaf.clone(), ev.position));
+                                ws.floor_context = Some((leaf.clone(), ev.position));
                                 window.focus(&ws.focus_handle, cx);
                                 cx.notify();
                             }
@@ -591,7 +625,7 @@ impl Workspace {
                         }
                     })
                     .on_drop(cx.listener(move |ws, d: &RelationDrag, _, cx| {
-                        ws.war_room_begin_relation(Some(d.from), Some(seat), cx);
+                        ws.threshing_floor_begin_relation(Some(d.from), Some(seat), cx);
                     }))
                     // Where it sits: the tab's own name is kept whole, and the
                     // levels above it are the part that clips on a narrow box.
@@ -638,6 +672,22 @@ impl Workspace {
                     )
                     .child(
                         div()
+                            .id(SharedString::from(format!("floor-message-{}", seat.0)))
+                            .debug_selector(move || format!("floor-message-{}", seat.0))
+                            .text_size(sk.text_px(8.5))
+                            .text_color(th.text.alpha(0.65))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(SharedString::from(
+                                f.message
+                                    .as_deref()
+                                    .and_then(|m| m.lines().find(|l| !l.trim().is_empty()))
+                                    .unwrap_or("")
+                                    .to_string(),
+                            )),
+                    )
+                    .child(
+                        div()
                             .text_size(sk.text_px(8.5))
                             .text_color(th.text.alpha(0.6))
                             .overflow_hidden()
@@ -648,16 +698,16 @@ impl Workspace {
                         div()
                             .text_size(sk.text_px(8.5))
                             .text_color(state_ink)
-                            .child(SharedString::from(format!(
-                                "\u{25cf} {}",
-                                f.state.label_in(lang)
-                            ))),
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(SharedString::from(state_line)),
                     )
-                    .child(self.war_room_metrics(f, &sk, th))
+                    .child(self.threshing_floor_metrics(f, &sk, th))
+                    .child(self.threshing_floor_artifact_row(f, seat, &sk, th, cx))
                     .child(
                         div()
-                            .id(SharedString::from(format!("war-connect-{}", seat.0)))
-                            .debug_selector(move || format!("war-connect-{}", seat.0))
+                            .id(SharedString::from(format!("floor-connect-{}", seat.0)))
+                            .debug_selector(move || format!("floor-connect-{}", seat.0))
                             .absolute()
                             .right(px(7. * s))
                             .bottom(px(5. * s))
@@ -683,12 +733,12 @@ impl Workspace {
                             })
                             .on_click(cx.listener(move |ws, _, _, cx| {
                                 cx.stop_propagation();
-                                ws.war_room_begin_relation(Some(seat), None, cx);
+                                ws.threshing_floor_begin_relation(Some(seat), None, cx);
                             })),
                     )
                     .on_click(cx.listener(move |ws, _, _w, cx| {
                         cx.stop_propagation();
-                        ws.war_room_click_seat(seat, cx);
+                        ws.threshing_floor_click_seat(seat, cx);
                     })),
             );
         }
@@ -711,18 +761,18 @@ impl Workspace {
                     .flex_col()
                     .gap_1()
                     .text_color(th.text.alpha(0.6))
-                    .child(SharedString::from(ui.wr_unavailable.to_string()))
+                    .child(SharedString::from(ui.floor_unavailable.to_string()))
                     .child(SharedString::from(format!(
                         "{} {} · {} {}",
-                        ui.wr_age, ui.wr_unknown, ui.wr_tokens, ui.wr_unknown
+                        ui.floor_age, ui.floor_unknown, ui.floor_tokens, ui.floor_unknown
                     )))
                     .child(
-                        Self::bezel_btn(&sk, ui.wr_unseat_btn, false)
-                            .id(SharedString::from(format!("war-forget-{}", seat.0)))
+                        Self::bezel_btn(&sk, ui.floor_unseat_btn, false)
+                            .id(SharedString::from(format!("floor-forget-{}", seat.0)))
                             .on_click(cx.listener(move |ws, _, _, cx| {
                                 cx.stop_propagation();
                                 ws.chart.forget_seat(seat);
-                                ws.war_orgs.remove(seat);
+                                ws.floor_orgs.remove(seat);
                                 ws.save(cx);
                                 cx.notify();
                             })),
@@ -738,9 +788,9 @@ impl Workspace {
                 bypass_ink
             } else {
                 match w.rung {
-                    Some(warroom::Rung::Ask) => th.ansi[3],
-                    Some(warroom::Rung::Read) => line_ink,
-                    Some(warroom::Rung::See) => line_ink.alpha(0.75),
+                    Some(threshing_floor::Rung::Ask) => th.ansi[3],
+                    Some(threshing_floor::Rung::Read) => line_ink,
+                    Some(threshing_floor::Rung::See) => line_ink.alpha(0.75),
                     None => hidden_ink,
                 }
             };
@@ -749,8 +799,11 @@ impl Workspace {
             let lx = (w.label_at.0 - lw / 2.).clamp(2., (chart_w - lw - 2.).max(2.));
             chart = chart.child(
                 div()
-                    .id(SharedString::from(format!("war-line-{}-{}", from.0, to.0)))
-                    .debug_selector(move || format!("war-line-{}-{}", from.0, to.0))
+                    .id(SharedString::from(format!(
+                        "floor-line-{}-{}",
+                        from.0, to.0
+                    )))
+                    .debug_selector(move || format!("floor-line-{}-{}", from.0, to.0))
                     .absolute()
                     .left(px(lx))
                     .top(px(w.label_at.1 - 9. * s))
@@ -773,7 +826,7 @@ impl Workspace {
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
-                            ws.war_room_click_line(from, to, cx);
+                            ws.threshing_floor_click_line(from, to, cx);
                         }),
                     ),
             );
@@ -784,7 +837,7 @@ impl Workspace {
         for f in &loose {
             let leaf = f.leaf.clone();
             let is_agent = leaf.read(cx).mode.is_agent();
-            let owner = f.seat.and_then(|s| self.war_orgs.owner(s));
+            let owner = f.seat.and_then(|s| self.floor_orgs.owner(s));
             let pane_drag = PaneDrag {
                 leaf: leaf.clone(),
                 title: f.name.tab.clone(),
@@ -794,12 +847,12 @@ impl Workspace {
             off = off.child(
                 div()
                     .id(SharedString::from(format!(
-                        "war-pane-{}",
+                        "floor-pane-{}",
                         leaf.entity_id().as_u64()
                     )))
                     .debug_selector({
                         let id = leaf.entity_id().as_u64();
-                        move || format!("war-pane-{id}")
+                        move || format!("floor-pane-{id}")
                     })
                     .w(px(sw))
                     .h(px(sh))
@@ -820,7 +873,7 @@ impl Workspace {
                                 let ws = cx.entity().downgrade();
                                 move |d: &PaneDrag, position, window: &mut Window, cx: &mut App| {
                                     let _ = ws.update(cx, |ws, cx| {
-                                        ws.war_room_begin_drag(&d.leaf, window, cx)
+                                        ws.threshing_floor_begin_drag(&d.leaf, window, cx)
                                     });
                                     cx.new(|_| DragPreview {
                                         title: d.title.clone(),
@@ -837,7 +890,7 @@ impl Workspace {
                             let leaf = f.leaf.clone();
                             move |ws, ev: &MouseDownEvent, window, cx| {
                                 cx.stop_propagation();
-                                ws.war_context = Some((leaf.clone(), ev.position));
+                                ws.floor_context = Some((leaf.clone(), ev.position));
                                 window.focus(&ws.focus_handle, cx);
                                 cx.notify();
                             }
@@ -865,7 +918,7 @@ impl Workspace {
                             .text_color(th.text.alpha(0.6))
                             .child(SharedString::from(f.program.clone())),
                     )
-                    .child(self.war_room_metrics(f, &sk, th))
+                    .child(self.threshing_floor_metrics(f, &sk, th))
                     .when(f.access.is_off_limits(), |d| {
                         d.child(
                             div()
@@ -879,7 +932,7 @@ impl Workspace {
                             div()
                                 .text_size(sk.text_px(8.5))
                                 .text_color(th.text.alpha(0.6))
-                                .child(SharedString::from(ui.wr_org_unknown.to_string())),
+                                .child(SharedString::from(ui.floor_org_unknown.to_string())),
                         )
                     })
                     .when_some(owner, |d, org| {
@@ -887,38 +940,41 @@ impl Workspace {
                             div()
                                 .text_size(sk.text_px(8.5))
                                 .text_color(th.accent)
-                                .child(SharedString::from(self.war_room_org_label(org))),
+                                .child(SharedString::from(self.threshing_floor_org_label(org))),
                         )
                     })
                     .when(is_agent && owner.is_some(), |d| {
                         let org = owner.unwrap();
                         d.child(
-                            Self::bezel_btn(&sk, ui.wr_org_open, false)
+                            Self::bezel_btn(&sk, ui.floor_org_open, false)
                                 .id(SharedString::from(format!(
-                                    "war-open-org-{}",
+                                    "floor-open-org-{}",
                                     leaf.entity_id().as_u64()
                                 )))
-                                .debug_selector(move || format!("war-open-org-{}", org.0))
+                                .debug_selector(move || format!("floor-open-org-{}", org.0))
                                 .on_click(cx.listener(move |ws, _, _, cx| {
                                     cx.stop_propagation();
-                                    ws.war_room_set_org(org, cx);
+                                    ws.threshing_floor_set_org(org, cx);
                                 })),
                         )
                     })
-                    .when(is_agent && owner.is_none() && self.war_org.is_some(), |d| {
-                        d.child(
-                            Self::bezel_btn(&sk, ui.wr_org_add, false)
-                                .id(SharedString::from(format!(
-                                    "war-seat-btn-{}",
-                                    leaf.entity_id().as_u64()
-                                )))
-                                .hover(|d| d.border_color(th.accent))
-                                .on_click(cx.listener(move |ws, _, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.war_room_seat(&leaf, cx);
-                                })),
-                        )
-                    }),
+                    .when(
+                        is_agent && owner.is_none() && self.floor_org.is_some(),
+                        |d| {
+                            d.child(
+                                Self::bezel_btn(&sk, ui.floor_org_add, false)
+                                    .id(SharedString::from(format!(
+                                        "floor-seat-btn-{}",
+                                        leaf.entity_id().as_u64()
+                                    )))
+                                    .hover(|d| d.border_color(th.accent))
+                                    .on_click(cx.listener(move |ws, _, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.threshing_floor_seat(&leaf, cx);
+                                    })),
+                            )
+                        },
+                    ),
             );
         }
 
@@ -926,8 +982,8 @@ impl Workspace {
         // Headers are siblings of scroll bodies. Zero minimum height on every
         // flex ancestor prevents the contents from stretching the frame.
         let header = div()
-            .id("war-room-header")
-            .debug_selector(|| "war-room-header".to_string())
+            .id("threshing-floor-header")
+            .debug_selector(|| "threshing-floor-header".to_string())
             .flex_none()
             .min_w(px(0.))
             .flex()
@@ -945,7 +1001,7 @@ impl Workspace {
                             .text_size(sk.text_px(13.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.complement)
-                            .child(SharedString::from(ui.wr_hdr.to_string())),
+                            .child(SharedString::from(ui.floor_hdr.to_string())),
                     )
                     .child(
                         div()
@@ -965,8 +1021,8 @@ impl Workspace {
             )
             .child(
                 div()
-                    .id("war-room-search")
-                    .debug_selector(|| "war-room-search".to_string())
+                    .id("threshing-floor-search")
+                    .debug_selector(|| "threshing-floor-search".to_string())
                     .flex()
                     .flex_row()
                     .items_center()
@@ -978,7 +1034,7 @@ impl Workspace {
                     .bg(darken(th.surface, 0.35))
                     .cursor(gpui::CursorStyle::IBeam)
                     .child(render_edit_buffer(
-                        &self.war_room_query,
+                        &self.threshing_floor_query,
                         s,
                         th.text,
                         th.accent,
@@ -988,19 +1044,19 @@ impl Workspace {
                         d.child(
                             div()
                                 .text_color(th.text.alpha(0.55))
-                                .child(SharedString::from(ui.wr_search.to_string())),
+                                .child(SharedString::from(ui.floor_search.to_string())),
                         )
                     })
                     .child(div().flex_1())
                     .child(
                         Self::bezel_btn(&sk, "×", false)
-                            .id("war-room-clear")
+                            .id("threshing-floor-clear")
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                                     cx.stop_propagation();
-                                    ws.war_room_query = EditBuffer::seeded("");
-                                    ws.war_room_pick = None;
+                                    ws.threshing_floor_query = EditBuffer::seeded("");
+                                    ws.threshing_floor_pick = None;
                                     cx.notify();
                                 }),
                             ),
@@ -1017,7 +1073,7 @@ impl Workspace {
                 div()
                     .text_color(th.text.alpha(0.6))
                     .child(SharedString::from(lang::fill(
-                        ui.wr_results,
+                        ui.floor_results,
                         &[("shown", &shown.to_string()), ("total", &total.to_string())],
                     ))),
             )
@@ -1025,35 +1081,35 @@ impl Workspace {
                 d.child(
                     div()
                         .p_2()
-                        .child(SharedString::from(ui.wr_no_matches.to_string())),
+                        .child(SharedString::from(ui.floor_no_matches.to_string())),
                 )
             });
         let org_header = div()
-            .id("war-org-header")
-            .debug_selector(|| "war-org-header".to_string())
+            .id("floor-org-header")
+            .debug_selector(|| "floor-org-header".to_string())
             .flex_none()
             .min_w(px(0.))
             .flex()
             .flex_col()
             .gap_2()
-            .child(self.war_room_org_controls(&sk, th, cx))
+            .child(self.threshing_floor_org_controls(&sk, th, cx))
             .child(
                 div()
                     .text_size(sk.text_px(8.5))
                     .text_color(th.accent.alpha(0.85))
                     .child(SharedString::from(
                         if drag_active {
-                            ui.wr_drag_hint
+                            ui.floor_drag_hint
                         } else {
-                            ui.wr_hint
+                            ui.floor_hint
                         }
                         .to_string(),
                     )),
             )
             .children(
-                self.war_map
+                self.floor_map
                     .is_none()
-                    .then(|| self.war_room_relationship_controls(&sk, th, cx)),
+                    .then(|| self.threshing_floor_relationship_controls(&sk, th, cx)),
             )
             .children(self.ask_numbers.as_ref().map(|n| {
                 div()
@@ -1064,7 +1120,7 @@ impl Workspace {
                         th.text.alpha(0.6)
                     })
                     .child(SharedString::from(lang::fill(
-                        ui.wr_asks,
+                        ui.floor_asks,
                         &[
                             ("cheap", &n.cheap_answers.to_string()),
                             ("copies", &n.copy_answers.to_string()),
@@ -1074,8 +1130,8 @@ impl Workspace {
             }));
         let drop_chart_ink = th.accent;
         let chart_tile = div()
-            .id("war-org-tile")
-            .debug_selector(|| "war-org-tile".to_string())
+            .id("floor-org-tile")
+            .debug_selector(|| "floor-org-tile".to_string())
             .flex_1()
             .min_w(px(0.))
             .min_h(px(0.))
@@ -1088,10 +1144,10 @@ impl Workspace {
             // heading distinct from the room's pink header and the green field,
             // so the board reads as "this org's chart" instead of cards adrift
             // in empty space.
-            .children(self.war_org.map(|id| {
+            .children(self.floor_org.map(|id| {
                 div()
-                    .id("war-org-title")
-                    .debug_selector(|| "war-org-title".to_string())
+                    .id("floor-org-title")
+                    .debug_selector(|| "floor-org-title".to_string())
                     .flex_none()
                     .pb_1()
                     .border_b_1()
@@ -1099,12 +1155,12 @@ impl Workspace {
                     .text_size(sk.text_px(13.))
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
                     .text_color(th.ansi[6])
-                    .child(SharedString::from(self.war_room_org_label(id)))
+                    .child(SharedString::from(self.threshing_floor_org_label(id)))
             }))
             .child(
                 div()
-                    .id("war-room-chart")
-                    .debug_selector(|| "war-room-chart".to_string())
+                    .id("threshing-floor-chart")
+                    .debug_selector(|| "threshing-floor-chart".to_string())
                     .flex_1()
                     .min_w(px(0.))
                     .min_h(px(0.))
@@ -1127,23 +1183,23 @@ impl Workspace {
                             .shadow(drop_glow(drop_chart_ink, true))
                     })
                     .can_drop({
-                        let has_org = self.war_org.is_some();
+                        let has_org = self.floor_org.is_some();
                         move |_, _, _| has_org
                     })
                     .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
-                        if let Some(org) = ws.war_org {
-                            ws.war_room_assign(&d.leaf, org, false, cx);
+                        if let Some(org) = ws.floor_org {
+                            ws.threshing_floor_assign(&d.leaf, org, false, cx);
                         }
                     }))
-                    .child(if self.war_map.is_some() {
-                        self.war_system_map(&sk, th, cx).into_any_element()
+                    .child(if self.floor_map.is_some() {
+                        self.floor_system_map(&sk, th, cx).into_any_element()
                     } else {
                         chart.into_any_element()
                     }),
             );
         let pool_tile = div()
-            .id("war-pool-tile")
-            .debug_selector(|| "war-pool-tile".to_string())
+            .id("floor-pool-tile")
+            .debug_selector(|| "floor-pool-tile".to_string())
             .w(px(sw + 18.))
             .max_w(gpui::relative(0.4))
             .flex_none()
@@ -1171,15 +1227,15 @@ impl Workspace {
                     style
                 }
             })
-            .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| ws.war_room_unseat(&d.leaf, cx)))
+            .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| ws.threshing_floor_unseat(&d.leaf, cx)))
             .overflow_hidden()
             .flex()
             .flex_col()
             .gap_2()
             .child(
                 div()
-                    .id("war-pool-header")
-                    .debug_selector(|| "war-pool-header".to_string())
+                    .id("floor-pool-header")
+                    .debug_selector(|| "floor-pool-header".to_string())
                     .flex_none()
                     .flex()
                     .flex_col()
@@ -1188,7 +1244,7 @@ impl Workspace {
                         div()
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(th.text.alpha(0.85))
-                            .child(SharedString::from(ui.wr_off_hdr.to_string())),
+                            .child(SharedString::from(ui.floor_off_hdr.to_string())),
                     )
                     .child(
                         div()
@@ -1196,9 +1252,9 @@ impl Workspace {
                             .text_color(th.text.alpha(0.6))
                             .child(SharedString::from(
                                 if removing {
-                                    ui.wr_drop_remove
+                                    ui.floor_drop_remove
                                 } else {
-                                    ui.wr_off_blurb
+                                    ui.floor_off_blurb
                                 }
                                 .to_string(),
                             )),
@@ -1206,8 +1262,8 @@ impl Workspace {
             )
             .child(
                 div()
-                    .id("war-room-pool")
-                    .debug_selector(|| "war-room-pool".to_string())
+                    .id("threshing-floor-pool")
+                    .debug_selector(|| "threshing-floor-pool".to_string())
                     .flex_1()
                     .min_w(px(0.))
                     .min_h(px(0.))
@@ -1216,8 +1272,8 @@ impl Workspace {
                     .child(off),
             );
         let panel = div()
-            .id("war-room-panel")
-            .debug_selector(|| "war-room-panel".to_string())
+            .id("threshing-floor-panel")
+            .debug_selector(|| "threshing-floor-panel".to_string())
             .w(gpui::relative(0.95))
             .h(gpui::relative(0.9))
             .min_w(px(0.))
@@ -1238,7 +1294,7 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    if ws.war_room_pick.take().is_some() {
+                    if ws.threshing_floor_pick.take().is_some() {
                         cx.notify();
                     }
                 }),
@@ -1247,8 +1303,8 @@ impl Workspace {
             .child(header)
             .child(
                 div()
-                    .id("war-room-tiles")
-                    .debug_selector(|| "war-room-tiles".to_string())
+                    .id("threshing-floor-tiles")
+                    .debug_selector(|| "threshing-floor-tiles".to_string())
                     .flex_1()
                     .min_w(px(0.))
                     .min_h(px(0.))
@@ -1261,7 +1317,7 @@ impl Workspace {
                     .child(chart_tile)
                     .child(pool_tile),
             )
-            .child(self.war_room_drag_footer(removing, drag_active, &sk, th, cx));
+            .child(self.threshing_floor_drag_footer(removing, drag_active, &sk, th, cx));
 
         Some(
             div()
@@ -1276,7 +1332,7 @@ impl Workspace {
                     cx.set_active_drag_cursor_style(gpui::CursorStyle::ClosedHand, window);
                 })
                 .capture_any_mouse_up(cx.listener(|ws, _, _, cx| {
-                    if ws.war_drag.take().is_some() {
+                    if ws.floor_drag.take().is_some() {
                         cx.notify();
                     }
                 }))
@@ -1284,37 +1340,37 @@ impl Workspace {
                     MouseButton::Right,
                     cx.listener(|ws, _, _, cx| {
                         cx.stop_propagation();
-                        ws.war_context = None;
+                        ws.floor_context = None;
                         cx.notify();
                     }),
                 )
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                        ws.close_war_room();
+                        ws.close_threshing_floor();
                         ws.focus_active(window, cx);
                         cx.notify();
                     }),
                 )
                 .child(panel)
-                .children(self.war_room_context_menu(&sk, th, cx)),
+                .children(self.threshing_floor_context_menu(&sk, th, cx)),
         )
     }
 
-    fn war_room_begin_drag(
+    fn threshing_floor_begin_drag(
         &mut self,
         leaf: &Entity<TerminalView>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.war_drag = Some(leaf.clone());
-        self.war_context = None;
-        self.war_feedback = None;
+        self.floor_drag = Some(leaf.clone());
+        self.floor_context = None;
+        self.floor_feedback = None;
         window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
-    fn war_room_drag_footer(
+    fn threshing_floor_drag_footer(
         &self,
         removing: bool,
         dragging: bool,
@@ -1338,16 +1394,16 @@ impl Workspace {
                     .text_size(sk.text_px(9.))
                     .text_color(th.text.alpha(0.8))
                     .child(SharedString::from(if dragging {
-                        ui.wr_drag_hint.to_string()
+                        ui.floor_drag_hint.to_string()
                     } else {
-                        self.war_feedback.clone().unwrap_or_default()
+                        self.floor_feedback.clone().unwrap_or_default()
                     })),
             )
             .when(removing, |d| {
                 d.child(
                     div()
-                        .id("war-remove-drop")
-                        .debug_selector(|| "war-remove-drop".to_string())
+                        .id("floor-remove-drop")
+                        .debug_selector(|| "floor-remove-drop".to_string())
                         .h_full()
                         .w(px(236.))
                         .flex_none()
@@ -1365,9 +1421,9 @@ impl Workspace {
                                 .bg(ink.alpha(0.14))
                                 .shadow(drop_glow(ink, true))
                         })
-                        .on_drop(
-                            cx.listener(|ws, d: &PaneDrag, _, cx| ws.war_room_unseat(&d.leaf, cx)),
-                        )
+                        .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
+                            ws.threshing_floor_unseat(&d.leaf, cx)
+                        }))
                         .child(trash_icon(ink))
                         .child(
                             div()
@@ -1375,25 +1431,25 @@ impl Workspace {
                                 .flex()
                                 .flex_col()
                                 .gap_1()
-                                .child(div().text_color(ink).child(ui.wr_remove))
+                                .child(div().text_color(ink).child(ui.floor_remove))
                                 .child(
                                     div()
                                         .text_size(sk.text_px(8.))
                                         .text_color(th.text.alpha(0.7))
-                                        .child(ui.wr_access_off),
+                                        .child(ui.floor_access_off),
                                 ),
                         ),
                 )
             })
     }
 
-    fn war_room_context_menu(
+    fn threshing_floor_context_menu(
         &self,
         sk: &skin::Skin,
         th: &theme::Theme,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let (leaf, pos) = self.war_context.as_ref()?;
+        let (leaf, pos) = self.floor_context.as_ref()?;
         let ui = self.lang.strings().ui;
         let parts = self.lang.strings().parts;
         let row = |label: String| {
@@ -1405,8 +1461,8 @@ impl Workspace {
                 .hover(|d| d.bg(th.accent.alpha(0.16)))
         };
         let mut menu = div()
-            .id("war-context-menu")
-            .debug_selector(|| "war-context-menu".to_string())
+            .id("floor-context-menu")
+            .debug_selector(|| "floor-context-menu".to_string())
             .min_w(px(220.))
             .max_w(px(360.))
             .py_1()
@@ -1421,7 +1477,7 @@ impl Workspace {
             .text_color(th.text)
             .shadow_md()
             .on_mouse_down_out(cx.listener(|ws, _, _, cx| {
-                ws.war_context = None;
+                ws.floor_context = None;
                 cx.notify();
             }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -1437,30 +1493,30 @@ impl Workspace {
         if leaf.read(cx).seat.is_some() {
             let leaf = leaf.clone();
             menu = menu.child(
-                row(ui.wr_remove.to_string())
-                    .id("war-context-remove")
-                    .debug_selector(|| "war-context-remove".to_string())
+                row(ui.floor_remove.to_string())
+                    .id("floor-context-remove")
+                    .debug_selector(|| "floor-context-remove".to_string())
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
-                        ws.war_room_unseat(&leaf, cx);
+                        ws.threshing_floor_unseat(&leaf, cx);
                     })),
             );
         }
         for (access, label, id) in [
             (
-                warroom::AgentAccess::Open,
+                threshing_floor::AgentAccess::Open,
                 parts.pane_ctx_let_agents_see,
-                "war-context-open",
+                "floor-context-open",
             ),
             (
-                warroom::AgentAccess::ReadOnly,
+                threshing_floor::AgentAccess::ReadOnly,
                 parts.pane_ctx_read_only,
-                "war-context-read-only",
+                "floor-context-read-only",
             ),
             (
-                warroom::AgentAccess::OffLimits,
+                threshing_floor::AgentAccess::OffLimits,
                 parts.pane_ctx_off_limits,
-                "war-context-off-limits",
+                "floor-context-off-limits",
             ),
         ] {
             let mark = if leaf.read(cx).agent_access == access {
@@ -1476,7 +1532,7 @@ impl Workspace {
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
                         leaf.update(cx, |v, cx| v.set_agent_access(access, cx));
-                        ws.war_context = None;
+                        ws.floor_context = None;
                         ws.save(cx);
                         cx.notify();
                     })),
@@ -1486,35 +1542,35 @@ impl Workspace {
     }
 
     /// Modal keyboard capture keeps all editing away from the underlying PTY.
-    pub(crate) fn war_room_capture_key(
+    pub(crate) fn threshing_floor_capture_key(
         &mut self,
         key: &gpui::Keystroke,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self.war_room {
+        if !self.threshing_floor {
             return false;
         }
         if key.key == "escape" {
             if cx.stop_active_drag(window) {
-                self.war_drag = None;
+                self.floor_drag = None;
                 cx.notify();
                 return true;
             }
-            if self.war_context.take().is_some() {
+            if self.floor_context.take().is_some() {
                 cx.notify();
                 return true;
             }
-            if self.war_drop.take().is_some()
-                || self.war_move.take().is_some()
-                || self.war_org_edit.take().is_some()
-                || self.war_relation.take().is_some()
+            if self.floor_drop.take().is_some()
+                || self.floor_move.take().is_some()
+                || self.floor_org_edit.take().is_some()
+                || self.floor_relation.take().is_some()
             {
-            } else if !self.war_room_query.text().is_empty() {
-                self.war_room_query = EditBuffer::seeded("");
-                self.war_room_pick = None;
+            } else if !self.threshing_floor_query.text().is_empty() {
+                self.threshing_floor_query = EditBuffer::seeded("");
+                self.threshing_floor_pick = None;
             } else {
-                self.close_war_room();
+                self.close_threshing_floor();
                 self.focus_active(window, cx);
             }
             cx.notify();
@@ -1523,33 +1579,33 @@ impl Workspace {
         if cx.has_active_drag() {
             return true;
         }
-        if self.war_context.is_some() {
+        if self.floor_context.is_some() {
             return true;
         }
-        if key.key == "delete" && self.war_relation.is_none() && self.war_org_edit.is_none() {
+        if key.key == "delete" && self.floor_relation.is_none() && self.floor_org_edit.is_none() {
             if let Some(leaf) = self
-                .war_room_pick
-                .and_then(|seat| self.war_room_seat_leaf(seat, cx))
+                .threshing_floor_pick
+                .and_then(|seat| self.threshing_floor_seat_leaf(seat, cx))
             {
-                self.war_room_unseat(&leaf, cx);
+                self.threshing_floor_unseat(&leaf, cx);
                 return true;
             }
         }
         if key.key == "enter" {
-            if self.war_org_edit.is_some() {
-                self.war_room_save_org(cx);
-            } else if self.war_relation.is_some() {
-                self.war_room_save_relation(cx);
+            if self.floor_org_edit.is_some() {
+                self.threshing_floor_save_org(cx);
+            } else if self.floor_relation.is_some() {
+                self.threshing_floor_save_relation(cx);
             }
             return true;
         }
-        if self.war_relation.is_some() || self.war_move.is_some() {
+        if self.floor_relation.is_some() || self.floor_move.is_some() {
             return true;
         }
-        let editing_org = self.war_org_edit.is_some();
-        let buffer = match &mut self.war_org_edit {
+        let editing_org = self.floor_org_edit.is_some();
+        let buffer = match &mut self.floor_org_edit {
             Some((_, text)) => text,
-            None => &mut self.war_room_query,
+            None => &mut self.threshing_floor_query,
         };
         let before = buffer.text();
         let cap = if editing_org { 80 } else { 256 };
@@ -1565,20 +1621,116 @@ impl Workspace {
             buffer.apply(&key.key, &key.modifiers, key.key_char.as_deref(), cap);
         }
         if !editing_org && buffer.text() != before {
-            self.war_room_pick = None;
+            self.threshing_floor_pick = None;
         }
         cx.notify();
         true
     }
 
-    fn war_room_metrics(&self, f: &PaneFacts, sk: &skin::Skin, th: &theme::Theme) -> gpui::Div {
+    /// The card's last row: the agent's newest artifact by name, how many more
+    /// it has handed over, and whether a person has left feedback on it. A click
+    /// opens it in that agent's pane, the way the artifact rail does. An agent
+    /// that has handed nothing over says so in the accent.
+    fn threshing_floor_artifact_row(
+        &self,
+        f: &PaneFacts,
+        seat: threshing_floor::SeatId,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let ui = self.lang.strings().ui;
-        let age =
-            session_age(f.started_ms, now_ms() as i64).unwrap_or_else(|| ui.wr_unknown.to_string());
+        let s = th.grade.scale;
+        let Some((label, more, feedback)) = &f.artifact else {
+            return div()
+                .id(SharedString::from(format!("floor-no-artifact-{}", seat.0)))
+                .debug_selector(move || format!("floor-no-artifact-{}", seat.0))
+                .mr(px(30. * s))
+                .text_size(sk.text_px(8.5))
+                .text_color(th.accent)
+                .child(SharedString::from(ui.floor_no_artifact.to_string()))
+                .into_any_element();
+        };
+        let pill = |word: &str, ink: Hsla, ground: Hsla| {
+            div()
+                .flex_none()
+                .px(px(5. * s))
+                .rounded(sk.rad_raw(8.))
+                .bg(ground)
+                .text_color(ink)
+                .text_size(sk.text_px(7.))
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(SharedString::from(word.to_string()))
+        };
+        let pill = match feedback {
+            crate::feedback::Feedback::Annotated => Some(
+                pill(ui.floor_annotated, th.human, th.human.alpha(0.16))
+                    .debug_selector(move || format!("floor-annotated-{}", seat.0)),
+            ),
+            crate::feedback::Feedback::None => Some(
+                pill(
+                    ui.floor_no_feedback,
+                    th.text.alpha(0.6),
+                    th.text.alpha(0.08),
+                )
+                .debug_selector(move || format!("floor-no-feedback-{}", seat.0)),
+            ),
+            // Nothing is claimed for an artifact that takes no notes here.
+            crate::feedback::Feedback::Unknown => None,
+        };
+        let leaf = f.leaf.clone();
+        div()
+            .id(SharedString::from(format!("floor-artifact-{}", seat.0)))
+            .debug_selector(move || format!("floor-artifact-{}", seat.0))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(5. * s))
+            .mr(px(30. * s))
+            .min_w(px(0.))
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_size(sk.text_px(8.5))
+            .cursor_pointer()
+            .child(
+                div()
+                    .min_w(px(0.))
+                    .truncate()
+                    .text_color(th.text)
+                    .child(SharedString::from(label.clone())),
+            )
+            .when(*more > 0, |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .text_color(th.text.alpha(0.55))
+                        .child(SharedString::from(format!("+{more}"))),
+                )
+            })
+            .when_some(pill, |d, p| d.child(p))
+            .on_click(cx.listener(move |ws, _, _, cx| {
+                cx.stop_propagation();
+                ws.close_threshing_floor();
+                leaf.update(cx, |v, cx| v.open_newest_handover(cx));
+                ws.pending_jump = Some(leaf.entity_id());
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+
+    fn threshing_floor_metrics(
+        &self,
+        f: &PaneFacts,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+    ) -> gpui::Div {
+        let ui = self.lang.strings().ui;
+        let age = session_age(f.started_ms, now_ms() as i64)
+            .unwrap_or_else(|| ui.floor_unknown.to_string());
         let tokens = f
             .size
             .map(hud::fmt_tokens)
-            .unwrap_or_else(|| ui.wr_unknown.to_string());
+            .unwrap_or_else(|| ui.floor_unknown.to_string());
         div()
             .flex()
             .flex_row()
@@ -1586,54 +1738,54 @@ impl Workspace {
             .gap_2()
             .text_size(sk.text_px(8.5))
             .text_color(th.text.alpha(0.85))
-            .child(SharedString::from(format!("{} {age}", ui.wr_age)))
-            .child(SharedString::from(format!("{} {tokens}", ui.wr_tokens)))
+            .child(SharedString::from(format!("{} {age}", ui.floor_age)))
+            .child(SharedString::from(format!("{} {tokens}", ui.floor_tokens)))
     }
 
-    fn war_room_org_label(&self, id: warroom::OrgId) -> String {
-        self.war_orgs
+    fn threshing_floor_org_label(&self, id: threshing_floor::OrgId) -> String {
+        self.floor_orgs
             .get(id)
             .and_then(|o| o.name.clone())
-            .unwrap_or_else(|| self.lang.strings().ui.wr_org_unnamed.to_string())
+            .unwrap_or_else(|| self.lang.strings().ui.floor_org_unnamed.to_string())
     }
 
-    fn war_room_set_org(&mut self, id: warroom::OrgId, cx: &mut Context<Self>) {
-        if self.war_orgs.get(id).is_none() {
+    fn threshing_floor_set_org(&mut self, id: threshing_floor::OrgId, cx: &mut Context<Self>) {
+        if self.floor_orgs.get(id).is_none() {
             return;
         }
-        self.war_org = Some(id);
+        self.floor_org = Some(id);
         // The pane filter is the person's, not the view's: seating or moving a
         // pane (which lands here) must not wipe what they typed. Clearing is
         // theirs to do — the × button and Esc. See also begin_relation/unseat.
-        self.war_room_pick = None;
-        self.war_relation = None;
-        self.war_org_edit = None;
-        self.war_delete_org = None;
-        self.war_drop = None;
+        self.threshing_floor_pick = None;
+        self.floor_relation = None;
+        self.floor_org_edit = None;
+        self.floor_delete_org = None;
+        self.floor_drop = None;
         self.save(cx);
         cx.notify();
     }
 
-    fn war_room_save_org(&mut self, cx: &mut Context<Self>) {
-        let Some((id, buffer)) = &self.war_org_edit else {
+    fn threshing_floor_save_org(&mut self, cx: &mut Context<Self>) {
+        let Some((id, buffer)) = &self.floor_org_edit else {
             return;
         };
         let text = buffer.text();
         let org = match id {
-            Some(id) => self.war_orgs.rename(*id, &text).then_some(*id),
-            None => self.war_orgs.create(&text),
+            Some(id) => self.floor_orgs.rename(*id, &text).then_some(*id),
+            None => self.floor_orgs.create(&text),
         };
         if let Some(org) = org {
-            self.war_room_set_org(org, cx);
+            self.threshing_floor_set_org(org, cx);
         }
     }
 
     /// How many relationships deleting `org` would erase: every seat-to-seat
     /// line touching a member, plus every org line that names the org. This is
     /// the count the confirm shows before anything is removed.
-    fn war_room_org_relationship_count(&self, org: warroom::OrgId) -> usize {
-        let members: std::collections::HashSet<warroom::SeatId> = self
-            .war_orgs
+    fn threshing_floor_org_relationship_count(&self, org: threshing_floor::OrgId) -> usize {
+        let members: std::collections::HashSet<threshing_floor::SeatId> = self
+            .floor_orgs
             .get(org)
             .map(|o| o.seats.iter().copied().collect())
             .unwrap_or_default();
@@ -1651,38 +1803,38 @@ impl Workspace {
     /// every relationship touching a member and every org line naming the org
     /// are erased. Nothing is kept dormant: a deleted org's grants are gone, and
     /// the view falls back to another org (or none).
-    fn war_room_delete_org(&mut self, org: warroom::OrgId, cx: &mut Context<Self>) {
-        let members = self.war_orgs.delete(org);
+    fn threshing_floor_delete_org(&mut self, org: threshing_floor::OrgId, cx: &mut Context<Self>) {
+        let members = self.floor_orgs.delete(org);
         for seat in members {
             self.chart.forget_seat(seat);
-            if let Some(leaf) = self.war_room_seat_leaf(seat, cx) {
-                self.war_room_forget_pending(&leaf, seat, cx);
+            if let Some(leaf) = self.threshing_floor_seat_leaf(seat, cx) {
+                self.threshing_floor_forget_pending(&leaf, seat, cx);
             }
         }
         self.chart.forget_org(org);
-        self.war_delete_org = None;
-        if self.war_org == Some(org) {
-            self.war_org = self.war_orgs.saved().first().map(|o| o.id);
+        self.floor_delete_org = None;
+        if self.floor_org == Some(org) {
+            self.floor_org = self.floor_orgs.saved().first().map(|o| o.id);
         }
-        self.war_relation = None;
-        self.war_move = None;
-        self.war_drop = None;
-        self.war_room_pick = None;
+        self.floor_relation = None;
+        self.floor_move = None;
+        self.floor_drop = None;
+        self.threshing_floor_pick = None;
         self.save(cx);
         cx.notify();
     }
 
     /// What one System Map endpoint reads as: an agent by its pane name, or a
     /// whole org by its name with the "whole org" tag so the two never blur.
-    fn war_map_end_label(&self, end: warroom::End, cx: &App) -> String {
+    fn floor_map_end_label(&self, end: threshing_floor::End, cx: &App) -> String {
         let ui = self.lang.strings().ui;
         match end {
-            warroom::End::Seat(seat) => self.war_room_seat_label(seat, cx),
-            warroom::End::Org { org } => {
+            threshing_floor::End::Seat(seat) => self.threshing_floor_seat_label(seat, cx),
+            threshing_floor::End::Org { org } => {
                 format!(
                     "{} \u{00b7} {}",
-                    self.war_room_org_label(org),
-                    ui.wr_map_whole_org
+                    self.threshing_floor_org_label(org),
+                    ui.floor_map_whole_org
                 )
             }
         }
@@ -1691,8 +1843,8 @@ impl Workspace {
     /// Pick one end of the System Map's relationship. From is chosen first, then
     /// To; choosing the same endpoint twice is refused so a line never points at
     /// itself.
-    fn war_map_choose(&mut self, end: warroom::End, cx: &mut Context<Self>) {
-        if let Some(m) = &mut self.war_map {
+    fn floor_map_choose(&mut self, end: threshing_floor::End, cx: &mut Context<Self>) {
+        if let Some(m) = &mut self.floor_map {
             match m.choosing {
                 Some(RelationEnd::From) => {
                     m.from = Some(end);
@@ -1714,8 +1866,8 @@ impl Workspace {
     /// Draw the System Map's relationship: a seat-to-seat line (even across
     /// orgs) goes on the chart as a plain line; anything naming a whole org is a
     /// whole-org line. The draft clears so the next one starts fresh.
-    fn war_map_draw(&mut self, cx: &mut Context<Self>) {
-        let Some(m) = self.war_map.as_ref() else {
+    fn floor_map_draw(&mut self, cx: &mut Context<Self>) {
+        let Some(m) = self.floor_map.as_ref() else {
             return;
         };
         let (Some(from), Some(to), Some(rung)) = (m.from, m.to, m.rung) else {
@@ -1725,10 +1877,12 @@ impl Workspace {
             return;
         }
         match (from, to) {
-            (warroom::End::Seat(f), warroom::End::Seat(t)) => self.chart.draw(f, t, rung),
+            (threshing_floor::End::Seat(f), threshing_floor::End::Seat(t)) => {
+                self.chart.draw(f, t, rung)
+            }
             _ => self.chart.draw_org(from, to, rung),
         }
-        if let Some(m) = &mut self.war_map {
+        if let Some(m) = &mut self.floor_map {
             m.from = None;
             m.to = None;
             m.rung = None;
@@ -1738,47 +1892,51 @@ impl Workspace {
         cx.notify();
     }
 
-    fn war_room_org_controls(
+    fn threshing_floor_org_controls(
         &self,
         sk: &skin::Skin,
         th: &theme::Theme,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let ui = self.lang.strings().ui;
-        let dragging = self.war_drag.is_some() && cx.has_active_drag();
+        let dragging = self.floor_drag.is_some() && cx.has_active_drag();
         let mut choices = div()
             .flex()
             .flex_row()
             .flex_none()
             .items_center()
             .gap_1()
-            .child(SharedString::from(ui.wr_org.to_string()));
-        for org in self.war_orgs.saved() {
+            .child(SharedString::from(ui.floor_org.to_string()));
+        for org in self.floor_orgs.saved() {
             let id = org.id;
             let ink = th.accent;
             choices = choices.child(
-                Self::bezel_btn(sk, &self.war_room_org_label(id), self.war_org == Some(id))
-                    .id(SharedString::from(format!("war-org-{}", id.0)))
-                    .debug_selector(move || format!("war-org-{}", id.0))
-                    .flex_none()
-                    .max_w(px(240.))
-                    .truncate()
-                    .when(dragging, |d| {
-                        d.border_color(ink.alpha(0.65))
-                            .shadow(drop_glow(ink, false))
-                    })
-                    .drag_over::<PaneDrag>(move |s, _, _, _| {
-                        s.border_color(ink)
-                            .bg(ink.alpha(0.14))
-                            .shadow(drop_glow(ink, true))
-                    })
-                    .on_drop(cx.listener(move |ws, drag: &PaneDrag, _, cx| {
-                        ws.war_room_drop_on_org(&drag.leaf, id, cx);
-                    }))
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        cx.stop_propagation();
-                        ws.war_room_set_org(id, cx);
-                    })),
+                Self::bezel_btn(
+                    sk,
+                    &self.threshing_floor_org_label(id),
+                    self.floor_org == Some(id),
+                )
+                .id(SharedString::from(format!("floor-org-{}", id.0)))
+                .debug_selector(move || format!("floor-org-{}", id.0))
+                .flex_none()
+                .max_w(px(240.))
+                .truncate()
+                .when(dragging, |d| {
+                    d.border_color(ink.alpha(0.65))
+                        .shadow(drop_glow(ink, false))
+                })
+                .drag_over::<PaneDrag>(move |s, _, _, _| {
+                    s.border_color(ink)
+                        .bg(ink.alpha(0.14))
+                        .shadow(drop_glow(ink, true))
+                })
+                .on_drop(cx.listener(move |ws, drag: &PaneDrag, _, cx| {
+                    ws.threshing_floor_drop_on_org(&drag.leaf, id, cx);
+                }))
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    cx.stop_propagation();
+                    ws.threshing_floor_set_org(id, cx);
+                })),
             );
         }
         let mut actions = div()
@@ -1787,58 +1945,58 @@ impl Workspace {
             .flex_none()
             .gap_1()
             .child(
-                Self::bezel_btn(sk, ui.wr_org_new, false)
-                    .id("war-org-new")
-                    .debug_selector(|| "war-org-new".to_string())
+                Self::bezel_btn(sk, ui.floor_org_new, false)
+                    .id("floor-org-new")
+                    .debug_selector(|| "floor-org-new".to_string())
                     .on_click(cx.listener(|ws, _, w, cx| {
                         cx.stop_propagation();
-                        ws.war_org_edit = Some((None, EditBuffer::seeded("")));
+                        ws.floor_org_edit = Some((None, EditBuffer::seeded("")));
                         w.focus(&ws.focus_handle, cx);
                         cx.notify();
                     })),
             )
             .child(
-                Self::bezel_btn(sk, ui.wr_map, self.war_map.is_some())
-                    .id("war-system-map-toggle")
-                    .debug_selector(|| "war-system-map-toggle".to_string())
+                Self::bezel_btn(sk, ui.floor_map, self.floor_map.is_some())
+                    .id("floor-system-map-toggle")
+                    .debug_selector(|| "floor-system-map-toggle".to_string())
                     .on_click(cx.listener(|ws, _, _, cx| {
                         cx.stop_propagation();
                         // Toggle the higher-level view; its draft lives only
                         // while it is open.
-                        ws.war_map = match ws.war_map {
+                        ws.floor_map = match ws.floor_map {
                             Some(_) => None,
                             None => Some(SystemMap::default()),
                         };
                         cx.notify();
                     })),
             );
-        if let Some(id) = self.war_org {
+        if let Some(id) = self.floor_org {
             actions = actions.child(
-                Self::bezel_btn(sk, ui.wr_org_rename, false)
-                    .id("war-org-rename")
-                    .debug_selector(|| "war-org-rename".to_string())
+                Self::bezel_btn(sk, ui.floor_org_rename, false)
+                    .id("floor-org-rename")
+                    .debug_selector(|| "floor-org-rename".to_string())
                     .on_click(cx.listener(move |ws, _, w, cx| {
                         cx.stop_propagation();
                         let name = ws
-                            .war_orgs
+                            .floor_orgs
                             .get(id)
                             .and_then(|o| o.name.as_deref())
                             .unwrap_or("");
-                        ws.war_org_edit = Some((Some(id), EditBuffer::seeded(name)));
+                        ws.floor_org_edit = Some((Some(id), EditBuffer::seeded(name)));
                         w.focus(&ws.focus_handle, cx);
                         cx.notify();
                     })),
             );
             actions = actions.child(
-                Self::bezel_btn(sk, ui.wr_org_delete, false)
-                    .id("war-org-delete")
-                    .debug_selector(|| "war-org-delete".to_string())
+                Self::bezel_btn(sk, ui.floor_org_delete, false)
+                    .id("floor-org-delete")
+                    .debug_selector(|| "floor-org-delete".to_string())
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
                         // Hold the delete until the person confirms the count; the
                         // name editor steps aside so the two never stack.
-                        ws.war_delete_org = Some(id);
-                        ws.war_org_edit = None;
+                        ws.floor_delete_org = Some(id);
+                        ws.floor_org_edit = None;
                         cx.notify();
                     })),
             );
@@ -1852,7 +2010,7 @@ impl Workspace {
                 .gap_2()
                 .child(
                     div()
-                        .id("war-org-choices")
+                        .id("floor-org-choices")
                         .min_w(px(0.))
                         .flex_1()
                         .overflow_x_scroll()
@@ -1860,11 +2018,14 @@ impl Workspace {
                 )
                 .child(actions.when(dragging, |d| d.opacity(0.3))),
         );
-        if let Some(id) = self.war_delete_org {
-            let n = self.war_room_org_relationship_count(id);
+        if let Some(id) = self.floor_delete_org {
+            let n = self.threshing_floor_org_relationship_count(id);
             let text = lang::fill(
-                ui.wr_org_delete_confirm,
-                &[("org", &self.war_room_org_label(id)), ("n", &n.to_string())],
+                ui.floor_org_delete_confirm,
+                &[
+                    ("org", &self.threshing_floor_org_label(id)),
+                    ("n", &n.to_string()),
+                ],
             );
             controls = controls.child(
                 div()
@@ -1879,40 +2040,40 @@ impl Workspace {
                     .gap_1()
                     .child(SharedString::from(text))
                     .child(
-                        Self::bezel_btn(sk, ui.wr_org_delete_go, false)
-                            .id("war-org-delete-go")
-                            .debug_selector(|| "war-org-delete-go".to_string())
+                        Self::bezel_btn(sk, ui.floor_org_delete_go, false)
+                            .id("floor-org-delete-go")
+                            .debug_selector(|| "floor-org-delete-go".to_string())
                             .text_color(th.ansi[1])
                             .on_click(cx.listener(move |ws, _, _, cx| {
                                 cx.stop_propagation();
-                                ws.war_room_delete_org(id, cx);
+                                ws.threshing_floor_delete_org(id, cx);
                             })),
                     )
                     .child(
                         Self::bezel_btn(sk, ui.dlg_cancel, false)
-                            .id("war-org-delete-cancel")
-                            .debug_selector(|| "war-org-delete-cancel".to_string())
+                            .id("floor-org-delete-cancel")
+                            .debug_selector(|| "floor-org-delete-cancel".to_string())
                             .on_click(cx.listener(|ws, _, _, cx| {
                                 cx.stop_propagation();
-                                ws.war_delete_org = None;
+                                ws.floor_delete_org = None;
                                 cx.notify();
                             })),
                     ),
             );
         }
-        if let Some(drop) = &self.war_drop {
-            let org_label = self.war_room_org_label(drop.org);
+        if let Some(drop) = &self.floor_drop {
+            let org_label = self.threshing_floor_org_label(drop.org);
             let pane = self.pane_name(&drop.leaf, cx).full();
-            let rung_word = |rung: warroom::Rung| match rung {
-                warroom::Rung::See => ui.wr_rung_see,
-                warroom::Rung::Read => ui.wr_rung_read,
-                warroom::Rung::Ask => ui.wr_rung_ask,
+            let rung_word = |rung: threshing_floor::Rung| match rung {
+                threshing_floor::Rung::See => ui.floor_rung_see,
+                threshing_floor::Rung::Read => ui.floor_rung_read,
+                threshing_floor::Rung::Ask => ui.floor_rung_ask,
             };
             // Amber, like the move hint: these routes build a grant — the colour
             // of "yours to argue with", never the delete confirm's red.
             let mut panel = div()
-                .id("war-drop-choice")
-                .debug_selector(|| "war-drop-choice".to_string())
+                .id("floor-drop-choice")
+                .debug_selector(|| "floor-drop-choice".to_string())
                 .p_2()
                 .border_1()
                 .border_color(th.ansi[3])
@@ -1921,80 +2082,80 @@ impl Workspace {
                 .flex_col()
                 .gap_1();
             let cancel = Self::bezel_btn(sk, ui.dlg_cancel, false)
-                .id("war-drop-cancel")
-                .debug_selector(|| "war-drop-cancel".to_string())
+                .id("floor-drop-cancel")
+                .debug_selector(|| "floor-drop-cancel".to_string())
                 .on_click(cx.listener(|ws, _, _, cx| {
                     cx.stop_propagation();
-                    ws.war_drop = None;
+                    ws.floor_drop = None;
                     cx.notify();
                 }));
-            let back = Self::bezel_btn(sk, ui.wr_drop_back, false)
-                .id("war-drop-back")
-                .debug_selector(|| "war-drop-back".to_string())
+            let back = Self::bezel_btn(sk, ui.floor_drop_back, false)
+                .id("floor-drop-back")
+                .debug_selector(|| "floor-drop-back".to_string())
                 .on_click(cx.listener(|ws, _, _, cx| {
                     cx.stop_propagation();
-                    ws.war_drop_back(cx);
+                    ws.floor_drop_back(cx);
                 }));
             match &drop.stage {
                 DropStage::Choosing => {
-                    let members = self.war_drop_members(drop);
+                    let members = self.floor_drop_members(drop);
                     panel = panel
                         .child(SharedString::from(lang::fill(
-                            ui.wr_drop_title,
+                            ui.floor_drop_title,
                             &[("pane", &pane), ("org", &org_label)],
                         )))
                         .child(
                             Self::bezel_btn(
                                 sk,
-                                &lang::fill(ui.wr_drop_move, &[("org", &org_label)]),
+                                &lang::fill(ui.floor_drop_move, &[("org", &org_label)]),
                                 false,
                             )
-                            .id("war-drop-move")
-                            .debug_selector(|| "war-drop-move".to_string())
+                            .id("floor-drop-move")
+                            .debug_selector(|| "floor-drop-move".to_string())
                             .on_click(cx.listener(|ws, _, _, cx| {
                                 cx.stop_propagation();
-                                ws.war_drop_move(cx);
+                                ws.floor_drop_move(cx);
                             })),
                         )
                         .child(
                             Self::bezel_btn(
                                 sk,
-                                &lang::fill(ui.wr_drop_relate_org, &[("org", &org_label)]),
+                                &lang::fill(ui.floor_drop_relate_org, &[("org", &org_label)]),
                                 false,
                             )
-                            .id("war-drop-relate-org")
-                            .debug_selector(|| "war-drop-relate-org".to_string())
+                            .id("floor-drop-relate-org")
+                            .debug_selector(|| "floor-drop-relate-org".to_string())
                             .on_click(cx.listener(|ws, _, _, cx| {
                                 cx.stop_propagation();
-                                ws.war_drop_relate_org(cx);
+                                ws.floor_drop_relate_org(cx);
                             })),
                         );
                     if !members.is_empty() {
                         panel = panel.child(
-                            Self::bezel_btn(sk, ui.wr_drop_relate_member, false)
-                                .id("war-drop-relate-member")
-                                .debug_selector(|| "war-drop-relate-member".to_string())
+                            Self::bezel_btn(sk, ui.floor_drop_relate_member, false)
+                                .id("floor-drop-relate-member")
+                                .debug_selector(|| "floor-drop-relate-member".to_string())
                                 .on_click(cx.listener(|ws, _, _, cx| {
                                     cx.stop_propagation();
-                                    ws.war_drop_relate_member(cx);
+                                    ws.floor_drop_relate_member(cx);
                                 })),
                         );
                     }
                     panel = panel.child(cancel);
                 }
                 DropStage::RelateOrg { rung } => {
-                    let to = format!("{} \u{00b7} {}", org_label, ui.wr_map_whole_org);
+                    let to = format!("{} \u{00b7} {}", org_label, ui.floor_map_whole_org);
                     let sentence = match rung {
                         Some(rung) => lang::fill(
-                            ui.wr_rel_sentence,
+                            ui.floor_rel_sentence,
                             &[("from", &pane), ("to", &to), ("rung", rung_word(*rung))],
                         ),
-                        None => ui.wr_rel_choose.to_string(),
+                        None => ui.floor_rel_choose.to_string(),
                     };
                     let ready = rung.is_some();
                     panel = panel
                         .child(SharedString::from(sentence))
-                        .child(self.war_drop_rung_row(sk, th, *rung, cx))
+                        .child(self.floor_drop_rung_row(sk, th, *rung, cx))
                         .child(
                             div()
                                 .flex()
@@ -2002,13 +2163,13 @@ impl Workspace {
                                 .flex_wrap()
                                 .gap_2()
                                 .child(
-                                    Self::bezel_btn(sk, ui.wr_drop_draw, ready)
-                                        .id("war-drop-draw")
-                                        .debug_selector(|| "war-drop-draw".to_string())
+                                    Self::bezel_btn(sk, ui.floor_drop_draw, ready)
+                                        .id("floor-drop-draw")
+                                        .debug_selector(|| "floor-drop-draw".to_string())
                                         .opacity(if ready { 1. } else { 0.4 })
                                         .on_click(cx.listener(|ws, _, _, cx| {
                                             cx.stop_propagation();
-                                            ws.war_drop_draw(cx);
+                                            ws.floor_drop_draw(cx);
                                         })),
                                 )
                                 .child(back)
@@ -2018,25 +2179,31 @@ impl Workspace {
                 DropStage::RelateMember { member, rung } => match member {
                     None => {
                         let mut list = div()
-                            .id("war-drop-members")
+                            .id("floor-drop-members")
                             .max_h(px(130.))
                             .overflow_y_scroll()
                             .flex()
                             .flex_col()
                             .gap_1();
-                        for seat in self.war_drop_members(drop) {
+                        for seat in self.floor_drop_members(drop) {
                             list = list.child(
-                                Self::bezel_btn(sk, &self.war_room_seat_label(seat, cx), false)
-                                    .id(SharedString::from(format!("war-drop-member-{}", seat.0)))
-                                    .on_click(cx.listener(move |ws, _, _, cx| {
+                                Self::bezel_btn(
+                                    sk,
+                                    &self.threshing_floor_seat_label(seat, cx),
+                                    false,
+                                )
+                                .id(SharedString::from(format!("floor-drop-member-{}", seat.0)))
+                                .on_click(cx.listener(
+                                    move |ws, _, _, cx| {
                                         cx.stop_propagation();
-                                        ws.war_drop_pick_member(seat, cx);
-                                    })),
+                                        ws.floor_drop_pick_member(seat, cx);
+                                    },
+                                )),
                             );
                         }
                         panel = panel
                             .child(SharedString::from(lang::fill(
-                                ui.wr_drop_pick,
+                                ui.floor_drop_pick,
                                 &[("org", &org_label)],
                             )))
                             .child(list)
@@ -2044,22 +2211,22 @@ impl Workspace {
                     }
                     Some(to) => {
                         let to = *to;
-                        let to_label = self.war_room_seat_label(to, cx);
+                        let to_label = self.threshing_floor_seat_label(to, cx);
                         let sentence = match rung {
                             Some(rung) => lang::fill(
-                                ui.wr_rel_sentence,
+                                ui.floor_rel_sentence,
                                 &[
                                     ("from", &pane),
                                     ("to", &to_label),
                                     ("rung", rung_word(*rung)),
                                 ],
                             ),
-                            None => ui.wr_rel_choose.to_string(),
+                            None => ui.floor_rel_choose.to_string(),
                         };
                         let ready = rung.is_some();
                         panel = panel
                             .child(SharedString::from(sentence))
-                            .child(self.war_drop_rung_row(sk, th, *rung, cx))
+                            .child(self.floor_drop_rung_row(sk, th, *rung, cx))
                             .child(
                                 div()
                                     .flex()
@@ -2067,13 +2234,13 @@ impl Workspace {
                                     .flex_wrap()
                                     .gap_2()
                                     .child(
-                                        Self::bezel_btn(sk, ui.wr_drop_draw, ready)
-                                            .id("war-drop-draw")
-                                            .debug_selector(|| "war-drop-draw".to_string())
+                                        Self::bezel_btn(sk, ui.floor_drop_draw, ready)
+                                            .id("floor-drop-draw")
+                                            .debug_selector(|| "floor-drop-draw".to_string())
                                             .opacity(if ready { 1. } else { 0.4 })
                                             .on_click(cx.listener(|ws, _, _, cx| {
                                                 cx.stop_propagation();
-                                                ws.war_drop_draw(cx);
+                                                ws.floor_drop_draw(cx);
                                             })),
                                     )
                                     .child(back)
@@ -2084,7 +2251,7 @@ impl Workspace {
             }
             controls = controls.child(panel);
         }
-        if let Some((_, buffer)) = &self.war_org_edit {
+        if let Some((_, buffer)) = &self.floor_org_edit {
             controls = controls.child(
                 div()
                     .flex()
@@ -2103,20 +2270,20 @@ impl Workspace {
                         th.accent.alpha(0.3),
                     ))
                     .child(
-                        Self::bezel_btn(sk, ui.wr_org_save, false)
-                            .id("war-org-save")
-                            .debug_selector(|| "war-org-save".to_string())
+                        Self::bezel_btn(sk, ui.floor_org_save, false)
+                            .id("floor-org-save")
+                            .debug_selector(|| "floor-org-save".to_string())
                             .on_click(cx.listener(|ws, _, _, cx| {
                                 cx.stop_propagation();
-                                ws.war_room_save_org(cx);
+                                ws.threshing_floor_save_org(cx);
                             })),
                     )
                     .child(
                         Self::bezel_btn(sk, ui.dlg_cancel, false)
-                            .id("war-org-cancel")
+                            .id("floor-org-cancel")
                             .on_click(cx.listener(|ws, _, _, cx| {
                                 cx.stop_propagation();
-                                ws.war_org_edit = None;
+                                ws.floor_org_edit = None;
                                 cx.notify();
                             })),
                     ),
@@ -2125,19 +2292,19 @@ impl Workspace {
         controls
     }
 
-    fn war_room_assign(
+    fn threshing_floor_assign(
         &mut self,
         leaf: &Entity<TerminalView>,
-        org: warroom::OrgId,
+        org: threshing_floor::OrgId,
         confirmed: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.war_orgs.get(org).is_none() || !leaf.read(cx).mode.is_agent() {
+        if self.floor_orgs.get(org).is_none() || !leaf.read(cx).mode.is_agent() {
             return;
         }
         let old = leaf.read(cx).seat;
-        if old.is_some_and(|seat| self.war_orgs.owner(seat) == Some(org)) {
-            self.war_room_set_org(org, cx);
+        if old.is_some_and(|seat| self.floor_orgs.owner(seat) == Some(org)) {
+            self.threshing_floor_set_org(org, cx);
             return;
         }
         let connected = old.is_some_and(|seat| {
@@ -2147,52 +2314,52 @@ impl Workspace {
                 .any(|l| l.from == seat || l.to == seat)
         });
         if connected && !confirmed {
-            self.war_move = Some((leaf.clone(), org));
+            self.floor_move = Some((leaf.clone(), org));
             cx.notify();
             return;
         }
-        let seat = old.unwrap_or_else(warroom::SeatId::mint);
+        let seat = old.unwrap_or_else(threshing_floor::SeatId::mint);
         if old.is_some() {
             self.chart.forget_seat(seat);
-            self.war_room_forget_pending(leaf, seat, cx);
+            self.threshing_floor_forget_pending(leaf, seat, cx);
         }
-        self.war_orgs.assign(seat, org);
+        self.floor_orgs.assign(seat, org);
         leaf.update(cx, |v, cx| v.set_seat(Some(seat), cx));
-        self.war_move = None;
-        self.war_room_set_org(org, cx);
+        self.floor_move = None;
+        self.threshing_floor_set_org(org, cx);
     }
 
     /// A pane card was dropped on an org button. If the pane is already in that
     /// org this just opens it; a loose (seatless) pane simply moves in; a seated
     /// pane from a *different* org opens the move/relate choice, so the drop can
     /// build a relationship instead of silently moving. Routing only.
-    fn war_room_drop_on_org(
+    fn threshing_floor_drop_on_org(
         &mut self,
         leaf: &Entity<TerminalView>,
-        org: warroom::OrgId,
+        org: threshing_floor::OrgId,
         cx: &mut Context<Self>,
     ) {
-        if self.war_orgs.get(org).is_none() || !leaf.read(cx).mode.is_agent() {
+        if self.floor_orgs.get(org).is_none() || !leaf.read(cx).mode.is_agent() {
             return;
         }
         let seat = leaf.read(cx).seat;
         // Already a member of this org: nothing to move or relate — just select.
-        if seat.is_some_and(|s| self.war_orgs.owner(s) == Some(org)) {
-            self.war_room_set_org(org, cx);
+        if seat.is_some_and(|s| self.floor_orgs.owner(s) == Some(org)) {
+            self.threshing_floor_set_org(org, cx);
             return;
         }
         // A loose pane has no seat to relate from; dropping it means "seat here".
         let Some(seat) = seat else {
-            self.war_room_assign(leaf, org, false, cx);
+            self.threshing_floor_assign(leaf, org, false, cx);
             return;
         };
         // Seated, and a different org: offer the choice. Clear the sibling
         // popups so only one is ever open at a time.
-        self.war_delete_org = None;
-        self.war_org_edit = None;
-        self.war_move = None;
-        self.war_relation = None;
-        self.war_drop = Some(DropChoice {
+        self.floor_delete_org = None;
+        self.floor_org_edit = None;
+        self.floor_move = None;
+        self.floor_relation = None;
+        self.floor_drop = Some(DropChoice {
             leaf: leaf.clone(),
             seat,
             org,
@@ -2203,21 +2370,21 @@ impl Workspace {
 
     /// The MOVE route: hand off to the same assign the drop used to do, which
     /// raises its own confirm when the pane would lose connections.
-    fn war_drop_move(&mut self, cx: &mut Context<Self>) {
-        if let Some(drop) = self.war_drop.take() {
-            self.war_room_assign(&drop.leaf, drop.org, false, cx);
+    fn floor_drop_move(&mut self, cx: &mut Context<Self>) {
+        if let Some(drop) = self.floor_drop.take() {
+            self.threshing_floor_assign(&drop.leaf, drop.org, false, cx);
         }
     }
 
-    fn war_drop_relate_org(&mut self, cx: &mut Context<Self>) {
-        if let Some(drop) = &mut self.war_drop {
+    fn floor_drop_relate_org(&mut self, cx: &mut Context<Self>) {
+        if let Some(drop) = &mut self.floor_drop {
             drop.stage = DropStage::RelateOrg { rung: None };
             cx.notify();
         }
     }
 
-    fn war_drop_relate_member(&mut self, cx: &mut Context<Self>) {
-        if let Some(drop) = &mut self.war_drop {
+    fn floor_drop_relate_member(&mut self, cx: &mut Context<Self>) {
+        if let Some(drop) = &mut self.floor_drop {
             drop.stage = DropStage::RelateMember {
                 member: None,
                 rung: None,
@@ -2226,8 +2393,8 @@ impl Workspace {
         }
     }
 
-    fn war_drop_pick_member(&mut self, member: warroom::SeatId, cx: &mut Context<Self>) {
-        if let Some(drop) = &mut self.war_drop {
+    fn floor_drop_pick_member(&mut self, member: threshing_floor::SeatId, cx: &mut Context<Self>) {
+        if let Some(drop) = &mut self.floor_drop {
             if let DropStage::RelateMember { member: slot, rung } = &mut drop.stage {
                 // Re-picking clears a rung chosen for the previous member.
                 if *slot != Some(member) {
@@ -2239,8 +2406,8 @@ impl Workspace {
         }
     }
 
-    fn war_drop_set_rung(&mut self, rung: warroom::Rung, cx: &mut Context<Self>) {
-        if let Some(drop) = &mut self.war_drop {
+    fn floor_drop_set_rung(&mut self, rung: threshing_floor::Rung, cx: &mut Context<Self>) {
+        if let Some(drop) = &mut self.floor_drop {
             match &mut drop.stage {
                 DropStage::RelateOrg { rung: slot } => *slot = Some(rung),
                 DropStage::RelateMember { rung: slot, .. } => *slot = Some(rung),
@@ -2250,8 +2417,8 @@ impl Workspace {
         }
     }
 
-    fn war_drop_back(&mut self, cx: &mut Context<Self>) {
-        if let Some(drop) = &mut self.war_drop {
+    fn floor_drop_back(&mut self, cx: &mut Context<Self>) {
+        if let Some(drop) = &mut self.floor_drop {
             drop.stage = DropStage::Choosing;
             cx.notify();
         }
@@ -2260,8 +2427,8 @@ impl Workspace {
     /// Members of the drop's target org the dragged agent could relate to: every
     /// seat in the org except itself. Empty means the member route is not
     /// offered (nothing to point at).
-    fn war_drop_members(&self, drop: &DropChoice) -> Vec<warroom::SeatId> {
-        self.war_orgs
+    fn floor_drop_members(&self, drop: &DropChoice) -> Vec<threshing_floor::SeatId> {
+        self.floor_orgs
             .get(drop.org)
             .map(|o| {
                 o.seats
@@ -2277,16 +2444,16 @@ impl Workspace {
     /// agent to the target org, or a seat-to-seat line to a chosen member. The
     /// agent stays where it is — relating is not moving. Same two Chart calls
     /// the System Map makes, so the grant is identical however it was drawn.
-    fn war_drop_draw(&mut self, cx: &mut Context<Self>) {
-        let Some(drop) = self.war_drop.as_ref() else {
+    fn floor_drop_draw(&mut self, cx: &mut Context<Self>) {
+        let Some(drop) = self.floor_drop.as_ref() else {
             return;
         };
         let from = drop.seat;
         match &drop.stage {
             DropStage::RelateOrg { rung: Some(rung) } => {
                 self.chart.draw_org(
-                    warroom::End::Seat(from),
-                    warroom::End::Org { org: drop.org },
+                    threshing_floor::End::Seat(from),
+                    threshing_floor::End::Org { org: drop.org },
                     *rung,
                 );
             }
@@ -2298,7 +2465,7 @@ impl Workspace {
             }
             _ => return,
         }
-        self.war_drop = None;
+        self.floor_drop = None;
         self.save(cx);
         cx.notify();
     }
@@ -2307,30 +2474,30 @@ impl Workspace {
     /// see < read < ask, with `ask` — the only rung that lets one agent prompt
     /// another — in the action amber with a ▲, so the powerful one is never
     /// granted by reflex. Each sets the current stage's rung.
-    fn war_drop_rung_row(
+    fn floor_drop_rung_row(
         &self,
         sk: &skin::Skin,
         th: &theme::Theme,
-        current: Option<warroom::Rung>,
+        current: Option<threshing_floor::Rung>,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let ui = self.lang.strings().ui;
         let mut levels = div().flex().flex_row().flex_wrap().items_center().gap_2();
         for (rung, label) in [
-            (warroom::Rung::See, ui.wr_rung_see),
-            (warroom::Rung::Read, ui.wr_rung_read),
-            (warroom::Rung::Ask, ui.wr_rung_ask),
+            (threshing_floor::Rung::See, ui.floor_rung_see),
+            (threshing_floor::Rung::Read, ui.floor_rung_read),
+            (threshing_floor::Rung::Ask, ui.floor_rung_ask),
         ] {
             let selected = current == Some(rung);
-            let is_ask = matches!(rung, warroom::Rung::Ask);
+            let is_ask = matches!(rung, threshing_floor::Rung::Ask);
             let shown = if is_ask {
                 format!("\u{25B2} {label}")
             } else {
                 label.to_string()
             };
             let mut btn = Self::bezel_btn(sk, &shown, selected)
-                .id(SharedString::from(format!("war-drop-rung-{rung:?}")))
-                .debug_selector(move || format!("war-drop-rung-{rung:?}"));
+                .id(SharedString::from(format!("floor-drop-rung-{rung:?}")))
+                .debug_selector(move || format!("floor-drop-rung-{rung:?}"));
             if is_ask {
                 btn = btn
                     .border_color(th.ansi[3])
@@ -2343,13 +2510,17 @@ impl Workspace {
             }
             levels = levels.child(btn.on_click(cx.listener(move |ws, _, _, cx| {
                 cx.stop_propagation();
-                ws.war_drop_set_rung(rung, cx);
+                ws.floor_drop_set_rung(rung, cx);
             })));
         }
         levels
     }
 
-    fn war_room_seat_leaf(&self, seat: warroom::SeatId, cx: &App) -> Option<Entity<TerminalView>> {
+    fn threshing_floor_seat_leaf(
+        &self,
+        seat: threshing_floor::SeatId,
+        cx: &App,
+    ) -> Option<Entity<TerminalView>> {
         self.tabs
             .iter()
             .flat_map(|t| {
@@ -2361,31 +2532,31 @@ impl Workspace {
             .cloned()
     }
 
-    fn war_room_seat_label(&self, seat: warroom::SeatId, cx: &App) -> String {
-        self.war_room_seat_leaf(seat, cx)
+    fn threshing_floor_seat_label(&self, seat: threshing_floor::SeatId, cx: &App) -> String {
+        self.threshing_floor_seat_leaf(seat, cx)
             .as_ref()
             .map(|leaf| self.pane_name(leaf, cx).full())
-            .unwrap_or_else(|| self.lang.strings().ui.wr_unknown.to_string())
+            .unwrap_or_else(|| self.lang.strings().ui.floor_unknown.to_string())
     }
 
-    fn war_room_begin_relation(
+    fn threshing_floor_begin_relation(
         &mut self,
-        from: Option<warroom::SeatId>,
-        to: Option<warroom::SeatId>,
+        from: Option<threshing_floor::SeatId>,
+        to: Option<threshing_floor::SeatId>,
         cx: &mut Context<Self>,
     ) {
-        if from.is_some_and(|s| self.war_orgs.owner(s) != self.war_org) {
+        if from.is_some_and(|s| self.floor_orgs.owner(s) != self.floor_org) {
             return;
         }
-        if to.is_some_and(|s| self.war_orgs.owner(s) != self.war_org || Some(s) == from) {
+        if to.is_some_and(|s| self.floor_orgs.owner(s) != self.floor_org || Some(s) == from) {
             return;
         }
         let rung = from
             .zip(to)
             .and_then(|(f, t)| self.chart.line(f, t))
             .and_then(|l| l.rung.known());
-        self.war_relation = Some(RelationEditor {
-            draft: warroom::RelationDraft { from, to, rung },
+        self.floor_relation = Some(RelationEditor {
+            draft: threshing_floor::RelationDraft { from, to, rung },
             choosing: if from.is_none() {
                 Some(RelationEnd::From)
             } else if to.is_none() {
@@ -2397,15 +2568,19 @@ impl Workspace {
         // Beginning a relationship (a drag onto a card, or Connect) keeps the
         // person's filter — losing it mid-wiring was the "clicking an agent
         // clears the filter" complaint.
-        self.war_room_pick = None;
+        self.threshing_floor_pick = None;
         cx.notify();
     }
 
-    fn war_room_choose_endpoint(&mut self, seat: warroom::SeatId, cx: &mut Context<Self>) {
-        if self.war_orgs.owner(seat) != self.war_org {
+    fn threshing_floor_choose_endpoint(
+        &mut self,
+        seat: threshing_floor::SeatId,
+        cx: &mut Context<Self>,
+    ) {
+        if self.floor_orgs.owner(seat) != self.floor_org {
             return;
         }
-        if let Some(editor) = &mut self.war_relation {
+        if let Some(editor) = &mut self.floor_relation {
             match editor.choosing {
                 Some(RelationEnd::From) => {
                     editor.draft.from = Some(seat);
@@ -2425,27 +2600,27 @@ impl Workspace {
         cx.notify();
     }
 
-    fn war_room_save_relation(&mut self, cx: &mut Context<Self>) {
+    fn threshing_floor_save_relation(&mut self, cx: &mut Context<Self>) {
         let ready = self
-            .war_relation
+            .floor_relation
             .as_ref()
-            .and_then(|e| e.draft.ready(&self.war_orgs));
+            .and_then(|e| e.draft.ready(&self.floor_orgs));
         if let Some((from, to, rung)) = ready {
-            if self.war_orgs.owner(from) != self.war_org
-                || self.war_room_seat_leaf(from, cx).is_none()
-                || self.war_room_seat_leaf(to, cx).is_none()
+            if self.floor_orgs.owner(from) != self.floor_org
+                || self.threshing_floor_seat_leaf(from, cx).is_none()
+                || self.threshing_floor_seat_leaf(to, cx).is_none()
             {
                 return;
             }
             self.chart.draw(from, to, rung);
-            self.war_room_forget_pair(from, to, cx);
-            self.war_relation = None;
+            self.threshing_floor_forget_pair(from, to, cx);
+            self.floor_relation = None;
             self.save(cx);
             cx.notify();
         }
     }
 
-    fn war_room_relationship_controls(
+    fn threshing_floor_relationship_controls(
         &self,
         sk: &skin::Skin,
         th: &theme::Theme,
@@ -2453,7 +2628,7 @@ impl Workspace {
     ) -> gpui::Div {
         let ui = self.lang.strings().ui;
         let mut controls = div().flex().flex_col().gap_2();
-        if let Some((leaf, org)) = &self.war_move {
+        if let Some((leaf, org)) = &self.floor_move {
             let leaf = leaf.clone();
             let org = *org;
             let n = leaf
@@ -2468,7 +2643,7 @@ impl Workspace {
                 })
                 .unwrap_or(0);
             let text = lang::fill(
-                ui.wr_move_hint,
+                ui.floor_move_hint,
                 &[
                     ("pane", &self.pane_name(&leaf, cx).full()),
                     ("n", &n.to_string()),
@@ -2484,24 +2659,24 @@ impl Workspace {
                     .gap_1()
                     .child(SharedString::from(format!(
                         "{text} → {}",
-                        self.war_room_org_label(org)
+                        self.threshing_floor_org_label(org)
                     )))
                     .child(
-                        Self::bezel_btn(sk, ui.wr_move_confirm, false)
-                            .id("war-move-confirm")
-                            .debug_selector(|| "war-move-confirm".to_string())
+                        Self::bezel_btn(sk, ui.floor_move_confirm, false)
+                            .id("floor-move-confirm")
+                            .debug_selector(|| "floor-move-confirm".to_string())
                             .on_click(cx.listener(move |ws, _, _, cx| {
                                 cx.stop_propagation();
-                                ws.war_room_assign(&leaf, org, true, cx);
+                                ws.threshing_floor_assign(&leaf, org, true, cx);
                             })),
                     )
                     .child(
                         Self::bezel_btn(sk, ui.dlg_cancel, false)
-                            .id("war-move-cancel")
-                            .debug_selector(|| "war-move-cancel".to_string())
+                            .id("floor-move-cancel")
+                            .debug_selector(|| "floor-move-cancel".to_string())
                             .on_click(cx.listener(|ws, _, _, cx| {
                                 cx.stop_propagation();
-                                ws.war_move = None;
+                                ws.floor_move = None;
                                 cx.notify();
                             })),
                     ),
@@ -2514,37 +2689,39 @@ impl Workspace {
             .items_center()
             .gap_2()
             .child(
-                Self::bezel_btn(sk, ui.wr_rel_connect, self.war_relation.is_some())
-                    .id("war-connect")
-                    .debug_selector(|| "war-connect".to_string())
+                Self::bezel_btn(sk, ui.floor_rel_connect, self.floor_relation.is_some())
+                    .id("floor-connect")
+                    .debug_selector(|| "floor-connect".to_string())
                     .on_click(cx.listener(|ws, _, _, cx| {
                         cx.stop_propagation();
-                        ws.war_room_begin_relation(ws.war_room_pick, None, cx);
+                        ws.threshing_floor_begin_relation(ws.threshing_floor_pick, None, cx);
                     })),
             );
-        if let Some(seat) = self.war_room_pick {
-            if let Some(leaf) = self.war_room_seat_leaf(seat, cx) {
+        if let Some(seat) = self.threshing_floor_pick {
+            if let Some(leaf) = self.threshing_floor_seat_leaf(seat, cx) {
                 let n = self
                     .chart
                     .saved()
                     .iter()
                     .filter(|l| l.from == seat || l.to == seat)
                     .count();
-                let label = lang::fill(ui.wr_org_remove, &[("n", &n.to_string())]);
+                let label = lang::fill(ui.floor_org_remove, &[("n", &n.to_string())]);
                 row = row
-                    .child(SharedString::from(self.war_room_seat_label(seat, cx)))
+                    .child(SharedString::from(
+                        self.threshing_floor_seat_label(seat, cx),
+                    ))
                     .child(
                         Self::bezel_btn(sk, &label, false)
-                            .id("war-unseat")
+                            .id("floor-unseat")
                             .on_click(cx.listener(move |ws, _, _, cx| {
                                 cx.stop_propagation();
-                                ws.war_room_unseat(&leaf, cx);
+                                ws.threshing_floor_unseat(&leaf, cx);
                             })),
                     );
             }
         }
         controls = controls.child(row);
-        let Some(editor) = &self.war_relation else {
+        let Some(editor) = &self.floor_relation else {
             return controls;
         };
         let mut form = div()
@@ -2555,20 +2732,25 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
-            .child(SharedString::from(ui.wr_rel.to_string()));
+            .child(SharedString::from(ui.floor_rel.to_string()));
         let mut ends = div().flex().flex_row().flex_wrap().gap_2();
         for (end, seat, label, id) in [
             (
                 RelationEnd::From,
                 editor.draft.from,
-                ui.wr_rel_from,
-                "war-rel-from",
+                ui.floor_rel_from,
+                "floor-rel-from",
             ),
-            (RelationEnd::To, editor.draft.to, ui.wr_rel_to, "war-rel-to"),
+            (
+                RelationEnd::To,
+                editor.draft.to,
+                ui.floor_rel_to,
+                "floor-rel-to",
+            ),
         ] {
             let value = seat
-                .map(|s| self.war_room_seat_label(s, cx))
-                .unwrap_or_else(|| ui.wr_unknown.to_string());
+                .map(|s| self.threshing_floor_seat_label(s, cx))
+                .unwrap_or_else(|| ui.floor_unknown.to_string());
             ends = ends.child(
                 Self::bezel_btn(sk, &format!("{label}: {value}"), false)
                     .id(id)
@@ -2579,7 +2761,7 @@ impl Workspace {
                     .text_ellipsis()
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
-                        if let Some(e) = &mut ws.war_relation {
+                        if let Some(e) = &mut ws.floor_relation {
                             e.choosing = Some(end);
                         }
                         cx.notify();
@@ -2589,7 +2771,7 @@ impl Workspace {
         form = form.child(ends);
         if let Some(end) = editor.choosing {
             let mut list = div()
-                .id("war-rel-endpoints")
+                .id("floor-rel-endpoints")
                 .max_h(px(130.))
                 .overflow_y_scroll()
                 .flex()
@@ -2602,17 +2784,17 @@ impl Workspace {
                     let Some(seat) = leaf.read(cx).seat else {
                         continue;
                     };
-                    if self.war_orgs.owner(seat) != self.war_org
+                    if self.floor_orgs.owner(seat) != self.floor_org
                         || matches!(end, RelationEnd::To) && editor.draft.from == Some(seat)
                     {
                         continue;
                     }
                     list = list.child(
-                        Self::bezel_btn(sk, &self.war_room_seat_label(seat, cx), false)
-                            .id(SharedString::from(format!("war-endpoint-{}", seat.0)))
+                        Self::bezel_btn(sk, &self.threshing_floor_seat_label(seat, cx), false)
+                            .id(SharedString::from(format!("floor-endpoint-{}", seat.0)))
                             .on_click(cx.listener(move |ws, _, _, cx| {
                                 cx.stop_propagation();
-                                ws.war_room_choose_endpoint(seat, cx);
+                                ws.threshing_floor_choose_endpoint(seat, cx);
                             })),
                     );
                 }
@@ -2621,9 +2803,9 @@ impl Workspace {
         }
         let mut levels = div().flex().flex_row().flex_wrap().items_center().gap_2();
         for (rung, label) in [
-            (warroom::Rung::See, ui.wr_rung_see),
-            (warroom::Rung::Read, ui.wr_rung_read),
-            (warroom::Rung::Ask, ui.wr_rung_ask),
+            (threshing_floor::Rung::See, ui.floor_rung_see),
+            (threshing_floor::Rung::Read, ui.floor_rung_read),
+            (threshing_floor::Rung::Ask, ui.floor_rung_ask),
         ] {
             let selected = editor.draft.rung == Some(rung);
             // The rungs escalate see < read < ask. `ask` is the top clearance —
@@ -2632,15 +2814,15 @@ impl Workspace {
             // line is drawn in) and a ▲ mark, while the lower rungs are dimmed,
             // so the powerful one reads first. A person should never grant it by
             // reflex.
-            let is_ask = matches!(rung, warroom::Rung::Ask);
+            let is_ask = matches!(rung, threshing_floor::Rung::Ask);
             let shown = if is_ask {
                 format!("\u{25B2} {label}")
             } else {
                 label.to_string()
             };
             let mut btn = Self::bezel_btn(sk, &shown, selected)
-                .id(SharedString::from(format!("war-rung-{rung:?}")))
-                .debug_selector(move || format!("war-rung-{rung:?}"));
+                .id(SharedString::from(format!("floor-rung-{rung:?}")))
+                .debug_selector(move || format!("floor-rung-{rung:?}"));
             if is_ask {
                 btn = btn
                     .border_color(th.ansi[3])
@@ -2653,50 +2835,54 @@ impl Workspace {
             }
             levels = levels.child(btn.on_click(cx.listener(move |ws, _, _, cx| {
                 cx.stop_propagation();
-                if let Some(e) = &mut ws.war_relation {
+                if let Some(e) = &mut ws.floor_relation {
                     e.draft.rung = Some(rung);
                 }
                 cx.notify();
             })));
         }
-        let sentence = if let Some((from, to, rung)) = editor.draft.ready(&self.war_orgs) {
+        let sentence = if let Some((from, to, rung)) = editor.draft.ready(&self.floor_orgs) {
             let word = match rung {
-                warroom::Rung::See => ui.wr_rung_see,
-                warroom::Rung::Read => ui.wr_rung_read,
-                warroom::Rung::Ask => ui.wr_rung_ask,
+                threshing_floor::Rung::See => ui.floor_rung_see,
+                threshing_floor::Rung::Read => ui.floor_rung_read,
+                threshing_floor::Rung::Ask => ui.floor_rung_ask,
             };
             lang::fill(
-                ui.wr_rel_sentence,
+                ui.floor_rel_sentence,
                 &[
-                    ("from", &self.war_room_seat_label(from, cx)),
-                    ("to", &self.war_room_seat_label(to, cx)),
+                    ("from", &self.threshing_floor_seat_label(from, cx)),
+                    ("to", &self.threshing_floor_seat_label(to, cx)),
                     ("rung", word),
                 ],
             )
         } else {
-            ui.wr_rel_choose.to_string()
+            ui.floor_rel_choose.to_string()
         };
-        let ready = editor.draft.ready(&self.war_orgs).is_some_and(|(f, t, _)| {
-            self.war_room_seat_leaf(f, cx).is_some() && self.war_room_seat_leaf(t, cx).is_some()
-        });
+        let ready = editor
+            .draft
+            .ready(&self.floor_orgs)
+            .is_some_and(|(f, t, _)| {
+                self.threshing_floor_seat_leaf(f, cx).is_some()
+                    && self.threshing_floor_seat_leaf(t, cx).is_some()
+            });
         levels = levels
             .child(
-                Self::bezel_btn(sk, ui.wr_rel_save, ready)
-                    .id("war-rel-save")
-                    .debug_selector(|| "war-rel-save".to_string())
+                Self::bezel_btn(sk, ui.floor_rel_save, ready)
+                    .id("floor-rel-save")
+                    .debug_selector(|| "floor-rel-save".to_string())
                     .opacity(if ready { 1. } else { 0.4 })
                     .on_click(cx.listener(|ws, _, _, cx| {
                         cx.stop_propagation();
-                        ws.war_room_save_relation(cx);
+                        ws.threshing_floor_save_relation(cx);
                     })),
             )
             .child(
                 Self::bezel_btn(sk, ui.dlg_cancel, false)
-                    .id("war-rel-cancel")
-                    .debug_selector(|| "war-rel-cancel".to_string())
+                    .id("floor-rel-cancel")
+                    .debug_selector(|| "floor-rel-cancel".to_string())
                     .on_click(cx.listener(|ws, _, _, cx| {
                         cx.stop_propagation();
-                        ws.war_relation = None;
+                        ws.floor_relation = None;
                         cx.notify();
                     })),
             );
@@ -2707,14 +2893,14 @@ impl Workspace {
             .filter(|(f, t)| self.chart.line(*f, *t).is_some())
         {
             levels = levels.child(
-                Self::bezel_btn(sk, ui.wr_erase, false)
-                    .id("war-rel-remove")
-                    .debug_selector(|| "war-rel-remove".to_string())
+                Self::bezel_btn(sk, ui.floor_erase, false)
+                    .id("floor-rel-remove")
+                    .debug_selector(|| "floor-rel-remove".to_string())
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
                         ws.chart.erase(from, to);
-                        ws.war_room_forget_pair(from, to, cx);
-                        ws.war_relation = None;
+                        ws.threshing_floor_forget_pair(from, to, cx);
+                        ws.floor_relation = None;
                         ws.save(cx);
                         cx.notify();
                     })),
@@ -2728,31 +2914,36 @@ impl Workspace {
     /// place cross-org and whole-org relationships are drawn — a list of the
     /// relationships that span orgs (the ones a single org's chart cannot show),
     /// and a reference of every org with its members.
-    fn war_system_map(
+    fn floor_system_map(
         &self,
         sk: &skin::Skin,
         th: &theme::Theme,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let ui = self.lang.strings().ui;
-        let Some(map) = self.war_map.as_ref() else {
-            return div().id("war-system-map");
+        let Some(map) = self.floor_map.as_ref() else {
+            return div().id("floor-system-map");
         };
-        let rung_word = |r: warroom::Rung| match r {
-            warroom::Rung::See => ui.wr_rung_see,
-            warroom::Rung::Read => ui.wr_rung_read,
-            warroom::Rung::Ask => ui.wr_rung_ask,
+        let rung_word = |r: threshing_floor::Rung| match r {
+            threshing_floor::Rung::See => ui.floor_rung_see,
+            threshing_floor::Rung::Read => ui.floor_rung_read,
+            threshing_floor::Rung::Ask => ui.floor_rung_ask,
         };
 
         // ---- the builder: two ends, each an org or an agent ----
         let mut ends = div().flex().flex_row().flex_wrap().gap_2();
         for (which, end, label, id) in [
-            (RelationEnd::From, map.from, ui.wr_rel_from, "war-map-from"),
-            (RelationEnd::To, map.to, ui.wr_rel_to, "war-map-to"),
+            (
+                RelationEnd::From,
+                map.from,
+                ui.floor_rel_from,
+                "floor-map-from",
+            ),
+            (RelationEnd::To, map.to, ui.floor_rel_to, "floor-map-to"),
         ] {
             let value = end
-                .map(|e| self.war_map_end_label(e, cx))
-                .unwrap_or_else(|| ui.wr_unknown.to_string());
+                .map(|e| self.floor_map_end_label(e, cx))
+                .unwrap_or_else(|| ui.floor_unknown.to_string());
             ends = ends.child(
                 Self::bezel_btn(
                     sk,
@@ -2765,7 +2956,7 @@ impl Workspace {
                 .text_ellipsis()
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     cx.stop_propagation();
-                    if let Some(m) = &mut ws.war_map {
+                    if let Some(m) = &mut ws.floor_map {
                         m.choosing = Some(which);
                     }
                     cx.notify();
@@ -2787,14 +2978,14 @@ impl Workspace {
                 RelationEnd::To => map.from,
             };
             let mut list = div()
-                .id("war-map-endpoints")
+                .id("floor-map-endpoints")
                 .max_h(px(180.))
                 .overflow_y_scroll()
                 .flex()
                 .flex_col()
                 .gap_1();
-            for org in self.war_orgs.saved() {
-                let end = warroom::End::Org { org: org.id };
+            for org in self.floor_orgs.saved() {
+                let end = threshing_floor::End::Org { org: org.id };
                 if Some(end) == other {
                     continue;
                 }
@@ -2803,16 +2994,19 @@ impl Workspace {
                         sk,
                         &format!(
                             "{} \u{00b7} {}",
-                            self.war_room_org_label(org.id),
-                            ui.wr_map_whole_org
+                            self.threshing_floor_org_label(org.id),
+                            ui.floor_map_whole_org
                         ),
                         false,
                     )
-                    .id(SharedString::from(format!("war-map-end-org-{}", org.id.0)))
+                    .id(SharedString::from(format!(
+                        "floor-map-end-org-{}",
+                        org.id.0
+                    )))
                     .text_color(th.ansi[6])
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
-                        ws.war_map_choose(end, cx);
+                        ws.floor_map_choose(end, cx);
                     })),
                 );
             }
@@ -2823,16 +3017,16 @@ impl Workspace {
                     let Some(seat) = leaf.read(cx).seat else {
                         continue;
                     };
-                    let end = warroom::End::Seat(seat);
+                    let end = threshing_floor::End::Seat(seat);
                     if Some(end) == other {
                         continue;
                     }
                     list = list.child(
-                        Self::bezel_btn(sk, &self.war_room_seat_label(seat, cx), false)
-                            .id(SharedString::from(format!("war-map-end-seat-{}", seat.0)))
+                        Self::bezel_btn(sk, &self.threshing_floor_seat_label(seat, cx), false)
+                            .id(SharedString::from(format!("floor-map-end-seat-{}", seat.0)))
                             .on_click(cx.listener(move |ws, _, _, cx| {
                                 cx.stop_propagation();
-                                ws.war_map_choose(end, cx);
+                                ws.floor_map_choose(end, cx);
                             })),
                     );
                 }
@@ -2841,20 +3035,20 @@ impl Workspace {
         }
         let mut levels = div().flex().flex_row().flex_wrap().items_center().gap_2();
         for (rung, label) in [
-            (warroom::Rung::See, ui.wr_rung_see),
-            (warroom::Rung::Read, ui.wr_rung_read),
-            (warroom::Rung::Ask, ui.wr_rung_ask),
+            (threshing_floor::Rung::See, ui.floor_rung_see),
+            (threshing_floor::Rung::Read, ui.floor_rung_read),
+            (threshing_floor::Rung::Ask, ui.floor_rung_ask),
         ] {
             let selected = map.rung == Some(rung);
-            let is_ask = matches!(rung, warroom::Rung::Ask);
+            let is_ask = matches!(rung, threshing_floor::Rung::Ask);
             let shown = if is_ask {
                 format!("\u{25B2} {label}")
             } else {
                 label.to_string()
             };
             let mut btn = Self::bezel_btn(sk, &shown, selected)
-                .id(SharedString::from(format!("war-map-rung-{rung:?}")))
-                .debug_selector(move || format!("war-map-rung-{rung:?}"));
+                .id(SharedString::from(format!("floor-map-rung-{rung:?}")))
+                .debug_selector(move || format!("floor-map-rung-{rung:?}"));
             if is_ask {
                 btn = btn
                     .border_color(th.ansi[3])
@@ -2867,7 +3061,7 @@ impl Workspace {
             }
             levels = levels.child(btn.on_click(cx.listener(move |ws, _, _, cx| {
                 cx.stop_propagation();
-                if let Some(m) = &mut ws.war_map {
+                if let Some(m) = &mut ws.floor_map {
                     m.rung = Some(rung);
                 }
                 cx.notify();
@@ -2876,33 +3070,35 @@ impl Workspace {
         let ready = matches!((map.from, map.to, map.rung), (Some(f), Some(t), Some(_)) if f != t);
         let sentence = match (map.from, map.to, map.rung) {
             (Some(f), Some(t), Some(r)) if f != t => lang::fill(
-                ui.wr_rel_sentence,
+                ui.floor_rel_sentence,
                 &[
-                    ("from", &self.war_map_end_label(f, cx)),
-                    ("to", &self.war_map_end_label(t, cx)),
+                    ("from", &self.floor_map_end_label(f, cx)),
+                    ("to", &self.floor_map_end_label(t, cx)),
                     ("rung", rung_word(r)),
                 ],
             ),
-            _ => ui.wr_rel_choose.to_string(),
+            _ => ui.floor_rel_choose.to_string(),
         };
         levels = levels.child(
-            Self::bezel_btn(sk, ui.wr_rel_save, ready)
-                .id("war-map-draw")
-                .debug_selector(|| "war-map-draw".to_string())
+            Self::bezel_btn(sk, ui.floor_rel_save, ready)
+                .id("floor-map-draw")
+                .debug_selector(|| "floor-map-draw".to_string())
                 .opacity(if ready { 1. } else { 0.4 })
                 .on_click(cx.listener(|ws, _, _, cx| {
                     cx.stop_propagation();
-                    ws.war_map_draw(cx);
+                    ws.floor_map_draw(cx);
                 })),
         );
         form = form.child(levels).child(SharedString::from(sentence));
 
         // ---- the relationships that span orgs ----
-        let cross: Vec<warroom::Line> = self
+        let cross: Vec<threshing_floor::Line> = self
             .chart
             .saved()
             .iter()
-            .filter(|l| !l.is_bypass() && self.war_orgs.owner(l.from) != self.war_orgs.owner(l.to))
+            .filter(|l| {
+                !l.is_bypass() && self.floor_orgs.owner(l.from) != self.floor_orgs.owner(l.to)
+            })
             .cloned()
             .collect();
         let org_lines = self.chart.org_lines().to_vec();
@@ -2910,23 +3106,23 @@ impl Workspace {
             div()
                 .text_size(sk.text_px(9.5))
                 .font_weight(gpui::FontWeight::BOLD)
-                .child(SharedString::from(ui.wr_map_rels.to_string())),
+                .child(SharedString::from(ui.floor_map_rels.to_string())),
         );
         if cross.is_empty() && org_lines.is_empty() {
             rels = rels.child(
                 div()
                     .text_color(th.text.alpha(0.6))
-                    .child(SharedString::from(ui.wr_map_empty.to_string())),
+                    .child(SharedString::from(ui.floor_map_empty.to_string())),
             );
         }
         for l in &cross {
             let (from, to) = (l.from, l.to);
             let word = l.rung.known().map(rung_word).unwrap_or("?");
             let sentence = lang::fill(
-                ui.wr_rel_sentence,
+                ui.floor_rel_sentence,
                 &[
-                    ("from", &self.war_room_seat_label(from, cx)),
-                    ("to", &self.war_room_seat_label(to, cx)),
+                    ("from", &self.threshing_floor_seat_label(from, cx)),
+                    ("to", &self.threshing_floor_seat_label(to, cx)),
                     ("rung", word),
                 ],
             );
@@ -2938,15 +3134,15 @@ impl Workspace {
                     .gap_2()
                     .child(SharedString::from(sentence))
                     .child(
-                        Self::bezel_btn(sk, ui.wr_map_remove, false)
+                        Self::bezel_btn(sk, ui.floor_map_remove, false)
                             .id(SharedString::from(format!(
-                                "war-map-rm-seat-{}-{}",
+                                "floor-map-rm-seat-{}-{}",
                                 from.0, to.0
                             )))
                             .on_click(cx.listener(move |ws, _, _, cx| {
                                 cx.stop_propagation();
                                 ws.chart.erase(from, to);
-                                ws.war_room_forget_pair(from, to, cx);
+                                ws.threshing_floor_forget_pair(from, to, cx);
                                 ws.save(cx);
                                 cx.notify();
                             })),
@@ -2957,10 +3153,10 @@ impl Workspace {
             let (from, to) = (ol.from, ol.to);
             let word = ol.rung.known().map(rung_word).unwrap_or("?");
             let sentence = lang::fill(
-                ui.wr_rel_sentence,
+                ui.floor_rel_sentence,
                 &[
-                    ("from", &self.war_map_end_label(from, cx)),
-                    ("to", &self.war_map_end_label(to, cx)),
+                    ("from", &self.floor_map_end_label(from, cx)),
+                    ("to", &self.floor_map_end_label(to, cx)),
                     ("rung", word),
                 ],
             );
@@ -2972,9 +3168,9 @@ impl Workspace {
                     .gap_2()
                     .child(SharedString::from(sentence))
                     .child(
-                        Self::bezel_btn(sk, ui.wr_map_remove, false)
+                        Self::bezel_btn(sk, ui.floor_map_remove, false)
                             .id(SharedString::from(format!(
-                                "war-map-rm-org-{from:?}-{to:?}"
+                                "floor-map-rm-org-{from:?}-{to:?}"
                             )))
                             .on_click(cx.listener(move |ws, _, _, cx| {
                                 cx.stop_propagation();
@@ -2988,7 +3184,7 @@ impl Workspace {
 
         // ---- a reference of every org and its members ----
         let mut orgboxes = div().flex().flex_row().flex_wrap().gap_2();
-        for org in self.war_orgs.saved() {
+        for org in self.floor_orgs.saved() {
             let id = org.id;
             let mut boxed = div()
                 .p_2()
@@ -3002,22 +3198,24 @@ impl Workspace {
                     div()
                         .font_weight(gpui::FontWeight::EXTRA_BOLD)
                         .text_color(th.ansi[6])
-                        .child(SharedString::from(self.war_room_org_label(id))),
+                        .child(SharedString::from(self.threshing_floor_org_label(id))),
                 );
             for seat in &org.seats {
                 boxed = boxed.child(
                     div()
                         .text_size(sk.text_px(9.))
                         .text_color(th.text.alpha(0.85))
-                        .child(SharedString::from(self.war_room_seat_label(*seat, cx))),
+                        .child(SharedString::from(
+                            self.threshing_floor_seat_label(*seat, cx),
+                        )),
                 );
             }
             orgboxes = orgboxes.child(boxed);
         }
 
         div()
-            .id("war-system-map")
-            .debug_selector(|| "war-system-map".to_string())
+            .id("floor-system-map")
+            .debug_selector(|| "floor-system-map".to_string())
             .size_full()
             .flex()
             .flex_col()
@@ -3028,7 +3226,7 @@ impl Workspace {
                     .text_size(sk.text_px(12.))
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
                     .text_color(th.complement)
-                    .child(SharedString::from(ui.wr_map.to_string())),
+                    .child(SharedString::from(ui.floor_map.to_string())),
             )
             .child(form)
             .child(rels)
@@ -3036,14 +3234,18 @@ impl Workspace {
     }
 
     /// What a person calls `leaf`: where its tab sits on the left bar, then
-    /// its header's title (see [`warroom::PaneName`]). Every place the War
+    /// its header's title (see [`threshing_floor::PaneName`]). Every place the War
     /// Room and its rail name a pane goes through here.
-    pub(crate) fn pane_name(&self, leaf: &Entity<TerminalView>, cx: &App) -> warroom::PaneName {
+    pub(crate) fn pane_name(
+        &self,
+        leaf: &Entity<TerminalView>,
+        cx: &App,
+    ) -> threshing_floor::PaneName {
         let spine = self
             .tab_with_leaf(leaf.entity_id())
             .map(|ti| self.spine_path(ti))
             .unwrap_or_default();
-        warroom::PaneName::new(&spine, &leaf.read(cx).header_title())
+        threshing_floor::PaneName::new(&spine, &leaf.read(cx).header_title())
     }
 
     /// An agent's question for another (`ask_agent`), or its read-back of a
@@ -3065,14 +3267,14 @@ impl Workspace {
                         self.forget_copy(*ask_id, cx);
                         return mcp::AskReply::Refused(refusal);
                     }
-                    mcp::AskReply::Copy(warroom::CopyStatus {
+                    mcp::AskReply::Copy(threshing_floor::CopyStatus {
                         ask_id: *ask_id,
                         reads: a.reads,
                         press_limit: self.press_limit(),
                         stage: a.stage.clone(),
                     })
                 }
-                None => mcp::AskReply::Refused(warroom::Refusal::NoSuchAsk),
+                None => mcp::AskReply::Refused(threshing_floor::Refusal::NoSuchAsk),
             },
         }
     }
@@ -3080,21 +3282,25 @@ impl Workspace {
     /// A copy's admission is not permission to deliver after revocation. A
     /// spent bypass remains a receipt for this one already-admitted question;
     /// explicit relationship edits and membership moves erase those receipts.
-    fn copy_refusal(&self, a: &warroom::CopyAsk, cx: &App) -> Option<warroom::Refusal> {
+    fn copy_refusal(
+        &self,
+        a: &threshing_floor::CopyAsk,
+        cx: &App,
+    ) -> Option<threshing_floor::Refusal> {
         let Some(caller) = self.leaf_by_pane_id(a.asker_pane, cx) else {
-            return Some(warroom::Refusal::Gone);
+            return Some(threshing_floor::Refusal::Gone);
         };
         let Some(target) = self.leaf_by_shell_pid(a.target_pid, cx) else {
-            return Some(warroom::Refusal::Gone);
+            return Some(threshing_floor::Refusal::Gone);
         };
         let (c, t) = (caller.read(cx), target.read(cx));
         if a.from.is_none() || a.to.is_none() || c.seat != a.from || t.seat != a.to {
-            return Some(warroom::Refusal::Gone);
+            return Some(threshing_floor::Refusal::Gone);
         }
         if !c.mode.is_agent() || askcopy::Program::of_mode(t.mode.label()) != Some(a.program) {
-            return Some(warroom::Refusal::NotAnAgent);
+            return Some(threshing_floor::Refusal::NotAnAgent);
         }
-        let mut receipt = warroom::Chart::default();
+        let mut receipt = threshing_floor::Chart::default();
         let chart = if a.via == "bypass" {
             // This transient chart checks the already-spent prompt against
             // today's global and target ceilings without spending it twice.
@@ -3103,10 +3309,10 @@ impl Workspace {
         } else {
             &self.chart
         };
-        warroom::decide_ask(
+        threshing_floor::decide_ask(
             &self.mcp,
             chart,
-            &self.war_orgs,
+            &self.floor_orgs,
             &c.party(),
             &t.party(),
             false,
@@ -3115,7 +3321,7 @@ impl Workspace {
         .err()
     }
 
-    fn forget_copy(&mut self, id: warroom::AskId, cx: &mut Context<Self>) {
+    fn forget_copy(&mut self, id: threshing_floor::AskId, cx: &mut Context<Self>) {
         if let Some(a) = self.asks.remove(id) {
             if let Some(asker) = self.leaf_by_pane_id(a.asker_pane, cx) {
                 asker.update(cx, |v, cx| {
@@ -3131,14 +3337,14 @@ impl Workspace {
         }
     }
 
-    fn war_room_forget_pair(
+    fn threshing_floor_forget_pair(
         &mut self,
-        from: warroom::SeatId,
-        to: warroom::SeatId,
+        from: threshing_floor::SeatId,
+        to: threshing_floor::SeatId,
         cx: &mut Context<Self>,
     ) {
         self.asks.forget_pair(from, to);
-        if let Some(asker) = self.war_room_seat_leaf(from, cx) {
+        if let Some(asker) = self.threshing_floor_seat_leaf(from, cx) {
             asker.update(cx, |v, cx| {
                 if v.access_ask
                     .as_ref()
@@ -3154,11 +3360,12 @@ impl Workspace {
 
     /// The person's press limit: a copy reading more waits for their Yes.
     pub(crate) fn press_limit(&self) -> u64 {
-        self.ask_press_tokens.unwrap_or(warroom::ASK_PRESS_TOKENS)
+        self.ask_press_tokens
+            .unwrap_or(threshing_floor::ASK_PRESS_TOKENS)
     }
 
     /// A line from the asker's seat must reach as far as ask
-    /// (`warroom::decide_ask`). A cheap ask is answered from what the window
+    /// (`threshing_floor::decide_ask`). A cheap ask is answered from what the window
     /// can already show; a copy is priced, and starts at once when it reads no
     /// more than the person's press limit, or goes to the rail for their Yes.
     /// Every ask — refused or answered — leaves one line in the record,
@@ -3166,7 +3373,7 @@ impl Workspace {
     fn ask_question(&mut self, req: &mcp::AskRequest, cx: &mut Context<Self>) -> mcp::AskReply {
         let now_ms = now_ms();
         self.ask_seq = (self.ask_seq + 1).max(now_ms);
-        let id = warroom::AskId(self.ask_seq);
+        let id = threshing_floor::AskId(self.ask_seq);
         let caller = self.leaf_by_pane_id(req.caller_pane, cx);
         let target = self.leaf_by_shell_pid(req.target, cx);
         let from = caller.as_ref().and_then(|l| l.read(cx).seat);
@@ -3197,7 +3404,7 @@ impl Workspace {
         };
         let reply = match (caller.as_ref(), target.as_ref()) {
             (Some(c), Some(t)) => self.decide_question(req, id, c, t, &mut entry, cx),
-            _ => mcp::AskReply::Refused(warroom::Refusal::Gone),
+            _ => mcp::AskReply::Refused(threshing_floor::Refusal::Gone),
         };
         if let mcp::AskReply::Refused(r) = &reply {
             entry.refusal = refusal_code(r);
@@ -3212,8 +3419,8 @@ impl Workspace {
                 self.save(cx);
             }
             match status.stage {
-                warroom::CopyStage::AwaitingPress => self.raise_copy_card(id, cx),
-                warroom::CopyStage::Running => self.start_copy(id, "copy_started", cx),
+                threshing_floor::CopyStage::AwaitingPress => self.raise_copy_card(id, cx),
+                threshing_floor::CopyStage::Running => self.start_copy(id, "copy_started", cx),
                 _ => {}
             }
         }
@@ -3223,7 +3430,7 @@ impl Workspace {
     fn decide_question(
         &mut self,
         req: &mcp::AskRequest,
-        id: warroom::AskId,
+        id: threshing_floor::AskId,
         caller: &Entity<TerminalView>,
         target: &Entity<TerminalView>,
         entry: &mut askrecord::Entry,
@@ -3232,10 +3439,10 @@ impl Workspace {
         let (c, t) = (caller.read(cx), target.read(cx));
         let q = req.question.chars().count();
         let same = caller.entity_id() == target.entity_id();
-        let via = match warroom::decide_ask(
+        let via = match threshing_floor::decide_ask(
             &self.mcp,
             &self.chart,
-            &self.war_orgs,
+            &self.floor_orgs,
             &c.party(),
             &t.party(),
             same,
@@ -3248,17 +3455,17 @@ impl Workspace {
         entry.program = Some(t.mode.label().to_string());
         if req.copy {
             let Some(program) = askcopy::Program::of_mode(t.mode.label()) else {
-                return mcp::AskReply::Refused(warroom::Refusal::CannotCopy);
+                return mcp::AskReply::Refused(threshing_floor::Refusal::CannotCopy);
             };
             // One at a time: a copy running or waiting, or any ask of this
             // agent's still on the person's rail.
             if self.asks.busy(req.caller_pane) || c.access_ask.is_some() {
-                return mcp::AskReply::Refused(warroom::Refusal::Busy);
+                return mcp::AskReply::Refused(threshing_floor::Refusal::Busy);
             }
             // Priced by the transport, off this thread, from the transcript
             // the copy would fork. No price is no copy.
             let Some(price) = &req.price else {
-                return mcp::AskReply::Refused(warroom::Refusal::ConversationUnnamed);
+                return mcp::AskReply::Refused(threshing_floor::Refusal::ConversationUnnamed);
             };
             let conversation = match &price.conversation {
                 Ok(c) => c.clone(),
@@ -3266,10 +3473,10 @@ impl Workspace {
             };
             let (reads, model) = (price.reads, price.model.clone());
             let limit = self.press_limit();
-            let stage = if warroom::copy_waits_for_press(reads, limit) {
-                warroom::CopyStage::AwaitingPress
+            let stage = if threshing_floor::copy_waits_for_press(reads, limit) {
+                threshing_floor::CopyStage::AwaitingPress
             } else {
-                warroom::CopyStage::Running
+                threshing_floor::CopyStage::Running
             };
             entry.program = Some(program.word().to_string());
             entry.model = model.clone();
@@ -3277,7 +3484,7 @@ impl Workspace {
             entry.stage = "priced".into();
             self.asks.open(
                 id,
-                warroom::CopyAsk {
+                threshing_floor::CopyAsk {
                     asker_pane: req.caller_pane,
                     from: entry.from,
                     to: entry.to,
@@ -3293,7 +3500,7 @@ impl Workspace {
                     stage: stage.clone(),
                 },
             );
-            return mcp::AskReply::Copy(warroom::CopyStatus {
+            return mcp::AskReply::Copy(threshing_floor::CopyStatus {
                 ask_id: id,
                 reads,
                 press_limit: limit,
@@ -3307,7 +3514,7 @@ impl Workspace {
             .and_then(|ti| self.place_of(ti).project)
             .and_then(|id| self.project_at(id))
             .and_then(|p| p.name.clone());
-        let seat = warroom::SeatView {
+        let seat = threshing_floor::SeatView {
             title: seat_title(t),
             project,
             role: t.seat.map(|s| self.chart.role_of(s)),
@@ -3317,10 +3524,10 @@ impl Workspace {
         };
         entry.model = seat.model.clone();
         entry.stage = "cheap".into();
-        mcp::AskReply::Cheap(warroom::CheapAnswer {
+        mcp::AskReply::Cheap(threshing_floor::CheapAnswer {
             ask_id: id,
             seat,
-            summary: t.bench.latest_response().map(|r| warroom::Summary {
+            summary: t.bench.latest_response().map(|r| threshing_floor::Summary {
                 brief: r.brief.clone(),
                 layman: r.layman.clone(),
             }),
@@ -3334,19 +3541,19 @@ impl Workspace {
     }
 
     /// Append one stage to this window's ask record, and read the numbers
-    /// back for the War Room.
+    /// back for the Threshing Floor.
     fn record(&mut self, entry: &askrecord::Entry) {
         let record = askrecord::path_for(crate::instance::key());
         if let Err(e) = askrecord::append(&record, entry) {
-            eprintln!("[war-room] the ask record could not be written: {e}");
+            eprintln!("[threshing-floor] the ask record could not be written: {e}");
         }
-        self.ask_numbers = askrecord::numbers(&record).ok();
+        self.ask_numbers = askrecord::numbers_for(crate::instance::key()).ok();
     }
 
     /// One stage of a copy ask, for the record.
     fn record_copy(
         &mut self,
-        id: warroom::AskId,
+        id: threshing_floor::AskId,
         stage: &str,
         tweak: impl FnOnce(&mut askrecord::Entry),
     ) {
@@ -3374,7 +3581,7 @@ impl Workspace {
     }
 
     /// Put a priced copy on the asker's rail row, for a person's Yes or No.
-    fn raise_copy_card(&mut self, id: warroom::AskId, cx: &mut Context<Self>) {
+    fn raise_copy_card(&mut self, id: threshing_floor::AskId, cx: &mut Context<Self>) {
         let Some(a) = self.asks.get(id).cloned() else {
             return;
         };
@@ -3388,7 +3595,9 @@ impl Workspace {
             title,
             why: access::excerpt(&a.question),
             at: std::time::Instant::now(),
-            risk: Some(warroom::risk(&warroom::RiskFacts::Copy { reads: a.reads })),
+            risk: Some(threshing_floor::risk(&threshing_floor::RiskFacts::Copy {
+                reads: a.reads,
+            })),
             prompts: access::BYPASS_PROMPTS,
             reads: a.reads,
             ask_id: Some(id),
@@ -3407,7 +3616,7 @@ impl Workspace {
     /// pane), read the agent's program, folder and environment, run the copy
     /// and hand the answer back here. Called under the press limit by the ask
     /// itself and over it by the rail's Yes — nowhere else.
-    fn start_copy(&mut self, id: warroom::AskId, stage: &str, cx: &mut Context<Self>) {
+    fn start_copy(&mut self, id: threshing_floor::AskId, stage: &str, cx: &mut Context<Self>) {
         let Some(a) = self.asks.get(id).cloned() else {
             return;
         };
@@ -3415,7 +3624,7 @@ impl Workspace {
             self.forget_copy(id, cx);
             return;
         }
-        self.asks.set(id, warroom::CopyStage::Running);
+        self.asks.set(id, threshing_floor::CopyStage::Running);
         self.record_copy(id, stage, |_| {});
         let facts = self.pane_facts(cx);
         let (tx, rx) = futures::channel::oneshot::channel();
@@ -3465,7 +3674,7 @@ impl Workspace {
     /// finishing is not something a person did.
     fn copy_finished(
         &mut self,
-        id: warroom::AskId,
+        id: threshing_floor::AskId,
         out: Result<askcopy::Answer, askcopy::End>,
         cx: &mut Context<Self>,
     ) {
@@ -3478,7 +3687,7 @@ impl Workspace {
         }
         let (stage, word) = match out {
             Ok(a) => (
-                warroom::CopyStage::Answered {
+                threshing_floor::CopyStage::Answered {
                     answer: a.text,
                     tokens_read: a.tokens_read,
                     cost_usd: a.cost_usd,
@@ -3486,17 +3695,19 @@ impl Workspace {
                 "answered",
             ),
             Err(askcopy::End::Refused(refusal)) => {
-                (warroom::CopyStage::Refused { refusal }, "refused")
+                (threshing_floor::CopyStage::Refused { refusal }, "refused")
             }
-            Err(askcopy::End::Failed(why)) => (warroom::CopyStage::Failed { why }, "failed"),
+            Err(askcopy::End::Failed(why)) => {
+                (threshing_floor::CopyStage::Failed { why }, "failed")
+            }
         };
         let (tokens_read, cost_usd, refusal) = match &stage {
-            warroom::CopyStage::Answered {
+            threshing_floor::CopyStage::Answered {
                 tokens_read,
                 cost_usd,
                 ..
             } => (*tokens_read, *cost_usd, None),
-            warroom::CopyStage::Refused { refusal } => (None, None, refusal_code(refusal)),
+            threshing_floor::CopyStage::Refused { refusal } => (None, None, refusal_code(refusal)),
             _ => (None, None, None),
         };
         if self.asks.set(id, stage).is_none() {
@@ -3514,14 +3725,14 @@ impl Workspace {
     /// Called by `rail_answer` only. Returns what came of it.
     pub(crate) fn answer_copy(
         &mut self,
-        id: Option<warroom::AskId>,
+        id: Option<threshing_floor::AskId>,
         answer: access::Answer,
         cx: &mut Context<Self>,
     ) -> access::Outcome {
         let Some(id) = id.filter(|id| {
             self.asks
                 .get(*id)
-                .is_some_and(|a| a.stage == warroom::CopyStage::AwaitingPress)
+                .is_some_and(|a| a.stage == threshing_floor::CopyStage::AwaitingPress)
         }) else {
             return access::Outcome::Gone;
         };
@@ -3542,7 +3753,7 @@ impl Workspace {
                 if !alive {
                     self.asks.set(
                         id,
-                        warroom::CopyStage::Failed {
+                        threshing_floor::CopyStage::Failed {
                             why: "the pane asked has closed".into(),
                         },
                     );
@@ -3553,66 +3764,66 @@ impl Workspace {
                 access::Outcome::Done
             }
             access::Answer::No => {
-                self.asks.set(id, warroom::CopyStage::Declined);
+                self.asks.set(id, threshing_floor::CopyStage::Declined);
                 self.record_copy(id, "declined", |_| {});
                 access::Outcome::Kept
             }
         }
     }
-    /// Close the War Room and let go of any half-drawn line.
-    pub(crate) fn close_war_room(&mut self) {
-        self.war_room = false;
-        self.war_room_pick = None;
-        self.war_relation = None;
-        self.war_org_edit = None;
-        self.war_move = None;
-        self.war_delete_org = None;
-        self.war_drop = None;
-        self.war_drag = None;
-        self.war_context = None;
-        self.war_feedback = None;
-        self.war_room_query = EditBuffer::seeded("");
+    /// Close the Threshing Floor and let go of any half-drawn line.
+    pub(crate) fn close_threshing_floor(&mut self) {
+        self.threshing_floor = false;
+        self.threshing_floor_pick = None;
+        self.floor_relation = None;
+        self.floor_org_edit = None;
+        self.floor_move = None;
+        self.floor_delete_org = None;
+        self.floor_drop = None;
+        self.floor_drag = None;
+        self.floor_context = None;
+        self.floor_feedback = None;
+        self.threshing_floor_query = EditBuffer::seeded("");
     }
 
     /// A person seated a pane: mint its seat and save it with the pane.
-    fn war_room_seat(&mut self, leaf: &Entity<TerminalView>, cx: &mut Context<Self>) {
-        if let Some(org) = self.war_org {
-            self.war_room_assign(leaf, org, false, cx);
+    fn threshing_floor_seat(&mut self, leaf: &Entity<TerminalView>, cx: &mut Context<Self>) {
+        if let Some(org) = self.floor_org {
+            self.threshing_floor_assign(leaf, org, false, cx);
         }
     }
 
     /// Both removal targets and the click alternative revoke the same authority.
-    fn war_room_unseat(&mut self, leaf: &Entity<TerminalView>, cx: &mut Context<Self>) {
+    fn threshing_floor_unseat(&mut self, leaf: &Entity<TerminalView>, cx: &mut Context<Self>) {
         let Some(seat) = leaf.read(cx).seat else {
             return;
         };
         self.chart.forget_seat(seat);
-        self.war_orgs.remove(seat);
-        self.war_room_forget_pending(leaf, seat, cx);
-        self.war_relation = None;
-        self.war_move = None;
-        self.war_drop = None;
-        self.war_context = None;
+        self.floor_orgs.remove(seat);
+        self.threshing_floor_forget_pending(leaf, seat, cx);
+        self.floor_relation = None;
+        self.floor_move = None;
+        self.floor_drop = None;
+        self.floor_context = None;
         leaf.update(cx, |v, cx| {
-            v.set_agent_access(warroom::AgentAccess::OffLimits, cx);
+            v.set_agent_access(threshing_floor::AgentAccess::OffLimits, cx);
             v.set_seat(None, cx);
         });
-        self.war_feedback = Some(lang::fill(
-            self.lang.strings().ui.wr_removed,
+        self.floor_feedback = Some(lang::fill(
+            self.lang.strings().ui.floor_removed,
             &[("pane", &self.pane_name(leaf, cx).tab)],
         ));
-        if self.war_room_pick == Some(seat) {
-            self.war_room_pick = None;
+        if self.threshing_floor_pick == Some(seat) {
+            self.threshing_floor_pick = None;
         }
         self.save(cx);
         cx.notify();
     }
 
     /// Membership changes invalidate both directions and every waiting card.
-    fn war_room_forget_pending(
+    fn threshing_floor_forget_pending(
         &mut self,
         leaf: &Entity<TerminalView>,
-        seat: warroom::SeatId,
+        seat: threshing_floor::SeatId,
         cx: &mut Context<Self>,
     ) {
         self.asks.forget_seat(seat);
@@ -3638,15 +3849,19 @@ impl Workspace {
     }
 
     /// Selection never grants a relationship or changes a card's dimensions.
-    fn war_room_click_seat(&mut self, seat: warroom::SeatId, cx: &mut Context<Self>) {
+    fn threshing_floor_click_seat(
+        &mut self,
+        seat: threshing_floor::SeatId,
+        cx: &mut Context<Self>,
+    ) {
         if self
-            .war_relation
+            .floor_relation
             .as_ref()
             .is_some_and(|e| e.choosing.is_some())
         {
-            self.war_room_choose_endpoint(seat, cx);
+            self.threshing_floor_choose_endpoint(seat, cx);
         } else {
-            self.war_room_pick = if self.war_room_pick == Some(seat) {
+            self.threshing_floor_pick = if self.threshing_floor_pick == Some(seat) {
                 None
             } else {
                 Some(seat)
@@ -3656,13 +3871,13 @@ impl Workspace {
     }
 
     /// The edge label opens an explicit editor; it never cycles a permission.
-    fn war_room_click_line(
+    fn threshing_floor_click_line(
         &mut self,
-        from: warroom::SeatId,
-        to: warroom::SeatId,
+        from: threshing_floor::SeatId,
+        to: threshing_floor::SeatId,
         cx: &mut Context<Self>,
     ) {
-        self.war_room_begin_relation(Some(from), Some(to), cx);
+        self.threshing_floor_begin_relation(Some(from), Some(to), cx);
     }
 }
 
@@ -3795,7 +4010,7 @@ fn stroke_wire(
 }
 
 /// A refusal's wire name, for the record.
-fn refusal_code(r: &warroom::Refusal) -> Option<String> {
+fn refusal_code(r: &threshing_floor::Refusal) -> Option<String> {
     serde_json::to_value(r)
         .ok()
         .and_then(|v| v.as_str().map(str::to_string))
@@ -3808,6 +4023,17 @@ fn seat_title(t: &TerminalView) -> String {
         .unwrap_or_else(|| t.shown_title())
 }
 
+/// The card's harness-and-model line, as Parker spelled it: `CLAUDE · OPUS 5.5
+/// MAX`, `CODEX · SOL 6.1 XHIGH`. An unknown model says so rather than leaving
+/// the line short, and an effort the transcript never named is left off.
+fn model_line(program: &str, model: Option<&str>, effort: Option<&str>, unknown: &str) -> String {
+    match (model, effort.map(str::trim).filter(|e| !e.is_empty())) {
+        (Some(m), Some(e)) => format!("{program} · {m} {}", e.to_uppercase()),
+        (Some(m), None) => format!("{program} · {m}"),
+        (None, _) => format!("{program} · {unknown}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3817,7 +4043,7 @@ mod tests {
     ) -> (
         Entity<Workspace>,
         &'static mut gpui::VisualTestContext,
-        warroom::OrgId,
+        threshing_floor::OrgId,
     ) {
         cx.executor().allow_parking();
         cx.update(|cx| {
@@ -3850,24 +4076,24 @@ mod tests {
                 };
                 ws.tabs
                     .push(Tab::new(Node::Leaf(second), Some("Worker".into())));
-                let org = ws.war_orgs.create("Cinema crew").unwrap();
-                let other = ws.war_orgs.create("Launch crew").unwrap();
+                let org = ws.floor_orgs.create("Cinema crew").unwrap();
+                let other = ws.floor_orgs.create("Launch crew").unwrap();
                 for (i, tab) in ws.tabs.iter_mut().enumerate() {
                     tab.name = Some(if i == 0 { "Lead" } else { "Worker" }.into());
                     let mut leaves = Vec::new();
                     tab.root.leaves(&mut leaves);
                     let pane = leaves[0].clone();
-                    let seat = warroom::SeatId(100 + i as u64);
+                    let seat = threshing_floor::SeatId(100 + i as u64);
                     pane.update(cx, |v, cx| {
                         v.mode = pane::PaneMode::Codex;
                         v.seat = Some(seat);
                         v.fixture_set_pane_id(10 + i as u64);
                         cx.notify();
                     });
-                    ws.war_orgs.assign(seat, org);
+                    ws.floor_orgs.assign(seat, org);
                 }
-                ws.war_org = Some(org);
-                ws.war_room = true;
+                ws.floor_org = Some(org);
+                ws.threshing_floor = true;
                 ws.left_bar = false;
                 w.focus(&ws.focus_handle, cx);
                 cx.notify();
@@ -3909,7 +4135,7 @@ mod tests {
         snapshot.panes = ws.mcp_snapshot(cx);
         snapshot.config = ws.mcp.clone();
         snapshot.chart = ws.chart.clone();
-        snapshot.orgs = ws.war_orgs.clone();
+        snapshot.orgs = ws.floor_orgs.clone();
         snapshot.caller = Some(mcp::Caller {
             session: "fixture".into(),
             pane: Some(10),
@@ -3946,14 +4172,16 @@ mod tests {
             let target = ws.leaf_by_pane_id(11, cx).unwrap();
             let pid = target.read(cx).shell_pid().unwrap();
             let key = asker.entity_id().as_u64();
-            target.update(cx, |v, _| v.agent_access = warroom::AgentAccess::OffLimits);
+            target.update(cx, |v, _| {
+                v.agent_access = threshing_floor::AgentAccess::OffLimits
+            });
             let hidden = propose_open(ws, cx, pid);
             assert_ne!(hidden["isError"], true, "{hidden}");
             let pending_hidden = propose_open(ws, cx, pid);
             assert_eq!(pending_hidden["isError"], true);
             assert_eq!(
                 target.read(cx).agent_access,
-                warroom::AgentAccess::OffLimits
+                threshing_floor::AgentAccess::OffLimits
             );
             let proposal = asker.read(cx).access_ask.as_ref().unwrap();
             assert_eq!(proposal.target_key, Some(target.entity_id().as_u64()));
@@ -3961,7 +4189,7 @@ mod tests {
             assert!(ws.rail_answer(key, access::Answer::No, cx));
             assert_eq!(
                 target.read(cx).agent_access,
-                warroom::AgentAccess::OffLimits
+                threshing_floor::AgentAccess::OffLimits
             );
 
             // Same claimed PID, same caller/chart, but no target in the window.
@@ -3981,7 +4209,7 @@ mod tests {
             assert!(ws.rail_answer(key, access::Answer::Yes, cx));
             assert_eq!(
                 target.read(cx).agent_access,
-                warroom::AgentAccess::OffLimits
+                threshing_floor::AgentAccess::OffLimits
             );
 
             assert_eq!(propose_open(ws, cx, pid), hidden);
@@ -3992,12 +4220,15 @@ mod tests {
             assert!(ws.rail_answer(key, access::Answer::Yes, cx));
             assert_eq!(
                 target.read(cx).agent_access,
-                warroom::AgentAccess::OffLimits
+                threshing_floor::AgentAccess::OffLimits
             );
 
             assert_eq!(propose_open(ws, cx, pid), hidden);
             assert!(ws.rail_answer(key, access::Answer::Yes, cx));
-            assert_eq!(target.read(cx).agent_access, warroom::AgentAccess::Open);
+            assert_eq!(
+                target.read(cx).agent_access,
+                threshing_floor::AgentAccess::Open
+            );
             assert_eq!(
                 propose_open(ws, cx, pid),
                 hidden,
@@ -4032,23 +4263,29 @@ mod tests {
     fn removal_check(cx: &mut gpui::TestAppContext, target: &str) {
         let (ws, cx, _) = fixture(cx);
         let leaf = ws.read_with(cx, |ws, cx| {
-            ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap()
+            ws.threshing_floor_seat_leaf(threshing_floor::SeatId(100), cx)
+                .unwrap()
         });
         ws.update(cx, |ws, cx| {
             ws.mcp.enabled = true;
             ws.chart.draw(
-                warroom::SeatId(100),
-                warroom::SeatId(101),
-                warroom::Rung::Read,
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(101),
+                threshing_floor::Rung::Read,
             );
-            ws.chart
-                .grant_bypass(warroom::SeatId(101), warroom::SeatId(100), 3);
+            ws.chart.grant_bypass(
+                threshing_floor::SeatId(101),
+                threshing_floor::SeatId(100),
+                3,
+            );
             ws.chart.draw(
-                warroom::SeatId(300),
-                warroom::SeatId(301),
-                warroom::Rung::See,
+                threshing_floor::SeatId(300),
+                threshing_floor::SeatId(301),
+                threshing_floor::Rung::See,
             );
-            let other = ws.war_room_seat_leaf(warroom::SeatId(101), cx).unwrap();
+            let other = ws
+                .threshing_floor_seat_leaf(threshing_floor::SeatId(101), cx)
+                .unwrap();
             other.update(cx, |v, cx| {
                 v.access_ask = Some(access::Ask {
                     change: access::Change::OpenPane,
@@ -4067,38 +4304,38 @@ mod tests {
             cx.notify();
         });
         cx.run_until_parked();
-        drag(cx, "war-seat-100", target);
+        drag(cx, "floor-seat-100", target);
         ws.read_with(cx, |ws, cx| {
-            assert_eq!(ws.war_orgs.owner(warroom::SeatId(100)), None);
+            assert_eq!(ws.floor_orgs.owner(threshing_floor::SeatId(100)), None);
             let v = leaf.read(cx);
             assert_eq!(v.seat, None);
-            assert_eq!(v.agent_access, warroom::AgentAccess::OffLimits);
+            assert_eq!(v.agent_access, threshing_floor::AgentAccess::OffLimits);
             assert_eq!(ws.chart.saved().len(), 1, "unrelated relationships survive");
-            let party = warroom::Party {
+            let party = threshing_floor::Party {
                 seat: v.seat,
                 access: v.agent_access,
                 is_agent: true,
             };
             assert_eq!(
-                warroom::reach(&ws.mcp, &ws.chart, &ws.war_orgs, None, &party, false),
-                warroom::Reach::Hidden
+                threshing_floor::reach(&ws.mcp, &ws.chart, &ws.floor_orgs, None, &party, false),
+                threshing_floor::Reach::Hidden
             );
-            assert!(!warroom::may_write_live(
+            assert!(!threshing_floor::may_write_live(
                 &ws.mcp,
                 &ws.chart,
-                &ws.war_orgs,
-                Some(warroom::SeatId(101)),
+                &ws.floor_orgs,
+                Some(threshing_floor::SeatId(101)),
                 &party,
                 false
             ));
             assert!(ws
-                .war_room_seat_leaf(warroom::SeatId(101), cx)
+                .threshing_floor_seat_leaf(threshing_floor::SeatId(101), cx)
                 .unwrap()
                 .read(cx)
                 .access_ask
                 .is_none());
-            assert!(ws.war_feedback.as_ref().unwrap().contains("Lead"));
-            assert!(ws.war_drag.is_none());
+            assert!(ws.floor_feedback.as_ref().unwrap().contains("Lead"));
+            assert!(ws.floor_drag.is_none());
             let saved: StateFile =
                 toml::from_str(&toml::to_string(&ws.build_state(cx)).unwrap()).unwrap();
             match &saved.tabs[0].node {
@@ -4110,44 +4347,51 @@ mod tests {
                 } => {
                     assert_eq!(*seat, None);
                     assert_eq!(
-                        warroom::AgentAccess::from_saved(*off_limits, agents.as_deref()),
-                        warroom::AgentAccess::OffLimits
+                        threshing_floor::AgentAccess::from_saved(*off_limits, agents.as_deref()),
+                        threshing_floor::AgentAccess::OffLimits
                     );
                 }
                 _ => panic!("fixture is one leaf"),
             }
             assert_eq!(
-                warroom::Orgs::restore(saved.war_orgs, &[]).owner(warroom::SeatId(100)),
+                threshing_floor::Orgs::restore(saved.floor_orgs, &[])
+                    .owner(threshing_floor::SeatId(100)),
                 None
             );
         });
         assert!(
-            cx.debug_bounds("war-remove-drop").is_none(),
+            cx.debug_bounds("floor-remove-drop").is_none(),
             "bin stayed after release"
         );
-        let pool_id = format!("war-pane-{}", leaf.entity_id().as_u64());
-        drag(cx, &pool_id, "war-room-chart");
+        let pool_id = format!("floor-pane-{}", leaf.entity_id().as_u64());
+        drag(cx, &pool_id, "threshing-floor-chart");
         ws.read_with(cx, |ws, cx| {
             let v = leaf.read(cx);
             assert!(
-                v.seat.is_some() && v.seat != Some(warroom::SeatId(100)),
+                v.seat.is_some() && v.seat != Some(threshing_floor::SeatId(100)),
                 "reseating gets a fresh identity"
             );
             assert_eq!(
                 v.agent_access,
-                warroom::AgentAccess::OffLimits,
+                threshing_floor::AgentAccess::OffLimits,
                 "reseating must not reopen access"
             );
             assert_eq!(ws.chart.saved().len(), 1);
         });
     }
 
-    fn pending_copy(ws: &Workspace, cx: &App, stage: warroom::CopyStage) -> warroom::CopyAsk {
-        let target = ws.war_room_seat_leaf(warroom::SeatId(101), cx).unwrap();
-        warroom::CopyAsk {
+    fn pending_copy(
+        ws: &Workspace,
+        cx: &App,
+        stage: threshing_floor::CopyStage,
+    ) -> threshing_floor::CopyAsk {
+        let target = ws
+            .threshing_floor_seat_leaf(threshing_floor::SeatId(101), cx)
+            .unwrap();
+        threshing_floor::CopyAsk {
             asker_pane: 10,
-            from: Some(warroom::SeatId(100)),
-            to: Some(warroom::SeatId(101)),
+            from: Some(threshing_floor::SeatId(100)),
+            to: Some(threshing_floor::SeatId(101)),
             target_pid: target.read(cx).shell_pid().unwrap(),
             via: "line",
             reads: Some(1),
@@ -4181,7 +4425,7 @@ mod tests {
         }
         ws.update(cx, |ws, cx| {
             ws.mcp.enabled = true;
-            ws.chart.draw(warroom::SeatId(100), warroom::SeatId(101), warroom::Rung::Read);
+            ws.chart.draw(threshing_floor::SeatId(100), threshing_floor::SeatId(101), threshing_floor::Rung::Read);
             let pid = target.read(cx).shell_pid().unwrap();
             let mut snap = mcp::Snapshot::empty();
             snap.panes = ws.mcp_snapshot(cx);
@@ -4196,11 +4440,11 @@ mod tests {
                 value["result"]["structuredContent"]["panes"].as_array().unwrap().iter().any(|p| p["pid"] == pid)
             };
             assert!(contains_target(ws), "unchanged grant failed its positive control");
-            ws.chart.erase(warroom::SeatId(100), warroom::SeatId(101));
+            ws.chart.erase(threshing_floor::SeatId(100), threshing_floor::SeatId(101));
             assert!(!contains_target(ws), "queued grep used a revoked snapshot grant to read the live grid");
-            ws.chart.draw(warroom::SeatId(100), warroom::SeatId(101), warroom::Rung::See);
+            ws.chart.draw(threshing_floor::SeatId(100), threshing_floor::SeatId(101), threshing_floor::Rung::See);
             assert!(!contains_target(ws), "a census-only line disclosed scrollback");
-            ws.chart.draw(warroom::SeatId(100), warroom::SeatId(101), warroom::Rung::Read);
+            ws.chart.draw(threshing_floor::SeatId(100), threshing_floor::SeatId(101), threshing_floor::Rung::Read);
             assert!(contains_target(ws), "restoring read must restore the positive control");
             ws.mcp.enabled = false;
             assert!(!contains_target(ws), "disabling MCP did not revoke the queued read");
@@ -4217,26 +4461,28 @@ mod tests {
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, _other) = fixture(cx);
         ws.update(cx, |ws, cx| {
-            let org = ws.war_orgs.owner(warroom::SeatId(100)).unwrap();
+            let org = ws.floor_orgs.owner(threshing_floor::SeatId(100)).unwrap();
             // a relationship inside the org, which the confirm must count
             ws.chart.draw(
-                warroom::SeatId(100),
-                warroom::SeatId(101),
-                warroom::Rung::Ask,
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(101),
+                threshing_floor::Rung::Ask,
             );
-            assert_eq!(ws.war_room_org_relationship_count(org), 1);
-            ws.war_delete_org = Some(org);
-            ws.war_room_delete_org(org, cx);
+            assert_eq!(ws.threshing_floor_org_relationship_count(org), 1);
+            ws.floor_delete_org = Some(org);
+            ws.threshing_floor_delete_org(org, cx);
             // the org is gone, its line is gone, the confirm is cleared
-            assert!(ws.war_orgs.get(org).is_none());
+            assert!(ws.floor_orgs.get(org).is_none());
             assert!(ws
                 .chart
-                .line(warroom::SeatId(100), warroom::SeatId(101))
+                .line(threshing_floor::SeatId(100), threshing_floor::SeatId(101))
                 .is_none());
-            assert_eq!(ws.war_delete_org, None);
+            assert_eq!(ws.floor_delete_org, None);
             // members are loose: no owner, but still seated and available
-            assert_eq!(ws.war_orgs.owner(warroom::SeatId(100)), None);
-            assert!(ws.war_room_seat_leaf(warroom::SeatId(100), cx).is_some());
+            assert_eq!(ws.floor_orgs.owner(threshing_floor::SeatId(100)), None);
+            assert!(ws
+                .threshing_floor_seat_leaf(threshing_floor::SeatId(100), cx)
+                .is_some());
         });
     }
 
@@ -4250,39 +4496,39 @@ mod tests {
         let (ws, cx, other) = fixture(cx);
         ws.update(cx, |ws, cx| {
             // put a member in the other org so the whole-org line has someone to reach
-            ws.war_orgs.assign(warroom::SeatId(101), other);
-            ws.war_map = Some(SystemMap::default());
-            if let Some(m) = &mut ws.war_map {
-                m.from = Some(warroom::End::Seat(warroom::SeatId(100)));
-                m.to = Some(warroom::End::Org { org: other });
-                m.rung = Some(warroom::Rung::Ask);
+            ws.floor_orgs.assign(threshing_floor::SeatId(101), other);
+            ws.floor_map = Some(SystemMap::default());
+            if let Some(m) = &mut ws.floor_map {
+                m.from = Some(threshing_floor::End::Seat(threshing_floor::SeatId(100)));
+                m.to = Some(threshing_floor::End::Org { org: other });
+                m.rung = Some(threshing_floor::Rung::Ask);
             }
-            ws.war_map_draw(cx);
+            ws.floor_map_draw(cx);
             assert_eq!(ws.chart.org_lines().len(), 1, "the whole-org line is drawn");
             // the draft cleared for the next one
-            assert!(ws.war_map.as_ref().is_some_and(|m| m.from.is_none()));
+            assert!(ws.floor_map.as_ref().is_some_and(|m| m.from.is_none()));
             // and seat 100 now reaches the other org's member at ask
             ws.mcp.enabled = true;
-            let caller = warroom::Party {
-                seat: Some(warroom::SeatId(100)),
+            let caller = threshing_floor::Party {
+                seat: Some(threshing_floor::SeatId(100)),
                 is_agent: true,
-                access: warroom::AgentAccess::Open,
+                access: threshing_floor::AgentAccess::Open,
             };
-            let member = warroom::Party {
-                seat: Some(warroom::SeatId(101)),
+            let member = threshing_floor::Party {
+                seat: Some(threshing_floor::SeatId(101)),
                 is_agent: true,
-                access: warroom::AgentAccess::Open,
+                access: threshing_floor::AgentAccess::Open,
             };
             assert_eq!(
-                warroom::reach(
+                threshing_floor::reach(
                     &ws.mcp,
                     &ws.chart,
-                    &ws.war_orgs,
+                    &ws.floor_orgs,
                     Some(&caller),
                     &member,
                     false
                 ),
-                warroom::Reach::Ask
+                threshing_floor::Reach::Ask
             );
         });
     }
@@ -4295,7 +4541,7 @@ mod tests {
         let (ws, cx, _other) = fixture(cx);
         // open the System Map with the From chooser active
         ws.update(cx, |ws, _| {
-            ws.war_map = Some(SystemMap {
+            ws.floor_map = Some(SystemMap {
                 choosing: Some(RelationEnd::From),
                 ..Default::default()
             });
@@ -4305,20 +4551,20 @@ mod tests {
             w.draw(cx).clear();
         });
         // the map, its builder and its rung picker all drew
-        bounds(cx, "war-system-map");
-        bounds(cx, "war-map-draw");
-        bounds(cx, "war-map-rung-Ask");
+        bounds(cx, "floor-system-map");
+        bounds(cx, "floor-map-draw");
+        bounds(cx, "floor-map-rung-Ask");
         // arm the destructive org delete: its confirm button draws
-        let org = ws.read_with(cx, |ws, _| ws.war_org.unwrap());
+        let org = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
         ws.update(cx, |ws, _| {
-            ws.war_map = None;
-            ws.war_delete_org = Some(org);
+            ws.floor_map = None;
+            ws.floor_delete_org = Some(org);
         });
         cx.update(|w, cx| {
             w.refresh();
             w.draw(cx).clear();
         });
-        bounds(cx, "war-org-delete-go");
+        bounds(cx, "floor-org-delete-go");
     }
 
     #[gpui::test]
@@ -4329,22 +4575,24 @@ mod tests {
         let (ws, cx, other) = fixture(cx);
         for moving in [100, 101] {
             ws.update(cx, |ws, cx| {
-                let original = ws.war_orgs.owner(warroom::SeatId(100)).unwrap();
-                let leaf = ws.war_room_seat_leaf(warroom::SeatId(moving), cx).unwrap();
+                let original = ws.floor_orgs.owner(threshing_floor::SeatId(100)).unwrap();
+                let leaf = ws
+                    .threshing_floor_seat_leaf(threshing_floor::SeatId(moving), cx)
+                    .unwrap();
                 let destination = if original == other {
-                    ws.war_orgs.create("Third crew").unwrap()
+                    ws.floor_orgs.create("Third crew").unwrap()
                 } else {
                     other
                 };
                 ws.chart.draw(
-                    warroom::SeatId(100),
-                    warroom::SeatId(101),
-                    warroom::Rung::Ask,
+                    threshing_floor::SeatId(100),
+                    threshing_floor::SeatId(101),
+                    threshing_floor::Rung::Ask,
                 );
                 for (i, stage) in [
-                    warroom::CopyStage::AwaitingPress,
-                    warroom::CopyStage::Running,
-                    warroom::CopyStage::Answered {
+                    threshing_floor::CopyStage::AwaitingPress,
+                    threshing_floor::CopyStage::Running,
+                    threshing_floor::CopyStage::Answered {
                         answer: "PRIVATE_CANARY".into(),
                         tokens_read: None,
                         cost_usd: None,
@@ -4353,15 +4601,17 @@ mod tests {
                 .into_iter()
                 .enumerate()
                 {
-                    ws.asks
-                        .open(warroom::AskId(i as u64 + 1), pending_copy(ws, cx, stage));
+                    ws.asks.open(
+                        threshing_floor::AskId(i as u64 + 1),
+                        pending_copy(ws, cx, stage),
+                    );
                 }
-                let mut unrelated = pending_copy(ws, cx, warroom::CopyStage::Running);
-                unrelated.from = Some(warroom::SeatId(300));
-                unrelated.to = Some(warroom::SeatId(301));
-                ws.asks.open(warroom::AskId(99), unrelated);
+                let mut unrelated = pending_copy(ws, cx, threshing_floor::CopyStage::Running);
+                unrelated.from = Some(threshing_floor::SeatId(300));
+                unrelated.to = Some(threshing_floor::SeatId(301));
+                ws.asks.open(threshing_floor::AskId(99), unrelated);
                 let asker = ws.leaf_by_pane_id(10, cx).unwrap();
-                let target_pid = ws.asks.get(warroom::AskId(1)).unwrap().target_pid;
+                let target_pid = ws.asks.get(threshing_floor::AskId(1)).unwrap().target_pid;
                 asker.update(cx, |v, _| {
                     v.access_ask = Some(access::Ask {
                         change: access::Change::AskLine,
@@ -4376,15 +4626,15 @@ mod tests {
                         ask_id: None,
                     })
                 });
-                ws.war_room_assign(&leaf, destination, false, cx);
+                ws.threshing_floor_assign(&leaf, destination, false, cx);
                 assert!(
-                    ws.asks.get(warroom::AskId(1)).is_some(),
+                    ws.asks.get(threshing_floor::AskId(1)).is_some(),
                     "unconfirmed move changed authority"
                 );
-                ws.war_room_assign(&leaf, destination, true, cx);
+                ws.threshing_floor_assign(&leaf, destination, true, cx);
                 for id in 1..=3 {
                     assert!(
-                        ws.asks.get(warroom::AskId(id)).is_none(),
+                        ws.asks.get(threshing_floor::AskId(id)).is_none(),
                         "org transfer retained copy {id}"
                     );
                 }
@@ -4393,7 +4643,7 @@ mod tests {
                     "old bypass prompt survived transfer"
                 );
                 ws.copy_finished(
-                    warroom::AskId(2),
+                    threshing_floor::AskId(2),
                     Ok(askcopy::Answer {
                         text: "LATE_PRIVATE_CANARY".into(),
                         tokens_read: None,
@@ -4402,11 +4652,11 @@ mod tests {
                     cx,
                 );
                 assert!(
-                    ws.asks.get(warroom::AskId(2)).is_none(),
+                    ws.asks.get(threshing_floor::AskId(2)).is_none(),
                     "late completion restored a revoked answer"
                 );
                 assert!(
-                    ws.asks.get(warroom::AskId(99)).is_some(),
+                    ws.asks.get(threshing_floor::AskId(99)).is_some(),
                     "unrelated copy was cancelled"
                 );
             });
@@ -4430,16 +4680,17 @@ mod tests {
                 ..Default::default()
             };
             ws.chart.draw(
-                warroom::SeatId(100),
-                warroom::SeatId(101),
-                warroom::Rung::Read,
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(101),
+                threshing_floor::Rung::Read,
             );
             assert!(
                 ws.apply_mcp_config(&[(mcp::Target::Pane(pid), patch.clone())], cx)[0]
                     .1
                     .is_ok()
             );
-            ws.chart.erase(warroom::SeatId(100), warroom::SeatId(101));
+            ws.chart
+                .erase(threshing_floor::SeatId(100), threshing_floor::SeatId(101));
             let before = target.read(cx).appearance.clone();
             assert!(
                 ws.apply_mcp_config(&[(mcp::Target::Pane(pid), patch.clone())], cx)[0]
@@ -4488,47 +4739,50 @@ mod tests {
                 "read-only",
             ] {
                 ws.mcp.enabled = true;
-                asker.update(cx, |v, _| v.seat = Some(warroom::SeatId(100)));
+                asker.update(cx, |v, _| v.seat = Some(threshing_floor::SeatId(100)));
                 target.update(cx, |v, _| {
-                    v.seat = Some(warroom::SeatId(101));
-                    v.agent_access = warroom::AgentAccess::Open;
+                    v.seat = Some(threshing_floor::SeatId(101));
+                    v.agent_access = threshing_floor::AgentAccess::Open;
                 });
                 ws.chart.draw(
-                    warroom::SeatId(100),
-                    warroom::SeatId(101),
-                    warroom::Rung::Ask,
+                    threshing_floor::SeatId(100),
+                    threshing_floor::SeatId(101),
+                    threshing_floor::Rung::Ask,
                 );
                 let mut ask = pending_copy(
                     ws,
                     cx,
-                    warroom::CopyStage::Answered {
+                    threshing_floor::CopyStage::Answered {
                         answer: "SECRET_ANSWER".into(),
                         tokens_read: None,
                         cost_usd: None,
                     },
                 );
                 match case {
-                    "line-removed" => ws.chart.erase(warroom::SeatId(100), warroom::SeatId(101)),
-                    "off-limits" => {
-                        target.update(cx, |v, _| v.agent_access = warroom::AgentAccess::OffLimits)
-                    }
-                    "read-only" => {
-                        target.update(cx, |v, _| v.agent_access = warroom::AgentAccess::ReadOnly)
-                    }
+                    "line-removed" => ws
+                        .chart
+                        .erase(threshing_floor::SeatId(100), threshing_floor::SeatId(101)),
+                    "off-limits" => target.update(cx, |v, _| {
+                        v.agent_access = threshing_floor::AgentAccess::OffLimits
+                    }),
+                    "read-only" => target.update(cx, |v, _| {
+                        v.agent_access = threshing_floor::AgentAccess::ReadOnly
+                    }),
                     "mcp-off" => ws.mcp.enabled = false,
                     "asker-reseated" => {
-                        asker.update(cx, |v, _| v.seat = Some(warroom::SeatId(900)))
+                        asker.update(cx, |v, _| v.seat = Some(threshing_floor::SeatId(900)))
                     }
                     "target-reseated" => {
-                        target.update(cx, |v, _| v.seat = Some(warroom::SeatId(901)))
+                        target.update(cx, |v, _| v.seat = Some(threshing_floor::SeatId(901)))
                     }
                     "spent-bypass" => {
                         ask.via = "bypass";
-                        ws.chart.erase(warroom::SeatId(100), warroom::SeatId(101));
+                        ws.chart
+                            .erase(threshing_floor::SeatId(100), threshing_floor::SeatId(101));
                     }
                     _ => {}
                 }
-                let id = warroom::AskId(500);
+                let id = threshing_floor::AskId(500);
                 ws.asks.open(id, ask);
                 let reply = ws.ask_bridge(
                     &mcp::AskCall::Answer {
@@ -4543,7 +4797,7 @@ mod tests {
                     allowed,
                     "{case}: {reply:?}"
                 );
-                ws.asks.forget_seat(warroom::SeatId(100));
+                ws.asks.forget_seat(threshing_floor::SeatId(100));
             }
         });
     }
@@ -4560,28 +4814,33 @@ mod tests {
             ws.mcp.enabled = true;
             let target = ws.leaf_by_pane_id(11, cx).unwrap();
             ws.chart.draw(
-                warroom::SeatId(100),
-                warroom::SeatId(101),
-                warroom::Rung::Ask,
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(101),
+                threshing_floor::Rung::Ask,
             );
             ws.asks.open(
-                warroom::AskId(1),
-                pending_copy(ws, cx, warroom::CopyStage::AwaitingPress),
+                threshing_floor::AskId(1),
+                pending_copy(ws, cx, threshing_floor::CopyStage::AwaitingPress),
             );
-            target.update(cx, |v, _| v.agent_access = warroom::AgentAccess::OffLimits);
+            target.update(cx, |v, _| {
+                v.agent_access = threshing_floor::AgentAccess::OffLimits
+            });
             assert_eq!(
-                ws.answer_copy(Some(warroom::AskId(1)), access::Answer::Yes, cx),
+                ws.answer_copy(Some(threshing_floor::AskId(1)), access::Answer::Yes, cx),
                 access::Outcome::Gone
             );
-            assert!(ws.asks.get(warroom::AskId(1)).is_none());
-            target.update(cx, |v, _| v.agent_access = warroom::AgentAccess::Open);
+            assert!(ws.asks.get(threshing_floor::AskId(1)).is_none());
+            target.update(cx, |v, _| {
+                v.agent_access = threshing_floor::AgentAccess::Open
+            });
             ws.asks.open(
-                warroom::AskId(2),
-                pending_copy(ws, cx, warroom::CopyStage::Running),
+                threshing_floor::AskId(2),
+                pending_copy(ws, cx, threshing_floor::CopyStage::Running),
             );
-            ws.chart.erase(warroom::SeatId(100), warroom::SeatId(101));
+            ws.chart
+                .erase(threshing_floor::SeatId(100), threshing_floor::SeatId(101));
             ws.copy_finished(
-                warroom::AskId(2),
+                threshing_floor::AskId(2),
                 Ok(askcopy::Answer {
                     text: "REVOKED_CANARY".into(),
                     tokens_read: None,
@@ -4589,27 +4848,27 @@ mod tests {
                 }),
                 cx,
             );
-            assert!(ws.asks.get(warroom::AskId(2)).is_none());
-            let mut bypass = pending_copy(ws, cx, warroom::CopyStage::Running);
+            assert!(ws.asks.get(threshing_floor::AskId(2)).is_none());
+            let mut bypass = pending_copy(ws, cx, threshing_floor::CopyStage::Running);
             bypass.via = "bypass";
-            ws.asks.open(warroom::AskId(3), bypass.clone());
+            ws.asks.open(threshing_floor::AskId(3), bypass.clone());
             std::mem::swap(&mut bypass.from, &mut bypass.to);
-            ws.asks.open(warroom::AskId(4), bypass);
-            ws.war_relation = Some(RelationEditor {
-                draft: warroom::RelationDraft {
-                    from: Some(warroom::SeatId(100)),
-                    to: Some(warroom::SeatId(101)),
-                    rung: Some(warroom::Rung::See),
+            ws.asks.open(threshing_floor::AskId(4), bypass);
+            ws.floor_relation = Some(RelationEditor {
+                draft: threshing_floor::RelationDraft {
+                    from: Some(threshing_floor::SeatId(100)),
+                    to: Some(threshing_floor::SeatId(101)),
+                    rung: Some(threshing_floor::Rung::See),
                 },
                 choosing: None,
             });
-            ws.war_room_save_relation(cx);
+            ws.threshing_floor_save_relation(cx);
             assert!(
-                ws.asks.get(warroom::AskId(3)).is_none(),
+                ws.asks.get(threshing_floor::AskId(3)).is_none(),
                 "relationship edit preserved a bypass receipt"
             );
             assert!(
-                ws.asks.get(warroom::AskId(4)).is_some(),
+                ws.asks.get(threshing_floor::AskId(4)).is_some(),
                 "reverse direction was cancelled"
             );
         });
@@ -4620,7 +4879,7 @@ mod tests {
         let _warp = crate::warp::WARP_SERIAL
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        removal_check(cx, "war-room-pool");
+        removal_check(cx, "threshing-floor-pool");
     }
 
     #[gpui::test]
@@ -4628,7 +4887,7 @@ mod tests {
         let _warp = crate::warp::WARP_SERIAL
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        removal_check(cx, "war-remove-drop");
+        removal_check(cx, "floor-remove-drop");
     }
 
     #[gpui::test]
@@ -4639,9 +4898,9 @@ mod tests {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, _) = fixture(cx);
-        let source = bounds(cx, "war-seat-100");
-        let chart = bounds(cx, "war-room-chart");
-        let pool = bounds(cx, "war-pool-tile");
+        let source = bounds(cx, "floor-seat-100");
+        let chart = bounds(cx, "threshing-floor-chart");
+        let pool = bounds(cx, "floor-pool-tile");
         for escape in [true, false] {
             cx.simulate_mouse_down(
                 source.center(),
@@ -4654,23 +4913,23 @@ mod tests {
                 gpui::Modifiers::default(),
             );
             cx.run_until_parked();
-            assert!(cx.debug_bounds("war-remove-drop").is_some());
+            assert!(cx.debug_bounds("floor-remove-drop").is_some());
             assert_eq!(
-                bounds(cx, "war-seat-100"),
+                bounds(cx, "floor-seat-100"),
                 source,
                 "pickup moved its source"
             );
-            assert_eq!(bounds(cx, "war-room-chart"), chart);
-            assert_eq!(bounds(cx, "war-pool-tile"), pool);
-            let bin = bounds(cx, "war-remove-drop");
+            assert_eq!(bounds(cx, "threshing-floor-chart"), chart);
+            assert_eq!(bounds(cx, "floor-pool-tile"), pool);
+            let bin = bounds(cx, "floor-remove-drop");
             cx.simulate_mouse_move(
                 bin.bottom_right() - point(px(3.), px(3.)),
                 MouseButton::Left,
                 gpui::Modifiers::default(),
             );
             cx.run_until_parked();
-            let preview = bounds(cx, "war-drag-preview");
-            let panel = bounds(cx, "war-room-panel");
+            let preview = bounds(cx, "floor-drag-preview");
+            let panel = bounds(cx, "threshing-floor-panel");
             assert!(
                 preview.right() <= panel.right(),
                 "preview {preview:?}, panel {panel:?}, bin {bin:?}"
@@ -4685,18 +4944,116 @@ mod tests {
             let end = if escape {
                 pool.center()
             } else {
-                bounds(cx, "war-room-header").center()
+                bounds(cx, "threshing-floor-header").center()
             };
             cx.simulate_mouse_move(end, MouseButton::Left, gpui::Modifiers::default());
             cx.simulate_mouse_up(end, MouseButton::Left, gpui::Modifiers::default());
             cx.run_until_parked();
             ws.read_with(cx, |ws, cx| {
-                assert!(ws.war_room);
-                assert!(ws.war_room_seat_leaf(warroom::SeatId(100), cx).is_some());
-                assert!(ws.war_feedback.is_none());
+                assert!(ws.threshing_floor);
+                assert!(ws
+                    .threshing_floor_seat_leaf(threshing_floor::SeatId(100), cx)
+                    .is_some());
+                assert!(ws.floor_feedback.is_none());
             });
-            assert!(cx.debug_bounds("war-remove-drop").is_none());
+            assert!(cx.debug_bounds("floor-remove-drop").is_none());
         }
+    }
+
+    /// Parker's spelling of the model line, 2026-10-27: harness, model with
+    /// its version, then effort.
+    #[test]
+    fn the_model_line_reads_harness_model_version_and_effort() {
+        let u = "model unknown";
+        assert_eq!(
+            model_line("CLAUDE", Some("OPUS 5.5"), Some("max"), u),
+            "CLAUDE · OPUS 5.5 MAX"
+        );
+        assert_eq!(
+            model_line("CODEX", Some("SOL 6.1"), Some("xhigh"), u),
+            "CODEX · SOL 6.1 XHIGH"
+        );
+        assert_eq!(
+            model_line("CLAUDE", Some("HAIKU 5.1"), Some("  "), u),
+            "CLAUDE · HAIKU 5.1",
+            "an effort the transcript never named is left off"
+        );
+        assert_eq!(
+            model_line("CODEX", None, Some("high"), u),
+            "CODEX · model unknown",
+            "an unknown model says so, effort or no"
+        );
+    }
+
+    /// A seat that has handed nothing over says so in the accent; once it hands
+    /// a brief over, the card names the newest, counts the rest, and says a
+    /// person annotated it only because a concur is saved in the file.
+    #[gpui::test]
+    fn a_card_names_its_newest_artifact_and_whether_a_person_annotated_it(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        assert!(cx.debug_bounds("floor-no-artifact-101").is_some());
+        assert!(cx.debug_bounds("floor-artifact-101").is_none());
+        let dir = std::env::temp_dir().join(format!("td-floor-card-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let older = dir.join("older.html");
+        std::fs::write(&older, "<html><body>an earlier page</body></html>").unwrap();
+        let brief = dir.join("brief.html");
+        let islands = |concurs: &str| {
+            format!(
+                "<html><body><p id=\"x\">x</p>\
+                 <script type=\"application/json\" id=\"report-notes\" data-format=\"1\">{{}}</script>\
+                 <script type=\"application/json\" id=\"report-concurs\" data-format=\"1\">{concurs}</script>\
+                 </body></html>"
+            )
+        };
+        std::fs::write(&brief, islands("{}")).unwrap();
+        cx.update(|_, cx| {
+            let leaf = ws
+                .read(cx)
+                .threshing_floor_seat_leaf(threshing_floor::SeatId(101), cx)
+                .unwrap();
+            leaf.update(cx, |v, cx| {
+                v.hand_over(
+                    None,
+                    older.display().to_string(),
+                    crate::handover::Source::Declared,
+                    cx,
+                );
+                v.hand_over(
+                    Some("The brief".into()),
+                    brief.display().to_string(),
+                    crate::handover::Source::Declared,
+                    cx,
+                );
+            });
+            ws.update(cx, |_, cx| cx.notify());
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("floor-no-artifact-101").is_none());
+        assert!(cx.debug_bounds("floor-artifact-101").is_some());
+        assert!(
+            cx.debug_bounds("floor-no-feedback-101").is_some(),
+            "handed over and not yet annotated"
+        );
+        assert!(
+            cx.debug_bounds("floor-no-artifact-100").is_some(),
+            "the other seat has still handed nothing over"
+        );
+        std::fs::write(&brief, islands(r#"{"ask-1":"2026-10-27 12:00"}"#)).unwrap();
+        ws.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("floor-annotated-101").is_some(),
+            "a concur saved in the file is a person's feedback"
+        );
+        assert!(cx.debug_bounds("floor-no-feedback-101").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[gpui::test]
@@ -4705,50 +5062,50 @@ mod tests {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, _) = fixture(cx);
-        let at = bounds(cx, "war-seat-101").center();
+        let at = bounds(cx, "floor-seat-101").center();
         cx.simulate_mouse_down(at, MouseButton::Right, gpui::Modifiers::default());
         cx.simulate_mouse_up(at, MouseButton::Right, gpui::Modifiers::default());
         cx.run_until_parked();
-        assert!(cx.debug_bounds("war-context-menu").is_some());
-        let outside = bounds(cx, "war-room-search").center();
+        assert!(cx.debug_bounds("floor-context-menu").is_some());
+        let outside = bounds(cx, "threshing-floor-search").center();
         cx.simulate_mouse_down(outside, MouseButton::Left, gpui::Modifiers::default());
         assert!(
-            ws.read_with(cx, |ws, _| ws.war_context.is_none()),
+            ws.read_with(cx, |ws, _| ws.floor_context.is_none()),
             "waited for release"
         );
         cx.simulate_mouse_up(outside, MouseButton::Left, gpui::Modifiers::default());
         cx.simulate_mouse_down(at, MouseButton::Right, gpui::Modifiers::default());
         cx.simulate_mouse_up(at, MouseButton::Right, gpui::Modifiers::default());
         cx.run_until_parked();
-        click(cx, "war-context-off-limits");
+        click(cx, "floor-context-off-limits");
         ws.read_with(cx, |ws, cx| {
-            assert!(ws.war_context.is_none());
+            assert!(ws.floor_context.is_none());
             assert_eq!(
-                ws.war_room_seat_leaf(warroom::SeatId(101), cx)
+                ws.threshing_floor_seat_leaf(threshing_floor::SeatId(101), cx)
                     .unwrap()
                     .read(cx)
                     .agent_access,
-                warroom::AgentAccess::OffLimits
+                threshing_floor::AgentAccess::OffLimits
             );
             assert_eq!(
-                ws.war_room_seat_leaf(warroom::SeatId(100), cx)
+                ws.threshing_floor_seat_leaf(threshing_floor::SeatId(100), cx)
                     .unwrap()
                     .read(cx)
                     .agent_access,
-                warroom::AgentAccess::Open
+                threshing_floor::AgentAccess::Open
             );
         });
         cx.simulate_mouse_down(at, MouseButton::Right, gpui::Modifiers::default());
         cx.simulate_mouse_up(at, MouseButton::Right, gpui::Modifiers::default());
         cx.simulate_keystrokes("escape");
         ws.read_with(cx, |ws, _| {
-            assert!(ws.war_room);
-            assert!(ws.war_context.is_none());
+            assert!(ws.threshing_floor);
+            assert!(ws.floor_context.is_none());
         });
     }
 
     #[gpui::test]
-    fn terminal_menu_closes_even_when_the_war_room_swallows_the_press(
+    fn terminal_menu_closes_even_when_the_threshing_floor_swallows_the_press(
         cx: &mut gpui::TestAppContext,
     ) {
         let _warp = crate::warp::WARP_SERIAL
@@ -4756,7 +5113,7 @@ mod tests {
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, _) = fixture(cx);
         ws.update(cx, |ws, cx| {
-            ws.close_war_room();
+            ws.close_threshing_floor();
             cx.notify();
         });
         cx.run_until_parked();
@@ -4766,15 +5123,15 @@ mod tests {
         cx.run_until_parked();
         assert!(cx.debug_bounds("pane-context-menu").is_some());
         ws.update(cx, |ws, cx| {
-            ws.war_room = true;
+            ws.threshing_floor = true;
             cx.notify();
         });
         cx.run_until_parked();
-        let outside = bounds(cx, "war-room-search").center();
+        let outside = bounds(cx, "threshing-floor-search").center();
         cx.simulate_mouse_down(outside, MouseButton::Left, gpui::Modifiers::default());
         ws.read_with(cx, |ws, cx| {
             assert!(!ws
-                .war_room_seat_leaf(warroom::SeatId(100), cx)
+                .threshing_floor_seat_leaf(threshing_floor::SeatId(100), cx)
                 .unwrap()
                 .read(cx)
                 .popup_open())
@@ -4796,58 +5153,58 @@ mod tests {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, _) = fixture(cx);
-        let original = bounds(cx, "war-seat-100").size;
-        click(cx, "war-seat-100");
+        let original = bounds(cx, "floor-seat-100").size;
+        click(cx, "floor-seat-100");
         assert_eq!(
-            bounds(cx, "war-seat-100").size,
+            bounds(cx, "floor-seat-100").size,
             original,
             "selection transformed the card"
         );
         assert!(ws.read_with(cx, |ws, _| ws.chart.saved().is_empty()));
-        drag(cx, "war-connect-100", "war-seat-101");
+        drag(cx, "floor-connect-100", "floor-seat-101");
         ws.read_with(cx, |ws, _| {
             let editor = ws
-                .war_relation
+                .floor_relation
                 .as_ref()
                 .expect("connector drop opened the builder");
-            assert_eq!(editor.draft.from, Some(warroom::SeatId(100)));
-            assert_eq!(editor.draft.to, Some(warroom::SeatId(101)));
+            assert_eq!(editor.draft.from, Some(threshing_floor::SeatId(100)));
+            assert_eq!(editor.draft.to, Some(threshing_floor::SeatId(101)));
             assert_eq!(editor.draft.rung, None);
             assert!(
                 ws.chart.saved().is_empty(),
                 "dropping a connector granted access"
             );
         });
-        click(cx, "war-rel-save");
+        click(cx, "floor-rel-save");
         assert!(ws.read_with(cx, |ws, _| ws.chart.saved().is_empty()));
-        click(cx, "war-rung-Read");
-        click(cx, "war-rel-save");
+        click(cx, "floor-rung-Read");
+        click(cx, "floor-rel-save");
         ws.read_with(cx, |ws, _| {
             assert_eq!(
                 ws.chart
-                    .line(warroom::SeatId(100), warroom::SeatId(101))
+                    .line(threshing_floor::SeatId(100), threshing_floor::SeatId(101))
                     .unwrap()
                     .rung
                     .known(),
-                Some(warroom::Rung::Read)
+                Some(threshing_floor::Rung::Read)
             )
         });
-        assert_eq!(bounds(cx, "war-seat-100").size, original);
-        click(cx, "war-line-100-101");
-        click(cx, "war-rung-Ask");
-        click(cx, "war-rel-cancel");
+        assert_eq!(bounds(cx, "floor-seat-100").size, original);
+        click(cx, "floor-line-100-101");
+        click(cx, "floor-rung-Ask");
+        click(cx, "floor-rel-cancel");
         ws.read_with(cx, |ws, _| {
             assert_eq!(
                 ws.chart
-                    .line(warroom::SeatId(100), warroom::SeatId(101))
+                    .line(threshing_floor::SeatId(100), threshing_floor::SeatId(101))
                     .unwrap()
                     .rung
                     .known(),
-                Some(warroom::Rung::Read)
+                Some(threshing_floor::Rung::Read)
             )
         });
-        click(cx, "war-line-100-101");
-        click(cx, "war-rel-remove");
+        click(cx, "floor-line-100-101");
+        click(cx, "floor-rel-remove");
         assert!(ws.read_with(cx, |ws, _| ws.chart.saved().is_empty()));
     }
 
@@ -4863,25 +5220,28 @@ mod tests {
         // read "prompt", not the underwhelming "ask", while the saved word is
         // still "ask" so older charts keep loading.
         ws.read_with(cx, |ws, _| {
-            assert_eq!(ws.lang.strings().ui.wr_rung_ask, "prompt");
+            assert_eq!(ws.lang.strings().ui.floor_rung_ask, "prompt");
             assert_eq!(
-                warroom::RungWord::Known(warroom::Rung::Ask).known(),
-                Some(warroom::Rung::Ask)
+                threshing_floor::RungWord::Known(threshing_floor::Rung::Ask).known(),
+                Some(threshing_floor::Rung::Ask)
             );
         });
         cx.simulate_keystrokes("l e a d");
         cx.run_until_parked();
-        assert_eq!(ws.read_with(cx, |ws, _| ws.war_room_query.text()), "lead");
+        assert_eq!(
+            ws.read_with(cx, |ws, _| ws.threshing_floor_query.text()),
+            "lead"
+        );
         // Opening the relationship builder (Connect, or a connector drop) used
         // to wipe the filter mid-wiring. It must survive.
-        click(cx, "war-connect");
+        click(cx, "floor-connect");
         ws.read_with(cx, |ws, _| {
             assert!(
-                ws.war_relation.is_some(),
+                ws.floor_relation.is_some(),
                 "Connect did not open the relationship builder"
             );
             assert_eq!(
-                ws.war_room_query.text(),
+                ws.threshing_floor_query.text(),
                 "lead",
                 "beginning a relationship wiped the person's filter"
             );
@@ -4896,22 +5256,28 @@ mod tests {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, other) = fixture(cx);
-        let original = bounds(cx, "war-seat-100").size;
+        let original = bounds(cx, "floor-seat-100").size;
         ws.update(cx, |ws, cx| {
             ws.chart.draw(
-                warroom::SeatId(100),
-                warroom::SeatId(101),
-                warroom::Rung::Read,
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(101),
+                threshing_floor::Rung::Read,
             );
             cx.notify();
         });
         cx.run_until_parked();
         // Dropping on a different org now offers a choice rather than moving
         // silently: the drag opens the popup, and nothing has changed yet.
-        drag(cx, "war-seat-100", &format!("war-org-{}", other.0));
+        drag(cx, "floor-seat-100", &format!("floor-org-{}", other.0));
         ws.read_with(cx, |ws, _| {
-            assert!(ws.war_drop.is_some(), "the drop opens a choice, not a move");
-            assert_ne!(ws.war_orgs.owner(warroom::SeatId(100)), Some(other));
+            assert!(
+                ws.floor_drop.is_some(),
+                "the drop opens a choice, not a move"
+            );
+            assert_ne!(
+                ws.floor_orgs.owner(threshing_floor::SeatId(100)),
+                Some(other)
+            );
             assert_eq!(
                 ws.chart.saved().len(),
                 1,
@@ -4920,44 +5286,52 @@ mod tests {
         });
         // Choosing Move on a connected pane still raises the connection-loss
         // confirm before anything is lost.
-        click(cx, "war-drop-move");
+        click(cx, "floor-drop-move");
         ws.read_with(cx, |ws, _| {
             assert!(
-                ws.war_move.is_some(),
+                ws.floor_move.is_some(),
                 "a connected move needs a visible confirm"
             );
-            assert_ne!(ws.war_orgs.owner(warroom::SeatId(100)), Some(other));
+            assert_ne!(
+                ws.floor_orgs.owner(threshing_floor::SeatId(100)),
+                Some(other)
+            );
             assert_eq!(ws.chart.saved().len(), 1);
         });
-        click(cx, "war-move-cancel");
+        click(cx, "floor-move-cancel");
         assert_eq!(ws.read_with(cx, |ws, _| ws.chart.saved().len()), 1);
         // Drive it all the way through: choose Move, then confirm the loss.
-        drag(cx, "war-seat-100", &format!("war-org-{}", other.0));
-        click(cx, "war-drop-move");
-        click(cx, "war-move-confirm");
-        assert_eq!(bounds(cx, "war-seat-100").size, original);
+        drag(cx, "floor-seat-100", &format!("floor-org-{}", other.0));
+        click(cx, "floor-drop-move");
+        click(cx, "floor-move-confirm");
+        assert_eq!(bounds(cx, "floor-seat-100").size, original);
         ws.read_with(cx, |ws, cx| {
-            assert_eq!(ws.war_orgs.owner(warroom::SeatId(100)), Some(other));
-            assert_eq!(ws.war_org, Some(other));
+            assert_eq!(
+                ws.floor_orgs.owner(threshing_floor::SeatId(100)),
+                Some(other)
+            );
+            assert_eq!(ws.floor_org, Some(other));
             assert!(ws.chart.saved().is_empty());
             let state = ws.build_state(cx);
             let saved: StateFile = toml::from_str(&toml::to_string(&state).unwrap()).unwrap();
-            let orgs = warroom::Orgs::restore(saved.war_orgs, &[]);
-            assert_eq!(orgs.owner(warroom::SeatId(100)), Some(other));
+            let orgs = threshing_floor::Orgs::restore(saved.floor_orgs, &[]);
+            assert_eq!(orgs.owner(threshing_floor::SeatId(100)), Some(other));
             assert_eq!(
                 orgs.get(other).unwrap().name.as_deref(),
                 Some("Launch crew")
             );
         });
-        let first = ws.read_with(cx, |ws, _| ws.war_orgs.owner(warroom::SeatId(101)).unwrap());
+        let first = ws.read_with(cx, |ws, _| {
+            ws.floor_orgs.owner(threshing_floor::SeatId(101)).unwrap()
+        });
         cx.simulate_keystrokes("w o r k e r");
         cx.run_until_parked();
-        click(cx, &format!("war-open-org-{}", first.0));
+        click(cx, &format!("floor-open-org-{}", first.0));
         ws.read_with(cx, |ws, _| {
-            assert_eq!(ws.war_org, Some(first));
+            assert_eq!(ws.floor_org, Some(first));
             // The filter is the person's. Opening the org it found keeps what
             // they typed instead of wiping it — only ×, Esc and closing clear.
-            assert_eq!(ws.war_room_query.text(), "worker");
+            assert_eq!(ws.threshing_floor_query.text(), "worker");
         });
     }
 
@@ -4969,23 +5343,23 @@ mod tests {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, _) = fixture(cx);
-        click(cx, "war-org-new");
+        click(cx, "floor-org-new");
         cx.simulate_keystrokes("c r e w enter");
         cx.run_until_parked();
         let created = ws.read_with(cx, |ws, _| {
-            let id = ws.war_org.unwrap();
-            assert_eq!(ws.war_orgs.get(id).unwrap().name.as_deref(), Some("crew"));
-            assert!(ws.war_orgs.get(id).unwrap().seats.is_empty());
+            let id = ws.floor_org.unwrap();
+            assert_eq!(ws.floor_orgs.get(id).unwrap().name.as_deref(), Some("crew"));
+            assert!(ws.floor_orgs.get(id).unwrap().seats.is_empty());
             assert!(ws.chart.saved().is_empty());
             id
         });
-        click(cx, "war-org-rename");
+        click(cx, "floor-org-rename");
         cx.simulate_keystrokes("t e a m enter");
         cx.run_until_parked();
         ws.read_with(cx, |ws, _| {
-            assert_eq!(ws.war_org, Some(created));
+            assert_eq!(ws.floor_org, Some(created));
             assert_eq!(
-                ws.war_orgs.get(created).unwrap().name.as_deref(),
+                ws.floor_orgs.get(created).unwrap().name.as_deref(),
                 Some("team")
             );
             assert!(ws.chart.saved().is_empty());
@@ -4994,7 +5368,7 @@ mod tests {
         cx.run_until_parked();
         cx.update(|window, cx| {
             ws.read_with(cx, |ws, cx| {
-                assert!(!ws.war_room);
+                assert!(!ws.threshing_floor);
                 let mut leaves = Vec::new();
                 ws.tabs[ws.active].root.leaves(&mut leaves);
                 assert!(
@@ -5015,8 +5389,10 @@ mod tests {
         let (ws, cx, _) = fixture(cx);
         let (worker, extras) = cx.update(|window, cx| {
             ws.update(cx, |ws, cx| {
-                let worker = ws.war_room_seat_leaf(warroom::SeatId(101), cx).unwrap();
-                ws.war_room_unseat(&worker, cx);
+                let worker = ws
+                    .threshing_floor_seat_leaf(threshing_floor::SeatId(101), cx)
+                    .unwrap();
+                ws.threshing_floor_unseat(&worker, cx);
                 let mut extras = Vec::new();
                 for i in 0..6 {
                     let pane = {
@@ -5037,15 +5413,15 @@ mod tests {
                     ));
                     extras.push(pane);
                 }
-                let mut from = warroom::SeatId(100);
+                let mut from = threshing_floor::SeatId(100);
                 for i in 200..208 {
-                    let to = warroom::SeatId(i);
-                    ws.war_orgs.assign(to, ws.war_org.unwrap());
-                    ws.chart.draw(from, to, warroom::Rung::See);
+                    let to = threshing_floor::SeatId(i);
+                    ws.floor_orgs.assign(to, ws.floor_org.unwrap());
+                    ws.chart.draw(from, to, threshing_floor::Rung::See);
                     from = to;
                 }
                 for i in 0..12 {
-                    ws.war_orgs.create(&format!("Other crew {i}"));
+                    ws.floor_orgs.create(&format!("Other crew {i}"));
                 }
                 cx.notify();
                 (worker, extras)
@@ -5055,13 +5431,13 @@ mod tests {
             let stop = pane.read_with(cx, |v, _| v.fixture_shutdown());
             cx.on_quit(stop);
         }
-        let first = format!("war-pane-{}", worker.entity_id().as_u64());
+        let first = format!("floor-pane-{}", worker.entity_id().as_u64());
         for dimensions in [size(px(900.), px(560.)), size(px(1200.), px(1000.))] {
             cx.simulate_resize(dimensions);
             cx.run_until_parked();
-            let frame = bounds(cx, "war-room-panel");
-            let chart = bounds(cx, "war-room-chart");
-            let pool = bounds(cx, "war-room-pool");
+            let frame = bounds(cx, "threshing-floor-panel");
+            let chart = bounds(cx, "threshing-floor-chart");
+            let pool = bounds(cx, "threshing-floor-pool");
             assert!(frame.origin.x >= px(0.) && frame.right() <= dimensions.width);
             assert!(frame.origin.y >= px(0.) && frame.bottom() <= dimensions.height);
             assert!(chart.bottom() <= frame.bottom() && pool.bottom() <= frame.bottom());
@@ -5070,10 +5446,14 @@ mod tests {
                 chart.right() < pool.origin.x,
                 "the pool belongs on the right"
             );
-            let headers = ["war-room-header", "war-org-header", "war-pool-header"];
+            let headers = [
+                "threshing-floor-header",
+                "floor-org-header",
+                "floor-pool-header",
+            ];
             let fixed = headers.map(|id| bounds(cx, id));
             let card = bounds(cx, &first);
-            let member = bounds(cx, "war-seat-100");
+            let member = bounds(cx, "floor-seat-100");
             let wheel = |cx: &mut gpui::VisualTestContext, at| {
                 cx.simulate_event(gpui::ScrollWheelEvent {
                     position: at,
@@ -5089,14 +5469,14 @@ mod tests {
                 "pool contents scroll"
             );
             assert_eq!(
-                bounds(cx, "war-seat-100"),
+                bounds(cx, "floor-seat-100"),
                 member,
                 "pool wheel moved the chart"
             );
             let pool_after = bounds(cx, &first);
             wheel(cx, chart.center());
             assert!(
-                bounds(cx, "war-seat-100").origin.y < member.origin.y,
+                bounds(cx, "floor-seat-100").origin.y < member.origin.y,
                 "chart contents scroll"
             );
             assert_eq!(bounds(cx, &first), pool_after, "chart wheel moved the pool");
@@ -5105,7 +5485,7 @@ mod tests {
                 card.size,
                 "scrolling reshaped a card"
             );
-            assert_eq!(bounds(cx, "war-room-panel"), frame);
+            assert_eq!(bounds(cx, "threshing-floor-panel"), frame);
             assert_eq!(
                 headers.map(|id| bounds(cx, id)),
                 fixed,
@@ -5114,8 +5494,8 @@ mod tests {
         }
     }
 
-    fn name() -> warroom::PaneName {
-        warroom::PaneName::new(
+    fn name() -> threshing_floor::PaneName {
+        threshing_floor::PaneName::new(
             &["Terminal Delight".into(), "MCP wiring".into()],
             "Fix permissions",
         )
@@ -5162,9 +5542,9 @@ mod tests {
                 "{query}"
             );
         }
-        let repeated = warroom::PaneName::new(&["same".into()], "same");
+        let repeated = threshing_floor::PaneName::new(&["same".into()], "same");
         assert!(pane_search_score("", &repeated, ":same:same").is_some());
-        let unicode = warroom::PaneName::new(&["ÜBER".into()], "修复权限");
+        let unicode = threshing_floor::PaneName::new(&["ÜBER".into()], "修复权限");
         assert!(pane_search_score("", &unicode, ":über:修权").is_some());
     }
 
@@ -5300,17 +5680,19 @@ mod tests {
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, other) = fixture(cx);
         ws.update(cx, |ws, cx| {
-            let lead = ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap();
-            ws.war_room_drop_on_org(&lead, other, cx);
+            let lead = ws
+                .threshing_floor_seat_leaf(threshing_floor::SeatId(100), cx)
+                .unwrap();
+            ws.threshing_floor_drop_on_org(&lead, other, cx);
             let drop = ws
-                .war_drop
+                .floor_drop
                 .as_ref()
                 .expect("a drop onto a different org opens a choice, not a silent move");
-            assert_eq!(drop.seat, warroom::SeatId(100));
+            assert_eq!(drop.seat, threshing_floor::SeatId(100));
             assert_eq!(drop.org, other);
             assert!(matches!(drop.stage, DropStage::Choosing));
             // one popup at a time: the siblings were cleared.
-            assert!(ws.war_move.is_none() && ws.war_relation.is_none());
+            assert!(ws.floor_move.is_none() && ws.floor_relation.is_none());
         });
     }
 
@@ -5321,13 +5703,18 @@ mod tests {
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, other) = fixture(cx);
         ws.update(cx, |ws, cx| {
-            let lead = ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap();
-            ws.war_room_drop_on_org(&lead, other, cx);
-            ws.war_drop_move(cx);
+            let lead = ws
+                .threshing_floor_seat_leaf(threshing_floor::SeatId(100), cx)
+                .unwrap();
+            ws.threshing_floor_drop_on_org(&lead, other, cx);
+            ws.floor_drop_move(cx);
             // An unconnected pane moves straight through; no confirm, popup closed.
-            assert_eq!(ws.war_orgs.owner(warroom::SeatId(100)), Some(other));
-            assert!(ws.war_drop.is_none());
-            assert!(ws.war_move.is_none());
+            assert_eq!(
+                ws.floor_orgs.owner(threshing_floor::SeatId(100)),
+                Some(other)
+            );
+            assert!(ws.floor_drop.is_none());
+            assert!(ws.floor_move.is_none());
         });
     }
 
@@ -5340,44 +5727,52 @@ mod tests {
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, other) = fixture(cx);
         ws.update(cx, |ws, cx| {
-            let cinema = ws.war_orgs.owner(warroom::SeatId(100)).unwrap();
+            let cinema = ws.floor_orgs.owner(threshing_floor::SeatId(100)).unwrap();
             // Give the target org a member so the whole-org grant reaches someone.
-            ws.war_orgs.assign(warroom::SeatId(101), other);
-            let lead = ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap();
-            ws.war_room_drop_on_org(&lead, other, cx);
-            ws.war_drop_relate_org(cx);
-            ws.war_drop_set_rung(warroom::Rung::Ask, cx);
-            ws.war_drop_draw(cx);
+            ws.floor_orgs.assign(threshing_floor::SeatId(101), other);
+            let lead = ws
+                .threshing_floor_seat_leaf(threshing_floor::SeatId(100), cx)
+                .unwrap();
+            ws.threshing_floor_drop_on_org(&lead, other, cx);
+            ws.floor_drop_relate_org(cx);
+            ws.floor_drop_set_rung(threshing_floor::Rung::Ask, cx);
+            ws.floor_drop_draw(cx);
             // A whole-org line from the agent to the org — and the agent did not move.
             let lines = ws.chart.org_lines();
             assert_eq!(lines.len(), 1);
-            assert_eq!(lines[0].from, warroom::End::Seat(warroom::SeatId(100)));
-            assert_eq!(lines[0].to, warroom::End::Org { org: other });
-            assert_eq!(lines[0].rung.known(), Some(warroom::Rung::Ask));
-            assert_eq!(ws.war_orgs.owner(warroom::SeatId(100)), Some(cinema));
-            assert!(ws.war_drop.is_none());
+            assert_eq!(
+                lines[0].from,
+                threshing_floor::End::Seat(threshing_floor::SeatId(100))
+            );
+            assert_eq!(lines[0].to, threshing_floor::End::Org { org: other });
+            assert_eq!(lines[0].rung.known(), Some(threshing_floor::Rung::Ask));
+            assert_eq!(
+                ws.floor_orgs.owner(threshing_floor::SeatId(100)),
+                Some(cinema)
+            );
+            assert!(ws.floor_drop.is_none());
             // The agent now reaches the other org's member at ask.
             ws.mcp.enabled = true;
-            let caller = warroom::Party {
-                seat: Some(warroom::SeatId(100)),
+            let caller = threshing_floor::Party {
+                seat: Some(threshing_floor::SeatId(100)),
                 is_agent: true,
-                access: warroom::AgentAccess::Open,
+                access: threshing_floor::AgentAccess::Open,
             };
-            let member = warroom::Party {
-                seat: Some(warroom::SeatId(101)),
+            let member = threshing_floor::Party {
+                seat: Some(threshing_floor::SeatId(101)),
                 is_agent: true,
-                access: warroom::AgentAccess::Open,
+                access: threshing_floor::AgentAccess::Open,
             };
             assert_eq!(
-                warroom::reach(
+                threshing_floor::reach(
                     &ws.mcp,
                     &ws.chart,
-                    &ws.war_orgs,
+                    &ws.floor_orgs,
                     Some(&caller),
                     &member,
                     false
                 ),
-                warroom::Reach::Ask
+                threshing_floor::Reach::Ask
             );
         });
     }
@@ -5390,21 +5785,26 @@ mod tests {
         let (ws, cx, other) = fixture(cx);
         ws.update(cx, |ws, cx| {
             // Seat 101 into the other org, so relating to it is a cross-org line.
-            ws.war_orgs.assign(warroom::SeatId(101), other);
-            let lead = ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap();
-            ws.war_room_drop_on_org(&lead, other, cx);
-            ws.war_drop_relate_member(cx);
-            ws.war_drop_pick_member(warroom::SeatId(101), cx);
-            ws.war_drop_set_rung(warroom::Rung::Read, cx);
-            ws.war_drop_draw(cx);
+            ws.floor_orgs.assign(threshing_floor::SeatId(101), other);
+            let lead = ws
+                .threshing_floor_seat_leaf(threshing_floor::SeatId(100), cx)
+                .unwrap();
+            ws.threshing_floor_drop_on_org(&lead, other, cx);
+            ws.floor_drop_relate_member(cx);
+            ws.floor_drop_pick_member(threshing_floor::SeatId(101), cx);
+            ws.floor_drop_set_rung(threshing_floor::Rung::Read, cx);
+            ws.floor_drop_draw(cx);
             let line = ws
                 .chart
-                .line(warroom::SeatId(100), warroom::SeatId(101))
+                .line(threshing_floor::SeatId(100), threshing_floor::SeatId(101))
                 .expect("a cross-org seat-to-seat line");
-            assert_eq!(line.rung.known(), Some(warroom::Rung::Read));
+            assert_eq!(line.rung.known(), Some(threshing_floor::Rung::Read));
             // Relating is not moving: the agent stayed in its own org.
-            assert_ne!(ws.war_orgs.owner(warroom::SeatId(100)), Some(other));
-            assert!(ws.war_drop.is_none());
+            assert_ne!(
+                ws.floor_orgs.owner(threshing_floor::SeatId(100)),
+                Some(other)
+            );
+            assert!(ws.floor_drop.is_none());
         });
     }
 
@@ -5415,23 +5815,25 @@ mod tests {
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, other) = fixture(cx);
         ws.update(cx, |ws, cx| {
-            let lead = ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap();
+            let lead = ws
+                .threshing_floor_seat_leaf(threshing_floor::SeatId(100), cx)
+                .unwrap();
             // Empty target org: nobody to relate an individual to.
-            ws.war_room_drop_on_org(&lead, other, cx);
+            ws.threshing_floor_drop_on_org(&lead, other, cx);
             let empty = {
-                let drop = ws.war_drop.as_ref().unwrap();
-                ws.war_drop_members(drop).is_empty()
+                let drop = ws.floor_drop.as_ref().unwrap();
+                ws.floor_drop_members(drop).is_empty()
             };
             assert!(empty, "no member route for an empty org");
             // Give it a member and reopen: the route is offered.
-            ws.war_drop = None;
-            ws.war_orgs.assign(warroom::SeatId(101), other);
-            ws.war_room_drop_on_org(&lead, other, cx);
+            ws.floor_drop = None;
+            ws.floor_orgs.assign(threshing_floor::SeatId(101), other);
+            ws.threshing_floor_drop_on_org(&lead, other, cx);
             let members = {
-                let drop = ws.war_drop.as_ref().unwrap();
-                ws.war_drop_members(drop)
+                let drop = ws.floor_drop.as_ref().unwrap();
+                ws.floor_drop_members(drop)
             };
-            assert!(members == vec![warroom::SeatId(101)]);
+            assert!(members == vec![threshing_floor::SeatId(101)]);
         });
     }
 
@@ -5442,26 +5844,28 @@ mod tests {
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, other) = fixture(cx);
         ws.update(cx, |ws, cx| {
-            let lead = ws.war_room_seat_leaf(warroom::SeatId(100), cx).unwrap();
-            ws.war_room_drop_on_org(&lead, other, cx);
+            let lead = ws
+                .threshing_floor_seat_leaf(threshing_floor::SeatId(100), cx)
+                .unwrap();
+            ws.threshing_floor_drop_on_org(&lead, other, cx);
         });
         cx.update(|w, cx| {
             w.refresh();
             w.draw(cx).clear();
         });
         // The choice popup and its two always-present routes drew.
-        bounds(cx, "war-drop-choice");
-        bounds(cx, "war-drop-move");
-        bounds(cx, "war-drop-relate-org");
-        bounds(cx, "war-drop-cancel");
+        bounds(cx, "floor-drop-choice");
+        bounds(cx, "floor-drop-move");
+        bounds(cx, "floor-drop-relate-org");
+        bounds(cx, "floor-drop-cancel");
         // Step into the whole-org route: the rung picker and Draw appear.
-        ws.update(cx, |ws, cx| ws.war_drop_relate_org(cx));
+        ws.update(cx, |ws, cx| ws.floor_drop_relate_org(cx));
         cx.update(|w, cx| {
             w.refresh();
             w.draw(cx).clear();
         });
-        bounds(cx, "war-drop-rung-Ask");
-        bounds(cx, "war-drop-draw");
-        bounds(cx, "war-drop-back");
+        bounds(cx, "floor-drop-rung-Ask");
+        bounds(cx, "floor-drop-draw");
+        bounds(cx, "floor-drop-back");
     }
 }

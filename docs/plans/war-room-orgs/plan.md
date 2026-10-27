@@ -1,4 +1,4 @@
-# War Room Orgs
+# Threshing Floor Orgs
 
 **Difficulty: 4/10** — one surface with persisted groups. One approval before implementation.
 
@@ -18,7 +18,7 @@ Search stays global across project, tab name and pane title. A result in another
 
 ## The Shape
 
-- `app/src/war_room_view.rs`: remove `war_room_card` and its summary gathering; render org selection, create/rename input, member cards and available-pane assignment. Reuse `EditBuffer` and the existing fuzzy matcher.
+- `app/src/threshing_floor_view.rs`: remove `threshing_floor_card` and its summary gathering; render org selection, create/rename input, member cards and available-pane assignment. Reuse `EditBuffer` and the existing fuzzy matcher.
 - `app/src/warroom.rs`: org identity and membership rules alongside stable seat identities. Keep `Chart` as the explicit connection store.
 - `app/src/main.rs`: persist org records alongside saved lines and seats; hold the selected org/editor state in `Workspace`; migrate old layouts without changing connections.
 - `app/src/lang/chrome.rs` and language checks: all new labels in nine languages.

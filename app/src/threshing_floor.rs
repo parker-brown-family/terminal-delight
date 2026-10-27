@@ -1,7 +1,7 @@
-//! The War Room's rules: which agent may reach which pane, and how far.
+//! The Threshing Floor's rules: which agent may reach which pane, and how far.
 //!
 //! A person gives each pane a position (open, read-only, off-limits) that holds
-//! for every agent, seats agent panes in the War Room, and draws lines between
+//! for every agent, seats agent panes in the Threshing Floor, and draws lines between
 //! seats. A line says how far its sender may reach the pane it points at: see
 //! it in the census, read its screen and tool calls, or ask it a question. Only
 //! a person draws a line, and nothing here is drawn on screen — this module is
@@ -437,7 +437,7 @@ impl Chart {
         self.org_lines.push(line);
     }
 
-    /// A person drew (or changed) a line. Callers: the War Room panel only.
+    /// A person drew (or changed) a line. Callers: the Threshing Floor panel only.
     pub fn draw(&mut self, from: SeatId, to: SeatId, rung: Rung) {
         self.put(Line {
             from,
@@ -468,7 +468,7 @@ impl Chart {
     }
 
     /// A person drew (or changed) a line to or from a whole org. Callers: the
-    /// War Room panel and the System Map only.
+    /// Threshing Floor panel and the System Map only.
     pub fn draw_org(&mut self, from: End, to: End, rung: Rung) {
         self.put_org(OrgLine {
             from,
@@ -557,7 +557,7 @@ impl Chart {
     }
 }
 
-/// Where a seat is drawn in the War Room: its row (how deep it sits under
+/// Where a seat is drawn in the Threshing Floor: its row (how deep it sits under
 /// managers) and its place in that row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Placed {
@@ -632,7 +632,7 @@ impl From<Rung> for Reach {
 
 /// The largest copy of an agent's conversation that starts without a
 /// person's press, unless the person set their own. Zero: every copy asks
-/// first (Parker, on the War Room's build page, 2026-10-22). Gate 1 drew
+/// first (Parker, on the Threshing Floor's build page, 2026-10-22). Gate 1 drew
 /// 400,000, and the median Claude pane measured that day was about 360,000,
 /// so most copies would have started unasked.
 pub const ASK_PRESS_TOKENS: u64 = 0;
@@ -807,7 +807,7 @@ impl Refusal {
     pub fn why(&self) -> &'static str {
         match self {
             Self::McpOff => "MCP is switched off in this window",
-            Self::NoLine => "no line from your seat reaches this pane as far as ask; only a person draws one, in the War Room, or grants a bypass on the rail",
+            Self::NoLine => "no line from your seat reaches this pane as far as ask; only a person draws one, in the Threshing Floor, or grants a bypass on the rail",
             Self::OffLimits => "that pane is off-limits to agents",
             Self::NotAnAgent => "that pane is not running an agent",
             Self::OwnPane => "that is your own pane",

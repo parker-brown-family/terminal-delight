@@ -1,6 +1,6 @@
-# The War Room — launch notes
+# The Threshing Floor — launch notes
 
-The War Room lands on `dev/0.5.0` as one pull request: six slices, Parker's four answers from the build page, and a merge with the artifact rail. It is the 0.5.0 work on agent-to-agent communication. Agents can now ask each other questions, and a person decides who may ask whom by drawing an org chart.
+The Threshing Floor lands on `dev/0.5.0` as one pull request: six slices, Parker's four answers from the build page, and a merge with the artifact rail. It is the 0.5.0 work on agent-to-agent communication. Agents can now ask each other questions, and a person decides who may ask whom by drawing an org chart.
 
 Until this build, an agent with MCP on could read every agent pane in the window, and none could ask another anything. Now a person seats agents on a chart and draws lines between them. A line says how far one agent may reach another: find it, read it, or ask it a question. An unseated pane behaves exactly as before, except that no agent can ever ask it anything.
 
@@ -8,7 +8,7 @@ Each section below covers one part of the feature: what you see, what agents can
 
 ## What you see
 
-**The door is the agent counter**, top right of the window. A click opens the War Room over the panes, and Esc closes it. The `…` menu lists it as well, for a window whose counter is hidden by UI CONFIG. Ctrl+Shift+A still opens the agent wall, and now only the wall. The wall's help row is gone, and the key sheet lists the War Room as *the War Room: who may reach whom, and the window's MCP switches*.
+**The door is the agent counter**, top right of the window. A click opens the Threshing Floor over the panes, and Esc closes it. The `…` menu lists it as well, for a window whose counter is hidden by UI CONFIG. Ctrl+Shift+A still opens the agent wall, and now only the wall. The wall's help row is gone, and the key sheet lists the Threshing Floor as *the Threshing Floor: who may reach whom, and the window's MCP switches*.
 
 **Its header counts the window**: seats, how many are working, how many need you, and how many agents are off the chart.
 
@@ -21,11 +21,11 @@ Each section below covers one part of the feature: what you see, what agents can
 
 The chart arranges seats into rows by their lines, labelled orchestrator, manager or worker. A seat with no lines is labelled seated.
 
-**Every agent is named the way you find it**: where its tab sits on the left bar, then the title on its own header, as in *TERMINAL DELIGHT › MCP work · ✳ Per-pane MCP least privilege*. The header alone was not enough. A new window starts every pane's title at *shell*, because the session host does not pass titles on, and an agent's header keeps saying *shell* until it sets its title again. Two hours after the War Room's install, fifteen of the window's agents still read *shell*, and the War Room listed row after row of *shell · CLAUDE*. A header that only repeats its tab's name is not said twice. On the chart, a seat's box keeps its tab's name whole and lets the project and group above it shorten (*SERVER › au… › backend lead*). The opened card, the lines, the rows off the chart and every card on the rail use the same name.
+**Every agent is named the way you find it**: where its tab sits on the left bar, then the title on its own header, as in *TERMINAL DELIGHT › MCP work · ✳ Per-pane MCP least privilege*. The header alone was not enough. A new window starts every pane's title at *shell*, because the session host does not pass titles on, and an agent's header keeps saying *shell* until it sets its title again. Two hours after the Threshing Floor's install, fifteen of the window's agents still read *shell*, and the Threshing Floor listed row after row of *shell · CLAUDE*. A header that only repeats its tab's name is not said twice. On the chart, a seat's box keeps its tab's name whole and lets the project and group above it shorten (*SERVER › au… › backend lead*). The opened card, the lines, the rows off the chart and every card on the rail use the same name.
 
 **Draw a line** by clicking one seat, then another. The line arrives at the `ask` rung. Click its label to cycle it through ask, see, read, and then erase. A line that skips a row runs down the gap between columns, so it never crosses a seat. A **bypass line**, granted on the rail, is dashed and labelled *bypass · N left*. Clicking its label erases it.
 
-**The window's five MCP switches** sit in the War Room as well as on the wall: the server on or off, which panes agents may see (agents, or every pane), pushed events, writes, and card images. Both surfaces draw them with one function, so the two can never disagree. Every refusal that used to send people to the robot button or the MCP CONTROL panel now names *the War Room (the agent counter, top right)*.
+**The window's five MCP switches** sit in the Threshing Floor as well as on the wall: the server on or off, which panes agents may see (agents, or every pane), pushed events, writes, and card images. Both surfaces draw them with one function, so the two can never disagree. Every refusal that used to send people to the robot button or the MCP CONTROL panel now names *the Threshing Floor (the agent counter, top right)*.
 
 **The bottom line counts this session's asks**: answered from what was visible, answered by a copy, and answered with no line. The last must stay at zero.
 
@@ -49,12 +49,12 @@ The agent inside a read-only or off-limits pane keeps its own-pane verbs: its ow
 | `ask_answer` | Reads a copy's answer back, for the pane that asked and no other. The answer is labelled untrusted. |
 | `request_access` with `ask_line` | Asks a person for a bypass line to a seat. The person picks how many copies it allows: one, three or ten. |
 
-The reach rules, in `warroom::reach`:
+The reach rules, in `threshing_floor::reach`:
 
 - **A pane nobody seated keeps the window's switches.** Agents read it as they always have, and never ask it.
 - **A seated pane is hidden** from every agent, except along a line from that agent's own seat.
 - **Read-only caps a line at ask. Off-limits beats every line.**
-- **Only a person draws, changes or erases a line.** The source test `only_the_war_room_and_the_rail_draw_lines` keeps it so.
+- **Only a person draws, changes or erases a line.** The source test `only_the_threshing_floor_and_the_rail_draw_lines` keeps it so.
 - **Seats are random ids saved with the pane**, because pane numbers restart when the session host does. Lines are saved in the layout between seat ids.
 - **The pushed events cannot tell who is listening**, so they carry only unseated panes. A seated pane's tool calls are never pushed.
 
@@ -114,20 +114,20 @@ A copy is made only when it can be made safely, and refused by name otherwise.
 - **It leaves nothing behind.** Claude's copy saves no transcript and Codex's is ephemeral. The copy's whole process group is killed when it answers or fails, after five minutes, or past 16 MB of output. An answer is cut at 16,000 characters.
 - **One copy at a time per asker.**
 
-What it does not stop: an agent with a shell runs as you. It can edit the layout file, or send keys to the window through the compositor. The War Room is the front door: the one way Terminal Delight offers, labels and answers, so an agent that behaves has a way to ask and you have one place to say yes.
+What it does not stop: an agent with a shell runs as you. It can edit the layout file, or send keys to the window through the compositor. The Threshing Floor is the front door: the one way Terminal Delight offers, labels and answers, so an agent that behaves has a way to ask and you have one place to say yes.
 
 ## The record
 
-Every ask, cheap or copy, refused or answered, writes one line per stage to `$XDG_STATE_HOME/terminal-delight/warroom/<session>/asks.jsonl`. A copy's stages are measured, started or pressed, answered, declined, refused and failed. Each line says who asked whom, along which line, at which stage, and what it read and cost. It keeps the question's length and SHA-256, never its words, and never the answer. The window's book of copy asks drops the question's words once the copy is done.
+Every ask, cheap or copy, refused or answered, writes one line per stage to `$XDG_STATE_HOME/terminal-delight/threshing-floor/<session>/asks.jsonl`. A copy's stages are measured, started or pressed, answered, declined, refused and failed. Each line says who asked whom, along which line, at which stage, and what it read and cost. It keeps the question's length and SHA-256, never its words, and never the answer. The window's book of copy asks drops the question's words once the copy is done.
 
 ## What changes under existing scripts and habits
 
 - **`list_panes`' `exposed` field is now `reach`**, with three values, and a `hidden` count sits beside the panes.
-- **The agent counter opens the War Room, not the wall.** Ctrl+Shift+A is the wall's only door.
+- **The agent counter opens the Threshing Floor, not the wall.** Ctrl+Shift+A is the wall's only door.
 - **A second `request_access` from one pane is refused** while its first is on the rail. It used to replace the first.
 - **The push feed leaves out seated panes.** A watcher that counts agents from `agent_appeared` sees only unseated ones.
 - **The layout file gains** `seat` and `agents` on a pane, `[[lines]]`, and `ask_press_tokens`. A 0.4 window reads a read-only pane as open and does not know seats or lines. From 0.4's code (not tried), its next save writes the layout without them. Nothing is written for older builds.
-- **Refusals name the War Room**, where they named the robot button or the MCP CONTROL panel.
+- **Refusals name the Threshing Floor**, where they named the robot button or the MCP CONTROL panel.
 
 ## Not built yet
 
@@ -145,7 +145,7 @@ Every ask, cheap or copy, refused or answered, writes one line per stage to `$XD
 - **Planned breaks**: every safety rule added in the six slices and the press-limit change was broken on purpose on its production line. Each break turned its test red and was restored byte for byte, and each is listed by slice in `04-slices.md`.
 - **Live copies of seeded sessions**: a Claude copy on Haiku tried Write and Bash, was refused both, and wrote nothing. It read 167,120 tokens for $0.012. A Codex 0.162.1 copy read 213,714 tokens and wrote nothing. It declined to try, so its sandbox was proven by the morning's probes, not by that run.
 - **A hidden window with stand-in agents**, with the press limit at 300,000. A copy reading 290,213 tokens started at once and answered. One reading 360,092 waited as a caution card, was pressed with `y`, and answered. Earlier, cheap asks along an ask line and a bypass were answered, and asks with no line were refused `no_line`. The record held one line per stage and no words.
-- **The merged build in a scratch window, before the merge.** With no press limit set, copies of 290,213 and 360,092 tokens both waited as caution cards, were pressed, and answered. With the War Room and the artifact rail open together, one Esc closed the rail and left the War Room up. See *Landed* in `04-slices.md`.
+- **The merged build in a scratch window, before the merge.** With no press limit set, copies of 290,213 and 360,092 tokens both waited as caution cards, were pressed, and answered. With the Threshing Floor and the artifact rail open together, one Esc closed the rail and left the Threshing Floor up. See *Landed* in `04-slices.md`.
 - **Then on the live window**, swapped onto `td-eed3d4d6-0.5-war-room`. The session host was kept, and the same 29 panes came back.
 
 ## Where it lives
@@ -153,11 +153,11 @@ Every ask, cheap or copy, refused or answered, writes one line per stage to `$XD
 | Piece | File |
 |---|---|
 | Positions, seats, lines, rungs, reach, risk, refusals, the copy book | `app/src/warroom.rs` |
-| The War Room panel, the ask bridge, copies started and answered | `app/src/war_room_view.rs` |
+| The Threshing Floor panel, the ask bridge, copies started and answered | `app/src/threshing_floor_view.rs` |
 | Planning and running one read-only copy | `app/src/askcopy.rs` |
 | The record of asks | `app/src/askrecord.rs` |
 | The MCP verbs | `app/src/mcp.rs`, `app/src/mcp_transport.rs` |
 | Rail cards and their answers | `app/src/access.rs`, `app/src/attention.rs`, `app/src/main.rs` |
 | A Codex rollout's size and model | `app/src/vitals.rs` |
-| The reference for agents | `docs/mcp.md`: *Each pane's position*, *The War Room*, *An agent asks, a person answers*, *Asking another agent* |
+| The reference for agents | `docs/mcp.md`: *Each pane's position*, *The Threshing Floor*, *An agent asks, a person answers*, *Asking another agent* |
 | The plan, the slices, the evidence | `docs/plans/pane-agent-access/` |

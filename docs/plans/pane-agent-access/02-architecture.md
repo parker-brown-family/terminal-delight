@@ -1,16 +1,16 @@
-# Architecture: the War Room, first step
+# Architecture: the Threshing Floor, first step
 
 Status: **APPROVED 2026-10-22** — eight concurs on `reports/2026-10-22-war-room-architecture.html`, no notes, "Great!". The first gate in this feature with no amendment. The approved enforcement core is `02-enforcement.md`; this page places it in the code. Read from `origin/dev/0.5.0` at `d17d0661` and `origin/feat/agent-management` at `017da926`. Line numbers are as on those refs.
 
 ## Fit
 
-**The door.** `render_agent_counter` (main.rs:23558) keeps its look; its click sets a new `war_room` flag instead of `mcp_menu` (main.rs:~23605). The `…` menu row `more-mcp` (main.rs:33406) opens the War Room too, so a window whose counter is hidden by UI CONFIG (`uiconfig::Key::AgentCounter`) still has a way in. The agent wall stays reachable only by Ctrl+Shift+A (pane.rs:7380 → main.rs:5157). Its help row goes (main.rs:33771). The stale "🤖 (mother bar)" row (main.rs:33770) becomes the counter's row. The source test `the_agent_wall_opens_from_the_counter_that_summarises_it` (main.rs:38406) is rewritten to pin the new doors. Agreed with the artifact rail, which takes a new 📜 glyph and leaves the counter alone (`00-status.md`, Coordination).
+**The door.** `render_agent_counter` (main.rs:23558) keeps its look; its click sets a new `threshing_floor` flag instead of `mcp_menu` (main.rs:~23605). The `…` menu row `more-mcp` (main.rs:33406) opens the Threshing Floor too, so a window whose counter is hidden by UI CONFIG (`uiconfig::Key::AgentCounter`) still has a way in. The agent wall stays reachable only by Ctrl+Shift+A (pane.rs:7380 → main.rs:5157). Its help row goes (main.rs:33771). The stale "🤖 (mother bar)" row (main.rs:33770) becomes the counter's row. The source test `the_agent_wall_opens_from_the_counter_that_summarises_it` (main.rs:38406) is rewritten to pin the new doors. Agreed with the artifact rail, which takes a new 📜 glyph and leaves the counter alone (`00-status.md`, Coordination).
 
-**The window's MCP switches.** Today they live inside the wall overlay (`mcp-btn-enable`, `-expose`, `-events`, `-writes`, `-images`, main.rs ~30750–30850). The ctl refusal text (ctl.rs:170) points people at "the MCP control panel (Ctrl+Shift+A)". A hotkey-only wall would hide them, so the switch row is drawn by one function and placed in the War Room's header; the wall calls the same function. The ctl text names the War Room.
+**The window's MCP switches.** Today they live inside the wall overlay (`mcp-btn-enable`, `-expose`, `-events`, `-writes`, `-images`, main.rs ~30750–30850). The ctl refusal text (ctl.rs:170) points people at "the MCP control panel (Ctrl+Shift+A)". A hotkey-only wall would hide them, so the switch row is drawn by one function and placed in the Threshing Floor's header; the wall calls the same function. The ctl text names the Threshing Floor.
 
-**A new pure module, `warroom.rs`.** It holds seats, lines and rungs, roles derived from lines, `reach(caller, target)` combining window switches, pane position and line, and risk. It has no gpui and is unit-tested, like `hud.rs` and `access.rs`. The read/act split from the superseded plan lives here, taking the caller as an argument.
+**A new pure module, `threshing_floor.rs`.** It holds seats, lines and rungs, roles derived from lines, `reach(caller, target)` combining window switches, pane position and line, and risk. It has no gpui and is unit-tested, like `hud.rs` and `access.rs`. The read/act split from the superseded plan lives here, taking the caller as an argument.
 
-**`mcp.rs`.** Every exposure site asks `warroom::reach`. The census hides a seated pane from callers without a line. Two new verbs and one changed verb are listed under Endpoints.
+**`mcp.rs`.** Every exposure site asks `threshing_floor::reach`. The census hides a seated pane from callers without a line. Two new verbs and one changed verb are listed under Endpoints.
 
 **`access.rs` and the rail.** `Change` gains `AskLine` (wire `ask_line`) and an expensive-ask kind. `Ask` gains `risk: coordination::Severity` and, for a line, a prompt count. `rail_ink` (main.rs:24575) colours an Access card by its risk instead of by its lane, and the card shows the Severity glyph. `rail_answer` (main.rs:24127) creates the bypass line or starts the copy. Today every Access card is the same amber (attention.rs:74, main.rs:24575); no severity reaches the rail.
 
@@ -33,7 +33,7 @@ Status: **APPROVED 2026-10-22** — eight concurs on `reports/2026-10-22-war-roo
   - `copy: true` returns `{ask_id, state: running | awaiting_press | refused, reads_tokens}`.
 - `ask_answer` (new) `{ask_id}` returns `{state, answer?, tokens_read?}`. A pushed `notifications/message` also announces each answer. No call waits on a model.
 - `request_access` (changed): change `ask_line` `{pid}`. The count is chosen at the press.
-- ctl: nothing new. A line is set only by a person, in the War Room or by pressing Yes on the rail.
+- ctl: nothing new. A line is set only by a person, in the Threshing Floor or by pressing Yes on the rail.
 
 ## Data
 
@@ -43,14 +43,14 @@ Status: **APPROVED 2026-10-22** — eight concurs on `reports/2026-10-22-war-roo
 - `StateFile.ask_press_tokens: Option<u64>`. Absent means 400,000.
 - Nothing is written for older builds.
 
-**Ask record**, append-only, one per window session: `$XDG_STATE_HOME/terminal-delight/warroom/<session>/asks.jsonl`.
+**Ask record**, append-only, one per window session: `$XDG_STATE_HOME/terminal-delight/threshing-floor/<session>/asks.jsonl`.
 - Fields: `{id, at, from_seat, to_seat, via: line | bypass, stage, question_len, question_sha, program, model, reads_tokens, tokens_read, cost_usd?}`, where `stage` is one of `cheap | priced | pressed | declined | copy_started | answered | refused | failed`.
 - The question text and the answer are not written to disk. The two Gate 1 numbers (unlined prompts, tokens per answered ask) come from this file.
 
 ## Flow
 
-1. **The counter's click** opens the War Room: seats, lines, the five switches, seat facts.
-2. **A cheap ask.** `ask_agent` reaches the window through `mcp_transport`. The caller is found by peer credentials and `warroom::reach(caller, target)` must be at least ask. The window builds the packet, writes `cheap` to the record, and answers.
+1. **The counter's click** opens the Threshing Floor: seats, lines, the five switches, seat facts.
+2. **A cheap ask.** `ask_agent` reaches the window through `mcp_transport`. The caller is found by peer credentials and `threshing_floor::reach(caller, target)` must be at least ask. The window builds the packet, writes `cheap` to the record, and answers.
 3. **A copy.** The same checks run again, and a bypass line spends one prompt. Then:
    - The conversation is resolved: `Declared` and unique, or the ask is refused.
    - The size comes from vitals. An unknown size is treated as over the limit.
@@ -81,8 +81,8 @@ Status: **APPROVED 2026-10-22** — eight concurs on `reports/2026-10-22-war-roo
 
 ## Questions for this gate — all concurred 2026-10-22
 
-1. The window's five MCP switches move from the agent wall into the War Room's header.
-2. The `…` menu's agent row opens the War Room; the wall keeps only Ctrl+Shift+A and loses its help row.
+1. The window's five MCP switches move from the agent wall into the Threshing Floor's header.
+2. The `…` menu's agent row opens the Threshing Floor; the wall keeps only Ctrl+Shift+A and loses its help row.
 3. Lines are keyed by a seat id saved with the pane, not by pane number.
 4. A copy is made only of a conversation its agent named itself and no other pane claims.
 5. Every access ask on the rail carries a risk (the existing four-step scale with its glyphs), and Caution takes the theme's blue so the steps differ by hue.

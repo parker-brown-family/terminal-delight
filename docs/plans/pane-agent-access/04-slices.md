@@ -1,4 +1,4 @@
-# Slices: the War Room, first step
+# Slices: the Threshing Floor, first step
 
 Status: **folded into building.** Gates 2 and 3 came back as bare approvals in a row (eight and seven concurs, no notes; Parker: "Great!", then "go!"). By the playbook's rule this slice plan is written and building starts without a separate approval round. Any slice that turns up a decision the gates did not make stops and asks.
 
@@ -7,19 +7,19 @@ Branch `feat/war-room` off `dev/0.5.0` at `d17d0661`. Worktree `~/Work/td-author
 Every slice runs the CI gates from `app/` and leaves the suite green. The gates are `cargo fmt -- --check`, `cargo check --locked`, `cargo clippy --locked -- -D warnings`, and `cargo test --locked --no-fail-fast`. Each slice that adds a security rule also makes its planned break and watches the named test go red.
 
 1. **[DONE 2026-10-22, 9f088c6a] Tracer bullet: the rules, and every exposure site choosing.**
-   - Add `warroom.rs`: `SeatId`, `AgentAccess`, `Rung`/`RungWord`, `Line`, `Chart`, `Reach`, `reach`, `may_write`, roles, risk, `Refusal`.
+   - Add `threshing_floor.rs`: `SeatId`, `AgentAccess`, `Rung`/`RungWord`, `Line`, `Chart`, `Reach`, `reach`, `may_write`, roles, risk, `Refusal`.
    - `PaneInfo.exposed` is deleted. Every site says which reach it means.
    - The saved leaf gains `seat` and `agents`, and the window gains `lines` and `ask_press_tokens`.
    - With no seats and no lines, behaviour is identical to today, and a test pins that.
-   - Proof: the `warroom.rs` rule tests, `off_limits_wins_over_an_agents_word`, `a_state_file_without_lines_reads_as_no_chart`, `a_seat_survives_a_respawn`, and the planned break *let an unseated pane be asked*.
-2. **[DONE 2026-10-22] The War Room panel and its doors.**
+   - Proof: the `threshing_floor.rs` rule tests, `off_limits_wins_over_an_agents_word`, `a_state_file_without_lines_reads_as_no_chart`, `a_seat_survives_a_respawn`, and the planned break *let an unseated pane be asked*.
+2. **[DONE 2026-10-22] The Threshing Floor panel and its doors.**
    - The counter and the `…` row open it, and the wall keeps only Ctrl+Shift+A.
    - The five switches move, drawn by one function.
    - A person can seat and unseat a pane and draw, change or erase a line, by click then click.
    - Seat facts come from what exists: state, size and model (Claude), and the latest summary and note.
    - The read-only position is in the right-click menu.
    - Strings are written in all nine languages.
-   - Proof: the door tests, `the_switch_row_is_drawn_by_one_function`, `only_the_war_room_and_the_rail_draw_lines`, `latest_response_ignores_the_selected_card`, and screenshots of a scratch window.
+   - Proof: the door tests, `the_switch_row_is_drawn_by_one_function`, `only_the_threshing_floor_and_the_rail_draw_lines`, `latest_response_ignores_the_selected_card`, and screenshots of a scratch window.
 3. **[DONE 2026-10-22] Cheap asks.**
    - Add `ask_agent` (cheap), `ask_answer`, `askrecord.rs`, and the untrusted label.
    - `list_panes` follows lines and counts what is hidden.
@@ -43,7 +43,7 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
 
 ## Progress
 
-- **Slice 1, done (9f088c6a).** `warroom.rs` is in. `TerminalView.agent_access` replaces the off-limits flag. `PaneInfo.exposed` and `mcp::should_expose`/`may_write` are deleted, and every site states its reach. Seats, lines and the press limit are saved.
+- **Slice 1, done (9f088c6a).** `threshing_floor.rs` is in. `TerminalView.agent_access` replaces the off-limits flag. `PaneInfo.exposed` and `mcp::should_expose`/`may_write` are deleted, and every site states its reach. Seats, lines and the press limit are saved.
   - Gates: fmt, clippy `-D warnings`, and 2,731 tests passing (baseline 2,712), 15 ignored as before.
   - Planned breaks, each made, caught and undone:
     - *unseated pane asked*: `an_unseated_pane_is_read_and_never_asked`, `a_plain_shell_follows_the_window_switch` and the mcp seated test went red.
@@ -55,21 +55,21 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
     - `list_panes`' wire field `exposed` became `reach`; see docs/mcp.md.
   - Owed: `a_seat_survives_a_respawn` is covered only by the saved-leaf round trip. Both restore paths (`build_node`, `build_node_attached`) copy the saved seat onto the view whatever the attach plan does, but a gpui-level respawn test is still to be written, in slice 2.
 - **Slice 2, done.**
-  - The counter and the `…` row (`more-mcp`, now labelled with the War Room's name) open the War Room. Ctrl+Shift+A alone opens the wall, and its help row is gone.
+  - The counter and the `…` row (`more-mcp`, now labelled with the Threshing Floor's name) open the Threshing Floor. Ctrl+Shift+A alone opens the wall, and its help row is gone.
   - The five switches are one function, `mcp_switch_buttons`, which both surfaces call.
-  - The panel is `war_room_view.rs`. It shows seats in rows by `warroom::layout`, with elbow lines on a canvas. Lines that skip a row run down the column gap, and a bypass is dashed. Label chips are clickable: a click cycles ask, see, read, then erase, and a click on a bypass erases it.
+  - The panel is `threshing_floor_view.rs`. It shows seats in rows by `threshing_floor::layout`, with elbow lines on a canvas. Lines that skip a row run down the column gap, and a bypass is dashed. Label chips are clickable: a click cycles ask, see, read, then erase, and a click on a bypass erases it.
   - A seat card shows the agent's latest summary (`Bench::latest_response`), state, model, size (from vitals), note, and lines in and out. Off-chart agents each get a Seat button.
   - The right-click menu has three position rows, with the current one marked, and a READ-ONLY badge. All strings are in nine languages.
-  - `TD_WAR_ROOM_DEMO` opens the War Room for a rig. Agent sizes are refreshed while it is open.
-  - Tests: `only_ctrl_shift_a_opens_the_wall`, `the_switch_row_is_drawn_by_one_function`, `only_the_war_room_and_the_rail_draw_lines`, `latest_response_ignores_the_selected_card`, two layout tests, the rewritten door test, and the person-only setter scan moved to `set_agent_access`.
+  - `TD_THRESHING_FLOOR_DEMO` opens the Threshing Floor for a rig. Agent sizes are refreshed while it is open.
+  - Tests: `only_ctrl_shift_a_opens_the_wall`, `the_switch_row_is_drawn_by_one_function`, `only_the_threshing_floor_and_the_rail_draw_lines`, `latest_response_ignores_the_selected_card`, two layout tests, the rewritten door test, and the person-only setter scan moved to `set_agent_access`.
   - Gates: fmt, clippy `-D warnings`, 2,737 tests passing, 15 ignored.
   - Photographed in a hidden window with stand-in agents (`evidence/rig/`). Shots are in `reports/2026-10-22-war-room-evidence/`.
   - Found by the photographs, fixed before commit:
     - A line two rows down crossed the seat between and covered its label.
     - The bypass label sat on a shorter line's label.
 - **Slice 3, done (23643370).**
-  - `ask_agent` answers from the cheap reads, decided by `warroom::decide_ask` in the window's `ask_bridge`.
-  - `askrecord.rs` keeps each ask's length and fingerprint, never its words. `list_panes` gives a `hidden` count, and the War Room shows the ask numbers.
+  - `ask_agent` answers from the cheap reads, decided by `threshing_floor::decide_ask` in the window's `ask_bridge`.
+  - `askrecord.rs` keeps each ask's length and fingerprint, never its words. `list_panes` gives a `hidden` count, and the Threshing Floor shows the ask numbers.
   - Planned break *drop the line check from `decide_ask`*: `an_ask_is_refused_by_name_in_order` went red.
   - End to end, in the hidden rig, the stand-in release lead asked from inside its own seated pane through `ctl --workspace special:warroomrig mcp from <session> <pane>`, the door a real agent's relay uses (`evidence/rig/asks-2026-10-22.out`):
     - backend lead: answered, along its ask line;
@@ -77,7 +77,7 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
     - docs pages: refused `no_line` (a read line);
     - scratch: refused `no_line` (unseated).
   - The record held four lines, with fingerprints and no words (`evidence/rig/asks-record-2026-10-22.jsonl`). The bypass was not spent by cheap answers.
-  - The War Room shot (`reports/2026-10-22-war-room-evidence/war-room-asked.png`) shows "2 answered from what was visible · 0 by a copy · 0 with no line".
+  - The Threshing Floor shot (`reports/2026-10-22-war-room-evidence/war-room-asked.png`) shows "2 answered from what was visible · 0 by a copy · 0 with no line".
   - Found: `list_panes`'s MCP-off error still says "the robot button on the mother bar". It is fixed in slice 6 with the ctl text.
   - Flake: `host::owning::a_pane_knows_which_session_and_pane_it_is` failed once under a full run and passed 5/5 alone, with host.rs untouched here. File an issue.
 - **Slice 4, done (3aad9bdd).**
@@ -96,22 +96,22 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
     - the Codex version pin.
   - The model list's `Transport` is shared: `start_with` takes a deadline, an output cap and the noun its errors use, so the model list's own messages are unchanged.
   - `ask_agent` with `copy: true` returns an ask id and a stage. The new verb `ask_answer` reads it back for the asking pane only, labelled untrusted.
-  - A copy at or under the press limit starts at once. One over it, or of unknown size, puts a Copy card on the asker's rail row, coloured by `warroom::risk`. Yes starts the copy; No declines it.
+  - A copy at or under the press limit starts at once. One over it, or of unknown size, puts a Copy card on the asker's rail row, coloured by `threshing_floor::risk`. Yes starts the copy; No declines it.
   - `Change::Copy` has no wire name, so no agent can raise one.
   - The record keeps every stage: priced, copy_started or pressed, answered, declined, refused, failed. Each stage carries the question's length and fingerprint, never its words. The book drops the words once the copy is done.
   - The vitals keep the raw model id (`claude-opus-5-5[1m]` from the cost record when the session is on the 1M tier). They now read a Codex rollout's last call size and model. Fatigue and relevance stay unmeasured for Codex, and its call is NO READING.
-  - `warroom.rs` lost its dead-code allowance; the one method nothing called (`Chart::is_empty`) is gone.
+  - `threshing_floor.rs` lost its dead-code allowance; the one method nothing called (`Chart::is_empty`) is gone.
   - Gates: fmt, clippy `-D warnings`, 2,776 tests passing, 17 ignored. The 17 are the earlier 15 plus the two live copies. Earlier slices reported 15 here, which matched, because a grep dropped test groups with no passes.
   - **Departures from the program design, each measured or argued:**
     1. *Claude's tool list is checked after the question is sent, not before.* Claude prints `system/init` only once a user message arrives. Measured: init came 1.3 s before the first word of the answer, after hooks. Servers are checked before the question through the `mcp_status` control request. The tool list is checked the moment init lands, and the copy is killed ahead of any model output. A stand-in that comes up with Write and then leaves a mark two seconds later is killed before the mark appears: `a_copy_that_comes_up_wider_is_killed_before_it_can_act`.
     2. *The second Claude check watches results, not attempts.* A copy remembers the worker's tools and reaches for them. Measured: Write, then Bash, then ToolSearch, each answered "No such tool available" as an error. Killing on the attempt failed the first live run, and would fail almost every copy of a working agent. A tool outside the grant that returns a non-error result stops the copy. A server-side tool use stops it on sight.
-    3. *Pricing moved from the War Room's readings to the MCP connection thread.* The vitals sweep runs only while the War Room or the MCP menu is open, which is a cost decision recorded in the sweep's own comment. So most asks would have priced as unknown, and the rest at a reading minutes old. The connection thread resolves which conversation the pane holds, as `pane_events` already does, and reads the size and model of the transcript the copy would fork. An unprovable conversation is refused at the ask, not after a press. When the copy runs, its conversation must still be the one priced.
+    3. *Pricing moved from the Threshing Floor's readings to the MCP connection thread.* The vitals sweep runs only while the Threshing Floor or the MCP menu is open, which is a cost decision recorded in the sweep's own comment. So most asks would have priced as unknown, and the rest at a reading minutes old. The connection thread resolves which conversation the pane holds, as `pane_events` already does, and reads the size and model of the transcript the copy would fork. An unprovable conversation is refused at the ask, not after a press. When the copy runs, its conversation must still be the one priced.
     4. *Nothing is typed into the asker when a copy finishes, and nothing is pushed.* A line typed there is signed with the session's tag as its person's, and a copy finishing is not something a person did. The asker reads the answer with `ask_answer`. After a press, the rail's own signed answer line names `ask_answer` and the ask id. A pushed notification is still owed.
     5. *One copy at a time per asking pane* (`busy`). An agent with a drawn ask line could otherwise start copies in parallel, each reading the whole of another agent's context.
     6. *The question's first 40 words are shown on the copy card,* because the person is deciding what to pay for.
   - Proof:
     - `askcopy.rs`: both plans carry every measured switch; the environment tests; the init, servers and no-list refusals; tools that run outside the grant; the unproven Codex version; guessed and shared conversations; the price read from the transcript; answers keep "not reported" apart from zero; the wire-level kill.
-    - `warroom.rs`: the press rule, `ask_answer_only_answers_the_asker`, one copy at a time, the book keeping open asks.
+    - `threshing_floor.rs`: the press rule, `ask_answer_only_answers_the_asker`, one copy at a time, the book keeping open asks.
     - `mcp.rs`: `ask_agent_copy_over_the_limit_waits_for_a_press_and_ask_answer_reads_it`.
     - `access.rs`: `copy_is_not_a_wire_change`, the card's words and answer line, `a_copy_starts_only_under_the_limit_or_on_a_press`, and the agent-facing scan extended to `answer_copy`, `start_copy` and `grant_bypass`.
     - `attention.rs`: `a_copy_row_says_it_starts_a_copy_and_names_ask_agent`.
@@ -136,15 +136,15 @@ Every slice runs the CI gates from `app/` and leaves the suite green. The gates 
 - **Slice 6, done (ee77c4e6).**
   - `docs/mcp.md` covers:
     - the three positions;
-    - the War Room's seats, lines, rungs and reach rules;
+    - the Threshing Floor's seats, lines, rungs and reach rules;
     - `ask_line`;
     - `ask_agent` with its copies, `ask_answer` and the record;
     - the push feed skipping seated panes;
     - two new security bullets.
   - The docsite pages are updated: MCP, agent wall, panes, ctl, sticky notes.
-  - The docsite builder reads `s.ui.*` help rows from `lang/chrome.rs`, so the War Room's row is on the key sheet. Its two fixes for the wall's vanished row are deleted, as the builder requires.
+  - The docsite builder reads `s.ui.*` help rows from `lang/chrome.rs`, so the Threshing Floor's row is on the key sheet. Its two fixes for the wall's vanished row are deleted, as the builder requires.
   - The terminal-input note names `takes_writes()` and records that the asks add no way into a terminal.
-  - Every refusal that pointed at the robot button or the MCP CONTROL panel now names the War Room. `an_unscripted_window_refuses_all_global_policy_mutations` pins it.
+  - Every refusal that pointed at the robot button or the MCP CONTROL panel now names the Threshing Floor. `an_unscripted_window_refuses_all_global_policy_mutations` pins it.
   - Gates: fmt, clippy `-D warnings`, 2,776 tests passing, 17 ignored.
   - The review page is `reports/2026-10-22-the-war-room-built.html`:
     - eight figures, two of them photographs of the built window;
@@ -159,7 +159,7 @@ On 2026-10-22, in chat: *"Yes all -- into 0.5.0 and rebuild our binary here!"*, 
 1. **The six departures are accepted** as the design. The program design is not rewritten; this file is where they are recorded.
 2. **An asking agent comes back for its copy's answer** with `ask_answer` until a pushed notice exists. Nothing is typed into its terminal.
 3. **The press limit is 0 by default**, so every copy asks first.
-   - `warroom::ASK_PRESS_TOKENS` is 0, and a measured size of zero waits like an unknown one, since every copy reads at least its own instructions.
+   - `threshing_floor::ASK_PRESS_TOKENS` is 0, and a measured size of zero waits like an unknown one, since every copy reads at least its own instructions.
    - A copy's rail colour no longer follows the limit. At 0 the old rule (caution up to 1.5× the limit, warning up to 2.5×) would have put every copy card in red. The bands are now the sizes Gate 2 drew from a 400,000 limit: caution up to 600,000 tokens, warning up to 1,000,000, alert past it (`COPY_CAUTION_TOKENS`, `COPY_WARNING_TOKENS`).
    - When the limit is 0, `ask_agent` says the person presses Yes for every copy instead of naming "a press limit of 0".
    - Tests: `by_default_every_copy_waits_for_a_press`, `a_copys_colour_does_not_follow_the_press_limit`, `a_waiting_copy_names_a_limit_only_when_the_person_set_one`.
@@ -174,7 +174,7 @@ On 2026-10-22, in chat: *"Yes all -- into 0.5.0 and rebuild our binary here!"*, 
 - **One pull request**, PR 1115, merged into `dev/0.5.0` as `eed3d4d6` on 2026-10-22. It carried:
   - the six slices;
   - the press-limit change;
-  - a merge of `dev/0.5.0` with the artifact rail and Ops glass, with two conflicts in `main.rs`: the module list, and the Esc ladder, where the rail is drawn over the War Room and closes first;
+  - a merge of `dev/0.5.0` with the artifact rail and Ops glass, with two conflicts in `main.rs`: the module list, and the Esc ladder, where the rail is drawn over the Threshing Floor and closes first;
   - the launch notes (`05-launch-notes.md`), the changelog and the 0.5.0 highlights.
 - **Building dev/0.5.0** in `td-authority-lab` needed renderer patch 0011 (desktop cutout) on that lab's shared `zed-upstream`. It was applied with `scripts/prepare-gpui.sh`. It only adds API, so the lab's other worktrees build as before.
 - **Gates on the PR head**:
@@ -186,7 +186,7 @@ On 2026-10-22, in chat: *"Yes all -- into 0.5.0 and rebuild our binary here!"*, 
   - With no press limit set, copies of 290,213 and 360,092 tokens both waited as caution cards. The first would have started unasked under the old limit. Both were pressed and answered.
   - The record held priced, pressed and answered for each ask, with no words.
   - Neither copy carried a `TD_` variable.
-  - With the War Room and the artifact rail open together, one Esc closed the rail and left the War Room up.
+  - With the Threshing Floor and the artifact rail open together, one Esc closed the rail and left the Threshing Floor up.
 - **The rig's own bug**, found on its first run: the rail stays open after a press, so a second Ctrl+Shift+N closed it, and the second `y` reached no card. The rig now opens the rail once.
 - **Installed** on the session-1 window with `live-window-swap-05` inside the landing lock. The window moved from `td-57bc5b3a` to `td-eed3d4d6-0.5-war-room`.
   - The host was kept (pid 2108452), with 29 panes before and after, and the same ids, pids and shell start ticks. The split document came back.
@@ -197,9 +197,9 @@ On 2026-10-22, in chat: *"Yes all -- into 0.5.0 and rebuild our binary here!"*, 
 
 ## After landing: names by the left bar
 
-Parker, looking at the installed War Room's OFF THE CHART list of `shell · CLAUDE` rows: it *"should be based on the left spine + pane title"*.
+Parker, looking at the installed Threshing Floor's OFF THE CHART list of `shell · CLAUDE` rows: it *"should be based on the left spine + pane title"*.
 
-- **Why the rows all said shell.** The War Room named a pane by its header title alone. A new window starts every title at `shell`, because the session host passes no titles on (issue 1117). Two hours after the install, fifteen agents still read `shell`.
-- **What changed.** Every War Room and rail site names a pane as `PROJECT › group › tab · header title` through `warroom::PaneName`, `spine_path` and the pane's `header_title`. A seat's box keeps the tab's name whole and shortens the levels above it. A header that only repeats the tab's name is not said twice.
+- **Why the rows all said shell.** The Threshing Floor named a pane by its header title alone. A new window starts every title at `shell`, because the session host passes no titles on (issue 1117). Two hours after the install, fifteen agents still read `shell`.
+- **What changed.** Every Threshing Floor and rail site names a pane as `PROJECT › group › tab · header title` through `threshing_floor::PaneName`, `spine_path` and the pane's `header_title`. A seat's box keeps the tab's name whole and shortens the levels above it. A header that only repeats the tab's name is not said twice.
 - **A fix found on the way.** The cheap answer's project and a bypass's across-projects check used `tab_index_of`, which only matches a tab's first pane, so a seat in a split had no project. Both use `tab_with_leaf` now.
 - **Proof.** `PaneName`'s test, a source test over the five naming sites, three planned breaks each caught, and a hidden window (`evidence/rig/names/`, shot `war-room-names-by-left-bar.png`).

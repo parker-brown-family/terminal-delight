@@ -139,7 +139,7 @@ fn bench_outcome(rx: mpsc::Receiver<String>) -> String {
         .unwrap_or_else(|_| "err the window did not answer".into())
 }
 
-/// One field of the MCP control-surface policy — the War Room's switches.
+/// One field of the MCP control-surface policy — the Threshing Floor's switches.
 /// The socket refuses every one of them, in either direction, unless the window
 /// was launched to be scripted — see [`PolicyControl`]. A scripted window applies
 /// them like the panel's press: it writes `ws.mcp` and `save()`s, so the change
@@ -167,7 +167,7 @@ impl McpPolicy {
             Self::ExposeAll(true) => "mcp expose all",
             Self::ExposeAll(false) => "mcp expose agents",
         };
-        format!("err {verb}: nothing changed. Global MCP policy is a person's choice in the War Room (the agent counter, top right). An agent can propose wider access with request_access when MCP is on; it cannot change global switches, including disabling other workloads. Operator scripts must launch their own window with TD_MCP_SCRIPTED=1.")
+        format!("err {verb}: nothing changed. Global MCP policy is a person's choice in the Threshing Floor (the agent counter, top right). An agent can propose wider access with request_access when MCP is on; it cannot change global switches, including disabling other workloads. Operator scripts must launch their own window with TD_MCP_SCRIPTED=1.")
     }
 }
 
@@ -1205,7 +1205,7 @@ pub fn start(cx: &mut Context<Workspace>) {
                     Req::DocNote(cmd, reply) => {
                         let _ = reply.send(ws.doc_note(cmd, cx));
                     }
-                    // The same escalation the War Room's switch performs, and the same
+                    // The same escalation the Threshing Floor's switch performs, and the same
                     // persistence: a grant made from the CLI shows in the panel
                     // and survives a restart.
                     // An id the window does not know still gets refused here —
@@ -1778,7 +1778,7 @@ pub(crate) fn descends_from(pid: u32, ancestor: u32) -> bool {
     false
 }
 
-/// The control-socket twin of the War Room's chart — fail-closed.
+/// The control-socket twin of the Threshing Floor's chart — fail-closed.
 ///
 /// The chart gates the MCP read verbs: who may see, read or ask whom. But the
 /// control socket carries a second set of verbs that act *as the person* —
@@ -1847,7 +1847,7 @@ fn person_acting_refusal(cmd: &Cmd) -> String {
         "err {}: refused. This verb acts as the person — it types into a pane, answers \
          its questions, stamps its notes, spawns panes or renames tabs — so a live \
          window refuses it from every caller. An agent reaches another pane only along a \
-         War Room line; a person reaches their own pane by typing in its composer. \
+         Threshing Floor line; a person reaches their own pane by typing in its composer. \
          Operator scripts must launch their own window with TD_MCP_SCRIPTED=1.",
         person_acting_label(cmd)
     )
@@ -3211,7 +3211,7 @@ mod tests {
             assert!(reply.starts_with("err"), "{verb}: {reply}");
             for word in [
                 "nothing changed",
-                "War Room",
+                "Threshing Floor",
                 "request_access",
                 "TD_MCP_SCRIPTED=1",
             ] {

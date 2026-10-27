@@ -100,7 +100,7 @@ pub struct Parts {
     pub access_ask_expose_shells: &'static str,
     /// An agent asks to turn on the tool-call event stream.
     pub access_ask_events_on: &'static str,
-    /// Rail: an agent asks for a bypass line to {pane} in the War Room.
+    /// Rail: an agent asks for a bypass line to {pane} in the Threshing Floor.
     pub access_ask_ask_line: &'static str,
     /// Rail: the word after a bypass's prompt count picker.
     pub access_bypass_prompts: &'static str,

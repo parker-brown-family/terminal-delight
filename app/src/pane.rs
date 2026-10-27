@@ -2915,15 +2915,15 @@ pub struct TerminalView {
     /// (agents may watch and ask, never write or type into its bench) or
     /// off-limits (no agent reads it or writes to it through MCP, except the
     /// one running inside it acting on its own pane — see
-    /// `warroom::may_write` — and the control socket's bench verbs never pick
+    /// `threshing_floor::may_write` — and the control socket's bench verbs never pick
     /// it). Set and cleared ONLY by a person: the terminal's right-click menu,
     /// or a Yes on the rail to an agent's `request_access` — no control-socket
     /// or MCP verb reaches it, because both answer agents, and a lock an agent
     /// can lift is decoration. Persisted per leaf in the state file.
-    pub agent_access: crate::warroom::AgentAccess,
-    /// This pane's seat in the War Room, once a person seats it. Saved with
-    /// the leaf so it outlives the pane's number (see `warroom::SeatId`).
-    pub seat: Option<crate::warroom::SeatId>,
+    pub agent_access: crate::threshing_floor::AgentAccess,
+    /// This pane's seat in the Threshing Floor, once a person seats it. Saved with
+    /// the leaf so it outlives the pane's number (see `threshing_floor::SeatId`).
+    pub seat: Option<crate::threshing_floor::SeatId>,
     /// Whether this pane is in the tab being shown, written by the workspace
     /// on every draw (`Workspace::render`). An atomic so the workspace can set
     /// it while only reading the pane, and so it is never a frame stale.
@@ -4720,7 +4720,7 @@ impl TerminalView {
     /// bench input held while it did not.
     pub(crate) fn set_agent_access(
         &mut self,
-        access: crate::warroom::AgentAccess,
+        access: crate::threshing_floor::AgentAccess,
         cx: &mut Context<Self>,
     ) {
         if self.agent_access == access {
@@ -4734,11 +4734,11 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Seat this pane in the War Room, or take it off. Called from the War
+    /// Seat this pane in the Threshing Floor, or take it off. Called from the War
     /// Room panel only — a person's click — and saved with the leaf.
     pub(crate) fn set_seat(
         &mut self,
-        seat: Option<crate::warroom::SeatId>,
+        seat: Option<crate::threshing_floor::SeatId>,
         cx: &mut Context<Self>,
     ) {
         if self.seat != seat {
@@ -4747,9 +4747,9 @@ impl TerminalView {
         }
     }
 
-    /// This pane as the War Room's rules see it.
-    pub(crate) fn party(&self) -> crate::warroom::Party {
-        crate::warroom::Party {
+    /// This pane as the Threshing Floor's rules see it.
+    pub(crate) fn party(&self) -> crate::threshing_floor::Party {
+        crate::threshing_floor::Party {
             seat: self.seat,
             is_agent: self.mode.is_agent(),
             access: self.agent_access,
@@ -4760,9 +4760,9 @@ impl TerminalView {
     /// it: closing makes the pane off-limits, opening makes it fully open.
     pub(crate) fn set_off_limits(&mut self, on: bool, cx: &mut Context<Self>) {
         let access = if on {
-            crate::warroom::AgentAccess::OffLimits
+            crate::threshing_floor::AgentAccess::OffLimits
         } else {
-            crate::warroom::AgentAccess::Open
+            crate::threshing_floor::AgentAccess::Open
         };
         self.set_agent_access(access, cx);
     }
@@ -5210,7 +5210,7 @@ impl TerminalView {
             pane_id,
             guard,
             superseded: false,
-            agent_access: crate::warroom::AgentAccess::Open,
+            agent_access: crate::threshing_floor::AgentAccess::Open,
             seat: None,
             staged: restore.clone(),
             title: DEFAULT_TITLE.into(),
@@ -6993,7 +6993,7 @@ impl TerminalView {
 
     /// The title on this pane's own header: the name a person gave it, else,
     /// on the Document face, the file's name (the shell's own title describes
-    /// a terminal that is not on screen), else the OSC title. The War Room
+    /// a terminal that is not on screen), else the OSC title. The Threshing Floor
     /// names a pane with this too, so the two cannot disagree.
     pub fn header_title(&self) -> String {
         let document = (self.bench.face() == crate::workbench::Face::Document)
@@ -10737,7 +10737,7 @@ impl Render for TerminalView {
                 // may watch and ask, never write or type into the bench), and
                 // off-limits. Picking one is a person's choice of the position.
                 .children({
-                    use crate::warroom::AgentAccess;
+                    use crate::threshing_floor::AgentAccess;
                     let parts = crate::lang::current().strings().parts;
                     [
                         (
@@ -12083,11 +12083,11 @@ impl Render for TerminalView {
                     .children({
                         let parts = crate::lang::current().strings().parts;
                         match self.agent_access {
-                            crate::warroom::AgentAccess::Open => None,
-                            crate::warroom::AgentAccess::ReadOnly => {
+                            crate::threshing_floor::AgentAccess::Open => None,
+                            crate::threshing_floor::AgentAccess::ReadOnly => {
                                 Some(parts.pane_read_only_badge)
                             }
-                            crate::warroom::AgentAccess::OffLimits => {
+                            crate::threshing_floor::AgentAccess::OffLimits => {
                                 Some(parts.pane_off_limits_badge)
                             }
                         }

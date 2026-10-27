@@ -1,8 +1,8 @@
-# Product: the War Room, first step
+# Product: the Threshing Floor, first step
 
 Status: **APPROVED 2026-10-22** — eight concurs on `reports/2026-10-22-the-war-room.html`, with two amendments:
 
-- **The door is the existing agent counter**, top right, not a new glyph in the bottom-right tray. Parker: *"we will NOT put this glyph in teh bottom tray - the other agent agreed to put their artifacts glyph down there. This will USE THE EXXXXISTING agent wall rail (don't change look - just change where it goes) -- the agent wal will be an easter egg now... stil runs and is accessible (for now) but hidden with its hotkey."* The counter keeps its look (robot glyph, then working, blocked, error, done, idle and unknown cells); its click opens the War Room. The agent wall stays reachable by its hotkey only. The artifact rail gets a new scroll glyph in the bottom-right tray (Parker to that pane, 19:07).
+- **The door is the existing agent counter**, top right, not a new glyph in the bottom-right tray. Parker: *"we will NOT put this glyph in teh bottom tray - the other agent agreed to put their artifacts glyph down there. This will USE THE EXXXXISTING agent wall rail (don't change look - just change where it goes) -- the agent wal will be an easter egg now... stil runs and is accessible (for now) but hidden with its hotkey."* The counter keeps its look (robot glyph, then working, blocked, error, done, idle and unknown cells); its click opens the Threshing Floor. The agent wall stays reachable by its hotkey only. The artifact rail gets a new scroll glyph in the bottom-right tray (Parker to that pane, 19:07).
 - **Rail cards are coloured by risk.** On the two new cards: *"COlour coding needs to distinguish the severity or seriousness or risk of the ask."* The colour says how serious the ask is, not which kind it is.
 
 ## Problem
@@ -25,7 +25,7 @@ Also waiting, unsolved: a long-lived coordinator's own conversation grows for da
 
 ## Start small: this feature
 
-1. **The War Room**, opened from the existing agent counter at the top right (amended; first drawn as a new glyph in the bottom-right row). Seats are agents you placed; lines are what you drew between them.
+1. **The Threshing Floor**, opened from the existing agent counter at the top right (amended; first drawn as a new glyph in the bottom-right row). Seats are agents you placed; lines are what you drew between them.
 2. **Observability.** Each seat shows its state (working, needs you, done, idle, or unreadable), its program and model, how much it is carrying, and its latest summary for you. The size it carries is also what one question to a copy of it would read.
 3. **Permission.** You place seats, draw lines, and set how far each line reaches: see, read or ask. Off-limits and read-only panes cap every line into them. Agents may ask you for a bypass line on the rail; it grants three prompts by default.
 4. **Asks, cheapest first.** An agent's question is answered first from what can already be seen: the other agent's latest summary, its note, its recent tool calls and its screen. A read-only copy of the other agent starts only when the asker says that was not enough. A copy that would read more than a limit waits for your press.
@@ -37,7 +37,7 @@ Also waiting, unsolved: a long-lived coordinator's own conversation grows for da
 
 ## Announcement
 
-Terminal Delight has a War Room. Open it from the corner of the window and you see every agent you have placed: who it answers to, what it is doing right now, which model it runs and how much it is carrying. Draw a line from one agent to another to let it watch or ask, and nothing passes between agents without one. When an agent asks another a question, Terminal Delight first answers from what it can already see, and only if that is not enough does it start a read-only copy of the other agent, telling you the price first if it is large. The agent being asked is never interrupted, and its conversation never changes.
+Terminal Delight has a Threshing Floor. Open it from the corner of the window and you see every agent you have placed: who it answers to, what it is doing right now, which model it runs and how much it is carrying. Draw a line from one agent to another to let it watch or ask, and nothing passes between agents without one. When an agent asks another a question, Terminal Delight first answers from what it can already see, and only if that is not enough does it start a read-only copy of the other agent, telling you the price first if it is large. The agent being asked is never interrupted, and its conversation never changes.
 
 ## Screens
 

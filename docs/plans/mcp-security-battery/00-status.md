@@ -2,7 +2,7 @@
 
 Difficulty: 7/10. Permission can change between admission, execution and delivery; a stale result can disclose another organisation's work without a visible failure.
 
-Parker authorised autonomous overnight testing, fixes and durable automated evidence on 2026-10-25. This continues the War Room work on `dev/0.5.0`, from `cba36a6f8ad94bc9617888ec6d4635fc237bfbe7`. The four design gates below are recorded before implementation; his overnight authorisation covers proceeding without interactive approvals.
+Parker authorised autonomous overnight testing, fixes and durable automated evidence on 2026-10-25. This continues the Threshing Floor work on `dev/0.5.0`, from `cba36a6f8ad94bc9617888ec6d4635fc237bfbe7`. The four design gates below are recorded before implementation; his overnight authorisation covers proceeding without interactive approvals.
 
 ## Progress
 
