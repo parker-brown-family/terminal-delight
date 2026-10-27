@@ -17686,6 +17686,13 @@ impl Workspace {
             .child(div().flex().flex_col().gap_0p5().child(track).child(ticks))
     }
 
+    fn open_agents(&mut self, cx: &mut Context<Self>) {
+        self.more_menu = false;
+        self.agents_prefs = agentcfg::load();
+        self.agents_menu = true;
+        cx.notify();
+    }
+
     /// CONFIG › Agents: every agent setting in one place. The new ones — rest,
     /// sleep and their thresholds — live here; the ones another page already
     /// owns are drawn by that page's own function (launch defaults, the MCP
@@ -17802,6 +17809,7 @@ impl Workspace {
         let local = launcher::LocalAdapter::config_path();
         let panel = div()
             .id("agents-panel")
+            .debug_selector(|| "agents-panel".into())
             .w(px(520.))
             .max_h(px(self.tray_card_h()))
             .overflow_x_hidden()
@@ -30311,7 +30319,7 @@ impl Render for Workspace {
         // them hidden and CONFIG takes the corner — the `…` menu a narrow
         // window already folds its glyphs into, named, and opened by choice.
         let ui_on = |k: uiconfig::Key| uiconfig::shown(cx, k);
-        let ui_glyph: [bool; 7] = [
+        let ui_glyph: [bool; 8] = [
             ui_on(uiconfig::Key::Surfaces),
             ui_on(uiconfig::Key::Sliders),
             ui_on(uiconfig::Key::Graveyard),
@@ -30319,6 +30327,7 @@ impl Render for Workspace {
             ui_on(uiconfig::Key::BugReport),
             ui_on(uiconfig::Key::Plugins),
             ui_on(uiconfig::Key::Artifacts),
+            ui_on(uiconfig::Key::Agents),
         ];
         let ui_counts = ui_on(uiconfig::Key::Counts);
         let ui_scale = ui_on(uiconfig::Key::Scale);
@@ -30352,6 +30361,19 @@ impl Render for Workspace {
                     cx.stop_propagation();
                     ws.open_osd(MenuScope::Outer, None);
                     cx.notify();
+                }),
+            );
+        let ic_agents = Self::hicon_s(&sk, self.agents_menu, scale)
+            .id("toolbar-agents")
+            .debug_selector(|| "toolbar-agents".into())
+            .text_size(sk.text_px(CHROME_GLYPH * scale))
+            .line_height(px(CHROME_GLYPH * scale))
+            .child("\u{1f916}")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.open_agents(cx);
                 }),
             );
         // The agent wall has no glyph on the chrome any more. Its door is the
@@ -30541,6 +30563,7 @@ impl Render for Workspace {
                     })
                     .when(ui_glyph[0], |d| d.child(ic_theme))
                     .when(ui_glyph[1], |d| d.child(ic_osd))
+                    .when(ui_glyph[7], |d| d.child(ic_agents))
                     .when(ui_glyph[2], |d| d.child(ic_dead))
                     .when(ui_glyph[3], |d| d.child(ic_notif))
                     .when(ui_glyph[4], |d| d.child(ic_bug))
@@ -31695,12 +31718,13 @@ impl Render for Workspace {
                         .child(switch(t.ui.ui_close, &[K::PaneClose], "ui-p-close", cx))
                         .child(switch(t.ui.ui_notes, &[K::PaneNotes], "ui-p-notes", cx))
                 } else {
-                    // The seven corner glyphs: as a group, or one at a time.
+                    // The corner glyphs: as a group, or one at a time.
                     let mut chips = div().flex().flex_row().flex_wrap().gap_1().pb_1();
                     for (glyph, key, id) in [
                         ("\u{1f4dc}", K::Artifacts, "ui-g-artifacts"),
                         ("\u{1f3a8}", K::Surfaces, "ui-g-surfaces"),
                         ("\u{1f4ca}", K::Sliders, "ui-g-sliders"),
+                        ("\u{1f916}", K::Agents, "ui-g-agents"),
                         ("\u{1faa6}", K::Graveyard, "ui-g-graveyard"),
                         ("\u{1f514}", K::Notifications, "ui-g-notifications"),
                         ("\u{1f41e}", K::BugReport, "ui-g-bug"),
@@ -31710,6 +31734,7 @@ impl Render for Workspace {
                         chips = chips.child(
                             sk.chip(on)
                                 .id(id)
+                                .debug_selector(move || id.into())
                                 .cursor_pointer()
                                 .when(!on, |d| d.opacity(0.35))
                                 .child(glyph)
@@ -35034,16 +35059,15 @@ impl Render for Workspace {
                     ),
                 )
                 .child(
-                    entry("\u{1f916}", s.ui.cfg_agents, "more-agents").on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.more_menu = false;
-                            ws.agents_prefs = agentcfg::load();
-                            ws.agents_menu = true;
-                            cx.notify();
-                        }),
-                    ),
+                    entry("\u{1f916}", s.ui.cfg_agents, "more-agents")
+                        .debug_selector(|| "more-agents".into())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.open_agents(cx);
+                            }),
+                        ),
                 )
                 .child(
                     entry("\u{1f41e}", s.report_bug, "more-bug")
@@ -37047,6 +37071,96 @@ mod tests {
             ws.read_with(cx, |ws, _| ws.war_room),
             "click still opens the War Room"
         );
+    }
+
+    #[gpui::test]
+    fn agents_toolbar_toggle_keeps_both_settings_doors_and_the_counter(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(1200.), px(1000.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let stop = ws.read_with(cx, |ws, cx| ws.every_view()[0].read(cx).fixture_shutdown());
+        cx.on_quit(stop);
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+        };
+        let click = |cx: &mut gpui::VisualTestContext, selector: &'static str| {
+            let bounds = cx.debug_bounds(selector).expect(selector);
+            cx.simulate_mouse_down(
+                bounds.center(),
+                MouseButton::Left,
+                gpui::Modifiers::default(),
+            );
+            cx.simulate_mouse_up(
+                bounds.center(),
+                MouseButton::Left,
+                gpui::Modifiers::default(),
+            );
+        };
+        ws.update(cx, |_, cx| {
+            uiconfig::flip(cx, uiconfig::Key::Agents, true);
+            uiconfig::flip(cx, uiconfig::Key::AgentCounter, true);
+        });
+        draw(cx);
+        click(cx, "toolbar-agents");
+        draw(cx);
+        assert!(cx.debug_bounds("agents-panel").is_some());
+
+        ws.update(cx, |ws, cx| {
+            ws.agents_menu = false;
+            ws.theme_menu = Some(MenuScope::Outer);
+            ws.ui_cfg_panes = false;
+            cx.notify();
+        });
+        draw(cx);
+        click(cx, "ui-g-agents");
+        draw(cx);
+        ws.read_with(cx, |_, cx| {
+            assert!(!uiconfig::shown(cx, uiconfig::Key::Agents));
+            assert!(uiconfig::shown(cx, uiconfig::Key::AgentCounter));
+            assert!(uiconfig::config_in_corner(cx));
+            let wire = toml::to_string(&uiconfig::choice(cx)).unwrap();
+            let restored: uiconfig::UiChoice = toml::from_str(&wire).unwrap();
+            assert_eq!(restored.flipped(uiconfig::Key::Agents), Some(false));
+        });
+        assert!(cx.debug_bounds("toolbar-agents").is_none());
+        assert!(cx.debug_bounds("agent-rollup").is_some());
+        click(cx, "ui-g-agents");
+        draw(cx);
+        assert!(cx.debug_bounds("toolbar-agents").is_some());
+
+        ws.update(cx, |ws, cx| {
+            ws.theme_menu = None;
+            ws.flip_ui(&[uiconfig::Key::Agents], false, cx);
+            ws.more_menu = true;
+            cx.notify();
+        });
+        draw(cx);
+        click(cx, "more-agents");
+        draw(cx);
+        assert!(cx.debug_bounds("agents-panel").is_some());
     }
 
     /// Parker, 2026-10-25, wearing Chalk under Tactical: he picked Hacker and

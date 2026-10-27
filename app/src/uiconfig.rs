@@ -106,6 +106,7 @@ ui_keys! {
     Artifacts      => Outer, "artifacts";
     Surfaces       => Outer, "surfaces";
     Sliders        => Outer, "sliders";
+    Agents         => Outer, "agents";
     Graveyard      => Outer, "graveyard";
     Notifications  => Outer, "notifications";
     BugReport      => Outer, "bug_report";
@@ -123,12 +124,13 @@ ui_keys! {
 }
 
 impl Key {
-    /// The seven glyphs of the bottom-right corner, in the order they sit.
+    /// The glyphs of the bottom-right corner, in the order they sit.
     /// Hide any of them and CONFIG takes the corner.
     pub const MENU_GLYPHS: &'static [Key] = &[
         Key::Artifacts,
         Key::Surfaces,
         Key::Sliders,
+        Key::Agents,
         Key::Graveyard,
         Key::Notifications,
         Key::BugReport,
@@ -348,7 +350,7 @@ pub fn shown(cx: &App, key: Key) -> bool {
     decide(&st.choice, set, key)
 }
 
-/// Any of the seven corner glyphs hidden — CONFIG takes the corner.
+/// Any corner glyph hidden — CONFIG takes the corner.
 pub fn config_in_corner(cx: &App) -> bool {
     Key::MENU_GLYPHS.iter().any(|k| !shown(cx, *k))
         || !shown(cx, Key::Counts)
@@ -659,11 +661,14 @@ mod tests {
         };
         c.flip(Key::PaneClose, true);
         c.flip(Key::Counts, false);
+        c.flip(Key::Agents, false);
         let wire = toml::to_string(&c).unwrap();
         let back: UiChoice = toml::from_str(&wire).unwrap();
         assert_eq!(back, c, "{wire}");
         assert!(
-            wire.contains("close = true") && wire.contains("counts = false"),
+            wire.contains("close = true")
+                && wire.contains("counts = false")
+                && wire.contains("agents = false"),
             "{wire}"
         );
     }

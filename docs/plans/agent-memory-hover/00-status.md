@@ -24,3 +24,13 @@ The measurement repair closes the [unavailable-memory accounting issue](https://
 
 **Turned out to be:** 3/10 held. The existing sampler and hover builder supplied the mechanism; the main work was keeping unavailable readings and partial comparison coverage intact.
 
+## Agents Toolbar Shortcut
+
+**Difficulty: 2/10** — add the missing Agents settings shortcut through the existing UI-choice mechanism. No gates. Parker identified its omission from MENU GLYPHS on October 27.
+
+The 🤖 toggle controls a direct Agents settings button in the bottom toolbar. It is independent of the top-right counter. Standard and All show it; Clean folds it into CONFIG. The CONFIG entry remains available either way, and both buttons use the same settings-opening function. Hand choices persist as `ui.outer.agents`.
+
+[Native capture](toolbar-native.png): an isolated 1200×900 logical-pixel window using Ops and Hacker, showing the new MENU GLYPHS chip and matching toolbar shortcut. The private capture window explicitly opted into scripted operator control; the daily window's policy was unchanged. The GPUI interaction test clicks the real chip, hides and restores the shortcut, checks serialization and counter independence, and opens settings through both doors.
+
+**Turned out to be:** 2/10 held; the existing UI set, persistence and menu patterns supplied the change. The pull request records final checks and local activation.
+

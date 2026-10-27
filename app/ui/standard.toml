@@ -17,6 +17,7 @@ scale           = false
 artifacts       = true
 surfaces        = true
 sliders         = true
+agents          = true
 graveyard       = false
 notifications   = false
 bug_report      = false
