@@ -1,7 +1,7 @@
 # Status: idle agents stop costing memory
 
 **Difficulty: 8/10** — new authority over live agent processes (freeze, end, resume) in the host that owns every pane, where a wrong call silently loses someone's agent mid-work and the host cannot be restarted to undo it → four gates.
-**Turned out to be:** _(filled in at the end)_
+**Turned out to be:** 8/10 held. Gate 1 earned its keep (four amendments, none of them rubber stamps); Gates 2–4 were written as the record under "do all the work". What was misjudged was the kernel, not the product: memory charges stay where pages were first touched, which turned "push memory out" into "freeze, and be born in the group".
 
 - Gate 1 — Product: APPROVED 2026-10-26 with four amendments (CONFIG › Agents page, sleep after 2 h of rest on a snapping slider, in 0.5.0, two new states in the agent counter) — `01-product.md`
 - Authorization 2026-10-26: "do all the work" — Gates 2–4 are written as the record and NOT stopped at; build, test, install the rebuilt current build, coordinated with the MCP work
@@ -14,7 +14,7 @@
 - [x] Slice 2 — rest: gate in the socket, touch/output clocks, freeze + paced reclaim, RESTING chip, hud state, counter cell, orphan sweep
 - [x] Slice 3 — sleep: wake file, SIGTERM, ASLEEP card, wake by key into a fresh pane, side-file store (not the layout leaf: 52 sites), restore keeps it asleep, dead-agent list
 - [x] Slice 4 — CONFIG › Agents: 🤖 menu entry, rest/sleep switches and snapping sliders, launch defaults, MCP switches, agent colours, notices link, local-agent path; `agents.toml`
-- [ ] Slice 5 — gates (fmt ✓, clippy default ✓, full suite ✓ after two guard fixes, 8 mutations all red ✓), live off-screen rig, core-alacritty clippy/tests, PR + CI, install
+- [x] Slice 5 — gates (fmt, clippy both cores, 2,808 tests, 8 mutations all red), two off-screen rig runs, PR 1154 green in CI (Rust checks 13m40s) and merged to dev/0.5.0 as 604e7b1f, installed 2026-10-26 17:50 as `td-98ec53fe-0.5-idle-agents` (tree identical to 604e7b1f) with `live-window-swap-05`: host 2108452 kept, 32 host panes, 0 closed, split restored; within 20 s all 32 panes had their own `td-pane-1-*` scope
 
 ## Notes for a fresh session
 

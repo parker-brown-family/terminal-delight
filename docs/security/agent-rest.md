@@ -42,3 +42,11 @@ The signal goes to the agent pid alone, never to the shell, never to a group. If
 A key or a click in an asleep pane opens a fresh pane in the same place through the host's ordinary `SpawnPane` with recipe `bash '<wake file>'` — the same spawn-time path a session restore uses (site #8 in `terminal-input.md`). The window never types into the shell that held the sleeper; that shell is hung up. A wake is refused while any live Claude process reports the same conversation open, so a conversation never has two writers.
 
 The wake file, `~/.local/state/terminal-delight/wake/<session>.sh` (mode 0600), is the agent's own argv, shell-quoted, after `exec`.
+
+## When a window quits, or dies
+
+A window that quits thaws every frozen pane of its session before it goes (`panegroup::thaw_session`), so the next window — this build, or an older one that knows nothing of rest — finds every pane awake; a window with the feature rests them again after ten minutes. A window that crashes cannot do that. A window with the feature adopts what it finds frozen and thaws it on the first key; if an older build is started instead, thaw by hand:
+
+```bash
+for f in /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/app.slice/td-pane-*/cgroup.freeze; do echo 0 > "$f"; done
+```
