@@ -137,14 +137,19 @@ pub fn run(mut job: Job) -> Outcome {
     if let Some(r) = &report {
         job.look.said_idle_for = r.idle_for(now_ms());
     }
-    job.look.foreign = agent_pid.map(|agent| {
+    let census = agent_pid.map(|agent| {
         let listening = panegroup::listening_inodes();
         let procs: Vec<_> = panegroup::procs(&group)
             .into_iter()
             .filter_map(|pid| panegroup::proc_info(pid, &listening))
             .collect();
-        agentrest::foreign(&procs, job.shell, agent)
+        (
+            agentrest::foreign(&procs, job.shell, agent),
+            agentrest::helpers(&procs, job.shell, agent) > 0,
+        )
     });
+    job.look.owns_helpers = census.as_ref().map(|(_, owns)| *owns);
+    job.look.foreign = census.map(|(foreign, _)| foreign);
     job.look.enabled = job.rest_on;
 
     match job.stage {
@@ -170,21 +175,33 @@ pub fn run(mut job: Job) -> Outcome {
                 out.refusal = Some(Refusal::Off);
                 return out;
             }
-            let (Some(pid), Some(session)) = (
-                agent_pid,
-                report.as_ref().and_then(|r| r.session_id.clone()),
-            ) else {
+            let home = crate::session::home_dir();
+            // The conversation the agent is in, by its own word: Claude's
+            // registry, or the rollout a Codex holds open.
+            let session = match job.agent {
+                Some(Agent::Codex) => {
+                    agent_pid.and_then(|pid| crate::session::codex_held_session(pid as u32, &home))
+                }
+                _ => report.as_ref().and_then(|r| r.session_id.clone()),
+            };
+            let (Some(pid), Some(session)) = (agent_pid, session) else {
                 out.refusal = Some(Refusal::NoConversation);
                 return out;
             };
             let argv = read_argv(pid);
-            let wake = agentrest::wake_argv(&argv, &session);
+            let wake = match job.agent {
+                Some(Agent::Codex) => agentrest::codex_wake_argv(&argv, &session),
+                _ => agentrest::wake_argv(&argv, &session),
+            };
             if let Err(r) = agentrest::may_sleep(&job.look, rested, &job.thresholds, &wake) {
                 out.refusal = Some(r);
                 return out;
             }
+            // A Codex's held rollout is its saved conversation; a Claude may
+            // report an id it has not written down yet.
             let cwd = std::fs::read_link(format!("/proc/{}/cwd", job.shell));
-            if !cwd.is_ok_and(|cwd| conversation_saved(&crate::session::home_dir(), &cwd, &session))
+            if job.agent != Some(Agent::Codex)
+                && !cwd.is_ok_and(|cwd| conversation_saved(&home, &cwd, &session))
             {
                 out.refusal = Some(Refusal::NoConversation);
                 return out;
@@ -237,7 +254,7 @@ pub fn wake_script(argv: &[String]) -> String {
     let line: Vec<String> = argv.iter().map(|w| agentrest::shell_quote(w)).collect();
     format!(
         "# Written by Terminal Delight when this agent went to sleep.\n\
-         # Its own launch line, with --resume naming its conversation.\n\
+         # Its own launch line, naming the conversation it resumes.\n\
          #\n\
          # First, up to three seconds for the window to give this pane its own\n\
          # memory group, so the agent is born in it and every page it touches is\n\
@@ -271,13 +288,14 @@ pub fn conversation_saved(home: &std::path::Path, cwd: &std::path::Path, session
     std::fs::metadata(file).is_ok_and(|m| m.is_file() && m.len() > 0)
 }
 
-/// The model word in a launch line, for the sleep card.
+/// The model word in a launch line, for the sleep card: Claude's `--model`, or
+/// Codex's `--model` / `-m`.
 fn model_of(argv: &[String]) -> Option<String> {
     argv.iter()
         .enumerate()
         .find_map(|(i, w)| match w.split_once('=') {
             Some(("--model", v)) => Some(v.to_owned()),
-            _ if w == "--model" => argv.get(i + 1).cloned(),
+            _ if w == "--model" || w == "-m" => argv.get(i + 1).cloned(),
             _ => None,
         })
 }
@@ -334,21 +352,44 @@ fn sleep(
     })
 }
 
-/// A live Claude Code process that has `session` open, by its own registry.
-/// Waking a sleeper while one exists would put two writers on one
-/// conversation — what a probe did to pane 111 on 2026-10-26.
+/// A live process that has conversation `session` open: a Claude Code by its
+/// own registry, or a Codex holding that conversation's rollout. Waking a
+/// sleeper while one exists would put two writers on one conversation — what a
+/// probe did to pane 111 on 2026-10-26.
 pub fn conversation_holder(session: &str) -> Option<i32> {
-    let home = std::env::var_os("HOME")?;
-    let dir = std::path::Path::new(&home).join(".claude/sessions");
-    std::fs::read_dir(dir).ok()?.flatten().find_map(|entry| {
-        let name = entry.file_name();
-        let pid: i32 = name.to_str()?.strip_suffix(".json")?.parse().ok()?;
-        let text = std::fs::read_to_string(entry.path()).ok()?;
-        let report = agentrest::parse_self_report(&text, pid)?;
-        (report.session_id.as_deref() == Some(session)
-            && std::path::Path::new(&format!("/proc/{pid}")).exists())
-        .then_some(pid)
-    })
+    let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
+    let dir = home.join(".claude/sessions");
+    let claude = std::fs::read_dir(dir).ok().and_then(|entries| {
+        entries.flatten().find_map(|entry| {
+            let name = entry.file_name();
+            let pid: i32 = name.to_str()?.strip_suffix(".json")?.parse().ok()?;
+            let text = std::fs::read_to_string(entry.path()).ok()?;
+            let report = agentrest::parse_self_report(&text, pid)?;
+            (report.session_id.as_deref() == Some(session)
+                && std::path::Path::new(&format!("/proc/{pid}")).exists())
+            .then_some(pid)
+        })
+    });
+    claude.or_else(|| codex_holder(&home, session))
+}
+
+/// A live process holding Codex conversation `session`'s rollout open. Read
+/// from `/proc`, once, when a key wakes a pane: a scan, but not on any tick.
+fn codex_holder(home: &std::path::Path, session: &str) -> Option<i32> {
+    std::fs::read_dir("/proc")
+        .ok()?
+        .flatten()
+        .find_map(|entry| {
+            let pid: i32 = entry.file_name().to_str()?.parse().ok()?;
+            let fds = std::fs::read_dir(entry.path().join("fd")).ok()?;
+            fds.flatten()
+                .any(|fd| {
+                    std::fs::read_link(fd.path()).is_ok_and(|target| {
+                        crate::session::is_codex_rollout_of(&target, home, session)
+                    })
+                })
+                .then_some(pid)
+        })
 }
 
 /// What must outlive a window: which panes are asleep (and how they wake), and
