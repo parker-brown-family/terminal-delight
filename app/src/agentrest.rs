@@ -12,10 +12,12 @@
 //!   process is still there, so nothing is lost; a keystroke shows within a
 //!   fifth of a second (191–212 ms measured after 314 MB went to swap).
 //! - **Sleep** ends the agent with SIGTERM and keeps its conversation; a key in
-//!   the pane brings it back with the same launch line plus `--resume`
-//!   (1.4 s to a prompt for a 20 MB conversation). It loses what lives only in
-//!   the process — background shells, session grants, a self-paced loop — so it
-//!   refuses wherever one of those might exist.
+//!   the pane brings it back with the same launch line plus `--resume` for
+//!   Claude, `resume <id>` for Codex (1.4 s to a prompt for a 20 MB Claude
+//!   conversation). It loses what lives only in the process — background
+//!   shells, session grants, a self-paced loop — so it refuses wherever one of
+//!   those might exist. A Codex sleeps only when it runs its own server: one
+//!   attached to a shared Codex service would free almost nothing.
 //!
 //! This module is the part with no I/O: the thresholds, the reasons to refuse,
 //! the slider's scale, and the launch line a sleeper wakes with. Every input is
@@ -115,6 +117,8 @@ pub struct Proc {
     pub argv: Vec<String>,
     /// Whether it holds a listening TCP socket.
     pub listens: bool,
+    /// Its session id (`/proc/<pid>/stat` field 6), `None` when unreadable.
+    pub session: Option<i32>,
 }
 
 /// Is `argv` one of Claude Code's Bash tool shells? They run as
@@ -123,69 +127,96 @@ fn is_tool_shell(argv: &[String]) -> bool {
     argv.iter().any(|a| a.contains("/.claude/shell-snapshots/"))
 }
 
-/// The processes of a pane's group that rest must not freeze. `shell` is the
-/// pane's shell, `agent` the agent it runs. Helpers are the agent's
-/// descendants that are not tool shells (MCP servers and what they start);
-/// anything else — a tool shell and its children, a job of the shell, any
-/// process holding a listening port — is foreign.
-pub fn foreign(procs: &[Proc], shell: i32, agent: i32) -> Vec<Foreign> {
-    let parent = |pid: i32| procs.iter().find(|p| p.pid == pid).map(|p| p.ppid);
-    let by_pid = |pid: i32| procs.iter().find(|p| p.pid == pid);
+/// Did `p` start a session of its own? An agent's commands do and its helpers
+/// do not. Measured 2026-10-27 on every agent pane in the live window: each MCP
+/// helper, Claude's and Codex's, shared its agent's session and terminal, while
+/// Claude's Bash tool shells and the command behind a Codex "background
+/// terminal" (one Codex keeps running after its turn ends, a direct child of
+/// the Codex window) each led a new session with no terminal. A session that
+/// cannot be read counts as one: unknown is never idle.
+fn leads_own_session(p: &Proc) -> bool {
+    p.session.is_none_or(|s| s == p.pid)
+}
+
+/// Where one process of a pane's group stands for rest.
+enum Kind {
+    /// The pane's shell or its agent: what rest freezes on purpose.
+    Itself,
+    /// One of the agent's helpers, frozen along with it.
+    Helper,
+    Foreign(Foreign),
+}
+
+/// Classify `p`. `shell` is the pane's shell, `agent` the agent it runs.
+/// Helpers are the agent's descendants that are not commands (MCP servers and
+/// what they start). Anything else is foreign: a command the agent ran (a tool
+/// shell, or anything that leads its own session, and their children), a job
+/// of the shell, any process holding a listening port.
+fn kind(procs: &[Proc], shell: i32, agent: i32, p: &Proc) -> Kind {
+    let parent = |pid: i32| procs.iter().find(|q| q.pid == pid).map(|q| q.ppid);
+    let by_pid = |pid: i32| procs.iter().find(|q| q.pid == pid);
     let name = |p: &Proc| {
         p.argv
             .first()
             .map(|a| a.rsplit('/').next().unwrap_or(a).to_owned())
             .unwrap_or_default()
     };
-    let mut out = Vec::new();
-    for p in procs {
-        if p.pid == shell || p.pid == agent {
-            if p.listens && p.pid == shell {
-                out.push(Foreign::Listener {
-                    pid: p.pid,
-                    name: name(p),
-                });
-            }
-            continue;
+    let (pid, name) = (p.pid, name(p));
+    if p.pid == shell || p.pid == agent {
+        if p.listens && p.pid == shell {
+            return Kind::Foreign(Foreign::Listener { pid, name });
         }
-        if p.listens {
-            out.push(Foreign::Listener {
-                pid: p.pid,
-                name: name(p),
-            });
-            continue;
+        return Kind::Itself;
+    }
+    if p.listens {
+        return Kind::Foreign(Foreign::Listener { pid, name });
+    }
+    // Walk up to the agent, the shell, or the edge of the group.
+    let mut cur = p.pid;
+    let mut under_agent = false;
+    let mut a_command = false;
+    for _ in 0..64 {
+        if let Some(q) = by_pid(cur) {
+            a_command |= is_tool_shell(&q.argv) || leads_own_session(q);
         }
-        // Walk up to the agent, the shell, or the edge of the group.
-        let mut cur = p.pid;
-        let mut under_agent = false;
-        let mut in_tool_shell = false;
-        for _ in 0..64 {
-            if let Some(q) = by_pid(cur) {
-                in_tool_shell |= is_tool_shell(&q.argv);
+        match parent(cur) {
+            Some(pp) if pp == agent => {
+                under_agent = true;
+                break;
             }
-            match parent(cur) {
-                Some(pp) if pp == agent => {
-                    under_agent = true;
-                    break;
-                }
-                Some(pp) if pp == shell => break,
-                Some(pp) => cur = pp,
-                None => break,
-            }
-        }
-        if !under_agent {
-            out.push(Foreign::ShellJob {
-                pid: p.pid,
-                name: name(p),
-            });
-        } else if in_tool_shell {
-            out.push(Foreign::Command {
-                pid: p.pid,
-                name: name(p),
-            });
+            Some(pp) if pp == shell => break,
+            Some(pp) => cur = pp,
+            None => break,
         }
     }
-    out
+    if !under_agent {
+        Kind::Foreign(Foreign::ShellJob { pid, name })
+    } else if a_command {
+        Kind::Foreign(Foreign::Command { pid, name })
+    } else {
+        Kind::Helper
+    }
+}
+
+/// The processes of a pane's group that rest must not freeze; see [`kind`].
+pub fn foreign(procs: &[Proc], shell: i32, agent: i32) -> Vec<Foreign> {
+    procs
+        .iter()
+        .filter_map(|p| match kind(procs, shell, agent, p) {
+            Kind::Foreign(f) => Some(f),
+            Kind::Itself | Kind::Helper => None,
+        })
+        .collect()
+}
+
+/// How many helpers the agent has of its own. A Codex window running its own
+/// server has its MCP helpers as children; one attached to a shared Codex
+/// service has none, because the service starts them.
+pub fn helpers(procs: &[Proc], shell: i32, agent: i32) -> usize {
+    procs
+        .iter()
+        .filter(|p| matches!(kind(procs, shell, agent, p), Kind::Helper))
+        .count()
 }
 
 /// Everything rest and sleep decide on, read in one look at a pane.
@@ -209,6 +240,9 @@ pub struct Look {
     pub screen_at_prompt: Option<bool>,
     /// Processes in the pane's group that freezing would catch.
     pub foreign: Option<Vec<Foreign>>,
+    /// Whether the agent has helpers of its own (see [`helpers`]). For Codex
+    /// this says it runs its own server, so ending it frees that server too.
+    pub owns_helpers: Option<bool>,
     /// The group's CPU over the last rest window, as a share of one core.
     pub cpu_share: Option<f64>,
 }
@@ -234,8 +268,9 @@ pub enum Refusal {
     Unknown(&'static str),
     /// Sleep only: not rested long enough yet.
     NotRestedLongEnough,
-    /// Sleep only: Codex keeps its helpers in its own service; sleeping the
-    /// window would save almost nothing.
+    /// Sleep only: this Codex window is attached to a shared Codex service,
+    /// which holds its helpers and its work; ending the window would save
+    /// almost nothing. A Codex running its own server may sleep.
     CodexKeepsItsHelpers,
     /// Sleep only: the agent's conversation id is not known for certain, or
     /// Claude has not saved that conversation, so `--resume` could not open it.
@@ -348,6 +383,9 @@ pub fn may_sleep(
 ) -> Result<(), Refusal> {
     match look.agent {
         Some(Agent::Claude) => {}
+        // Running its own server (its helpers are its children), ending it
+        // frees all of it. Attached to a shared service, nothing comes back.
+        Some(Agent::Codex) if look.owns_helpers == Some(true) => {}
         Some(Agent::Codex) => return Err(Refusal::CodexKeepsItsHelpers),
         None => return Err(Refusal::NotAnAgent),
     }
@@ -790,6 +828,156 @@ pub fn wake_argv(argv: &[String], session: &str) -> Result<Vec<String>, String> 
     Ok(out)
 }
 
+/// codex-cli 0.162.1 options that take a value (`codex --help`, `codex resume
+/// --help`; the two accept the same ones).
+const CODEX_VALUE_FLAGS: &[&str] = &[
+    "-a",
+    "--ask-for-approval",
+    "--add-dir",
+    "-c",
+    "--cd",
+    "-C",
+    "--config",
+    "--disable",
+    "--enable",
+    "--local-provider",
+    "-m",
+    "--model",
+    "-p",
+    "--profile",
+    "--remote",
+    "--remote-auth-token-env",
+    "-s",
+    "--sandbox",
+];
+/// Plain switches.
+const CODEX_SWITCHES: &[&str] = &[
+    "--approve-for-me",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "--dangerously-bypass-hook-trust",
+    "--no-alt-screen",
+    "--no-daemon",
+    "--oss",
+    "--search",
+    "--strict-config",
+];
+/// `resume`'s and `fork`'s own options choosing a conversation; the wake line
+/// names its conversation instead.
+const CODEX_PICKERS: &[&str] = &["--all", "--include-non-interactive", "--last"];
+/// The subcommands that open a conversation in the pane; the wake line
+/// replaces them, and the conversation they named, with `resume <id>`.
+const CODEX_CONVERSATION_COMMANDS: &[&str] = &["fork", "resume"];
+/// Every other subcommand: none of them is an interactive pane to wake.
+const CODEX_OTHER_COMMANDS: &[&str] = &[
+    "a",
+    "agents",
+    "app-server",
+    "apply",
+    "archive",
+    "cloud",
+    "completion",
+    "debug",
+    "delete",
+    "doctor",
+    "e",
+    "exec",
+    "exec-server",
+    "features",
+    "help",
+    "login",
+    "logout",
+    "mcp",
+    "mcp-server",
+    "migrate-rollouts",
+    "plugin",
+    "queue",
+    "remote-control",
+    "review",
+    "sandbox",
+    "unarchive",
+    "update",
+];
+
+/// The launch line a sleeping Codex wakes with: its own argv, every option it
+/// was started with kept word for word, the conversation it named (by
+/// `resume`, `fork`, `--last` or an id) and its opening prompt removed, and
+/// `resume <session>` added.
+///
+/// The opening prompt is dropped where Claude's refuses, because Codex's
+/// `resume` takes none: the prompt is already the first message of the
+/// conversation being resumed, and Terminal Delight's own launcher always
+/// passes one, so refusing would keep every launcher-started Codex awake.
+/// Refused, with the reason, for an option this version does not know, a
+/// subcommand that is not an interactive pane, initial images (they belong to
+/// that first message), and `--worktree` (it would open a new checkout).
+pub fn codex_wake_argv(argv: &[String], session: &str) -> Result<Vec<String>, String> {
+    if !crate::session::safe_resume_id(session) {
+        return Err("conversation id is not a session id".into());
+    }
+    let (program, rest) = argv.split_first().ok_or("no program")?;
+    let mut out = vec![program.clone()];
+    let is_option = |w: &str| w.starts_with('-') && w.len() > 1;
+    let mut command_seen = false;
+    let mut prompt_seen = false;
+    let mut named = 0;
+    let mut i = 0;
+    while i < rest.len() {
+        let word = rest[i].as_str();
+        let (flag, inline) = match word.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f, Some(v)),
+            _ => (word, None),
+        };
+        if !is_option(flag) {
+            if command_seen {
+                // `resume`'s conversation, then its prompt: both replaced.
+                named += 1;
+                if named > 2 {
+                    return Err(format!("an unexpected word after the command: {word:.40}"));
+                }
+            } else if prompt_seen {
+                return Err(format!("an unexpected word after the prompt: {word:.40}"));
+            } else if CODEX_CONVERSATION_COMMANDS.contains(&word) {
+                command_seen = true;
+            } else if CODEX_OTHER_COMMANDS.contains(&word) {
+                return Err(format!("codex {word} is not an interactive pane"));
+            } else {
+                prompt_seen = true;
+            }
+            i += 1;
+            continue;
+        }
+        match flag {
+            "-h" | "--help" | "-V" | "--version" => {
+                return Err(format!("{flag} is not an interactive pane"));
+            }
+            "-i" | "--image" => {
+                return Err("an initial image would be attached again".into());
+            }
+            "--worktree" => return Err("--worktree would open a new checkout".into()),
+            _ => {}
+        }
+        if CODEX_PICKERS.contains(&flag) {
+            i += 1;
+        } else if CODEX_VALUE_FLAGS.contains(&flag) {
+            if inline.is_some() {
+                out.push(word.to_owned());
+                i += 1;
+            } else {
+                let value = rest.get(i + 1).ok_or(format!("{flag} has no value"))?;
+                out.extend([word.to_owned(), value.clone()]);
+                i += 2;
+            }
+        } else if CODEX_SWITCHES.contains(&flag) {
+            out.push(word.to_owned());
+            i += 1;
+        } else {
+            return Err(format!("{flag} is an option this build does not know"));
+        }
+    }
+    out.extend(["resume".to_owned(), session.to_owned()]);
+    Ok(out)
+}
+
 /// One word, quoted for a POSIX shell.
 pub fn shell_quote(word: &str) -> String {
     if !word.is_empty()
@@ -1032,6 +1220,7 @@ mod tests {
         words.iter().map(|w| w.to_string()).collect()
     }
     const SID: &str = "80915041-fe1f-413a-9f48-95217cb9ec6b";
+    const CODEX_SID: &str = "01a17e9d-7d73-7160-a209-cfd369b05db8";
 
     fn idle_claude() -> Look {
         let long = Some(Duration::from_secs(3600));
@@ -1166,28 +1355,37 @@ mod tests {
 
     #[test]
     fn helpers_are_allowed_and_commands_jobs_and_listeners_are_not() {
+        // Everything in the pane shell's session (1) unless it started its own.
         let p = |pid, ppid, argv: &[&str], listens| Proc {
             pid,
             ppid,
             argv: s(argv),
             listens,
+            session: Some(1),
         };
         let procs = vec![
             p(1, 0, &["bash"], false),
             p(2, 1, &["/home/parker/.local/bin/claude"], false),
             p(3, 2, &["/home/parker/.local/bin/lean-ctx"], false),
             p(4, 3, &["node", "helper.js"], false),
-            p(
-                5,
-                2,
-                &[
-                    "/usr/bin/bash",
-                    "-c",
-                    "source /home/parker/.claude/shell-snapshots/x.sh && cargo build",
-                ],
-                false,
-            ),
-            p(6, 5, &["cargo", "build"], false),
+            // Claude's Bash tool shell leads a session of its own.
+            Proc {
+                session: Some(5),
+                ..p(
+                    5,
+                    2,
+                    &[
+                        "/usr/bin/bash",
+                        "-c",
+                        "source /home/parker/.claude/shell-snapshots/x.sh && cargo build",
+                    ],
+                    false,
+                )
+            },
+            Proc {
+                session: Some(5),
+                ..p(6, 5, &["cargo", "build"], false)
+            },
             p(7, 1, &["python3", "-m", "http.server"], true),
             p(8, 2, &["terminal-delight", "mcp"], false),
             p(9, 2, &["devserver"], true),
@@ -1234,6 +1432,130 @@ mod tests {
                 name: "sleep".into()
             }]
         );
+        assert_eq!(helpers(&procs, 1, 2), 3, "lean-ctx, its node, and the mcp");
+    }
+
+    /// The process shapes measured on 2026-10-27 under an in-process Codex
+    /// (codex-cli 0.162.1, `daemon_auto_start = false`): seven MCP helpers in
+    /// the pane shell's session, and the `sleep 240` a "background terminal"
+    /// kept running after the turn ended, a direct child of the Codex window
+    /// leading a session of its own with no terminal.
+    fn codex_pane(background: bool) -> Vec<Proc> {
+        let p = |pid, ppid, argv: &[&str], session| Proc {
+            pid,
+            ppid,
+            argv: s(argv),
+            listens: false,
+            session: Some(session),
+        };
+        let mut procs = vec![
+            p(100, 1, &["/usr/bin/bash"], 100),
+            p(
+                101,
+                100,
+                &["/home/parker/.local/share/mise/installs/codex/latest/bin/codex"],
+                100,
+            ),
+            p(
+                102,
+                101,
+                &["/home/parker/.local/bin/terminal-delight", "mcp"],
+                100,
+            ),
+            p(
+                103,
+                101,
+                &["/usr/lib/chatgpt/resources/cua_node/bin/node", "cua-repl"],
+                100,
+            ),
+            p(
+                104,
+                103,
+                &["/usr/lib/chatgpt/resources/cua_node/bin/node_repl"],
+                100,
+            ),
+            p(
+                105,
+                101,
+                &[
+                    "/usr/bin/bun",
+                    "run",
+                    "/home/parker/ai-garrison/src/cli.ts",
+                    "mcp",
+                ],
+                100,
+            ),
+            p(106, 101, &["cdx-mcp"], 100),
+            p(
+                107,
+                101,
+                &["/home/parker/.local/bin/workspace-mcp", "--single-user"],
+                100,
+            ),
+            p(108, 101, &["/home/parker/.local/bin/lean-ctx", "mcp"], 100),
+        ];
+        if background {
+            procs.push(p(110, 101, &["sleep", "240"], 110));
+        }
+        procs
+    }
+
+    #[test]
+    fn a_codex_background_terminal_is_a_command_and_its_mcp_helpers_are_not() {
+        assert_eq!(
+            foreign(&codex_pane(true), 100, 101),
+            vec![Foreign::Command {
+                pid: 110,
+                name: "sleep".into()
+            }]
+        );
+        assert!(foreign(&codex_pane(false), 100, 101).is_empty());
+        assert_eq!(helpers(&codex_pane(true), 100, 101), 7);
+        // A Codex window attached to a shared service has no children: the
+        // service starts its helpers.
+        let attached = codex_pane(false)[..2].to_vec();
+        assert_eq!(helpers(&attached, 100, 101), 0);
+    }
+
+    #[test]
+    fn a_process_whose_session_cannot_be_read_counts_as_a_command() {
+        let mut procs = codex_pane(false);
+        procs[2].session = None;
+        assert_eq!(
+            foreign(&procs, 100, 101),
+            vec![Foreign::Command {
+                pid: 102,
+                name: "terminal-delight".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_codex_sleeps_only_when_it_runs_its_own_server() {
+        let t = Thresholds::default();
+        let rested = Duration::from_secs(7200);
+        let wake = Ok(s(&["codex", "resume", CODEX_SID]));
+        let mut own = idle_claude();
+        own.agent = Some(Agent::Codex);
+        own.said_idle_for = None;
+        own.screen_at_prompt = Some(true);
+        own.owns_helpers = Some(true);
+        assert_eq!(may_sleep(&own, rested, &t, &wake), Ok(()));
+        for attached in [Some(false), None] {
+            let mut l = own.clone();
+            l.owns_helpers = attached;
+            assert_eq!(
+                may_sleep(&l, rested, &t, &wake),
+                Err(Refusal::CodexKeepsItsHelpers)
+            );
+        }
+        // A background terminal still running keeps it awake, as for rest.
+        let mut working = own.clone();
+        working.foreign = Some(foreign(&codex_pane(true), 100, 101));
+        assert!(matches!(
+            may_sleep(&working, rested, &t, &wake),
+            Err(Refusal::Running(Foreign::Command { pid: 110, .. }))
+        ));
     }
 
     #[test]
@@ -1322,6 +1644,84 @@ mod tests {
         assert!(wake_argv(&s(&["claude", "--model"]), SID).is_err());
         assert!(wake_argv(&s(&["claude"]), "not a session").is_err());
         assert!(wake_argv(&[], SID).is_err());
+    }
+
+    #[test]
+    fn a_codex_wakes_with_every_option_and_without_its_opening_prompt() {
+        let codex = "/home/parker/.local/share/mise/installs/codex/latest/bin/codex";
+        // Terminal Delight's launcher, as pane 41 ran it on 2026-10-27.
+        assert_eq!(
+            codex_wake_argv(
+                &s(&[
+                    codex,
+                    "-c",
+                    "model_reasoning_effort=medium",
+                    "You are running inside Terminal Delight, which can render your work",
+                ]),
+                CODEX_SID
+            )
+            .unwrap(),
+            s(&[
+                codex,
+                "-c",
+                "model_reasoning_effort=medium",
+                "resume",
+                CODEX_SID
+            ])
+        );
+        // A resume line, by id or by --last: the conversation is replaced.
+        for line in [
+            &[codex, "resume", "01a164c0-27f1-7dc2-bcd4-f919cdf3e0ba"][..],
+            &[codex, "resume", "--last"][..],
+            &[codex, "fork", "--last"][..],
+        ] {
+            assert_eq!(
+                codex_wake_argv(&s(line), CODEX_SID).unwrap(),
+                s(&[codex, "resume", CODEX_SID])
+            );
+        }
+        // Options after the command are kept, before the new `resume`.
+        assert_eq!(
+            codex_wake_argv(
+                &s(&[
+                    "codex",
+                    "resume",
+                    "-m",
+                    "gpt-6-astra",
+                    "--search",
+                    "--config=model_reasoning_effort=xhigh",
+                    "01a164c0-27f1-7dc2-bcd4-f919cdf3e0ba",
+                    "carry on",
+                ]),
+                CODEX_SID
+            )
+            .unwrap(),
+            s(&[
+                "codex",
+                "-m",
+                "gpt-6-astra",
+                "--search",
+                "--config=model_reasoning_effort=xhigh",
+                "resume",
+                CODEX_SID,
+            ])
+        );
+    }
+
+    #[test]
+    fn a_codex_wake_line_that_would_guess_is_refused() {
+        let refused = |words: &[&str]| codex_wake_argv(&s(words), CODEX_SID).unwrap_err();
+        assert!(refused(&["codex", "exec", "fix it"]).contains("not an interactive pane"));
+        assert!(refused(&["codex", "review"]).contains("not an interactive pane"));
+        assert!(refused(&["codex", "-i", "shot.png", "look"]).contains("image"));
+        assert!(refused(&["codex", "--worktree"]).contains("new checkout"));
+        assert!(refused(&["codex", "--brand-new-flag"]).contains("does not know"));
+        assert!(refused(&["codex", "-m"]).contains("no value"));
+        assert!(refused(&["codex", "--help"]).contains("not an interactive pane"));
+        assert!(refused(&["codex", "one prompt", "and another"]).contains("unexpected"));
+        assert!(refused(&["codex", "resume", "a", "b", "c"]).contains("unexpected"));
+        assert!(codex_wake_argv(&s(&["codex"]), "not a session").is_err());
+        assert!(codex_wake_argv(&[], CODEX_SID).is_err());
     }
 
     #[test]
