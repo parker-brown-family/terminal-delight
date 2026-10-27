@@ -33,6 +33,9 @@ struct PaneFacts {
     /// The agent's own latest message on its workbench: its brief, or the
     /// start of its plain reply when it wrote no brief.
     message: Option<String>,
+    /// The pane's conversation is only guessed at, so its bench may hold
+    /// another conversation's words: the card says so instead of quoting them.
+    message_unproven: bool,
     /// Its newest artifact, how many more it has handed over, and whether a
     /// person has left feedback on the newest. `None`: nothing handed over yet.
     artifact: Option<(String, usize, crate::feedback::Feedback)>,
@@ -341,6 +344,7 @@ impl Workspace {
                         .bench
                         .latest_response()
                         .map(|r| r.brief.clone().unwrap_or_else(|| r.layman.clone())),
+                    message_unproven: !v.bench_is_its_own(),
                     artifact: v.handovers().newest().map(|h| {
                         (
                             h.label.clone(),
@@ -557,11 +561,20 @@ impl Workspace {
                 (!h.is_empty() && !h.eq_ignore_ascii_case("shell") && h != f.name.tab.trim())
                     .then(|| h.to_string())
             };
-            let message = f
-                .message
-                .as_deref()
-                .and_then(|m| m.lines().map(str::trim).find(|l| !l.is_empty()))
-                .map(str::to_string);
+            // A guessed binding is said as such, never quoted (Bond::Guess).
+            let message = if f.message_unproven {
+                Some(ui.floor_conversation_unknown.to_string())
+            } else {
+                f.message
+                    .as_deref()
+                    .and_then(|m| m.lines().map(str::trim).find(|l| !l.is_empty()))
+                    .map(str::to_string)
+            };
+            let message_ink = if f.message_unproven {
+                th.text.alpha(0.45)
+            } else {
+                th.text.alpha(0.85)
+            };
             let pane_drag = PaneDrag {
                 leaf: f.leaf.clone(),
                 title: f.name.tab.clone(),
@@ -708,7 +721,7 @@ impl Workspace {
                                         .id(SharedString::from(format!("floor-message-{}", seat.0)))
                                         .debug_selector(move || format!("floor-message-{}", seat.0))
                                         .text_size(sk.text_px(8.5))
-                                        .text_color(th.text.alpha(0.85))
+                                        .text_color(message_ink)
                                         .overflow_hidden()
                                         .whitespace_nowrap()
                                         .child(SharedString::from(m)),
@@ -3604,10 +3617,16 @@ impl Workspace {
         mcp::AskReply::Cheap(threshing_floor::CheapAnswer {
             ask_id: id,
             seat,
-            summary: t.bench.latest_response().map(|r| threshing_floor::Summary {
-                brief: r.brief.clone(),
-                layman: r.layman.clone(),
-            }),
+            // A guessed conversation may be another agent's: answer with no
+            // summary rather than a stranger's words.
+            summary: t
+                .bench
+                .latest_response()
+                .filter(|_| t.bench_is_its_own())
+                .map(|r| threshing_floor::Summary {
+                    brief: r.brief.clone(),
+                    layman: r.layman.clone(),
+                }),
             note: t.saved_note().map(|n| match n.title {
                 Some(title) if !n.text.is_empty() => format!("{title} — {}", n.text),
                 Some(title) => title,

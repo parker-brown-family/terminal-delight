@@ -31,7 +31,21 @@ use crate::workbench::Step;
 /// go through here.
 const HIGHLIGHT_CAP: usize = 4096;
 
+/// Whether a workbench speaks for its own agent. With no conversation bound,
+/// everything on it was addressed to the pane itself. With one bound, only a
+/// binding better than a guess does: [`crate::vitals::Bond::Guess`] is the rung
+/// that put one pane's words on another pane's bench, and a guessed binding
+/// reads as unknown rather than as a stranger's message.
+pub(crate) fn speaks_for_itself(bound: bool, bond: crate::vitals::Bond) -> bool {
+    !bound || bond != crate::vitals::Bond::Guess
+}
+
 impl TerminalView {
+    /// See [`speaks_for_itself`].
+    pub(crate) fn bench_is_its_own(&self) -> bool {
+        speaks_for_itself(self.wb_conv.is_some(), self.wb_conv_bond)
+    }
+
     // -- dragging over the bench's text -------------------------------------
 
     /// How far the pointer may travel before a press stops being a click.
@@ -5130,6 +5144,30 @@ mod press_pick_tests {
             bench_press_pick(None, Some(CARD), None, false),
             None,
             "a modified press on a verb chip is the chip's"
+        );
+    }
+}
+
+#[cfg(test)]
+mod speaks_for_itself_tests {
+    use super::speaks_for_itself;
+    use crate::vitals::Bond;
+
+    /// Only a guessed binding hides the bench's words; a pane with no
+    /// conversation, or one named by the agent, birth or elimination, speaks
+    /// for itself.
+    #[test]
+    fn only_a_guessed_conversation_is_not_the_panes_own() {
+        assert!(
+            speaks_for_itself(false, Bond::Guess),
+            "nothing bound: the bench is the pane's"
+        );
+        for bond in [Bond::Declared, Bond::Birth, Bond::Sole] {
+            assert!(speaks_for_itself(true, bond), "{bond:?}");
+        }
+        assert!(
+            !speaks_for_itself(true, Bond::Guess),
+            "a guessed conversation may be another agent's"
         );
     }
 }
