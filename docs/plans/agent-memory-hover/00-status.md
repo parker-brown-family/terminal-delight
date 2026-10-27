@@ -11,11 +11,16 @@ Unavailable measurements stay absent. Subtotals always carry their measured/elig
 - [x] Preserve independent RAM/swap readings and unavailable process lists.
 - [x] Aggregate cached memory with coverage, including sleeping shells.
 - [x] Add a themed hover and strings in all nine locales.
-- [ ] Verify the hover interaction, both terminal cores, formatting and lint.
-- [ ] Land one pull request into dev/0.5.0 and refresh the local window safely.
+- [x] Verify the hover interaction, both terminal cores, formatting and lint.
+- [x] Open one pull request targeting dev/0.5.0 and validate the guarded GUI-replacement preflight.
+
+Delivery is tracked in [the memory-hover pull request](https://github.com/parker-brown-family/terminal-delight/pull/1158). Its current status and activation receipt establish whether integration and the local refresh have finished.
 
 The measurement repair closes the [unavailable-memory accounting issue](https://github.com/parker-brown-family/terminal-delight/issues/1157). Shared Codex helper retention remains tracked separately in the [shared-helper issue](https://github.com/parker-brown-family/terminal-delight/issues/1155).
 
-**Validation so far:** twelve memory-related tests passed, including empty versus unavailable process lists, independent missing swap, grouping, comparison coverage and binary units.
+**Validation:** Rio: 2,931 passed; Alacritty: 2,878 passed. Both retain 17 existing ignored tests. Formatting and both strict Clippy checks pass. The original unavailable-scope reproduction now passes. The native GPUI test opens the real hover, updates an open card from cached data, retains the resting state and War Room click, and checks the card fits a 968px window. The GUI-replacement preflight preserves the host, all 32 panes, the saved split document, policy and geometry; no replacement was applied in the preflight.
 
-**Turned out to be:** pending.
+**Preview:** [the reconstruction](preview.png) shows the layout with illustrative values. It is not a desktop pixel capture.
+
+**Turned out to be:** 3/10 held. The existing sampler and hover builder supplied the mechanism; the main work was keeping unavailable readings and partial comparison coverage intact.
+
