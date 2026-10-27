@@ -237,7 +237,8 @@ pub enum Refusal {
     /// Sleep only: Codex keeps its helpers in its own service; sleeping the
     /// window would save almost nothing.
     CodexKeepsItsHelpers,
-    /// Sleep only: the agent's conversation id is not known for certain.
+    /// Sleep only: the agent's conversation id is not known for certain, or
+    /// Claude has not saved that conversation, so `--resume` could not open it.
     NoConversation,
     /// Sleep only: the launch line cannot be rebuilt exactly.
     LaunchLine(String),

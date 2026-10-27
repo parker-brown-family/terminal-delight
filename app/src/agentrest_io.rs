@@ -183,6 +183,12 @@ pub fn run(mut job: Job) -> Outcome {
                 out.refusal = Some(r);
                 return out;
             }
+            let cwd = std::fs::read_link(format!("/proc/{}/cwd", job.shell));
+            if !cwd.is_ok_and(|cwd| conversation_saved(&crate::session::home_dir(), &cwd, &session))
+            {
+                out.refusal = Some(Refusal::NoConversation);
+                return out;
+            }
             match sleep(
                 &job.gate,
                 &group,
@@ -240,6 +246,29 @@ pub fn wake_script(argv: &[String]) -> String {
          exec {}\n",
         line.join(" ")
     )
+}
+
+/// Has Claude Code saved conversation `session` where a wake started in `cwd`
+/// will look for it: `~/.claude/projects/<cwd slug>/<session>.jsonl`, not empty.
+///
+/// Claude reports a session id from the moment it starts, but writes the
+/// conversation down only once something is said in it. A Claude started and
+/// never spoken to, or one `/clear`ed into a fresh id, reports an id that
+/// `--resume` cannot open, and ending it leaves a wake line that answers "No
+/// conversation found with session ID" — the job-search pane on 2026-10-27.
+/// Read from the pane shell's cwd because that is where the wake runs. The id
+/// has already passed `safe_resume_id`, so it cannot climb out of the folder.
+/// A slug Claude shortens (a path over 200 characters) is not found, and the
+/// pane stays awake: that costs memory, where the other mistake costs the pane.
+pub fn conversation_saved(home: &std::path::Path, cwd: &std::path::Path, session: &str) -> bool {
+    let Some(cwd) = cwd.to_str() else {
+        return false;
+    };
+    let file = home
+        .join(".claude/projects")
+        .join(crate::session::claude_slug(cwd))
+        .join(format!("{session}.jsonl"));
+    std::fs::metadata(file).is_ok_and(|m| m.is_file() && m.len() > 0)
 }
 
 /// The model word in a launch line, for the sleep card.
@@ -399,6 +428,34 @@ mod tests {
             "abc-1",
         ]));
         assert!(script.ends_with("exec /home/p/.local/bin/claude --append-system-prompt 'it'\\''s $x' --resume abc-1\n"), "{script}");
+    }
+
+    #[test]
+    fn only_a_conversation_claude_has_saved_where_the_wake_looks_may_sleep() {
+        let home = std::env::temp_dir().join(format!("td-rest-saved-{}", std::process::id()));
+        let cwd = std::path::Path::new("/home/p/job-search-aug-2026");
+        let projects = home.join(".claude/projects");
+        let here = projects.join(crate::session::claude_slug("/home/p/job-search-aug-2026"));
+        std::fs::create_dir_all(&here).unwrap();
+        let id = "c159b064-501c-4a50-b539-f4a64b4d6601";
+
+        // Started, never spoken to: Claude has an id and no file for it.
+        assert!(!conversation_saved(&home, cwd, id));
+        std::fs::write(here.join(format!("{id}.jsonl")), "").unwrap();
+        assert!(
+            !conversation_saved(&home, cwd, id),
+            "an empty file holds no conversation"
+        );
+        std::fs::write(here.join(format!("{id}.jsonl")), "{\"type\":\"user\"}\n").unwrap();
+        assert!(conversation_saved(&home, cwd, id));
+        // Saved, but under another directory: a wake from this one cannot open it.
+        assert!(!conversation_saved(
+            &home,
+            std::path::Path::new("/home/p/elsewhere"),
+            id
+        ));
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
