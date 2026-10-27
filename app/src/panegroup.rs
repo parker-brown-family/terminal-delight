@@ -633,6 +633,9 @@ pub fn proc_info(
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let after = stat.get(stat.rfind(')')? + 2..)?;
     let ppid = after.split_whitespace().nth(1)?.parse().ok()?;
+    // Field 6 of stat, counted from the state after the name: state, ppid,
+    // pgrp, session.
+    let session = after.split_whitespace().nth(3).and_then(|s| s.parse().ok());
     let argv = std::fs::read(format!("/proc/{pid}/cmdline"))
         .ok()?
         .split(|b| *b == 0)
@@ -661,6 +664,7 @@ pub fn proc_info(
         ppid,
         argv,
         listens,
+        session,
     })
 }
 
