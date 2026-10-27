@@ -25,7 +25,7 @@
 # Then it writes, into fresh copies only:
 #
 #   - write: every case's edits.json made through the note box's own commands
-#     (`ctl doc note add|delete`, `ctl doc concur`), saved with `ctl doc save`,
+#     (`ctl doc note add|delete`, `ctl doc concur`), saved on each edit,
 #     and the written copy held to the skill's expected.html byte for byte —
 #     once the times TD stamps (each note's minute, the island's revision) are
 #     set aside, since TD writes now and the fixtures a fixed moment. The map
@@ -34,7 +34,7 @@
 #     refuses are refused, in words, and their copies are not touched.
 #   - on disk: a brief changed under an open window. Its notes alone changed:
 #     they are shown, and the page is not drawn again. Its body changed: the
-#     page is drawn again and a note waiting to be saved survives it and saves.
+#     page is drawn again and the submitted note remains in the original HTML.
 #     The file removed: saving is off, and says why.
 #
 #   scripts/doc-notes-check.sh [--bin PATH] [--out DIR]
@@ -248,13 +248,10 @@ for case_dir in "$FIX"/cases/*/; do
       case "$r" in ok*) ;; *) problems="$problems $op said: $r" ;; esac
     fi
   done < <(jq -c '.edits[]' "$case_dir/edits.json")
-  r=$(ctl doc save)
   if [ -n "$refuse" ]; then
-    case "$r" in err\ *) ;; *) problems="$problems save was not refused: $r" ;; esac
     [ "$(sha256sum < "$dir/brief.html")" = "$sum_before" ] || problems="$problems the refused copy changed"
     said="refused: ${r#err }"
   else
-    case "$r" in ok*) ;; *) problems="$problems doc save said: $r" ;; esac
     if json=$(wait_saved); then
       said=$(jq -r '.said // ""' <<< "$json")
       [ "$said" = "saved into brief.html ✓" ] || problems="$problems said '$said'"
@@ -300,8 +297,9 @@ if [ "$ok" = 1 ] && [ "$(laid)" = "$drawn" ]; then
 else
   echo "FAIL on disk: notes-only change: $(jq -c '{notes,concurs}' <<< "$j"), drawn $drawn -> $(laid)"; fail=1
 fi
-# A note waits; then the body changes: the page is drawn again, the note survives.
+# A submitted note is already on disk when another writer changes the body.
 ctl doc note add finding-the-island-is-the "Written before the body changed." > /dev/null
+j=$(wait_saved)
 python3 - "$dir/brief.html" <<'PY'
 import sys
 p = sys.argv[1]
@@ -316,17 +314,15 @@ for _ in $(seq 1 100); do
   sleep 0.1
 done
 j=$(notes_now)
-if [ "$ok" = 1 ] && [ "$(jq -r .unsaved <<< "$j")" = 1 ]; then
-  echo "   ok the body changed: drawn again, and the note waiting to be saved is still waiting"
+if [ "$ok" = 1 ] && [ "$(jq -r .unsaved <<< "$j")" = 0 ]; then
+  echo "   ok the body changed: drawn again, and the submitted note is already saved"
 else
   echo "FAIL on disk: body change: drawn $drawn -> $(laid), unsaved $(jq -r .unsaved <<< "$j")"; fail=1
 fi
-ctl doc save > /dev/null
-j=$(wait_saved)
-if [ "$(jq -r .said <<< "$j")" = "saved into brief.html ✓" ] && grep -q "Written before the body changed." "$dir/brief.html" && grep -q "A paragraph an agent added." "$dir/brief.html"; then
-  echo "   ok saved over the other writer's change, keeping it"
+if grep -q "Written before the body changed." "$dir/brief.html" && grep -q "A paragraph an agent added." "$dir/brief.html"; then
+  echo "   ok the original HTML keeps both the submitted comment and the other writer's change"
 else
-  echo "FAIL on disk: save after the change said $(jq -r .said <<< "$j")"; fail=1
+  echo "FAIL on disk: comment or body change was lost; said $(jq -r .said <<< "$j")"; fail=1
 fi
 # The file goes: saving is off, and says so.
 mv "$dir/brief.html" "$dir/away.html"
