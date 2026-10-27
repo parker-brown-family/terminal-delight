@@ -534,6 +534,30 @@ pub fn orphans(session: &str, live: &[(u64, i32)]) -> Vec<PaneGroup> {
     orphans_in(&app_slice_dir(), session, live)
 }
 
+/// Thaw every frozen scope of `session`. Called as the window quits: a pane
+/// stays frozen only while a window that can thaw it is up, so whatever runs
+/// next — this build, or an older one that knows nothing of rest and would
+/// leave a frozen agent answering no key — finds every pane awake. Returns how
+/// many it thawed.
+pub fn thaw_session(session: &str) -> usize {
+    thaw_session_in(&app_slice_dir(), session)
+}
+
+fn thaw_session_in(dir: &Path, session: &str) -> usize {
+    let mut thawed = 0;
+    for group in orphans_in(dir, session, &[]) {
+        let frozen = std::fs::read_to_string(group.dir.join("cgroup.events"))
+            .ok()
+            .and_then(|t| keyed(&t, "frozen"))
+            == Some(1);
+        if frozen {
+            thaw_dir(&group.dir);
+            thawed += 1;
+        }
+    }
+    thawed
+}
+
 fn orphans_in(dir: &Path, session: &str, live: &[(u64, i32)]) -> Vec<PaneGroup> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -639,6 +663,33 @@ mod tests {
             .collect();
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(found, vec!["td-pane-1-4-999.scope".to_string()]);
+    }
+
+    #[test]
+    fn quitting_thaws_this_sessions_frozen_scopes_and_nothing_else() {
+        let dir = std::env::temp_dir().join(format!("td-thaw-quit-{}", std::process::id()));
+        let scope = |name: &str, frozen: bool| {
+            let d = dir.join(name);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("cgroup.freeze"), if frozen { "1" } else { "0" }).unwrap();
+            let events = if frozen { "frozen 1\n" } else { "frozen 0\n" };
+            std::fs::write(d.join("cgroup.events"), events).unwrap();
+            d
+        };
+        let ours_frozen = scope("td-pane-1-4-100.scope", true);
+        let ours_awake = scope("td-pane-1-5-200.scope", false);
+        let theirs = scope("td-pane-2-4-100.scope", true);
+        let thawed = thaw_session_in(&dir, "1");
+        let read = |d: &PathBuf| std::fs::read_to_string(d.join("cgroup.freeze")).unwrap();
+        let (a, b, c) = (read(&ours_frozen), read(&ours_awake), read(&theirs));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(thawed, 1);
+        assert_eq!(a, "0", "this session's frozen pane is thawed");
+        assert_eq!(b, "0");
+        assert_eq!(
+            c, "1",
+            "another session's pane is not this window's to thaw"
+        );
     }
 
     #[test]

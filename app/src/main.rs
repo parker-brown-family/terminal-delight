@@ -47702,6 +47702,18 @@ fn main() {
             async move {}
         })
         .detach();
+        // A pane stays frozen only while a window that can thaw it is up. One
+        // that quits thaws its session's panes, so whatever runs next — this
+        // build, or an older one that knows nothing of rest and would show a
+        // frozen agent answering no key — finds them awake. A crash skips
+        // this; docs/security/agent-rest.md has the one-line recovery.
+        if agentrest::enabled_by_env() {
+            cx.on_app_quit(|_cx| {
+                panegroup::thaw_session(crate::instance::key());
+                async move {}
+            })
+            .detach();
+        }
         let bounds = if demo {
             // open the demo at the cloned window's geometry, else a generous centre
             match load_demo_state().win {
