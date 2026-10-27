@@ -92,6 +92,7 @@ mod paneident;
 mod paper;
 mod picturewire;
 mod plugins;
+mod prompt;
 mod ptyscan;
 mod readrows;
 mod recover;
@@ -4611,6 +4612,10 @@ struct Workspace {
     /// rail's copy card presses. Held in memory only; the record keeps each
     /// stage without the words.
     asks: threshing_floor::AskBook,
+    /// Prompts, from `prompt_agent` to the worker's last word: what
+    /// `prompt_status` reads and the prompt clock moves. Held in memory only;
+    /// the record keeps each stage without the words.
+    prompts: prompt::PromptBook,
     /// The menu-bar SIZE popover, raised by the ▭ button in the mother bar. The
     /// scrub track used to live inline on that row; on a thin tile it was the
     /// widest thing there and had nowhere to go, so it moved behind a button.
@@ -6382,6 +6387,7 @@ impl Workspace {
             ask_seq: 0,
             ask_numbers: None,
             asks: threshing_floor::AskBook::default(),
+            prompts: prompt::PromptBook::default(),
             scale_menu: false,
             more_menu: false,
             art_rail: false,
@@ -6864,6 +6870,25 @@ impl Workspace {
                 }
             });
             if alive.is_err() {
+                break;
+            }
+        })
+        .detach();
+        // THRESHING FLOOR: the prompt clock. Half a second, because a prompt
+        // pastes on one look and presses Enter on a later one (`prompt.rs`),
+        // and a worker that finished should be reported while its sender is
+        // still waiting on `prompt_status`. A tick with no open prompt returns
+        // before it reads a pane.
+        cx.spawn_in(window, async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(500))
+                .await;
+            if this
+                .update_in(cx, |ws: &mut Workspace, window, cx| {
+                    ws.prompt_tick(window, cx)
+                })
+                .is_err()
+            {
                 break;
             }
         })
@@ -7744,6 +7769,19 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.wake_sleeper_as(old, true, window, cx);
+    }
+
+    /// Wake an asleep agent in a fresh pane. `focus`: whether the fresh pane
+    /// takes the keyboard — yes for a person's key in the pane, no for a
+    /// prompt another agent sent, which must not move the person's focus.
+    pub(crate) fn wake_sleeper_as(
+        &mut self,
+        old: &Entity<TerminalView>,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(ctx) = self.attach.clone() else {
             return;
         };
@@ -7797,7 +7835,9 @@ impl Workspace {
         }
         // The shell that held the sleeper is no longer shown; end it.
         self.hangup(std::slice::from_ref(old), cx);
-        window.focus(&fresh.focus_handle(cx), cx);
+        if focus {
+            window.focus(&fresh.focus_handle(cx), cx);
+        }
         self.save(cx);
         cx.notify();
     }
@@ -41831,6 +41871,9 @@ mod tests {
             vec![
                 "main.rs build_node: view.agent_access = access;",
                 "main.rs build_node_attached: view.agent_access = access;",
+                // A restore: the pane rebuilt from a snapshot, or an asleep
+                // agent woken into a fresh shell, wears the mark it had.
+                "pane.rs adopt_presentation: self.agent_access = from.agent_access;",
                 "pane.rs set_agent_access: self.agent_access = access;",
             ],
             "something other than a person's gesture or a restore writes the position"

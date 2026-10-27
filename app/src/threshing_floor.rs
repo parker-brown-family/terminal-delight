@@ -236,14 +236,23 @@ impl AgentAccess {
     }
 }
 
-/// How far a line reaches. The first step stops at `Ask`; assigning work
-/// arrives later, together with budgets.
+/// How far a line reaches.
+///
+/// `Ask` and `Prompt` are different channels, not two strengths of one
+/// (Parker, 2026-10-27: *"these are now feeling like SEAPARATE levels and
+/// actions. The POINT of a managing agent is to TREAT OTHER AGENTS AS SUB
+/// AGENTS"*). An ask never touches the worker: it is answered from what the
+/// window already shows, or by a read-only copy. A prompt enters the worker's
+/// own conversation as a turn, run with the worker's own tools. Only a person
+/// draws either. A build from before `Prompt` reads the word as unknown, so it
+/// grants nothing there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Rung {
     See,
     Read,
     Ask,
+    Prompt,
 }
 
 /// A rung as saved. A word this build does not know is kept as written, so a
@@ -618,6 +627,7 @@ pub enum Reach {
     Seen,
     Read,
     Ask,
+    Prompt,
 }
 
 impl From<Rung> for Reach {
@@ -626,6 +636,7 @@ impl From<Rung> for Reach {
             Rung::See => Self::Seen,
             Rung::Read => Self::Read,
             Rung::Ask => Self::Ask,
+            Rung::Prompt => Self::Prompt,
         }
     }
 }
@@ -658,10 +669,12 @@ pub fn policy_admits(cfg: &McpConfig, is_agent: bool) -> bool {
     cfg.enabled && (matches!(cfg.expose, Expose::All) || is_agent)
 }
 
-/// The most a pane's position lets any line reach.
+/// The most a pane's position lets any line reach. A read-only pane can be
+/// asked and never prompted: a prompt writes into it.
 fn ceiling(access: AgentAccess) -> Reach {
     match access {
-        AgentAccess::Open | AgentAccess::ReadOnly => Reach::Ask,
+        AgentAccess::Open => Reach::Prompt,
+        AgentAccess::ReadOnly => Reach::Ask,
         AgentAccess::OffLimits => Reach::Hidden,
     }
 }
@@ -800,6 +813,16 @@ pub enum Refusal {
     UnprovenProgram,
     /// `ask_answer` named no copy ask this pane made.
     NoSuchAsk,
+    /// No line from the sender's seat reaches this pane as far as prompt.
+    NoPromptLine,
+    /// The pane is read-only: it can be asked, never prompted.
+    ReadOnly,
+    /// The brief is empty or longer than [`PROMPT_MAX_CHARS`].
+    BadBrief,
+    /// An earlier prompt from this sender to this pane has not finished.
+    PromptBusy,
+    /// `prompt_status` named no prompt this pane sent.
+    NoSuchPrompt,
 }
 
 impl Refusal {
@@ -820,6 +843,11 @@ impl Refusal {
             Self::ToolsWider => "the copy came up able to do more than read, and was stopped before it answered",
             Self::UnprovenProgram => "this version of the agent program has not been checked for read-only copies",
             Self::NoSuchAsk => "no copy ask by that id was made from your pane",
+            Self::NoPromptLine => "no line from your seat reaches this pane as far as prompt; only a person draws one, in the Threshing Floor",
+            Self::ReadOnly => "that pane is read-only: it can be asked, never prompted",
+            Self::BadBrief => "the prompt is empty or longer than 32,000 characters",
+            Self::PromptBusy => "your earlier prompt to that pane has not finished; read it with prompt_status first",
+            Self::NoSuchPrompt => "no prompt by that id was sent from your pane",
         }
     }
 }
@@ -871,6 +899,49 @@ pub fn decide_ask(
 
 /// The longest question an ask carries.
 pub const QUESTION_MAX_CHARS: usize = 4_000;
+
+/// The longest brief a prompt carries, after its control characters are
+/// removed.
+pub const PROMPT_MAX_CHARS: usize = 32_000;
+
+/// Whether a prompt may go from `caller` to `target`, or which refusal stops
+/// it, in this order: the sender named itself, a brief that is empty or too
+/// long, MCP off, an off-limits pane, a pane that is not an agent, a
+/// read-only pane, and no line from the sender's seat reaching prompt. A
+/// bypass the rail granted is an ask and never a prompt: only a line a person
+/// drew at Prompt, seat to seat or to a whole org, carries one.
+pub fn decide_prompt(
+    cfg: &McpConfig,
+    chart: &Chart,
+    orgs: &Orgs,
+    caller: &Party,
+    target: &Party,
+    same_pane: bool,
+    brief_chars: usize,
+) -> Result<(), Refusal> {
+    if same_pane {
+        return Err(Refusal::OwnPane);
+    }
+    if brief_chars == 0 || brief_chars > PROMPT_MAX_CHARS {
+        return Err(Refusal::BadBrief);
+    }
+    if !cfg.enabled {
+        return Err(Refusal::McpOff);
+    }
+    if target.access.is_off_limits() {
+        return Err(Refusal::OffLimits);
+    }
+    if !target.is_agent {
+        return Err(Refusal::NotAnAgent);
+    }
+    if target.access == AgentAccess::ReadOnly {
+        return Err(Refusal::ReadOnly);
+    }
+    if reach(cfg, chart, orgs, Some(caller), target, false) < Reach::Prompt {
+        return Err(Refusal::NoPromptLine);
+    }
+    Ok(())
+}
 
 /// What a person calls a pane: where its tab sits on the left bar, and the
 /// title on the pane's own header. The header alone cannot do it — until an
@@ -2108,6 +2179,151 @@ mod tests {
         ];
         let placed = layout(&seats, &chart);
         assert_eq!(placed.len(), 2, "both seats are drawn");
+    }
+
+    /// Prompt is its own rung above ask, and only a line a person drew at
+    /// prompt carries one: an ask line, a bypass and a read-only pane are each
+    /// refused by name, in the order the checks run.
+    #[test]
+    fn a_prompt_is_refused_by_name_in_order() {
+        let mut chart = Chart::default();
+        line(&mut chart, 1, 2, Rung::Prompt);
+        line(&mut chart, 1, 3, Rung::Ask);
+        chart.grant_bypass(SeatId(1), SeatId(4), 3);
+        let me = agent(Some(1), AgentAccess::Open);
+        let worker = agent(Some(2), AgentAccess::Open);
+        let decide = |cfg: &McpConfig, t: &Party, same: bool, n: usize| {
+            decide_prompt(cfg, &chart, &Orgs::default(), &me, t, same, n)
+        };
+        assert_eq!(decide(&on(), &worker, false, 12), Ok(()));
+        assert_eq!(decide(&on(), &worker, true, 12), Err(Refusal::OwnPane));
+        assert_eq!(decide(&on(), &worker, false, 0), Err(Refusal::BadBrief));
+        assert_eq!(
+            decide(&on(), &worker, false, PROMPT_MAX_CHARS + 1),
+            Err(Refusal::BadBrief)
+        );
+        assert_eq!(decide(&on(), &worker, false, PROMPT_MAX_CHARS), Ok(()));
+        assert_eq!(
+            decide(&McpConfig::default(), &worker, false, 12),
+            Err(Refusal::McpOff)
+        );
+        assert_eq!(
+            decide(&on(), &agent(Some(2), AgentAccess::OffLimits), false, 12),
+            Err(Refusal::OffLimits)
+        );
+        let shell = Party {
+            seat: Some(SeatId(2)),
+            is_agent: false,
+            access: AgentAccess::Open,
+        };
+        assert_eq!(decide(&on(), &shell, false, 12), Err(Refusal::NotAnAgent));
+        assert_eq!(
+            decide(&on(), &agent(Some(2), AgentAccess::ReadOnly), false, 12),
+            Err(Refusal::ReadOnly),
+            "read-only is asked, never prompted"
+        );
+        assert_eq!(
+            decide(&on(), &agent(Some(3), AgentAccess::Open), false, 12),
+            Err(Refusal::NoPromptLine),
+            "an ask line does not reach prompt"
+        );
+        assert_eq!(
+            decide(&on(), &agent(Some(4), AgentAccess::Open), false, 12),
+            Err(Refusal::NoPromptLine),
+            "a bypass is an ask line"
+        );
+        assert_eq!(
+            decide(&on(), &agent(None, AgentAccess::Open), false, 12),
+            Err(Refusal::NoPromptLine),
+            "no prompt without a line"
+        );
+        // A prompt line also reaches ask: the cheap read stays open to the
+        // agent that may give the work.
+        assert_eq!(
+            decide_ask(&on(), &chart, &Orgs::default(), &me, &worker, false, 12),
+            Ok("line")
+        );
+    }
+
+    /// An org line at prompt reaches every seat in the org; a bypass granted
+    /// over a prompt line never shortens it to ask.
+    #[test]
+    fn a_prompt_line_to_an_org_reaches_its_seats_and_a_bypass_cannot_shorten_it() {
+        let (orgs, ids) = orgset(&[("crew", &[2, 3])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[0] }, Rung::Prompt);
+        let me = agent(Some(1), AgentAccess::Open);
+        for seat in [2, 3] {
+            assert_eq!(
+                decide_prompt(
+                    &on(),
+                    &chart,
+                    &orgs,
+                    &me,
+                    &agent(Some(seat), AgentAccess::Open),
+                    false,
+                    5
+                ),
+                Ok(())
+            );
+        }
+        assert_eq!(
+            decide_prompt(
+                &on(),
+                &chart,
+                &orgs,
+                &me,
+                &agent(Some(4), AgentAccess::Open),
+                false,
+                5
+            ),
+            Err(Refusal::NoPromptLine)
+        );
+        let mut chart = Chart::default();
+        line(&mut chart, 1, 2, Rung::Prompt);
+        chart.grant_bypass(SeatId(1), SeatId(2), 3);
+        assert_eq!(
+            chart
+                .line(SeatId(1), SeatId(2))
+                .map(|l| (l.rung.known(), l.is_bypass())),
+            Some((Some(Rung::Prompt), false))
+        );
+    }
+
+    /// The word on disk: an old chart's `ask` stays ask (never upgraded),
+    /// `prompt` is read back as prompt, and an older build that does not know
+    /// `prompt` keeps the word and grants nothing by it.
+    #[test]
+    fn the_prompt_rung_is_saved_by_its_own_word() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        struct One {
+            rung: RungWord,
+        }
+        let read = |w: &str| {
+            toml::from_str::<One>(&format!("rung = \"{w}\""))
+                .unwrap()
+                .rung
+        };
+        assert_eq!(read("ask"), RungWord::Known(Rung::Ask));
+        assert_eq!(read("prompt"), RungWord::Known(Rung::Prompt));
+        assert_eq!(
+            toml::to_string(&One {
+                rung: RungWord::Known(Rung::Prompt)
+            })
+            .unwrap()
+            .trim(),
+            "rung = \"prompt\""
+        );
+        let later = read("command");
+        assert_eq!(
+            later.known(),
+            None,
+            "a word this build does not know grants nothing"
+        );
+        assert_eq!(Reach::from(Rung::Prompt), Reach::Prompt);
+        assert!(Reach::Prompt > Reach::Ask && Reach::Ask > Reach::Read);
+        assert_eq!(ceiling(AgentAccess::ReadOnly), Reach::Ask);
+        assert_eq!(ceiling(AgentAccess::Open), Reach::Prompt);
     }
 
     #[test]

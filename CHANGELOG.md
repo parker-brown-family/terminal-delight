@@ -18,6 +18,21 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   record older builds kept under `warroom/<session>/` is still read and counted,
   and never moved.
 - `TD_WAR_ROOM_DEMO` is now `TD_THRESHING_FLOOR_DEMO`.
+- A line can now reach `prompt`, a rung of its own above `ask`. Along a prompt
+  line, `prompt_agent` gives another agent work: the words are typed into its
+  own conversation as its next turn, once it is at rest at its prompt, and
+  `prompt_status` reports the stages and the worker's last message. A
+  coordinating agent can now treat the other agents in the window as its
+  sub-agents, Claude Code and Codex alike. A worker that is working is waited
+  for; a resting or asleep one is woken; a permission prompt, a dialog or a
+  person typing is never typed into, and Enter is pressed once, only after the
+  paste shows. Ask lines and rail bypasses never prompt, read-only panes are
+  never prompted, and lines drawn before this stay ask lines. The ask rung now
+  reads "ask" rather than "prompt".
+- A pane rebuilt from a fresh snapshot, and an asleep agent woken into a fresh
+  shell, keep their Threshing Floor seat and the read-only or off-limits mark a
+  person set. Before, both came back unseated, and an off-limits pane came back
+  open to agents.
 
 ### Agent Memory Hover for 0.5.0 Development
 

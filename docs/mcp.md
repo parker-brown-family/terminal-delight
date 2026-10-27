@@ -107,15 +107,24 @@ one seat, then another. A line carries a rung, and clicking its label cycles it:
 | `see` | find the pane in `list_panes` |
 | `read` | also read it: `grep`, `pane_events`, `get_pane_config` |
 | `ask` | also ask it a question with `ask_agent` |
+| `prompt` | also give it work with `prompt_agent`: a turn typed into its own conversation |
+
+`ask` and `prompt` are different channels, not two strengths of one. An ask reads
+an agent and leaves its conversation as it was; a prompt is its next turn. A
+coordinating agent treats the agents it holds a prompt line to as its sub-agents.
 
 The rules, in `threshing_floor::reach`:
 
 - **A pane nobody seated keeps the window's switches**: agents read it as they
-  always have, and **never ask it**. No prompt travels without a line.
+  always have, and **never ask or prompt it**. Neither travels without a line.
 - **A seated pane is hidden** from every agent except along a line from that
   agent's own seat. `list_panes` says how many panes the caller cannot see, as a
   `hidden` count, and never which.
-- **Read-only caps a line at ask; off-limits beats every line.**
+- **Read-only caps a line at ask; off-limits beats every line.** A read-only
+  pane can be asked and never prompted.
+- **A line from before prompt existed is not upgraded.** A line drawn at `ask`
+  stays an ask line; prompting needs a person to set the line to `prompt`. A
+  bypass granted on the rail is always an ask line.
 - **Only a person draws, changes or erases a line.** No MCP or `ctl` verb can;
   `only_the_threshing_floor_and_the_rail_draw_lines` keeps it so. An agent may *ask*
   for a bypass line through `request_access` (below).
@@ -206,7 +215,7 @@ agents may do:
 | `writes_on` | turns MCP writes on | Threshing Floor, Writes |
 | `expose_shells` | shows plain shells as well as agents | Threshing Floor, Expose |
 | `events_on` | shows other agents' tool calls | Threshing Floor, Events |
-| `ask_line` + `pid` | a bypass line from the asker's seat to that seat, for the prompts picked on the card (1, 3 or 10; 3 unless changed) | Threshing Floor, draw a line |
+| `ask_line` + `pid` | a bypass line from the asker's seat to that seat, for the uses picked on the card (1, 3 or 10; 3 unless changed) | Threshing Floor, draw a line |
 
 Appearance is not on the list. With writes on, `set_pane_config` restyles a pane
 and asks nobody — Parker's line was that agents should not be *"blocked by human
@@ -247,7 +256,7 @@ keeps `mcp.rs` and `ctl.rs` from naming the answering code, and
 `an_ask_is_answered_only_by_the_rails_buttons_and_keys` keeps the rest of the
 window to those two callers.
 
-A bypass line spends one prompt for every copy asked along it (a cheap answer
+A bypass line spends one use for every copy asked along it (a cheap answer
 spends nothing) and disappears at zero. It never shortens a drawn line that
 already reaches as far.
 
@@ -308,6 +317,69 @@ Every ask, cheap or copy, refused or answered, leaves a line per stage in
 `$XDG_STATE_HOME/terminal-delight/threshing-floor/<session>/asks.jsonl` (builds from before the rename wrote `warroom/<session>/`, which is still read and counted): who asked whom,
 along what, at which stage, what it read and cost. It keeps the question's length
 and SHA-256, never its words, and never the answer.
+
+### Prompting another agent
+
+`prompt_agent` gives another agent work: the sender's words, typed into the
+worker's own conversation as its next turn, the way its person would type them.
+The worker answers with everything it already knows. It is how a coordinating
+agent treats other agents in the window as its sub-agents, whatever program each
+one runs, without a second process or a copy.
+
+It goes only along a line a person drew from the sender's seat at `prompt`. An
+ask line, a bypass, a read-only pane and an off-limits pane are refused by name
+(`no_prompt_line`, `read_only`, `off_limits`). `prompt_agent` returns a
+`prompt_id` at once, and nothing has been typed yet. The window types when the
+worker is ready, by these rules (`app/src/prompt.rs`):
+
+- **Only at a settled rest.** The words go in after the worker's screen has shown
+  its own idle prompt for two seconds, look after look, with no turn beginning in
+  between: a streaming agent's screen can look at rest between two chunks. A
+  working worker is waited for, up to ten minutes; a resting or asleep one is woken first, without taking the person's
+  focus. A pane showing a permission prompt, a question, a dialog, an error, or a
+  screen nobody can read is never typed into.
+- **Never over a person.** A pane its person typed in during the last twenty
+  seconds, and one showing a picker the workbench's dial raised, waits.
+- **As one bracketed paste.** Every control character but newline and tab is
+  taken out first, so nothing in the words can close the paste early or press a
+  key. A prompt that has not asked for bracketed paste is not typed into.
+- **Enter once, and only on proof.** Enter is pressed after the paste shows on the
+  worker's screen: a row that changed carries this prompt's own number, or the
+  program's placeholder for a long paste (`[Pasted text …]`, `[Pasted Content …]`).
+  With no proof in four seconds, or with a dialog, an error or the person's key in
+  between, Enter is not pressed and the prompt fails, saying the words may be
+  sitting at the worker's prompt. That worker then takes no more prompts until its
+  person types in the pane or a turn begins there, so a second paste never joins
+  the first.
+- **A header line comes first**, naming the sender's pane and pid, saying a
+  person drew the prompt line, and saying whether the worker's last message will
+  be returned. It carries the prompt's number,
+  `[Threshing Floor prompt <id>, from …]`.
+- **One at a time.** One prompt in flight from a sender to a worker
+  (`prompt_busy`), and a worker's prompts from several senders go in send order,
+  each after the last has ended.
+- **A retry is safe.** `key` names a prompt: the same key from the same pane
+  returns the first prompt instead of typing another.
+- **The pane's own write.** The bytes go through `TerminalView::type_prompt`, row
+  #10 of `docs/security/terminal-input.md`, which refuses again for a pane a person
+  has since closed to agents. Unlike the workbench's lines, a prompt reaches a
+  worker in a tab that is not on screen: the header, not the person's view, is
+  what says who typed it.
+
+`prompt_status` reads it, by `prompt_id`, from the pane that sent it. Stages:
+`waiting` (with what the worker is doing), `typing`, `delivered`, `working`,
+`finished` and `failed` (with the reason). A prompt is called finished only after
+the same settled rest. `finished` carries `reply`: the
+worker's last message after the prompt, read from its own transcript (Claude
+Code's or Codex's). The prompt's number in that transcript is what proves the
+message answers this prompt; without it, `reply` is `null` and `reply_unknown`
+says why. `wait_seconds` (up to 6) holds the answer until the prompt ends, so
+one call can wait for the work.
+
+An erased line, a pane marked read-only or off-limits, or MCP switched off stops a
+prompt that has not been typed. A prompt already typed is the worker's and runs
+to its end. Every stage leaves a line in the same `asks.jsonl`, with `via` set
+to `prompt`, the words' length and SHA-256, never the words and never the reply.
 
 **What it does not stop.** An agent with a shell runs as you. It can edit TD's
 state file, or put keystrokes into the window through the compositor. This is the
@@ -401,10 +473,10 @@ exposed window. In a restricted window it refuses the read and points to
 
 ### Pane reads and appearance
 
-`tools/list` declares `annotations.readOnlyHint: true` on the twelve tools whose
+`tools/list` declares `annotations.readOnlyHint: true` on the thirteen tools whose
 handlers only read: `list_panes`, `pane_events`, `get_pane_config`, `ask_answer`,
-the four `coordination_*` tools, `engineering_state`, `document_notes`,
-`surface_catalogue` and `grep`. Write tools leave this hint undeclared. These
+`prompt_status`, the four `coordination_*` tools, `engineering_state`,
+`document_notes`, `surface_catalogue` and `grep`. Write tools leave this hint undeclared. These
 hints help clients describe tools; they do not grant access or replace the
 server's permission checks. The other risk hints remain undeclared.
 
@@ -417,13 +489,15 @@ annotations are a separate feature; `ctl doc note` does not write sticky notes.
 
 | Tool | Arguments | Returns |
 |------|-----------|---------|
-| `list_panes` | _(none)_ | Every currently-exposed pane: `tab`, `title`, `mode` (CLAUDE/CODEX/SHELL/REMOTE/`UNKNOWN`/the program's own name), `is_agent`, `pid`, `cwd`, `session` (resume recipe, which may not identify an exact conversation), `reach` (how far the caller reaches this pane: `seen`, `read` or `ask`; a pane nobody seated in the Threshing Floor is `read`, and a seated pane appears only along a line a person drew from the caller's seat). Beside the panes, `hidden` counts the panes the caller cannot see. **`UNKNOWN` is a real answer, not a failure**: the pane belongs to a session host that has not classified it yet, and it is deliberately not reported as `SHELL` — an agent reading its own fleet can tell "nothing has described this pane" from "a shell is running here", which is the distinction whose absence hid eleven working agents from the attention rail (#462). Text summary + `structuredContent`. |
+| `list_panes` | _(none)_ | Every currently-exposed pane: `tab`, `title`, `mode` (CLAUDE/CODEX/SHELL/REMOTE/`UNKNOWN`/the program's own name), `is_agent`, `pid`, `cwd`, `session` (resume recipe, which may not identify an exact conversation), `reach` (how far the caller reaches this pane: `seen`, `read`, `ask` or `prompt`; a pane nobody seated in the Threshing Floor is `read`, and a seated pane appears only along a line a person drew from the caller's seat). Beside the panes, `hidden` counts the panes the caller cannot see. **`UNKNOWN` is a real answer, not a failure**: the pane belongs to a session host that has not classified it yet, and it is deliberately not reported as `SHELL` — an agent reading its own fleet can tell "nothing has described this pane" from "a shell is running here", which is the distinction whose absence hid eleven working agents from the attention rail (#462). Text summary + `structuredContent`. |
 | `pane_events` | `pid` (from `list_panes`), `limit` (default 20, max 200) | Recent structured tool calls for that agent pane — `{ts, tool, summary}` — tailed from the agent's **own transcript**, not the rendered screen. |
 | `get_pane_config` | `targets?` — array of pids and/or `"outer"`; omit for every exposed pane + `outer` | Each target's **appearance**: the monitor grade as uniform `0..100` percents (`brightness`, `contrast`, `colour`, `text`, `background`, `gamma`, `menu_bar`, `text_size`, `warp`, `crawl_angle`, `crawl_depth`) plus a `crawl` boolean. A bad pid is a per-target `error` row, not a failed call. Read-only. |
 | `set_pane_config` | `updates` — array of `{ target, config }` where `target` is a pid or `"outer"` and `config` is a partial grade | Applies each partial: only the channels you include change (others untouched, PATCH semantics); out-of-range values clamp. Returns the resulting grade per target. Requires the **Writes** toggle. Setting `outer` re-grades every pane that inherits it — change the whole wall in one call. |
 | `request_access` | `change` (`open_pane`, `close_pane`, `writes_on`, `expose_shells`, `events_on`, `ask_line`), `pid` (for `open_pane`, `close_pane` and `ask_line`), `why` (one sentence, at most 40 words) | Puts an ask on the person's attention rail with Yes and No, on the calling pane's own row. Changes nothing itself. Needs the master switch and a pane to call from; does **not** need Writes. See *An agent asks, a person answers* above. |
 | `ask_agent` | `pid`, `question` (up to 4,000 characters), `copy?` | Asks a pane along a line that reaches `ask`. Without `copy`: the cheap answer, at once. With `copy`: an `ask_id`, the stage, and what the copy reads (`reads`, `null` when unknown) against the `press_limit`. Refused by name without a line. Does not need Writes. See *Asking another agent* above. |
 | `ask_answer` | `ask_id` | How a copy is getting on, and its answer once it has one. Only the pane that asked can read it. |
+| `prompt_agent` | `pid`, `prompt` (up to 32,000 characters), `key?` | Gives a pane work along a line that reaches `prompt`: the words are typed into its conversation when it is at rest. Returns a `prompt_id` and the stage at once. Refused by name without a prompt line. Does not need Writes: the prompt line is the person's grant. See *Prompting another agent* above. |
+| `prompt_status` | `prompt_id`, `wait_seconds?` (0 to 6) | How a prompt is getting on, and the worker's last message once it has finished. Only the pane that sent it can read it. |
 | `grep` | `query` (exact, case-insensitive substring), `scrollback?` (recent lines/pane, default 2000, max 50000) | Searches every **exposed** pane's recent scrollback. Returns, per matching pane, its identity (`pid`/`tab`/`title`/`mode`) and the matching lines as `{line, col, text}` (capped 50/pane). Read-only — it reads on-screen text, never writes. Use it to find *where* something is across the whole wall (an error, a path, a value). |
 
 `list_panes`/`pane_events`/`get_pane_config`/`grep` honour the master switch;
@@ -473,19 +547,22 @@ silence it.
 
 ## Security posture
 
-- **Never a PTY.** No tool writes bytes to a terminal. Sending input into a shell
-  would be arbitrary code execution; that path does not exist here. Writes cover
-  appearance (`set_pane_config`), notes, deliverables, surfaces and opened
-  documents, and none of them reaches a terminal's input.
+- **One way into a terminal, and a person opens it.** `prompt_agent` is the only
+  tool that leads to bytes in a terminal, and only into an agent's own prompt,
+  along a line a person drew at `prompt`, by the rules under *Prompting another
+  agent*. It never reaches a shell: a pane that is not running an agent is refused.
+  Every other write covers appearance (`set_pane_config`), notes, deliverables,
+  surfaces and opened documents, and none of them reaches a terminal's input.
 - **Writes are a separate opt-in.** The server is a read-only watch surface until
   you flip **Writes** (or set `TD_MCP_WRITE`). Reads never need it.
 - **stdio only, never TCP.** The trust boundary is whoever launched the process.
 - **No arbitrary reads.** Transcript paths are derived from each pane's
   kernel-reported `cwd`, slugged so they can't escape `~/.claude` / `~/.codex`;
   reads are bounded to the tail of the file.
-- **No prompt without a line.** Another agent is asked only along a line a
-  person drew in the Threshing Floor, or a bypass a person granted on the rail. An
-  unseated pane is never asked.
+- **No ask and no prompt without a line.** Another agent is asked only along a
+  line a person drew in the Threshing Floor, or a bypass a person granted on the
+  rail, and prompted only along a line a person drew at `prompt`. An unseated
+  pane is never asked or prompted.
 - **A copy can only read, and the person pays for it.** See *Asking another
   agent*: by default every copy waits for a Yes, and the record keeps no
   question and no answer.

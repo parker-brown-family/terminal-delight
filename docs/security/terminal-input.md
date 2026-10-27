@@ -6,9 +6,11 @@ and in an agent pane it is typing into a live conversation with a model that wil
 **The rule this repository holds: TD never types into a running terminal on its own initiative.**
 Every byte that reaches the pty of a pane you are already using originates from a key you pressed, a
 pointer gesture you made (a scroll, a ▲/▼ click, a context-menu paste, a ↪ in a brief's notes
-bar), or the terminal protocol
-answering the program running in the pane. No timer, plugin, MCP verb or notification callback can
-put text in front of an agent that is already running.
+bar), the terminal protocol answering the program running in the pane, or — since 0.5
+development — a prompt another agent sent along a line you drew at `prompt` in the Threshing
+Floor (row #10). No timer, plugin or notification callback can put text in front of an agent that
+is already running, and the one MCP verb that can, `prompt_agent`, reaches only an agent whose
+person drew that line, by the rules in *A prompt from another agent*.
 
 One qualification, stated here rather than buried, because the unqualified sentence is not true:
 **opening a new pane can carry a command line into it** — the control socket's `adopt` verb, the
@@ -36,6 +38,7 @@ audited 2026-09-08:
 | 7 | `pane.rs` | `seek_agent_prompt` | `alt+↑` / `alt+↓` **and the ▲/▼ header buttons** — walks an alt-screen agent's own scrollback with synthetic wheel notches, or PageUp/PageDown when the program has not asked for mouse reports; a bounded async walk, see below | keystroke + pointer |
 | 8 | `pane.rs:2471` | `new_restored` | a **freshly spawned** shell is handed its recorded command line — session restore, the dead-agent *resurrect* menu, `ctl adopt --run`, or `TD_SEED_RESUME` at launch | see below |
 | 9 | `pane.rs` | `send_notes` | a press on **↪** in a brief's notes bar, or its chord **ctrl+shift+enter** over the square while the button is drawn — the brief's notes map, pasted into the prompt of the agent pane the brief sits beside, bracketed and **never followed by Enter**; on the bench face it goes into the composer instead and writes nothing here; see below | pointer + keystroke |
+| 10 | `pane.rs` | `type_prompt` | **another agent**, along a line a person drew at `prompt` in the Threshing Floor: `prompt_agent` over MCP, typed by `Workspace::prompt_tick` when `prompt.rs` decides. One bracketed paste of the cleaned words, then one carriage return after the paste shows at the worker's own prompt; see below | agent, under a person's grant |
 
 The editing keys share site #1. Shift+Backspace sends backward-word deletion;
 Ctrl+Shift+Backspace computes the entire current logical line, including soft wraps, and walks
@@ -49,10 +52,14 @@ expanded into an edit. The existing scrolled-view and non-agent alternate-screen
 `send` is the only site that composes bytes from a keystroke, and it is reachable only from the key
 handler, the cut keybinding and the launch panel's `run_line`. That is the invariant. Everything
 else is the terminal answering its own program (#2, #3), a pointer gesture the person made (#4, #6,
-#7, #9), or site #8 handing a command line to a shell it just spawned — and #8 is the only one of
-the three that something other than a person can start.
+#7, #9), site #8 handing a command line to a shell it just spawned, or site #10 typing a prompt
+another agent sent — and #8 and #10 are the only ones something other than a person can start. #10
+starts only along a line a person drew, for that pair of panes.
 
-**`mcp.rs` and `plugins.rs` reach none of them.** The MCP tool surface changes appearance —
+**`mcp.rs` and `plugins.rs` reach none of them but #10, and `mcp.rs` reaches that only by asking
+the window.** `prompt_agent` carries no bytes: it names a pane and some words, and the window
+decides whether, when and how they are typed (*A prompt from another agent*, below). Apart from
+it, the MCP tool surface changes appearance —
 brightness, contrast, warp, text size — reads pane state, posts a sticky note, declares a
 deliverable, puts work objects on a pane's workbench and opens a document beside its caller; the
 twelve tools are `list_panes`, `pane_events`, `get_pane_config`, `set_pane_config`, `leave_note`,
@@ -62,8 +69,8 @@ notes a person left on the brief beside the calling agent, from the same report 
 prints, and writes nothing. `open_document` changes the layout of the caller's own tab and nothing
 else: a document pane it splits off gets a fresh shell with no command line — `PaneRestore` with no
 `resume`, so site #8 has nothing to type — exactly as a Ctrl+Alt+click's does, and it takes no pane
-argument, so it cannot reach another agent's. There is no input verb, by design, and this audit
-confirmed it rather than taking the docs' word for it. The plugin *host* launches plugin MCP servers
+argument, so it cannot reach another agent's. There is no other input verb, by design, and this
+audit confirmed it rather than taking the docs' word for it. The plugin *host* launches plugin MCP servers
 over stdio and never holds a `Session`.
 
 **`ctl.rs` reaches exactly one — site #8, and only by making a new pane.** `ctl adopt --cwd X --run
@@ -181,11 +188,60 @@ These look like the concern and are not. Recorded so the next reader does not re
   many went that the file does not hold. Where the button is
   drawn is checked live, without pressing it, by `scripts/doc-send-check.sh`: absent over a shell,
   present over an agent and on a split opened beside one, and a stand-in agent's stdin empty after.
-- **The MCP server.** `set_pane_config` stores numbers for appearance. There is no verb that writes
-  to a pty, and this audit confirmed the docs' claim rather than repeating it.
+- **The MCP server.** `set_pane_config` stores numbers for appearance. No verb writes to a pty;
+  `prompt_agent` asks the window to, and is row #10, with its own section above. This audit
+  confirmed the docs' claim rather than repeating it.
 
 `td-send` used to sit in this list. It does not clear: it reaches site #8 over the control socket,
 and it is written up in the next section instead.
+
+---
+
+## A prompt from another agent
+
+**Row #10 is the one write another agent can start, and a person opens it.** Parker, 2026-10-27:
+*"the coordinating or PROMPTING agent NEEDS TO BE ABLE TO PROMPT THE AGENT (via MCP ideally)
+INSIDE AND THROUGH terminal delight … The POINT of a managing agent is to TREAT OTHER AGENTS AS
+SUB AGENTS!!!"* `prompt_agent` is that: the sender's words typed into the worker's own
+conversation as its next turn, and Enter pressed for it.
+
+That is the thing *What was removed, and why* says the correct amount of is none, so the
+difference has to be in the mechanism, and it is stated here rather than assumed:
+
+- **A person grants it, pane to pane.** Keepalive typed on TD's own initiative, on a timer, into
+  every idle agent. A prompt types only when an agent asks, along a line a person drew from that
+  agent's seat to this one at `prompt`. No verb draws a line
+  (`only_the_threshing_floor_and_the_rail_draw_lines`); a bypass a person grants on the rail is an
+  ask line and never reaches `prompt`; a line drawn before the rung existed is not upgraded; a pane
+  marked read-only or off-limits is refused, and refused again at the write (`type_prompt` checks
+  `takes_writes`). Erasing the line stops every prompt along it that has not been typed.
+- **Rest is read off the screen, not the process.** Keepalive's failure was a status that described
+  the agent process while Claude Code's *"Do you trust the files in this folder?"* dialog was on
+  screen. A prompt is pasted only after the screen has shown the agent's own idle
+  furniture (`hud::is_at_rest`) for two seconds, look after look, with no turn beginning in
+  between (a streaming agent's screen can look at rest between chunks), read before the finish bell, which promotes a screen nobody could read as
+  readily as a resting one. A menu with `❯ 1.`, a permission prompt or a question reads as blocked
+  (`hud::is_blocked_prompt`) and is never typed into. Nor is a pane its person typed in during the
+  last twenty seconds, or one showing a picker the workbench's dial raised.
+- **Enter waits for proof, and is pressed once.** The paste goes first, bracketed, with every control
+  character but newline and tab taken out (`prompt::paste`). Enter follows only when a row that
+  changed on the worker's screen carries this prompt's own number, or the program's placeholder for
+  a long paste — a dialog does not echo a paste, so it gives no proof. A block, an error, the person's
+  key or a rest between the paste and Enter means no Enter, and the prompt fails saying where its
+  words may be. That worker then takes no paste until its person types in the pane or a turn
+  begins there, so words left behind are never sent with the next prompt's. There is no second
+  Enter, whatever the screen does after.
+- **The worker can tell who typed it.** The first line names the sending pane and its pid, says a
+  person drew the prompt line, and carries the prompt's number.
+
+What it still trusts: a program whose dialog draws the idle furniture *and* echoes a paste in a new
+row would have that dialog answered. No agent program this repository reads does both. A prompt
+also reaches a pane that is not on screen, which the workbench's lines never do: the header, not the
+person's view, says where it came from.
+
+The walk-back, if the trade stops looking worth it, is to keep the paste and never press Enter:
+`prompt.rs` stops emitting `Act::Enter`, and a person submits each prompt. That costs the feature
+its point and keeps everything else.
 
 ---
 
@@ -223,7 +279,7 @@ check whose expectation is wrong on the day it ships is a check somebody switche
 
 ```
 sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'self\.send\('  # expect: 4 — run_line, terminal_key twice (the erase and the key), cut_selection
-sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'notifier\.notify\('  # expect: 10 — the nine rows above but #5, which writes through send, with #2 and #4 twice each; code only, since the tests quote the call
+sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'notifier\.notify\('  # expect: 11 — the ten rows above but #5, which writes through send, with #2 and #4 twice each; code only, since the tests quote the call
 rg -c 'keepalive' app/src/main.rs           # expect: 2  — the module doc, and the header-glyph count comment
 rg -n 'Msg::Input|notifier\.0|notifier:' app/src   # expect: the type in vt/pump.rs and vt/socket.rs's test, the field in term.rs, and host.rs's own three writes (the recipe, write_to, a test) — nothing in pane.rs or main.rs
 ```
