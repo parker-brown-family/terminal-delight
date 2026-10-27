@@ -5404,14 +5404,9 @@ const REST_SWEEP_SECS: u64 = 15;
 /// CONFIG › Agents page.
 #[derive(Debug, Clone, Default)]
 struct RestCensus {
-    resting: u32,
-    asleep: u32,
-    /// Bytes pushed out of the panes resting now.
-    given_back: u64,
-    /// Bytes agent panes hold in RAM and swap, among those measured.
-    held: u64,
-    /// Agent panes whose memory could not be read.
-    unmeasured: u32,
+    memory: agentrest::MemoryCensus,
+    /// Start of the last completed sampling pass; absent before the first pass.
+    sampled_at: Option<Instant>,
     /// Why panes are not resting, by kind.
     refusals: Vec<(agentrest::RefusalClass, u32)>,
 }
@@ -7674,24 +7669,19 @@ impl Workspace {
                 cx.notify();
             });
             let v = e.read(cx);
-            match &v.rest.dormancy {
-                Dormancy::Resting { .. } => {
-                    census.resting += 1;
-                    census.given_back += v.rest.given_back().unwrap_or(0);
-                }
-                Dormancy::Asleep(_) => census.asleep += 1,
-                Dormancy::Awake => {}
-            }
-            if v.counts_as_agent() {
-                match v.rest.usage.resident {
-                    Some(r) => census.held += r + v.rest.usage.swapped.unwrap_or(0),
-                    None => census.unmeasured += 1,
-                }
-            }
             if let Some(class) = v.rest.refusal.as_ref().and_then(|r| r.class()) {
                 *reasons.entry(class).or_default() += 1;
             }
         }
+        // Include agent panes without a hosted reading as unmeasured. A shell
+        // whose agent sleeps still counts; ordinary shell panes do not.
+        for e in &views {
+            let v = e.read(cx);
+            if v.counts_as_agent() {
+                census.memory.add(&v.rest);
+            }
+        }
+        census.sampled_at = Some(looked);
         census.refusals = reasons.into_iter().collect();
         self.rest_census = census;
         let store = self.rest_store(cx);
@@ -17769,16 +17759,27 @@ impl Workspace {
         let mut now = lang::fill(
             ui.ag_now,
             &[
-                ("resting", &c.resting.to_string()),
-                ("asleep", &c.asleep.to_string()),
-                ("back", &agentrest::short_bytes(c.given_back)),
-                ("held", &agentrest::short_bytes(c.held)),
+                ("resting", &c.memory.resting.panes().to_string()),
+                ("asleep", &c.memory.asleep.panes().to_string()),
+                (
+                    "back",
+                    &c.memory
+                        .decrease
+                        .label(self.lang.strings().parts.pane_mem_unmeasured),
+                ),
+                (
+                    "held",
+                    &c.memory
+                        .held
+                        .label(self.lang.strings().parts.pane_mem_unmeasured),
+                ),
             ],
         );
-        if c.unmeasured > 0 {
+        let unmeasured = c.memory.held.panes - c.memory.held.measured;
+        if unmeasured > 0 {
             now = format!(
                 "{now} \u{b7} {}",
-                lang::fill(ui.ag_unmeasured, &[("n", &c.unmeasured.to_string())])
+                lang::fill(ui.ag_unmeasured, &[("n", &unmeasured.to_string())])
             );
         }
         let why = c
@@ -17891,7 +17892,7 @@ impl Workspace {
                     .px_2()
                     .text_size(sk.text_px(8.5))
                     .text_color(th.text.alpha(0.7))
-                    .child(SharedString::from(now)),
+                    .child(SharedString::from(format!("{now}\n{}", ui.am_coverage))),
             )
             .when(!why.is_empty(), |d| {
                 d.child(
@@ -24897,6 +24898,7 @@ impl Workspace {
         let rad = sk.radius();
         let text = th.text;
         let tally = self.slot_tally(cx);
+        let owner = cx.entity().downgrade();
         // The robot is `U+F06A9` out of the Nerd Font TD resolves, checked
         // against `fc-list :charset` rather than assumed: the mock's `🤖`
         // (`U+1F916`) is in no monospace font on this machine and would paint
@@ -24923,6 +24925,18 @@ impl Workspace {
         let mut counter = sk
             .sheet()
             .id("agent-rollup")
+            .debug_selector(|| "agent-rollup".into())
+            .tooltip(move |_w, cx| {
+                cx.new(|cx| {
+                    if let Some(ws) = owner.upgrade() {
+                        cx.observe(&ws, |_, _, cx| cx.notify()).detach();
+                    }
+                    AgentMemoryTooltip {
+                        owner: owner.clone(),
+                    }
+                })
+                .into()
+            })
             .flex_none()
             .flex()
             .flex_row()
@@ -28116,6 +28130,98 @@ impl Render for SlotTooltip {
             );
         }
         card
+    }
+}
+
+/// The counter's hover reads only the sampling loop's cache. Observing the
+/// workspace keeps an open card current without doing I/O on hover.
+struct AgentMemoryTooltip {
+    owner: gpui::WeakEntity<Workspace>,
+}
+
+impl Render for AgentMemoryTooltip {
+    fn render(&mut self, w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let th = theme::theme(cx);
+        let s = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, s);
+        let strings = lang::current().strings();
+        let ui = strings.ui;
+        let census = self
+            .owner
+            .upgrade()
+            .map(|ws| ws.read(cx).rest_census.clone())
+            .unwrap_or_default();
+        let mut card = over_the_glass_tip(&th, &sk, s)
+            .id("agent-memory-tooltip")
+            .debug_selector(|| "agent-memory-tooltip".into())
+            .w(px(410. * s))
+            .max_w((w.viewport_size().width - px(16.)).max(px(0.)))
+            .gap(px(5. * s))
+            .text_size(sk.text_px(10.5 * s))
+            .text_color(sk.ink.ink_dim)
+            .child(
+                div()
+                    .text_color(sk.ink.ink)
+                    .text_size(sk.text_px(12. * s))
+                    .child(ui.am_title),
+            );
+        if let Some(sampled) = census.sampled_at {
+            let memory = &census.memory;
+            let row = |key: &str, label: String, ram: String, swap: String| {
+                div()
+                    .id(SharedString::from(format!("agent-memory-{key}")))
+                    .debug_selector(|| format!("agent-memory-{key}"))
+                    .flex()
+                    .flex_row()
+                    .gap(px(6. * s))
+                    .child(div().w(px(104. * s)).flex_none().child(label))
+                    .child(div().flex_1().min_w_0().map(|d| sk.data(d)).child(ram))
+                    .child(div().flex_1().min_w_0().map(|d| sk.data(d)).child(swap))
+            };
+            card = card.child(row(
+                "head",
+                String::new(),
+                ui.am_ram.into(),
+                ui.am_swap.into(),
+            ));
+            for (key, label, values) in [
+                ("awake", ui.am_awake, &memory.awake),
+                ("resting", strings.parts.hud_state_resting, &memory.resting),
+                ("asleep", strings.parts.hud_state_asleep, &memory.asleep),
+            ] {
+                card = card.child(row(
+                    key,
+                    format!("{label} · {}", values.panes()),
+                    values.ram.label(strings.parts.pane_mem_unmeasured),
+                    values.swap.label(strings.parts.pane_mem_unmeasured),
+                ));
+            }
+            card = card
+                .child(
+                    div()
+                        .mt(px(4. * s))
+                        .border_t_1()
+                        .border_color(sk.ink.ink_dim.alpha(0.25))
+                        .pt(px(5. * s))
+                        .text_color(sk.ink.ink)
+                        .child(format!(
+                            "{}: {}",
+                            ui.am_decrease,
+                            memory.decrease.label(strings.parts.pane_mem_unmeasured)
+                        )),
+                )
+                .child(ui.am_coverage)
+                .child(lang::fill(
+                    ui.am_updated,
+                    &[
+                        ("age", &agentrest::short_age(sampled.elapsed())),
+                        ("seconds", &REST_SWEEP_SECS.to_string()),
+                    ],
+                ));
+        } else {
+            card = card.child(ui.am_waiting);
+        }
+        card.child(ui.am_scope)
     }
 }
 
@@ -36838,6 +36944,111 @@ mod tests {
         assert!(legacy.skin.is_none());
     }
 
+    #[gpui::test]
+    fn agent_memory_hover_uses_cached_samples_and_keeps_the_war_room_click(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(968.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let pane = ws.read_with(cx, |ws, _| ws.every_view()[0].clone());
+        let stop = pane.read_with(cx, |v, _| v.fixture_shutdown());
+        cx.on_quit(stop);
+        ws.update(cx, |_, cx| {
+            uiconfig::flip(cx, uiconfig::Key::AgentCounter, true)
+        });
+        cx.run_until_parked();
+        cx.update(|w, cx| {
+            w.refresh();
+            w.draw(cx).clear();
+        });
+        let counter = cx.debug_bounds("agent-rollup").expect("counter is drawn");
+        cx.simulate_mouse_move(counter.center(), None, gpui::Modifiers::default());
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        cx.update(|w, cx| {
+            w.refresh();
+            w.draw(cx).clear();
+        });
+        assert!(
+            cx.debug_bounds("agent-memory-tooltip").is_some(),
+            "hover opens the card"
+        );
+        assert!(
+            cx.debug_bounds("agent-memory-resting").is_none(),
+            "no invented rows before a sample"
+        );
+
+        ws.update(cx, |ws, cx| {
+            pane.update(cx, |v, _| {
+                v.mode = pane::PaneMode::Claude;
+                v.rest.dormancy = agentrest::Dormancy::Resting {
+                    since: Instant::now(),
+                };
+                v.rest.usage.resident = Some(5 * 1024 * 1024);
+                v.rest.usage.swapped = None;
+                v.rest.rest_from = None;
+            });
+            let mut memory = agentrest::MemoryCensus::default();
+            memory.add(&pane.read(cx).rest);
+            ws.rest_census = RestCensus {
+                memory,
+                sampled_at: Some(Instant::now()),
+                ..Default::default()
+            };
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.update(|w, cx| {
+            w.refresh();
+            w.draw(cx).clear();
+        });
+        let bounds = cx
+            .debug_bounds("agent-memory-tooltip")
+            .expect("open card updates from cache");
+        assert!(bounds.origin.x >= px(0.) && bounds.origin.x + bounds.size.width <= px(968.));
+        assert!(cx.debug_bounds("agent-memory-resting").is_some());
+        pane.read_with(cx, |v, _| {
+            assert!(v.rest.dormancy.is_resting(), "hover must not wake a pane");
+            assert_eq!(v.rest.usage.resident, Some(5 * 1024 * 1024));
+            assert_eq!(v.rest.usage.swapped, None);
+            assert_eq!(v.rest.rest_from, None);
+            assert_eq!(v.rest.group, None, "hover must not adopt or scan a group");
+        });
+        cx.simulate_mouse_down(
+            counter.center(),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            counter.center(),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        assert!(
+            ws.read_with(cx, |ws, _| ws.war_room),
+            "click still opens the War Room"
+        );
+    }
+
     /// Parker, 2026-10-25, wearing Chalk under Tactical: he picked Hacker and
     /// the skin changed too. *"These are intended to move independently."*
     /// Every way a window's design changes — the DESIGN row, a reset, an undo,
@@ -39179,6 +39390,7 @@ mod tests {
         let known: &[(&str, usize)] = &[
             ("render_savings_overlay", 1),
             ("render_bar_slot", 1),
+            ("render_agent_counter", 1),
             ("terminal_state_toggle", 1),
             // Concise palette help, including Custom's interactive editor link.
             ("palette_help", 2),

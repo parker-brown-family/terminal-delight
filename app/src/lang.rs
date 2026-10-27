@@ -2998,6 +2998,9 @@ mod tests {
         "chrome.cfg_agents",
         "chrome.ag_hdr",
         "chrome.ag_unit_min",
+        // RAM is an international acronym; German and French retain Swap.
+        "chrome.am_ram",
+        "chrome.am_swap",
         "chrome.ui_hdr",
         "chrome.ui_face",
         // French shares these with English.

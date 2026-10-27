@@ -192,7 +192,12 @@ pub fn run(mut job: Job) -> Outcome {
                 &argv,
                 job.epoch,
             ) {
-                Ok(asleep) => out.act = Act::Slept(asleep),
+                Ok(asleep) => {
+                    out.act = Act::Slept(asleep);
+                    // The state now describes the surviving shell; the usage
+                    // sampled before termination described the agent as well.
+                    out.usage = panegroup::usage(&group);
+                }
                 Err(r) => out.refusal = Some(r),
             }
         }
