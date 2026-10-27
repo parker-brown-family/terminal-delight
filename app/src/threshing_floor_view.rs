@@ -497,9 +497,10 @@ impl Workspace {
             .w(px(chart_w))
             .h(px(chart_h))
             .child(canvas);
-        if seats.is_empty() && query.trim().is_empty() {
+        if seats.is_empty() && missing.is_empty() && query.trim().is_empty() {
             chart = chart.child(
                 div()
+                    .debug_selector(|| "floor-org-empty-hint".to_string())
                     .absolute()
                     .left(px(pad))
                     .top(px(pad))
@@ -549,6 +550,18 @@ impl Workspace {
                 None => format!("\u{25cf} {} · {role}", f.state.label_in(lang)),
             };
             let produced = f.artifact.is_some();
+            // A header that only says "shell", or repeats the tab, adds a line
+            // and no information.
+            let header = {
+                let h = f.name.header.trim();
+                (!h.is_empty() && !h.eq_ignore_ascii_case("shell") && h != f.name.tab.trim())
+                    .then(|| h.to_string())
+            };
+            let message = f
+                .message
+                .as_deref()
+                .and_then(|m| m.lines().map(str::trim).find(|l| !l.is_empty()))
+                .map(str::to_string);
             let pane_drag = PaneDrag {
                 leaf: f.leaf.clone(),
                 title: f.name.tab.clone(),
@@ -571,8 +584,8 @@ impl Workspace {
                     .top(px(y))
                     .w(px(sw))
                     .h(px(sh))
-                    .px(px(10. * s))
-                    .py(px(6. * s))
+                    .px(px(12. * s))
+                    .py(px(9. * s))
                     .rounded(sk.rad_raw(7.))
                     .border_1()
                     // Nothing handed over yet wears the theme's accent: a fact
@@ -587,7 +600,7 @@ impl Workspace {
                     .bg(darken(th.surface, 0.35))
                     .flex()
                     .flex_col()
-                    .gap_0p5()
+                    .gap(px(8. * s))
                     .cursor(gpui::CursorStyle::OpenHand)
                     .when(dragging == Some(&f.leaf), |d| d.opacity(0.35))
                     .hover(|d| d.border_color(th.accent))
@@ -627,83 +640,113 @@ impl Workspace {
                     .on_drop(cx.listener(move |ws, d: &RelationDrag, _, cx| {
                         ws.threshing_floor_begin_relation(Some(d.from), Some(seat), cx);
                     }))
-                    // Where it sits: the tab's own name is kept whole, and the
-                    // levels above it are the part that clips on a narrow box.
+                    // Four groups, read top to bottom: who it is, what it is doing
+                    // now, what it runs on, and what it has produced. Lines in a
+                    // group sit close and a wider gap falls between groups, so a
+                    // sweep of the floor sorts each card before it is read. The
+                    // produced row sits at the foot of every card, so it lines up
+                    // from card to card.
                     .child(
                         div()
                             .flex()
-                            .flex_row()
-                            .min_w(px(0.))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_size(sk.text_px(10.5))
-                            .when(!f.name.outer.is_empty(), |d| {
-                                // The `›` sits outside the part that clips, so
-                                // a cut group never runs into the tab's name.
+                            .flex_col()
+                            .gap(px(2. * s))
+                            // Where it sits: the tab's own name is kept whole, and the
+                            // levels above it are the part that clips on a narrow box.
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .min_w(px(0.))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_size(sk.text_px(10.5))
+                                    .when(!f.name.outer.is_empty(), |d| {
+                                        // The `›` sits outside the part that clips, so
+                                        // a cut group never runs into the tab's name.
+                                        d.child(
+                                            div()
+                                                .min_w(px(0.))
+                                                .truncate()
+                                                .text_color(th.text.alpha(0.6))
+                                                .child(SharedString::from(f.name.outer.clone())),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_none()
+                                                .text_color(th.text.alpha(0.6))
+                                                .child("\u{a0}\u{203a}\u{a0}"),
+                                        )
+                                    })
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(th.text)
+                                            .child(SharedString::from(f.name.tab.clone())),
+                                    ),
+                            )
+                            .when_some(header, |d, h| {
                                 d.child(
                                     div()
-                                        .min_w(px(0.))
-                                        .truncate()
-                                        .text_color(th.text.alpha(0.6))
-                                        .child(SharedString::from(f.name.outer.clone())),
+                                        .text_size(sk.text_px(8.5))
+                                        .text_color(th.text.alpha(0.55))
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .child(SharedString::from(h)),
                                 )
-                                .child(
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2. * s))
+                            .when_some(message, |d, m| {
+                                d.child(
                                     div()
-                                        .flex_none()
-                                        .text_color(th.text.alpha(0.6))
-                                        .child("\u{a0}\u{203a}\u{a0}"),
+                                        .id(SharedString::from(format!("floor-message-{}", seat.0)))
+                                        .debug_selector(move || format!("floor-message-{}", seat.0))
+                                        .text_size(sk.text_px(8.5))
+                                        .text_color(th.text.alpha(0.85))
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .child(SharedString::from(m)),
                                 )
                             })
                             .child(
                                 div()
-                                    .flex_none()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(th.text)
-                                    .child(SharedString::from(f.name.tab.clone())),
+                                    .text_size(sk.text_px(8.5))
+                                    .text_color(state_ink)
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .child(SharedString::from(state_line)),
                             ),
                     )
                     .child(
                         div()
-                            .text_size(sk.text_px(8.5))
-                            .text_color(th.text.alpha(0.8))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .child(SharedString::from(f.name.header.clone())),
+                            .flex()
+                            .flex_col()
+                            .gap(px(2. * s))
+                            .child(
+                                div()
+                                    .text_size(sk.text_px(8.5))
+                                    .text_color(th.text.alpha(0.6))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .child(SharedString::from(second)),
+                            )
+                            .child(self.threshing_floor_metrics(f, &sk, th)),
                     )
                     .child(
                         div()
-                            .id(SharedString::from(format!("floor-message-{}", seat.0)))
-                            .debug_selector(move || format!("floor-message-{}", seat.0))
-                            .text_size(sk.text_px(8.5))
-                            .text_color(th.text.alpha(0.65))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .child(SharedString::from(
-                                f.message
-                                    .as_deref()
-                                    .and_then(|m| m.lines().find(|l| !l.trim().is_empty()))
-                                    .unwrap_or("")
-                                    .to_string(),
-                            )),
+                            .mt_auto()
+                            .pt(px(6. * s))
+                            .mr(px(30. * s))
+                            .border_t_1()
+                            .border_color(th.text.alpha(0.12))
+                            .child(self.threshing_floor_artifact_row(f, seat, &sk, th, cx)),
                     )
-                    .child(
-                        div()
-                            .text_size(sk.text_px(8.5))
-                            .text_color(th.text.alpha(0.6))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .child(SharedString::from(second)),
-                    )
-                    .child(
-                        div()
-                            .text_size(sk.text_px(8.5))
-                            .text_color(state_ink)
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .child(SharedString::from(state_line)),
-                    )
-                    .child(self.threshing_floor_metrics(f, &sk, th))
-                    .child(self.threshing_floor_artifact_row(f, seat, &sk, th, cx))
                     .child(
                         div()
                             .id(SharedString::from(format!("floor-connect-{}", seat.0)))
@@ -748,34 +791,63 @@ impl Workspace {
             };
             chart = chart.child(
                 div()
+                    .debug_selector(move || format!("floor-unavailable-{}", seat.0))
                     .absolute()
                     .left(px(x))
                     .top(px(y))
                     .w(px(sw))
                     .h(px(sh))
-                    .p_2()
+                    .px(px(12. * s))
+                    .py(px(9. * s))
                     .border_1()
                     .border_color(th.text.alpha(0.3))
                     .rounded(sk.rad_raw(7.))
                     .flex()
                     .flex_col()
-                    .gap_1()
-                    .text_color(th.text.alpha(0.6))
-                    .child(SharedString::from(ui.floor_unavailable.to_string()))
-                    .child(SharedString::from(format!(
-                        "{} {} · {} {}",
-                        ui.floor_age, ui.floor_unknown, ui.floor_tokens, ui.floor_unknown
-                    )))
+                    .gap(px(8. * s))
                     .child(
-                        Self::bezel_btn(&sk, ui.floor_unseat_btn, false)
-                            .id(SharedString::from(format!("floor-forget-{}", seat.0)))
-                            .on_click(cx.listener(move |ws, _, _, cx| {
-                                cx.stop_propagation();
-                                ws.chart.forget_seat(seat);
-                                ws.floor_orgs.remove(seat);
-                                ws.save(cx);
-                                cx.notify();
-                            })),
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2. * s))
+                            .child(
+                                div()
+                                    .text_size(sk.text_px(10.5))
+                                    .text_color(th.text.alpha(0.75))
+                                    .child(SharedString::from(ui.floor_unavailable.to_string())),
+                            )
+                            .child(
+                                div()
+                                    .text_size(sk.text_px(8.5))
+                                    .text_color(th.text.alpha(0.5))
+                                    .child(SharedString::from(
+                                        ui.floor_unavailable_why.to_string(),
+                                    )),
+                            )
+                            // Its pane is gone, so what it produced is not known
+                            // here: said plainly, never drawn as "nothing yet".
+                            .child(
+                                div()
+                                    .text_size(sk.text_px(8.5))
+                                    .text_color(th.text.alpha(0.45))
+                                    .child(SharedString::from(
+                                        ui.floor_artifacts_unknown.to_string(),
+                                    )),
+                            ),
+                    )
+                    // The one thing to do with it, alone at the foot.
+                    .child(
+                        div().mt_auto().flex().flex_row().child(
+                            Self::bezel_btn(&sk, ui.floor_unseat_btn, false)
+                                .id(SharedString::from(format!("floor-forget-{}", seat.0)))
+                                .on_click(cx.listener(move |ws, _, _, cx| {
+                                    cx.stop_propagation();
+                                    ws.chart.forget_seat(seat);
+                                    ws.floor_orgs.remove(seat);
+                                    ws.save(cx);
+                                    cx.notify();
+                                })),
+                        ),
                     ),
             );
         }
@@ -1019,10 +1091,13 @@ impl Workspace {
                     .gap_1()
                     .children(switches),
             )
+            // Finding a pane is a different job from the window's switches above
+            // it, so it starts a group of its own: a wider gap here than inside.
             .child(
                 div()
                     .id("threshing-floor-search")
                     .debug_selector(|| "threshing-floor-search".to_string())
+                    .mt_2()
                     .flex()
                     .flex_row()
                     .items_center()
@@ -1111,8 +1186,11 @@ impl Workspace {
                     .is_none()
                     .then(|| self.threshing_floor_relationship_controls(&sk, th, cx)),
             )
+            // The session's numbers report on the floor rather than act on it:
+            // set a little apart from the org controls.
             .children(self.ask_numbers.as_ref().map(|n| {
                 div()
+                    .mt_2()
                     .text_size(sk.text_px(8.5))
                     .text_color(if n.unlined_answered > 0 {
                         th.ansi[1]
@@ -1645,7 +1723,6 @@ impl Workspace {
             return div()
                 .id(SharedString::from(format!("floor-no-artifact-{}", seat.0)))
                 .debug_selector(move || format!("floor-no-artifact-{}", seat.0))
-                .mr(px(30. * s))
                 .text_size(sk.text_px(8.5))
                 .text_color(th.accent)
                 .child(SharedString::from(ui.floor_no_artifact.to_string()))
@@ -1654,11 +1731,12 @@ impl Workspace {
         let pill = |word: &str, ink: Hsla, ground: Hsla| {
             div()
                 .flex_none()
-                .px(px(5. * s))
+                .px(px(6. * s))
+                .py(px(1. * s))
                 .rounded(sk.rad_raw(8.))
                 .bg(ground)
                 .text_color(ink)
-                .text_size(sk.text_px(7.))
+                .text_size(sk.text_px(7.5))
                 .font_weight(gpui::FontWeight::BOLD)
                 .child(SharedString::from(word.to_string()))
         };
@@ -1686,7 +1764,6 @@ impl Workspace {
             .flex_row()
             .items_center()
             .gap(px(5. * s))
-            .mr(px(30. * s))
             .min_w(px(0.))
             .overflow_hidden()
             .whitespace_nowrap()
@@ -5054,6 +5131,37 @@ mod tests {
         );
         assert!(cx.debug_bounds("floor-no-feedback-101").is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An org whose every seat has lost its pane still draws those seats, and
+    /// the hint for an empty org is not laid over them (Parker's screenshot,
+    /// 2026-10-27: "Drop panes here" printed across the first card).
+    #[gpui::test]
+    fn an_org_whose_panes_are_all_gone_shows_their_cards_and_no_empty_hint(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        cx.update(|_, cx| {
+            ws.update(cx, |ws, cx| {
+                let org = ws.floor_org.unwrap();
+                ws.floor_orgs.remove(threshing_floor::SeatId(100));
+                ws.floor_orgs.remove(threshing_floor::SeatId(101));
+                ws.floor_orgs.assign(threshing_floor::SeatId(999), org);
+                cx.notify();
+            })
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("floor-unavailable-999").is_some(),
+            "the seat whose pane is gone keeps its card"
+        );
+        assert!(
+            cx.debug_bounds("floor-org-empty-hint").is_none(),
+            "the empty-org hint is only for an org with no seats at all"
+        );
     }
 
     #[gpui::test]
