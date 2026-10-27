@@ -61,6 +61,7 @@ mod docview;
 mod emphasis;
 mod engstate;
 mod fav;
+mod feedback;
 mod glyph;
 mod gridwire;
 mod handover;
