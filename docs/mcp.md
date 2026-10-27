@@ -46,8 +46,8 @@ attach an agent to an existing Terminal Delight session.
 ## Turning exposure on
 
 Exposure ships **disabled** and the policy is operator-controlled from the
-**War Room**, the panel the agent counter at the top right opens (the `…` menu has
-a War Room row too). Its switch row:
+**Threshing Floor**, the panel the agent counter at the top right opens (the `…` menu has
+a Threshing Floor row too). Its switch row:
 
 - **Enabled** — master switch. Off ⇒ the server reports nothing.
 - **Expose** — `agents only` (claude / codex panes; the safe default, never a
@@ -92,12 +92,12 @@ person-acting bench, document, adoption and tab-edit command, regardless of
 caller ancestry. A shared daemon or an unknown caller gets no exception.
 Operator rigs must launch their own window with `TD_MCP_SCRIPTED=1`; those
 windows retain off-limits selection and dispatch checks. Hidden and absent write targets answer alike. The MCP gate is
-`warroom::reach` for reading and `warroom::may_write` for writing; the idea is
+`threshing_floor::reach` for reading and `threshing_floor::may_write` for writing; the idea is
 Splinterm's per-pane grant, with TD's own shape.
 
-### The War Room: who may reach whom
+### The Threshing Floor: who may reach whom
 
-A position holds for every agent. The War Room says which agent may reach which
+A position holds for every agent. The Threshing Floor says which agent may reach which
 pane, as an org chart a person draws. Each agent pane can be given a **seat**
 (the Seat button beside it), and a person draws **lines** between seats: click
 one seat, then another. A line carries a rung, and clicking its label cycles it:
@@ -108,7 +108,7 @@ one seat, then another. A line carries a rung, and clicking its label cycles it:
 | `read` | also read it: `grep`, `pane_events`, `get_pane_config` |
 | `ask` | also ask it a question with `ask_agent` |
 
-The rules, in `warroom::reach`:
+The rules, in `threshing_floor::reach`:
 
 - **A pane nobody seated keeps the window's switches**: agents read it as they
   always have, and **never ask it**. No prompt travels without a line.
@@ -117,7 +117,7 @@ The rules, in `warroom::reach`:
   `hidden` count, and never which.
 - **Read-only caps a line at ask; off-limits beats every line.**
 - **Only a person draws, changes or erases a line.** No MCP or `ctl` verb can;
-  `only_the_war_room_and_the_rail_draw_lines` keeps it so. An agent may *ask*
+  `only_the_threshing_floor_and_the_rail_draw_lines` keeps it so. An agent may *ask*
   for a bypass line through `request_access` (below).
 - **Seats are not pane numbers.** Pane ids restart at 1 when the session host
   restarts, so a seat is a random id saved with the pane, and lines are saved in
@@ -203,10 +203,10 @@ agents may do:
 |---|---|---|
 | `open_pane` + `pid` | lifts off-limits from that pane | right-click → Let agents see this pane |
 | `close_pane` + `pid` | marks that pane off-limits | right-click → Off-limits to agents |
-| `writes_on` | turns MCP writes on | War Room, Writes |
-| `expose_shells` | shows plain shells as well as agents | War Room, Expose |
-| `events_on` | shows other agents' tool calls | War Room, Events |
-| `ask_line` + `pid` | a bypass line from the asker's seat to that seat, for the prompts picked on the card (1, 3 or 10; 3 unless changed) | War Room, draw a line |
+| `writes_on` | turns MCP writes on | Threshing Floor, Writes |
+| `expose_shells` | shows plain shells as well as agents | Threshing Floor, Expose |
+| `events_on` | shows other agents' tool calls | Threshing Floor, Events |
+| `ask_line` + `pid` | a bypass line from the asker's seat to that seat, for the prompts picked on the card (1, 3 or 10; 3 unless changed) | Threshing Floor, draw a line |
 
 Appearance is not on the list. With writes on, `set_pane_config` restyles a pane
 and asks nobody — Parker's line was that agents should not be *"blocked by human
@@ -305,7 +305,7 @@ A copy is made only when it can be made safely, and refused by name otherwise:
 - **One copy at a time per asker** (`busy`).
 
 Every ask, cheap or copy, refused or answered, leaves a line per stage in
-`$XDG_STATE_HOME/terminal-delight/warroom/<session>/asks.jsonl`: who asked whom,
+`$XDG_STATE_HOME/terminal-delight/threshing-floor/<session>/asks.jsonl` (builds from before the rename wrote `warroom/<session>/`, which is still read and counted): who asked whom,
 along what, at which stage, what it read and cost. It keeps the question's length
 and SHA-256, never its words, and never the answer.
 
@@ -417,7 +417,7 @@ annotations are a separate feature; `ctl doc note` does not write sticky notes.
 
 | Tool | Arguments | Returns |
 |------|-----------|---------|
-| `list_panes` | _(none)_ | Every currently-exposed pane: `tab`, `title`, `mode` (CLAUDE/CODEX/SHELL/REMOTE/`UNKNOWN`/the program's own name), `is_agent`, `pid`, `cwd`, `session` (resume recipe, which may not identify an exact conversation), `reach` (how far the caller reaches this pane: `seen`, `read` or `ask`; a pane nobody seated in the War Room is `read`, and a seated pane appears only along a line a person drew from the caller's seat). Beside the panes, `hidden` counts the panes the caller cannot see. **`UNKNOWN` is a real answer, not a failure**: the pane belongs to a session host that has not classified it yet, and it is deliberately not reported as `SHELL` — an agent reading its own fleet can tell "nothing has described this pane" from "a shell is running here", which is the distinction whose absence hid eleven working agents from the attention rail (#462). Text summary + `structuredContent`. |
+| `list_panes` | _(none)_ | Every currently-exposed pane: `tab`, `title`, `mode` (CLAUDE/CODEX/SHELL/REMOTE/`UNKNOWN`/the program's own name), `is_agent`, `pid`, `cwd`, `session` (resume recipe, which may not identify an exact conversation), `reach` (how far the caller reaches this pane: `seen`, `read` or `ask`; a pane nobody seated in the Threshing Floor is `read`, and a seated pane appears only along a line a person drew from the caller's seat). Beside the panes, `hidden` counts the panes the caller cannot see. **`UNKNOWN` is a real answer, not a failure**: the pane belongs to a session host that has not classified it yet, and it is deliberately not reported as `SHELL` — an agent reading its own fleet can tell "nothing has described this pane" from "a shell is running here", which is the distinction whose absence hid eleven working agents from the attention rail (#462). Text summary + `structuredContent`. |
 | `pane_events` | `pid` (from `list_panes`), `limit` (default 20, max 200) | Recent structured tool calls for that agent pane — `{ts, tool, summary}` — tailed from the agent's **own transcript**, not the rendered screen. |
 | `get_pane_config` | `targets?` — array of pids and/or `"outer"`; omit for every exposed pane + `outer` | Each target's **appearance**: the monitor grade as uniform `0..100` percents (`brightness`, `contrast`, `colour`, `text`, `background`, `gamma`, `menu_bar`, `text_size`, `warp`, `crawl_angle`, `crawl_depth`) plus a `crawl` boolean. A bad pid is a per-target `error` row, not a failed call. Read-only. |
 | `set_pane_config` | `updates` — array of `{ target, config }` where `target` is a pid or `"outer"` and `config` is a partial grade | Applies each partial: only the channels you include change (others untouched, PATCH semantics); out-of-range values clamp. Returns the resulting grade per target. Requires the **Writes** toggle. Setting `outer` re-grades every pane that inherits it — change the whole wall in one call. |
@@ -463,7 +463,7 @@ polling:
 - `agent_vanished` — a watched pane is gone (carries `pid`).
 
 The feed reaches every connection at once and cannot tell who is listening, so it
-carries only panes nobody seated in the War Room; a seated pane's tool calls are
+carries only panes nobody seated in the Threshing Floor; a seated pane's tool calls are
 never pushed.
 
 The feed never replays history: when you connect mid-conversation you get one
@@ -484,7 +484,7 @@ silence it.
   kernel-reported `cwd`, slugged so they can't escape `~/.claude` / `~/.codex`;
   reads are bounded to the tail of the file.
 - **No prompt without a line.** Another agent is asked only along a line a
-  person drew in the War Room, or a bypass a person granted on the rail. An
+  person drew in the Threshing Floor, or a bypass a person granted on the rail. An
   unseated pane is never asked.
 - **A copy can only read, and the person pays for it.** See *Asking another
   agent*: by default every copy waits for a Yes, and the record keeps no

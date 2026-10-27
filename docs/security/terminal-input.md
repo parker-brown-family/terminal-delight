@@ -91,7 +91,7 @@ or read-only (`docs/mcp.md`) takes none of them:** the bench verbs skip it when 
 hover is refused again at dispatch (`pane/bench.rs`), so a pane whose position changed after the
 pick still takes nothing.
 
-**The War Room's asks add no way in.** `ask_agent` answers from what the window already shows, and
+**The Threshing Floor's asks add no way in.** `ask_agent` answers from what the window already shows, and
 writes nothing anywhere. A copy (`ask_agent` with `copy`) is a new process, started by the window
 with its own stdin pipe; the question goes down that pipe, and the asked agent's terminal and
 conversation are never touched (`app/src/askcopy.rs`). The only line typed into anybody's terminal

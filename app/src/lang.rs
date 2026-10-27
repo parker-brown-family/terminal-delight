@@ -3034,7 +3034,7 @@ mod tests {
         "chrome.sav_tab_usage",
         "chrome.scale_xl",
         // Spanish and German retain the technical term "tokens".
-        "chrome.wr_tokens",
+        "chrome.floor_tokens",
         "coord.checkout",
         "coord.crumb_checkouts",
         "coord.dirty",

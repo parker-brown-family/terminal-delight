@@ -1,4 +1,4 @@
-# War Room Drag UX
+# Threshing Floor Drag UX
 
 **Difficulty: 6/10** — membership gestures change access as well as layout; errors need native interaction and permission tests.
 **Turned out to be:** 6/10. Native event tests caught the preview-root positioning mistake; removal also needed to invalidate undelivered copy results.
@@ -7,7 +7,7 @@ The combined plan is authorised by Parker's 2026-10-25 instruction: "I am AFK so
 
 - [x] Read the current implementation, release context and existing follow-ups.
 - [x] Research drag feedback, cancellation, pointer alternatives and menu dismissal.
-- [x] Dismiss menus on outside press and bind War Room menus to the intended card.
+- [x] Dismiss menus on outside press and bind Threshing Floor menus to the intended card.
 - [x] Connect pool and bin removal to the same access-revoking operation.
 - [x] Highlight destinations, dim and frost unrelated surfaces, and support cancellation.
 - [x] Run native interaction tests, permission/persistence checks and project gates.

@@ -1,13 +1,14 @@
 //! The record of every ask one agent made of another, one JSON line per stage.
 //!
 //! Append-only, one file per window session under
-//! `$XDG_STATE_HOME/terminal-delight/warroom/<session>/asks.jsonl`. It keeps
+//! `$XDG_STATE_HOME/terminal-delight/threshing-floor/<session>/asks.jsonl`. It keeps
 //! who asked whom, along which kind of line, at which stage, and what reading
 //! the answer cost — and never the question's words or the answer, only the
 //! question's length and SHA-256, so the record cannot become a second copy of
 //! what agents say to each other. The two numbers Gate 1 promised Parker (asks
 //! answered with no line, which must be zero, and tokens per answered ask) are
-//! read back from it by [`numbers`].
+//! read back from it by [`numbers_for`], which also counts the file an older
+//! build kept under the record's earlier directory name.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -15,7 +16,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::warroom::{AskId, SeatId};
+use crate::threshing_floor::{AskId, SeatId};
 
 /// One stage of one ask.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -58,16 +59,35 @@ pub fn fingerprint(question: &str) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Where one window session's record lives.
-pub fn path_for(session: &str) -> PathBuf {
-    let state = std::env::var_os("XDG_STATE_HOME")
+/// The directory the record is written under.
+const DIR: &str = "threshing-floor";
+/// The directory builds before the rename wrote under (LEGACY_DIR). It is read and never
+/// written or moved: a window still running an older build keeps appending there, and a
+/// record is never moved out from under its writer.
+const LEGACY_DIR: &str = "warroom";
+
+fn state_root() -> PathBuf {
+    std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| crate::session::home_dir().join(".local/state"));
-    state
-        .join("terminal-delight")
-        .join("warroom")
+        .unwrap_or_else(|| crate::session::home_dir().join(".local/state"))
+}
+
+fn under(root: &Path, dir: &str, session: &str) -> PathBuf {
+    root.join("terminal-delight")
+        .join(dir)
         .join(session)
         .join("asks.jsonl")
+}
+
+/// Where one window session's record is written.
+pub fn path_for(session: &str) -> PathBuf {
+    under(&state_root(), DIR, session)
+}
+
+/// Every file holding one session's record, oldest first: the one an older build
+/// kept (LEGACY_DIR), then the current one.
+fn paths_to_read(root: &Path, session: &str) -> [PathBuf; 2] {
+    [under(root, LEGACY_DIR, session), under(root, DIR, session)]
 }
 
 /// Append one stage. A record that cannot be written is an error the caller
@@ -99,14 +119,33 @@ pub struct Numbers {
     pub copy_tokens: Option<u64>,
 }
 
-/// Read a record back. Lines this build cannot read are skipped and counted
-/// out of the numbers rather than guessed into them.
-pub fn numbers(path: &Path) -> std::io::Result<Numbers> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e),
-    };
+/// One session's numbers, from its current record and any an older build kept.
+pub fn numbers_for(session: &str) -> std::io::Result<Numbers> {
+    numbers_for_in(&state_root(), session)
+}
+
+fn numbers_for_in(root: &Path, session: &str) -> std::io::Result<Numbers> {
+    numbers_in(&paths_to_read(root, session))
+}
+
+/// Read one record file back.
+#[cfg(test)]
+fn numbers(path: &Path) -> std::io::Result<Numbers> {
+    numbers_in(std::slice::from_ref(&path.to_path_buf()))
+}
+
+/// Read records back, in order. A missing file holds no asks. Lines this build
+/// cannot read are skipped and counted out of the numbers rather than guessed
+/// into them.
+fn numbers_in(paths: &[PathBuf]) -> std::io::Result<Numbers> {
+    let mut text = String::new();
+    for path in paths {
+        match std::fs::read_to_string(path) {
+            Ok(t) => text.push_str(&t),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+    }
     let mut n = Numbers {
         unlined_answered: 0,
         cheap_answers: 0,
@@ -156,6 +195,39 @@ mod tests {
             tokens_read: None,
             cost_usd: None,
         }
+    }
+
+    #[test]
+    fn stages_are_written_under_the_new_directory_name() {
+        let root = Path::new("/state");
+        assert_eq!(
+            under(root, DIR, "7"),
+            Path::new("/state/terminal-delight/threshing-floor/7/asks.jsonl")
+        );
+        assert!(path_for("7").ends_with("terminal-delight/threshing-floor/7/asks.jsonl"));
+    }
+
+    #[test]
+    fn the_numbers_include_the_record_an_older_build_kept() {
+        let root = std::env::temp_dir().join(format!("td-askrecord-{}-legacy", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let [old, new] = paths_to_read(&root, "7");
+        // The directory older builds wrote; renaming it here would orphan their records.
+        assert_eq!(LEGACY_DIR, "warroom");
+        assert!(
+            old.ends_with(Path::new(LEGACY_DIR).join("7/asks.jsonl")),
+            "{old:?}"
+        );
+        append(&old, &entry("cheap", "line", "a")).unwrap();
+        append(&old, &entry("answered", "line", "b")).unwrap();
+        append(&new, &entry("answered", "line", "c")).unwrap();
+        let n = numbers_for_in(&root, "7").unwrap();
+        assert_eq!(
+            (n.cheap_answers, n.copy_answers),
+            (1, 2),
+            "asks recorded before the rename still count"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn scratch(name: &str) -> PathBuf {

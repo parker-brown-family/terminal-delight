@@ -47,7 +47,7 @@ pub enum Change {
     ExposeShells,
     /// Let agents tail other agents' transcripts.
     EventsOn,
-    /// A bypass line in the War Room: ask one pane directly, past the chart,
+    /// A bypass line in the Threshing Floor: ask one pane directly, past the chart,
     /// for a few prompts (three unless the person picks another count).
     AskLine,
     /// A read-only copy of an agent, over the person's press limit or of
@@ -214,7 +214,7 @@ pub struct Ask {
     /// When the ask arrived, so the row can say how long it has waited.
     pub at: Instant,
     /// How serious the ask is — the rail's colour and glyph. Assessed by the
-    /// window when the ask arrives (`warroom::risk`); `None` until then.
+    /// window when the ask arrives (`threshing_floor::risk`); `None` until then.
     pub risk: Option<crate::coordination::Severity>,
     /// For a bypass: the prompts it grants, three unless the person picks
     /// another count on the card before pressing Yes.
@@ -223,7 +223,7 @@ pub struct Ask {
     /// unknown, which is why the card is on the rail at all.
     pub reads: Option<u64>,
     /// For a copy: the ask it answers, in the window's book.
-    pub ask_id: Option<crate::warroom::AskId>,
+    pub ask_id: Option<crate::threshing_floor::AskId>,
 }
 
 impl Ask {
@@ -267,7 +267,7 @@ pub struct Now<'a> {
     pub pane_off_limits: Option<bool>,
     pub mcp: &'a McpConfig,
     /// For `ask_line`: `None` when the asker or the pane is not seated in the
-    /// War Room (a line runs between seats), else whether a line from the
+    /// Threshing Floor (a line runs between seats), else whether a line from the
     /// asker's seat already reaches the pane as far as ask.
     pub line_reaches_ask: Option<bool>,
 }
@@ -308,8 +308,8 @@ pub fn nothing_to_ask(change: Change, pid: Option<u32>, now: &Now) -> Option<Str
             }),
             (Some(true), _) => Some(format!("{pane} is off-limits; no line can reach it")),
             (Some(false), None) => Some(format!(
-                "a line runs between War Room seats, and your pane or {pane} is not seated; \
-                 only a person seats panes, in the War Room"
+                "a line runs between Threshing Floor seats, and your pane or {pane} is not seated; \
+                 only a person seats panes, in the Threshing Floor"
             )),
             (Some(false), Some(true)) => Some(format!(
                 "a line from your seat already reaches {pane} as far as ask"
@@ -438,7 +438,7 @@ mod tests {
         );
     }
 
-    /// A bypass runs between two War Room seats: no pane, an off-limits pane,
+    /// A bypass runs between two Threshing Floor seats: no pane, an off-limits pane,
     /// an unseated pane and a line that already reaches each leave nothing to
     /// ask, each in its own words.
     #[test]
@@ -496,7 +496,7 @@ mod tests {
         let mut a = ask(Change::Copy, Some(200));
         a.title = Some("auth refactor".into());
         a.reads = Some(560_000);
-        a.ask_id = Some(crate::warroom::AskId(41));
+        a.ask_id = Some(crate::threshing_floor::AskId(41));
         assert!(a.words().contains("560.0k"), "{}", a.words());
         a.reads = None;
         assert!(a.words().contains("unknown"), "{}", a.words());
@@ -735,7 +735,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
-        let view = code(include_str!("war_room_view.rs"));
+        let view = code(include_str!("threshing_floor_view.rs"));
         let main = code(include_str!("main.rs"));
         // Each call, with the function it sits in; the definition is not a call.
         let starts: Vec<&str> = view
@@ -771,7 +771,7 @@ mod tests {
         assert_eq!(
             view.matches("answer_copy(").count(),
             1,
-            "war_room_view.rs only defines answer_copy"
+            "threshing_floor_view.rs only defines answer_copy"
         );
     }
 }

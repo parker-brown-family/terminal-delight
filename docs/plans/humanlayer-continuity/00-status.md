@@ -24,7 +24,7 @@ Existing terminal host independence, permission controls, note data and handover
 
 ## Implementation
 
-The isolated feature checkout is `/home/parker/Work/td-authority-lab/humanlayer-continuity`; the daily integration checkout is `../td-humanlayer-integrated`, based on the current War Room and MCP integration. The original working tree and its usage edits were left untouched.
+The isolated feature checkout is `/home/parker/Work/td-authority-lab/humanlayer-continuity`; the daily integration checkout is `../td-humanlayer-integrated`, based on the current Threshing Floor and MCP integration. The original working tree and its usage edits were left untouched.
 
 The archive uses existing conversation records, with explicit unbound events before conversation identity is available. Capture runs off the UI thread. Markdown notes capture their quotation, neighbouring passages and source hash when created; the version-two store preserves legacy notes without inventing missing evidence. Explicit close runs at the PTY owner, uses retained child identity and pidfds, and reports incomplete inspection or unobserved exits.
 

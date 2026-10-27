@@ -450,7 +450,7 @@ pub fn compact_label(raw: &str) -> Option<String> {
 }
 
 /// One agent program spoken to in JSON lines over its stdin and stdout: the
-/// model list's runner, and the War Room's read-only copies (`askcopy.rs`).
+/// model list's runner, and the Threshing Floor's read-only copies (`askcopy.rs`).
 /// Its whole process group is killed when it is dropped, so a copy cannot
 /// outlive the ask that started it.
 pub(crate) struct Transport {

@@ -1,4 +1,4 @@
-# War Room drag-to-relate (drop-on-org popup) — status / ExecPlan
+# Threshing Floor drag-to-relate (drop-on-org popup) — status / ExecPlan
 
 Difficulty: **6/10**. Builds on existing, merged drag infra (PR #1143) and the
 cross-org data model (PR #1150). Net-new is a drop-target popup with three
@@ -32,8 +32,8 @@ The rung (See/Read/Ask + prompts-left) is chosen as the existing relation flow d
 2. Merge #1150 (feat/war-room-system-map) → dev/0.5.0.
 3. Open drag PR (feat/war-room-drag-relate → dev/0.5.0); after #1150 merges its
    diff is just the drag work. Merge it.
-4. Build dev/0.5.0 → binary, verify green (fmt + clippy -D warnings + warroom +
-   war_room_view tests + a render test).
+4. Build dev/0.5.0 → binary, verify green (fmt + clippy -D warnings + threshing_floor +
+   threshing_floor_view tests + a render test).
 5. Install the binary to a named slot and hand Parker the exact swap command +
    rollback. **He swaps.**
 
@@ -43,15 +43,15 @@ The rung (See/Read/Ask + prompts-left) is chosen as the existing relation flow d
 - [x] Code map (Explore agent).
 - [x] Build the drop-on-org popup + MOVE/relate routing.
 - [x] Tests: 6 new view tests + 1 pre-existing contract test updated.
-- [x] Gate green: fmt=0, clippy -D warnings=0, warroom 52, war_room_view 30.
+- [x] Gate green: fmt=0, clippy -D warnings=0, threshing_floor 52, threshing_floor_view 30.
 - [ ] PR + land all 3.
 - [ ] Staged binary + swap command for Parker.
 
 ## What was built
-- `DropChoice`/`DropStage` state + `war_drop` Window field (transient, unsaved).
-- `war_room_drop_on_org` replaces the org-button's direct `war_room_assign`:
+- `DropChoice`/`DropStage` state + `floor_drop` Window field (transient, unsaved).
+- `threshing_floor_drop_on_org` replaces the org-button's direct `threshing_floor_assign`:
   same-org → select; loose pane → move in; seated-from-another-org → popup.
-- Routes: Move (`war_room_assign`, keeps its connection-loss confirm),
+- Routes: Move (`threshing_floor_assign`, keeps its connection-loss confirm),
   Relate-to-org (`chart.draw_org(Seat→Org)`), Relate-to-member
   (`chart.draw(seat,seat)`, cross-org). Direction: dragged agent = from.
 - 7 new `wr_drop_*` strings across all 9 locales; Esc + every sibling clear it.

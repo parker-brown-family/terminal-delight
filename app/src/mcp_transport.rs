@@ -67,7 +67,7 @@ enum UiReq {
     /// sender travels with the request rather than being answered here.
     Open(mcp::OpenRequest, mpsc::Sender<String>),
     /// `ask_agent`: an agent's question for another, decided and answered by
-    /// the window, which holds the War Room's chart and the seat facts.
+    /// the window, which holds the Threshing Floor's chart and the seat facts.
     Ask(mcp::AskCall, mpsc::Sender<mcp::AskReply>),
 }
 
@@ -236,8 +236,9 @@ pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::
                                 let _ = reply.send(answer);
                             }
                             Err(_) => {
-                                let _ = reply
-                                    .send(mcp::AskReply::Refused(crate::warroom::Refusal::Gone));
+                                let _ = reply.send(mcp::AskReply::Refused(
+                                    crate::threshing_floor::Refusal::Gone,
+                                ));
                                 alive = false;
                             }
                         }
@@ -293,7 +294,7 @@ fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot
         engineering_allowed: ws.coordination_full_scope(),
         documents: ws.mcp_documents(cx),
         chart: ws.chart.clone(),
-        orgs: ws.war_orgs.clone(),
+        orgs: ws.floor_orgs.clone(),
     }
 }
 
@@ -402,7 +403,7 @@ pub(crate) fn respond_as(
                 }
             };
             let ask = |call: &mcp::AskCall| -> mcp::AskReply {
-                let gone = || mcp::AskReply::Refused(crate::warroom::Refusal::Gone);
+                let gone = || mcp::AskReply::Refused(crate::threshing_floor::Refusal::Gone);
                 // A copy is priced here, on this connection's thread: which
                 // conversation the pane holds is a fact about the whole
                 // window, and reading its size is file work the window's
@@ -536,13 +537,16 @@ fn notify_loop(
             .panes
             .iter()
             .map(|p| mcp::PaneInfo {
-                reach: Some(crate::warroom::anonymous_reach(&snap.config, &p.party())),
+                reach: Some(crate::threshing_floor::anonymous_reach(
+                    &snap.config,
+                    &p.party(),
+                )),
                 ..p.clone()
             })
             .collect();
         for p in pushable
             .iter()
-            .filter(|p| p.is_agent && p.reach >= Some(crate::warroom::Reach::Read))
+            .filter(|p| p.is_agent && p.reach >= Some(crate::threshing_floor::Reach::Read))
         {
             let events = match bound.get(&p.pid) {
                 Some(path) => mcp_tail::tail_tool_events(path, PUSH_TAIL),
@@ -589,7 +593,7 @@ mod tests {
                 tool: None,
                 note: None,
                 reach: None,
-                access: crate::warroom::AgentAccess::Open,
+                access: crate::threshing_floor::AgentAccess::Open,
                 seat: None,
                 grade: mcp::GradeReport::default(),
             }],
@@ -604,8 +608,8 @@ mod tests {
             coordination: None,
             engineering_allowed: false,
             documents: vec![],
-            chart: crate::warroom::Chart::default(),
-            orgs: crate::warroom::Orgs::default(),
+            chart: crate::threshing_floor::Chart::default(),
+            orgs: crate::threshing_floor::Orgs::default(),
         }
     }
 

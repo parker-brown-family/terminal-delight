@@ -171,7 +171,7 @@ const APP_KEY_FIXES = [
     why: 'a tab never crosses a group (main.rs, the tab move)' },
   { key: 'theme icon (top-right)', text: 'PALETTE — Themes, style and rules', to: ['🎨 (bottom-right)', null],
     why: 'the 🎨 sits bottom-right' },
-  { key: '\u{f06a9} (agent counter, top right)', text: 'the War Room: who may reach whom, and the window\u2019s MCP switches', to: ['agent counter (top right)', 'The War Room: who may reach whom, and the window\u2019s MCP switches'],
+  { key: '\u{f06a9} (agent counter, top right)', text: 'the Threshing Floor: who may reach whom, and the window\u2019s MCP switches', to: ['agent counter (top right)', 'The Threshing Floor: who may reach whom, and the window\u2019s MCP switches'],
     why: 'the app draws the counter with an icon-font glyph the docs do not carry' },
   { key: 'wheel / shift+wheel', text: 'Pan a zoomed FOCUS read down / sideways', to: ['wheel', 'Pan a zoomed FOCUS read; it wraps, so only down'],
     why: 'the reader wraps and has no horizontal axis' },
@@ -187,7 +187,7 @@ async function appKeys() {
   const en = {};
   const unescape = (v) => v.replace(/\\u\{([0-9a-f]+)\}/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/\\"/g, '"');
   for (const m of block[1].matchAll(/^\s+(\w+): "((?:[^"\\]|\\.)*)",/gm)) en[m[1]] = unescape(m[2]);
-  /* the chrome strings (`s.ui.*`), which some rows use: the War Room's, for one */
+  /* the chrome strings (`s.ui.*`), which some rows use: the Threshing Floor's, for one */
   const chrome = await readFile(join(ROOT, 'app', 'src', 'lang', 'chrome.rs'), 'utf8');
   const chromeBlock = chrome.match(/pub const EN: Chrome = Chrome \{([\s\S]*?)\n\};/);
   if (!chromeBlock) { fail(where, 'app/src/lang/chrome.rs has no EN block'); return []; }
@@ -203,7 +203,8 @@ async function appKeys() {
     if ((m = expr.match(/^&format!\("((?:[^"\\]|\\.)*)",\s*s\.((?:ui\.)?\w+)\)$/))) return unescape(m[1]).replace('{}', string(m[2]));
     fail(where, `a help row it cannot read: ${expr}`); return expr;
   };
-  const ROW = /row\(\s*("(?:[^"\\]|\\.)*"|&format!\("(?:[^"\\]|\\.)*",\s*s\.(?:ui\.)?\w+\)|s\.(?:ui\.)?\w+)\s*,\s*s\.((?:ui\.)?\w+)\s*\)/g;
+  /* rustfmt splits a long row over lines and ends it with a comma */
+  const ROW = /row\(\s*("(?:[^"\\]|\\.)*"|&format!\("(?:[^"\\]|\\.)*",\s*s\.(?:ui\.)?\w+\)|s\.(?:ui\.)?\w+)\s*,\s*s\.((?:ui\.)?\w+)\s*,?\s*\)/g;
   const cols = [region.slice(0, split), region.slice(split)].map((part) =>
     [...part.matchAll(/section\(\s*s\.(\w+),\s*vec!\[([\s\S]*?)\]\s*,?\s*\)/g)].map((sm) => ({
       title: string(sm[1]),

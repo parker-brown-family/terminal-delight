@@ -1,4 +1,4 @@
-# War Room Drag UX
+# Threshing Floor Drag UX
 
 The operator needs to see where a member can go while dragging it. Dropping on the pool or bin removes it from its organisation and revokes its access relationships. Clicking away from a context menu must dismiss it immediately.
 
@@ -14,12 +14,12 @@ Research read on 2026-10-25. These are design inputs; WCAG describes web accessi
 | The target determines the operation; commit on release. | Chart assigns, pool and bin remove; no mutation during hover. | [Microsoft drag-and-drop](https://learn.microsoft.com/en-us/windows/apps/develop/data/drag-and-drop) |
 | Allow cancellation before completing the operation. | Escape cancels the drag first; release outside a valid target changes nothing. | [W3C pointer cancellation](https://www.w3.org/WAI/WCAG22/Understanding/pointer-cancellation.html) |
 | Offer an equivalent pointer action without dragging. | Retain Add to org and a selected-member Remove button; expose removal in the card menu. | [W3C dragging movements](https://www.w3.org/WAI/WCAG22/Understanding/dragging-movements) |
-| Return from a menu to its invoking context. | Escape closes the card menu before the War Room; an outside press dismisses immediately. | [W3C menu pattern](https://www.w3.org/WAI/ARIA/apg/patterns/menubar/) |
+| Return from a menu to its invoking context. | Escape closes the card menu before the Threshing Floor; an outside press dismisses immediately. | [W3C menu pattern](https://www.w3.org/WAI/ARIA/apg/patterns/menubar/) |
 | Give feedback after an action-triggering drop. | Show which pane was removed and that access is off; keep it visible in the pool. | [Apple drag-and-drop guidance](https://developer.apple.com/design/human-interface-guidelines/drag-and-drop) |
 
 ## Implementation
 
-Reuse GPUI's existing drag session, native release hit testing, capture-phase outside handlers, theme shadows and the existing GPU focus blur. `war_room_view.rs` owns card menus, drag feedback and one removal handler. `pane.rs` adds outside-press dismissal to its own menu. Workspace holds transient drag/menu/feedback state. User-facing strings remain in all nine language tables.
+Reuse GPUI's existing drag session, native release hit testing, capture-phase outside handlers, theme shadows and the existing GPU focus blur. `threshing_floor_view.rs` owns card menus, drag feedback and one removal handler. `pane.rs` adds outside-press dismissal to its own menu. Workspace holds transient drag/menu/feedback state. User-facing strings remain in all nine language tables.
 
 Removal clears both directions of chart lines, including bypass budgets; removes organisation membership and the seat; sets `AgentAccess::OffLimits`; dismisses related drafts and pending access requests; and saves. Re-adding creates a fresh seat and preserves Off-limits until the operator explicitly changes it. Existing copy results require care: a request made before removal must not resurrect access or disclose a late answer afterward.
 

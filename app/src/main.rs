@@ -98,7 +98,7 @@ mod restricted;
 mod screenread;
 mod session;
 mod skin;
-mod war_room_view;
+mod threshing_floor_view;
 use skin::parts::{color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn};
 mod slot;
 mod sticky;
@@ -110,6 +110,7 @@ mod terminal_state;
 #[cfg(test)]
 mod testsync;
 mod theme;
+mod threshing_floor;
 mod toolprop;
 mod transcript;
 mod tree;
@@ -118,7 +119,6 @@ mod usage;
 mod vitals;
 mod vt;
 mod warp;
-mod warroom;
 mod workbench;
 
 use std::fs;
@@ -396,9 +396,9 @@ const OVERLAYS_OVER_PANES: [(&str, Warped); 7] = [
     ),
     ("mcp_menu panel", Warped::Tube("register_focus_tube")),
     (
-        "war room panel",
+        "threshing floor panel",
         Warped::FlatByDesign {
-            flag: "war_room",
+            flag: "threshing_floor",
             why: "a chart of lines between seats, drawn as straight segments \
                   between boxes: under a tube the segments would bow away from \
                   the boxes they join, and every click would land beside the \
@@ -846,8 +846,8 @@ struct LeafState {
     note: Option<SavedNote>,
     pane_id: Option<u64>,
     document: Option<SavedDocument>,
-    access: warroom::AgentAccess,
-    seat: Option<warroom::SeatId>,
+    access: threshing_floor::AgentAccess,
+    seat: Option<threshing_floor::SeatId>,
 }
 
 /// The document a pane was showing on its Document face, on its way into the
@@ -929,21 +929,21 @@ enum SavedNode {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         document: Option<SavedDocument>,
         /// A person marked this pane off-limits to agents (see
-        /// [`warroom::reach`]). Written only when set, and absent in every
+        /// [`threshing_floor::reach`]). Written only when set, and absent in every
         /// file written before the mark existed — which reads back as NOT
         /// marked, exactly how those panes behaved. It wins over `agents`.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         off_limits: bool,
         /// Any other position a person gave the pane: `"read-only"`. Absent
         /// means open. A word this build does not know reads as off-limits
-        /// ([`warroom::AgentAccess::from_saved`]); nothing is written for older
+        /// ([`threshing_floor::AgentAccess::from_saved`]); nothing is written for older
         /// builds, which read a read-only pane as open.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agents: Option<String>,
-        /// The pane's War Room seat, once a person seats it. Saved here, with
+        /// The pane's Threshing Floor seat, once a person seats it. Saved here, with
         /// the pane, because pane ids restart when the host does.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        seat: Option<warroom::SeatId>,
+        seat: Option<threshing_floor::SeatId>,
     },
     Split {
         dir: SplitDir,
@@ -984,7 +984,7 @@ impl<'de> Deserialize<'de> for SavedNode {
             #[serde(default)]
             agents: Option<String>,
             #[serde(default)]
-            seat: Option<warroom::SeatId>,
+            seat: Option<threshing_floor::SeatId>,
         }
         // A leaf's appearance: the new per-group form if present, else migrate a
         // legacy `theme` override, else pristine (follows outer for everything).
@@ -2864,27 +2864,32 @@ struct StateFile {
     /// interface ever offered it as a setting. The rest is on [`SavedScope`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scope: Option<SavedScope>,
-    /// Read-only MCP control-surface policy (the War Room's switches). Absent
+    /// Read-only MCP control-surface policy (the Threshing Floor's switches). Absent
     /// on pre-feature files → the locked-down [`mcp::McpConfig`] default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mcp: Option<mcp::McpConfig>,
-    /// The War Room's lines between seats (see [`warroom`]). Absent → nobody is
-    /// seated, and every pane behaves as it did before the War Room.
+    /// The Threshing Floor's lines between seats (see [`threshing_floor`]). Absent → nobody is
+    /// seated, and every pane behaves as it did before the Threshing Floor.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    lines: Vec<warroom::Line>,
-    /// The War Room's lines to or from a whole org (see [`warroom::OrgLine`]).
+    lines: Vec<threshing_floor::Line>,
+    /// The Threshing Floor's lines to or from a whole org (see [`threshing_floor::OrgLine`]).
     /// Absent on every pre-cross-org file → no org lines, which is the
     /// fail-closed truth: an org grants nothing until a person draws to or from
-    /// it. Written only beside `war_orgs`, so a legacy chart never grows one.
+    /// it. Written only beside `floor_orgs`, so a legacy chart never grows one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    org_lines: Vec<warroom::OrgLine>,
+    org_lines: Vec<threshing_floor::OrgLine>,
     /// Absent means a legacy unnamed chart; Some([]) means explicitly no orgs.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    war_orgs: Option<Vec<warroom::Org>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    war_org: Option<warroom::OrgId>,
+    ///
+    /// Saved under the key it had before the Threshing Floor was renamed, so a build
+    /// on either side of the rename reads the same file: a swap that rolls back to
+    /// an older build must not lose a person's orgs.
+    #[serde(default, rename = "war_orgs", skip_serializing_if = "Option::is_none")]
+    floor_orgs: Option<Vec<threshing_floor::Org>>,
+    /// Saved under its pre-rename key, for the same reason as `floor_orgs`.
+    #[serde(default, rename = "war_org", skip_serializing_if = "Option::is_none")]
+    floor_org: Option<threshing_floor::OrgId>,
     /// The size above which a copy of an agent waits for a person's press.
-    /// Absent → the default, [`warroom::ASK_PRESS_TOKENS`].
+    /// Absent → the default, [`threshing_floor::ASK_PRESS_TOKENS`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ask_press_tokens: Option<u64>,
     /// Global FOCUS-reader preference: inherit the read pane's CRT look (barrel
@@ -2990,8 +2995,8 @@ impl Default for StateFile {
             mcp: None,
             lines: vec![],
             org_lines: vec![],
-            war_orgs: None,
-            war_org: None,
+            floor_orgs: None,
+            floor_org: None,
             ask_press_tokens: None,
             // A fresh install's reader wears the pane it reads. With the CRT
             // off that is a flat screen either way; switch the tube on and the
@@ -4559,52 +4564,52 @@ struct Workspace {
     /// Read-only MCP control-surface policy (persisted). The 🤖 mother-bar
     /// button edits this; the live snapshot it would expose is derived per-frame.
     mcp: mcp::McpConfig,
-    /// The War Room's lines: which seat may reach which. Changed only by a
-    /// person, in the War Room or by a Yes on the rail.
-    chart: warroom::Chart,
-    war_orgs: warroom::Orgs,
-    war_org: Option<warroom::OrgId>,
-    war_org_edit: Option<(Option<warroom::OrgId>, EditBuffer)>,
-    war_relation: Option<war_room_view::RelationEditor>,
-    war_move: Option<(Entity<TerminalView>, warroom::OrgId)>,
+    /// The Threshing Floor's lines: which seat may reach which. Changed only by a
+    /// person, in the Threshing Floor or by a Yes on the rail.
+    chart: threshing_floor::Chart,
+    floor_orgs: threshing_floor::Orgs,
+    floor_org: Option<threshing_floor::OrgId>,
+    floor_org_edit: Option<(Option<threshing_floor::OrgId>, EditBuffer)>,
+    floor_relation: Option<threshing_floor_view::RelationEditor>,
+    floor_move: Option<(Entity<TerminalView>, threshing_floor::OrgId)>,
     /// An org a person has asked to delete, held until they confirm the count of
     /// relationships it will take with it. Deleting is destructive and nothing
     /// is kept dormant, so it waits for a yes.
-    war_delete_org: Option<warroom::OrgId>,
+    floor_delete_org: Option<threshing_floor::OrgId>,
     /// The System Map, the higher-level view across every org. `Some` holds its
     /// cross-org relationship draft while it is open.
-    war_map: Option<war_room_view::SystemMap>,
+    floor_map: Option<threshing_floor_view::SystemMap>,
     /// A pane dropped on a *different* org, held while the person chooses whether
     /// to move the agent in or build a relationship (with the org, or a member).
     /// `Some` means the drop popup is open.
-    war_drop: Option<war_room_view::DropChoice>,
+    floor_drop: Option<threshing_floor_view::DropChoice>,
     /// Transient membership gesture; GPUI remains the authority on its lifetime.
-    war_drag: Option<Entity<TerminalView>>,
-    war_context: Option<(Entity<TerminalView>, Point<Pixels>)>,
-    war_feedback: Option<String>,
+    floor_drag: Option<Entity<TerminalView>>,
+    floor_context: Option<(Entity<TerminalView>, Point<Pixels>)>,
+    floor_feedback: Option<String>,
     /// A person's limit for a copy before it needs their press; `None` is the
-    /// default, [`warroom::ASK_PRESS_TOKENS`].
+    /// default, [`threshing_floor::ASK_PRESS_TOKENS`].
     ask_press_tokens: Option<u64>,
     /// The 🤖 MCP control panel is open. Outer-only (global), so a plain bool.
     mcp_menu: bool,
-    /// The War Room is open: the panel the agent counter and the `…` row
+    /// The Threshing Floor is open: the panel the agent counter and the `…` row
     /// raise. The agent wall stays reachable only by Ctrl+Shift+A.
-    war_room: bool,
+    threshing_floor: bool,
     /// Fuzzy search across project, tab and pane title while the panel is open.
-    war_room_query: EditBuffer,
-    /// The seat a person clicked first in the War Room; a click on another
+    threshing_floor_query: EditBuffer,
+    /// The seat a person clicked first in the Threshing Floor; a click on another
     /// seat draws a line from this one to it.
-    war_room_pick: Option<warroom::SeatId>,
+    threshing_floor_pick: Option<threshing_floor::SeatId>,
     /// The last ask id handed out; each ask's id is later than the last and
     /// than the clock, so ids stay unique across window restarts.
     ask_seq: u64,
-    /// The ask record read back: Gate 1's two numbers, shown in the War Room.
+    /// The ask record read back: Gate 1's two numbers, shown in the Threshing Floor.
     /// `None` until the record is first read, which is not zero asks.
     ask_numbers: Option<askrecord::Numbers>,
     /// Copy asks, from the ask to the answer: what `ask_answer` reads and the
     /// rail's copy card presses. Held in memory only; the record keeps each
     /// stage without the words.
-    asks: warroom::AskBook,
+    asks: threshing_floor::AskBook,
     /// The menu-bar SIZE popover, raised by the ▭ button in the mother bar. The
     /// scrub track used to live inline on that row; on a thin tile it was the
     /// widest thing there and had nowhere to go, so it moved behind a button.
@@ -5311,7 +5316,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     })
     .detach();
     cx.subscribe(pane, |ws, _pane, _ev: &OpenAgentPanel, cx| {
-        ws.close_war_room();
+        ws.close_threshing_floor();
         ws.mcp_menu = true;
         cx.notify();
     })
@@ -6150,7 +6155,7 @@ fn build_node_attached(
             // pristine one, which means "follow the outer cabinet".
             let appearance = appearance.clone();
             let name = name.clone();
-            let access = warroom::AgentAccess::from_saved(*off_limits, agents.as_deref());
+            let access = threshing_floor::AgentAccess::from_saved(*off_limits, agents.as_deref());
             let seat = *seat;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
@@ -6216,7 +6221,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             // hence this applies unconditionally, not just when non-pristine.
             let appearance = appearance.clone();
             let name = name.clone();
-            let access = warroom::AgentAccess::from_saved(*off_limits, agents.as_deref());
+            let access = threshing_floor::AgentAccess::from_saved(*off_limits, agents.as_deref());
             let seat = *seat;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
@@ -6356,26 +6361,26 @@ impl Workspace {
             osd_at: None,
             osd_eggs: OsdEggs::default(),
             mcp: saved.mcp.clone().unwrap_or_default(),
-            chart: warroom::Chart::from_saved(saved.lines.clone(), saved.org_lines.clone()),
-            war_orgs: warroom::Orgs::default(),
-            war_org: None,
-            war_org_edit: None,
-            war_relation: None,
-            war_move: None,
-            war_delete_org: None,
-            war_map: None,
-            war_drop: None,
-            war_drag: None,
-            war_context: None,
-            war_feedback: None,
+            chart: threshing_floor::Chart::from_saved(saved.lines.clone(), saved.org_lines.clone()),
+            floor_orgs: threshing_floor::Orgs::default(),
+            floor_org: None,
+            floor_org_edit: None,
+            floor_relation: None,
+            floor_move: None,
+            floor_delete_org: None,
+            floor_map: None,
+            floor_drop: None,
+            floor_drag: None,
+            floor_context: None,
+            floor_feedback: None,
             ask_press_tokens: saved.ask_press_tokens,
             mcp_menu: false,
-            war_room: false,
-            war_room_query: EditBuffer::seeded(""),
-            war_room_pick: None,
+            threshing_floor: false,
+            threshing_floor_query: EditBuffer::seeded(""),
+            threshing_floor_pick: None,
             ask_seq: 0,
             ask_numbers: None,
-            asks: warroom::AskBook::default(),
+            asks: threshing_floor::AskBook::default(),
             scale_menu: false,
             more_menu: false,
             art_rail: false,
@@ -6676,11 +6681,11 @@ impl Workspace {
                 seats.extend(leaves.into_iter().filter_map(|p| p.read(cx).seat));
             }
             seats.extend(ws.chart.saved().iter().flat_map(|l| [l.from, l.to]));
-            ws.war_orgs = warroom::Orgs::restore(saved.war_orgs.clone(), &seats);
-            ws.war_org = saved
-                .war_org
-                .filter(|id| ws.war_orgs.get(*id).is_some())
-                .or_else(|| ws.war_orgs.saved().first().map(|o| o.id));
+            ws.floor_orgs = threshing_floor::Orgs::restore(saved.floor_orgs.clone(), &seats);
+            ws.floor_org = saved
+                .floor_org
+                .filter(|id| ws.floor_orgs.get(*id).is_some())
+                .or_else(|| ws.floor_orgs.saved().first().map(|o| o.id));
         }
         if ws.eng_table {
             window.focus(&ws.focus_handle, cx);
@@ -6792,7 +6797,7 @@ impl Workspace {
                 // every ten seconds, permanently, to compute bars nobody could
                 // see. The wall is a glance surface; it costs nothing to keep
                 // one until it is looked at.
-                if !(ws.mcp_menu || ws.war_room) || ws.vitals_refreshing {
+                if !(ws.mcp_menu || ws.threshing_floor) || ws.vitals_refreshing {
                     return Vec::new(); // closed, or a pass is still out
                 }
                 let reqs = ws.vitals_requests(cx);
@@ -7126,7 +7131,7 @@ impl Workspace {
         if std::env::var_os("TD_MCP").is_some() {
             // A SECOND, explicit opt-in promotes the read-only watch surface to a
             // remote-control one (an agent may change pane appearance via
-            // set_pane_config). The War Room persists this in state; the env
+            // set_pane_config). The Threshing Floor persists this in state; the env
             // var forces it on for a headless / orchestrated launch.
             if std::env::var_os("TD_MCP_WRITE").is_some() {
                 ws.mcp.writable = true;
@@ -8361,8 +8366,8 @@ impl Workspace {
             mcp: Some(self.mcp.clone()),
             lines: self.chart.saved().to_vec(),
             org_lines: self.chart.org_lines().to_vec(),
-            war_orgs: Some(self.war_orgs.saved().to_vec()),
-            war_org: self.war_org,
+            floor_orgs: Some(self.floor_orgs.saved().to_vec()),
+            floor_org: self.floor_org,
             ask_press_tokens: self.ask_press_tokens,
             focus_inherit: self.focus_inherit_theme,
             anchor_top: self.anchor_top,
@@ -8608,14 +8613,14 @@ impl Workspace {
             for leaf in leaves {
                 let p = leaf.read(cx);
                 let own = caller.as_ref().is_some_and(|caller| caller == leaf);
-                if warroom::reach(
+                if threshing_floor::reach(
                     &self.mcp,
                     &self.chart,
-                    &self.war_orgs,
+                    &self.floor_orgs,
                     caller_party.as_ref(),
                     &p.party(),
                     own,
-                ) < warroom::Reach::Read
+                ) < threshing_floor::Reach::Read
                 {
                     continue;
                 }
@@ -8842,10 +8847,10 @@ impl Workspace {
                                 // the write was queued stops it. Own-ness is the
                                 // sender BEING this pane, resolved by identity.
                                 let own = sender_shell == Some(*pid);
-                                let exposed = warroom::may_write_live(
+                                let exposed = threshing_floor::may_write_live(
                                     &self.mcp,
                                     &self.chart,
-                                    &self.war_orgs,
+                                    &self.floor_orgs,
                                     sender_seat,
                                     &p.party(),
                                     own,
@@ -8927,14 +8932,14 @@ impl Workspace {
                                     let line_reaches_ask = target_party
                                         .filter(|t| asker_party.seat.is_some() && t.seat.is_some())
                                         .map(|t| {
-                                            warroom::reach(
+                                            threshing_floor::reach(
                                                 &self.mcp,
                                                 &self.chart,
-                                                &self.war_orgs,
+                                                &self.floor_orgs,
                                                 Some(&asker_party),
                                                 &t,
                                                 false,
-                                            ) >= warroom::Reach::Ask
+                                            ) >= threshing_floor::Reach::Ask
                                         });
                                     let now = access::Now {
                                         pane_off_limits: off,
@@ -8948,16 +8953,16 @@ impl Workspace {
                                             .and_then(|ti| self.place_of(ti).project)
                                     };
                                     let facts = match ask.change {
-                                        access::Change::AskLine => warroom::RiskFacts::Bypass {
+                                        access::Change::AskLine => threshing_floor::RiskFacts::Bypass {
                                             across_projects: named.as_ref().is_some_and(|t| {
                                                 project_of(t) != project_of(&leaf)
                                             }),
                                             into_read_only: target_party.is_some_and(|t| {
-                                                t.access == warroom::AgentAccess::ReadOnly
+                                                t.access == threshing_floor::AgentAccess::ReadOnly
                                             }),
                                             prompts: ask.prompts,
                                         },
-                                        other => warroom::RiskFacts::Pane(other),
+                                        other => threshing_floor::RiskFacts::Pane(other),
                                     };
                                     if leaf.read(cx).access_ask.is_some() {
                                         // One ask at a time per agent (Gate 3,
@@ -8974,7 +8979,7 @@ impl Workspace {
                                                 target_key: named
                                                     .as_ref()
                                                     .map(|p| p.entity_id().as_u64()),
-                                                risk: Some(warroom::risk(&facts)),
+                                                risk: Some(threshing_floor::risk(&facts)),
                                                 ..ask.clone()
                                             })),
                                         }
@@ -12047,7 +12052,7 @@ impl Workspace {
         // Always the caller's own pane (`caller_pane` in mcp.rs resolved it),
         // so its off-limits mark does not stop the agent inside opening a
         // document in its own tab.
-        if !warroom::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent()) {
+        if !threshing_floor::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent()) {
             let _ = reply.send(format!(
                 "err pane {} is not exposed under the current policy",
                 request.pid
@@ -14803,8 +14808,8 @@ impl Workspace {
                     mode: v.mode.label().into(),
                     agent: Self::coordination_agent(&v.mode),
                     session: coordination::session_identity(rt.resume.as_deref()),
-                    exposed: warroom::anonymous_reach(&self.mcp, &v.party())
-                        >= warroom::Reach::Read,
+                    exposed: threshing_floor::anonymous_reach(&self.mcp, &v.party())
+                        >= threshing_floor::Reach::Read,
                     full_scope,
                 };
                 let Some(cwd) = v.current_cwd() else {
@@ -20128,7 +20133,7 @@ impl Workspace {
             || self.more_menu
             || self.art_rail
             || self.mcp_menu
-            || self.war_room
+            || self.threshing_floor
             || self.dead_menu
             || self.plugins_menu
             || self.notif_menu
@@ -20296,14 +20301,14 @@ impl Workspace {
             self.more_menu = false;
             return true;
         }
-        // The artifact rail is drawn over the War Room, so it closes first.
+        // The artifact rail is drawn over the Threshing Floor, so it closes first.
         if self.art_rail {
             self.art_close();
             return true;
         }
-        // The War Room sits over the panes like the wall, and closes before it.
-        if self.war_room {
-            self.close_war_room();
+        // The Threshing Floor sits over the panes like the wall, and closes before it.
+        if self.threshing_floor {
+            self.close_threshing_floor();
             return true;
         }
         // The base layer: the agent wall itself.
@@ -22855,7 +22860,7 @@ impl Workspace {
     }
 
     /// The window's five MCP switches — server on, which panes agents may see,
-    /// pushed events, writes, card images — as the agent wall and the War Room
+    /// pushed events, writes, card images — as the agent wall and the Threshing Floor
     /// both draw them. One function, so the two can never disagree about what
     /// a switch does; `prefix` keeps their element ids apart.
     fn mcp_switch_buttons(
@@ -24969,9 +24974,8 @@ impl Workspace {
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
                     ws.mcp_menu = false;
-                    ws.war_room = true;
-                    ws.ask_numbers =
-                        askrecord::numbers(&askrecord::path_for(crate::instance::key())).ok();
+                    ws.threshing_floor = true;
+                    ws.ask_numbers = askrecord::numbers_for(crate::instance::key()).ok();
                     cx.notify();
                 }),
             )
@@ -25360,7 +25364,7 @@ impl Workspace {
                             why: "the migration failed there and I need its last 50 lines to \
                                   say why"
                                 .into(),
-                            risk: Some(warroom::risk(&warroom::RiskFacts::Pane(
+                            risk: Some(threshing_floor::risk(&threshing_floor::RiskFacts::Pane(
                                 access::Change::OpenPane,
                             ))),
                             bypass: None,
@@ -25532,7 +25536,7 @@ impl Workspace {
                     None => access::Outcome::Gone,
                     Some((from, to)) => {
                         let reaches = self.chart.line(from, to).is_some_and(|l| {
-                            !l.is_bypass() && l.rung.known() >= Some(warroom::Rung::Ask)
+                            !l.is_bypass() && l.rung.known() >= Some(threshing_floor::Rung::Ask)
                         });
                         if reaches {
                             access::Outcome::AlreadySo
@@ -29481,7 +29485,7 @@ impl Render for Workspace {
                 || self.theme_menu.is_some()
                 || self.osd_menu.is_some()
                 || self.mcp_menu
-                || self.war_room
+                || self.threshing_floor
                 || self.scale_menu
                 || self.more_menu
                 || self.art_rail
@@ -29621,12 +29625,12 @@ impl Render for Workspace {
             self.confirm_close = Some(self.active);
             cx.notify();
         }
-        // demo/capture hook (TD_WAR_ROOM_DEMO): open the War Room for a rig that
+        // demo/capture hook (TD_THRESHING_FLOOR_DEMO): open the Threshing Floor for a rig that
         // cannot click the counter; a number selects that seat without granting access.
-        if let Ok(how) = std::env::var("TD_WAR_ROOM_DEMO") {
-            if !self.war_room {
-                self.war_room = true;
-                self.war_room_pick = how.parse().ok().map(warroom::SeatId);
+        if let Ok(how) = std::env::var("TD_THRESHING_FLOOR_DEMO") {
+            if !self.threshing_floor {
+                self.threshing_floor = true;
+                self.threshing_floor_pick = how.parse().ok().map(threshing_floor::SeatId);
                 cx.notify();
             }
         }
@@ -32388,7 +32392,7 @@ impl Render for Workspace {
             window.request_animation_frame();
         }
         let savings_overlay = self.render_savings_overlay(&th, chrome_vw, cx);
-        let war_room_overlay = self.render_war_room(&th, cx);
+        let threshing_floor_overlay = self.render_threshing_floor(&th, cx);
 
         // ---- MCP control: the read-only agent-watch surface (the 🤖 button) ----
         let mcp_overlay = self.mcp_menu.then(|| {
@@ -32398,7 +32402,7 @@ impl Render for Workspace {
             let total = panes.len();
             let exposed = panes
                 .iter()
-                .filter(|p| warroom::visible_to_some_agent(&self.mcp, &p.party()))
+                .filter(|p| threshing_floor::visible_to_some_agent(&self.mcp, &p.party()))
                 .count();
             let vp_h = f32::from(window.viewport_size().height);
             let filt = self.mcp_filter;
@@ -32925,7 +32929,7 @@ impl Render for Workspace {
                         .or_else(|| (!p.title.is_empty()).then(|| p.shown_title()))
                         .unwrap_or_else(|| p.mode.label().to_string());
                     let rt = p.runtime();
-                    let exposed = warroom::visible_to_some_agent(&self.mcp, &p.party());
+                    let exposed = threshing_floor::visible_to_some_agent(&self.mcp, &p.party());
                     let status = p.agent_status();
                     // The card's chat-scroller. An IDLE agent's live input box is
                     // wasted space — show the LAST USER PROMPT (what you asked it)
@@ -35001,18 +35005,19 @@ impl Render for Workspace {
                 // of its glyph row, and a list of the window's surfaces that
                 // left out the one TD is steered from would be a list with a
                 // hole in it.
-                .child(entry("\u{f06a9}", s.ui.wr_hdr, "more-mcp").on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.more_menu = false;
-                        ws.mcp_menu = false;
-                        ws.war_room = true;
-                        ws.ask_numbers =
-                            askrecord::numbers(&askrecord::path_for(crate::instance::key())).ok();
-                        cx.notify();
-                    }),
-                ))
+                .child(
+                    entry("\u{f06a9}", s.ui.floor_hdr, "more-mcp").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.more_menu = false;
+                            ws.mcp_menu = false;
+                            ws.threshing_floor = true;
+                            ws.ask_numbers = askrecord::numbers_for(crate::instance::key()).ok();
+                            cx.notify();
+                        }),
+                    ),
+                )
                 .child(
                     entry("\u{1f3a8}", s.ui.cfg_surfaces, "more-theme").on_mouse_down(
                         MouseButton::Left,
@@ -35394,7 +35399,10 @@ impl Render for Workspace {
                         row(s.k_input_colour, s.input_colour),
                         row("Ctrl+Shift+N", s.rail),
                         row("Ctrl+Shift+M", s.handed_over),
-                        row(&format!("\u{f06a9} {}", s.ui.wr_counter_key), s.ui.wr_help),
+                        row(
+                            &format!("\u{f06a9} {}", s.ui.floor_counter_key),
+                            s.ui.floor_help,
+                        ),
                         row("Ctrl+Shift+U / Y", s.usage),
                     ],
                 ))
@@ -36799,7 +36807,7 @@ impl Render for Workspace {
             // when the pane it reads does not hold the keyboard, and otherwise by
             // that pane, which has to hear the Esc (`escape_closes_the_reader`).
             .capture_key_down(cx.listener(|ws, ev: &KeyDownEvent, window, cx| {
-                if ws.war_room_capture_key(&ev.keystroke, window, cx) {
+                if ws.threshing_floor_capture_key(&ev.keystroke, window, cx) {
                     cx.stop_propagation();
                     return;
                 }
@@ -36906,7 +36914,7 @@ impl Render for Workspace {
                     .children(menu_overlay)
                     .children(osd_overlay)
                     .children(mcp_overlay)
-                    .children(war_room_overlay)
+                    .children(threshing_floor_overlay)
                     .children(dead_overlay)
                     .children(plugins_overlay)
                     .children(notif_overlay)
@@ -36969,7 +36977,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn agent_memory_hover_uses_cached_samples_and_keeps_the_war_room_click(
+    fn agent_memory_hover_uses_cached_samples_and_keeps_the_threshing_floor_click(
         cx: &mut gpui::TestAppContext,
     ) {
         let _warp = crate::warp::WARP_SERIAL
@@ -37068,8 +37076,8 @@ mod tests {
             gpui::Modifiers::default(),
         );
         assert!(
-            ws.read_with(cx, |ws, _| ws.war_room),
-            "click still opens the War Room"
+            ws.read_with(cx, |ws, _| ws.threshing_floor),
+            "click still opens the Threshing Floor"
         );
     }
 
@@ -40314,7 +40322,7 @@ mod tests {
             .expect("the ask");
         assert!(pending < asked, "the pending check comes first");
         assert!(
-            apply.contains("risk: Some(warroom::risk(&facts))"),
+            apply.contains("risk: Some(threshing_floor::risk(&facts))"),
             "every ask is assessed"
         );
     }
@@ -40343,7 +40351,7 @@ mod tests {
     }
 
     /// The window's five MCP switches are drawn by one function, which the
-    /// wall and the War Room both call — so the two can never disagree about
+    /// wall and the Threshing Floor both call — so the two can never disagree about
     /// what a switch does.
     #[test]
     fn the_switch_row_is_drawn_by_one_function() {
@@ -40366,23 +40374,29 @@ mod tests {
             "the wall"
         );
         assert!(
-            include_str!("war_room_view.rs")
+            include_str!("threshing_floor_view.rs")
                 .contains("self.mcp_switch_buttons(&sk, th, \"war\", cx)"),
-            "the War Room"
+            "the Threshing Floor"
         );
     }
 
-    /// Seats and lines are a person's: only the War Room panel seats a pane or
+    /// Seats and lines are a person's: only the Threshing Floor panel seats a pane or
     /// draws, changes and erases a line. The control socket and MCP answer
     /// agents, and a chart an agent could redraw would be decoration.
     #[test]
-    fn only_the_war_room_and_the_rail_draw_lines() {
+    fn only_the_threshing_floor_and_the_rail_draw_lines() {
         let cut = |src: &'static str, marker: &str| -> &'static str {
             &src[..src.find(marker).unwrap_or(src.len())]
         };
         let files = [
             ("main.rs", shipped_src()),
-            ("war_room_view.rs", include_str!("war_room_view.rs")),
+            // Cut at its tests like the others: a test fixture that grants a
+            // bypass changes no live chart, and was only unseen here while
+            // rustfmt split its call over two lines.
+            (
+                "threshing_floor_view.rs",
+                cut(include_str!("threshing_floor_view.rs"), "\n#[cfg(test)]"),
+            ),
             ("pane.rs", cut(include_str!("pane.rs"), "\n#[cfg(test)]")),
             ("ctl.rs", cut(include_str!("ctl.rs"), "\n#[cfg(test)]")),
             ("mcp.rs", cut(include_str!("mcp.rs"), "\n#[cfg(test)]")),
@@ -40420,23 +40434,23 @@ mod tests {
             calls,
             vec![
                 "main.rs: .chart.grant_bypass(",
-                "war_room_view.rs: .chart.draw(",
-                "war_room_view.rs: .chart.erase(",
-                "war_room_view.rs: .chart.forget_seat(",
-                "war_room_view.rs: .set_seat(",
+                "threshing_floor_view.rs: .chart.draw(",
+                "threshing_floor_view.rs: .chart.erase(",
+                "threshing_floor_view.rs: .chart.forget_seat(",
+                "threshing_floor_view.rs: .set_seat(",
             ],
-            "something other than the War Room panel or the rail's answer changes the chart"
+            "something other than the Threshing Floor panel or the rail's answer changes the chart"
         );
     }
 
-    /// The War Room and its rail name a pane the way a person finds it: where
+    /// The Threshing Floor and its rail name a pane the way a person finds it: where
     /// its tab sits on the left bar, then the title on its header. Parker,
     /// 2026-10-22, at row after row of "shell · CLAUDE": the list *"should be
     /// based on the left spine + pane title"*. The rule itself is
-    /// `warroom::PaneName`'s test; this one holds every surface to it.
+    /// `threshing_floor::PaneName`'s test; this one holds every surface to it.
     #[test]
-    fn the_war_room_names_a_pane_by_the_left_bar_and_its_header() {
-        let view = include_str!("war_room_view.rs");
+    fn the_threshing_floor_names_a_pane_by_the_left_bar_and_its_header() {
+        let view = include_str!("threshing_floor_view.rs");
         let code: Vec<&str> = view
             .lines()
             .chain(shipped_src().lines())
@@ -40446,11 +40460,11 @@ mod tests {
         let has = |s: &str| code.iter().any(|l| l.contains(s));
         for (site, what) in [
             (
-                "warroom::PaneName::new(&spine, &v.header_title())",
+                "threshing_floor::PaneName::new(&spine, &v.header_title())",
                 "the seats and the rows off the chart",
             ),
             (
-                "warroom::PaneName::new(&spine, &leaf.read(cx).header_title())",
+                "threshing_floor::PaneName::new(&spine, &leaf.read(cx).header_title())",
                 "the one helper",
             ),
             (
@@ -40475,7 +40489,7 @@ mod tests {
                 .lines()
                 .map(str::trim)
                 .any(|l| !l.starts_with("//") && l.contains("tab_index_of(")),
-            "the War Room looks a pane's tab up with tab_with_leaf"
+            "the Threshing Floor looks a pane's tab up with tab_with_leaf"
         );
         assert!(
             has("self.tab_with_leaf(l.entity_id())"),
@@ -40483,7 +40497,7 @@ mod tests {
         );
     }
 
-    /// The War Room opens from the counter that summarises the agents, and
+    /// The Threshing Floor opens from the counter that summarises the agents, and
     /// that counter is in the top right. Parker, 2026-10-22: *"This will USE THE
     /// EXISTING agent wall rail (don't change look - just change where it goes)
     /// -- the agent wal will be an easter egg now"*. Before that the counter
@@ -40527,7 +40541,7 @@ mod tests {
     }
 
     #[test]
-    fn the_counter_opens_the_war_room() {
+    fn the_counter_opens_the_threshing_floor() {
         let src = shipped_src();
         let body = |sig: &str| -> &str {
             let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
@@ -40537,9 +40551,9 @@ mod tests {
         let counter = body("    fn render_agent_counter(");
         assert!(
             counter.contains(".id(\"agent-rollup\")")
-                && counter.contains("ws.war_room = true")
+                && counter.contains("ws.threshing_floor = true")
                 && !counter.contains("ws.mcp_menu = true"),
-            "the counter must be the War Room's door, and no longer the wall's"
+            "the counter must be the Threshing Floor's door, and no longer the wall's"
         );
         assert!(
             counter.contains("cx.stop_propagation();"),
@@ -40567,9 +40581,9 @@ mod tests {
         };
         assert!(
             more.contains("more-mcp")
-                && more.contains("ws.war_room = true")
+                && more.contains("ws.threshing_floor = true")
                 && !more.contains("ws.mcp_menu = true"),
-            "the … menu lists the War Room, for a window whose counter is switched off"
+            "the … menu lists the Threshing Floor, for a window whose counter is switched off"
         );
         assert!(
             more.contains("over_the_footer(div().id(\"more-panel\")"),
@@ -41642,8 +41656,8 @@ mod tests {
             pane_id: Some(7),
             document: None,
             off_limits: false,
-            agents: Some(warroom::READ_ONLY_WORD.into()),
-            seat: Some(warroom::SeatId(42)),
+            agents: Some(threshing_floor::READ_ONLY_WORD.into()),
+            seat: Some(threshing_floor::SeatId(42)),
         };
         let text = toml::to_string(&seated).expect("a leaf serialises");
         assert!(
@@ -41664,10 +41678,10 @@ mod tests {
             panic!("a leaf")
         };
         assert_eq!(
-            warroom::AgentAccess::from_saved(off_limits, agents.as_deref()),
-            warroom::AgentAccess::ReadOnly
+            threshing_floor::AgentAccess::from_saved(off_limits, agents.as_deref()),
+            threshing_floor::AgentAccess::ReadOnly
         );
-        assert_eq!(seat, Some(warroom::SeatId(42)));
+        assert_eq!(seat, Some(threshing_floor::SeatId(42)));
 
         // A leaf as every file before today wrote it.
         let old: SavedNode =
@@ -41683,7 +41697,7 @@ mod tests {
         ));
     }
 
-    /// A saved window from before the War Room reads back with nobody seated
+    /// A saved window from before the Threshing Floor reads back with nobody seated
     /// and no lines; one with lines keeps them, a rung word this build does not
     /// know included, and writes them back unchanged.
     #[test]
@@ -41692,7 +41706,7 @@ mod tests {
         assert!(legacy.lines.is_empty());
         assert_eq!(legacy.ask_press_tokens, None);
         assert!(
-            warroom::Chart::from_saved(legacy.lines.clone(), legacy.org_lines.clone())
+            threshing_floor::Chart::from_saved(legacy.lines.clone(), legacy.org_lines.clone())
                 .saved()
                 .is_empty()
         );
@@ -41703,7 +41717,7 @@ mod tests {
         let back: StateFile = toml::from_str(with).unwrap();
         assert_eq!(back.ask_press_tokens, Some(250_000));
         assert_eq!(
-            warroom::Chart::from_saved(back.lines.clone(), back.org_lines.clone())
+            threshing_floor::Chart::from_saved(back.lines.clone(), back.org_lines.clone())
                 .saved()
                 .len(),
             2
@@ -41713,6 +41727,28 @@ mod tests {
         assert!(
             !toml::to_string(&legacy).unwrap().contains("lines"),
             "nothing new is written"
+        );
+    }
+
+    /// Orgs a person saved before the rename load in a build after it, and a build
+    /// after it writes them under the same keys, so a swap that rolls back to an
+    /// older build still finds them.
+    #[test]
+    fn saved_orgs_keep_their_keys_across_the_rename() {
+        let before = "active = 0\ntabs = []\nwar_org = 1\n\n\
+                      [[war_orgs]]\nid = 1\nname = \"Cinema crew\"\nseats = [1, 2]\n";
+        let back: StateFile = toml::from_str(before).unwrap();
+        let orgs = back
+            .floor_orgs
+            .clone()
+            .expect("orgs saved before the rename load");
+        assert_eq!(orgs.len(), 1);
+        assert_eq!(orgs[0].name.as_deref(), Some("Cinema crew"));
+        assert_eq!(back.floor_org, Some(threshing_floor::OrgId(1)));
+        let again = toml::to_string(&back).unwrap();
+        assert!(
+            again.contains("[[war_orgs]]") && again.contains("war_org = 1"),
+            "{again}"
         );
     }
 
@@ -41863,15 +41899,15 @@ mod tests {
             .find("\n#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests")
             .unwrap_or(src.len())];
         // The old yes/no gate is gone; nothing may bring it back beside the
-        // War Room's rules, where it would answer without the caller's lines.
+        // Threshing Floor's rules, where it would answer without the caller's lines.
         let old_gate = ["mcp::", "should_expose("].concat();
         assert!(!code.contains(&old_gate), "the old gate is back");
         // Every window-side decision hands the rules the pane's own party —
         // its position and seat — rather than a mark it remembered to read.
         for (gate, sites) in [
-            ("warroom::visible_to_some_agent(", 2),
-            ("warroom::anonymous_reach(", 1),
-            ("warroom::may_write_live(", 1),
+            ("threshing_floor::visible_to_some_agent(", 2),
+            ("threshing_floor::anonymous_reach(", 1),
+            ("threshing_floor::may_write_live(", 1),
         ] {
             let calls: Vec<&str> = code.split(gate).skip(1).collect();
             assert_eq!(calls.len(), sites, "{gate}");
@@ -41885,12 +41921,13 @@ mod tests {
         }
         // `policy_admits` asks the switches alone, so it is kept to the one
         // site that is always the caller's own pane.
-        assert_eq!(code.matches("warroom::policy_admits(").count(), 1);
+        assert_eq!(code.matches("threshing_floor::policy_admits(").count(), 1);
         let open = live_fn("fn mcp_open(");
-        assert!(open.contains("warroom::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent())"));
+        assert!(open
+            .contains("threshing_floor::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent())"));
         let writes = live_fn("fn apply_mcp_config(");
         assert!(
-            writes.contains("warroom::may_write_live(")
+            writes.contains("threshing_floor::may_write_live(")
                 && writes.contains("&self.chart")
                 && writes.contains("p.party()")
                 && writes.contains("sender_shell == Some(*pid)"),
@@ -42082,7 +42119,7 @@ mod tests {
             "a held open bumps the rail's door: {open}"
         );
         assert!(
-            open.contains("warroom::policy_admits("),
+            open.contains("threshing_floor::policy_admits("),
             "the policy is asked again: {open}"
         );
         let route = live_fn("fn open_doc_beside(");

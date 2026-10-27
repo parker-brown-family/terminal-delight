@@ -56,11 +56,11 @@ impl TerminalView {
         // Defence at dispatch as well as selection: a queued pointer must not
         // turn an off-limits pane's controls into operator input.
         match self.agent_access {
-            crate::warroom::AgentAccess::Open => {}
-            crate::warroom::AgentAccess::ReadOnly => {
+            crate::threshing_floor::AgentAccess::Open => {}
+            crate::threshing_floor::AgentAccess::ReadOnly => {
                 return "err a read-only pane takes no scripted pointer".into();
             }
-            crate::warroom::AgentAccess::OffLimits => {
+            crate::threshing_floor::AgentAccess::OffLimits => {
                 return "err an off-limits pane takes no scripted pointer".into();
             }
         }

@@ -1,4 +1,4 @@
-# Status: the War Room fence — make the chart a real boundary
+# Status: the Threshing Floor fence — make the chart a real boundary
 
 **Difficulty: 7/10 — one combined plan, approved by the work itself.** A security
 boundary is wrong for a long time before anyone notices, it crosses a process
@@ -10,7 +10,7 @@ full gates.
 ## Where this came from
 
 The 2026-10-23 security review (`reports/2026-10-23-war-room-security-review.html`,
-in the primary checkout) found the War Room is a solid **reading** boundary but not
+in the primary checkout) found the Threshing Floor is a solid **reading** boundary but not
 an isolation one: the control socket (`ctl`) and the MCP **write** verbs reach a
 pane without consulting the chart, so any agent with a shell can prompt another
 agent, forge the person's approval, or write to a seated pane it has no line to.
@@ -63,7 +63,7 @@ and a scripted window still pass.
 
 `app/src/mcp.rs`. One shared `Snapshot::write_gate(pid)` the four write verbs
 (`set_pane_config`, `leave_note`, `declare_deliverable`, `present_surface`) call
-before `apply`. It routes through the same `warroom::may_write` the reading verbs
+before `apply`. It routes through the same `threshing_floor::may_write` the reading verbs
 use: the caller's own pane and an unseated pane under the policy pass; a seated pane
 with no line does not. A `Hidden` pane answers **identically to an absent pid**
 (`no pane with pid N`), so the gate is no existence oracle; a visible-but-read-only
