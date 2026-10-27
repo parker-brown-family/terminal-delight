@@ -20,7 +20,7 @@ Harden the existing design in these areas:
 - **Recovery and control:** replay, crash/reopen, deadlines, cancellation, queue credit and store failures preserve the approved behavior.
 - **Daily use:** repeatable public-MCP exercises across multiple existing recipient processes, with sanitized exports and reproducible failures.
 
-The existing exposure and writes controls remain in force. Forwarded original-agent identity is a cooperative assertion and is recorded that way. This release does not add automatic agent creation, resume, forks, PTY input or process termination.
+The existing exposure and writes controls remain in force. Forwarded original-agent identity is a cooperative assertion and is recorded that way. This release does not add automatic agent creation, forks or PTY input. **One exception, by Parker's decision on 2026-10-26** (`docs/plans/idle-agents/`, "In with 0.5.0"): an idle agent may *rest* (its pane's memory group frozen and its memory pushed out; any input thaws it first) and, after two hours of rest, *sleep* (the agent alone sent SIGTERM, never SIGKILL, and resumed with its own launch line plus `--resume` when a person presses a key in its pane, through the spawn-time path session restore uses). Terminal Delight still never types into a running terminal.
 
 ## Schedule
 

@@ -33,6 +33,14 @@ pub enum AgentState {
     /// and the two must never merge again.
     #[default]
     Idle,
+    /// Frozen by Terminal Delight while idle, its memory pushed out (see
+    /// `agentrest`). Never parsed from a screen: the window sets it, and a
+    /// latched bell cannot turn it into [`AgentState::Finished`].
+    Resting,
+    /// The agent was ended while idle and its conversation kept; a key in the
+    /// pane brings it back. The pane's foreground is a shell by then, which is
+    /// why the window, not the screen, says so.
+    Asleep,
     /// The pane is an agent and its screen matched no rule here.
     ///
     /// This used to be `Idle`, and that conflation is the defect this variant
@@ -51,6 +59,8 @@ impl AgentState {
             AgentState::Error => "\u{2715}",    // ✕
             AgentState::Finished => "\u{2713}", // ✓
             AgentState::Idle => "\u{00b7}",     // ·
+            AgentState::Resting => "\u{263e}",  // ☾
+            AgentState::Asleep => "z",
             AgentState::Unknown => "?",
         }
     }
@@ -65,6 +75,8 @@ impl AgentState {
             AgentState::Error => "error",
             AgentState::Finished => "done",
             AgentState::Idle => "idle",
+            AgentState::Resting => "resting",
+            AgentState::Asleep => "asleep",
             AgentState::Unknown => "unknown",
         }
     }
@@ -78,6 +90,8 @@ impl AgentState {
             AgentState::Error => t.hud_state_error,
             AgentState::Finished => t.hud_state_done,
             AgentState::Idle => t.hud_state_idle,
+            AgentState::Resting => t.hud_state_resting,
+            AgentState::Asleep => t.hud_state_asleep,
             AgentState::Unknown => t.hud_state_unknown,
         }
     }
@@ -505,11 +519,30 @@ mod tests {
             AgentState::Error,
             AgentState::Finished,
             AgentState::Idle,
+            AgentState::Resting,
+            AgentState::Asleep,
             AgentState::Unknown,
         ] {
             assert_eq!(st.label_in(Lang::En), st.label());
+            for l in Lang::ALL {
+                assert!(!st.label_in(l).is_empty(), "{st:?} in {l:?}");
+            }
         }
         assert_eq!(AgentState::Finished.label(), "done");
+    }
+
+    #[test]
+    fn rest_and_sleep_are_neither_wanting_you_nor_promotable_by_a_bell() {
+        for st in [AgentState::Resting, AgentState::Asleep] {
+            assert!(!st.needs_you(), "{st:?} must not raise the counter's alarm");
+            assert!(
+                !st.is_quiet(),
+                "{st:?} is quiet would let a bell make it Finished"
+            );
+            assert_eq!(with_bell(st, true), st);
+        }
+        // The control: a quiet state IS promoted.
+        assert_eq!(with_bell(AgentState::Idle, true), AgentState::Finished);
     }
 
     fn rows(s: &[&str]) -> Vec<String> {

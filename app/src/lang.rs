@@ -2993,6 +2993,11 @@ mod tests {
         // face chips, which read TERM | BENCH in every language.
         "chrome.cfg_config",
         "chrome.cfg_ui",
+        // French shares "Agents" with English, and Spanish and French the
+        // abbreviation "min".
+        "chrome.cfg_agents",
+        "chrome.ag_hdr",
+        "chrome.ag_unit_min",
         "chrome.ui_hdr",
         "chrome.ui_face",
         // French shares these with English.

@@ -439,6 +439,10 @@ pub struct Tally {
     /// because the difference is the whole point: one is a measurement, the
     /// other is the absence of one.
     pub unknown: u32,
+    /// Agents the window froze while idle (see `agentrest`).
+    pub resting: u32,
+    /// Agents ended while idle, their conversations kept for a key.
+    pub asleep: u32,
 }
 
 impl Tally {
@@ -450,7 +454,14 @@ impl Tally {
     /// wall's door and zero is a real answer.
     #[cfg(test)]
     pub fn total(&self) -> u32 {
-        self.working + self.blocked + self.errored + self.finished + self.idle + self.unknown
+        self.working
+            + self.blocked
+            + self.errored
+            + self.finished
+            + self.idle
+            + self.unknown
+            + self.resting
+            + self.asleep
     }
 
     /// True when something in the tally wants a human — the whole point of the

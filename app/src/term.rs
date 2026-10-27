@@ -287,6 +287,8 @@ pub struct AttachStreams {
     /// A resize is a control verb, never a byte-stream fact. Called from the
     /// read loop's own thread, hence `Send`.
     pub announce_resize: Box<dyn FnMut(WindowSize) + Send + 'static>,
+    /// The pane's rest gate; `None` where nothing will ever freeze the pane.
+    pub gate: Option<std::sync::Arc<crate::panegroup::Gate>>,
 }
 
 /// THE SEAM: a terminal this process does not own, driven by TD's read loop
@@ -310,8 +312,9 @@ pub fn attach_in(
     let AttachStreams {
         bytes,
         announce_resize,
+        gate,
     } = streams;
-    let source = vt::socket::SocketSource::with_resize(bytes, announce_resize)?;
+    let source = vt::socket::SocketSource::with_resize(bytes, announce_resize)?.with_gate(gate);
     // Shared with the loop's tap: the count of bytes that have actually reached
     // this replica's parser, which is the clock the divergence guard reads.
     let consumed = Arc::new(AtomicU64::new(0));
@@ -569,6 +572,7 @@ mod echo_bench {
                             },
                         );
                     }),
+                    gate: None,
                 },
                 Some(info.shell_pid),
             )
@@ -724,6 +728,7 @@ mod attached {
                 announce_resize: Box::new(move |size| {
                     heard.lock().expect("announced").push(size);
                 }),
+                gate: None,
             },
             shell_pid,
         )

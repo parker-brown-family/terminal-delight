@@ -3183,6 +3183,10 @@ pub struct TerminalView {
     doc_holding: bool,
     /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
     was_focused: bool,
+    /// Rest and sleep: this pane's memory group, its freezer gate, the clocks
+    /// that say how long it has been untouched and quiet, and whether it is
+    /// awake, resting or asleep. See `agentrest`.
+    pub(crate) rest: crate::agentrest::PaneRest,
     /// Last observed agent working state; absent until the first settled scan.
     agent_thinking: Option<bool>,
     /// Throttle for the (cheap) grid scan that detects the agent spinner.
@@ -3567,6 +3571,10 @@ impl gpui::EventEmitter<OffLimitsChanged> for TerminalView {}
 /// or the launch needs a new tab; the entry point never writes to the PTY.
 pub struct OpenAgentLauncher;
 impl gpui::EventEmitter<OpenAgentLauncher> for TerminalView {}
+
+/// A key or a click on an asleep pane: bring its agent back.
+pub struct WakeAsleep;
+impl gpui::EventEmitter<WakeAsleep> for TerminalView {}
 
 /// Click on this pane's header logo (or the `＋ logo` placeholder when none is
 /// set) — ask the workspace to open the image-file picker scoped to this pane.
@@ -4939,6 +4947,17 @@ impl TerminalView {
                     {
                         view.housekeeping_ticks += 1;
                     }
+                    // Rest's clocks: a changed screen is output, a write is a
+                    // touch, and a thaw on the pump thread is a wake to show.
+                    {
+                        let now = Instant::now();
+                        let generation = view.session.content_generation();
+                        view.rest.saw_generation(generation, now);
+                        view.rest.saw_writes(now);
+                        if view.rest.absorb_wake(now) {
+                            cx.notify();
+                        }
+                    }
                     let th = theme::theme(cx);
                     if view.fx.tick(&th) {
                         view.repaint(cx);
@@ -5279,6 +5298,7 @@ impl TerminalView {
             doc_rect: std::rc::Rc::new(std::cell::Cell::new(None)),
             doc_holding: false,
             was_focused: false,
+            rest: crate::agentrest::PaneRest::new(Instant::now()),
             pending_pty: None,
             cell_px,
             last_scroll_offset: None,
@@ -5542,6 +5562,14 @@ impl TerminalView {
     /// all of it on screens that had not changed. The bell is applied after the
     /// memo, because it changes without the screen changing.
     pub fn agent_status(&self) -> crate::hud::AgentStatus {
+        // The window's own word comes first: an asleep pane's screen is a shell,
+        // and a resting one's is a frozen frame, so neither is the screen's call.
+        if self.rest.dormancy.asleep().is_some() {
+            return crate::hud::AgentStatus {
+                state: crate::hud::AgentState::Asleep,
+                ..Default::default()
+            };
+        }
         if !self.mode.is_agent() {
             return crate::hud::AgentStatus::default();
         }
@@ -5558,7 +5586,108 @@ impl TerminalView {
             st
         });
         st.state = crate::hud::with_bell(st.state, self.bell);
+        // After the bell, so a latched bell cannot turn rest into a finish.
+        if self.rest.dormancy.is_resting() {
+            st.state = crate::hud::AgentState::Resting;
+        }
         st
+    }
+
+    /// Whether this pane is on screen and held the keyboard focus when it
+    /// last drew. A pane in a tab that is not shown stops drawing, so its
+    /// last-drawn focus goes stale; it is not being looked at.
+    pub fn focused_last_frame(&self) -> bool {
+        self.was_focused && self.shown.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The RESTING or ASLEEP chip for the header, or nothing while awake.
+    fn rest_chip(
+        &self,
+        th: &Theme,
+        fg: Hsla,
+        sk: &crate::skin::Skin,
+        scale: f32,
+    ) -> Option<gpui::Div> {
+        let parts = crate::lang::current().strings().parts;
+        let (glyph, word) = match &self.rest.dormancy {
+            crate::agentrest::Dormancy::Awake => return None,
+            crate::agentrest::Dormancy::Resting { since } => (
+                '\u{f0594}',
+                format!(
+                    "{} · {}",
+                    parts.hud_state_resting.to_uppercase(),
+                    crate::agentrest::short_age(since.elapsed())
+                ),
+            ),
+            crate::agentrest::Dormancy::Asleep(_) => {
+                ('\u{f04b2}', parts.hud_state_asleep.to_uppercase())
+            }
+        };
+        let tint = fg.alpha(0.85);
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(3. * scale))
+                .px(px(5. * scale))
+                .rounded(sk.rad(4.))
+                .border_1()
+                .border_color(tint.alpha(0.5))
+                .text_color(tint)
+                .text_size(sk.text_px(9.5 * scale))
+                .child(
+                    div()
+                        .when_some(chrome_glyph_font(glyph, th), |d, family| {
+                            d.font_family(family)
+                        })
+                        .child(glyph.to_string()),
+                )
+                .child(word),
+        )
+    }
+
+    /// What this pane costs: everything its group holds in RAM and swap, or,
+    /// while it rests, what is left in RAM and what went out. `unmeasured`
+    /// where the group could not be made or read, never a smaller number.
+    fn memory_figure(&self, fg: Hsla, sk: &crate::skin::Skin, scale: f32) -> Option<gpui::Div> {
+        use crate::agentrest::short_bytes;
+        let parts = crate::lang::current().strings().parts;
+        let u = self.rest.usage;
+        let text = match (self.rest.group.is_some(), u.resident) {
+            (true, Some(ram)) if self.rest.dormancy.is_resting() => match u.swapped {
+                Some(out) => format!(
+                    "{} + {} {}",
+                    short_bytes(ram),
+                    short_bytes(out),
+                    parts.pane_mem_out
+                ),
+                None => format!("{} + ?", short_bytes(ram)),
+            },
+            (true, Some(ram)) => match u.swapped {
+                Some(out) => short_bytes(ram + out),
+                None => format!("{} + ?", short_bytes(ram)),
+            },
+            (true, None) => parts.pane_mem_unmeasured.to_string(),
+            (false, _) if self.rest.group_error.is_some() => parts.pane_mem_unmeasured.to_string(),
+            // Not looked at yet: a blank, not a guess.
+            (false, _) => return None,
+        };
+        Some(
+            div()
+                .flex_none()
+                .text_color(fg.alpha(0.62))
+                .text_size(sk.text_px(9.5 * scale))
+                .child(text),
+        )
+    }
+
+    /// An agent pane, or one whose agent is asleep. Asleep panes run a shell
+    /// in the foreground, and anything that counts agents by mode alone would
+    /// lose them.
+    pub fn counts_as_agent(&self) -> bool {
+        self.mode.is_agent() || self.rest.dormancy.asleep().is_some()
     }
 
     /// Tokens this agent has spent this session: banked completed turns plus the
@@ -6571,6 +6700,13 @@ impl TerminalView {
     /// Type `bytes` at the PTY: drop any selection, snap the view back to the
     /// prompt, and mark the pane as having pending input.
     fn send(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        // An asleep pane has a shell behind its card. A key that would type
+        // asks for the agent back instead — the workspace does that in a fresh
+        // pane — and a chord the key table handles still works as it would.
+        if self.rest.dormancy.asleep().is_some() {
+            cx.emit(WakeAsleep);
+            return;
+        }
         {
             let mut term = self.session.term.lock();
             term.clear_selection();
@@ -7141,6 +7277,7 @@ impl TerminalView {
     /// `if ks.key.as_str() == …` added here is how the order grows back.
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
+        self.rest.touch(Instant::now());
         // Typing into the pane is attention too — covers the frozen-badge case
         // where the pane kept idle keyboard focus across the whole latch, so
         // no focus-in edge ever fired. No-op when nothing is latched.
@@ -10846,6 +10983,8 @@ impl Render for TerminalView {
             self.was_focused = focused_now;
             if focused_now {
                 self.ack_bell(cx);
+                // Looking at a resting pane wakes it: a fifth of a second.
+                self.rest.touch(Instant::now());
             }
             if self
                 .session
@@ -11055,6 +11194,105 @@ impl Render for TerminalView {
 
         // The ⋯ overflow menu lists exactly the controls hidden at this width, in
         // the same order they collapse. Mirrors the right-click menu's look.
+        // An asleep pane: its last screen dimmed under a card that says when,
+        // what it will come back as, and what it will come back without. A
+        // click on it wakes the agent, the same as a key.
+        let sleep_el = self.rest.dormancy.asleep().cloned().map(|asleep| {
+            let lang = crate::lang::current();
+            let parts = lang.strings().parts;
+            let when = crate::surface::stamp_local(asleep.since_ms, lang)
+                .unwrap_or_else(|| "?".to_string());
+            let mut kept = parts.sleep_card_kept.to_string();
+            if let Some(model) = &asleep.model {
+                kept = format!("{kept} \u{b7} {model}");
+            }
+            let refused = matches!(
+                &self.rest.refusal,
+                Some(crate::agentrest::Refusal::AgentBusy(Some(why))) if why == "open elsewhere"
+            );
+            let (surf, txt, acc) = (th.surface, th.text, th.accent);
+            let violet = gpui::hsla(0.72, 0.45, 0.72, 1.);
+            div()
+                .id("sleep-card")
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::black().alpha(0.55))
+                .cursor_pointer()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.rest.touch(Instant::now());
+                        cx.emit(WakeAsleep);
+                    }),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(5.))
+                        .max_w(px(360.))
+                        .px(px(16.))
+                        .py(px(12.))
+                        .rounded(px(9.))
+                        .bg(surf.alpha(0.94))
+                        .border_1()
+                        .border_color(violet.alpha(0.55))
+                        .shadow_md()
+                        .text_color(txt)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(6.))
+                                .text_size(px(14.))
+                                .child(
+                                    div()
+                                        .text_color(violet)
+                                        .when_some(chrome_glyph_font('\u{f04b2}', &th), |d, f| {
+                                            d.font_family(f)
+                                        })
+                                        .child("\u{f04b2}"),
+                                )
+                                .child(crate::lang::fill(
+                                    parts.sleep_card_since,
+                                    &[("when", &when)],
+                                )),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(txt.alpha(0.75))
+                                .child(kept),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.5))
+                                .text_color(if refused {
+                                    gpui::hsla(0.11, 0.85, 0.60, 1.)
+                                } else {
+                                    acc
+                                })
+                                .child(if refused {
+                                    parts.sleep_card_open_elsewhere
+                                } else {
+                                    parts.sleep_card_wake
+                                }),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(txt.alpha(0.55))
+                                .child(parts.sleep_card_lost),
+                        ),
+                )
+        });
         let overflow_el = self.hdr_overflow.map(|pos| {
             let (acc, surf, txt, human, _ff) = (
                 th.accent,
@@ -11199,6 +11437,37 @@ impl Render for TerminalView {
                         cx.notify();
                     }),
                 ));
+            }
+            // Rest and sleep, by hand: pin an agent awake, or send an idle
+            // one to sleep now (the clocks are skipped, never the refusals).
+            if self.counts_as_agent() && self.pane_id.is_some() {
+                let parts = crate::lang::current().strings().parts;
+                let label = if self.rest.keep_awake {
+                    format!("{} \u{2713}", parts.pane_keep_awake)
+                } else {
+                    parts.pane_keep_awake.to_string()
+                };
+                menu = menu.child(item("\u{2615}", &label).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        v.rest.keep_awake = !v.rest.keep_awake;
+                        v.rest.touch(Instant::now());
+                        cx.notify();
+                    }),
+                ));
+                if self.mode.is_agent() && self.rest.dormancy.asleep().is_none() {
+                    menu = menu.child(item("\u{1f4a4}", parts.pane_sleep_now).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.hdr_overflow = None;
+                            v.rest.sleep_now = true;
+                            cx.notify();
+                        }),
+                    ));
+                }
             }
             if !show_handover && self.has_handovers() {
                 let word = crate::lang::current().strings().artifacts_word;
@@ -11834,6 +12103,10 @@ impl Render for TerminalView {
                                 .child(badge)
                         })
                     })
+                    // Rest and sleep: whether the window has frozen or ended
+                    // this pane's agent, and what the pane costs.
+                    .children(self.rest_chip(&th, bar_fg, &sk, scale))
+                    .children(self.memory_figure(bar_fg, &sk, scale))
                     .child(status)
                     .when(ui_close, |d| {
                         d.child(
@@ -12363,6 +12636,7 @@ impl Render for TerminalView {
             .when(th.bezel > 0.001 && sk.glass(), |el| {
                 el.child(crt::bezel(&th))
             })
+            .children(sleep_el)
             .children(ctx_menu_el)
             .children(overflow_el)
             // the paint overlay is the topmost surface — painted last, above
@@ -17720,3 +17994,5 @@ mod behaviour;
 mod harness;
 #[cfg(test)]
 mod housekeeping_tests;
+#[cfg(test)]
+mod rest_tests;
