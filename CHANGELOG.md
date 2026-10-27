@@ -9,6 +9,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Agent Memory Hover for 0.5.0 Development
 
+- MENU GLYPHS includes a saved 🤖 Agents shortcut toggle. The toolbar button
+  opens Agents settings; CONFIG keeps the same entry when the glyph is hidden.
+  Standard and All show it, while Clean folds it into CONFIG.
 - Hover the top-right agent counter to see RAM and swap for awake, resting and
   sleeping panes, the observed RAM decrease since rest, measurement coverage
   and sample age. The card uses cached measurements and keeps the War Room click.
