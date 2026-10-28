@@ -408,6 +408,7 @@ impl Workspace {
             threshing_floor::Rung::See => ui.floor_rung_see,
             threshing_floor::Rung::Read => ui.floor_rung_read,
             threshing_floor::Rung::Ask => ui.floor_rung_ask,
+            threshing_floor::Rung::Prompt => ui.floor_rung_prompt,
         };
         let wires: Vec<Wire> = self
             .chart
@@ -867,13 +868,15 @@ impl Workspace {
         for w in &wires {
             let (from, to) = (w.from, w.to);
             // The chip is inked by the rung, so the clearance reads at a glance:
-            // the prompt rung (ask) in the action amber, the quieter rungs in
-            // accent, an unreadable word faint. A bypass keeps its amber.
+            // prompt, which writes into the worker, in the action amber; ask in
+            // full accent; the quieter rungs fainter; an unreadable word faint.
+            // A bypass keeps its amber.
             let rink = if w.bypass {
                 bypass_ink
             } else {
                 match w.rung {
-                    Some(threshing_floor::Rung::Ask) => th.ansi[3],
+                    Some(threshing_floor::Rung::Prompt) => th.ansi[3],
+                    Some(threshing_floor::Rung::Ask) => line_ink,
                     Some(threshing_floor::Rung::Read) => line_ink,
                     Some(threshing_floor::Rung::See) => line_ink.alpha(0.75),
                     None => hidden_ink,
@@ -2158,6 +2161,7 @@ impl Workspace {
                 threshing_floor::Rung::See => ui.floor_rung_see,
                 threshing_floor::Rung::Read => ui.floor_rung_read,
                 threshing_floor::Rung::Ask => ui.floor_rung_ask,
+                threshing_floor::Rung::Prompt => ui.floor_rung_prompt,
             };
             // Amber, like the move hint: these routes build a grant — the colour
             // of "yours to argue with", never the delete confirm's red.
@@ -2577,9 +2581,10 @@ impl Workspace {
             (threshing_floor::Rung::See, ui.floor_rung_see),
             (threshing_floor::Rung::Read, ui.floor_rung_read),
             (threshing_floor::Rung::Ask, ui.floor_rung_ask),
+            (threshing_floor::Rung::Prompt, ui.floor_rung_prompt),
         ] {
             let selected = current == Some(rung);
-            let is_ask = matches!(rung, threshing_floor::Rung::Ask);
+            let is_ask = matches!(rung, threshing_floor::Rung::Prompt);
             let shown = if is_ask {
                 format!("\u{25B2} {label}")
             } else {
@@ -2896,15 +2901,16 @@ impl Workspace {
             (threshing_floor::Rung::See, ui.floor_rung_see),
             (threshing_floor::Rung::Read, ui.floor_rung_read),
             (threshing_floor::Rung::Ask, ui.floor_rung_ask),
+            (threshing_floor::Rung::Prompt, ui.floor_rung_prompt),
         ] {
             let selected = editor.draft.rung == Some(rung);
-            // The rungs escalate see < read < ask. `ask` is the top clearance —
-            // the ONLY rung that lets one agent prompt another (fork its
-            // session) — so it wears the action colour (the same amber a bypass
-            // line is drawn in) and a ▲ mark, while the lower rungs are dimmed,
-            // so the powerful one reads first. A person should never grant it by
-            // reflex.
-            let is_ask = matches!(rung, threshing_floor::Rung::Ask);
+            // The rungs escalate see < read < ask < prompt. `prompt` is the top
+            // clearance, the only rung that writes into another agent's own
+            // conversation, so it wears the action colour (the same amber a
+            // bypass line is drawn in) and a ▲ mark, and the lower rungs are
+            // dimmed so the powerful one reads first. A person should never
+            // grant it by reflex. (`is_ask` names the top rung, now Prompt.)
+            let is_ask = matches!(rung, threshing_floor::Rung::Prompt);
             let shown = if is_ask {
                 format!("\u{25B2} {label}")
             } else {
@@ -2936,6 +2942,7 @@ impl Workspace {
                 threshing_floor::Rung::See => ui.floor_rung_see,
                 threshing_floor::Rung::Read => ui.floor_rung_read,
                 threshing_floor::Rung::Ask => ui.floor_rung_ask,
+                threshing_floor::Rung::Prompt => ui.floor_rung_prompt,
             };
             lang::fill(
                 ui.floor_rel_sentence,
@@ -3018,6 +3025,7 @@ impl Workspace {
             threshing_floor::Rung::See => ui.floor_rung_see,
             threshing_floor::Rung::Read => ui.floor_rung_read,
             threshing_floor::Rung::Ask => ui.floor_rung_ask,
+            threshing_floor::Rung::Prompt => ui.floor_rung_prompt,
         };
 
         // ---- the builder: two ends, each an org or an agent ----
@@ -3128,9 +3136,10 @@ impl Workspace {
             (threshing_floor::Rung::See, ui.floor_rung_see),
             (threshing_floor::Rung::Read, ui.floor_rung_read),
             (threshing_floor::Rung::Ask, ui.floor_rung_ask),
+            (threshing_floor::Rung::Prompt, ui.floor_rung_prompt),
         ] {
             let selected = map.rung == Some(rung);
-            let is_ask = matches!(rung, threshing_floor::Rung::Ask);
+            let is_ask = matches!(rung, threshing_floor::Rung::Prompt);
             let shown = if is_ask {
                 format!("\u{25B2} {label}")
             } else {
@@ -3366,7 +3375,329 @@ impl Workspace {
                 }
                 None => mcp::AskReply::Refused(threshing_floor::Refusal::NoSuchAsk),
             },
+            mcp::AskCall::Prompt(req) => self.prompt_send(req, cx),
+            mcp::AskCall::PromptStatus {
+                caller_pane,
+                prompt_id,
+            } => match self.prompts.of_sender(*prompt_id, *caller_pane) {
+                Some(sent) => mcp::AskReply::Prompt(sent.status(crate::prompt::now_ms())),
+                None => mcp::AskReply::Refused(threshing_floor::Refusal::NoSuchPrompt),
+            },
         }
+    }
+
+    /// An agent's prompt for another (`prompt_agent`), decided here against
+    /// the lines a person drew and handed to the book, which waits for the
+    /// worker to come to rest. Nothing is typed in this call: typing is
+    /// [`Self::prompt_tick`]'s, on the book's word.
+    fn prompt_send(&mut self, req: &mcp::PromptRequest, cx: &mut Context<Self>) -> mcp::AskReply {
+        let now = crate::prompt::now_ms();
+        self.ask_seq = (self.ask_seq + 1).max(now);
+        let id = threshing_floor::AskId(self.ask_seq);
+        let caller = self.leaf_by_pane_id(req.caller_pane, cx);
+        let target = self.leaf_by_shell_pid(req.target, cx);
+        let from = caller.as_ref().and_then(|l| l.read(cx).seat);
+        let to = target.as_ref().and_then(|l| l.read(cx).seat);
+        let brief = crate::prompt::clean(&req.brief);
+        let mut entry = askrecord::Entry {
+            id,
+            at_ms: now,
+            from,
+            to,
+            via: "prompt".into(),
+            stage: "refused".into(),
+            refusal: None,
+            question_len: brief.chars().count(),
+            question_sha256: askrecord::fingerprint(&brief),
+            program: None,
+            model: None,
+            reads_tokens: None,
+            tokens_read: None,
+            cost_usd: None,
+        };
+        let decided = match (caller.as_ref(), target.as_ref()) {
+            (Some(c), Some(t)) => {
+                let (cv, tv) = (c.read(cx), t.read(cx));
+                entry.program = Some(tv.mode.label().to_string());
+                threshing_floor::decide_prompt(
+                    &self.mcp,
+                    &self.chart,
+                    &self.floor_orgs,
+                    &cv.party(),
+                    &prompt_party(tv),
+                    c.entity_id() == t.entity_id(),
+                    entry.question_len,
+                )
+            }
+            _ => Err(threshing_floor::Refusal::Gone),
+        };
+        let (Ok(()), Some(c), Some(t)) = (decided.clone(), caller, target) else {
+            let r = decided.err().unwrap_or(threshing_floor::Refusal::Gone);
+            entry.refusal = refusal_code(&r);
+            self.record(&entry);
+            return mcp::AskReply::Refused(r);
+        };
+        let sender = self.pane_name(&c, cx).full();
+        // Its last message can be read back from a Claude or Codex
+        // conversation; the header says only what will happen.
+        let returns = askcopy::Program::of_mode(t.read(cx).mode.label()).is_some();
+        let header = crate::prompt::header(id, &sender, c.read(cx).shell_pid(), returns);
+        let taken = self.prompts.send(crate::prompt::NewPrompt {
+            id,
+            sender_pane: req.caller_pane,
+            from,
+            to,
+            target_pid: req.target,
+            key: req.key.clone(),
+            text: crate::prompt::compose(&header, &brief),
+            brief_len: entry.question_len,
+            brief_sha256: entry.question_sha256.clone(),
+            now_ms: now,
+        });
+        match taken {
+            Ok(crate::prompt::Taken::New(status)) => {
+                entry.stage = "waiting".into();
+                self.record(&entry);
+                cx.notify();
+                mcp::AskReply::Prompt(status)
+            }
+            // A retry by key: the first prompt as it stands, recorded once.
+            Ok(crate::prompt::Taken::Again(status)) => mcp::AskReply::Prompt(status),
+            Err(r) => {
+                entry.refusal = refusal_code(&r);
+                self.record(&entry);
+                mcp::AskReply::Refused(r)
+            }
+        }
+    }
+
+    /// One look at every worker with an open prompt, and what the book
+    /// decides, done. Called on a short clock while any prompt is open.
+    pub(crate) fn prompt_tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.prompts.open().next().is_none() {
+            return;
+        }
+        let now = crate::prompt::now_ms();
+        let senders_gone: Vec<u64> = self
+            .prompts
+            .open()
+            .map(|s| s.sender_pane)
+            .filter(|p| self.leaf_by_pane_id(*p, cx).is_none())
+            .collect();
+        let mut book = std::mem::take(&mut self.prompts);
+        let mut ended = Vec::new();
+        for pane in senders_gone {
+            ended.extend(book.sender_gone(pane, now));
+        }
+        let acts = {
+            let app: &App = cx;
+            book.tick(now, |sent| self.prompt_look(sent, app))
+        };
+        self.prompts = book;
+        for id in ended {
+            self.record_prompt(id);
+        }
+        for act in acts {
+            self.prompt_act(act, window, cx);
+        }
+    }
+
+    /// What the book needs to know of a prompt's worker on this tick. The
+    /// worker is found by its shell, or by its seat once a wake has given it
+    /// a new one.
+    fn prompt_look(&self, sent: &crate::prompt::Sent, cx: &App) -> crate::prompt::Worker {
+        let leaf = self.leaf_by_shell_pid(sent.target_pid, cx).or_else(|| {
+            sent.to
+                .and_then(|seat| self.threshing_floor_seat_leaf(seat, cx))
+        });
+        let Some(leaf) = leaf else {
+            return crate::prompt::Worker::gone();
+        };
+        let v = leaf.read(cx);
+        // An asleep agent wakes in a fresh pane whose shell starts it again:
+        // until it is an agent once more, it is waking, not gone.
+        let waking = !v.mode.is_agent()
+            && sent.woke_ms.is_some_and(|t| {
+                crate::prompt::now_ms().saturating_sub(t) < crate::prompt::WAKE_GRACE_MS
+            });
+        let mut party = prompt_party(v);
+        party.is_agent |= waking;
+        let allowed = match self.leaf_by_pane_id(sent.sender_pane, cx) {
+            Some(c) => threshing_floor::decide_prompt(
+                &self.mcp,
+                &self.chart,
+                &self.floor_orgs,
+                &c.read(cx).party(),
+                &party,
+                c.entity_id() == leaf.entity_id(),
+                sent.brief_len.max(1),
+            ),
+            None => Err(threshing_floor::Refusal::Gone),
+        };
+        let (seen, label) = if waking {
+            (crate::prompt::Seen::Dormant, "starting again".to_string())
+        } else {
+            (
+                v.prompt_seen(),
+                v.agent_status().state.label_in(lang::Lang::En).to_string(),
+            )
+        };
+        crate::prompt::Worker {
+            seen,
+            label,
+            takes_paste: v.takes_bracketed_paste(),
+            picker: v.dial_picker_up(),
+            person_key_ms: v.person_key_ms(),
+            turn_began_ms: v.turn_began_ms(),
+            rows: v.recent_lines(crate::prompt::LOOK_ROWS),
+            allowed,
+            pid: v.shell_pid(),
+        }
+    }
+
+    /// One of the book's acts, done. Paste and Enter go through the pane's
+    /// one prompt write, `TerminalView::type_prompt`, which refuses again for
+    /// a pane a person has closed to agents since.
+    fn prompt_act(&mut self, act: crate::prompt::Act, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::prompt::{Act, Keys};
+        let now = crate::prompt::now_ms();
+        let id = match act {
+            Act::Wake(id)
+            | Act::Paste(id)
+            | Act::Enter(id)
+            | Act::ReadReply(id)
+            | Act::Probe(id)
+            | Act::Record(id) => id,
+        };
+        let Some(sent) = self.prompts.get(id).cloned() else {
+            return;
+        };
+        let leaf = self.leaf_by_shell_pid(sent.target_pid, cx);
+        match act {
+            Act::Record(_) => self.record_prompt(id),
+            Act::ReadReply(_) => self.prompt_read_reply(id, crate::prompt::REPLY_TRIES, cx),
+            Act::Probe(_) => self.prompt_read_reply(id, 1, cx),
+            Act::Wake(_) => {
+                let Some(leaf) = leaf else { return };
+                if leaf.read(cx).rest.dormancy.asleep().is_some() {
+                    self.wake_sleeper_as(&leaf, false, window, cx);
+                } else {
+                    leaf.update(cx, |v, cx| {
+                        v.rest.touch(std::time::Instant::now());
+                        cx.notify();
+                    });
+                }
+            }
+            Act::Paste(_) | Act::Enter(_) => {
+                let keys = match act {
+                    Act::Paste(_) => Keys::Paste(&sent.text),
+                    _ => Keys::Enter,
+                };
+                let typed = leaf.is_some_and(|leaf| {
+                    leaf.update(cx, |v, cx| {
+                        let typed = v.type_prompt(keys);
+                        cx.notify();
+                        typed
+                    })
+                });
+                if !typed {
+                    // Enter refused after the paste went in: the words are
+                    // there, and nothing more is typed over them.
+                    if matches!(act, Act::Enter(_)) {
+                        self.prompts.stain(sent.target_pid, now);
+                    }
+                    if self.prompts.fail(
+                        id,
+                        "the worker's pane refused the keys: it closed, is no longer an agent, was marked read-only or off-limits, or its prompt does not take a paste",
+                        now,
+                    ) {
+                        self.record_prompt(id);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The worker's last message after a prompt, read off the window's
+    /// thread from whichever conversation its pane is bound to. The prompt's
+    /// own number in that conversation is what proves the binding, so a guess
+    /// that is wrong reads as unknown, never as another agent's words.
+    fn prompt_read_reply(
+        &mut self,
+        id: threshing_floor::AskId,
+        tries: u32,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pid) = self.prompts.get(id).map(|s| s.target_pid) else {
+            return;
+        };
+        let facts = std::sync::Arc::new(self.pane_facts(cx));
+        cx.spawn(async move |this, cx| {
+            // The screen comes to rest a moment before the program has
+            // written its reply into the transcript (measured on Claude Code
+            // and Codex both, 2026-10-27), so a reply not there yet is looked
+            // for again, for a few seconds, before it is called unknown.
+            let mut reply = Err(String::new());
+            for attempt in 0..tries {
+                if attempt > 0 {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(
+                            crate::prompt::REPLY_RETRY_MS,
+                        ))
+                        .await;
+                }
+                let facts = facts.clone();
+                reply = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let home =
+                            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
+                        match paneident::resolve(&facts, &home).remove(&pid) {
+                            Some(bound) => crate::prompt::read_reply(&bound.path, id),
+                            None => Err(crate::prompt::NO_CONVERSATION.to_string()),
+                        }
+                    })
+                    .await;
+                if !reply
+                    .as_ref()
+                    .is_err_and(|why| crate::prompt::worth_another_look(why))
+                {
+                    break;
+                }
+            }
+            let _ = this.update(cx, |ws, cx| {
+                if ws.prompts.replied(id, reply, crate::prompt::now_ms()) {
+                    ws.record_prompt(id);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// One stage of a prompt, for the record: its length and fingerprint,
+    /// never its words.
+    fn record_prompt(&mut self, id: threshing_floor::AskId) {
+        let Some(s) = self.prompts.get(id) else {
+            return;
+        };
+        let entry = askrecord::Entry {
+            id,
+            at_ms: crate::prompt::now_ms(),
+            from: s.from,
+            to: s.to,
+            via: "prompt".into(),
+            stage: s.stage.word().into(),
+            refusal: None,
+            question_len: s.brief_len,
+            question_sha256: s.brief_sha256.clone(),
+            program: None,
+            model: None,
+            reads_tokens: None,
+            tokens_read: None,
+            cost_usd: None,
+        };
+        self.record(&entry);
     }
 
     /// A copy's admission is not permission to deliver after revocation. A
@@ -4106,6 +4437,14 @@ fn stroke_wire(
 }
 
 /// A refusal's wire name, for the record.
+/// A worker as a prompt's rules see it. An asleep agent's pane runs a shell
+/// until it is woken, and is still the agent a line was drawn to.
+fn prompt_party(v: &TerminalView) -> threshing_floor::Party {
+    let mut party = v.party();
+    party.is_agent |= v.rest.dormancy.asleep().is_some();
+    party
+}
+
 fn refusal_code(r: &threshing_floor::Refusal) -> Option<String> {
     serde_json::to_value(r)
         .ok()
@@ -5336,18 +5675,19 @@ mod tests {
     }
 
     #[gpui::test]
-    fn starting_a_relationship_keeps_the_pane_filter_and_the_top_rung_reads_prompt(
+    fn starting_a_relationship_keeps_the_pane_filter_and_ask_and_prompt_read_as_themselves(
         cx: &mut gpui::TestAppContext,
     ) {
         let _warp = crate::warp::WARP_SERIAL
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, _) = fixture(cx);
-        // The top rung is the one that lets an agent drive another — it must
-        // read "prompt", not the underwhelming "ask", while the saved word is
-        // still "ask" so older charts keep loading.
+        // Ask was once labelled "prompt", because a copy fork was the
+        // strongest thing a line allowed. Prompt is its own rung now, so each
+        // reads as what it does, and the saved words are the rungs' own.
         ws.read_with(cx, |ws, _| {
-            assert_eq!(ws.lang.strings().ui.floor_rung_ask, "prompt");
+            let ui = ws.lang.strings().ui;
+            assert_eq!((ui.floor_rung_ask, ui.floor_rung_prompt), ("ask", "prompt"));
             assert_eq!(
                 threshing_floor::RungWord::Known(threshing_floor::Rung::Ask).known(),
                 Some(threshing_floor::Rung::Ask)
@@ -5994,5 +6334,317 @@ mod tests {
         bounds(cx, "floor-drop-rung-Ask");
         bounds(cx, "floor-drop-draw");
         bounds(cx, "floor-drop-back");
+    }
+
+    /// A stand-in agent for the prompt tests: it asks for bracketed paste,
+    /// draws Claude Code's idle footer, writes every line it is handed to
+    /// `log`, and for a line carrying GO shows a working turn for a second and
+    /// comes back to rest. `first` is what it draws instead of the footer, to
+    /// stand in for a screen that must not be typed into.
+    fn prompt_worker(
+        ws: &Entity<Workspace>,
+        cx: &mut gpui::VisualTestContext,
+        log: &std::path::Path,
+        first: &str,
+    ) -> Entity<TerminalView> {
+        let script = format!(
+            "printf '\\033[?2004h\\033[2J\\033[H{first}\\n'; \
+             while IFS= read -r l; do printf '%s\\n' \"$l\" >> '{log}'; \
+             case \"$l\" in *GO*) printf '\\033[2J\\033[Hesc to interrupt\\n'; sleep 1; \
+             printf '\\033[2J\\033[HFAKE_DONE\\n? for shortcuts\\n';; esac; done",
+            log = log.display()
+        );
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), script])),
+            ..Default::default()
+        };
+        let worker = cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| {
+                let pane = {
+                    let _fork = crate::testsync::forks_and_locks();
+                    make_pane_window_owned(seed, w, cx)
+                };
+                ws.tabs
+                    .push(Tab::new(Node::Leaf(pane.clone()), Some("Prompted".into())));
+                pane.update(cx, |v, cx| {
+                    v.mode = pane::PaneMode::Claude;
+                    v.seat = Some(threshing_floor::SeatId(102));
+                    v.fixture_set_pane_id(12);
+                    cx.notify();
+                });
+                ws.mcp.enabled = true;
+                pane
+            })
+        });
+        let stop = worker.read_with(cx, |v, _| v.fixture_shutdown());
+        cx.on_quit(stop);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while worker.read_with(cx, |v, _| {
+            !v.takes_bracketed_paste() || v.grep_grid(first, 50).is_empty()
+        }) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the stand-in agent never drew its screen"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            cx.run_until_parked();
+        }
+        worker
+    }
+
+    /// A fresh, empty directory for one prompt test's log.
+    fn prompt_scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("td-prompt-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn prompt_ticks_until(
+        ws: &Entity<Workspace>,
+        cx: &mut gpui::VisualTestContext,
+        id: threshing_floor::AskId,
+        secs: u64,
+        done: impl Fn(&crate::prompt::PromptStage) -> bool,
+    ) -> crate::prompt::PromptStage {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        loop {
+            cx.update(|w, cx| ws.update(cx, |ws, cx| ws.prompt_tick(w, cx)));
+            cx.run_until_parked();
+            let stage = ws.read_with(cx, |ws, _| ws.prompts.get(id).unwrap().stage.clone());
+            if done(&stage) || std::time::Instant::now() >= deadline {
+                return stage;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
+    fn send_prompt(
+        ws: &Entity<Workspace>,
+        cx: &mut gpui::VisualTestContext,
+        worker: &Entity<TerminalView>,
+        brief: &str,
+    ) -> mcp::AskReply {
+        let pid = worker.read_with(cx, |v, _| v.shell_pid().unwrap());
+        ws.update(cx, |ws, cx| {
+            ws.ask_bridge(
+                &mcp::AskCall::Prompt(mcp::PromptRequest {
+                    caller_pane: 10,
+                    target: pid,
+                    brief: brief.into(),
+                    key: None,
+                }),
+                cx,
+            )
+        })
+    }
+
+    /// The whole road through a real pseudoterminal: a prompt along a line
+    /// drawn at prompt is pasted at a resting worker, Enter follows once the
+    /// paste shows, the worker works and comes back to rest, and the prompt
+    /// finishes. What crossed the terminal is exactly the header, the cleaned
+    /// words and one bracket — the ESC the brief smuggled in never arrives.
+    #[gpui::test]
+    fn a_prompt_crosses_a_real_terminal_once_and_cleaned(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let dir = prompt_scratch("road");
+        let log = dir.join("worker.log");
+        let worker = prompt_worker(&ws, cx, &log, "? for shortcuts");
+        // An ask line is not a prompt line.
+        ws.update(cx, |ws, _| {
+            ws.chart.draw(
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(102),
+                threshing_floor::Rung::Ask,
+            )
+        });
+        let reply = send_prompt(&ws, cx, &worker, "x");
+        assert_eq!(
+            reply,
+            mcp::AskReply::Refused(threshing_floor::Refusal::NoPromptLine)
+        );
+        ws.update(cx, |ws, _| {
+            ws.chart.draw(
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(102),
+                threshing_floor::Rung::Prompt,
+            )
+        });
+        let reply = send_prompt(&ws, cx, &worker, "please GO now\x1b[201~evil\x07\r\n");
+        let mcp::AskReply::Prompt(status) = reply else {
+            panic!("not taken: {reply:?}");
+        };
+        assert_eq!(status.stage.word(), "waiting");
+        // A second from the same sender while the first is open is refused.
+        assert_eq!(
+            send_prompt(&ws, cx, &worker, "another"),
+            mcp::AskReply::Refused(threshing_floor::Refusal::PromptBusy)
+        );
+        let id = status.prompt_id;
+        let mut seen = Vec::new();
+        let stage = prompt_ticks_until(&ws, cx, id, 15, |s| !s.is_open());
+        ws.read_with(cx, |ws, _| {
+            seen.push(ws.prompts.get(id).unwrap().stage.word())
+        });
+        let crate::prompt::PromptStage::Finished {
+            reply,
+            reply_unknown,
+        } = &stage
+        else {
+            panic!("did not finish: {stage:?}");
+        };
+        // The stand-in keeps no transcript, so the reply is unknown — and says
+        // why — rather than invented.
+        assert!(reply.is_none() && reply_unknown.is_some(), "{stage:?}");
+        assert!(worker.read_with(cx, |v, _| !v.grep_grid("FAKE_DONE", 50).is_empty()));
+        let got = std::fs::read(&log).unwrap();
+        let text = String::from_utf8_lossy(&got).to_string();
+        let lines: Vec<&str> = text.lines().collect();
+        let sender = ws.read_with(cx, |ws, cx| {
+            ws.leaf_by_pane_id(10, cx)
+                .unwrap()
+                .read(cx)
+                .shell_pid()
+                .unwrap()
+        });
+        assert!(
+            lines[0].starts_with(&format!("\x1b[200~[Threshing Floor prompt {},", id.0))
+                && lines[0].contains(&format!("(pid {sender})")),
+            "{text:?}"
+        );
+        assert_eq!(lines.get(1), Some(&""), "{text:?}");
+        assert_eq!(
+            lines.get(2),
+            Some(&"please GO now[201~evil\x1b[201~"),
+            "{text:?}"
+        );
+        assert_eq!(lines.len(), 3, "one prompt, one Enter: {text:?}");
+        assert_eq!(text.matches("\x1b[201~").count(), 1, "{text:?}");
+        assert_eq!(text.matches("\x1b[200~").count(), 1, "{text:?}");
+        assert!(!text.contains('\x07'), "{text:?}");
+    }
+
+    /// A worker showing a question for its person is never typed into, and a
+    /// line erased while the prompt waits ends it with nothing typed. A pane
+    /// made read-only is refused at the send and again at the write.
+    #[gpui::test]
+    fn a_prompt_never_types_into_a_dialog_or_after_its_line_is_erased(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let dir = prompt_scratch("dialog");
+        let log = dir.join("worker.log");
+        let worker = prompt_worker(
+            &ws,
+            cx,
+            &log,
+            "Do you trust the files in this folder? \u{276f} 1. Yes",
+        );
+        assert_eq!(
+            worker.read_with(cx, |v, _| v.prompt_seen()),
+            crate::prompt::Seen::Blocked
+        );
+        ws.update(cx, |ws, _| {
+            ws.chart.draw(
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(102),
+                threshing_floor::Rung::Prompt,
+            )
+        });
+        let mcp::AskReply::Prompt(status) = send_prompt(&ws, cx, &worker, "GO") else {
+            panic!("not taken");
+        };
+        let id = status.prompt_id;
+        let stage = prompt_ticks_until(&ws, cx, id, 2, |_| false);
+        assert_eq!(stage.word(), "waiting", "{stage:?}");
+        ws.update(cx, |ws, _| {
+            ws.chart
+                .erase(threshing_floor::SeatId(100), threshing_floor::SeatId(102))
+        });
+        let stage = prompt_ticks_until(&ws, cx, id, 2, |s| !s.is_open());
+        let crate::prompt::PromptStage::Failed { why } = &stage else {
+            panic!("not failed: {stage:?}");
+        };
+        assert!(why.contains("prompt"), "{why}");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!log.exists(), "something was typed into the dialog");
+
+        // Read-only: refused when sent, and the pane's own write refuses too.
+        ws.update(cx, |ws, cx| {
+            ws.chart.draw(
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(102),
+                threshing_floor::Rung::Prompt,
+            );
+            worker.update(cx, |v, _| {
+                v.agent_access = threshing_floor::AgentAccess::ReadOnly
+            });
+        });
+        assert_eq!(
+            send_prompt(&ws, cx, &worker, "GO"),
+            mcp::AskReply::Refused(threshing_floor::Refusal::ReadOnly)
+        );
+        let typed = worker.update(cx, |v, _| {
+            (
+                v.type_prompt(crate::prompt::Keys::Paste("GO")),
+                v.type_prompt(crate::prompt::Keys::Enter),
+            )
+        });
+        assert_eq!(typed, (false, false));
+        // And a pane that is not an agent takes nothing, Open or not.
+        let typed = worker.update(cx, |v, _| {
+            v.agent_access = threshing_floor::AgentAccess::Open;
+            v.mode = pane::PaneMode::Shell;
+            v.type_prompt(crate::prompt::Keys::Enter)
+        });
+        assert!(!typed);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!log.exists(), "a refused write reached the terminal");
+    }
+
+    /// A pane rebuilt from a snapshot, or an agent woken into a fresh shell,
+    /// keeps the seat a person gave it and the mark a person set. Before,
+    /// both came back empty: unseated, every line gone, and off-limits open.
+    #[gpui::test]
+    fn a_rebuilt_pane_keeps_its_seat_and_its_mark(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        for access in [
+            threshing_floor::AgentAccess::OffLimits,
+            threshing_floor::AgentAccess::ReadOnly,
+        ] {
+            let (old, fresh) = cx.update(|w, cx| {
+                ws.update(cx, |ws, cx| {
+                    let old = ws.leaf_by_pane_id(11, cx).unwrap();
+                    old.update(cx, |v, _| v.agent_access = access);
+                    let fresh = {
+                        let _fork = crate::testsync::forks_and_locks();
+                        make_pane_window_owned(session::PaneRestore::default(), w, cx)
+                    };
+                    (old, fresh)
+                })
+            });
+            let stop = fresh.read_with(cx, |v, _| v.fixture_shutdown());
+            cx.on_quit(stop);
+            assert_eq!(
+                fresh.read_with(cx, |v, _| (v.seat, v.agent_access)),
+                (None, threshing_floor::AgentAccess::Open),
+                "the control: a fresh pane starts unseated and open"
+            );
+            let carried = old.read_with(cx, |v, _| v.presentation());
+            fresh.update(cx, |v, cx| v.adopt_presentation(carried, cx));
+            assert_eq!(
+                fresh.read_with(cx, |v, _| (v.seat, v.agent_access)),
+                (Some(threshing_floor::SeatId(101)), access)
+            );
+        }
     }
 }

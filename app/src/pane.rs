@@ -2852,6 +2852,13 @@ pub struct Presentation {
     /// Who the document pane was opened beside: a repaired document pane is
     /// still beside the same agent.
     doc_opened_by: Option<u64>,
+    /// The Threshing Floor seat and the person's access mark. A pane rebuilt
+    /// from a fresh snapshot, or an asleep agent woken into a fresh shell, is
+    /// still the pane a person seated and marked: without these it came back
+    /// unseated, every line to it gone, and a pane marked off-limits came
+    /// back open to agents.
+    seat: Option<crate::threshing_floor::SeatId>,
+    agent_access: crate::threshing_floor::AgentAccess,
 }
 
 /// A document view on its way from a pane being replaced to its replacement.
@@ -3069,6 +3076,15 @@ pub struct TerminalView {
     /// played, the tab wears its 🔔 badge and the header reads "● done" until
     /// the focus-in edge acknowledges it ([`Self::ack_bell`]).
     bell: bool,
+    /// When a person last typed or pasted into this pane, in ms since the
+    /// epoch: a prompt another agent sent waits while a person may have a line
+    /// half-typed here (`prompt::QUIET_MS`). A `Cell`, because the paste path
+    /// borrows the pane shared.
+    person_key_ms: std::cell::Cell<Option<u64>>,
+    /// When this pane's own scan last saw a turn begin, in ms since the epoch:
+    /// a prompt's worker took it if a turn began after Enter, even one that
+    /// began and ended between two of the prompt clock's looks.
+    turn_began_ms: Option<u64>,
     /// The agent is stopped WAITING ON A HUMAN — a picker or permission prompt
     /// is on screen (see [`wants_human`]). Live state maintained by the 120ms
     /// scan, never latched: true exactly while the prompt is up. Drives the
@@ -4459,6 +4475,8 @@ impl TerminalView {
             }),
             float: self.float.as_ref().map(FloatingDoc::carry),
             doc_opened_by: self.doc_opened_by,
+            seat: self.seat,
+            agent_access: self.agent_access,
         }
     }
 
@@ -4496,6 +4514,9 @@ impl TerminalView {
             self.float = Some(Self::float_back(f, cx));
         }
         self.doc_opened_by = from.doc_opened_by;
+        // A restore, not a decision: the person's own seat and mark, carried.
+        self.seat = from.seat;
+        self.agent_access = from.agent_access;
     }
 
     /// Whether this pane has reported an ending that has not been explained yet.
@@ -4744,6 +4765,89 @@ impl TerminalView {
         if self.seat != seat {
             self.seat = seat;
             cx.notify();
+        }
+    }
+
+    /// Row #10 of `docs/security/terminal-input.md`: a prompt another agent
+    /// sent along a line a person drew at prompt, typed when `prompt.rs`
+    /// decides and `Workspace::prompt_tick` acts. Two shapes and no others:
+    /// the prompt's words as one bracketed paste ([`crate::prompt::paste`]),
+    /// which a program that asked for bracketing takes as text however many
+    /// newlines it holds; and one carriage return, pressed once, after the
+    /// paste has shown at the worker's prompt. Nothing is written — `false` —
+    /// to a pane that is not an agent, one a person marked read-only or
+    /// off-limits, one asleep, or, for the paste, a prompt that never asked
+    /// for bracketing.
+    pub(crate) fn type_prompt(&mut self, keys: crate::prompt::Keys<'_>) -> bool {
+        if !self.mode.is_agent()
+            || !self.agent_access.takes_writes()
+            || self.rest.dormancy.asleep().is_some()
+        {
+            return false;
+        }
+        let bytes = match keys {
+            crate::prompt::Keys::Paste(text) => {
+                match crate::prompt::paste(text, self.takes_bracketed_paste()) {
+                    Some(bytes) => bytes,
+                    None => return false,
+                }
+            }
+            crate::prompt::Keys::Enter => b"\r".to_vec(),
+        };
+        self.session.notifier.notify(bytes);
+        true
+    }
+
+    /// Whether the program in this pane has asked for bracketed paste.
+    pub(crate) fn takes_bracketed_paste(&self) -> bool {
+        self.session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::BRACKETED_PASTE)
+    }
+
+    /// When a person last typed or pasted here.
+    pub(crate) fn person_key_ms(&self) -> Option<u64> {
+        self.person_key_ms.get()
+    }
+
+    /// When this pane's scan last saw a turn begin.
+    pub(crate) fn turn_began_ms(&self) -> Option<u64> {
+        self.turn_began_ms
+    }
+
+    /// Whether a picker the workbench's dial raised is on screen.
+    pub(crate) fn dial_picker_up(&self) -> bool {
+        self.wb_dial_sent.is_some()
+    }
+
+    /// What a prompt sees of this pane: the screen's own word, before the
+    /// finish bell. The bell turns a screen nobody could read into "done" as
+    /// readily as a resting one, so `Ready` here is the idle furniture on
+    /// screen and nothing else.
+    pub(crate) fn prompt_seen(&self) -> crate::prompt::Seen {
+        use crate::hud::AgentState;
+        use crate::prompt::Seen;
+        if self.rest.dormancy.asleep().is_some() || self.rest.dormancy.is_resting() {
+            return Seen::Dormant;
+        }
+        if !self.mode.is_agent() {
+            return Seen::Gone;
+        }
+        let rows = self.live_rows();
+        let cached = match self.status_memo.borrow().as_ref() {
+            Some((seen, st)) if std::rc::Rc::ptr_eq(seen, &rows) => Some(st.state),
+            _ => None,
+        };
+        let state = cached.unwrap_or_else(|| crate::hud::parse_status_line(&rows).state);
+        match state {
+            AgentState::Idle => Seen::Ready,
+            AgentState::Working => Seen::Working,
+            AgentState::Blocked => Seen::Blocked,
+            AgentState::Error => Seen::Errored,
+            AgentState::Resting | AgentState::Asleep => Seen::Dormant,
+            AgentState::Finished | AgentState::Unknown => Seen::Unreadable,
         }
     }
 
@@ -5017,6 +5121,7 @@ impl TerminalView {
                                 cx.emit(AgentWorkingChanged);
                                 if thinking {
                                     view.think_since = Some(Instant::now());
+                                    view.turn_began_ms = Some(crate::prompt::now_ms());
                                     view.not_thinking_since = None;
                                     // A turn is running, so whatever was paused
                                     // is over. THE RISING EDGE, at 120ms, rather
@@ -5253,6 +5358,8 @@ impl TerminalView {
             appearance: PaneTheme::default(),
             ctx_menu: None,
             bell: false,
+            person_key_ms: std::cell::Cell::new(None),
+            turn_began_ms: None,
             needs_input: false,
             answered_on: None,
             attention_since: None,
@@ -6715,6 +6822,7 @@ impl TerminalView {
         // a real keystroke ends any keyboard selection in progress
         self.kbd_sel = None;
         self.pending_input = Some(Instant::now());
+        self.person_key_ms.set(Some(crate::prompt::now_ms()));
         self.session.notifier.notify(bytes);
         cx.notify();
     }
@@ -8634,6 +8742,7 @@ impl TerminalView {
         if bytes.is_empty() {
             return;
         }
+        self.person_key_ms.set(Some(crate::prompt::now_ms()));
         self.session.notifier.notify(bytes);
     }
     fn has_selection(&self) -> bool {
