@@ -29,6 +29,17 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   paste shows. Ask lines and rail bypasses never prompt, read-only panes are
   never prompted, and lines drawn before this stay ask lines. The ask rung now
   reads "ask" rather than "prompt".
+- Prompting waits longer and holds nothing back. A worker must sit settled at
+  its prompt for five seconds, not two, before it is typed into; a pane its
+  person typed in waits a minute, not twenty seconds; and Enter comes a second
+  after the paste shows. Words a failed prompt left unsent no longer stop the
+  worker taking prompts: the next one is pasted after them.
+- An agent Terminal Delight starts is told about the Threshing Floor in its
+  briefing: what a line is, how to read where it stands, how to answer a prompt
+  from another agent, and how to hand work out (a work order with how it will
+  be judged done, another try when a reply falls short, and its person told
+  after two or three). The new `floor_position` tool answers where an agent
+  stands, including which panes may prompt it.
 - A pane rebuilt from a fresh snapshot, and an asleep agent woken into a fresh
   shell, keep their Threshing Floor seat and the read-only or off-limits mark a
   person set. Before, both came back unseated, and an off-limits pane came back

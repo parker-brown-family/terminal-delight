@@ -1339,7 +1339,9 @@ fn initialize_result(params: &Value) -> Value {
              can change, with one exception a person grants: `prompt_agent` \
              types your words into another agent's prompt as its next turn, \
              only along a line a person drew from your seat at prompt in the \
-             Threshing Floor. Nothing else here writes to a terminal/PTY. An \
+             Threshing Floor, and `floor_position` says where you stand there: \
+             your seat and the lines out from you and in to you. Nothing else \
+             here writes to a terminal/PTY. An \
              answer that quotes other panes — `list_panes`, `grep`, `pane_events`, \
              `engineering_state`, and the pushed events — opens with UNTRUSTED \
              TERMINAL DATA and names the quoted fields under \
@@ -1548,7 +1550,7 @@ fn tool_defs() -> Value {
         },
         {
             "name": "prompt_agent",
-            "description": "Prompt another agent pane: your words typed into its own conversation as its next turn, the way its person would type them, so it works on them with everything it already knows. This is how a coordinating agent hands work to another agent in the same window. Only along a line a person drew from your seat at prompt in the Threshing Floor; an ask line, a bypass, a read-only pane and an off-limits pane are refused by name. The words go in only when the worker is at rest at its own prompt: a working worker is waited for (up to ten minutes), a resting or asleep one is woken, and a pane whose person is typing or which shows a permission prompt or a dialog is never typed into. A header line names you as the sender. Returns at once with a prompt_id; follow it with prompt_status. One prompt at a time from you to each pane. Only the length and fingerprint of your words are recorded.",
+            "description": "Prompt another agent pane: your words typed into its own conversation as its next turn, the way its person would type them, so it works on them with everything it already knows. This is how a coordinating agent hands work to another agent in the same window. Only along a line a person drew from your seat at prompt in the Threshing Floor; an ask line, a bypass, a read-only pane and an off-limits pane are refused by name. The words go in only when the worker is at rest at its own prompt: a working worker is waited for (up to ten minutes), a resting or asleep one is woken, and a pane whose person is typing or which shows a permission prompt or a dialog is never typed into. A header line names you as the sender. Returns at once with a prompt_id; follow it with prompt_status. One prompt at a time from you to each pane. Only the length and fingerprint of your words are recorded. Slow is expected: the window waits for a settled worker and a quiet pane, and the work runs while its person is away. Write the prompt as a work order: what to make, how you will judge it done, what is not known yet, and where the work it builds on lives. Check the reply against that and prompt again if it falls short; after two or three tries on the same piece without it coming right, stop and hand it to your person.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1573,6 +1575,12 @@ fn tool_defs() -> Value {
                 "required": ["prompt_id"],
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "floor_position",
+            "description": "Where you stand on the Threshing Floor, read now: whether a person has seated your pane, your org and role, the panes you reach along a line and how far (see, read, ask or prompt), and the panes that reach you, including ones you cannot see. A person draws every line, so this changes while you run: read it again before you rely on it. Read-only.",
+            "annotations": { "readOnlyHint": true },
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
         },
         {
             "name": "request_access",
@@ -1776,6 +1784,7 @@ where
     let args = params.get("arguments").cloned().unwrap_or(Value::Null);
     let out = match name {
         "list_panes" => list_panes(snap),
+        "floor_position" => floor_position(snap),
         "engineering_state" => engineering_state(snap),
         "coordination_overview"
         | "coordination_project"
@@ -1862,6 +1871,9 @@ fn provenance(tool: &str) -> Option<Provenance> {
         // The window's own stages and numbers; the worker's state is a word
         // the window chose from its screen.
         "prompt_agent" => Own,
+        // Numbers and rungs the window computed. The org's name is the
+        // person's, typed on the Floor; no program or agent writes one.
+        "floor_position" => Own,
         // A finished prompt carries the worker's own last message.
         "prompt_status" => Outside(&["reply"]),
         // Measured by Terminal Delight, but every name in it is somebody's:
@@ -2140,6 +2152,130 @@ fn engineering_state(snap: &Snapshot) -> Value {
     tool_ok(
         text,
         json!({ "projects": serde_json::to_value(&snap.engineering).unwrap_or(Value::Null) }),
+    )
+}
+
+/// Where the caller stands on the Threshing Floor, read live: its seat, its
+/// org and role, the panes it reaches along a line and how far, and the panes
+/// that reach it. The last is the one nothing else answers — `list_panes`
+/// says how far the caller reaches each pane it can see, never who may ask
+/// or prompt the caller, and a pane that reaches it may be one it cannot see.
+/// Such a pane is named only by the numbers a prompt's own header already
+/// carries (pid, pane, tab), never by its title or directory.
+fn floor_position(snap: &Snapshot) -> Value {
+    use crate::threshing_floor::Reach;
+    if !snap.config.enabled {
+        return tool_err(
+            "MCP exposure is disabled. Enable it in terminal-delight's Threshing Floor \
+             (the agent counter, top right).",
+        );
+    }
+    let Some(me) = snap.caller_info() else {
+        return tool_err(
+            "Terminal Delight could not tell which of its panes you are, so it cannot say \
+             where you stand. floor_position answers only an agent running in a pane of \
+             this window.",
+        );
+    };
+    let ident = |p: &PaneInfo, reach: Reach| {
+        json!({
+            "pid": p.pid,
+            "pane": p.pane_id,
+            "tab": p.tab,
+            "agent": p.is_agent,
+            "rung": reach,
+            "listed": snap.reach_of(p) >= Reach::Seen,
+        })
+    };
+    let Some(seat) = me.seat else {
+        let text = "You are not seated on the Threshing Floor. Every agent connected to this \
+                    window can see and read your pane, and none can ask or prompt you; you \
+                    can ask or prompt no one. Only a person seats panes and draws lines, in \
+                    the Threshing Floor (the agent counter, top right).";
+        return tool_ok(
+            text.to_string(),
+            json!({ "seated": false, "role": null, "org": null,
+                    "lines_out": [], "lines_in": [] }),
+        );
+    };
+    let others = || snap.panes.iter().filter(|p| !snap.is_callers(p.pid));
+    // Out: panes reached by a line. An unseated pane is read by policy, not
+    // by any line, so it is not one of these.
+    let out: Vec<(&PaneInfo, Reach)> = others()
+        .filter(|p| p.seat.is_some())
+        .map(|p| (p, snap.reach_of(p)))
+        .filter(|(_, r)| *r >= Reach::Seen)
+        .collect();
+    let mine = me.party();
+    let inbound: Vec<(&PaneInfo, Reach)> = others()
+        .map(|p| {
+            let r = crate::threshing_floor::reach(
+                &snap.config,
+                &snap.chart,
+                &snap.orgs,
+                Some(&p.party()),
+                &mine,
+                false,
+            );
+            (p, r)
+        })
+        .filter(|(_, r)| *r >= Reach::Seen)
+        .collect();
+    let role = snap.chart.role_of(seat);
+    let org = snap
+        .orgs
+        .owner(seat)
+        .and_then(|id| snap.orgs.get(id))
+        .and_then(|o| o.name.clone());
+    let word = |r: Reach| match r {
+        Reach::Prompt => "prompt",
+        Reach::Ask => "ask",
+        Reach::Read => "read",
+        Reach::Seen => "see",
+        Reach::Hidden => "nothing",
+    };
+    let who = |p: &PaneInfo| match p.pane_id {
+        Some(n) => format!("pid {} (pane {n}, tab {})", p.pid, p.tab),
+        None => format!("pid {} (tab {})", p.pid, p.tab),
+    };
+    let list = |v: &[(&PaneInfo, Reach)]| {
+        if v.is_empty() {
+            "none".to_string()
+        } else {
+            v.iter()
+                .map(|(p, r)| format!("{} {}", word(*r), who(p)))
+                .collect::<Vec<_>>()
+                .join("; ")
+        }
+    };
+    let role_word = match role {
+        crate::threshing_floor::Role::Orchestrator => {
+            "an orchestrator: you draw lines and have none drawn to you"
+        }
+        crate::threshing_floor::Role::Manager => "a manager: lines run to you and from you",
+        crate::threshing_floor::Role::Worker => "a worker: lines run to you and none from you",
+        crate::threshing_floor::Role::Alone => "seated alone: no line runs to you or from you",
+    };
+    let org_text = match &org {
+        Some(name) => format!(" in the org \"{name}\""),
+        None => String::new(),
+    };
+    let text = format!(
+        "You are seated on the Threshing Floor{org_text}, as {role_word}. \
+         You may: {}. These may reach you: {}. A person draws every line; \
+         a prompt to you opens with a header naming its sender.",
+        list(&out),
+        list(&inbound),
+    );
+    tool_ok(
+        text,
+        json!({
+            "seated": true,
+            "role": role,
+            "org": org,
+            "lines_out": out.iter().map(|(p, r)| ident(p, *r)).collect::<Vec<_>>(),
+            "lines_in": inbound.iter().map(|(p, r)| ident(p, *r)).collect::<Vec<_>>(),
+        }),
     )
 }
 
@@ -4437,6 +4573,84 @@ mod tests {
     /// Parse a response line back to a Value for assertions.
     fn resp(line: &str) -> Value {
         serde_json::from_str(line).unwrap()
+    }
+
+    /// `floor_position` answers both directions of the caller's lines, and is
+    /// the only verb that names who may prompt the caller: a coordinator the
+    /// worker cannot see is still named, by its numbers alone. A pane nobody
+    /// seated is no line either way, a read-only mark caps what reaches the
+    /// caller, and an unseated caller is told it is open to every reader.
+    ///
+    /// Mutation-tested: dropping the inbound list, or computing it from the
+    /// caller's side (`reach_of`), fails this.
+    #[test]
+    fn floor_position_names_the_lines_out_and_in() {
+        use crate::threshing_floor::{AgentAccess, Rung, SeatId};
+        let seated = |pid: u32, seat: u64| {
+            let mut p = agent_pane(pid, true);
+            p.seat = Some(SeatId(seat));
+            p.title = format!("secret-title-{pid}");
+            p
+        };
+        let me = seated(100, 1);
+        let coordinator = seated(200, 2);
+        let helper = seated(300, 3);
+        let loose = agent_pane(400, true);
+        let mut s = snap(true, true, vec![me, coordinator, helper, loose]);
+        s.caller = Some(Caller {
+            session: "s".into(),
+            pane: Some(u64::from(100u32 % 97)),
+        });
+        s.chart.draw(SeatId(2), SeatId(1), Rung::Prompt);
+        s.chart.draw(SeatId(1), SeatId(3), Rung::Ask);
+        let r = call(&s, "floor_position", json!({}));
+        assert_ne!(r["isError"], true, "{r}");
+        let data = &r["structuredContent"];
+        assert_eq!(data["seated"], true);
+        assert_eq!(data["role"], "manager");
+        let pairs = |k: &str| -> Vec<(u64, String, bool)> {
+            data[k]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|l| {
+                    (
+                        l["pid"].as_u64().unwrap(),
+                        l["rung"].as_str().unwrap().to_string(),
+                        l["listed"].as_bool().unwrap(),
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(pairs("lines_out"), vec![(300, "ask".into(), true)]);
+        // The coordinator reaches the caller at prompt, and the caller has no
+        // line to it, so it is not in the caller's census.
+        assert_eq!(pairs("lines_in"), vec![(200, "prompt".into(), false)]);
+        let text = r["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("prompt pid 200"), "{text}");
+        assert!(
+            !r.to_string().contains("secret-title"),
+            "a title leaked: {r}"
+        );
+
+        // A read-only mark on the caller caps the coordinator's reach at ask.
+        s.panes[0].access = AgentAccess::ReadOnly;
+        let r = call(&s, "floor_position", json!({}));
+        assert_eq!(r["structuredContent"]["lines_in"][0]["rung"], "ask", "{r}");
+
+        // Unseated: no lines either way, and said plainly.
+        s.panes[0].seat = None;
+        s.panes[0].access = agent_pane(100, true).access;
+        let r = call(&s, "floor_position", json!({}));
+        assert_eq!(r["structuredContent"]["seated"], false);
+        assert!(r["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("not seated"));
+
+        // An unknown caller is refused, not answered as nobody.
+        s.caller = None;
+        assert_eq!(call(&s, "floor_position", json!({}))["isError"], true);
     }
 
     /// A seated pane is reachable only along a line from the caller: absent
@@ -7236,8 +7450,9 @@ mod tests {
     /// fails this.
     #[test]
     fn exactly_the_reading_tools_declare_themselves_read_only() {
-        const READS: [&str; 13] = [
+        const READS: [&str; 14] = [
             "list_panes",
+            "floor_position",
             "pane_events",
             "get_pane_config",
             "ask_answer",
