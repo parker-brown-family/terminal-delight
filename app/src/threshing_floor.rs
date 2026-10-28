@@ -77,6 +77,12 @@ pub struct Orgs {
 }
 
 impl Orgs {
+    /// A record exists even when ownership is ambiguous. `owner == None`
+    /// alone cannot distinguish that from an unassigned seat.
+    pub fn has_membership(&self, seat: SeatId) -> bool {
+        self.orgs.iter().any(|org| org.seats.contains(&seat))
+    }
+
     pub fn restore(saved: Option<Vec<Org>>, legacy: &[SeatId]) -> Self {
         match saved {
             Some(orgs) => Self { orgs },

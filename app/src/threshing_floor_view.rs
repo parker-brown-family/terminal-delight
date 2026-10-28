@@ -2809,7 +2809,12 @@ impl Workspace {
         let v = leaf.read(cx);
         match v.seat.and_then(|s| self.floor_orgs.owner(s)) {
             Some(org) if Some(org) == self.floor_org => v.seat.map(RelationMember::Seat),
-            None if v.mode.is_agent() => Some(RelationMember::Pool(leaf.downgrade())),
+            None if v.mode.is_agent()
+                && v.seat
+                    .is_none_or(|seat| !self.floor_orgs.has_membership(seat)) =>
+            {
+                Some(RelationMember::Pool(leaf.downgrade()))
+            }
             _ => None,
         }
     }
@@ -2967,7 +2972,8 @@ impl Workspace {
             match member {
                 RelationMember::Seat(s) if orgs.owner(*s) == Some(org) => Some(*s),
                 RelationMember::Pool(_)
-                    if v.mode.is_agent() && v.seat.and_then(|s| orgs.owner(s)).is_none() =>
+                    if v.mode.is_agent()
+                        && v.seat.is_none_or(|seat| !orgs.has_membership(seat)) =>
                 {
                     let seat = v.seat.unwrap_or_else(threshing_floor::SeatId::mint);
                     orgs.assign(seat, org);
@@ -3287,11 +3293,15 @@ impl Workspace {
         }
         if !locked {
             target_row = target_row.child(
-                Self::bezel_btn(sk, &format!("+ {}", ui.floor_rel_to), false)
+                Self::bezel_btn(sk, "+", false)
+                    .text_size(sk.text_px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
                     .id("floor-rel-to")
                     .debug_selector(|| "floor-rel-to".to_string())
                     .h(px(78.))
-                    .w(px(if targets.is_empty() { 170. } else { 90. }))
+                    .w(px(if targets.is_empty() { 170. } else { 42. }))
                     .flex_none()
                     .on_click(cx.listener(|ws, _, _, cx| {
                         cx.stop_propagation();
@@ -6851,6 +6861,26 @@ mod tests {
             ws.floor_orgs.assign(seat, other);
             ws.threshing_floor_save_relation(cx);
             assert_eq!(ws.floor_orgs.owner(seat), Some(other));
+            assert!(ws.chart.saved().is_empty());
+            let mut records = ws.floor_orgs.saved().to_vec();
+            records
+                .iter_mut()
+                .find(|org| Some(org.id) == ws.floor_org)
+                .unwrap()
+                .seats
+                .push(seat);
+            ws.floor_orgs = threshing_floor::Orgs::restore(Some(records), &[]);
+            assert!(ws.floor_orgs.owner(seat).is_none());
+            assert!(ws.threshing_floor_member(&pool, cx).is_none());
+            ws.threshing_floor_save_relation(cx);
+            assert_eq!(
+                ws.floor_orgs
+                    .saved()
+                    .iter()
+                    .filter(|org| org.seats.contains(&seat))
+                    .count(),
+                2
+            );
             assert!(ws.chart.saved().is_empty());
         });
     }
