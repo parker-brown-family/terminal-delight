@@ -1,0 +1,340 @@
+{
+  "file": "reports/2026-10-28-relationship-builder.html",
+  "subject": "A clear on-page relationship builder for the Threshing Floor, with a selected actor, a verb and multiple target cards.",
+  "reader": "Parker knows Terminal Delight and supplied the screenshots; he is reviewing the proposed interaction and appearance before the native build.",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.72
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.7
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "journey",
+      "probabilities": {
+        "journey": 0.82,
+        "catalogue": 0.01,
+        "argument": 0.15,
+        "report": 0.01,
+        "none_of_the_above": 0.01
+      },
+      "confidence": 0.77
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Relationship builder",
+      "text": "In Terminal Delight, relationships control which agent can see, read, ask or prompt another. Your screenshots show a form that hides who is acting on whom. This builder puts the actor, verb and target cards in one sentence. \n\n Interactive sketch Native implementation pending",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 0.95,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.27,
+            "1": 0.53,
+            "2": 0.17,
+            "3": 0.03
+          },
+          "confidence": 0.5
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.05
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.5
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.02,
+            "complication": 0.1,
+            "turn": 0.87,
+            "consequence": 0,
+            "resolution": 0.01,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.85
+        }
+      },
+      "latency_ms": 367.5046458374709,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "Build relationship",
+      "text": "01 \u00b7 Actor, verb, targets \n\n Try: \n No selection \n HISTORY selected \n Dropped on codex \n\n THRESHING FLOOR TEST Example members \n\n BUILD RELATIONSHIP Reset \n\nACTOR \n\n \u2192 \n\n CAN Choose verb see read ask prompt \n \u2192 \n\nTARGETS \n\n Add targets \n\nEvery available target is already added. \n\n Build relationship \n\nHISTORY org member \ncodex org member \nREVIEW example member \n\nPrototype only. Extra members demonstrate the + action; readings are sample data. \n\n The selected card fills ACTOR; \u201c+ Add target\u201d keeps the same actor and adds another card. Try the three entry states, choose a verb, add several targets, then build the preview. The actor and chosen targets are excluded from the available target cards. Glass is sketched from your active-elements screenshot; production uses the current skin.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.32,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.12,
+            "1": 0.48,
+            "2": 0.37,
+            "3": 0.03
+          },
+          "confidence": 0.45
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.36
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.75,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.44,
+            "1": 0.39,
+            "2": 0.15,
+            "3": 0.02
+          },
+          "confidence": 0.25
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.11
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.02,
+            "complication": 0.02,
+            "turn": 0.58,
+            "consequence": 0.07,
+            "resolution": 0.06,
+            "aside": 0.24,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.51
+        }
+      },
+      "latency_ms": 359.21419016085565,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "Draw the connection",
+      "text": "Connect and both drag gestures open this builder. Alt-drag draws a line while the actor card stays in place. \n\n 02 \u00b7 Release on the target \n\n Connect Selected card \u2192 actor \n Card onto card Dragged card \u2192 actor; hit card \u2192 target \n Alt + left drag Draw line \u2192 release on target \n\n All three entry paths open the same on-page builder. A card hit wins over the org background around it. A self-drop, an outside drop or Escape changes nothing. Ordinary membership drops keep their current destinations. This drawing specifies the gesture; native event verification comes during the build.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.06,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.24,
+            "1": 0.49,
+            "2": 0.23,
+            "3": 0.04
+          },
+          "confidence": 0.45
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.15
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.16,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.07,
+            "1": 0.7,
+            "2": 0.22,
+            "3": 0.01
+          },
+          "confidence": 0.69
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.26
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0.01,
+            "turn": 0.59,
+            "consequence": 0.27,
+            "resolution": 0.03,
+            "aside": 0.09,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.52
+        }
+      },
+      "latency_ms": 344.80180381797254,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "Save together",
+      "text": "Review the targets together, then apply one verb to the whole set. \n\n 03 \u00b7 One choice, three relationships \n\nHISTORY ACTOR \n\nCAN READ \u2192 \n\ncodex \nREVIEW \nRUNNER \n\n All targets present Save all three directed relationships. \n A target disappeared Keep the draft and name the missing card. Save none. \n A line already exists Show that it will change to the chosen verb before Save. \n\n The batch is validated before any relationship changes. Each target receives its own saved line, using the existing line store. A target removed before Save prevents the whole batch. Editing an existing line keeps one fixed target and its Remove action. This is proposed behavior; persistence and access tests are still pending.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.28,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.09,
+            "1": 0.56,
+            "2": 0.33,
+            "3": 0.02
+          },
+          "confidence": 0.54
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.2
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.99,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.12,
+            "1": 0.78,
+            "2": 0.1,
+            "3": 0
+          },
+          "confidence": 0.78
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.57
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.01,
+            "turn": 0.27,
+            "consequence": 0.61,
+            "resolution": 0.1,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.54
+        }
+      },
+      "latency_ms": 350.64255096949637,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "Review",
+      "text": "Comment on a picture or concur with these behavior choices. \n\n One verb for the set \nRecommended: apply the chosen verb to every listed target, including existing relationships named in the summary. A missing target stops the entire save. \n\n Show all eligible cards \nRecommended: show the current org's available cards even when the board is filtered. Changing actor keeps the other targets and removes any self-target. \n Implementation and proof \n\nThe native build will route card and connector gestures into the same builder, validate every selected target, then update the saved relationships together. \nNative checks cover gestures, batch saves, restoration and access revocation. The existing saved line format stays. \n Full implementation plan \u00b7 Current view source \u00b7 Current relationship rules \n\n . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.66,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.37,
+            "2": 0.51,
+            "3": 0.09
+          },
+          "confidence": 0.48
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.57
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.54,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.08,
+            "1": 0.39,
+            "2": 0.45,
+            "3": 0.08
+          },
+          "confidence": 0.37
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.5
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.01,
+            "turn": 0.03,
+            "consequence": 0.06,
+            "resolution": 0.67,
+            "aside": 0.22,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.61
+        }
+      },
+      "latency_ms": 338.81159499287605,
+      "failure": null
+    }
+  ]
+}
