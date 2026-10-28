@@ -40,6 +40,13 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   be judged done, another try when a reply falls short, and its person told
   after two or three). The new `floor_position` tool answers where an agent
   stands, including which panes may prompt it.
+- An agent the sleep ends is always recorded asleep. One slower than five
+  seconds to exit used to be ended with its pane left a plain shell that no
+  key or prompt would resume; the window now follows it up and marks the pane
+  asleep once it has gone, and leaves it awake if it is still running a minute
+  after the signal. A worker woken from sleep for a prompt is told, under the
+  prompt's header, that its old process's shells and session permissions are
+  gone.
 - A pane rebuilt from a fresh snapshot, and an asleep agent woken into a fresh
   shell, keep their Threshing Floor seat and the read-only or off-limits mark a
   person set. Before, both came back unseated, and an off-limits pane came back

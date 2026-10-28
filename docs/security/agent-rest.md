@@ -36,7 +36,7 @@ In front of it, everything rest requires, plus (`agentrest::may_sleep`, `agentre
 - the launch line can be rebuilt exactly. For Claude (`agentrest::wake_argv`): no initial prompt that would be sent again, no option this build does not know, not a print or background run. For Codex (`agentrest::codex_wake_argv`): every option kept word for word and `resume <id>` added; the opening prompt is dropped, because it is already the conversation's first message; refused for an option this build does not know, a subcommand that is not an interactive pane, initial images, or `--worktree`;
 - no write to the pane since the look; the pid is still in the pane's own group.
 
-The signal goes to the agent pid alone, never to the shell, never to a group. If the agent has not exited five seconds later, nothing more is done — **never SIGKILL**, which could cut a transcript write — and the pane stays awake.
+The signal goes to the agent pid alone, never to the shell, never to a group. The sweep waits up to five seconds for it to go, and an exited agent its shell has not reaped yet (a zombie) counts as gone. One still going at five seconds is followed up on every later sweep (`agentrest::Stopping`): once it has gone, however late, the pane is recorded asleep with its wake file. Before that, an agent slower than five seconds was ended by the sleep and its pane never marked asleep, a plain shell nothing would resume (prompt rig 5, 2026-10-27). One still running a minute after the signal (`agentrest::STOP_GIVE_UP`) has chosen not to stop, and the pane is awake again — nothing more is done, **never SIGKILL**, which could cut a transcript write. The window's log says how long each signalled agent took.
 
 ## Waking a sleeper
 

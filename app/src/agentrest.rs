@@ -419,6 +419,47 @@ pub struct Asleep {
     pub model: Option<String>,
 }
 
+/// An agent the sleep signalled that had not exited by the sleep's own
+/// deadline. The sleep cannot wait longer without holding up every other
+/// pane's look, and an agent that ends a moment later has still been ended by
+/// it: before this, that agent was gone and its pane was never marked asleep,
+/// a plain shell nothing would resume (rig 5, 2026-10-27, issue 1174). So the
+/// pane keeps the sleep it will become, and each look asks again.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stopping {
+    pub pid: i32,
+    pub asleep: Asleep,
+    /// When the agent was signalled.
+    pub since: std::time::Instant,
+}
+
+/// How long a signalled agent may take to go before the sleep gives up on it
+/// and the pane is awake again. An agent still running a minute after SIGTERM
+/// has chosen not to stop, and is never killed harder (a SIGKILL could cut a
+/// transcript write).
+pub const STOP_GIVE_UP: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// What a look at a signalled agent decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopLook {
+    /// It has gone: the pane is asleep.
+    Asleep,
+    /// Still going; look again next time.
+    Stopping,
+    /// Still running past [`STOP_GIVE_UP`]: it is awake.
+    GaveUp,
+}
+
+pub fn stop_look(exited: bool, since_signal: std::time::Duration) -> StopLook {
+    if exited {
+        StopLook::Asleep
+    } else if since_signal >= STOP_GIVE_UP {
+        StopLook::GaveUp
+    } else {
+        StopLook::Stopping
+    }
+}
+
 /// Where a pane is between awake and asleep.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum Dormancy {
@@ -469,6 +510,8 @@ pub struct PaneRest {
     pub sleep_now: bool,
     /// Why the last look did not rest or sleep it.
     pub refusal: Option<Refusal>,
+    /// An agent the sleep signalled that has not gone yet.
+    pub stopping: Option<Stopping>,
     /// The group's memory at the last look.
     pub usage: crate::panegroup::Usage,
     /// What its processes held in RAM when it last went to rest.
@@ -491,6 +534,7 @@ impl PaneRest {
             keep_awake: false,
             sleep_now: false,
             refusal: None,
+            stopping: None,
             usage: Default::default(),
             rest_from: None,
             cpu_prev: None,
@@ -1110,6 +1154,22 @@ pub fn drag(scale: &Scale, pos: f64) -> u32 {
 
 #[cfg(test)]
 mod tests {
+
+    /// A signalled agent is asleep the moment it is seen gone, however late,
+    /// and given up on only after a full minute still running.
+    #[test]
+    fn a_signalled_agent_is_asleep_once_gone_and_awake_after_a_minute() {
+        use std::time::Duration;
+        assert_eq!(stop_look(true, Duration::ZERO), StopLook::Asleep);
+        assert_eq!(stop_look(true, Duration::from_secs(3600)), StopLook::Asleep);
+        assert_eq!(stop_look(false, Duration::from_secs(6)), StopLook::Stopping);
+        assert_eq!(
+            stop_look(false, STOP_GIVE_UP - Duration::from_millis(1)),
+            StopLook::Stopping
+        );
+        assert_eq!(stop_look(false, STOP_GIVE_UP), StopLook::GaveUp);
+    }
+
     use super::*;
 
     #[test]

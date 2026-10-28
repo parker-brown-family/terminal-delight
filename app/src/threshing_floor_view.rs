@@ -3581,6 +3581,7 @@ impl Workspace {
                 let Some(leaf) = leaf else { return };
                 if leaf.read(cx).rest.dormancy.asleep().is_some() {
                     self.wake_sleeper_as(&leaf, false, window, cx);
+                    self.prompts.restarted(id);
                 } else {
                     leaf.update(cx, |v, cx| {
                         v.rest.touch(std::time::Instant::now());
@@ -3589,8 +3590,9 @@ impl Workspace {
                 }
             }
             Act::Paste(_) | Act::Enter(_) => {
+                let pasted = crate::prompt::paste_text(&sent);
                 let keys = match act {
-                    Act::Paste(_) => Keys::Paste(&sent.text),
+                    Act::Paste(_) => Keys::Paste(&pasted),
                     _ => Keys::Enter,
                 };
                 let typed = leaf.is_some_and(|leaf| {
