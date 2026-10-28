@@ -337,7 +337,10 @@ worker is ready, by these rules (`app/src/prompt.rs`):
   between: a streaming agent's screen can look at rest between two chunks. A
   working worker is waited for, up to ten minutes; a resting or asleep one is woken first, without taking the person's
   focus. A pane showing a permission prompt, a question, a dialog, an error, or a
-  screen nobody can read is never typed into.
+  screen nobody can read is never typed into. A
+  worker woken from sleep is a new process holding its old conversation, and its
+  prompt says so under the header: background shells, permissions granted for
+  that session only, and running loops are gone (`prompt::WOKEN_NOTE`).
 - **Never over a person.** A pane its person typed in during the last minute,
   and one showing a picker the workbench's dial raised, waits. The clocks are
   slow on purpose: the work runs while its person is away.

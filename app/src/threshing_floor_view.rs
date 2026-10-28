@@ -3520,6 +3520,9 @@ impl Workspace {
             && sent.woke_ms.is_some_and(|t| {
                 crate::prompt::now_ms().saturating_sub(t) < crate::prompt::WAKE_GRACE_MS
             });
+        // An agent the sleep signalled is on its way to asleep: a prompt in
+        // that gap waits for a sleeper (`prompt_party` counts it an agent).
+        let going_to_sleep = v.rest.stopping.is_some();
         let mut party = prompt_party(v);
         party.is_agent |= waking;
         let allowed = match self.leaf_by_pane_id(sent.sender_pane, cx) {
@@ -3534,7 +3537,9 @@ impl Workspace {
             ),
             None => Err(threshing_floor::Refusal::Gone),
         };
-        let (seen, label) = if waking {
+        let (seen, label) = if going_to_sleep {
+            (crate::prompt::Seen::Dormant, "going to sleep".to_string())
+        } else if waking {
             (crate::prompt::Seen::Dormant, "starting again".to_string())
         } else {
             (
@@ -3579,8 +3584,13 @@ impl Workspace {
             Act::Probe(_) => self.prompt_read_reply(id, 1, cx),
             Act::Wake(_) => {
                 let Some(leaf) = leaf else { return };
-                if leaf.read(cx).rest.dormancy.asleep().is_some() {
+                if leaf.read(cx).rest.stopping.is_some() {
+                    // Not asleep yet: nothing to wake, and the wake is asked
+                    // for again on the next tick rather than a minute later.
+                    self.prompts.wake_not_taken(id);
+                } else if leaf.read(cx).rest.dormancy.asleep().is_some() {
                     self.wake_sleeper_as(&leaf, false, window, cx);
+                    self.prompts.restarted(id);
                 } else {
                     leaf.update(cx, |v, cx| {
                         v.rest.touch(std::time::Instant::now());
@@ -3589,8 +3599,9 @@ impl Workspace {
                 }
             }
             Act::Paste(_) | Act::Enter(_) => {
+                let pasted = crate::prompt::paste_text(&sent);
                 let keys = match act {
-                    Act::Paste(_) => Keys::Paste(&sent.text),
+                    Act::Paste(_) => Keys::Paste(&pasted),
                     _ => Keys::Enter,
                 };
                 let typed = leaf.is_some_and(|leaf| {
@@ -4434,9 +4445,12 @@ fn stroke_wire(
 /// A refusal's wire name, for the record.
 /// A worker as a prompt's rules see it. An asleep agent's pane runs a shell
 /// until it is woken, and is still the agent a line was drawn to.
+/// A pane as a prompt sees it: an asleep agent is still an agent, and so is
+/// one the sleep has signalled and not yet recorded (`rest.stopping`), whose
+/// pane reads as a plain shell for up to one rest sweep after it exits.
 fn prompt_party(v: &TerminalView) -> threshing_floor::Party {
     let mut party = v.party();
-    party.is_agent |= v.rest.dormancy.asleep().is_some();
+    party.is_agent |= v.rest.dormancy.asleep().is_some() || v.rest.stopping.is_some();
     party
 }
 
@@ -6432,6 +6446,62 @@ mod tests {
                 cx,
             )
         })
+    }
+
+    /// A worker the sleep has signalled but not yet recorded asleep is waited
+    /// for, not refused: once its agent exits, its pane reads as a plain shell
+    /// for up to one rest sweep, and a prompt sent then is a prompt for a
+    /// sleeper (Codex review of the late-sleep change, 2026-10-28).
+    ///
+    /// Mutation-tested: dropping `rest.stopping` from `prompt_party` fails
+    /// this at the send.
+    #[gpui::test]
+    fn a_worker_going_to_sleep_is_waited_for_not_refused(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let dir = prompt_scratch("stopping");
+        let log = dir.join("worker.log");
+        let worker = prompt_worker(&ws, cx, &log, "? for shortcuts");
+        ws.update(cx, |ws, _| {
+            ws.chart.draw(
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(102),
+                threshing_floor::Rung::Prompt,
+            )
+        });
+        // The agent has exited after the sleep's signal; the next sweep has
+        // not recorded it yet.
+        worker.update(cx, |v, _| {
+            v.mode = pane::PaneMode::Shell;
+            v.rest.stopping = Some(crate::agentrest::Stopping {
+                pid: i32::MAX,
+                start: None,
+                asleep: crate::agentrest::Asleep {
+                    since_ms: 0,
+                    session: "s".into(),
+                    wake_file: dir.join("wake.sh"),
+                    model: None,
+                },
+                since: std::time::Instant::now(),
+            });
+        });
+        let mcp::AskReply::Prompt(status) = send_prompt(&ws, cx, &worker, "GO") else {
+            panic!("a worker going to sleep was refused");
+        };
+        let stage = prompt_ticks_until(&ws, cx, status.prompt_id, 2, |_| false);
+        assert_eq!(
+            stage,
+            crate::prompt::PromptStage::Waiting {
+                worker: "going to sleep; waking it".into()
+            }
+        );
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(
+            !log.exists(),
+            "something was typed into a pane going to sleep"
+        );
     }
 
     /// The whole road through a real pseudoterminal: a prompt along a line

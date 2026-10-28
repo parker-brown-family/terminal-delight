@@ -7631,6 +7631,11 @@ impl Workspace {
                 rest_on: prefs.rest_on(),
                 sleep_on: prefs.sleep_on(),
                 epoch: v.rest.gate.writes(),
+                stopping: v
+                    .rest
+                    .stopping
+                    .as_ref()
+                    .map(|s| (s.pid, s.start, s.asleep.clone())),
             });
         }
         (jobs, live)
@@ -7667,6 +7672,10 @@ impl Workspace {
                 if o.cpu.is_some() {
                     v.rest.cpu_prev = o.cpu;
                 }
+                let mut gave_up = false;
+                // A pending stop is answered by every outcome: `Stopping` puts
+                // it back, anything else settles it.
+                let pending = v.rest.stopping.take();
                 match &o.act {
                     Act::Rested { before } => {
                         // Touched while the freeze was on its way: undo it now
@@ -7684,17 +7693,58 @@ impl Workspace {
                         }
                     }
                     Act::Woke => {
+                        if pending.is_some() {
+                            eprintln!(
+                                "terminal-delight: pane {}'s agent ended after the sleep's signal, but another agent was started there first; it stays awake",
+                                o.pane
+                            );
+                        }
                         if v.rest.dormancy.is_resting() {
                             v.rest.dormancy = Dormancy::Awake;
                         }
                     }
                     Act::Slept(asleep) => {
+                        if let Some(late) = &pending {
+                            eprintln!(
+                                "terminal-delight: pane {}'s agent ended {} ms after the sleep signalled it; asleep",
+                                o.pane,
+                                now.saturating_duration_since(late.since).as_millis()
+                            );
+                        }
                         v.rest.gate.set_blocked(true);
                         v.rest.dormancy = Dormancy::Asleep(asleep.clone());
                     }
+                    Act::Stopping { pid, start, asleep } => {
+                        let since = pending.as_ref().map_or(now, |s| s.since);
+                        match agentrest::stop_look(false, false, now.saturating_duration_since(since)) {
+                            agentrest::StopLook::GaveUp => {
+                                eprintln!(
+                                    "terminal-delight: pane {}'s agent did not end within a minute of the sleep's signal; it stays awake",
+                                    o.pane
+                                );
+                                v.rest.stopping = None;
+                                gave_up = true;
+                                if v.rest.dormancy.is_resting() {
+                                    v.rest.dormancy = Dormancy::Awake;
+                                }
+                            }
+                            _ => {
+                                v.rest.stopping = Some(agentrest::Stopping {
+                                    pid: *pid,
+                                    start: *start,
+                                    asleep: asleep.clone(),
+                                    since,
+                                });
+                            }
+                        }
+                    }
                     Act::Nothing => {}
                 }
-                v.rest.refusal = o.refusal.clone();
+                v.rest.refusal = if gave_up {
+                    Some(agentrest::Refusal::AgentBusy(Some("did not stop".into())))
+                } else {
+                    o.refusal.clone()
+                };
                 // A request is answered once, slept or refused, never retried.
                 v.rest.sleep_now = false;
                 cx.notify();

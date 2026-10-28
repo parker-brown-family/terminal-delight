@@ -219,6 +219,9 @@ pub struct Sent {
     pub stage: PromptStage,
     /// When it was last woken, while asleep or resting.
     pub woke_ms: Option<u64>,
+    /// The window restarted an asleep worker from its saved conversation for
+    /// this prompt, so the worker is told what it lost (see [`paste_text`]).
+    pub restarted: bool,
     pub pasted_ms: Option<u64>,
     /// The bottom rows of the worker's screen just before the paste.
     pub before: Vec<String>,
@@ -350,6 +353,7 @@ impl PromptBook {
                 worker: String::new(),
             },
             woke_ms: None,
+            restarted: false,
             pasted_ms: None,
             before: Vec::new(),
             entered_ms: None,
@@ -374,6 +378,21 @@ impl PromptBook {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// The wake asked for prompt `id` found nothing to wake yet (the worker
+    /// is still going to sleep): ask again on the next look.
+    pub fn wake_not_taken(&mut self, id: AskId) {
+        if let Some(s) = self.get_mut(id) {
+            s.woke_ms = None;
+        }
+    }
+
+    /// The window restarted the asleep worker for prompt `id`.
+    pub fn restarted(&mut self, id: AskId) {
+        if let Some(s) = self.get_mut(id) {
+            s.restarted = true;
         }
     }
 
@@ -783,6 +802,28 @@ pub fn header(id: AskId, sender: &str, sender_pid: Option<u32>, returns: bool) -
 /// The header, a blank line, and the brief.
 pub fn compose(header: &str, brief: &str) -> String {
     format!("{header}\n\n{brief}")
+}
+
+/// The line a worker restarted from sleep reads under the header. A woken
+/// agent is a new process holding the old conversation: it would otherwise
+/// take a background job it started, or a permission its person granted for
+/// that session, to be still there. Parker, 2026-10-27: "a sleepy worker is
+/// different than a resting worker".
+pub const WOKEN_NOTE: &str = "[You were asleep, and Terminal Delight restarted you from your \
+     saved conversation for this prompt. Anything that lived only in your old process is gone: \
+     background shells, permissions granted for that session only, and running loops.]";
+
+/// The words pasted for `s`: its text, with [`WOKEN_NOTE`] under the header
+/// when the window restarted the worker for it. The header stays the first
+/// line, so the prompt's number is where it is looked for.
+pub fn paste_text(s: &Sent) -> String {
+    if !s.restarted {
+        return s.text.clone();
+    }
+    match s.text.split_once('\n') {
+        Some((header, rest)) => format!("{header}\n{WOKEN_NOTE}\n{rest}"),
+        None => format!("{}\n{WOKEN_NOTE}", s.text),
+    }
 }
 
 /// A sender's key, checked: short, one line.
@@ -1507,6 +1548,24 @@ mod tests {
         assert!(stage(&b, 1).is_open());
         b.tick(T0 + 40_000 + ERROR_ENDS_MS, |_| worker(Seen::Errored));
         assert_eq!(stage(&b, 1).word(), "failed");
+    }
+
+    /// A worker restarted from sleep for a prompt is told what it lost, under
+    /// the header, which stays the first line; a worker only thawed from rest
+    /// is the same process and is told nothing.
+    #[test]
+    fn a_worker_restarted_from_sleep_is_told_its_old_process_is_gone() {
+        let mut b = PromptBook::default();
+        b.send(new(3, 1, 500, None)).unwrap();
+        let plain = paste_text(b.get(AskId(3)).unwrap());
+        assert!(!plain.contains("You were asleep"), "{plain}");
+        b.restarted(AskId(3));
+        let woken = paste_text(b.get(AskId(3)).unwrap());
+        let mut lines = woken.lines();
+        assert!(lines.next().unwrap().contains(&tag(AskId(3))), "{woken}");
+        assert_eq!(lines.next().unwrap(), WOKEN_NOTE);
+        assert!(woken.ends_with(&plain[plain.find('\n').unwrap() + 1..]));
+        assert_eq!(clean(&woken), woken, "the note is clean as it stands");
     }
 
     /// A brief cannot carry a key: every control character but newline and
