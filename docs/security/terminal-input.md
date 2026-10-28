@@ -214,7 +214,9 @@ difference has to be in the mechanism, and it is stated here rather than assumed
   (`only_the_threshing_floor_and_the_rail_draw_lines`); a bypass a person grants on the rail is an
   ask line and never reaches `prompt`; a line drawn before the rung existed is not upgraded; a pane
   marked read-only or off-limits is refused, and refused again at the write (`type_prompt` checks
-  `takes_writes`). Erasing the line stops every prompt along it that has not been typed. An agent
+  `takes_writes`). Erasing the line stops every prompt along it that has not been sent, and the
+  line is read again in the second between the paste and Enter, so a line erased then means no
+  Enter. An agent
   can ask its person for an ask line (`request_access`); there is nothing it can ask for that ends
   in a prompt line. Parker, 2026-10-27, on why the old rule does not cover this: it *"did not
   consider using a real terminal as a sub agent ... the POINT is that it moves while we are away
@@ -231,8 +233,9 @@ difference has to be in the mechanism, and it is stated here rather than assumed
   costs the hand-off.
 - **Enter waits for proof, and is pressed once.** The paste goes first, bracketed, with every control
   character but newline and tab taken out (`prompt::paste`). Enter follows a second later, and only when a row that
-  changed on the worker's screen carries this prompt's own number, or the program's placeholder for
-  a long paste — a dialog does not echo a paste, so it gives no proof. A block, an error, the person's
+  changed on the worker's screen carries this prompt's own number, or the screen holds one more of
+  the program's long-paste placeholders than before — a dialog does not echo a paste, so it gives no
+  proof, and an earlier prompt's leftover placeholder changing shape is not a new one. A block, an error, the person's
   key or a rest between the paste and Enter means no Enter, and the prompt fails saying where its
   words may be. Words left behind are not cleared: the next prompt is pasted after them, and its
   Enter sends both. A hold on the worker until its person cleared them shipped first and was taken

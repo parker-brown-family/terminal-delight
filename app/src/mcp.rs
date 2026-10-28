@@ -2161,7 +2161,9 @@ fn engineering_state(snap: &Snapshot) -> Value {
 /// says how far the caller reaches each pane it can see, never who may ask
 /// or prompt the caller, and a pane that reaches it may be one it cannot see.
 /// Such a pane is named only by the numbers a prompt's own header already
-/// carries (pid, pane, tab), never by its title or directory.
+/// carries (pid, pane, tab): not its title or directory, and not even whether
+/// it runs an agent. The role is read off the same two lists, so a whole-org
+/// line counts as much as a seat-to-seat one.
 fn floor_position(snap: &Snapshot) -> Value {
     use crate::threshing_floor::Reach;
     if !snap.config.enabled {
@@ -2178,13 +2180,14 @@ fn floor_position(snap: &Snapshot) -> Value {
         );
     };
     let ident = |p: &PaneInfo, reach: Reach| {
+        let listed = snap.reach_of(p) >= Reach::Seen;
         json!({
             "pid": p.pid,
             "pane": p.pane_id,
             "tab": p.tab,
-            "agent": p.is_agent,
+            "agent": listed.then_some(p.is_agent),
             "rung": reach,
-            "listed": snap.reach_of(p) >= Reach::Seen,
+            "listed": listed,
         })
     };
     let Some(seat) = me.seat else {
@@ -2221,7 +2224,14 @@ fn floor_position(snap: &Snapshot) -> Value {
         })
         .filter(|(_, r)| *r >= Reach::Seen)
         .collect();
-    let role = snap.chart.role_of(seat);
+    // `Chart::role_of` reads seat-to-seat lines only; an agent wants to
+    // know what actually reaches it, org lines and bypasses included.
+    let role = match (!inbound.is_empty(), !out.is_empty()) {
+        (false, true) => crate::threshing_floor::Role::Orchestrator,
+        (true, true) => crate::threshing_floor::Role::Manager,
+        (true, false) => crate::threshing_floor::Role::Worker,
+        (false, false) => crate::threshing_floor::Role::Alone,
+    };
     let org = snap
         .orgs
         .owner(seat)
@@ -2250,7 +2260,7 @@ fn floor_position(snap: &Snapshot) -> Value {
     };
     let role_word = match role {
         crate::threshing_floor::Role::Orchestrator => {
-            "an orchestrator: you draw lines and have none drawn to you"
+            "an orchestrator: lines run from you and none to you"
         }
         crate::threshing_floor::Role::Manager => "a manager: lines run to you and from you",
         crate::threshing_floor::Role::Worker => "a worker: lines run to you and none from you",
@@ -4632,11 +4642,37 @@ mod tests {
             !r.to_string().contains("secret-title"),
             "a title leaked: {r}"
         );
+        // A pane the caller cannot see is not even said to be an agent.
+        assert!(data["lines_in"][0]["agent"].is_null(), "{r}");
+        assert_eq!(data["lines_out"][0]["agent"], true);
 
         // A read-only mark on the caller caps the coordinator's reach at ask.
         s.panes[0].access = AgentAccess::ReadOnly;
         let r = call(&s, "floor_position", json!({}));
         assert_eq!(r["structuredContent"]["lines_in"][0]["rung"], "ask", "{r}");
+
+        // A whole-org line counts for the role as much as a seat line: with
+        // only an org line from the coordinator, the caller is a worker.
+        {
+            use crate::threshing_floor::{Chart, End, Orgs};
+            let mut orgs = Orgs::default();
+            let crew = orgs.create("Crew").unwrap();
+            orgs.assign(SeatId(1), crew);
+            let mut chart = Chart::default();
+            chart.draw_org(End::Seat(SeatId(2)), End::Org { org: crew }, Rung::Prompt);
+            let mut t = snap(true, true, s.panes.clone());
+            t.panes[0].access = agent_pane(100, true).access;
+            t.caller = s.caller.clone();
+            t.chart = chart;
+            t.orgs = orgs;
+            let r = call(&t, "floor_position", json!({}));
+            assert_eq!(r["structuredContent"]["role"], "worker", "{r}");
+            assert_eq!(r["structuredContent"]["org"], "Crew", "{r}");
+            assert_eq!(
+                r["structuredContent"]["lines_in"][0]["rung"], "prompt",
+                "{r}"
+            );
+        }
 
         // Unseated: no lines either way, and said plainly.
         s.panes[0].seat = None;

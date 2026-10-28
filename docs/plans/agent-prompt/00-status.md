@@ -85,3 +85,14 @@ He read the brief and answered its six decisions in notes and a reply.
 6. **Old lines stay ask lines:** concur.
 
 **New with these answers:** an agent Terminal Delight launches (alt+a, the launcher, Codex's first prompt, and a typed Claude through the briefing hook) is told about the Floor in its briefing (`surface::FLOOR_PARAGRAPH`), and `floor_position` reports where an agent stands, both directions. Parker's note: *"when TERMINAL DELIGHT spins up an agent (alt+a), we want that agent to be made aware of its threshing floor state ... AND IF IT DOESN'T EXIST YET... that the threshing floor is a thing and it should know HOW OT INTERACT AND REPORT effectively using this MCP!"* The hand-off guidance follows his: *"artifacts, specs, and careful instruction work best! clear acceptance criteria, known unkonwns ... context around the TRACER"*, planning sized by difficulty, and adversarial review by *"an agent from another provider (ie. claude builds and codex reviews)"*.
+
+**Cross-provider review.** Following the same note, a read-only Codex agent (`codex exec -s read-only`) reviewed this change from a work order. It found four things, all confirmed and fixed with a test each, and each test was seen to fail with its fix removed:
+
+1. Enter still followed the paste when the person erased the line in the second between them. The line is now read again before Enter (`a_revoked_line_stops_only_what_is_not_typed`). This one predates the change; the longer Enter wait widened it.
+2. With the hold gone, an earlier prompt's leftover placeholder changing shape could pass for the next paste's proof. Proof by placeholder now needs one more placeholder than before (`only_a_changed_row_proves_the_paste`).
+3. `floor_position` said whether a pane the caller cannot see runs an agent. That is now `null`.
+4. `floor_position`'s role read seat-to-seat lines only, so a whole-org line read as "alone". The role now comes from the lines that actually reach and are reached.
+
+It found no path that types into a pane without a person-drawn prompt line.
+
+**Rig 7** (release build, real Claude Code haiku and Codex workers): the coordinator's `floor_position` read orchestrator with prompt lines to both; each worker, prompted to call `floor_position` itself, returned its own position correctly (`role=worker in=prompt@<coordinator>,ask@<codex>`; `role=manager in=prompt@<coordinator> out=ask@<claude>`). Typing began 5.4–5.8 s after the send and Enter about a second after the paste.

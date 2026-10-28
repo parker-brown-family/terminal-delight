@@ -346,7 +346,9 @@ worker is ready, by these rules (`app/src/prompt.rs`):
   key. A prompt that has not asked for bracketed paste is not typed into.
 - **Enter once, and only on proof.** Enter is pressed a second after the paste, once it shows on the
   worker's screen: a row that changed carries this prompt's own number, or the
-  program's placeholder for a long paste (`[Pasted text …]`, `[Pasted Content …]`).
+  screen holds one more of the program's long-paste placeholders (`[Pasted text …]`,
+  `[Pasted Content …]`) than before, so an earlier prompt's leftover placeholder
+  changing shape is not taken for this paste.
   With no proof in four seconds, or with a dialog, an error or the person's key in
   between, Enter is not pressed and the prompt fails, saying the words may be
   sitting at the worker's prompt. They are not cleared: the next prompt to that
@@ -377,8 +379,9 @@ says why. `wait_seconds` (up to 6) holds the answer until the prompt ends, so
 one call can wait for the work.
 
 An erased line, a pane marked read-only or off-limits, or MCP switched off stops a
-prompt that has not been typed. A prompt already typed is the worker's and runs
-to its end. Every stage leaves a line in the same `asks.jsonl`, with `via` set
+prompt that has not been sent, including in the second between the paste and
+Enter: the line is read again before Enter, and a line that is gone means no
+Enter. A prompt already sent is the worker's and runs to its end. Every stage leaves a line in the same `asks.jsonl`, with `via` set
 to `prompt`, the words' length and SHA-256, never the words and never the reply.
 
 `floor_position` tells an agent where it stands: whether it is seated, its org
@@ -509,7 +512,7 @@ annotations are a separate feature; `ctl doc note` does not write sticky notes.
 | `ask_answer` | `ask_id` | How a copy is getting on, and its answer once it has one. Only the pane that asked can read it. |
 | `prompt_agent` | `pid`, `prompt` (up to 32,000 characters), `key?` | Gives a pane work along a line that reaches `prompt`: the words are typed into its conversation when it is at rest. Returns a `prompt_id` and the stage at once. Refused by name without a prompt line. Does not need Writes: the prompt line is the person's grant. See *Prompting another agent* above. |
 | `prompt_status` | `prompt_id`, `wait_seconds?` (0 to 6) | How a prompt is getting on, and the worker's last message once it has finished. Only the pane that sent it can read it. |
-| `floor_position` | _(none)_ | Where the caller stands on the Threshing Floor: `seated`, `org`, `role` (`orchestrator`, `manager`, `worker`, `alone`), `lines_out` and `lines_in`, each `{pid, pane, tab, agent, rung, listed}`, where `listed` says whether that pane is in the caller's `list_panes`. Refused for a caller the window cannot place. |
+| `floor_position` | _(none)_ | Where the caller stands on the Threshing Floor: `seated`, `org`, `role` (`orchestrator`, `manager`, `worker`, `alone`), `lines_out` and `lines_in`, each `{pid, pane, tab, agent, rung, listed}`, where `listed` says whether that pane is in the caller's `list_panes` and `agent` is `null` for a pane that is not. `role` is read from those two lists, whole-org lines and bypasses included. Refused for a caller the window cannot place. |
 | `grep` | `query` (exact, case-insensitive substring), `scrollback?` (recent lines/pane, default 2000, max 50000) | Searches every **exposed** pane's recent scrollback. Returns, per matching pane, its identity (`pid`/`tab`/`title`/`mode`) and the matching lines as `{line, col, text}` (capped 50/pane). Read-only — it reads on-screen text, never writes. Use it to find *where* something is across the whole wall (an error, a path, a value). |
 
 `list_panes`/`pane_events`/`get_pane_config`/`grep` honour the master switch;

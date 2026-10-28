@@ -563,6 +563,21 @@ fn step(s: &mut Sent, w: &Worker, now: u64, acts: &mut Vec<Act>) {
             if since < ENTER_AFTER_MS {
                 return;
             }
+            // The line is read again before Enter, not only before the paste:
+            // a line erased in the second between them means no Enter, so no
+            // turn is ever sent along a line that is gone (cross-provider
+            // review, 2026-10-27).
+            if let Err(r) = &w.allowed {
+                end(
+                    s,
+                    failed(&format!(
+                        "pasted, not sent: {} before Enter. The words may be sitting at its prompt.",
+                        r.why()
+                    )),
+                    now,
+                );
+                return;
+            }
             let hold = match w.seen {
                 Seen::Working => Some("it started working on something else before Enter"),
                 Seen::Blocked => Some("a prompt for its person came up before Enter"),
@@ -679,15 +694,30 @@ fn step(s: &mut Sent, w: &Worker, now: u64, acts: &mut Vec<Act>) {
 
 /// Whether the paste shows on the worker's screen: some row near the bottom
 /// that was not there before the paste carries this prompt's own number, or
-/// the placeholder the program draws in place of a long paste. A number or a
-/// placeholder in an unchanged row is an earlier prompt in its history and
-/// proves nothing.
+/// one more of the placeholders the program draws in place of a long paste
+/// than the screen held before. A number in an unchanged row is an earlier
+/// prompt in its history and proves nothing. A placeholder is counted rather
+/// than looked for in a changed row, because an earlier prompt's unsent paste
+/// can sit in the composer and change shape (rewrap, a cursor) without this
+/// paste having landed; only a new one is this paste. A count that cannot
+/// grow, because the screen scrolled one away, means no Enter: the safe side.
 pub fn shows_paste(before: &[String], after: &[String], id: AskId) -> bool {
     let tag = tag(id);
+    let placeholders = |rows: &[String]| -> usize {
+        rows.iter()
+            .map(|row| {
+                PLACEHOLDERS
+                    .iter()
+                    .map(|p| row.matches(p).count())
+                    .sum::<usize>()
+            })
+            .sum()
+    };
     after
         .iter()
         .filter(|row| !before.contains(row))
-        .any(|row| row.contains(&tag) || PLACEHOLDERS.iter().any(|p| row.contains(p)))
+        .any(|row| row.contains(&tag))
+        || placeholders(after) > placeholders(before)
 }
 
 /// How the agent programs draw a paste too long to show: Claude Code's
@@ -1112,6 +1142,13 @@ mod tests {
             "> [Threshing Floor prompt 8, from x".into(),
         ];
         assert!(!shows_paste(&before, &after, AskId(9)));
+        // An earlier prompt's unsent paste changing shape is not this paste;
+        // a second placeholder beside it is.
+        let before = vec!["> [Pasted text #1 +40 lines]".to_string()];
+        let reshaped = vec!["> [Pasted text #1 +40 lines]\u{2588}".to_string()];
+        assert!(!shows_paste(&before, &reshaped, AskId(9)));
+        let joined = vec!["> [Pasted text #1 +40 lines][Pasted text #2 +12 lines]".to_string()];
+        assert!(shows_paste(&before, &joined, AskId(9)));
     }
 
     /// Something that comes up between the paste and Enter stops Enter: a
@@ -1168,10 +1205,6 @@ mod tests {
         assert!(b
             .tick(t + SETTLE_MS, |_| worker(Seen::Ready))
             .contains(&Act::Paste(AskId(2))));
-    }
-
-    fn seen_ready() -> Seen {
-        Seen::Ready
     }
 
     /// Enter is pressed once. Whatever the worker shows after, no second Enter
@@ -1306,7 +1339,11 @@ mod tests {
     }
 
     /// A line erased, or the pane made read-only, stops a prompt not yet
-    /// typed. Once typed, the worker has it, and it runs to its end.
+    /// sent, and that includes the second between the paste and Enter: no
+    /// Enter is pressed along a line that is gone. Once Enter is pressed the
+    /// worker has the turn, and it runs to its end.
+    ///
+    /// Mutation-tested: dropping the recheck before Enter fails this.
     #[test]
     fn a_revoked_line_stops_only_what_is_not_typed() {
         let mut b = PromptBook::default();
@@ -1325,9 +1362,30 @@ mod tests {
             &["> [Threshing Floor prompt 9, from x"],
         );
         w.allowed = Err(Refusal::NoPromptLine);
-        assert!(b
+        assert!(!b
             .tick(T0 + E, |_| w.clone())
             .contains(&Act::Enter(AskId(9))));
+        let PromptStage::Failed { why } = stage(&b, 9) else {
+            panic!("not failed");
+        };
+        assert!(why.starts_with("pasted, not sent"), "{why}");
+
+        // Erased after Enter: the turn is the worker's, and it finishes.
+        let mut b = PromptBook::default();
+        b.send(new(9, 1, 500, None)).unwrap();
+        b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
+        b.tick(T0, |_| worker(Seen::Ready));
+        let pasted = with_rows(
+            worker(Seen::Ready),
+            &["> [Threshing Floor prompt 9, from x"],
+        );
+        assert!(b
+            .tick(T0 + E, |_| pasted.clone())
+            .contains(&Act::Enter(AskId(9))));
+        let mut w = worker(Seen::Working);
+        w.allowed = Err(Refusal::NoPromptLine);
+        b.tick(T0 + E + 1_000, |_| w.clone());
+        assert!(stage(&b, 9).is_open(), "{:?}", stage(&b, 9));
     }
 
     /// The same key from the same sender names the first prompt; another
