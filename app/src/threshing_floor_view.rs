@@ -3600,19 +3600,14 @@ impl Workspace {
                         typed
                     })
                 });
-                if !typed {
-                    // Enter refused after the paste went in: the words are
-                    // there, and nothing more is typed over them.
-                    if matches!(act, Act::Enter(_)) {
-                        self.prompts.stain(sent.target_pid, now);
-                    }
-                    if self.prompts.fail(
+                if !typed
+                    && self.prompts.fail(
                         id,
                         "the worker's pane refused the keys: it closed, is no longer an agent, was marked read-only or off-limits, or its prompt does not take a paste",
                         now,
-                    ) {
-                        self.record_prompt(id);
-                    }
+                    )
+                {
+                    self.record_prompt(id);
                 }
             }
         }

@@ -214,23 +214,34 @@ difference has to be in the mechanism, and it is stated here rather than assumed
   (`only_the_threshing_floor_and_the_rail_draw_lines`); a bypass a person grants on the rail is an
   ask line and never reaches `prompt`; a line drawn before the rung existed is not upgraded; a pane
   marked read-only or off-limits is refused, and refused again at the write (`type_prompt` checks
-  `takes_writes`). Erasing the line stops every prompt along it that has not been typed.
+  `takes_writes`). Erasing the line stops every prompt along it that has not been sent, and the
+  line is read again in the second between the paste and Enter, so a line erased then means no
+  Enter. An agent
+  can ask its person for an ask line (`request_access`); there is nothing it can ask for that ends
+  in a prompt line. Parker, 2026-10-27, on why the old rule does not cover this: it *"did not
+  consider using a real terminal as a sub agent ... the POINT is that it moves while we are away
+  ... this permission is enabled FROM the threshing floor."*
 - **Rest is read off the screen, not the process.** Keepalive's failure was a status that described
   the agent process while Claude Code's *"Do you trust the files in this folder?"* dialog was on
   screen. A prompt is pasted only after the screen has shown the agent's own idle
-  furniture (`hud::is_at_rest`) for two seconds, look after look, with no turn beginning in
+  furniture (`hud::is_at_rest`) for five seconds, look after look, with no turn beginning in
   between (a streaming agent's screen can look at rest between chunks), read before the finish bell, which promotes a screen nobody could read as
   readily as a resting one. A menu with `❯ 1.`, a permission prompt or a question reads as blocked
   (`hud::is_blocked_prompt`) and is never typed into. Nor is a pane its person typed in during the
-  last twenty seconds, or one showing a picker the workbench's dial raised.
+  last minute, or one showing a picker the workbench's dial raised. These clocks are slow on
+  purpose: a coordinator runs while its person is away, so waiting costs seconds and a misread
+  costs the hand-off.
 - **Enter waits for proof, and is pressed once.** The paste goes first, bracketed, with every control
-  character but newline and tab taken out (`prompt::paste`). Enter follows only when a row that
-  changed on the worker's screen carries this prompt's own number, or the program's placeholder for
-  a long paste — a dialog does not echo a paste, so it gives no proof. A block, an error, the person's
+  character but newline and tab taken out (`prompt::paste`). Enter follows a second later, and only when a row that
+  changed on the worker's screen carries this prompt's own number, or the screen holds one more of
+  the program's long-paste placeholders than before — a dialog does not echo a paste, so it gives no
+  proof, and an earlier prompt's leftover placeholder changing shape is not a new one. A block, an error, the person's
   key or a rest between the paste and Enter means no Enter, and the prompt fails saying where its
-  words may be. That worker then takes no paste until its person types in the pane or a turn
-  begins there, so words left behind are never sent with the next prompt's. There is no second
-  Enter, whatever the screen does after.
+  words may be. Words left behind are not cleared: the next prompt is pasted after them, and its
+  Enter sends both. A hold on the worker until its person cleared them shipped first and was taken
+  out; Parker, 2026-10-27: *"This feels overthunk and over engineered... pasting the next prompt on
+  top feels fine to me."* The worst case is one turn carrying two prompts, each with its own
+  header. There is no second Enter, whatever the screen does after.
 - **The worker can tell who typed it.** The first line names the sending pane and its pid, says a
   person drew the prompt line, and carries the prompt's number.
 

@@ -31,22 +31,30 @@ use serde::Serialize;
 
 use crate::threshing_floor::{AskId, Refusal, SeatId};
 
+// The clocks below are slow on purpose. A coordinator's workers run in the
+// background while their person is away, so a prompt that waits costs
+// seconds and a prompt typed on a misread costs the hand-off. Parker,
+// 2026-10-27: "slower and safer is basically better ... SPEED is NOT the
+// priority at all."
+
 /// How long a prompt waits for its worker to come to rest before it fails.
 pub const WAIT_FOR_REST_MS: u64 = 10 * 60 * 1000;
 /// A key a person pressed in the worker's pane holds a prompt back this long:
 /// they may have a line half-typed, and a paste would join it.
-pub const QUIET_MS: u64 = 20_000;
+pub const QUIET_MS: u64 = 60_000;
 /// The pause between the paste and Enter, so a program that takes its paste
 /// on the next frame has drawn it before it is looked for.
-pub const ENTER_AFTER_MS: u64 = 400;
+pub const ENTER_AFTER_MS: u64 = 1_000;
 /// How long the paste has to show on the worker's screen before Enter is
 /// given up.
 pub const SHOW_PASTE_MS: u64 = 4_000;
 /// After Enter, how long the worker has to be seen working.
 pub const TAKE_UP_MS: u64 = 2 * 60 * 1000;
 /// How long a worker must read at rest, look after look, with no turn
-/// beginning, before it is typed into or its prompt is called finished.
-pub const SETTLE_MS: u64 = 2_000;
+/// beginning, before it is typed into or its prompt is called finished. Two
+/// seconds held through a streamed story in rig run 5; five leaves room for
+/// a slower stream.
+pub const SETTLE_MS: u64 = 5_000;
 /// A worker back at rest, never seen working, has its transcript looked at
 /// this long after Enter, and as often after that.
 pub const PROBE_AFTER_MS: u64 = 3_000;
@@ -277,11 +285,6 @@ pub struct NewPrompt {
 #[derive(Default, Debug)]
 pub struct PromptBook {
     sent: VecDeque<Sent>,
-    /// Workers holding words a prompt pasted and never sent, by shell pid,
-    /// with when. Another paste would join them, and Enter would send both
-    /// (rig run 4), so nothing more is typed there until its person acts in
-    /// the pane or a turn begins.
-    stains: std::collections::HashMap<u32, u64>,
 }
 
 /// What [`PromptBook::send`] did with a prompt.
@@ -374,12 +377,6 @@ impl PromptBook {
         }
     }
 
-    /// Enter could not be written after the paste went in: the worker holds
-    /// the words.
-    pub fn stain(&mut self, pid: u32, now_ms: u64) {
-        self.stains.insert(pid, now_ms);
-    }
-
     /// The worker's last message, read after it came back to rest. `Err` says
     /// why it is not known.
     pub fn replied(&mut self, id: AskId, reply: Result<String, String>, now_ms: u64) -> bool {
@@ -435,22 +432,11 @@ impl PromptBook {
             }
             seen_workers.push(pid);
             let w = look(&self.sent[i]);
-            if let Some(&at) = self.stains.get(&pid) {
-                let acted = w.person_key_ms.is_some_and(|t| t > at)
-                    || w.turn_began_ms.is_some_and(|t| t > at);
-                if acted || w.seen == Seen::Gone {
-                    self.stains.remove(&pid);
-                }
-            }
-            let stained = self.stains.contains_key(&pid);
             let s = &mut self.sent[i];
             let before = s.stage.word();
-            step(s, &w, now_ms, stained, &mut acts);
+            step(s, &w, now_ms, &mut acts);
             if s.stage.word() != before {
                 acts.push(Act::Record(s.id));
-                if before == "typing" && s.stage.word() == "failed" {
-                    self.stains.insert(s.target_pid, now_ms);
-                }
             }
         }
         self.prune(now_ms);
@@ -487,7 +473,7 @@ fn end(s: &mut Sent, stage: PromptStage, now_ms: u64) {
 }
 
 /// One prompt's move on one tick.
-fn step(s: &mut Sent, w: &Worker, now: u64, stained: bool, acts: &mut Vec<Act>) {
+fn step(s: &mut Sent, w: &Worker, now: u64, acts: &mut Vec<Act>) {
     // A probe that never answers must not hold the prompt open: past the
     // take-up limit it is dropped, and a late answer changes nothing.
     let past_take_up = s
@@ -554,9 +540,6 @@ fn step(s: &mut Sent, w: &Worker, now: u64, stained: bool, acts: &mut Vec<Act>) 
                     "at a prompt that does not take a paste".to_string()
                 }
                 Seen::Ready if !settled => "coming to rest".to_string(),
-                Seen::Ready if stained => "holding words an earlier prompt pasted and did not \
-                     send, so nothing more is typed until its person sends or clears them"
-                    .to_string(),
                 Seen::Ready => {
                     s.before = w.rows.clone();
                     s.pasted_ms = Some(now);
@@ -580,6 +563,21 @@ fn step(s: &mut Sent, w: &Worker, now: u64, stained: bool, acts: &mut Vec<Act>) 
             if since < ENTER_AFTER_MS {
                 return;
             }
+            // The line is read again before Enter, not only before the paste:
+            // a line erased in the second between them means no Enter, so no
+            // turn is ever sent along a line that is gone (cross-provider
+            // review, 2026-10-27).
+            if let Err(r) = &w.allowed {
+                end(
+                    s,
+                    failed(&format!(
+                        "pasted, not sent: {} before Enter. The words may be sitting at its prompt.",
+                        r.why()
+                    )),
+                    now,
+                );
+                return;
+            }
             let hold = match w.seen {
                 Seen::Working => Some("it started working on something else before Enter"),
                 Seen::Blocked => Some("a prompt for its person came up before Enter"),
@@ -595,7 +593,7 @@ fn step(s: &mut Sent, w: &Worker, now: u64, stained: bool, acts: &mut Vec<Act>) 
                 end(
                     s,
                     failed(&format!(
-                        "pasted, not sent: {why}. The words may be sitting at its prompt, and prompts to this pane wait until its person sends or clears them."
+                        "pasted, not sent: {why}. The words may be sitting at its prompt; the next prompt to this pane is pasted after them, and Enter sends both."
                     )),
                     now,
                 );
@@ -610,8 +608,8 @@ fn step(s: &mut Sent, w: &Worker, now: u64, stained: bool, acts: &mut Vec<Act>) 
                     s,
                     failed(
                         "pasted, not sent: the words never showed at the worker's prompt, so Enter \
-                         was not pressed. They may be sitting at its prompt, and prompts to this \
-                         pane wait until its person sends or clears them.",
+                         was not pressed. They may be sitting at its prompt; the next prompt to \
+                         this pane is pasted after them, and Enter sends both.",
                     ),
                     now,
                 );
@@ -696,15 +694,30 @@ fn step(s: &mut Sent, w: &Worker, now: u64, stained: bool, acts: &mut Vec<Act>) 
 
 /// Whether the paste shows on the worker's screen: some row near the bottom
 /// that was not there before the paste carries this prompt's own number, or
-/// the placeholder the program draws in place of a long paste. A number or a
-/// placeholder in an unchanged row is an earlier prompt in its history and
-/// proves nothing.
+/// one more of the placeholders the program draws in place of a long paste
+/// than the screen held before. A number in an unchanged row is an earlier
+/// prompt in its history and proves nothing. A placeholder is counted rather
+/// than looked for in a changed row, because an earlier prompt's unsent paste
+/// can sit in the composer and change shape (rewrap, a cursor) without this
+/// paste having landed; only a new one is this paste. A count that cannot
+/// grow, because the screen scrolled one away, means no Enter: the safe side.
 pub fn shows_paste(before: &[String], after: &[String], id: AskId) -> bool {
     let tag = tag(id);
+    let placeholders = |rows: &[String]| -> usize {
+        rows.iter()
+            .map(|row| {
+                PLACEHOLDERS
+                    .iter()
+                    .map(|p| row.matches(p).count())
+                    .sum::<usize>()
+            })
+            .sum()
+    };
     after
         .iter()
         .filter(|row| !before.contains(row))
-        .any(|row| row.contains(&tag) || PLACEHOLDERS.iter().any(|p| row.contains(p)))
+        .any(|row| row.contains(&tag))
+        || placeholders(after) > placeholders(before)
 }
 
 /// How the agent programs draw a paste too long to show: Claude Code's
@@ -945,6 +958,9 @@ mod tests {
         }
     }
 
+    /// The first look after the pause before Enter.
+    const E: u64 = ENTER_AFTER_MS + 200;
+
     fn worker(seen: Seen) -> Worker {
         Worker {
             seen,
@@ -992,9 +1008,9 @@ mod tests {
             worker(Seen::Unreadable),
             &["> [Threshing Floor prompt 7, from planner"],
         );
-        let acts = b.tick(t + 600, |_| pasted.clone());
+        let acts = b.tick(t + E, |_| pasted.clone());
         assert_eq!(acts, vec![Act::Enter(AskId(7)), Act::Record(AskId(7))]);
-        let acts = b.tick(t + 1_600, |_| worker(Seen::Working));
+        let acts = b.tick(t + E + 1_000, |_| worker(Seen::Working));
         assert_eq!(acts, vec![Act::Record(AskId(7))]);
         assert!(matches!(stage(&b, 7), PromptStage::Working { .. }));
         // Back at rest: settled first, then read, so a pause in a streaming
@@ -1005,8 +1021,11 @@ mod tests {
         let acts = b.tick(t + 10_000 + SETTLE_MS, |_| worker(Seen::Ready));
         assert_eq!(acts, vec![Act::ReadReply(AskId(7))]);
         // While the reply is read the prompt is still open, and nothing moves.
-        assert_eq!(b.tick(t + 12_500, |_| worker(Seen::Gone)), vec![]);
-        assert!(b.replied(AskId(7), Ok("done".into()), t + 12_600));
+        assert_eq!(
+            b.tick(t + 10_000 + SETTLE_MS + 500, |_| worker(Seen::Gone)),
+            vec![]
+        );
+        assert!(b.replied(AskId(7), Ok("done".into()), t + 10_000 + SETTLE_MS + 600));
         assert_eq!(
             stage(&b, 7),
             PromptStage::Finished {
@@ -1123,6 +1142,13 @@ mod tests {
             "> [Threshing Floor prompt 8, from x".into(),
         ];
         assert!(!shows_paste(&before, &after, AskId(9)));
+        // An earlier prompt's unsent paste changing shape is not this paste;
+        // a second placeholder beside it is.
+        let before = vec!["> [Pasted text #1 +40 lines]".to_string()];
+        let reshaped = vec!["> [Pasted text #1 +40 lines]\u{2588}".to_string()];
+        assert!(!shows_paste(&before, &reshaped, AskId(9)));
+        let joined = vec!["> [Pasted text #1 +40 lines][Pasted text #2 +12 lines]".to_string()];
+        assert!(shows_paste(&before, &joined, AskId(9)));
     }
 
     /// Something that comes up between the paste and Enter stops Enter: a
@@ -1135,7 +1161,7 @@ mod tests {
             b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
             b.tick(T0, |_| worker(Seen::Ready));
             let pasted = with_rows(worker(seen), &["> [Threshing Floor prompt 4, from x"]);
-            let acts = b.tick(T0 + 600, |_| pasted.clone());
+            let acts = b.tick(T0 + E, |_| pasted.clone());
             assert!(!acts.contains(&Act::Enter(AskId(4))), "{seen:?}");
             assert_eq!(stage(&b, 4).word(), "failed", "{seen:?}");
         }
@@ -1150,64 +1176,35 @@ mod tests {
         );
         w.person_key_ms = Some(T0 + 200);
         assert!(!b
-            .tick(T0 + 600, |_| w.clone())
+            .tick(T0 + E, |_| w.clone())
             .contains(&Act::Enter(AskId(4))));
     }
 
-    /// Words a failed prompt left at the worker's prompt are never joined by
-    /// another paste: the next prompt waits until the person acts in the pane
-    /// or a turn begins there.
+    /// Words a failed prompt left at the worker's prompt do not hold the
+    /// worker: the next prompt is pasted after them once the worker settles,
+    /// and Enter sends both. Parker, 2026-10-27: "pasting the next prompt on
+    /// top feels fine to me."
     #[test]
-    fn a_paste_left_unsent_holds_the_next_prompt() {
+    fn a_paste_left_unsent_is_followed_by_the_next_prompt() {
         let mut b = PromptBook::default();
         b.send(new(1, 1, 500, None)).unwrap();
         b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
         b.tick(T0, |_| worker(Seen::Ready));
         let blocked = with_rows(worker(Seen::Blocked), &["> [Threshing Floor prompt 1, x"]);
-        b.tick(T0 + 600, |_| blocked.clone());
-        assert_eq!(stage(&b, 1).word(), "failed");
-        b.send(new(2, 2, 500, None)).unwrap();
-        let mut t = T0 + 1_000;
-        for _ in 0..10 {
-            let acts = b.tick(t, |_| worker(Seen::Ready));
-            assert!(!acts.contains(&Act::Paste(AskId(2))), "{acts:?}");
-            t += 1_000;
-        }
-        let PromptStage::Waiting { worker: why } = stage(&b, 2) else {
-            panic!("not waiting");
+        b.tick(T0 + ENTER_AFTER_MS + 200, |_| blocked.clone());
+        let PromptStage::Failed { why } = stage(&b, 1) else {
+            panic!("not failed");
         };
-        assert!(why.contains("did not send"), "{why}");
-        // The person acts in the pane: the stain lifts, and after rest the
-        // next prompt goes in.
-        let mut w = worker(Seen::Ready);
-        w.person_key_ms = Some(t);
-        b.tick(t + 1, |_| w.clone());
-        // Still at rest all along, so once the person's twenty quiet seconds
-        // are up it goes in.
+        assert!(why.contains("pasted after them"), "{why}");
+        b.send(new(2, 2, 500, None)).unwrap();
+        let t = T0 + 10_000;
+        b.tick(t, |_| worker(Seen::Ready));
         assert!(!b
-            .tick(t + QUIET_MS - 1, |_| w.clone())
+            .tick(t + SETTLE_MS - 1, |_| worker(Seen::Ready))
             .contains(&Act::Paste(AskId(2))));
         assert!(b
-            .tick(t + QUIET_MS + 1, |_| w.clone())
+            .tick(t + SETTLE_MS, |_| worker(Seen::Ready))
             .contains(&Act::Paste(AskId(2))));
-        // A turn that began after the stain lifts it the same way.
-        let mut b = PromptBook::default();
-        b.stain(500, T0);
-        b.send(new(3, 1, 500, None)).unwrap();
-        let mut w = worker(Seen::Ready);
-        b.tick(T0 + 10, |_| w.clone());
-        assert!(!b
-            .tick(T0 + 10 + SETTLE_MS, |_| w.clone())
-            .contains(&Act::Paste(AskId(3))));
-        w.turn_began_ms = Some(T0 + 5_000);
-        b.tick(T0 + 5_000 + SETTLE_MS, |_| w.clone());
-        assert!(b
-            .tick(T0 + 5_000 + 2 * SETTLE_MS, |_| w.clone())
-            .contains(&Act::Paste(AskId(3))));
-    }
-
-    fn seen_ready() -> Seen {
-        Seen::Ready
     }
 
     /// Enter is pressed once. Whatever the worker shows after, no second Enter
@@ -1247,17 +1244,17 @@ mod tests {
             b.send(new(1, 1, 500, None)).unwrap();
             b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
             b.tick(T0, |_| worker(Seen::Ready));
-            b.tick(T0 + 600, |_| {
+            b.tick(T0 + E, |_| {
                 with_rows(worker(Seen::Ready), &["> [Threshing Floor prompt 1, f"])
             });
         };
         let mut b = PromptBook::default();
         entered(&mut b);
         let mut w = worker(Seen::Ready);
-        w.turn_began_ms = Some(T0 + 700);
-        // Taken, but a turn that began in the last two seconds is not over.
+        w.turn_began_ms = Some(T0 + E + 100);
+        // Taken, but a turn that began in the last SETTLE_MS is not over.
         assert_eq!(
-            b.tick(T0 + 2_000, |_| w.clone()),
+            b.tick(T0 + E + 1_400, |_| w.clone()),
             vec![Act::Record(AskId(1))]
         );
         assert_eq!(
@@ -1266,18 +1263,18 @@ mod tests {
                 worker: "coming to rest".into()
             }
         );
-        assert!(b.tick(T0 + 2_700, |_| w.clone()).is_empty());
+        assert!(b.tick(T0 + E + 2_100, |_| w.clone()).is_empty());
         assert_eq!(
-            b.tick(T0 + 2_700 + SETTLE_MS, |_| w.clone()),
+            b.tick(T0 + E + 2_100 + SETTLE_MS, |_| w.clone()),
             vec![Act::ReadReply(AskId(1))]
         );
         // A turn that began before Enter is somebody else's.
         let mut b = PromptBook::default();
         entered(&mut b);
-        w.turn_began_ms = Some(T0 - 5_000);
-        assert!(b.tick(T0 + 2_000, |_| w.clone()).is_empty());
+        w.turn_began_ms = Some(T0 - SETTLE_MS - 3_000);
+        assert!(b.tick(T0 + E + 1_400, |_| w.clone()).is_empty());
         // The probe: after PROBE_AFTER_MS at rest, once per PROBE_AFTER_MS.
-        let at = T0 + 600 + PROBE_AFTER_MS;
+        let at = T0 + E + PROBE_AFTER_MS;
         assert_eq!(b.tick(at, |_| w.clone()), vec![Act::Probe(AskId(1))]);
         assert!(
             b.tick(at + 500, |_| w.clone()).is_empty(),
@@ -1342,7 +1339,11 @@ mod tests {
     }
 
     /// A line erased, or the pane made read-only, stops a prompt not yet
-    /// typed. Once typed, the worker has it, and it runs to its end.
+    /// sent, and that includes the second between the paste and Enter: no
+    /// Enter is pressed along a line that is gone. Once Enter is pressed the
+    /// worker has the turn, and it runs to its end.
+    ///
+    /// Mutation-tested: dropping the recheck before Enter fails this.
     #[test]
     fn a_revoked_line_stops_only_what_is_not_typed() {
         let mut b = PromptBook::default();
@@ -1361,9 +1362,30 @@ mod tests {
             &["> [Threshing Floor prompt 9, from x"],
         );
         w.allowed = Err(Refusal::NoPromptLine);
-        assert!(b
-            .tick(T0 + 600, |_| w.clone())
+        assert!(!b
+            .tick(T0 + E, |_| w.clone())
             .contains(&Act::Enter(AskId(9))));
+        let PromptStage::Failed { why } = stage(&b, 9) else {
+            panic!("not failed");
+        };
+        assert!(why.starts_with("pasted, not sent"), "{why}");
+
+        // Erased after Enter: the turn is the worker's, and it finishes.
+        let mut b = PromptBook::default();
+        b.send(new(9, 1, 500, None)).unwrap();
+        b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
+        b.tick(T0, |_| worker(Seen::Ready));
+        let pasted = with_rows(
+            worker(Seen::Ready),
+            &["> [Threshing Floor prompt 9, from x"],
+        );
+        assert!(b
+            .tick(T0 + E, |_| pasted.clone())
+            .contains(&Act::Enter(AskId(9))));
+        let mut w = worker(Seen::Working);
+        w.allowed = Err(Refusal::NoPromptLine);
+        b.tick(T0 + E + 1_000, |_| w.clone());
+        assert!(stage(&b, 9).is_open(), "{:?}", stage(&b, 9));
     }
 
     /// The same key from the same sender names the first prompt; another
@@ -1432,29 +1454,40 @@ mod tests {
             b.send(new(1, 1, 500, None)).unwrap();
             b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
             b.tick(T0, |_| worker(Seen::Ready));
-            b.tick(T0 + 600, |_| {
+            b.tick(T0 + E, |_| {
                 with_rows(worker(Seen::Ready), &["> [Threshing Floor prompt 1, f"])
             });
-            b.tick(T0 + 1_600, |_| worker(Seen::Working));
+            b.tick(T0 + E + 1_000, |_| worker(Seen::Working));
         };
         let mut b = PromptBook::default();
         typed(&mut b);
-        b.tick(T0 + 2_000, |_| worker(Seen::Gone));
+        b.tick(T0 + E + 1_400, |_| worker(Seen::Gone));
         assert_eq!(stage(&b, 1).word(), "failed");
         let mut b = PromptBook::default();
         typed(&mut b);
-        b.tick(T0 + 2_000, |_| worker(Seen::Dormant));
+        b.tick(T0 + E + 1_400, |_| worker(Seen::Dormant));
         assert_eq!(stage(&b, 1).word(), "failed");
         let mut b = PromptBook::default();
         typed(&mut b);
-        assert_eq!(b.tick(T0 + 2_000, |_| worker(Seen::Ready)), vec![]);
+        assert_eq!(b.tick(T0 + E + 1_400, |_| worker(Seen::Ready)), vec![]);
         assert_eq!(
-            b.tick(T0 + 2_000 + SETTLE_MS, |_| worker(Seen::Ready)),
+            b.tick(T0 + E + 1_400 + SETTLE_MS, |_| worker(Seen::Ready)),
             vec![Act::ReadReply(AskId(1))]
         );
-        assert_eq!(b.tick(T0 + 5_000, |_| worker(Seen::Ready)), vec![]);
-        assert!(b.replied(AskId(1), Err("not proven".into()), T0 + 5_100));
-        assert!(!b.replied(AskId(1), Ok("late".into()), T0 + 5_200));
+        assert_eq!(
+            b.tick(T0 + E + 1_400 + SETTLE_MS + 500, |_| worker(Seen::Ready)),
+            vec![]
+        );
+        assert!(b.replied(
+            AskId(1),
+            Err("not proven".into()),
+            T0 + E + 1_400 + SETTLE_MS + 600
+        ));
+        assert!(!b.replied(
+            AskId(1),
+            Ok("late".into()),
+            T0 + E + 1_400 + SETTLE_MS + 700
+        ));
     }
 
     /// An error that clears is weather; one that stays a minute ends it.
@@ -1464,10 +1497,10 @@ mod tests {
         b.send(new(1, 1, 500, None)).unwrap();
         b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
         b.tick(T0, |_| worker(Seen::Ready));
-        b.tick(T0 + 600, |_| {
+        b.tick(T0 + E, |_| {
             with_rows(worker(Seen::Ready), &["> [Threshing Floor prompt 1, f"])
         });
-        b.tick(T0 + 1_000, |_| worker(Seen::Errored));
+        b.tick(T0 + E + 400, |_| worker(Seen::Errored));
         b.tick(T0 + 30_000, |_| worker(Seen::Working));
         b.tick(T0 + 40_000, |_| worker(Seen::Errored));
         b.tick(T0 + 40_000 + ERROR_ENDS_MS - 1, |_| worker(Seen::Errored));

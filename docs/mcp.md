@@ -333,24 +333,26 @@ ask line, a bypass, a read-only pane and an off-limits pane are refused by name
 worker is ready, by these rules (`app/src/prompt.rs`):
 
 - **Only at a settled rest.** The words go in after the worker's screen has shown
-  its own idle prompt for two seconds, look after look, with no turn beginning in
+  its own idle prompt for five seconds, look after look, with no turn beginning in
   between: a streaming agent's screen can look at rest between two chunks. A
   working worker is waited for, up to ten minutes; a resting or asleep one is woken first, without taking the person's
   focus. A pane showing a permission prompt, a question, a dialog, an error, or a
   screen nobody can read is never typed into.
-- **Never over a person.** A pane its person typed in during the last twenty
-  seconds, and one showing a picker the workbench's dial raised, waits.
+- **Never over a person.** A pane its person typed in during the last minute,
+  and one showing a picker the workbench's dial raised, waits. The clocks are
+  slow on purpose: the work runs while its person is away.
 - **As one bracketed paste.** Every control character but newline and tab is
   taken out first, so nothing in the words can close the paste early or press a
   key. A prompt that has not asked for bracketed paste is not typed into.
-- **Enter once, and only on proof.** Enter is pressed after the paste shows on the
+- **Enter once, and only on proof.** Enter is pressed a second after the paste, once it shows on the
   worker's screen: a row that changed carries this prompt's own number, or the
-  program's placeholder for a long paste (`[Pasted text …]`, `[Pasted Content …]`).
+  screen holds one more of the program's long-paste placeholders (`[Pasted text …]`,
+  `[Pasted Content …]`) than before, so an earlier prompt's leftover placeholder
+  changing shape is not taken for this paste.
   With no proof in four seconds, or with a dialog, an error or the person's key in
   between, Enter is not pressed and the prompt fails, saying the words may be
-  sitting at the worker's prompt. That worker then takes no more prompts until its
-  person types in the pane or a turn begins there, so a second paste never joins
-  the first.
+  sitting at the worker's prompt. They are not cleared: the next prompt to that
+  worker is pasted after them, and its Enter sends both.
 - **A header line comes first**, naming the sender's pane and pid, saying a
   person drew the prompt line, and saying whether the worker's last message will
   be returned. It carries the prompt's number,
@@ -377,9 +379,21 @@ says why. `wait_seconds` (up to 6) holds the answer until the prompt ends, so
 one call can wait for the work.
 
 An erased line, a pane marked read-only or off-limits, or MCP switched off stops a
-prompt that has not been typed. A prompt already typed is the worker's and runs
-to its end. Every stage leaves a line in the same `asks.jsonl`, with `via` set
+prompt that has not been sent, including in the second between the paste and
+Enter: the line is read again before Enter, and a line that is gone means no
+Enter. A prompt already sent is the worker's and runs to its end. Every stage leaves a line in the same `asks.jsonl`, with `via` set
 to `prompt`, the words' length and SHA-256, never the words and never the reply.
+
+`floor_position` tells an agent where it stands: whether it is seated, its org
+and role, the panes it reaches along a line and how far, and the panes that reach
+it. That last list is the only place a worker learns who may prompt it before a
+prompt arrives; a pane it cannot otherwise see is named there by pid, pane and tab
+only, the numbers a prompt's own header carries. An agent Terminal Delight
+launches is told all of this in its briefing (`surface::FLOOR_PARAGRAPH`): what a
+line is, how to answer a prompt (one clear final message, because that is what
+goes back), and how to hand work out (a work order with how it will be judged
+done, prompt again when a reply falls short, and stop and tell the person after
+two or three tries).
 
 **What it does not stop.** An agent with a shell runs as you. It can edit TD's
 state file, or put keystrokes into the window through the compositor. This is the
@@ -473,8 +487,8 @@ exposed window. In a restricted window it refuses the read and points to
 
 ### Pane reads and appearance
 
-`tools/list` declares `annotations.readOnlyHint: true` on the thirteen tools whose
-handlers only read: `list_panes`, `pane_events`, `get_pane_config`, `ask_answer`,
+`tools/list` declares `annotations.readOnlyHint: true` on the fourteen tools whose
+handlers only read: `list_panes`, `floor_position`, `pane_events`, `get_pane_config`, `ask_answer`,
 `prompt_status`, the four `coordination_*` tools, `engineering_state`,
 `document_notes`, `surface_catalogue` and `grep`. Write tools leave this hint undeclared. These
 hints help clients describe tools; they do not grant access or replace the
@@ -498,6 +512,7 @@ annotations are a separate feature; `ctl doc note` does not write sticky notes.
 | `ask_answer` | `ask_id` | How a copy is getting on, and its answer once it has one. Only the pane that asked can read it. |
 | `prompt_agent` | `pid`, `prompt` (up to 32,000 characters), `key?` | Gives a pane work along a line that reaches `prompt`: the words are typed into its conversation when it is at rest. Returns a `prompt_id` and the stage at once. Refused by name without a prompt line. Does not need Writes: the prompt line is the person's grant. See *Prompting another agent* above. |
 | `prompt_status` | `prompt_id`, `wait_seconds?` (0 to 6) | How a prompt is getting on, and the worker's last message once it has finished. Only the pane that sent it can read it. |
+| `floor_position` | _(none)_ | Where the caller stands on the Threshing Floor: `seated`, `org`, `role` (`orchestrator`, `manager`, `worker`, `alone`), `lines_out` and `lines_in`, each `{pid, pane, tab, agent, rung, listed}`, where `listed` says whether that pane is in the caller's `list_panes` and `agent` is `null` for a pane that is not. `role` is read from those two lists, whole-org lines and bypasses included. Refused for a caller the window cannot place. |
 | `grep` | `query` (exact, case-insensitive substring), `scrollback?` (recent lines/pane, default 2000, max 50000) | Searches every **exposed** pane's recent scrollback. Returns, per matching pane, its identity (`pid`/`tab`/`title`/`mode`) and the matching lines as `{line, col, text}` (capped 50/pane). Read-only — it reads on-screen text, never writes. Use it to find *where* something is across the whole wall (an error, a path, a value). |
 
 `list_panes`/`pane_events`/`get_pane_config`/`grep` honour the master switch;

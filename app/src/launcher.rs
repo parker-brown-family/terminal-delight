@@ -1214,6 +1214,36 @@ mod tests {
         );
     }
 
+    /// Every launched agent is told the Threshing Floor exists, how to read
+    /// where it stands, how to answer a prompt that arrives along a line, and
+    /// how to hand work out along one, Codex through its first prompt as much
+    /// as Claude through its system prompt.
+    #[test]
+    fn the_briefing_teaches_the_threshing_floor_both_ways() {
+        let dir = Path::new("/run/td/surfaces/s");
+        let text = session_briefing(dir, None);
+        for needle in [
+            "THE THRESHING FLOOR",
+            "floor_position",
+            "[Threshing Floor prompt <n>, from",
+            "That message is what goes back to the sender",
+            "prompt_agent",
+            "prompt_status",
+            "how you will judge it done",
+            "two or three tries",
+            "different provider",
+        ] {
+            assert!(text.contains(needle), "{needle} is missing");
+        }
+        // The header the worker is told to look for is the one it gets.
+        let header =
+            crate::prompt::header(crate::threshing_floor::AskId(5), "planner", Some(9), true);
+        assert!(
+            header.starts_with("[Threshing Floor prompt 5, from planner"),
+            "{header}"
+        );
+    }
+
     #[test]
     fn every_launcher_harness_is_offered_the_shared_briefing() {
         for harness in Harness::ALL {
