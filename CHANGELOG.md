@@ -9,6 +9,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### The Threshing Floor for 0.5.0 Development
 
+- The pane pool starts beside the relationship builder and keeps its own
+  full-height column, with more compact cards. The chart supports Ctrl+wheel
+  zoom around the pointer, dragging its empty surface to pan, and a reset view.
+  Chart cards, connectors and relationship labels move and scale together;
+  the builder and pool keep their size. The add-target button stays visible
+  beside the target cards when several are selected.
 - Relationships are built in a persistent Actor → Can → Targets area above the
   Floor. Dropping one card onto another or Alt-dragging a line fills the builder;
   targets are chosen on the chart and in the filtered pane pool. Submit saves
