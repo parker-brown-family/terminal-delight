@@ -70,6 +70,8 @@ struct PaneDrag {
     title: String,
     ink: Hsla,
     bg: Hsla,
+    /// Captured when the drag starts, retained through mouse-up capture.
+    relation: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
 #[derive(Clone)]
@@ -86,12 +88,38 @@ struct DragPreview {
     offset: Point<Pixels>,
     ink: Hsla,
     bg: Hsla,
+    tether: Option<Point<Pixels>>,
 }
 
 impl Render for DragPreview {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let mouse = window.mouse_position();
         let viewport = window.viewport_size();
+        if let Some(origin) = self.tether {
+            let ink = self.ink;
+            return div()
+                .id("floor-connection-tether")
+                .debug_selector(|| "floor-connection-tether".to_string())
+                .relative()
+                .left(self.offset.x - mouse.x)
+                .top(self.offset.y - mouse.y)
+                .child(
+                    gpui::canvas(
+                        |_, _, _| {},
+                        move |_, _, window, _| {
+                            let mut path = PathBuilder::stroke(px(2.));
+                            path.move_to(origin);
+                            path.line_to(mouse);
+                            if let Ok(path) = path.build() {
+                                window.paint_path(path, ink);
+                            }
+                        },
+                    )
+                    .w(viewport.width)
+                    .h(viewport.height),
+                )
+                .into_any_element();
+        }
         // Flip beside the pointer near the panel edges so the preview remains
         // readable over the bin instead of being clipped or frosted outside it.
         let dx = if mouse.x + px(196.) > viewport.width * 0.975 - px(16.) {
@@ -104,26 +132,28 @@ impl Render for DragPreview {
         } else {
             px(8.)
         };
-        div().child(
-            div()
-                .id("floor-drag-preview")
-                .debug_selector(|| "floor-drag-preview".to_string())
-                .relative()
-                .left(self.offset.x + dx)
-                .top(self.offset.y + dy)
-                .w(px(180.))
-                .h(px(44.))
-                .p_2()
-                .border_1()
-                .border_color(self.ink)
-                .rounded(px(5.))
-                .bg(self.bg)
-                .text_color(self.ink)
-                .text_size(px(11.))
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .child(SharedString::from(self.title.clone())),
-        )
+        div()
+            .child(
+                div()
+                    .id("floor-drag-preview")
+                    .debug_selector(|| "floor-drag-preview".to_string())
+                    .relative()
+                    .left(self.offset.x + dx)
+                    .top(self.offset.y + dy)
+                    .w(px(180.))
+                    .h(px(44.))
+                    .p_2()
+                    .border_1()
+                    .border_color(self.ink)
+                    .rounded(px(5.))
+                    .bg(self.bg)
+                    .text_color(self.ink)
+                    .text_size(px(11.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .child(SharedString::from(self.title.clone())),
+            )
+            .into_any_element()
     }
 }
 
@@ -197,9 +227,33 @@ enum RelationEnd {
     To,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RelationMember {
+    Seat(threshing_floor::SeatId),
+    // A draft must not keep a closed pane or its process alive.
+    Pool(gpui::WeakEntity<TerminalView>),
+}
+
+#[derive(Default)]
 pub(crate) struct RelationEditor {
-    draft: threshing_floor::RelationDraft,
+    actor: Option<RelationMember>,
+    targets: Vec<RelationMember>,
+    rung: Option<threshing_floor::Rung>,
     choosing: Option<RelationEnd>,
+    editing: Option<(threshing_floor::SeatId, threshing_floor::SeatId)>,
+    verbs_at: Option<Point<Pixels>>,
+    error: Option<String>,
+    labels: Vec<(RelationMember, String)>,
+}
+
+struct PreparedRelationship {
+    org: threshing_floor::OrgId,
+    staged: Vec<(Entity<TerminalView>, threshing_floor::SeatId)>,
+    pairs: Vec<(
+        threshing_floor::SeatId,
+        threshing_floor::SeatId,
+        threshing_floor::Rung,
+    )>,
 }
 
 /// The System Map's own relationship draft. Unlike [`RelationEditor`], each end
@@ -301,8 +355,9 @@ impl Workspace {
         let ui = self.lang.strings().ui;
         let lang = self.lang;
         let dragging = self.floor_drag.as_ref().filter(|_| cx.has_active_drag());
-        let removing = dragging.is_some_and(|leaf| leaf.read(cx).seat.is_some());
-        let drag_active = dragging.is_some();
+        let removing = self.floor_tether.is_none()
+            && dragging.is_some_and(|leaf| leaf.read(cx).seat.is_some());
+        let drag_active = dragging.is_some() && self.floor_tether.is_none();
         let chart_active = drag_active && self.floor_org.is_some();
 
         // ---- gather: seated panes, and every pane off the chart ----
@@ -524,7 +579,11 @@ impl Workspace {
         for f in &seats {
             let Some(seat) = f.seat else { continue };
             let Some((x, y)) = at(seat) else { continue };
-            let picked = pick == Some(seat);
+            let member = RelationMember::Seat(seat);
+            let picked = pick == Some(seat)
+                || self.floor_relation.as_ref().is_some_and(|e| {
+                    e.actor.as_ref() == Some(&member) || e.targets.contains(&member)
+                });
             let state_ink = agent_state_glow(th, th.accent, f.state);
             let role = match self.chart.role_of(seat) {
                 threshing_floor::Role::Orchestrator => ui.floor_role_orchestrator,
@@ -581,6 +640,7 @@ impl Workspace {
                 title: f.name.tab.clone(),
                 ink: th.accent,
                 bg: th.surface,
+                relation: Default::default(),
             };
             let rel_drag = RelationDrag {
                 from: seat,
@@ -616,12 +676,18 @@ impl Workspace {
                     .flex_col()
                     .gap(px(8. * s))
                     .cursor(gpui::CursorStyle::OpenHand)
-                    .when(dragging == Some(&f.leaf), |d| d.opacity(0.35))
+                    .when(
+                        dragging == Some(&f.leaf) && self.floor_tether.is_none(),
+                        |d| d.opacity(0.35),
+                    )
                     .hover(|d| d.border_color(th.accent))
                     .on_drag(pane_drag, {
                         let ws = cx.entity().downgrade();
                         move |d: &PaneDrag, position, window: &mut Window, cx: &mut App| {
+                            d.relation.set(window.modifiers().alt);
+                            let tether = d.relation.get().then(|| window.mouse_position());
                             let _ = ws.update(cx, |ws, cx| {
+                                ws.floor_tether = tether;
                                 ws.threshing_floor_begin_drag(&d.leaf, window, cx)
                             });
                             cx.new(|_| DragPreview {
@@ -629,6 +695,7 @@ impl Workspace {
                                 offset: position,
                                 ink: d.ink,
                                 bg: d.bg,
+                                tether,
                             })
                         }
                     })
@@ -653,6 +720,18 @@ impl Workspace {
                     })
                     .on_drop(cx.listener(move |ws, d: &RelationDrag, _, cx| {
                         ws.threshing_floor_begin_relation(Some(d.from), Some(seat), cx);
+                    }))
+                    .drag_over::<PaneDrag>(move |style, d, _, cx| {
+                        if d.leaf.read(cx).seat != Some(seat) {
+                            style
+                                .border_color(drop_ink)
+                                .shadow(drop_glow(drop_ink, true))
+                        } else {
+                            style
+                        }
+                    })
+                    .on_drop(cx.listener(move |ws, d: &PaneDrag, _, cx| {
+                        ws.threshing_floor_drop_member(d, seat, cx)
                     }))
                     // Four groups, read top to bottom: who it is, what it is doing
                     // now, what it runs on, and what it has produced. Lines in a
@@ -780,12 +859,14 @@ impl Workspace {
                             .justify_center()
                             .child("○")
                             .cursor_crosshair()
-                            .on_drag(rel_drag, |d, position, _, cx| {
+                            .on_drag(rel_drag, |d, position, window, cx| {
+                                let tether = Some(window.mouse_position());
                                 cx.new(|_| DragPreview {
                                     title: d.title.clone(),
                                     offset: position,
                                     ink: d.ink,
                                     bg: d.bg,
+                                    tether,
                                 })
                             })
                             .on_click(cx.listener(move |ws, _, _, cx| {
@@ -931,6 +1012,7 @@ impl Workspace {
                 title: f.name.tab.clone(),
                 ink: th.accent,
                 bg: th.surface,
+                relation: Default::default(),
             };
             off = off.child(
                 div()
@@ -956,11 +1038,17 @@ impl Workspace {
                     .gap_1()
                     .when(is_agent, |d| {
                         d.cursor(gpui::CursorStyle::OpenHand)
-                            .when(dragging == Some(&f.leaf), |d| d.opacity(0.35))
+                            .when(
+                                dragging == Some(&f.leaf) && self.floor_tether.is_none(),
+                                |d| d.opacity(0.35),
+                            )
                             .on_drag(pane_drag, {
                                 let ws = cx.entity().downgrade();
                                 move |d: &PaneDrag, position, window: &mut Window, cx: &mut App| {
+                                    d.relation.set(window.modifiers().alt);
+                                    let tether = d.relation.get().then(|| window.mouse_position());
                                     let _ = ws.update(cx, |ws, cx| {
+                                        ws.floor_tether = tether;
                                         ws.threshing_floor_begin_drag(&d.leaf, window, cx)
                                     });
                                     cx.new(|_| DragPreview {
@@ -968,10 +1056,22 @@ impl Workspace {
                                         offset: position,
                                         ink: d.ink,
                                         bg: d.bg,
+                                        tether,
                                     })
                                 }
                             })
                     })
+                    .on_click(cx.listener({
+                        let leaf = leaf.clone();
+                        move |ws, _, _, cx| {
+                            cx.stop_propagation();
+                            if ws.floor_relation.is_some() {
+                                if let Some(member) = ws.threshing_floor_member(&leaf, cx) {
+                                    ws.threshing_floor_choose_member(member, cx);
+                                }
+                            }
+                        }
+                    }))
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener({
@@ -1050,16 +1150,34 @@ impl Workspace {
                         is_agent && owner.is_none() && self.floor_org.is_some(),
                         |d| {
                             d.child(
-                                Self::bezel_btn(&sk, ui.floor_org_add, false)
-                                    .id(SharedString::from(format!(
-                                        "floor-seat-btn-{}",
-                                        leaf.entity_id().as_u64()
-                                    )))
-                                    .hover(|d| d.border_color(th.accent))
-                                    .on_click(cx.listener(move |ws, _, _w, cx| {
+                                Self::bezel_btn(
+                                    &sk,
+                                    if self.floor_relation.is_some() {
+                                        ui.floor_rel_to
+                                    } else {
+                                        ui.floor_org_add
+                                    },
+                                    false,
+                                )
+                                .id(SharedString::from(format!(
+                                    "floor-seat-btn-{}",
+                                    leaf.entity_id().as_u64()
+                                )))
+                                .hover(|d| d.border_color(th.accent))
+                                .on_click(cx.listener(
+                                    move |ws, _, _w, cx| {
                                         cx.stop_propagation();
-                                        ws.threshing_floor_seat(&leaf, cx);
-                                    })),
+                                        if ws.floor_relation.is_some() {
+                                            if let Some(member) =
+                                                ws.threshing_floor_member(&leaf, cx)
+                                            {
+                                                ws.threshing_floor_choose_member(member, cx);
+                                            }
+                                        } else {
+                                            ws.threshing_floor_seat(&leaf, cx);
+                                        }
+                                    },
+                                )),
                             )
                         },
                     ),
@@ -1067,8 +1185,6 @@ impl Workspace {
         }
 
         let switches = self.mcp_switch_buttons(&sk, th, "war", cx);
-        // Headers are siblings of scroll bodies. Zero minimum height on every
-        // flex ancestor prevents the contents from stretching the frame.
         let header = div()
             .id("threshing-floor-header")
             .debug_selector(|| "threshing-floor-header".to_string())
@@ -1077,11 +1193,11 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
-            .when(drag_active, |d| d.opacity(0.3))
             .child(
                 div()
+                    .h(px(22.))
+                    .flex_none()
                     .flex()
-                    .flex_row()
                     .items_center()
                     .gap_3()
                     .child(
@@ -1089,11 +1205,13 @@ impl Workspace {
                             .text_size(sk.text_px(13.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.complement)
-                            .child(SharedString::from(ui.floor_hdr.to_string())),
+                            .child(ui.floor_hdr),
                     )
                     .child(
                         div()
                             .flex_1()
+                            .min_w(px(0.))
+                            .truncate()
                             .text_size(sk.text_px(9.))
                             .text_color(th.text.alpha(0.6))
                             .child(SharedString::from(counts)),
@@ -1101,80 +1219,90 @@ impl Workspace {
             )
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap_1()
-                    .children(switches),
-            )
-            // Finding a pane is a different job from the window's switches above
-            // it, so it starts a group of its own: a wider gap here than inside.
-            .child(
-                div()
-                    .id("threshing-floor-search")
-                    .debug_selector(|| "threshing-floor-search".to_string())
-                    .mt_2()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .p_2()
-                    .rounded(sk.rad_raw(6.))
-                    .border_1()
-                    .border_color(th.accent.alpha(0.6))
-                    .bg(darken(th.surface, 0.35))
-                    .cursor(gpui::CursorStyle::IBeam)
-                    .child(render_edit_buffer(
-                        &self.threshing_floor_query,
-                        s,
-                        th.text,
-                        th.accent,
-                        th.accent.alpha(0.3),
-                    ))
-                    .when(query.is_empty(), |d| {
-                        d.child(
-                            div()
-                                .text_color(th.text.alpha(0.55))
-                                .child(SharedString::from(ui.floor_search.to_string())),
-                        )
-                    })
-                    .child(div().flex_1())
+                    .id("floor-access-controls")
+                    .h(px(27.))
+                    .flex_none()
+                    .min_w(px(0.))
+                    .overflow_x_scroll()
                     .child(
-                        Self::bezel_btn(&sk, "×", false)
-                            .id("threshing-floor-clear")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.threshing_floor_query = EditBuffer::seeded("");
-                                    ws.threshing_floor_pick = None;
-                                    cx.notify();
-                                }),
-                            ),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, w, cx| {
-                            cx.stop_propagation();
-                            w.focus(&ws.focus_handle, cx);
-                        }),
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .children(switches),
                     ),
             )
             .child(
                 div()
-                    .text_color(th.text.alpha(0.6))
-                    .child(SharedString::from(lang::fill(
-                        ui.floor_results,
-                        &[("shown", &shown.to_string()), ("total", &total.to_string())],
-                    ))),
+                    .h(px(32.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .id("threshing-floor-search")
+                            .debug_selector(|| "threshing-floor-search".to_string())
+                            .flex_1()
+                            .min_w(px(0.))
+                            .h_full()
+                            .px_2()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .rounded(sk.rad_raw(6.))
+                            .border_1()
+                            .border_color(th.accent.alpha(0.45))
+                            .cursor(gpui::CursorStyle::IBeam)
+                            .child(render_edit_buffer(
+                                &self.threshing_floor_query,
+                                s,
+                                th.text,
+                                th.accent,
+                                th.accent.alpha(0.3),
+                            ))
+                            .when(query.is_empty(), |d| {
+                                d.child(div().text_color(th.text.alpha(0.5)).child(ui.floor_search))
+                            })
+                            .child(div().flex_1())
+                            .child(
+                                Self::bezel_btn(&sk, "×", false)
+                                    .id("threshing-floor-clear")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|ws, _: &MouseDownEvent, _, cx| {
+                                            cx.stop_propagation();
+                                            ws.threshing_floor_query = EditBuffer::seeded("");
+                                            cx.notify()
+                                        }),
+                                    ),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                                    cx.stop_propagation();
+                                    w.focus(&ws.focus_handle, cx)
+                                }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(sk.text_px(8.5))
+                            .text_color(th.text.alpha(0.6))
+                            .child(SharedString::from(lang::fill(
+                                ui.floor_results,
+                                &[("shown", &shown.to_string()), ("total", &total.to_string())],
+                            ))),
+                    ),
             )
-            .when(shown == 0 && !query.trim().is_empty(), |d| {
-                d.child(
-                    div()
-                        .p_2()
-                        .child(SharedString::from(ui.floor_no_matches.to_string())),
-                )
-            });
+            .child(
+                div()
+                    .flex_none()
+                    .min_w(px(0.))
+                    .child(self.threshing_floor_org_controls(&sk, th, cx)),
+            );
         let org_header = div()
             .id("floor-org-header")
             .debug_selector(|| "floor-org-header".to_string())
@@ -1183,7 +1311,6 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
-            .child(self.threshing_floor_org_controls(&sk, th, cx))
             .child(
                 div()
                     .text_size(sk.text_px(8.5))
@@ -1196,11 +1323,6 @@ impl Workspace {
                         }
                         .to_string(),
                     )),
-            )
-            .children(
-                self.floor_map
-                    .is_none()
-                    .then(|| self.threshing_floor_relationship_controls(&sk, th, cx)),
             )
             // The session's numbers report on the floor rather than act on it:
             // set a little apart from the org controls.
@@ -1281,7 +1403,14 @@ impl Workspace {
                         move |_, _, _| has_org
                     })
                     .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
-                        if let Some(org) = ws.floor_org {
+                        if d.relation.get() {
+                            return;
+                        }
+                        if ws.floor_relation.is_some() {
+                            if let Some(member) = ws.threshing_floor_member(&d.leaf, cx) {
+                                ws.threshing_floor_choose_member(member, cx);
+                            }
+                        } else if let Some(org) = ws.floor_org {
                             ws.threshing_floor_assign(&d.leaf, org, false, cx);
                         }
                     }))
@@ -1321,7 +1450,11 @@ impl Workspace {
                     style
                 }
             })
-            .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| ws.threshing_floor_unseat(&d.leaf, cx)))
+            .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
+                if !d.relation.get() {
+                    ws.threshing_floor_unseat(&d.leaf, cx)
+                }
+            }))
             .overflow_hidden()
             .flex()
             .flex_col()
@@ -1395,6 +1528,7 @@ impl Workspace {
             )
             .map(|d| sk.chrome(sk.finish(d)))
             .child(header)
+            .child(self.threshing_floor_relationship_controls(&sk, th, cx))
             .child(
                 div()
                     .id("threshing-floor-tiles")
@@ -1426,7 +1560,8 @@ impl Workspace {
                     cx.set_active_drag_cursor_style(gpui::CursorStyle::ClosedHand, window);
                 })
                 .capture_any_mouse_up(cx.listener(|ws, _, _, cx| {
-                    if ws.floor_drag.take().is_some() {
+                    if ws.floor_drag.take().is_some() || ws.floor_tether.is_some() {
+                        ws.floor_tether = None;
                         cx.notify();
                     }
                 }))
@@ -1447,7 +1582,8 @@ impl Workspace {
                     }),
                 )
                 .child(panel)
-                .children(self.threshing_floor_context_menu(&sk, th, cx)),
+                .children(self.threshing_floor_context_menu(&sk, th, cx))
+                .children(self.threshing_floor_verb_menu(&sk, th, cx)),
         )
     }
 
@@ -1516,7 +1652,9 @@ impl Workspace {
                                 .shadow(drop_glow(ink, true))
                         })
                         .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
-                            ws.threshing_floor_unseat(&d.leaf, cx)
+                            if !d.relation.get() {
+                                ws.threshing_floor_unseat(&d.leaf, cx)
+                            }
                         }))
                         .child(trash_icon(ink))
                         .child(
@@ -1646,8 +1784,17 @@ impl Workspace {
             return false;
         }
         if key.key == "escape" {
+            if self
+                .floor_relation
+                .as_mut()
+                .is_some_and(|e| e.verbs_at.take().is_some())
+            {
+                cx.notify();
+                return true;
+            }
             if cx.stop_active_drag(window) {
                 self.floor_drag = None;
+                self.floor_tether = None;
                 cx.notify();
                 return true;
             }
@@ -1693,7 +1840,7 @@ impl Workspace {
             }
             return true;
         }
-        if self.floor_relation.is_some() || self.floor_move.is_some() {
+        if self.floor_move.is_some() {
             return true;
         }
         let editing_org = self.floor_org_edit.is_some();
@@ -2024,7 +2171,9 @@ impl Workspace {
                         .shadow(drop_glow(ink, true))
                 })
                 .on_drop(cx.listener(move |ws, drag: &PaneDrag, _, cx| {
-                    ws.threshing_floor_drop_on_org(&drag.leaf, id, cx);
+                    if !drag.relation.get() {
+                        ws.threshing_floor_drop_on_org(&drag.leaf, id, cx);
+                    }
                 }))
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     cx.stop_propagation();
@@ -2634,36 +2783,107 @@ impl Workspace {
             .unwrap_or_else(|| self.lang.strings().ui.floor_unknown.to_string())
     }
 
+    fn threshing_floor_member_leaf(
+        &self,
+        member: &RelationMember,
+        cx: &App,
+    ) -> Option<Entity<TerminalView>> {
+        match member {
+            RelationMember::Seat(seat) => self.threshing_floor_seat_leaf(*seat, cx),
+            RelationMember::Pool(weak) => {
+                let leaf = weak.upgrade()?;
+                self.tabs.iter().find_map(|tab| {
+                    let mut leaves = Vec::new();
+                    tab.root.leaves(&mut leaves);
+                    leaves.into_iter().find(|live| **live == leaf).cloned()
+                })
+            }
+        }
+    }
+
+    fn threshing_floor_member(
+        &self,
+        leaf: &Entity<TerminalView>,
+        cx: &App,
+    ) -> Option<RelationMember> {
+        let v = leaf.read(cx);
+        match v.seat.and_then(|s| self.floor_orgs.owner(s)) {
+            Some(org) if Some(org) == self.floor_org => v.seat.map(RelationMember::Seat),
+            None if v.mode.is_agent() => Some(RelationMember::Pool(leaf.downgrade())),
+            _ => None,
+        }
+    }
+
     fn threshing_floor_begin_relation(
         &mut self,
         from: Option<threshing_floor::SeatId>,
         to: Option<threshing_floor::SeatId>,
         cx: &mut Context<Self>,
     ) {
-        if from.is_some_and(|s| self.floor_orgs.owner(s) != self.floor_org) {
+        if from.is_some_and(|s| self.floor_orgs.owner(s) != self.floor_org)
+            || to.is_some_and(|s| self.floor_orgs.owner(s) != self.floor_org || Some(s) == from)
+        {
             return;
         }
-        if to.is_some_and(|s| self.floor_orgs.owner(s) != self.floor_org || Some(s) == from) {
-            return;
-        }
-        let rung = from
-            .zip(to)
-            .and_then(|(f, t)| self.chart.line(f, t))
-            .and_then(|l| l.rung.known());
+        let labels = from
+            .iter()
+            .chain(to.iter())
+            .map(|seat| {
+                (
+                    RelationMember::Seat(*seat),
+                    self.threshing_floor_seat_label(*seat, cx),
+                )
+            })
+            .collect();
+        self.floor_feedback = None;
         self.floor_relation = Some(RelationEditor {
-            draft: threshing_floor::RelationDraft { from, to, rung },
-            choosing: if from.is_none() {
-                Some(RelationEnd::From)
-            } else if to.is_none() {
-                Some(RelationEnd::To)
+            labels,
+            actor: from.map(RelationMember::Seat),
+            targets: to.into_iter().map(RelationMember::Seat).collect(),
+            rung: from
+                .zip(to)
+                .and_then(|(a, t)| self.chart.line(a, t))
+                .and_then(|l| l.rung.known()),
+            choosing: Some(if from.is_none() {
+                RelationEnd::From
             } else {
-                None
-            },
+                RelationEnd::To
+            }),
+            ..Default::default()
         });
-        // Beginning a relationship (a drag onto a card, or Connect) keeps the
-        // person's filter — losing it mid-wiring was the "clicking an agent
-        // clears the filter" complaint.
-        self.threshing_floor_pick = None;
+        cx.notify();
+    }
+
+    fn threshing_floor_choose_member(&mut self, member: RelationMember, cx: &mut Context<Self>) {
+        let Some(leaf) = self.threshing_floor_member_leaf(&member, cx) else {
+            return;
+        };
+        if self.threshing_floor_member(&leaf, cx).as_ref() != Some(&member) {
+            return;
+        }
+        let label = self.pane_name(&leaf, cx).full();
+        let editor = self
+            .floor_relation
+            .get_or_insert_with(RelationEditor::default);
+        if editor.editing.is_some() {
+            return;
+        }
+        editor.labels.retain(|(m, _)| m != &member);
+        editor.labels.push((member.clone(), label));
+        if editor.choosing == Some(RelationEnd::From)
+            || (editor.actor.is_none() && editor.choosing != Some(RelationEnd::To))
+        {
+            editor.targets.retain(|m| m != &member);
+            editor.actor = Some(member);
+        } else if editor.actor.as_ref() != Some(&member) && !editor.targets.contains(&member) {
+            editor.targets.push(member);
+        }
+        editor.choosing = Some(if editor.actor.is_some() {
+            RelationEnd::To
+        } else {
+            RelationEnd::From
+        });
+        editor.error = None;
         cx.notify();
     }
 
@@ -2672,47 +2892,627 @@ impl Workspace {
         seat: threshing_floor::SeatId,
         cx: &mut Context<Self>,
     ) {
-        if self.floor_orgs.owner(seat) != self.floor_org {
+        if self.floor_orgs.owner(seat) == self.floor_org {
+            self.threshing_floor_choose_member(RelationMember::Seat(seat), cx);
+        }
+    }
+
+    fn threshing_floor_drop_member(
+        &mut self,
+        drag: &PaneDrag,
+        target: threshing_floor::SeatId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(actor) = self.threshing_floor_member(&drag.leaf, cx) else {
+            return;
+        };
+        // While collecting candidates, a pool card dropped on the Floor joins
+        // the current draft; hitting a member must not replace its actor.
+        if self.floor_relation.is_some()
+            && matches!(actor, RelationMember::Pool(_))
+            && !drag.relation.get()
+        {
+            self.threshing_floor_choose_member(actor, cx);
             return;
         }
-        if let Some(editor) = &mut self.floor_relation {
-            match editor.choosing {
-                Some(RelationEnd::From) => {
-                    editor.draft.from = Some(seat);
-                    if editor.draft.to == Some(seat) {
-                        editor.draft.to = None;
-                    }
-                    editor.choosing = Some(RelationEnd::To);
-                }
-                Some(RelationEnd::To) if editor.draft.from != Some(seat) => {
-                    editor.draft.to = Some(seat);
-                    editor.choosing = None;
-                }
-                _ => return,
-            }
-            editor.draft.rung = None;
+        let target = RelationMember::Seat(target);
+        if actor == target
+            || self.floor_orgs.owner(match target {
+                RelationMember::Seat(s) => s,
+                _ => unreachable!(),
+            }) != self.floor_org
+        {
+            return;
         }
+        let labels = vec![
+            (actor.clone(), self.pane_name(&drag.leaf, cx).full()),
+            (
+                target.clone(),
+                self.threshing_floor_seat_label(
+                    match target {
+                        RelationMember::Seat(s) => s,
+                        _ => unreachable!(),
+                    },
+                    cx,
+                ),
+            ),
+        ];
+        self.floor_relation = Some(RelationEditor {
+            labels,
+            actor: Some(actor),
+            targets: vec![target],
+            choosing: Some(RelationEnd::To),
+            ..Default::default()
+        });
         cx.notify();
     }
 
-    fn threshing_floor_save_relation(&mut self, cx: &mut Context<Self>) {
-        let ready = self
-            .floor_relation
-            .as_ref()
-            .and_then(|e| e.draft.ready(&self.floor_orgs));
-        if let Some((from, to, rung)) = ready {
-            if self.floor_orgs.owner(from) != self.floor_org
-                || self.threshing_floor_seat_leaf(from, cx).is_none()
-                || self.threshing_floor_seat_leaf(to, cx).is_none()
-            {
-                return;
+    /// Resolve every live identity and stage membership in a copy. A missing or
+    /// moved pane rejects the whole selection before a single live mutation.
+    fn threshing_floor_prepare_relation(&self, cx: &App) -> Option<PreparedRelationship> {
+        let editor = self.floor_relation.as_ref()?;
+        let org = self.floor_org?;
+        let mut members = Vec::new();
+        for member in editor.actor.iter().chain(editor.targets.iter()) {
+            if members.contains(member) {
+                return None;
             }
-            self.chart.draw(from, to, rung);
-            self.threshing_floor_forget_pair(from, to, cx);
-            self.floor_relation = None;
-            self.save(cx);
-            cx.notify();
+            members.push(member.clone());
         }
+        let mut orgs = self.floor_orgs.clone();
+        let mut staged = Vec::new();
+        let mut resolve = |member: &RelationMember| -> Option<threshing_floor::SeatId> {
+            let leaf = self.threshing_floor_member_leaf(member, cx)?;
+            let v = leaf.read(cx);
+            match member {
+                RelationMember::Seat(s) if orgs.owner(*s) == Some(org) => Some(*s),
+                RelationMember::Pool(_)
+                    if v.mode.is_agent() && v.seat.and_then(|s| orgs.owner(s)).is_none() =>
+                {
+                    let seat = v.seat.unwrap_or_else(threshing_floor::SeatId::mint);
+                    orgs.assign(seat, org);
+                    staged.push((leaf.clone(), seat));
+                    Some(seat)
+                }
+                _ => None,
+            }
+        };
+        let actor = resolve(editor.actor.as_ref()?)?;
+        let targets = editor
+            .targets
+            .iter()
+            .map(&mut resolve)
+            .collect::<Option<Vec<_>>>()?;
+        let pairs = threshing_floor::RelationBatch {
+            actor: Some(actor),
+            targets,
+            verb: editor.rung,
+        }
+        .ready(&orgs, org)?;
+        Some(PreparedRelationship { org, staged, pairs })
+    }
+
+    fn threshing_floor_member_label(&self, member: &RelationMember, cx: &App) -> String {
+        self.threshing_floor_member_leaf(member, cx)
+            .map(|leaf| self.pane_name(&leaf, cx).full())
+            .or_else(|| {
+                self.floor_relation.as_ref().and_then(|e| {
+                    e.labels
+                        .iter()
+                        .find(|(m, _)| m == member)
+                        .map(|(_, label)| label.clone())
+                })
+            })
+            .unwrap_or_else(|| self.lang.strings().ui.floor_unavailable.to_string())
+    }
+
+    fn threshing_floor_save_relation(&mut self, cx: &mut Context<Self>) {
+        let Some(prepared) = self.threshing_floor_prepare_relation(cx) else {
+            let missing = self
+                .floor_relation
+                .as_ref()
+                .and_then(|e| {
+                    e.actor.iter().chain(e.targets.iter()).find(|member| {
+                        self.threshing_floor_member_leaf(member, cx)
+                            .is_none_or(|leaf| {
+                                self.threshing_floor_member(&leaf, cx).as_ref() != Some(member)
+                            })
+                    })
+                })
+                .map(|member| self.threshing_floor_member_label(member, cx));
+            let error = match missing {
+                Some(name) => format!("{} · {name}", self.lang.strings().ui.floor_rel_invalid),
+                None => self.lang.strings().ui.floor_rel_invalid.to_string(),
+            };
+            if let Some(editor) = &mut self.floor_relation {
+                editor.error = Some(error);
+                cx.notify();
+            }
+            return;
+        };
+        for (leaf, seat) in prepared.staged {
+            self.chart.forget_seat(seat);
+            self.threshing_floor_forget_pending(&leaf, seat, cx);
+            self.floor_orgs.assign(seat, prepared.org);
+            leaf.update(cx, |v, cx| v.set_seat(Some(seat), cx));
+        }
+        let count = prepared.pairs.len();
+        for (actor, target, verb) in prepared.pairs {
+            self.chart.draw(actor, target, verb);
+            self.threshing_floor_forget_pair(actor, target, cx);
+        }
+        self.floor_relation = None;
+        self.floor_feedback = Some(lang::fill(
+            self.lang.strings().ui.floor_rel_done,
+            &[("n", &count.to_string())],
+        ));
+        self.save(cx);
+        cx.notify();
+    }
+
+    fn threshing_floor_member_card(
+        &self,
+        member: &RelationMember,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        cx: &App,
+    ) -> gpui::Div {
+        let mut card = sk.action(
+            div()
+                .relative()
+                .w(px(170.))
+                .h(px(78.))
+                .flex_none()
+                .p_2()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .border_1()
+                .border_color(th.accent.alpha(0.6))
+                .rounded(sk.radius()),
+            true,
+        );
+        if let Some(leaf) = self.threshing_floor_member_leaf(member, cx) {
+            let v = leaf.read(cx);
+            let name = self.pane_name(&leaf, cx);
+            card = card
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(sk.text_px(8.))
+                        .text_color(th.text.alpha(0.65))
+                        .child(SharedString::from(name.outer)),
+                )
+                .child(
+                    div()
+                        .truncate()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(SharedString::from(name.tab)),
+                )
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(sk.text_px(8.))
+                        .child(v.agent_status().state.label_in(self.lang)),
+                )
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(sk.text_px(8.))
+                        .text_color(th.text.alpha(0.65))
+                        .child(SharedString::from(v.mode.label().to_string())),
+                );
+            if v.agent_access.is_off_limits() {
+                card = card.child(
+                    div()
+                        .truncate()
+                        .text_size(sk.text_px(8.))
+                        .child(self.lang.strings().parts.pane_off_limits_badge),
+                );
+            }
+        } else {
+            card = card
+                .child(div().truncate().child(SharedString::from(
+                    self.threshing_floor_member_label(member, cx),
+                )))
+                .child(self.lang.strings().ui.floor_unavailable);
+        }
+        card
+    }
+
+    /// Always occupies the same space. The chart and pool below ARE the picker.
+    fn threshing_floor_composer(
+        &self,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let ui = self.lang.strings().ui;
+        let editor = self.floor_relation.as_ref();
+        let actor = editor
+            .and_then(|e| e.actor.clone())
+            .or_else(|| self.threshing_floor_pick.map(RelationMember::Seat));
+        let targets = editor.map(|e| e.targets.clone()).unwrap_or_default();
+        let ready = self.threshing_floor_prepare_relation(cx);
+        let locked = editor.is_some_and(|e| e.editing.is_some());
+        let mut title = div()
+            .h(px(23.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(th.accent)
+                    .child(ui.floor_rel),
+            )
+            .child(div().flex_1())
+            .child(
+                Self::bezel_btn(sk, ui.floor_rel_connect, editor.is_some())
+                    .id("floor-connect")
+                    .debug_selector(|| "floor-connect".to_string())
+                    .on_click(cx.listener(|ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.threshing_floor_begin_relation(ws.threshing_floor_pick, None, cx);
+                    })),
+            );
+        if let Some(leaf) = self
+            .threshing_floor_pick
+            .and_then(|s| self.threshing_floor_seat_leaf(s, cx))
+        {
+            title = title.child(
+                Self::bezel_btn(sk, ui.floor_remove, false)
+                    .id("floor-unseat")
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.threshing_floor_unseat(&leaf, cx)
+                    })),
+            );
+        }
+        let actor_card = actor
+            .as_ref()
+            .map(|m| self.threshing_floor_member_card(m, sk, th, cx))
+            .unwrap_or_else(|| {
+                div()
+                    .w(px(170.))
+                    .h(px(78.))
+                    .flex_none()
+                    .border_1()
+                    .border_color(th.accent.alpha(0.5))
+                    .rounded(sk.radius())
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(SharedString::from(format!("+ {}", ui.floor_rel_from)))
+            });
+        let actor_slot = div()
+            .id("floor-rel-from")
+            .debug_selector(|| "floor-rel-from".to_string())
+            .flex_none()
+            .cursor_pointer()
+            .child(
+                div()
+                    .h(px(17.))
+                    .text_size(sk.text_px(8.))
+                    .text_color(th.text.alpha(0.65))
+                    .child(ui.floor_rel_from),
+            )
+            .child(actor_card)
+            .on_click(cx.listener(move |ws, _, _, cx| {
+                cx.stop_propagation();
+                if locked {
+                    return;
+                }
+                if ws.floor_relation.is_none() {
+                    ws.threshing_floor_begin_relation(None, None, cx)
+                }
+                if let Some(e) = &mut ws.floor_relation {
+                    e.choosing = Some(RelationEnd::From)
+                }
+                cx.notify()
+            }))
+            .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
+                if let Some(m) = ws.threshing_floor_member(&d.leaf, cx) {
+                    let e = ws
+                        .floor_relation
+                        .get_or_insert_with(RelationEditor::default);
+                    e.choosing = Some(RelationEnd::From);
+                    ws.threshing_floor_choose_member(m, cx)
+                }
+            }));
+        let current = editor.and_then(|e| e.rung);
+        let verb = current
+            .map(|r| match r {
+                threshing_floor::Rung::See => ui.floor_rung_see,
+                threshing_floor::Rung::Read => ui.floor_rung_read,
+                threshing_floor::Rung::Ask => ui.floor_rung_ask,
+                threshing_floor::Rung::Prompt => ui.floor_rung_prompt,
+            })
+            .unwrap_or(ui.floor_rel_verb);
+        let verb_slot = div()
+            .flex_none()
+            .w(px(120.))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .h(px(17.))
+                    .text_size(sk.text_px(8.))
+                    .text_color(th.text.alpha(0.65))
+                    .child(ui.floor_rel_can),
+            )
+            .child(
+                Self::bezel_btn(sk, &format!("{verb} ▾"), current.is_some())
+                    .id("floor-rel-verb")
+                    .debug_selector(|| "floor-rel-verb".to_string())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, ev: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            if ws.floor_relation.is_none() {
+                                ws.threshing_floor_begin_relation(ws.threshing_floor_pick, None, cx)
+                            }
+                            if let Some(e) = &mut ws.floor_relation {
+                                e.verbs_at = Some(ev.position)
+                            }
+                            cx.notify()
+                        }),
+                    ),
+            );
+        let mut target_row = div().flex().flex_row().gap_2().items_center().h(px(78.));
+        for (i, member) in targets.iter().enumerate() {
+            let mut card = self.threshing_floor_member_card(member, sk, th, cx);
+            if !locked {
+                card = card.child(
+                    Self::bezel_btn(sk, "×", false)
+                        .id(SharedString::from(format!("floor-target-remove-{i}")))
+                        .absolute()
+                        .right_0()
+                        .top_0()
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            cx.stop_propagation();
+                            if let Some(e) = &mut ws.floor_relation {
+                                if i < e.targets.len() {
+                                    e.targets.remove(i);
+                                    e.error = None
+                                }
+                            }
+                            cx.notify()
+                        })),
+                );
+            }
+            target_row = target_row.child(card);
+        }
+        if !locked {
+            target_row = target_row.child(
+                Self::bezel_btn(sk, &format!("+ {}", ui.floor_rel_to), false)
+                    .id("floor-rel-to")
+                    .debug_selector(|| "floor-rel-to".to_string())
+                    .h(px(78.))
+                    .w(px(if targets.is_empty() { 170. } else { 90. }))
+                    .flex_none()
+                    .on_click(cx.listener(|ws, _, _, cx| {
+                        cx.stop_propagation();
+                        if ws.floor_relation.is_none() {
+                            ws.threshing_floor_begin_relation(ws.threshing_floor_pick, None, cx)
+                        }
+                        if let Some(e) = &mut ws.floor_relation {
+                            e.choosing = Some(RelationEnd::To)
+                        }
+                        cx.notify()
+                    })),
+            );
+        }
+        let target_slot = div()
+            .flex_1()
+            .min_w(px(0.))
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .h(px(17.))
+                    .text_size(sk.text_px(8.))
+                    .text_color(th.text.alpha(0.65))
+                    .child(ui.floor_rel_to),
+            )
+            .child(
+                div()
+                    .id("floor-targets-strip")
+                    .debug_selector(|| "floor-targets-strip".to_string())
+                    .h(px(78.))
+                    .overflow_x_scroll()
+                    .child(target_row),
+            )
+            .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
+                if let Some(m) = ws.threshing_floor_member(&d.leaf, cx) {
+                    if ws.floor_relation.is_none() {
+                        ws.threshing_floor_begin_relation(ws.threshing_floor_pick, None, cx)
+                    }
+                    if let Some(e) = &mut ws.floor_relation {
+                        e.choosing = Some(RelationEnd::To)
+                    }
+                    ws.threshing_floor_choose_member(m, cx)
+                }
+            }));
+        let staged = editor
+            .map(|e| {
+                e.actor
+                    .iter()
+                    .chain(e.targets.iter())
+                    .filter(|m| matches!(m, RelationMember::Pool(_)))
+                    .count()
+            })
+            .unwrap_or(0);
+        let changed = ready
+            .as_ref()
+            .map(|p| {
+                p.pairs
+                    .iter()
+                    .filter(|(a, t, _)| self.chart.line(*a, *t).is_some())
+                    .count()
+            })
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| ui.floor_unknown.to_string());
+        let summary = editor
+            .and_then(|e| e.error.clone())
+            .or_else(|| {
+                (!targets.is_empty()).then(|| {
+                    lang::fill(
+                        ui.floor_rel_summary,
+                        &[
+                            ("n", &targets.len().to_string()),
+                            ("added", &staged.to_string()),
+                            ("changed", &changed.to_string()),
+                        ],
+                    )
+                })
+            })
+            .or_else(|| self.floor_feedback.clone())
+            .unwrap_or_else(|| ui.floor_rel_choose.to_string());
+        let mut footer = div()
+            .h(px(27.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .truncate()
+                    .text_size(sk.text_px(8.5))
+                    .text_color(th.text.alpha(0.7))
+                    .child(SharedString::from(summary)),
+            )
+            .child(
+                Self::bezel_btn(sk, ui.floor_rel_save, ready.is_some())
+                    .id("floor-rel-save")
+                    .debug_selector(|| "floor-rel-save".to_string())
+                    .opacity(if ready.is_some() { 1. } else { 0.4 })
+                    .on_click(cx.listener(|ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.threshing_floor_save_relation(cx)
+                    })),
+            )
+            .child(
+                Self::bezel_btn(sk, ui.dlg_cancel, false)
+                    .id("floor-rel-cancel")
+                    .debug_selector(|| "floor-rel-cancel".to_string())
+                    .on_click(cx.listener(|ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.floor_relation = None;
+                        cx.notify()
+                    })),
+            );
+        if let Some((from, to)) = editor.and_then(|e| e.editing) {
+            footer = footer.child(
+                Self::bezel_btn(sk, ui.floor_erase, false)
+                    .id("floor-rel-remove")
+                    .debug_selector(|| "floor-rel-remove".to_string())
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.chart.erase(from, to);
+                        ws.threshing_floor_forget_pair(from, to, cx);
+                        ws.floor_relation = None;
+                        ws.save(cx);
+                        cx.notify()
+                    })),
+            );
+        }
+        sk.action(
+            div()
+                .id("floor-relationship-composer")
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .debug_selector(|| "floor-relationship-composer".to_string())
+                .h(px(178.))
+                .flex_none()
+                .min_w(px(0.))
+                .p_3()
+                .border_1()
+                .border_color(th.accent.alpha(0.75))
+                .rounded(sk.radius())
+                .flex()
+                .flex_col()
+                .gap_2(),
+            true,
+        )
+        .child(title)
+        .child(
+            div()
+                .h(px(95.))
+                .flex_none()
+                .flex()
+                .flex_row()
+                .gap_3()
+                .min_w(px(0.))
+                .child(actor_slot)
+                .child(div().pt(px(39.)).child("→"))
+                .child(verb_slot)
+                .child(div().pt(px(39.)).child("→"))
+                .child(target_slot),
+        )
+        .child(footer)
+    }
+
+    fn threshing_floor_verb_menu(
+        &self,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let at = self.floor_relation.as_ref()?.verbs_at?;
+        let ui = self.lang.strings().ui;
+        let mut menu = div()
+            .id("floor-verb-menu")
+            .debug_selector(|| "floor-verb-menu".to_string())
+            .occlude()
+            .w(px(150.))
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .bg(th.surface)
+            .border_1()
+            .border_color(th.accent)
+            .rounded(sk.radius())
+            .shadow_md()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down_out(cx.listener(|ws, _, _, cx| {
+                if let Some(e) = &mut ws.floor_relation {
+                    e.verbs_at = None
+                }
+                cx.notify()
+            }));
+        for (rung, label) in [
+            (threshing_floor::Rung::See, ui.floor_rung_see),
+            (threshing_floor::Rung::Read, ui.floor_rung_read),
+            (threshing_floor::Rung::Ask, ui.floor_rung_ask),
+            (threshing_floor::Rung::Prompt, ui.floor_rung_prompt),
+        ] {
+            menu = menu.child(
+                Self::bezel_btn(
+                    sk,
+                    label,
+                    self.floor_relation
+                        .as_ref()
+                        .is_some_and(|e| e.rung == Some(rung)),
+                )
+                .id(SharedString::from(format!("floor-rung-{rung:?}")))
+                .debug_selector(move || format!("floor-rung-{rung:?}"))
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    cx.stop_propagation();
+                    if let Some(e) = &mut ws.floor_relation {
+                        e.rung = Some(rung);
+                        e.verbs_at = None;
+                        e.error = None
+                    }
+                    cx.notify()
+                })),
+            );
+        }
+        Some(deferred(anchored().position(at).child(menu)).into_any_element())
     }
 
     fn threshing_floor_relationship_controls(
@@ -2777,233 +3577,7 @@ impl Workspace {
                     ),
             );
         }
-        let mut row = div()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .items_center()
-            .gap_2()
-            .child(
-                Self::bezel_btn(sk, ui.floor_rel_connect, self.floor_relation.is_some())
-                    .id("floor-connect")
-                    .debug_selector(|| "floor-connect".to_string())
-                    .on_click(cx.listener(|ws, _, _, cx| {
-                        cx.stop_propagation();
-                        ws.threshing_floor_begin_relation(ws.threshing_floor_pick, None, cx);
-                    })),
-            );
-        if let Some(seat) = self.threshing_floor_pick {
-            if let Some(leaf) = self.threshing_floor_seat_leaf(seat, cx) {
-                let n = self
-                    .chart
-                    .saved()
-                    .iter()
-                    .filter(|l| l.from == seat || l.to == seat)
-                    .count();
-                let label = lang::fill(ui.floor_org_remove, &[("n", &n.to_string())]);
-                row = row
-                    .child(SharedString::from(
-                        self.threshing_floor_seat_label(seat, cx),
-                    ))
-                    .child(
-                        Self::bezel_btn(sk, &label, false)
-                            .id("floor-unseat")
-                            .on_click(cx.listener(move |ws, _, _, cx| {
-                                cx.stop_propagation();
-                                ws.threshing_floor_unseat(&leaf, cx);
-                            })),
-                    );
-            }
-        }
-        controls = controls.child(row);
-        let Some(editor) = &self.floor_relation else {
-            return controls;
-        };
-        let mut form = div()
-            .p_2()
-            .border_1()
-            .border_color(th.accent.alpha(0.7))
-            .rounded(sk.rad_raw(6.))
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(SharedString::from(ui.floor_rel.to_string()));
-        let mut ends = div().flex().flex_row().flex_wrap().gap_2();
-        for (end, seat, label, id) in [
-            (
-                RelationEnd::From,
-                editor.draft.from,
-                ui.floor_rel_from,
-                "floor-rel-from",
-            ),
-            (
-                RelationEnd::To,
-                editor.draft.to,
-                ui.floor_rel_to,
-                "floor-rel-to",
-            ),
-        ] {
-            let value = seat
-                .map(|s| self.threshing_floor_seat_label(s, cx))
-                .unwrap_or_else(|| ui.floor_unknown.to_string());
-            ends = ends.child(
-                Self::bezel_btn(sk, &format!("{label}: {value}"), false)
-                    .id(id)
-                    .max_w(px(320.))
-                    .overflow_hidden()
-                    // A full pane name ("TERMINAL DELIGHT › MCP work · claude-…")
-                    // truncates on one line instead of char-wrapping down the panel.
-                    .text_ellipsis()
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        cx.stop_propagation();
-                        if let Some(e) = &mut ws.floor_relation {
-                            e.choosing = Some(end);
-                        }
-                        cx.notify();
-                    })),
-            );
-        }
-        form = form.child(ends);
-        if let Some(end) = editor.choosing {
-            let mut list = div()
-                .id("floor-rel-endpoints")
-                .max_h(px(130.))
-                .overflow_y_scroll()
-                .flex()
-                .flex_col()
-                .gap_1();
-            for tab in &self.tabs {
-                let mut leaves = Vec::new();
-                tab.root.leaves(&mut leaves);
-                for leaf in leaves {
-                    let Some(seat) = leaf.read(cx).seat else {
-                        continue;
-                    };
-                    if self.floor_orgs.owner(seat) != self.floor_org
-                        || matches!(end, RelationEnd::To) && editor.draft.from == Some(seat)
-                    {
-                        continue;
-                    }
-                    list = list.child(
-                        Self::bezel_btn(sk, &self.threshing_floor_seat_label(seat, cx), false)
-                            .id(SharedString::from(format!("floor-endpoint-{}", seat.0)))
-                            .on_click(cx.listener(move |ws, _, _, cx| {
-                                cx.stop_propagation();
-                                ws.threshing_floor_choose_endpoint(seat, cx);
-                            })),
-                    );
-                }
-            }
-            form = form.child(list);
-        }
-        let mut levels = div().flex().flex_row().flex_wrap().items_center().gap_2();
-        for (rung, label) in [
-            (threshing_floor::Rung::See, ui.floor_rung_see),
-            (threshing_floor::Rung::Read, ui.floor_rung_read),
-            (threshing_floor::Rung::Ask, ui.floor_rung_ask),
-            (threshing_floor::Rung::Prompt, ui.floor_rung_prompt),
-        ] {
-            let selected = editor.draft.rung == Some(rung);
-            // The rungs escalate see < read < ask < prompt. `prompt` is the top
-            // clearance, the only rung that writes into another agent's own
-            // conversation, so it wears the action colour (the same amber a
-            // bypass line is drawn in) and a ▲ mark, and the lower rungs are
-            // dimmed so the powerful one reads first. A person should never
-            // grant it by reflex. (`is_ask` names the top rung, now Prompt.)
-            let is_ask = matches!(rung, threshing_floor::Rung::Prompt);
-            let shown = if is_ask {
-                format!("\u{25B2} {label}")
-            } else {
-                label.to_string()
-            };
-            let mut btn = Self::bezel_btn(sk, &shown, selected)
-                .id(SharedString::from(format!("floor-rung-{rung:?}")))
-                .debug_selector(move || format!("floor-rung-{rung:?}"));
-            if is_ask {
-                btn = btn
-                    .border_color(th.ansi[3])
-                    .font_weight(gpui::FontWeight::BOLD);
-                if !selected {
-                    btn = btn.text_color(th.ansi[3]);
-                }
-            } else if !selected {
-                btn = btn.opacity(0.7);
-            }
-            levels = levels.child(btn.on_click(cx.listener(move |ws, _, _, cx| {
-                cx.stop_propagation();
-                if let Some(e) = &mut ws.floor_relation {
-                    e.draft.rung = Some(rung);
-                }
-                cx.notify();
-            })));
-        }
-        let sentence = if let Some((from, to, rung)) = editor.draft.ready(&self.floor_orgs) {
-            let word = match rung {
-                threshing_floor::Rung::See => ui.floor_rung_see,
-                threshing_floor::Rung::Read => ui.floor_rung_read,
-                threshing_floor::Rung::Ask => ui.floor_rung_ask,
-                threshing_floor::Rung::Prompt => ui.floor_rung_prompt,
-            };
-            lang::fill(
-                ui.floor_rel_sentence,
-                &[
-                    ("from", &self.threshing_floor_seat_label(from, cx)),
-                    ("to", &self.threshing_floor_seat_label(to, cx)),
-                    ("rung", word),
-                ],
-            )
-        } else {
-            ui.floor_rel_choose.to_string()
-        };
-        let ready = editor
-            .draft
-            .ready(&self.floor_orgs)
-            .is_some_and(|(f, t, _)| {
-                self.threshing_floor_seat_leaf(f, cx).is_some()
-                    && self.threshing_floor_seat_leaf(t, cx).is_some()
-            });
-        levels = levels
-            .child(
-                Self::bezel_btn(sk, ui.floor_rel_save, ready)
-                    .id("floor-rel-save")
-                    .debug_selector(|| "floor-rel-save".to_string())
-                    .opacity(if ready { 1. } else { 0.4 })
-                    .on_click(cx.listener(|ws, _, _, cx| {
-                        cx.stop_propagation();
-                        ws.threshing_floor_save_relation(cx);
-                    })),
-            )
-            .child(
-                Self::bezel_btn(sk, ui.dlg_cancel, false)
-                    .id("floor-rel-cancel")
-                    .debug_selector(|| "floor-rel-cancel".to_string())
-                    .on_click(cx.listener(|ws, _, _, cx| {
-                        cx.stop_propagation();
-                        ws.floor_relation = None;
-                        cx.notify();
-                    })),
-            );
-        if let Some((from, to)) = editor
-            .draft
-            .from
-            .zip(editor.draft.to)
-            .filter(|(f, t)| self.chart.line(*f, *t).is_some())
-        {
-            levels = levels.child(
-                Self::bezel_btn(sk, ui.floor_erase, false)
-                    .id("floor-rel-remove")
-                    .debug_selector(|| "floor-rel-remove".to_string())
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        cx.stop_propagation();
-                        ws.chart.erase(from, to);
-                        ws.threshing_floor_forget_pair(from, to, cx);
-                        ws.floor_relation = None;
-                        ws.save(cx);
-                        cx.notify();
-                    })),
-            );
-        }
-        controls.child(form.child(SharedString::from(sentence)).child(levels))
+        controls.child(self.threshing_floor_composer(sk, th, cx))
     }
 
     /// The System Map: the higher-level view across every org. It carries a
@@ -4311,6 +4885,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.threshing_floor_begin_relation(Some(from), Some(to), cx);
+        if let Some(e) = &mut self.floor_relation {
+            e.editing = Some((from, to));
+            e.choosing = None;
+        }
     }
 }
 
@@ -5299,12 +5877,11 @@ mod tests {
             std::mem::swap(&mut bypass.from, &mut bypass.to);
             ws.asks.open(threshing_floor::AskId(4), bypass);
             ws.floor_relation = Some(RelationEditor {
-                draft: threshing_floor::RelationDraft {
-                    from: Some(threshing_floor::SeatId(100)),
-                    to: Some(threshing_floor::SeatId(101)),
-                    rung: Some(threshing_floor::Rung::See),
-                },
+                actor: Some(RelationMember::Seat(threshing_floor::SeatId(100))),
+                targets: vec![RelationMember::Seat(threshing_floor::SeatId(101))],
+                rung: Some(threshing_floor::Rung::See),
                 choosing: None,
+                ..Default::default()
             });
             ws.threshing_floor_save_relation(cx);
             assert!(
@@ -5642,9 +6219,15 @@ mod tests {
                 .floor_relation
                 .as_ref()
                 .expect("connector drop opened the builder");
-            assert_eq!(editor.draft.from, Some(threshing_floor::SeatId(100)));
-            assert_eq!(editor.draft.to, Some(threshing_floor::SeatId(101)));
-            assert_eq!(editor.draft.rung, None);
+            assert_eq!(
+                editor.actor,
+                Some(RelationMember::Seat(threshing_floor::SeatId(100)))
+            );
+            assert_eq!(
+                editor.targets,
+                vec![RelationMember::Seat(threshing_floor::SeatId(101))]
+            );
+            assert_eq!(editor.rung, None);
             assert!(
                 ws.chart.saved().is_empty(),
                 "dropping a connector granted access"
@@ -5652,6 +6235,7 @@ mod tests {
         });
         click(cx, "floor-rel-save");
         assert!(ws.read_with(cx, |ws, _| ws.chart.saved().is_empty()));
+        click(cx, "floor-rel-verb");
         click(cx, "floor-rung-Read");
         click(cx, "floor-rel-save");
         ws.read_with(cx, |ws, _| {
@@ -5666,6 +6250,7 @@ mod tests {
         });
         assert_eq!(bounds(cx, "floor-seat-100").size, original);
         click(cx, "floor-line-100-101");
+        click(cx, "floor-rel-verb");
         click(cx, "floor-rung-Ask");
         click(cx, "floor-rel-cancel");
         ws.read_with(cx, |ws, _| {
@@ -5917,7 +6502,12 @@ mod tests {
             assert!(frame.origin.x >= px(0.) && frame.right() <= dimensions.width);
             assert!(frame.origin.y >= px(0.) && frame.bottom() <= dimensions.height);
             assert!(chart.bottom() <= frame.bottom() && pool.bottom() <= frame.bottom());
-            assert!(chart.size.height > px(0.) && pool.size.height > px(0.));
+            assert!(
+                chart.size.height > px(0.) && pool.size.height > px(0.),
+                "chart {chart:?}, pool {pool:?}, header {:?}, composer {:?}",
+                bounds(cx, "threshing-floor-header"),
+                bounds(cx, "floor-relationship-composer")
+            );
             assert!(
                 chart.right() < pool.origin.x,
                 "the pool belongs on the right"
@@ -5968,6 +6558,301 @@ mod tests {
                 "a header scrolled away"
             );
         }
+    }
+
+    fn pool_member(
+        ws: &Entity<Workspace>,
+        cx: &mut gpui::VisualTestContext,
+        name: &str,
+    ) -> Entity<TerminalView> {
+        let name = name.to_string();
+        let leaf = cx.update(|window, cx| {
+            ws.update(cx, |ws, cx| {
+                let leaf = {
+                    let _fork = crate::testsync::forks_and_locks();
+                    make_pane_window_owned(
+                        session::PaneRestore {
+                            program: Some(("/bin/cat".into(), vec![])),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    )
+                };
+                leaf.update(cx, |v, cx| {
+                    v.mode = pane::PaneMode::Codex;
+                    v.fixture_set_pane_id(30 + ws.tabs.len() as u64);
+                    cx.notify();
+                });
+                ws.tabs.push(Tab::new(Node::Leaf(leaf.clone()), Some(name)));
+                cx.notify();
+                leaf
+            })
+        });
+        let cleanup = leaf.read_with(cx, |v, _| v.fixture_shutdown());
+        cx.on_quit(cleanup);
+        cx.run_until_parked();
+        leaf
+    }
+
+    #[gpui::test]
+    fn composer_is_reserved_and_filter_stays_editable_while_choosing(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let ids = [
+            "floor-relationship-composer",
+            "threshing-floor-chart",
+            "floor-pool-tile",
+        ];
+        let before = ids.map(|id| bounds(cx, id));
+        click(cx, "floor-seat-100");
+        click(cx, "floor-connect");
+        assert_eq!(
+            ids.map(|id| bounds(cx, id)),
+            before,
+            "opening the draft moved the page"
+        );
+        cx.simulate_keystrokes("w o r k e r");
+        cx.run_until_parked();
+        click(cx, "floor-seat-101");
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(ws.threshing_floor_query.text(), "worker");
+            let e = ws.floor_relation.as_ref().unwrap();
+            assert_eq!(
+                e.actor,
+                Some(RelationMember::Seat(threshing_floor::SeatId(100)))
+            );
+            assert_eq!(
+                e.targets,
+                vec![RelationMember::Seat(threshing_floor::SeatId(101))]
+            );
+        });
+        click(cx, "floor-rel-cancel");
+        assert_eq!(
+            ids.map(|id| bounds(cx, id)),
+            before,
+            "cancelling moved the page"
+        );
+        assert_eq!(
+            ws.read_with(cx, |ws, _| ws.threshing_floor_query.text()),
+            "worker"
+        );
+    }
+
+    #[gpui::test]
+    fn whole_card_drop_builds_a_relationship_without_moving_membership(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let chart = bounds(cx, "threshing-floor-chart");
+        drag(cx, "floor-seat-100", "floor-seat-101");
+        ws.read_with(cx, |ws, _| {
+            let e = ws
+                .floor_relation
+                .as_ref()
+                .expect("body drop must open the builder");
+            assert_eq!(
+                e.actor,
+                Some(RelationMember::Seat(threshing_floor::SeatId(100)))
+            );
+            assert_eq!(
+                e.targets,
+                vec![RelationMember::Seat(threshing_floor::SeatId(101))]
+            );
+            assert!(ws.chart.saved().is_empty());
+            assert_eq!(
+                ws.floor_orgs.owner(threshing_floor::SeatId(100)),
+                ws.floor_org
+            );
+        });
+        assert_eq!(bounds(cx, "threshing-floor-chart"), chart);
+    }
+
+    #[gpui::test]
+    fn alt_drag_draws_a_tether_and_never_uses_a_membership_destination(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let source = bounds(cx, "floor-seat-100");
+        let alt = gpui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        cx.simulate_mouse_down(source.center(), MouseButton::Left, alt);
+        cx.simulate_mouse_move(
+            source.center() + point(px(10.), px(10.)),
+            MouseButton::Left,
+            alt,
+        );
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("floor-connection-tether").is_some(),
+            "Alt drag still drew a card preview"
+        );
+        assert_eq!(bounds(cx, "floor-seat-100"), source);
+        let end = bounds(cx, "floor-seat-101").center();
+        cx.simulate_mouse_move(end, MouseButton::Left, alt);
+        cx.simulate_mouse_up(end, MouseButton::Left, alt);
+        cx.run_until_parked();
+        assert!(ws.read_with(cx, |ws, _| ws.floor_relation.is_some()));
+        click(cx, "floor-rel-cancel");
+        cx.simulate_mouse_down(source.center(), MouseButton::Left, alt);
+        cx.simulate_mouse_move(
+            source.center() + point(px(10.), px(10.)),
+            MouseButton::Left,
+            alt,
+        );
+        cx.run_until_parked();
+        let end = bounds(cx, "threshing-floor-pool").center();
+        cx.simulate_mouse_move(end, MouseButton::Left, alt);
+        cx.simulate_mouse_up(end, MouseButton::Left, alt);
+        cx.run_until_parked();
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(
+                ws.floor_orgs.owner(threshing_floor::SeatId(100)),
+                ws.floor_org,
+                "Alt drag removed membership"
+            );
+            assert!(ws.floor_relation.is_none());
+            assert!(ws.chart.saved().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn pool_members_are_staged_then_saved_with_every_relationship(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let first = pool_member(&ws, cx, "Pool one");
+        let second = pool_member(&ws, cx, "Pool two");
+        let first_id = format!("floor-pane-{}", first.entity_id().as_u64());
+        let second_id = format!("floor-pane-{}", second.entity_id().as_u64());
+        click(cx, "floor-seat-100");
+        click(cx, "floor-connect");
+        click(cx, "floor-seat-101");
+        drag(cx, &first_id, "floor-seat-101");
+        click(cx, &second_id);
+        ws.read_with(cx, |ws, cx| {
+            assert_eq!(ws.floor_relation.as_ref().unwrap().targets.len(), 3);
+            assert_eq!(
+                ws.floor_relation.as_ref().unwrap().actor,
+                Some(RelationMember::Seat(threshing_floor::SeatId(100))),
+                "pool drop replaced the selected actor"
+            );
+            assert!(
+                first.read(cx).seat.is_none() && second.read(cx).seat.is_none(),
+                "draft seated a pool pane"
+            );
+            assert!(ws.chart.saved().is_empty());
+        });
+        click(cx, "floor-rel-verb");
+        click(cx, "floor-rung-Read");
+        click(cx, "floor-rel-save");
+        ws.read_with(cx, |ws, cx| {
+            assert!(ws.floor_relation.is_none());
+            assert_eq!(ws.chart.saved().len(), 3);
+            for leaf in [&first, &second] {
+                let seat = leaf
+                    .read(cx)
+                    .seat
+                    .expect("Submit must seat the pool member");
+                assert_eq!(ws.floor_orgs.owner(seat), ws.floor_org);
+                assert_eq!(
+                    ws.chart
+                        .line(threshing_floor::SeatId(100), seat)
+                        .unwrap()
+                        .rung
+                        .known(),
+                    Some(threshing_floor::Rung::Read)
+                );
+                assert!(ws.chart.line(seat, threshing_floor::SeatId(100)).is_none());
+            }
+            let state = ws.build_state(cx);
+            let saved: StateFile = toml::from_str(&toml::to_string(&state).unwrap()).unwrap();
+            assert_eq!(saved.lines.len(), 3);
+            let orgs = threshing_floor::Orgs::restore(saved.floor_orgs, &[]);
+            assert_eq!(orgs.owner(first.read(cx).seat.unwrap()), ws.floor_org);
+        });
+    }
+
+    #[gpui::test]
+    fn cancelling_or_losing_a_target_never_commits_staged_members(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let pool = pool_member(&ws, cx, "Candidate");
+        let id = format!("floor-pane-{}", pool.entity_id().as_u64());
+        click(cx, "floor-seat-100");
+        click(cx, "floor-connect");
+        click(cx, &id);
+        click(cx, "floor-rel-cancel");
+        assert!(pool.read_with(cx, |v, _| v.seat.is_none()));
+        ws.update(cx, |ws, cx| {
+            ws.threshing_floor_begin_relation(
+                Some(threshing_floor::SeatId(100)),
+                Some(threshing_floor::SeatId(101)),
+                cx,
+            );
+            ws.threshing_floor_choose_member(RelationMember::Pool(pool.downgrade()), cx);
+            ws.floor_relation.as_mut().unwrap().rung = Some(threshing_floor::Rung::Prompt);
+            ws.tabs.remove(1);
+            ws.threshing_floor_save_relation(cx);
+            assert!(ws.chart.saved().is_empty());
+            assert!(pool.read(cx).seat.is_none());
+            assert!(ws.floor_relation.as_ref().unwrap().error.is_some());
+        });
+    }
+
+    #[gpui::test]
+    fn malformed_pool_duplicates_and_new_membership_reject_the_entire_batch(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        let pool = pool_member(&ws, cx, "Candidate");
+        ws.update(cx, |ws, cx| {
+            ws.floor_relation = Some(RelationEditor {
+                actor: Some(RelationMember::Pool(pool.downgrade())),
+                targets: vec![RelationMember::Pool(pool.downgrade())],
+                rung: Some(threshing_floor::Rung::Read),
+                ..Default::default()
+            });
+            assert!(
+                ws.threshing_floor_prepare_relation(cx).is_none(),
+                "one pool pane became two tentative seats"
+            );
+            ws.floor_relation = Some(RelationEditor {
+                actor: Some(RelationMember::Seat(threshing_floor::SeatId(100))),
+                targets: vec![
+                    RelationMember::Pool(pool.downgrade()),
+                    RelationMember::Pool(pool.downgrade()),
+                ],
+                rung: Some(threshing_floor::Rung::Read),
+                ..Default::default()
+            });
+            assert!(ws.threshing_floor_prepare_relation(cx).is_none());
+            ws.floor_relation.as_mut().unwrap().targets.truncate(1);
+            let seat = threshing_floor::SeatId(500);
+            pool.update(cx, |v, cx| v.set_seat(Some(seat), cx));
+            ws.floor_orgs.assign(seat, other);
+            ws.threshing_floor_save_relation(cx);
+            assert_eq!(ws.floor_orgs.owner(seat), Some(other));
+            assert!(ws.chart.saved().is_empty());
+        });
     }
 
     fn name() -> threshing_floor::PaneName {

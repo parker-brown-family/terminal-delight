@@ -167,20 +167,30 @@ impl Orgs {
     }
 }
 
-/// An unfinished relationship grants nothing until both endpoints and a rung
-/// are explicitly selected and the person saves it.
+/// A person's whole selection. Staged pool panes are assigned tentative seats
+/// by the view in a cloned org map before this is checked; no live state changes
+/// until every pair has passed.
 #[derive(Clone, Debug, Default)]
-pub struct RelationDraft {
-    pub from: Option<SeatId>,
-    pub to: Option<SeatId>,
-    pub rung: Option<Rung>,
+pub struct RelationBatch {
+    pub actor: Option<SeatId>,
+    pub targets: Vec<SeatId>,
+    pub verb: Option<Rung>,
 }
 
-impl RelationDraft {
-    pub fn ready(&self, orgs: &Orgs) -> Option<(SeatId, SeatId, Rung)> {
-        let (from, to, rung) = (self.from?, self.to?, self.rung?);
-        (from != to && orgs.owner(from).is_some() && orgs.owner(from) == orgs.owner(to))
-            .then_some((from, to, rung))
+impl RelationBatch {
+    pub fn ready(&self, orgs: &Orgs, org: OrgId) -> Option<Vec<(SeatId, SeatId, Rung)>> {
+        let (actor, verb) = (self.actor?, self.verb?);
+        if orgs.get(org).is_none() || orgs.owner(actor) != Some(org) || self.targets.is_empty() {
+            return None;
+        }
+        let mut seen = std::collections::HashSet::new();
+        self.targets
+            .iter()
+            .map(|&target| {
+                (target != actor && orgs.owner(target) == Some(org) && seen.insert(target))
+                    .then_some((actor, target, verb))
+            })
+            .collect()
     }
 }
 
@@ -1304,19 +1314,22 @@ mod tests {
         orgs.assign(SeatId(1), a);
         orgs.assign(SeatId(2), a);
         orgs.assign(SeatId(3), b);
-        let mut draft = RelationDraft::default();
-        assert_eq!(draft.ready(&orgs), None);
-        draft.from = Some(SeatId(1));
-        draft.to = Some(SeatId(2));
-        assert_eq!(draft.ready(&orgs), None, "a drop is not permission");
-        draft.rung = Some(Rung::Read);
-        assert_eq!(draft.ready(&orgs), Some((SeatId(1), SeatId(2), Rung::Read)));
-        draft.to = Some(SeatId(1));
-        assert_eq!(draft.ready(&orgs), None, "no self link");
-        draft.to = Some(SeatId(3));
-        assert_eq!(draft.ready(&orgs), None, "no invisible cross-org grant");
-        draft.to = Some(SeatId(99));
-        assert_eq!(draft.ready(&orgs), None, "missing member");
+        let mut draft = RelationBatch::default();
+        assert_eq!(draft.ready(&orgs, a), None);
+        draft.actor = Some(SeatId(1));
+        draft.targets = vec![SeatId(2)];
+        assert_eq!(draft.ready(&orgs, a), None, "a drop is not permission");
+        draft.verb = Some(Rung::Read);
+        assert_eq!(
+            draft.ready(&orgs, a),
+            Some(vec![(SeatId(1), SeatId(2), Rung::Read)])
+        );
+        draft.targets = vec![SeatId(1)];
+        assert_eq!(draft.ready(&orgs, a), None, "no self link");
+        draft.targets = vec![SeatId(3)];
+        assert_eq!(draft.ready(&orgs, a), None, "no invisible cross-org grant");
+        draft.targets = vec![SeatId(99)];
+        assert_eq!(draft.ready(&orgs, a), None, "missing member");
         let ambiguous = Orgs::restore(
             Some(vec![
                 Org {
@@ -1332,9 +1345,9 @@ mod tests {
             ]),
             &[],
         );
-        draft.to = Some(SeatId(2));
+        draft.targets = vec![SeatId(2)];
         assert_eq!(
-            draft.ready(&ambiguous),
+            draft.ready(&ambiguous, OrgId(4)),
             None,
             "ambiguous membership is unknown"
         );
