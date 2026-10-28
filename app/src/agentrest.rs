@@ -428,6 +428,10 @@ pub struct Asleep {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stopping {
     pub pid: i32,
+    /// The process's start time in clock ticks (`/proc/<pid>/stat` field
+    /// 22), read before the signal: with the pid, the process's identity, so
+    /// a pid the kernel has since handed to somebody else is not waited on.
+    pub start: Option<u64>,
     pub asleep: Asleep,
     /// When the agent was signalled.
     pub since: std::time::Instant,
@@ -444,14 +448,20 @@ pub const STOP_GIVE_UP: std::time::Duration = std::time::Duration::from_secs(60)
 pub enum StopLook {
     /// It has gone: the pane is asleep.
     Asleep,
+    /// It has gone, and another agent already runs in the pane's shell,
+    /// started by a person in the moment between: that pane is awake, and is
+    /// never marked asleep over the new agent.
+    Replaced,
     /// Still going; look again next time.
     Stopping,
     /// Still running past [`STOP_GIVE_UP`]: it is awake.
     GaveUp,
 }
 
-pub fn stop_look(exited: bool, since_signal: std::time::Duration) -> StopLook {
-    if exited {
+pub fn stop_look(exited: bool, replaced: bool, since_signal: std::time::Duration) -> StopLook {
+    if exited && replaced {
+        StopLook::Replaced
+    } else if exited {
         StopLook::Asleep
     } else if since_signal >= STOP_GIVE_UP {
         StopLook::GaveUp
@@ -1160,14 +1170,26 @@ mod tests {
     #[test]
     fn a_signalled_agent_is_asleep_once_gone_and_awake_after_a_minute() {
         use std::time::Duration;
-        assert_eq!(stop_look(true, Duration::ZERO), StopLook::Asleep);
-        assert_eq!(stop_look(true, Duration::from_secs(3600)), StopLook::Asleep);
-        assert_eq!(stop_look(false, Duration::from_secs(6)), StopLook::Stopping);
+        assert_eq!(stop_look(true, false, Duration::ZERO), StopLook::Asleep);
         assert_eq!(
-            stop_look(false, STOP_GIVE_UP - Duration::from_millis(1)),
+            stop_look(true, false, Duration::from_secs(3600)),
+            StopLook::Asleep
+        );
+        assert_eq!(
+            stop_look(false, false, Duration::from_secs(6)),
             StopLook::Stopping
         );
-        assert_eq!(stop_look(false, STOP_GIVE_UP), StopLook::GaveUp);
+        assert_eq!(
+            stop_look(false, false, STOP_GIVE_UP - Duration::from_millis(1)),
+            StopLook::Stopping
+        );
+        assert_eq!(stop_look(false, false, STOP_GIVE_UP), StopLook::GaveUp);
+        // A person started another agent in the shell before the sweep: that
+        // pane is awake, however the old one went.
+        assert_eq!(
+            stop_look(true, true, Duration::from_secs(6)),
+            StopLook::Replaced
+        );
     }
 
     use super::*;

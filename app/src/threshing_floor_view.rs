@@ -6477,6 +6477,7 @@ mod tests {
             v.mode = pane::PaneMode::Shell;
             v.rest.stopping = Some(crate::agentrest::Stopping {
                 pid: i32::MAX,
+                start: None,
                 asleep: crate::agentrest::Asleep {
                     since_ms: 0,
                     session: "s".into(),

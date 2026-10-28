@@ -43,9 +43,9 @@ pub struct Job {
     pub sleep_on: bool,
     /// The gate's write count when the window looked.
     pub epoch: u64,
-    /// An agent the sleep signalled earlier that had not gone yet: its pid
-    /// and the sleep it becomes.
-    pub stopping: Option<(i32, Asleep)>,
+    /// An agent the sleep signalled earlier that had not gone yet: its pid,
+    /// its start time, and the sleep it becomes.
+    pub stopping: Option<(i32, Option<u64>, Asleep)>,
 }
 
 /// What the tick did to one pane.
@@ -67,6 +67,7 @@ pub enum Act {
     /// the sleep it will become, and the next look asks again.
     Stopping {
         pid: i32,
+        start: Option<u64>,
         asleep: Asleep,
     },
 }
@@ -101,6 +102,28 @@ pub fn run(mut job: Job) -> Outcome {
         act: Act::Nothing,
         refusal: None,
     };
+    // An agent the sleep already signalled: asleep once it has gone, and
+    // nothing else is decided for this pane until then. Read by the process's
+    // own identity, so a pane whose group cannot be read right now still
+    // reaches its answer and its give-up.
+    if let Some((pid, start, asleep)) = job.stopping.take() {
+        let ended = pid_ended(pid, start);
+        // A new agent under the shell, started by a person in the moment
+        // between; the old one, unreaped, is not it.
+        let replaced =
+            ended && crate::vitals::agent_under(job.shell as u32).is_some_and(|p| p as i32 != pid);
+        out.act = match agentrest::stop_look(ended, replaced, Duration::ZERO) {
+            agentrest::StopLook::Asleep => Act::Slept(asleep),
+            agentrest::StopLook::Replaced => Act::Woke,
+            agentrest::StopLook::Stopping | agentrest::StopLook::GaveUp => {
+                Act::Stopping { pid, start, asleep }
+            }
+        };
+        if let Ok(g) = &group {
+            out.usage = panegroup::usage(g);
+        }
+        return out;
+    }
     let Ok(group) = group else {
         out.refusal = Some(Refusal::Unknown("memory group"));
         return out;
@@ -112,18 +135,6 @@ pub fn run(mut job: Job) -> Outcome {
         (Some(prev), Some(cur)) => agentrest::cpu_share(prev, cur),
         _ => None,
     };
-
-    // An agent the sleep already signalled: asleep once it has gone, and
-    // nothing else is decided for this pane until then.
-    if let Some((pid, asleep)) = job.stopping.take() {
-        if exited(pid, &group) {
-            out.act = Act::Slept(asleep);
-            out.usage = panegroup::usage(&group);
-        } else {
-            out.act = Act::Stopping { pid, asleep };
-        }
-        return out;
-    }
 
     // A previous window's rest, found frozen: take it over rather than fight it.
     let frozen = panegroup::frozen(&group);
@@ -242,7 +253,9 @@ pub fn run(mut job: Job) -> Outcome {
                     // sampled before termination described the agent as well.
                     out.usage = panegroup::usage(&group);
                 }
-                Ok(Ended::Stopping(asleep)) => out.act = Act::Stopping { pid, asleep },
+                Ok(Ended::Stopping(asleep, start)) => {
+                    out.act = Act::Stopping { pid, start, asleep }
+                }
                 Err(r) => out.refusal = Some(r),
             }
         }
@@ -327,10 +340,10 @@ fn model_of(argv: &[String]) -> Option<String> {
 enum Ended {
     /// Gone within the deadline.
     Gone(Asleep),
-    /// Signalled, and still going at the deadline. The window looks again
-    /// on each sweep (`Job::stopping`) and gives up after
+    /// Signalled, and still going at the deadline, with its start time. The
+    /// window looks again on each sweep (`Job::stopping`) and gives up after
     /// [`agentrest::STOP_GIVE_UP`].
-    Stopping(Asleep),
+    Stopping(Asleep, Option<u64>),
 }
 
 /// How long the sleep waits, in the sweep, for the agent it signalled. Every
@@ -338,39 +351,54 @@ enum Ended {
 /// this is followed up on later sweeps instead.
 const STOP_WAIT: Duration = Duration::from_secs(5);
 
-/// Whether a process has ended: no `/proc` entry, a zombie waiting to be
-/// reaped, or a pid that is no longer in this pane's group (gone, and its
-/// number since given to somebody else).
-fn exited(pid: i32, group: &PaneGroup) -> bool {
-    pid_ended(pid) || !panegroup::procs(group).contains(&pid)
+/// A process's state letter and start time from `/proc/<pid>/stat`. The
+/// fields are counted after the parenthesised name, which may itself hold
+/// spaces and parentheses: the state is field 3, the start time field 22.
+fn stat_of(stat: &str) -> Option<(String, Option<u64>)> {
+    let (_, rest) = stat.rsplit_once(')')?;
+    let fields: Vec<&str> = rest.split_whitespace().collect();
+    let state = fields.first()?.to_string();
+    Some((state, fields.get(19).and_then(|f| f.parse().ok())))
 }
 
-fn pid_ended(pid: i32) -> bool {
+fn start_of(pid: i32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    stat_of(&stat).and_then(|(_, start)| start)
+}
+
+/// Whether the process `pid`, started at `start`, has ended: no `/proc`
+/// entry, a zombie waiting to be reaped, or that pid now naming a process
+/// that started at another time. A `/proc` read that fails for any reason
+/// but absence is not an ending: unknown is not gone, and a pane marked
+/// asleep over a running agent would put two writers on one conversation.
+fn pid_ended(pid: i32, start: Option<u64>) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Err(_) => true,
-        // The state is the first field after the parenthesised name, which
-        // may itself hold spaces and parentheses.
-        Ok(stat) => stat
-            .rsplit_once(')')
-            .and_then(|(_, rest)| rest.split_whitespace().next())
-            .is_some_and(|state| state == "Z" || state == "X"),
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+        Ok(stat) => match stat_of(&stat) {
+            Some((state, now)) => {
+                state == "Z" || state == "X" || matches!((start, now), (Some(a), Some(b)) if a != b)
+            }
+            None => false,
+        },
     }
 }
 
-/// SIGTERM to `pid`, then up to `wait` for it to end. Whether it did.
-fn signal_and_wait(pid: i32, wait: Duration) -> Result<bool, Refusal> {
+/// SIGTERM to `pid`, then up to `wait` for it to end. Whether it did, and
+/// the start time it was signalled at.
+fn signal_and_wait(pid: i32, wait: Duration) -> Result<(bool, Option<u64>), Refusal> {
+    let start = start_of(pid);
     // SAFETY: plain kill(2) on a pid the caller read from this pane's group.
     if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
         return Err(Refusal::Unknown("agent process"));
     }
     let deadline = Instant::now() + wait;
-    while !pid_ended(pid) {
+    while !pid_ended(pid, start) {
         if Instant::now() > deadline {
-            return Ok(false);
+            return Ok((false, start));
         }
         std::thread::sleep(Duration::from_millis(25));
     }
-    Ok(true)
+    Ok((true, start))
 }
 
 /// End the agent and keep its conversation: write the wake script, thaw, send
@@ -406,7 +434,7 @@ fn sleep(
         return Err(Refusal::Unknown("agent process"));
     }
     let signalled = Instant::now();
-    let gone = signal_and_wait(pid, STOP_WAIT)?;
+    let (gone, start) = signal_and_wait(pid, STOP_WAIT)?;
     eprintln!(
         "terminal-delight: sleep signalled pane agent pid {pid}; {} after {} ms",
         if gone { "it ended" } else { "still going" },
@@ -421,7 +449,7 @@ fn sleep(
     Ok(if gone {
         Ended::Gone(asleep)
     } else {
-        Ended::Stopping(asleep)
+        Ended::Stopping(asleep, start)
     })
 }
 
@@ -529,20 +557,34 @@ mod tests {
         let pid = child.id() as i32;
         // Let the shell install its trap before it is signalled.
         std::thread::sleep(Duration::from_millis(300));
-        assert_eq!(signal_and_wait(pid, Duration::from_millis(200)), Ok(false));
-        assert!(!pid_ended(pid), "still running inside its trap");
-        let start = Instant::now();
-        while !pid_ended(pid) {
-            assert!(
-                start.elapsed() < Duration::from_secs(10),
-                "never seen to end"
-            );
+        let (gone, start) = signal_and_wait(pid, Duration::from_millis(200)).unwrap();
+        assert!(!gone);
+        assert!(start.is_some(), "its start time was read");
+        assert!(!pid_ended(pid, start), "still running inside its trap");
+        // The same pid with another start time is another process.
+        assert!(
+            pid_ended(pid, start.map(|s| s + 1)),
+            "a reused pid is not the agent"
+        );
+        let t = Instant::now();
+        while !pid_ended(pid, start) {
+            assert!(t.elapsed() < Duration::from_secs(10), "never seen to end");
             std::thread::sleep(Duration::from_millis(25));
         }
         // Ended while still unreaped: a zombie is gone for the sleep's purposes.
         assert!(std::path::Path::new(&format!("/proc/{pid}")).exists());
         child.wait().unwrap();
-        assert!(pid_ended(pid));
+        assert!(pid_ended(pid, start));
+    }
+
+    /// The state and start time are read after the name's last parenthesis,
+    /// so a program that names itself with spaces and parentheses cannot shift
+    /// them; and a line that cannot be read is not an ending.
+    #[test]
+    fn a_stat_line_is_read_past_a_hostile_name() {
+        let line = "4242 (evil) Z 1 2 3) S 1 4242 4242 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 987654 1000 10";
+        assert_eq!(stat_of(line), Some(("S".to_string(), Some(987654))));
+        assert_eq!(stat_of("garbage"), None);
     }
 
     #[test]
