@@ -1,0 +1,48 @@
+{
+  "artifact": "reports/2026-10-28-relationship-builder.html",
+  "kind": "interactive design prototype",
+  "native_implementation": "pending approval",
+  "checks": {
+    "unique_ids": true,
+    "external_asset_dependencies": 0,
+    "note_coverage": {
+      "figures": [
+        3,
+        3
+      ],
+      "decisions": [
+        2,
+        2
+      ]
+    },
+    "empty_entry": [
+      "empty actor slot",
+      "empty target slot",
+      "all four fixture actor cards"
+    ],
+    "selected_actor": "HISTORY",
+    "target_options_exclude_actor": true,
+    "three_target_preview": true,
+    "changing_actor_removes_self_and_keeps_other_targets": true,
+    "missing_verb_disables_save": true,
+    "observed_viewport_widths_without_page_overflow": [
+      520,
+      1573
+    ],
+    "browser_note_survived_reload": true,
+    "original_file_notes_empty": true
+  },
+  "limits": [
+    "Prototype does not execute native drag gestures or persist permissions.",
+    "Browser automation timed out while clearing its temporary QA note; final browser cleanup and viewport reset could not be confirmed. The original deliverable contains no test annotations."
+  ],
+  "narrative_gate": {
+    "arc": "journey",
+    "opening": 0.72
+  },
+  "length": {
+    "prose_words": 214,
+    "caption_words": 154,
+    "figures": 3
+  }
+}

@@ -4587,6 +4587,7 @@ struct Workspace {
     floor_drop: Option<threshing_floor_view::DropChoice>,
     /// Transient membership gesture; GPUI remains the authority on its lifetime.
     floor_drag: Option<Entity<TerminalView>>,
+    floor_tether: Option<Point<Pixels>>,
     floor_context: Option<(Entity<TerminalView>, Point<Pixels>)>,
     floor_feedback: Option<String>,
     /// A person's limit for a copy before it needs their press; `None` is the
@@ -6377,6 +6378,7 @@ impl Workspace {
             floor_map: None,
             floor_drop: None,
             floor_drag: None,
+            floor_tether: None,
             floor_context: None,
             floor_feedback: None,
             ask_press_tokens: saved.ask_press_tokens,

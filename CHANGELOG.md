@@ -9,6 +9,11 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### The Threshing Floor for 0.5.0 Development
 
+- Relationships are built in a persistent Actor → Can → Targets area above the
+  Floor. Dropping one card onto another or Alt-dragging a line fills the builder;
+  targets are chosen on the chart and in the filtered pane pool. Submit saves
+  every target together and adds staged pool cards to the org. Cancel leaves
+  membership unchanged. Related controls are grouped with more space.
 - The War Room is now called the Threshing Floor, everywhere a person reads it:
   the panel, its help row, the docs and the site, in all nine languages. The
   name is meant to be calm: a threshing floor is where a harvest is sorted.
