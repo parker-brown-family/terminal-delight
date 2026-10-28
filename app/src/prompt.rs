@@ -381,6 +381,14 @@ impl PromptBook {
         }
     }
 
+    /// The wake asked for prompt `id` found nothing to wake yet (the worker
+    /// is still going to sleep): ask again on the next look.
+    pub fn wake_not_taken(&mut self, id: AskId) {
+        if let Some(s) = self.get_mut(id) {
+            s.woke_ms = None;
+        }
+    }
+
     /// The window restarted the asleep worker for prompt `id`.
     pub fn restarted(&mut self, id: AskId) {
         if let Some(s) = self.get_mut(id) {
