@@ -7,6 +7,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### SVG Links in HTML Documents
+
+- HTML briefs containing linked SVG diagrams now render in the document reader.
+  SVG links resolve to ordinary URL strings, preserving local fragment jumps
+  and document base URLs instead of failing with `url.indexOf is not a function`.
+
 ### The Threshing Floor for 0.5.0 Development
 
 - The War Room is now called the Threshing Floor, everywhere a person reads it:
