@@ -515,7 +515,9 @@ impl Workspace {
                 }
                 let matches = pane_search_score(&project, &name, &query).is_some();
                 // The System Map draws every seated pane, whatever is typed.
-                let mapped = map_open && org.is_some();
+                let mapped = map_open
+                    && v.seat
+                        .is_some_and(|seat| self.floor_orgs.has_membership(seat));
                 if !charted && !matches && !mapped {
                     continue;
                 }
@@ -4599,7 +4601,11 @@ impl Workspace {
             threshing_floor::Rung::Ask => ui.floor_rung_ask,
             threshing_floor::Rung::Prompt => ui.floor_rung_prompt,
         };
-        let fact_of = |seat: threshing_floor::SeatId| facts.iter().find(|f| f.seat == Some(seat));
+        let by_seat: std::collections::HashMap<threshing_floor::SeatId, &PaneFacts> = facts
+            .iter()
+            .filter_map(|f| f.seat.map(|s| (s, f)))
+            .collect();
+        let fact_of = |seat: threshing_floor::SeatId| by_seat.get(&seat).copied();
 
         // ---- every org laid out as the chart lays one out ----
         struct MapOrg {
@@ -4663,21 +4669,26 @@ impl Workspace {
         }
         let world_w = orgs.iter().map(|o| o.x + o.w).fold(0., f32::max) + pad;
         let world_h = orgs.iter().map(|o| o.y + o.h).fold(0., f32::max) + pad;
-        let seat_at = |seat: threshing_floor::SeatId| -> Option<(f32, f32)> {
-            orgs.iter().find_map(|o| {
-                o.placed.iter().find(|p| p.seat == seat).map(|p| {
+        // Where each seat landed, and in which org: the first org that lists
+        // it, so a seat saved in two orgs is drawn (and wired) once per copy
+        // but routed from its first.
+        let mut spots: std::collections::HashMap<
+            threshing_floor::SeatId,
+            ((f32, f32), threshing_floor::OrgId),
+        > = std::collections::HashMap::new();
+        for o in &orgs {
+            for p in &o.placed {
+                spots.entry(p.seat).or_insert((
                     (
                         o.x + pad + p.col * (sw + cg),
                         o.y + top + p.row as f32 * (sh + rg),
-                    )
-                })
-            })
-        };
-        let org_of_seat = |seat: threshing_floor::SeatId| {
-            orgs.iter()
-                .find(|o| o.placed.iter().any(|p| p.seat == seat))
-                .map(|o| o.org)
-        };
+                    ),
+                    o.org,
+                ));
+            }
+        }
+        let seat_at = |seat: threshing_floor::SeatId| spots.get(&seat).map(|(at, _)| *at);
+        let org_of_seat = |seat: threshing_floor::SeatId| spots.get(&seat).map(|(_, org)| *org);
         let rect_of = |end: End| -> Option<(f32, f32, f32, f32)> {
             match end {
                 End::Seat(seat) => seat_at(seat).map(|(x, y)| (x, y, sw, sh)),
@@ -4780,6 +4791,7 @@ impl Workspace {
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(ink)
                             .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .child(SharedString::from(format!(
                                 "\u{25a3} {} \u{b7} {}",
                                 self.threshing_floor_org_label(org).to_uppercase(),
@@ -4788,6 +4800,8 @@ impl Workspace {
                             .on_click(cx.listener(move |ws, _, _, cx| {
                                 cx.stop_propagation();
                                 ws.floor_map = None;
+                                // The map's zoom and pan are not the chart's.
+                                ws.floor_view.reset();
                                 ws.threshing_floor_set_org(org, cx);
                             })),
                     ),
@@ -4846,9 +4860,12 @@ impl Workspace {
                     })
                     .bg(darken(th.surface, 0.5))
                     .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
                         ws.floor_map = None;
+                        // The map's zoom and pan are not the chart's.
+                        ws.floor_view.reset();
                         ws.threshing_floor_set_org(org, cx);
                     }));
                 if far {
@@ -7653,7 +7670,25 @@ mod tests {
         });
         cx.run_until_parked();
         assert!(cx.debug_bounds("floor-map-seat-100").is_some());
-        // A card opens its org's chart and closes the map.
+        // A press on a card never starts a pan of the map under it.
+        let card = bounds(cx, "floor-map-seat-100").center();
+        cx.simulate_mouse_down(card, MouseButton::Left, Default::default());
+        assert!(ws.read_with(cx, |ws, _| ws.floor_view.drag.is_none()));
+        cx.simulate_mouse_up(card, MouseButton::Left, Default::default());
+        cx.run_until_parked();
+        // That click opened the org already shown, from a fresh view rather
+        // than the map's far zoom.
+        ws.read_with(cx, |ws, _| {
+            assert!(ws.floor_map.is_none());
+            assert_eq!(ws.floor_org, Some(here));
+            assert_eq!(ws.floor_view.zoom, 1.);
+        });
+        // A card in another org opens that org's chart.
+        ws.update(cx, |ws, cx| {
+            ws.floor_map = Some(SystemMap::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
         click(cx, "floor-map-seat-101");
         ws.read_with(cx, |ws, _| {
             assert!(ws.floor_map.is_none());
