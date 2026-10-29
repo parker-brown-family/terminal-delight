@@ -3141,50 +3141,42 @@ impl Workspace {
         }
     }
 
+    /// A card carried onto a member card is filed under it: the card dropped ON
+    /// is the parent (the actor, drawn above) and the carried card the child,
+    /// the way a person files a thing by taking it to where it belongs. An Alt
+    /// tether is the other gesture: it draws a line out of the card it started
+    /// on, like the connector handle, so that card stays the actor.
     fn threshing_floor_drop_member(
         &mut self,
         drag: &PaneDrag,
-        target: threshing_floor::SeatId,
+        onto: threshing_floor::SeatId,
         cx: &mut Context<Self>,
     ) {
-        let Some(actor) = self.threshing_floor_member(&drag.leaf, cx) else {
+        let Some(dragged) = self.threshing_floor_member(&drag.leaf, cx) else {
             return;
         };
+        let tether = drag.relation.get();
         // While collecting candidates, a pool card dropped on the Floor joins
         // the current draft; hitting a member must not replace its actor.
-        if self.floor_relation.is_some()
-            && matches!(actor, RelationMember::Pool(_))
-            && !drag.relation.get()
-        {
-            self.threshing_floor_choose_member(actor, cx);
+        if self.floor_relation.is_some() && matches!(dragged, RelationMember::Pool(_)) && !tether {
+            self.threshing_floor_choose_member(dragged, cx);
             return;
         }
-        let target = RelationMember::Seat(target);
-        if actor == target
-            || self.floor_orgs.owner(match target {
-                RelationMember::Seat(s) => s,
-                _ => unreachable!(),
-            }) != self.floor_org
-        {
+        let onto_member = RelationMember::Seat(onto);
+        if dragged == onto_member || self.floor_orgs.owner(onto) != self.floor_org {
             return;
         }
-        let labels = vec![
-            (actor.clone(), self.pane_name(&drag.leaf, cx).full()),
-            (
-                target.clone(),
-                self.threshing_floor_seat_label(
-                    match target {
-                        RelationMember::Seat(s) => s,
-                        _ => unreachable!(),
-                    },
-                    cx,
-                ),
-            ),
-        ];
+        let dragged = (dragged, self.pane_name(&drag.leaf, cx).full());
+        let onto = (onto_member, self.threshing_floor_seat_label(onto, cx));
+        let (actor, target) = if tether {
+            (dragged, onto)
+        } else {
+            (onto, dragged)
+        };
         self.floor_relation = Some(RelationEditor {
-            labels,
-            actor: Some(actor),
-            targets: vec![Some(target)],
+            actor: Some(actor.0.clone()),
+            targets: vec![Some(target.0.clone())],
+            labels: vec![actor, target],
             choosing: Some(RelationEnd::To),
             ..Default::default()
         });
@@ -7377,7 +7369,8 @@ mod tests {
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, _) = fixture(cx);
         let chart = bounds(cx, "threshing-floor-chart");
-        drag(cx, "floor-seat-100", "floor-seat-101");
+        // The child is carried onto the parent: the card dropped ON is the actor.
+        drag(cx, "floor-seat-101", "floor-seat-100");
         ws.read_with(cx, |ws, _| {
             let e = ws
                 .floor_relation
@@ -7385,15 +7378,17 @@ mod tests {
                 .expect("body drop must open the builder");
             assert_eq!(
                 e.actor,
-                Some(RelationMember::Seat(threshing_floor::SeatId(100)))
+                Some(RelationMember::Seat(threshing_floor::SeatId(100))),
+                "the card dropped ON is the parent"
             );
             assert_eq!(
                 e.targets,
-                vec![Some(RelationMember::Seat(threshing_floor::SeatId(101)))]
+                vec![Some(RelationMember::Seat(threshing_floor::SeatId(101)))],
+                "the carried card is the child"
             );
             assert!(ws.chart.saved().is_empty());
             assert_eq!(
-                ws.floor_orgs.owner(threshing_floor::SeatId(100)),
+                ws.floor_orgs.owner(threshing_floor::SeatId(101)),
                 ws.floor_org
             );
         });
