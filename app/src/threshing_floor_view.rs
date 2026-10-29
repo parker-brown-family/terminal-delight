@@ -88,6 +88,23 @@ struct PaneFacts {
 /// (drawn faint and dashed, granting nothing).
 type WireStroke = (Vec<(f32, f32)>, bool, bool);
 
+/// Someone related to the shown org from beyond its border: a seat in another
+/// org by a line to a member, or another org by a whole-org line. Drawn in the
+/// lane right of the border, one card per outsider however many lines it has.
+struct Outsider {
+    end: threshing_floor::End,
+    links: Vec<OutLink>,
+}
+
+/// One line between an outsider and the org: the member it lands on (`None`
+/// lands on the border, the whole org), its rung, and which way it points.
+struct OutLink {
+    inner: Option<threshing_floor::SeatId>,
+    rung: Option<threshing_floor::Rung>,
+    /// From inside the org out to the outsider.
+    outward: bool,
+}
+
 /// One drawn connection: a polyline in chart coordinates, how it is inked,
 /// and where its label chip sits.
 struct Wire {
@@ -571,16 +588,101 @@ impl Workspace {
                 .map(|seat| (*seat, String::new(), ui.floor_unavailable.to_string())),
         );
         let placed = threshing_floor::layout(&keys, &self.chart);
+        // Room above the first row for the border's name.
+        let top = pad + 18. * s;
         let at = |seat: threshing_floor::SeatId| -> Option<(f32, f32)> {
             placed
                 .iter()
                 .find(|p| p.seat == seat)
-                .map(|p| (pad + p.col * (sw + cg), pad + p.row as f32 * (sh + rg)))
+                .map(|p| (pad + p.col * (sw + cg), top + p.row as f32 * (sh + rg)))
         };
         let cols = placed.iter().map(|p| p.col + 1.).fold(0., f32::max);
         let rows = placed.iter().map(|p| p.row + 1).max().unwrap_or(0);
         let chart_w = (pad * 2. + cols * (sw + cg) - cg).max(420. * s);
-        let chart_h = (pad * 2. + rows as f32 * (sh + rg) - rg).max(sh + pad * 2.);
+        let mut chart_h = (top + pad + rows as f32 * (sh + rg) - rg).max(sh + top + pad);
+        let mut chart_w = chart_w;
+
+        // ---- the border, and who stands outside it ----
+        // The org is a region: a solid border round its seats, wearing its
+        // name. Whoever is related to it from beyond stands in a lane to the
+        // right. A line to one member lands on that card; a line to the whole
+        // org lands on the border.
+        let inside = |seat: threshing_floor::SeatId| at(seat).is_some();
+        let mut outsiders: Vec<Outsider> = Vec::new();
+        let mut meet = |end: threshing_floor::End, link: OutLink| match outsiders
+            .iter_mut()
+            .find(|o| o.end == end)
+        {
+            Some(o) => o.links.push(link),
+            None => outsiders.push(Outsider {
+                end,
+                links: vec![link],
+            }),
+        };
+        if self.floor_org.is_some() {
+            for l in self.chart.saved() {
+                match (inside(l.from), inside(l.to)) {
+                    (true, false) => meet(
+                        threshing_floor::End::Seat(l.to),
+                        OutLink {
+                            inner: Some(l.from),
+                            rung: l.rung.known(),
+                            outward: true,
+                        },
+                    ),
+                    (false, true) => meet(
+                        threshing_floor::End::Seat(l.from),
+                        OutLink {
+                            inner: Some(l.to),
+                            rung: l.rung.known(),
+                            outward: false,
+                        },
+                    ),
+                    _ => {}
+                }
+            }
+            let end_in = |e: &threshing_floor::End| match e {
+                threshing_floor::End::Seat(seat) => inside(*seat),
+                threshing_floor::End::Org { org } => Some(*org) == self.floor_org,
+            };
+            for l in self.chart.org_lines() {
+                let (from_in, to_in) = (end_in(&l.from), end_in(&l.to));
+                if from_in == to_in {
+                    continue;
+                }
+                let (inner, outer) = if from_in {
+                    (l.from, l.to)
+                } else {
+                    (l.to, l.from)
+                };
+                meet(
+                    outer,
+                    OutLink {
+                        inner: match inner {
+                            threshing_floor::End::Seat(seat) => Some(seat),
+                            threshing_floor::End::Org { .. } => None,
+                        },
+                        rung: l.rung.known(),
+                        outward: from_in,
+                    },
+                );
+            }
+        }
+        let border = self.floor_org.map(|_| {
+            let x0 = pad * 0.4;
+            let y0 = pad * 0.4;
+            let x1 = (pad + cols * (sw + cg) - cg + pad * 0.6).max(x0 + sw + pad);
+            let y1 = (top + rows as f32 * (sh + rg) - rg + pad * 0.6).max(top + sh * 0.5);
+            (x0, y0, x1, y1)
+        });
+        let (ow, oh, og) = (sw * 0.95, 64. * s, 14. * s);
+        let lane_x = border.map_or(pad, |(_, _, x1, _)| x1 + 48. * s);
+        let out_at = |i: usize| (lane_x, top + i as f32 * (oh + og));
+        if !outsiders.is_empty() {
+            chart_w = chart_w.max(lane_x + ow + pad);
+            let (_, y) = out_at(outsiders.len() - 1);
+            chart_h = chart_h.max(y + oh + pad);
+        }
 
         let rung_word = |r: threshing_floor::Rung| match r {
             threshing_floor::Rung::See => ui.floor_rung_see,
@@ -633,10 +735,45 @@ impl Workspace {
             .filter(|f| matches!(f.access, threshing_floor::AgentAccess::OffLimits))
             .filter_map(|f| f.seat)
             .collect();
-        let paths: Vec<WireStroke> = wires
+        let mut paths: Vec<WireStroke> = wires
             .iter()
             .map(|w| (w.points.clone(), w.bypass, off_limits.contains(&w.to)))
             .collect();
+        // An outsider's lines run down out of the member card into the row
+        // gap, along it past the border, then across into the lane; a line to
+        // the whole org leaves the border itself. The arrow keeps the line's
+        // own direction.
+        if let Some((_, by0, bx1, by1)) = border {
+            let gutter = bx1 + 22. * s;
+            for (i, o) in outsiders.iter().enumerate() {
+                let (ox, oy) = out_at(i);
+                let mid = oy + oh / 2.;
+                for (k, link) in o.links.iter().enumerate() {
+                    let lane = gutter + k as f32 * 4. * s;
+                    let mut pts = match link.inner.and_then(at) {
+                        Some((mx, my)) => {
+                            let cx_ = mx + sw / 2.;
+                            let ch = my + sh + rg * 0.72;
+                            vec![
+                                (cx_, my + sh),
+                                (cx_, ch),
+                                (lane, ch),
+                                (lane, mid),
+                                (ox, mid),
+                            ]
+                        }
+                        None => {
+                            let y = mid.clamp(by0 + 12. * s, by1 - 12. * s);
+                            vec![(bx1, y), (lane, y), (lane, mid), (ox, mid)]
+                        }
+                    };
+                    if !link.outward {
+                        pts.reverse();
+                    }
+                    paths.push((pts, false, false));
+                }
+            }
+        }
         let canvas = gpui::canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
@@ -666,6 +803,149 @@ impl Workspace {
             .w(px(chart_w))
             .h(px(chart_h))
             .child(canvas);
+        if let (Some((x0, y0, x1, y1)), Some(org)) = (border, self.floor_org) {
+            let ink = th.ansi[6];
+            chart = chart.child(
+                div()
+                    .id("floor-org-border")
+                    .debug_selector(|| "floor-org-border".to_string())
+                    .absolute()
+                    .left(px(x0))
+                    .top(px(y0))
+                    .w(px(x1 - x0))
+                    .h(px(y1 - y0))
+                    .rounded(sk.rad_raw(8.))
+                    .border_1()
+                    .border_color(ink.alpha(0.55))
+                    .bg(ink.alpha(0.025))
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(10. * s))
+                            .top(px(4. * s))
+                            .text_size(sk.text_px(8.5))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(ink)
+                            .child(SharedString::from(format!(
+                                "\u{25a3} {}",
+                                self.threshing_floor_org_label(org).to_uppercase()
+                            ))),
+                    ),
+            );
+        }
+        if !outsiders.is_empty() {
+            chart = chart.child(
+                div()
+                    .absolute()
+                    .left(px(lane_x))
+                    .top(px(top - 14. * s))
+                    .text_size(sk.text_px(8.))
+                    .text_color(th.text.alpha(0.55))
+                    .child(SharedString::from(ui.floor_outside.to_string())),
+            );
+        }
+        for (i, o) in outsiders.iter().enumerate() {
+            let (ox, oy) = out_at(i);
+            let (name, home, open) = match o.end {
+                threshing_floor::End::Seat(seat) => {
+                    let org = self.floor_orgs.owner(seat);
+                    (
+                        self.threshing_floor_seat_label(seat, cx),
+                        org.map_or_else(
+                            || ui.floor_unknown.to_string(),
+                            |o| self.threshing_floor_org_label(o),
+                        ),
+                        org,
+                    )
+                }
+                threshing_floor::End::Org { org } => (
+                    format!("\u{25c7} {}", self.threshing_floor_org_label(org)),
+                    ui.floor_whole_org.to_string(),
+                    Some(org),
+                ),
+            };
+            let first = &o.links[0];
+            let wire = lang::fill(
+                ui.floor_rel_wire,
+                &[(
+                    "rung",
+                    first.rung.map_or(ui.floor_unknown, |r| rung_word(r)),
+                )],
+            );
+            let member = first.inner.map_or_else(
+                || {
+                    self.floor_org
+                        .map(|o| self.threshing_floor_org_label(o))
+                        .unwrap_or_default()
+                },
+                |seat| self.threshing_floor_seat_label(seat, cx),
+            );
+            let mut sentence = if first.outward {
+                format!("{member} {wire}")
+            } else {
+                format!("{wire} {member}")
+            };
+            if o.links.len() > 1 {
+                sentence.push_str(&format!(" +{}", o.links.len() - 1));
+            }
+            let id = match o.end {
+                threshing_floor::End::Seat(seat) => format!("floor-outside-seat-{}", seat.0),
+                threshing_floor::End::Org { org } => format!("floor-outside-org-{}", org.0),
+            };
+            let sel = id.clone();
+            chart = chart.child(
+                div()
+                    .id(SharedString::from(id))
+                    .debug_selector(move || sel.clone())
+                    .absolute()
+                    .left(px(ox))
+                    .top(px(oy))
+                    .w(px(ow))
+                    .h(px(oh))
+                    .px(px(8. * s))
+                    .py(px(5. * s))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2. * s))
+                    .overflow_hidden()
+                    .rounded(sk.rad_raw(4.))
+                    .border_1()
+                    .border_color(th.ansi[4].alpha(0.6))
+                    .bg(darken(th.surface, 0.5))
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .text_size(sk.text_px(8.))
+                            .text_color(th.text.alpha(0.55))
+                            .whitespace_nowrap()
+                            .overflow_hidden()
+                            .child(SharedString::from(home)),
+                    )
+                    .child(
+                        div()
+                            .text_size(sk.text_px(9.5))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(th.text)
+                            .whitespace_nowrap()
+                            .overflow_hidden()
+                            .child(SharedString::from(name)),
+                    )
+                    .child(
+                        div()
+                            .text_size(sk.text_px(8.))
+                            .text_color(th.text.alpha(0.7))
+                            .whitespace_nowrap()
+                            .overflow_hidden()
+                            .child(SharedString::from(sentence)),
+                    )
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        if let Some(org) = open {
+                            ws.threshing_floor_set_org(org, cx);
+                        }
+                    })),
+            );
+        }
         if seats.is_empty() && missing.is_empty() && query.trim().is_empty() {
             chart = chart.child(
                 div()
@@ -2483,11 +2763,15 @@ impl Workspace {
                 .flex_row()
                 .items_center()
                 .gap_2()
+                // A narrow window breaks the row in two rather than squeezing
+                // the org tabs until the System Map disappears behind a scroll.
+                .flex_wrap()
                 .child(
                     div()
                         .id("floor-org-choices")
                         .debug_selector(|| "floor-org-choices".to_string())
-                        .min_w(px(0.))
+                        .flex_none()
+                        .max_w(gpui::relative(0.6))
                         .overflow_x_scroll()
                         .child(choices),
                 )
@@ -6737,6 +7021,10 @@ mod tests {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let (_ws, cx, _) = fixture(cx);
+        // At the width Parker reads it, about 2000 px, the header is one row; a
+        // narrower window may wrap it rather than hide the tabs.
+        cx.simulate_resize(size(px(2000.), px(1000.)));
+        cx.run_until_parked();
         let tabs = bounds(cx, "floor-org-choices");
         let switches = bounds(cx, "floor-access-controls");
         let search = bounds(cx, "threshing-floor-search");
@@ -6800,6 +7088,48 @@ mod tests {
             // Seating it does not wake it.
             assert!(sleeper.read(cx).rest.dormancy.asleep().is_some());
         });
+    }
+
+    #[gpui::test]
+    fn an_org_wears_a_border_and_its_outside_relations_stand_beyond_it(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            // The worker moves to the other org; its line to the lead stays.
+            ws.chart.draw(
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(101),
+                threshing_floor::Rung::Read,
+            );
+            ws.floor_orgs.assign(threshing_floor::SeatId(101), other);
+            let here = ws.floor_org.unwrap();
+            ws.chart.draw_org(
+                threshing_floor::End::Org { org: other },
+                threshing_floor::End::Org { org: here },
+                threshing_floor::Rung::See,
+            );
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let border = bounds(cx, "floor-org-border");
+        let lead = bounds(cx, "floor-seat-100");
+        assert!(border.origin.x <= lead.origin.x && border.right() >= lead.right());
+        let seat_out = bounds(cx, "floor-outside-seat-101");
+        let org_out = bounds(cx, &format!("floor-outside-org-{}", other.0));
+        for b in [seat_out, org_out] {
+            assert!(
+                b.origin.x > border.right(),
+                "an outsider stands beyond the border: {b:?}"
+            );
+        }
+        assert!(
+            cx.debug_bounds("floor-seat-101").is_none(),
+            "the worker is not a member any more, so it has no member card"
+        );
     }
 
     #[gpui::test]
