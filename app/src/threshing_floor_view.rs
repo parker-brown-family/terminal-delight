@@ -51,13 +51,14 @@ impl FloorViewport {
         if !delta.is_finite() {
             return;
         }
-        let next = (self.zoom * 2_f32.powf(delta.clamp(-480., 480.) / 240.)).clamp(0.5, 2.5);
+        let next = (self.zoom * 2_f32.powf(delta.clamp(-480., 480.) / 240.)).clamp(0.2, 2.5);
         self.offset = anchor - (anchor - self.offset) * (next / self.zoom);
         self.zoom = next;
     }
 }
 
 /// Everything one seat shows, gathered from facts the window already has.
+#[derive(Clone)]
 struct PaneFacts {
     leaf: Entity<TerminalView>,
     seat: Option<threshing_floor::SeatId>,
@@ -354,6 +355,9 @@ pub(crate) struct SystemMap {
     to: Option<threshing_floor::End>,
     rung: Option<threshing_floor::Rung>,
     choosing: Option<RelationEnd>,
+    /// The drawer listing every cross-org and whole-org line, with Remove.
+    /// Closed by default: the canvas draws them, the drawer edits them.
+    rels_open: bool,
 }
 
 /// What a pane card dropped onto a *different* org can become. Dropping used to
@@ -484,6 +488,8 @@ impl Workspace {
         let mut loose: Vec<PaneFacts> = Vec::new();
         let query = self.threshing_floor_query.text();
         let mut total = 0;
+        let map_open = self.floor_map.is_some();
+        let mut map_facts: Vec<PaneFacts> = Vec::new();
         for (ti, tab) in self.tabs.iter().enumerate() {
             let project = self
                 .place_of(ti)
@@ -507,7 +513,12 @@ impl Workspace {
                 if !charted && (org.is_none() || !query.trim().is_empty()) {
                     total += 1;
                 }
-                if !charted && pane_search_score(&project, &name, &query).is_none() {
+                let matches = pane_search_score(&project, &name, &query).is_some();
+                // The System Map draws every seated pane, whatever is typed.
+                let mapped = map_open
+                    && v.seat
+                        .is_some_and(|seat| self.floor_orgs.has_membership(seat));
+                if !charted && !matches && !mapped {
                     continue;
                 }
                 let vit = v
@@ -550,9 +561,12 @@ impl Workspace {
                     state: v.agent_status().state,
                     access: v.agent_access,
                 };
+                if mapped {
+                    map_facts.push(facts.clone());
+                }
                 if charted {
                     seats.push(facts);
-                } else if org.is_none() || !query.trim().is_empty() {
+                } else if matches && (org.is_none() || !query.trim().is_empty()) {
                     loose.push(facts);
                 }
             }
@@ -1692,7 +1706,7 @@ impl Workspace {
             // heading distinct from the room's pink header and the green field,
             // so the board reads as "this org's chart" instead of cards adrift
             // in empty space.
-            .children(self.floor_org.map(|id| {
+            .children(self.floor_org.filter(|_| !map_open).map(|id| {
                 div()
                     .id("floor-org-title")
                     .debug_selector(|| "floor-org-title".to_string())
@@ -1710,6 +1724,26 @@ impl Workspace {
                     .child(div().flex_1())
                     .child(self.threshing_floor_view_controls(&sk, cx))
             }))
+            .when(map_open, |d| {
+                d.child(
+                    div()
+                        .id("floor-map-title")
+                        .debug_selector(|| "floor-map-title".to_string())
+                        .flex_none()
+                        .pb_1()
+                        .border_b_1()
+                        .border_color(th.complement.alpha(0.35))
+                        .text_size(sk.text_px(13.))
+                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                        .text_color(th.complement)
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(SharedString::from(format!("\u{25c7} {}", ui.floor_map)))
+                        .child(div().flex_1())
+                        .child(self.threshing_floor_view_controls(&sk, cx)),
+                )
+            })
             .child(
                 div()
                     .id("threshing-floor-chart")
@@ -1718,19 +1752,14 @@ impl Workspace {
                     .min_w(px(0.))
                     .min_h(px(0.))
                     .relative()
-                    .when(self.floor_map.is_some(), |d| {
-                        d.overflow_x_scroll().overflow_y_scroll()
-                    })
-                    .when(self.floor_map.is_none(), |d| {
-                        d.overflow_hidden()
-                            .cursor(if self.floor_view.drag.is_some() {
-                                gpui::CursorStyle::ClosedHand
-                            } else {
-                                gpui::CursorStyle::OpenHand
-                            })
+                    .overflow_hidden()
+                    .cursor(if self.floor_view.drag.is_some() {
+                        gpui::CursorStyle::ClosedHand
+                    } else {
+                        gpui::CursorStyle::OpenHand
                     })
                     .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _, cx| {
-                        if ws.floor_map.is_some() || cx.has_active_drag() {
+                        if cx.has_active_drag() {
                             return;
                         }
                         cx.stop_propagation();
@@ -1750,7 +1779,7 @@ impl Workspace {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, ev: &MouseDownEvent, _, cx| {
-                            if ws.floor_map.is_some() || ev.modifiers.alt || cx.has_active_drag() {
+                            if ev.modifiers.alt || cx.has_active_drag() {
                                 return;
                             }
                             cx.stop_propagation();
@@ -1798,8 +1827,9 @@ impl Workspace {
                         .absolute()
                         .inset_0(),
                     )
-                    .child(if self.floor_map.is_some() {
-                        self.floor_system_map(&sk, th, cx).into_any_element()
+                    .child(if map_open {
+                        self.floor_map_canvas(&map_facts, &sk, th, cx)
+                            .into_any_element()
                     } else {
                         chart.into_any_element()
                     }),
@@ -1940,7 +1970,12 @@ impl Workspace {
                             .flex()
                             .flex_col()
                             .gap_3()
-                            .child(self.threshing_floor_relationship_controls(&sk, th, cx))
+                            .child(if map_open {
+                                self.floor_map_builder(&sk, th, cx).into_any_element()
+                            } else {
+                                self.threshing_floor_relationship_controls(&sk, th, cx)
+                                    .into_any_element()
+                            })
                             .child(chart_tile),
                     )
                     .child(pool_tile)
@@ -4224,7 +4259,11 @@ impl Workspace {
     /// place cross-org and whole-org relationships are drawn — a list of the
     /// relationships that span orgs (the ones a single org's chart cannot show),
     /// and a reference of every org with its members.
-    fn floor_system_map(
+    /// The System Map's builder: two ends (an org or an agent each), a rung and
+    /// Submit, then a drawer listing every line that spans orgs, with Remove.
+    /// It sits where the org view's relationship builder sits; the map itself
+    /// is drawn on the canvas below (`floor_map_canvas`).
+    fn floor_map_builder(
         &self,
         sk: &skin::Skin,
         th: &theme::Theme,
@@ -4414,12 +4453,7 @@ impl Workspace {
             .cloned()
             .collect();
         let org_lines = self.chart.org_lines().to_vec();
-        let mut rels = div().flex().flex_col().gap_1().child(
-            div()
-                .text_size(sk.text_px(9.5))
-                .font_weight(gpui::FontWeight::BOLD)
-                .child(SharedString::from(ui.floor_map_rels.to_string())),
-        );
+        let mut rels = div().flex().flex_col().gap_1();
         if cross.is_empty() && org_lines.is_empty() {
             rels = rels.child(
                 div()
@@ -4494,55 +4528,439 @@ impl Workspace {
             );
         }
 
-        // ---- a reference of every org and its members ----
-        let mut orgboxes = div().flex().flex_row().flex_wrap().gap_2();
-        for org in self.floor_orgs.saved() {
-            let id = org.id;
-            let mut boxed = div()
-                .p_2()
-                .border_1()
-                .border_color(th.ansi[6].alpha(0.4))
-                .rounded(sk.rad_raw(6.))
-                .flex()
-                .flex_col()
-                .gap_0p5()
-                .child(
-                    div()
-                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                        .text_color(th.ansi[6])
-                        .child(SharedString::from(self.threshing_floor_org_label(id))),
-                );
-            for seat in &org.seats {
-                boxed = boxed.child(
-                    div()
-                        .text_size(sk.text_px(9.))
-                        .text_color(th.text.alpha(0.85))
-                        .child(SharedString::from(
-                            self.threshing_floor_seat_label(*seat, cx),
-                        )),
-                );
-            }
-            orgboxes = orgboxes.child(boxed);
-        }
-
+        let open = map.rels_open;
+        let count = cross.len() + org_lines.len();
+        let drawer = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                Self::bezel_btn(
+                    sk,
+                    &format!(
+                        "{} {} \u{b7} {count}",
+                        if open { "\u{25be}" } else { "\u{25b8}" },
+                        ui.floor_map_rels
+                    ),
+                    open,
+                )
+                .id("floor-map-rels-toggle")
+                .debug_selector(|| "floor-map-rels-toggle".to_string())
+                .flex_none()
+                .on_click(cx.listener(|ws, _, _, cx| {
+                    cx.stop_propagation();
+                    if let Some(m) = &mut ws.floor_map {
+                        m.rels_open = !m.rels_open;
+                    }
+                    cx.notify();
+                })),
+            )
+            .when(open, |d| d.child(rels));
         div()
             .id("floor-system-map")
             .debug_selector(|| "floor-system-map".to_string())
-            .size_full()
+            .flex_none()
+            .max_h(px(320.))
+            .overflow_y_scroll()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_2()
             .p_2()
-            .child(
-                div()
-                    .text_size(sk.text_px(12.))
-                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                    .text_color(th.complement)
-                    .child(SharedString::from(ui.floor_map.to_string())),
-            )
+            .rounded(sk.rad_raw(8.))
+            .border_1()
+            .border_color(th.complement.alpha(0.45))
             .child(form)
-            .child(rels)
-            .child(orgboxes)
+            .child(drawer)
+    }
+
+    /// The System Map, drawn the way the org chart is: on the same pan and zoom,
+    /// every org a bordered region holding its seats in the chart's own tidy
+    /// tree, with the lines between orgs routed card to card and border to
+    /// border. Cards simplify as the view zooms out rather than shrinking past
+    /// reading: a dot and a name under 60%, the chart card's head between 60%
+    /// and 140%, and the message, age and size above that. A card or an org's
+    /// name opens that org's chart.
+    fn floor_map_canvas(
+        &self,
+        facts: &[PaneFacts],
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        use threshing_floor::End;
+        let ui = self.lang.strings().ui;
+        let zoom = self.floor_view.zoom;
+        let ui_scale = th.grade.scale.clamp(0.7, 1.6);
+        let s = ui_scale * zoom;
+        let (sw, sh, cg, rg, pad) = (SEAT_W * s, SEAT_H * s, COL_GAP * s, ROW_GAP * s, PAD * s);
+        let top = pad + 18. * s;
+        let gap = 70. * s;
+        let rung_word = |r: threshing_floor::Rung| match r {
+            threshing_floor::Rung::See => ui.floor_rung_see,
+            threshing_floor::Rung::Read => ui.floor_rung_read,
+            threshing_floor::Rung::Ask => ui.floor_rung_ask,
+            threshing_floor::Rung::Prompt => ui.floor_rung_prompt,
+        };
+        let by_seat: std::collections::HashMap<threshing_floor::SeatId, &PaneFacts> = facts
+            .iter()
+            .filter_map(|f| f.seat.map(|s| (s, f)))
+            .collect();
+        let fact_of = |seat: threshing_floor::SeatId| by_seat.get(&seat).copied();
+
+        // ---- every org laid out as the chart lays one out ----
+        struct MapOrg {
+            org: threshing_floor::OrgId,
+            w: f32,
+            h: f32,
+            x: f32,
+            y: f32,
+            placed: Vec<threshing_floor::Placed>,
+        }
+        let mut orgs: Vec<MapOrg> = self
+            .floor_orgs
+            .saved()
+            .iter()
+            .map(|o| {
+                let keys: Vec<_> = o
+                    .seats
+                    .iter()
+                    .map(|seat| match fact_of(*seat) {
+                        Some(f) => (*seat, f.project.clone(), f.name.full()),
+                        None => (*seat, String::new(), ui.floor_unavailable.to_string()),
+                    })
+                    .collect();
+                let placed = threshing_floor::layout(&keys, &self.chart);
+                let cols = placed.iter().map(|p| p.col + 1.).fold(0., f32::max);
+                let rows = placed.iter().map(|p| p.row + 1).max().unwrap_or(0) as f32;
+                let w = (pad * 2. + cols * (sw + cg) - cg).max(sw + pad * 2.);
+                let h = (top + rows * (sh + rg) - rg + pad).max(top + sh * 0.5 + pad);
+                MapOrg {
+                    org: o.id,
+                    w,
+                    h,
+                    x: 0.,
+                    y: 0.,
+                    placed,
+                }
+            })
+            .collect();
+        // Largest first, then packed left to right, wrapping at a width that
+        // keeps the whole map roughly as wide as a screen is.
+        orgs.sort_by(|a, b| {
+            b.placed
+                .len()
+                .cmp(&a.placed.len())
+                .then(a.org.0.cmp(&b.org.0))
+        });
+        let area: f32 = orgs.iter().map(|o| (o.w + gap) * (o.h + gap)).sum();
+        let widest = orgs.iter().map(|o| o.w).fold(0., f32::max);
+        let wrap = widest.max(area.sqrt() * 1.6);
+        let (mut x, mut y, mut row_h) = (pad, pad, 0_f32);
+        for o in &mut orgs {
+            if x > pad && x + o.w > wrap + pad {
+                x = pad;
+                y += row_h + gap;
+                row_h = 0.;
+            }
+            o.x = x;
+            o.y = y;
+            x += o.w + gap;
+            row_h = row_h.max(o.h);
+        }
+        let world_w = orgs.iter().map(|o| o.x + o.w).fold(0., f32::max) + pad;
+        let world_h = orgs.iter().map(|o| o.y + o.h).fold(0., f32::max) + pad;
+        // Where each seat landed, and in which org: the first org that lists
+        // it, so a seat saved in two orgs is drawn (and wired) once per copy
+        // but routed from its first.
+        let mut spots: std::collections::HashMap<
+            threshing_floor::SeatId,
+            ((f32, f32), threshing_floor::OrgId),
+        > = std::collections::HashMap::new();
+        for o in &orgs {
+            for p in &o.placed {
+                spots.entry(p.seat).or_insert((
+                    (
+                        o.x + pad + p.col * (sw + cg),
+                        o.y + top + p.row as f32 * (sh + rg),
+                    ),
+                    o.org,
+                ));
+            }
+        }
+        let seat_at = |seat: threshing_floor::SeatId| spots.get(&seat).map(|(at, _)| *at);
+        let org_of_seat = |seat: threshing_floor::SeatId| spots.get(&seat).map(|(_, org)| *org);
+        let rect_of = |end: End| -> Option<(f32, f32, f32, f32)> {
+            match end {
+                End::Seat(seat) => seat_at(seat).map(|(x, y)| (x, y, sw, sh)),
+                End::Org { org } => orgs
+                    .iter()
+                    .find(|o| o.org == org)
+                    .map(|o| (o.x, o.y, o.w, o.h)),
+            }
+        };
+
+        // ---- wires: inside an org as the chart routes them; between orgs, an
+        // elbow from the nearer sides of the two boxes ----
+        let mut paths: Vec<WireStroke> = Vec::new();
+        let mut chips: Vec<((f32, f32), String)> = Vec::new();
+        for l in self.chart.saved() {
+            let (Some(a), Some(b)) = (seat_at(l.from), seat_at(l.to)) else {
+                continue;
+            };
+            if org_of_seat(l.from) == org_of_seat(l.to) {
+                let (pts, _) = wire_route(a, b, sw, sh, cg, rg);
+                paths.push((pts, l.is_bypass(), false));
+            } else {
+                let pts = elbow((a.0, a.1, sw, sh), (b.0, b.1, sw, sh));
+                let word = l.rung.known().map_or(ui.floor_unknown, rung_word);
+                chips.push((
+                    pts[pts.len() / 2],
+                    lang::fill(ui.floor_rel_wire, &[("rung", word)]),
+                ));
+                paths.push((pts, l.is_bypass(), false));
+            }
+        }
+        for l in self.chart.org_lines() {
+            let (Some(a), Some(b)) = (rect_of(l.from), rect_of(l.to)) else {
+                continue;
+            };
+            let pts = elbow(a, b);
+            let word = l.rung.known().map_or(ui.floor_unknown, rung_word);
+            chips.push((
+                pts[pts.len() / 2],
+                lang::fill(ui.floor_rel_wire, &[("rung", word)]),
+            ));
+            paths.push((pts, false, false));
+        }
+        let line_ink = th.accent;
+        let bypass_ink = th.ansi[3];
+        let canvas = gpui::canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                for (pts, bypass, _) in &paths {
+                    stroke_wire(
+                        bounds,
+                        pts,
+                        if *bypass { bypass_ink } else { line_ink },
+                        *bypass,
+                        window,
+                    );
+                }
+            },
+        )
+        .absolute()
+        .inset_0();
+
+        let mut world = div()
+            .id("floor-map-world")
+            .debug_selector(|| "floor-map-world".to_string())
+            .absolute()
+            .left(self.floor_view.offset.x)
+            .top(self.floor_view.offset.y)
+            .flex_none()
+            .w(px(world_w.max(420. * s)))
+            .h(px(world_h.max(sh + pad * 2.)));
+        // Borders go down first, so wires and cards draw over them.
+        for o in &orgs {
+            let org = o.org;
+            let ink = th.ansi[6];
+            world = world.child(
+                div()
+                    .id(SharedString::from(format!("floor-map-org-{}", org.0)))
+                    .debug_selector(move || format!("floor-map-org-{}", org.0))
+                    .absolute()
+                    .left(px(o.x))
+                    .top(px(o.y))
+                    .w(px(o.w))
+                    .h(px(o.h))
+                    .rounded(sk.rad_raw(8.))
+                    .border_1()
+                    .border_color(ink.alpha(0.55))
+                    .bg(ink.alpha(0.025))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("floor-map-org-name-{}", org.0)))
+                            .absolute()
+                            .left(px(10. * s))
+                            .top(px(4. * s))
+                            .max_w(px(o.w - 20. * s))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            // Held at a readable size however far out the view is.
+                            .text_size(px((8.5 * ui_scale).max(8.5 * s)))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(ink)
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .child(SharedString::from(format!(
+                                "\u{25a3} {} \u{b7} {}",
+                                self.threshing_floor_org_label(org).to_uppercase(),
+                                o.placed.len()
+                            )))
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                cx.stop_propagation();
+                                ws.floor_map = None;
+                                // The map's zoom and pan are not the chart's.
+                                ws.floor_view.reset();
+                                ws.threshing_floor_set_org(org, cx);
+                            })),
+                    ),
+            );
+        }
+        world = world.child(canvas);
+        for (at, word) in chips {
+            world = world.child(
+                div()
+                    .absolute()
+                    .left(px(at.0 - 30. * s))
+                    .top(px(at.1 - 8. * s))
+                    .px(px(3. * s))
+                    .rounded(sk.rad_raw(3.))
+                    .border_1()
+                    .border_color(line_ink.alpha(0.6))
+                    .bg(darken(th.surface, 0.55))
+                    .text_size(px((7. * ui_scale).max(7.5 * s)))
+                    .text_color(line_ink)
+                    .whitespace_nowrap()
+                    .child(SharedString::from(word)),
+            );
+        }
+        // The cards, at the detail the zoom can carry.
+        let far = zoom < 0.6;
+        let near = zoom >= 1.4;
+        for o in &orgs {
+            let org = o.org;
+            for p in &o.placed {
+                let seat = p.seat;
+                let (cx_, cy_) = (
+                    o.x + pad + p.col * (sw + cg),
+                    o.y + top + p.row as f32 * (sh + rg),
+                );
+                let f = fact_of(seat);
+                let state_ink = f.map_or(th.text.alpha(0.4), |f| {
+                    agent_state_glow(th, th.accent, f.state)
+                });
+                let name =
+                    f.map_or_else(|| ui.floor_unavailable.to_string(), |f| f.name.tab.clone());
+                let mut card = div()
+                    .id(SharedString::from(format!("floor-map-seat-{}", seat.0)))
+                    .debug_selector(move || format!("floor-map-seat-{}", seat.0))
+                    .absolute()
+                    .left(px(cx_))
+                    .top(px(cy_))
+                    .w(px(sw))
+                    .h(px(sh))
+                    .overflow_hidden()
+                    .rounded(sk.rad_raw(4.))
+                    .border_1()
+                    .border_color(if far {
+                        state_ink
+                    } else {
+                        th.accent.alpha(0.55)
+                    })
+                    .bg(darken(th.surface, 0.5))
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.floor_map = None;
+                        // The map's zoom and pan are not the chart's.
+                        ws.floor_view.reset();
+                        ws.threshing_floor_set_org(org, cx);
+                    }));
+                if far {
+                    // A dot and the name, set at a size that still reads.
+                    card = card
+                        .px(px(4.))
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(
+                            div()
+                                .size(px(6.))
+                                .flex_none()
+                                .rounded(sk.radius_pill())
+                                .bg(state_ink),
+                        )
+                        .child(
+                            div()
+                                .min_w(px(0.))
+                                .truncate()
+                                .text_size(px(9. * ui_scale))
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(th.text)
+                                .child(SharedString::from(name)),
+                        );
+                } else {
+                    let place = f.map(|f| f.name.outer.clone()).unwrap_or_default();
+                    let state = f
+                        .map(|f| f.state.label_in(self.lang).to_string())
+                        .unwrap_or_default();
+                    let model = f
+                        .map(|f| {
+                            model_line(
+                                &f.program,
+                                f.model.as_deref(),
+                                f.effort.as_deref(),
+                                ui.floor_model_unknown,
+                            )
+                        })
+                        .unwrap_or_default();
+                    card =
+                        card.p(px(8. * s))
+                            .flex()
+                            .flex_col()
+                            .gap(px(3. * s))
+                            .text_size(sk.text_px(8.5))
+                            .child(
+                                div()
+                                    .whitespace_nowrap()
+                                    .overflow_hidden()
+                                    .text_size(sk.text_px(10.))
+                                    .when(!place.is_empty(), |d| {
+                                        d.child(div().text_color(th.text.alpha(0.6)).child(
+                                            SharedString::from(format!("{place} \u{203a} ")),
+                                        ))
+                                    })
+                                    .flex()
+                                    .child(
+                                        div()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(th.text)
+                                            .child(SharedString::from(name)),
+                                    ),
+                            )
+                            .when(near, |d| {
+                                d.children(f.and_then(|f| f.message.clone()).map(|m| {
+                                    div()
+                                        .whitespace_nowrap()
+                                        .overflow_hidden()
+                                        .text_color(th.text.alpha(0.85))
+                                        .child(SharedString::from(m))
+                                }))
+                            })
+                            .child(
+                                div()
+                                    .text_color(state_ink)
+                                    .child(SharedString::from(format!("\u{25cf} {state}"))),
+                            )
+                            .child(
+                                div()
+                                    .px(px(5. * s))
+                                    .py(px(3. * s))
+                                    .rounded(sk.rad_raw(3.))
+                                    .border_1()
+                                    .border_color(th.text.alpha(0.12))
+                                    .text_color(th.text.alpha(0.6))
+                                    .whitespace_nowrap()
+                                    .overflow_hidden()
+                                    .child(SharedString::from(model)),
+                            );
+                }
+                world = world.child(card);
+            }
+        }
+        world
     }
 
     /// What a person calls `leaf`: where its tab sits on the left bar, then
@@ -5602,6 +6020,34 @@ fn wire_route(
         let x1 = if left_to_right { tx } else { tx + sw };
         let (y0, y1) = (fy + sh / 2., ty + sh / 2.);
         (vec![(x0, y0), (x1, y1)], ((x0 + x1) / 2., (y0 + y1) / 2.))
+    }
+}
+
+/// An orthogonal route between two boxes `(x, y, w, h)` that may sit anywhere
+/// relative to each other: out of the side of `a` that faces `b`, across the
+/// gap between them, into the facing side of `b`. Side by side, it leaves and
+/// enters horizontally; stacked, vertically. The arrow end is `b`.
+fn elbow(a: (f32, f32, f32, f32), b: (f32, f32, f32, f32)) -> Vec<(f32, f32)> {
+    let (ax, ay, aw, ah) = a;
+    let (bx, by, bw, bh) = b;
+    if bx >= ax + aw || bx + bw <= ax {
+        let (sx, ex) = if bx >= ax + aw {
+            (ax + aw, bx)
+        } else {
+            (ax, bx + bw)
+        };
+        let (sy, ey) = (ay + ah / 2., by + bh / 2.);
+        let mx = (sx + ex) / 2.;
+        vec![(sx, sy), (mx, sy), (mx, ey), (ex, ey)]
+    } else {
+        let (sy, ey) = if by >= ay + ah {
+            (ay + ah, by)
+        } else {
+            (ay, by + bh)
+        };
+        let (sx, ex) = (ax + aw / 2., bx + bw / 2.);
+        let my = (sy + ey) / 2.;
+        vec![(sx, sy), (sx, my), (ex, my), (ex, ey)]
     }
 }
 
@@ -7173,6 +7619,83 @@ mod tests {
         }
     }
 
+    /// The System Map draws on the chart's canvas: every org a border holding
+    /// its own seats, a line across orgs as a wire with its rung, cards that
+    /// fall back to a dot and a name when zoomed far out, and a card that opens
+    /// its org.
+    #[gpui::test]
+    fn the_system_map_draws_every_org_as_a_bordered_region_of_cards(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        let here = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
+        ws.update(cx, |ws, cx| {
+            ws.floor_orgs.assign(threshing_floor::SeatId(101), other);
+            ws.chart.draw(
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(101),
+                threshing_floor::Rung::Read,
+            );
+            ws.floor_map = Some(SystemMap::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let home = bounds(cx, &format!("floor-map-org-{}", here.0));
+        let away = bounds(cx, &format!("floor-map-org-{}", other.0));
+        let lead = bounds(cx, "floor-map-seat-100");
+        let worker = bounds(cx, "floor-map-seat-101");
+        let inside = |b: Bounds<Pixels>, o: Bounds<Pixels>| {
+            b.origin.x >= o.origin.x
+                && b.right() <= o.right()
+                && b.origin.y >= o.origin.y
+                && b.bottom() <= o.bottom()
+        };
+        assert!(
+            inside(lead, home),
+            "the lead sits inside its own org's border"
+        );
+        assert!(
+            inside(worker, away),
+            "the worker sits inside the other org's border"
+        );
+        assert!(!inside(worker, home));
+        // The builder sits above the canvas; the drawer is closed until asked.
+        assert!(cx.debug_bounds("floor-system-map").is_some());
+        assert!(cx.debug_bounds("floor-map-rels-toggle").is_some());
+        // Far out, the cards keep their places.
+        ws.update(cx, |ws, cx| {
+            ws.floor_view.zoom = 0.3;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("floor-map-seat-100").is_some());
+        // A press on a card never starts a pan of the map under it.
+        let card = bounds(cx, "floor-map-seat-100").center();
+        cx.simulate_mouse_down(card, MouseButton::Left, Default::default());
+        assert!(ws.read_with(cx, |ws, _| ws.floor_view.drag.is_none()));
+        cx.simulate_mouse_up(card, MouseButton::Left, Default::default());
+        cx.run_until_parked();
+        // That click opened the org already shown, from a fresh view rather
+        // than the map's far zoom.
+        ws.read_with(cx, |ws, _| {
+            assert!(ws.floor_map.is_none());
+            assert_eq!(ws.floor_org, Some(here));
+            assert_eq!(ws.floor_view.zoom, 1.);
+        });
+        // A card in another org opens that org's chart.
+        ws.update(cx, |ws, cx| {
+            ws.floor_map = Some(SystemMap::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        click(cx, "floor-map-seat-101");
+        ws.read_with(cx, |ws, _| {
+            assert!(ws.floor_map.is_none());
+            assert_eq!(ws.floor_org, Some(other));
+        });
+    }
+
     #[gpui::test]
     fn whole_card_drag_moves_membership_and_the_saved_record_keeps_identity(
         cx: &mut gpui::TestAppContext,
@@ -7499,9 +8022,10 @@ mod tests {
         for delta in [480., 480., -480., -480., -480.] {
             view.zoom_at(anchor, delta);
             close_point((anchor - view.offset) * (1. / view.zoom), anchor);
-            assert!((0.5..=2.5).contains(&view.zoom));
+            assert!((0.2..=2.5).contains(&view.zoom));
         }
-        assert_eq!(view.zoom, 0.5);
+        // 20 %, so the System Map can hold every org on one screen.
+        assert_eq!(view.zoom, 0.2);
         let before = view.offset;
         view.zoom_at(anchor, f32::NAN);
         assert_eq!(view.offset, before);

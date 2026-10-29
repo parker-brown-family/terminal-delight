@@ -29820,6 +29820,10 @@ impl Render for Workspace {
             if !self.threshing_floor {
                 self.threshing_floor = true;
                 self.threshing_floor_pick = how.parse().ok().map(threshing_floor::SeatId);
+                // `map` opens the System Map instead of an org's chart.
+                if how == "map" {
+                    self.floor_map = Some(Default::default());
+                }
                 cx.notify();
             }
         }
