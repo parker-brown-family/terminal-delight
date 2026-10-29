@@ -6635,6 +6635,42 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_header_leads_with_the_model_and_an_unnamed_pane_is_its_number(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            let lead = ws
+                .threshing_floor_seat_leaf(threshing_floor::SeatId(100), cx)
+                .unwrap();
+            lead.update(cx, |v, _| {
+                v.title = pane::DEFAULT_TITLE.to_string();
+                v.name = None;
+                // Before a transcript names the model, the harness is all
+                // that is known, so it stands in.
+                assert_eq!(v.header_lead(), "CODEX");
+                assert_eq!(v.shown_title(), "10", "an unnamed pane is its number");
+                assert_eq!(v.header_title(), "10");
+                v.model_label = Some("SOL 6 XHIGH".into());
+                assert_eq!(
+                    v.header_lead(),
+                    "SOL 6 XHIGH",
+                    "the model, never the harness"
+                );
+                // A raw shell leads with its mode, whatever label it was left.
+                v.mode = pane::PaneMode::Shell;
+                assert_ne!(v.header_lead(), "SOL 6 XHIGH");
+                // A name a person gave still wins the title.
+                v.name = Some("corner model chip".into());
+                assert_eq!(v.header_title(), "corner model chip");
+            });
+        });
+    }
+
+    #[gpui::test]
     fn the_filter_narrows_the_pool_and_never_hides_a_chart_member(cx: &mut gpui::TestAppContext) {
         let _warp = crate::warp::WARP_SERIAL
             .lock()
