@@ -19,13 +19,17 @@ Parker, 2026-10-29, on the Floor after the boxed card vitals landed: *"The syste
 
 ## Gates
 
-- Plan (`plan.html`): **waiting for approval.** Eight questions, each with a recommendation.
+- Plan (`plan.html`): **APPROVED 2026-10-29 with amendments**, through notes on the figures ("yes", "yep - will have to be done carefully!", "nice"). No question was stamped, so all eight stand as recommended. Amendments:
+  - **The THRESHING FLOOR title goes too.** *"maybe actually kill the threshing floor title. yes. not needed."*
+  - **A child centres under its own parent, not under the row.** *"for a 2 - 3 - 4 tiered relationship WITHIN an org... the visual is CENTERED against the TREE, but should be centered against JUST ITS parent!"* His screenshot: omamaps, the child of X algo, sits under HISTORY's column. `layout()` places each row by sort order and has no notion of subtrees. This becomes the first part of slice 3.
+  - **Connect goes.** *"CONNECT doesn't seem useful..."* A relationship starts from a card dropped on a card, a connector pulled, or a line clicked.
+  - Wish, not scheduled: *"I really like the drag - putting on a vertical monitor would be super nice!"*. Waiting for Parker to say what he means.
 
 ## Slices
 
-- [ ] 1 · One-row header: groups, hover text, hints out, pads match, footer becomes an overlay.
+- [ ] 1 · One-row header with no title: groups, hover text, hints out, pads match, footer becomes an overlay, Connect removed.
 - [ ] 2 · Sleeping agents count as agents in the pool and in relations; the card shows harness and model; no wake on add.
-- [ ] 3 · Org border on the chart; an outside lane for related agents and orgs; whole-org lines drawn.
+- [ ] 3 · Tidy-tree layout (each child centred under its own parent); org border on the chart; an outside lane for related agents and orgs; whole-org lines drawn.
 - [ ] 4 · System Map on the shared canvas: N org borders, zoom 20–250% with three levels, relationship builder folds away.
 
 ## Facts the plan stands on (dev/0.5.0 at fdacb175)
