@@ -6796,20 +6796,24 @@ impl Workspace {
         // because a context window does not move fast enough to be worth
         // watching at 2s. Same shape as the sweeps above: gather on the main
         // thread, do the I/O on the pool, apply back.
+        let mut vitals_tick: u32 = 0;
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(Duration::from_secs(10))
                 .await;
+            vitals_tick = vitals_tick.wrapping_add(1);
             let Ok(reqs) = this.update(cx, |ws: &mut Workspace, cx| {
-                // Only while the wall is actually on screen. The sweep runs
-                // `edges` over every transcript in each live pane's project
-                // directory — one of those directories holds 47 — so leaving it
-                // ticking behind a closed overlay was tens of megabytes of reads
-                // every ten seconds, permanently, to compute bars nobody could
-                // see. The wall is a glance surface; it costs nothing to keep
-                // one until it is looked at.
-                if !(ws.mcp_menu || ws.threshing_floor) || ws.vitals_refreshing {
-                    return Vec::new(); // closed, or a pass is still out
+                // Every ten seconds while the wall is on screen; once a minute
+                // behind a closed one. The sweep re-reads every transcript that
+                // grew, and a working agent's always has, so ticking at the
+                // wall's pace behind a closed overlay was tens of megabytes of
+                // reads every ten seconds, permanently. The slow pass is still
+                // owed: each pane's header leads with its model and effort, and
+                // a `/model` switch must reach it within a minute, not wait for
+                // someone to open the wall.
+                let wall = ws.mcp_menu || ws.threshing_floor;
+                if (!wall && !vitals_tick.is_multiple_of(6)) || ws.vitals_refreshing {
+                    return Vec::new(); // not this tick, or a pass is still out
                 }
                 let reqs = ws.vitals_requests(cx);
                 ws.vitals_refreshing = !reqs.is_empty();
@@ -10171,6 +10175,7 @@ impl Workspace {
         }
         self.vitals_refreshing = false;
         if changed {
+            self.hand_down_model_labels(cx);
             cx.notify();
         }
     }
@@ -22168,6 +22173,25 @@ impl Workspace {
             });
             self.save(cx);
             cx.notify();
+        }
+    }
+
+    /// Give each pane the model label its header leads with, from the vitals
+    /// the window already reads by shell pid. A pane whose vitals are gone
+    /// loses its label and falls back to its harness, never to a stale model.
+    fn hand_down_model_labels(&mut self, cx: &mut Context<Self>) {
+        for leaf in self.all_leaves() {
+            let label = leaf
+                .read(cx)
+                .shell_pid()
+                .and_then(|pid| self.agent_vitals.get(&pid))
+                .and_then(|v| v.model_and_effort());
+            if leaf.read(cx).model_label != label {
+                leaf.update(cx, |v, cx| {
+                    v.model_label = label;
+                    cx.notify();
+                });
+            }
         }
     }
 
