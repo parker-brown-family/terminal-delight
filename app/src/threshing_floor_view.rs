@@ -20,6 +20,43 @@ const COL_GAP: f32 = 30.;
 const ROW_GAP: f32 = 56.;
 const PAD: f32 = 14.;
 
+/// A view over the chart, never a change to its seats or permissions. Bounds
+/// are measured at prepaint; before then the pointer anchor is unavailable.
+pub(crate) struct FloorViewport {
+    zoom: f32,
+    offset: Point<Pixels>,
+    drag: Option<(Point<Pixels>, Point<Pixels>)>,
+    bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+}
+
+impl Default for FloorViewport {
+    fn default() -> Self {
+        Self {
+            zoom: 1.,
+            offset: point(px(0.), px(0.)),
+            drag: None,
+            bounds: Default::default(),
+        }
+    }
+}
+
+impl FloorViewport {
+    fn reset(&mut self) {
+        self.zoom = 1.;
+        self.offset = point(px(0.), px(0.));
+        self.drag = None;
+    }
+
+    fn zoom_at(&mut self, anchor: Point<Pixels>, delta: f32) {
+        if !delta.is_finite() {
+            return;
+        }
+        let next = (self.zoom * 2_f32.powf(delta.clamp(-480., 480.) / 240.)).clamp(0.5, 2.5);
+        self.offset = anchor - (anchor - self.offset) * (next / self.zoom);
+        self.zoom = next;
+    }
+}
+
 /// Everything one seat shows, gathered from facts the window already has.
 struct PaneFacts {
     leaf: Entity<TerminalView>,
@@ -424,7 +461,12 @@ impl Workspace {
         let shown = seats.len() + loose.len();
 
         // ---- lay the chart out ----
-        let s = th.grade.scale.clamp(0.7, 1.6);
+        let chrome_sk = sk;
+        let ui_scale = th.grade.scale.clamp(0.7, 1.6);
+        let s = ui_scale * self.floor_view.zoom;
+        let mut sk = chrome_sk.clone();
+        sk.scale *= self.floor_view.zoom;
+        sk.type_scale *= self.floor_view.zoom;
         let (sw, sh, cg, rg, pad) = (SEAT_W * s, SEAT_H * s, COL_GAP * s, ROW_GAP * s, PAD * s);
         let missing: Vec<_> = self
             .floor_org
@@ -552,7 +594,9 @@ impl Workspace {
 
         let pick = self.threshing_floor_pick;
         let mut chart = div()
-            .relative()
+            .absolute()
+            .left(self.floor_view.offset.x)
+            .top(self.floor_view.offset.y)
             .flex_none()
             .w(px(chart_w))
             .h(px(chart_h))
@@ -676,6 +720,7 @@ impl Workspace {
                     .flex_col()
                     .gap(px(8. * s))
                     .cursor(gpui::CursorStyle::OpenHand)
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .when(
                         dragging == Some(&f.leaf) && self.floor_tether.is_none(),
                         |d| d.opacity(0.35),
@@ -900,6 +945,7 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .gap(px(8. * s))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
                         div()
                             .flex()
@@ -1002,7 +1048,16 @@ impl Workspace {
         }
 
         // ---- the pane pool ----
-        let mut off = div().w(px(sw)).flex_none().flex().flex_col().gap_2();
+        let sk = chrome_sk;
+        let s = ui_scale;
+        let sw = SEAT_W * s;
+        let mut off = div()
+            .w_full()
+            .min_w(px(0.))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap_2();
         for f in &loose {
             let leaf = f.leaf.clone();
             let is_agent = leaf.read(cx).mode.is_agent();
@@ -1024,8 +1079,8 @@ impl Workspace {
                         let id = leaf.entity_id().as_u64();
                         move || format!("floor-pane-{id}")
                     })
-                    .w(px(sw))
-                    .h(px(sh))
+                    .w_full()
+                    .min_h(px(112. * s))
                     .flex_none()
                     .overflow_hidden()
                     .p_2()
@@ -1319,7 +1374,7 @@ impl Workspace {
                         if drag_active {
                             ui.floor_drag_hint
                         } else {
-                            ui.floor_hint
+                            ui.floor_view_hint
                         }
                         .to_string(),
                     )),
@@ -1328,7 +1383,6 @@ impl Workspace {
             // set a little apart from the org controls.
             .children(self.ask_numbers.as_ref().map(|n| {
                 div()
-                    .mt_2()
                     .text_size(sk.text_px(8.5))
                     .text_color(if n.unlined_answered > 0 {
                         th.ansi[1]
@@ -1345,6 +1399,7 @@ impl Workspace {
                     )))
             }));
         let drop_chart_ink = th.accent;
+        let view_bounds = self.floor_view.bounds.clone();
         let chart_tile = div()
             .id("floor-org-tile")
             .debug_selector(|| "floor-org-tile".to_string())
@@ -1371,7 +1426,12 @@ impl Workspace {
                     .text_size(sk.text_px(13.))
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
                     .text_color(th.ansi[6])
+                    .flex()
+                    .items_center()
+                    .gap_2()
                     .child(SharedString::from(self.threshing_floor_org_label(id)))
+                    .child(div().flex_1())
+                    .child(self.threshing_floor_view_controls(&sk, cx))
             }))
             .child(
                 div()
@@ -1380,8 +1440,47 @@ impl Workspace {
                     .flex_1()
                     .min_w(px(0.))
                     .min_h(px(0.))
-                    .overflow_x_scroll()
-                    .overflow_y_scroll()
+                    .relative()
+                    .when(self.floor_map.is_some(), |d| {
+                        d.overflow_x_scroll().overflow_y_scroll()
+                    })
+                    .when(self.floor_map.is_none(), |d| {
+                        d.overflow_hidden()
+                            .cursor(if self.floor_view.drag.is_some() {
+                                gpui::CursorStyle::ClosedHand
+                            } else {
+                                gpui::CursorStyle::OpenHand
+                            })
+                    })
+                    .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _, cx| {
+                        if ws.floor_map.is_some() || cx.has_active_drag() {
+                            return;
+                        }
+                        cx.stop_propagation();
+                        let delta = ev.delta.pixel_delta(px(20.));
+                        if ev.modifiers.control {
+                            if ws.floor_view.drag.is_none() {
+                                if let Some(bounds) = ws.floor_view.bounds.get() {
+                                    ws.floor_view
+                                        .zoom_at(ev.position - bounds.origin, f32::from(delta.y));
+                                }
+                            }
+                        } else {
+                            ws.floor_view.offset += delta;
+                        }
+                        cx.notify();
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, ev: &MouseDownEvent, _, cx| {
+                            if ws.floor_map.is_some() || ev.modifiers.alt || cx.has_active_drag() {
+                                return;
+                            }
+                            cx.stop_propagation();
+                            ws.floor_view.drag = Some((ev.position, ws.floor_view.offset));
+                            cx.notify();
+                        }),
+                    )
                     .rounded(sk.rad_raw(8.))
                     .border_1()
                     .border_color(if chart_active {
@@ -1414,6 +1513,14 @@ impl Workspace {
                             ws.threshing_floor_assign(&d.leaf, org, false, cx);
                         }
                     }))
+                    .child(
+                        gpui::canvas(
+                            move |bounds, _, _| view_bounds.set(Some(bounds)),
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
                     .child(if self.floor_map.is_some() {
                         self.floor_system_map(&sk, th, cx).into_any_element()
                     } else {
@@ -1424,7 +1531,7 @@ impl Workspace {
             .id("floor-pool-tile")
             .debug_selector(|| "floor-pool-tile".to_string())
             .w(px(sw + 18.))
-            .max_w(gpui::relative(0.4))
+            .max_w(gpui::relative(0.28))
             .flex_none()
             .min_w(px(0.))
             .min_h(px(0.))
@@ -1528,7 +1635,6 @@ impl Workspace {
             )
             .map(|d| sk.chrome(sk.finish(d)))
             .child(header)
-            .child(self.threshing_floor_relationship_controls(&sk, th, cx))
             .child(
                 div()
                     .id("threshing-floor-tiles")
@@ -1542,7 +1648,18 @@ impl Workspace {
                     .gap_3()
                     .relative()
                     .when(drag_active, |d| d.child(drag_focus()))
-                    .child(chart_tile)
+                    .child(
+                        div()
+                            .id("floor-workspace-column")
+                            .flex_1()
+                            .min_w(px(0.))
+                            .min_h(px(0.))
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(self.threshing_floor_relationship_controls(&sk, th, cx))
+                            .child(chart_tile),
+                    )
                     .child(pool_tile),
             )
             .child(self.threshing_floor_drag_footer(removing, drag_active, &sk, th, cx));
@@ -1553,6 +1670,7 @@ impl Workspace {
                 .absolute()
                 .inset_0()
                 .bg(th.bg.alpha(0.70))
+                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                 .flex()
                 .items_center()
                 .justify_center()
@@ -1560,8 +1678,20 @@ impl Workspace {
                     cx.set_active_drag_cursor_style(gpui::CursorStyle::ClosedHand, window);
                 })
                 .capture_any_mouse_up(cx.listener(|ws, _, _, cx| {
-                    if ws.floor_drag.take().is_some() || ws.floor_tether.is_some() {
+                    let panning = ws.floor_view.drag.take().is_some();
+                    if ws.floor_drag.take().is_some() || ws.floor_tether.is_some() || panning {
                         ws.floor_tether = None;
+                        cx.notify();
+                    }
+                }))
+                .on_mouse_move(cx.listener(|ws, ev: &MouseMoveEvent, _, cx| {
+                    if let Some((start, offset)) = ws.floor_view.drag {
+                        if ev.pressed_button == Some(MouseButton::Left) {
+                            ws.floor_view.offset = offset + ev.position - start;
+                        } else {
+                            ws.floor_view.drag = None;
+                        }
+                        cx.stop_propagation();
                         cx.notify();
                     }
                 }))
@@ -1584,6 +1714,49 @@ impl Workspace {
                 .child(panel)
                 .children(self.threshing_floor_context_menu(&sk, th, cx))
                 .children(self.threshing_floor_verb_menu(&sk, th, cx)),
+        )
+    }
+
+    fn threshing_floor_view_controls(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> gpui::Div {
+        let mut controls = div().flex().items_center().gap_1().flex_none();
+        for (id, glyph, delta) in [("floor-zoom-out", "−", -60.), ("floor-zoom-in", "+", 60.)] {
+            controls = controls.child(
+                Self::bezel_btn(sk, glyph, false)
+                    .id(id)
+                    .debug_selector(move || id.to_string())
+                    .w(px(26.))
+                    .text_center()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        if let Some(bounds) = ws.floor_view.bounds.get() {
+                            ws.floor_view.zoom_at(
+                                point(bounds.size.width / 2., bounds.size.height / 2.),
+                                delta,
+                            );
+                            cx.notify();
+                        }
+                    })),
+            );
+        }
+        controls.child(
+            Self::bezel_btn(
+                sk,
+                &format!(
+                    "{:.0}% · {}",
+                    self.floor_view.zoom * 100.,
+                    self.lang.strings().ui.floor_view_reset
+                ),
+                false,
+            )
+            .id("floor-view-reset")
+            .debug_selector(|| "floor-view-reset".to_string())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|ws, _, _, cx| {
+                cx.stop_propagation();
+                ws.floor_view.reset();
+                cx.notify();
+            })),
         )
     }
 
@@ -1626,7 +1799,7 @@ impl Workspace {
                     .child(SharedString::from(if dragging {
                         ui.floor_drag_hint.to_string()
                     } else {
-                        self.floor_feedback.clone().unwrap_or_default()
+                        String::new()
                     })),
             )
             .when(removing, |d| {
@@ -1784,6 +1957,10 @@ impl Workspace {
             return false;
         }
         if key.key == "escape" {
+            if self.floor_view.drag.take().is_some() {
+                cx.notify();
+                return true;
+            }
             if self
                 .floor_relation
                 .as_mut()
@@ -1881,7 +2058,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let ui = self.lang.strings().ui;
-        let s = th.grade.scale;
+        let s = sk.scale;
         let Some((label, more, feedback)) = &f.artifact else {
             return div()
                 .id(SharedString::from(format!("floor-no-artifact-{}", seat.0)))
@@ -1992,6 +2169,9 @@ impl Workspace {
     fn threshing_floor_set_org(&mut self, id: threshing_floor::OrgId, cx: &mut Context<Self>) {
         if self.floor_orgs.get(id).is_none() {
             return;
+        }
+        if self.floor_org != Some(id) {
+            self.floor_view.reset();
         }
         self.floor_org = Some(id);
         // The pane filter is the person's, not the view's: seating or moving a
@@ -3066,7 +3246,7 @@ impl Workspace {
         let mut card = sk.action(
             div()
                 .relative()
-                .w(px(170.))
+                .w(px(148.))
                 .h(px(78.))
                 .flex_none()
                 .p_2()
@@ -3181,7 +3361,7 @@ impl Workspace {
             .map(|m| self.threshing_floor_member_card(m, sk, th, cx))
             .unwrap_or_else(|| {
                 div()
-                    .w(px(170.))
+                    .w(px(148.))
                     .h(px(78.))
                     .flex_none()
                     .border_1()
@@ -3238,10 +3418,9 @@ impl Workspace {
             .unwrap_or(ui.floor_rel_verb);
         let verb_slot = div()
             .flex_none()
-            .w(px(120.))
+            .w(px(108.))
             .flex()
             .flex_col()
-            .gap_2()
             .child(
                 div()
                     .h(px(17.))
@@ -3250,22 +3429,29 @@ impl Workspace {
                     .child(ui.floor_rel_can),
             )
             .child(
-                Self::bezel_btn(sk, &format!("{verb} ▾"), current.is_some())
-                    .id("floor-rel-verb")
-                    .debug_selector(|| "floor-rel-verb".to_string())
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, ev: &MouseDownEvent, _, cx| {
-                            cx.stop_propagation();
-                            if ws.floor_relation.is_none() {
-                                ws.threshing_floor_begin_relation(ws.threshing_floor_pick, None, cx)
-                            }
-                            if let Some(e) = &mut ws.floor_relation {
-                                e.verbs_at = Some(ev.position)
-                            }
-                            cx.notify()
-                        }),
-                    ),
+                div().h(px(78.)).flex().items_center().child(
+                    Self::bezel_btn(sk, &format!("{verb} ▾"), current.is_some())
+                        .w_full()
+                        .id("floor-rel-verb")
+                        .debug_selector(|| "floor-rel-verb".to_string())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, ev: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                if ws.floor_relation.is_none() {
+                                    ws.threshing_floor_begin_relation(
+                                        ws.threshing_floor_pick,
+                                        None,
+                                        cx,
+                                    )
+                                }
+                                if let Some(e) = &mut ws.floor_relation {
+                                    e.verbs_at = Some(ev.position)
+                                }
+                                cx.notify()
+                            }),
+                        ),
+                ),
             );
         let mut target_row = div().flex().flex_row().gap_2().items_center().h(px(78.));
         for (i, member) in targets.iter().enumerate() {
@@ -3291,8 +3477,21 @@ impl Workspace {
             }
             target_row = target_row.child(card);
         }
+        let mut target_rail = div().flex().gap_2().min_w(px(0.)).h(px(78.));
+        if !targets.is_empty() {
+            target_rail = target_rail.child(
+                div()
+                    .id("floor-targets-strip")
+                    .debug_selector(|| "floor-targets-strip".to_string())
+                    .flex_1()
+                    .min_w(px(0.))
+                    .h_full()
+                    .overflow_x_scroll()
+                    .child(target_row),
+            );
+        }
         if !locked {
-            target_row = target_row.child(
+            target_rail = target_rail.child(
                 Self::bezel_btn(sk, "+", false)
                     .text_size(sk.text_px(20.))
                     .flex()
@@ -3301,8 +3500,9 @@ impl Workspace {
                     .id("floor-rel-to")
                     .debug_selector(|| "floor-rel-to".to_string())
                     .h(px(78.))
-                    .w(px(if targets.is_empty() { 170. } else { 42. }))
-                    .flex_none()
+                    .w(px(if targets.is_empty() { 148. } else { 36. }))
+                    .when(!targets.is_empty(), |d| d.flex_none())
+                    .min_w(px(0.))
                     .on_click(cx.listener(|ws, _, _, cx| {
                         cx.stop_propagation();
                         if ws.floor_relation.is_none() {
@@ -3327,14 +3527,7 @@ impl Workspace {
                     .text_color(th.text.alpha(0.65))
                     .child(ui.floor_rel_to),
             )
-            .child(
-                div()
-                    .id("floor-targets-strip")
-                    .debug_selector(|| "floor-targets-strip".to_string())
-                    .h(px(78.))
-                    .overflow_x_scroll()
-                    .child(target_row),
-            )
+            .child(target_rail)
             .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
                 if let Some(m) = ws.threshing_floor_member(&d.leaf, cx) {
                     if ws.floor_relation.is_none() {
@@ -4789,6 +4982,8 @@ impl Workspace {
     }
     /// Close the Threshing Floor and let go of any half-drawn line.
     pub(crate) fn close_threshing_floor(&mut self) {
+        self.floor_view.drag = None;
+        self.floor_view.bounds.set(None);
         self.threshing_floor = false;
         self.threshing_floor_pick = None;
         self.floor_relation = None;
@@ -6522,6 +6717,16 @@ mod tests {
                 chart.right() < pool.origin.x,
                 "the pool belongs on the right"
             );
+            let composer = bounds(cx, "floor-relationship-composer");
+            let pool_tile = bounds(cx, "floor-pool-tile");
+            assert_eq!(
+                composer.origin.y, pool_tile.origin.y,
+                "pool must start beside the composer"
+            );
+            assert!(
+                composer.right() < pool_tile.origin.x,
+                "the active glass must stop before the pool"
+            );
             let headers = [
                 "threshing-floor-header",
                 "floor-org-header",
@@ -6603,6 +6808,269 @@ mod tests {
         cx.on_quit(cleanup);
         cx.run_until_parked();
         leaf
+    }
+
+    fn chart_wheel(cx: &mut gpui::VisualTestContext, at: Point<Pixels>, lines: f32) {
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: at,
+            delta: gpui::ScrollDelta::Lines(point(0., lines)),
+            modifiers: gpui::Modifiers {
+                control: true,
+                ..Default::default()
+            },
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        cx.run_until_parked();
+    }
+
+    fn close_point(actual: Point<Pixels>, expected: Point<Pixels>) {
+        assert!(
+            (f32::from(actual.x - expected.x)).abs() < 1.5,
+            "{actual:?} != {expected:?}"
+        );
+        assert!(
+            (f32::from(actual.y - expected.y)).abs() < 1.5,
+            "{actual:?} != {expected:?}"
+        );
+    }
+
+    #[test]
+    fn chart_zoom_keeps_its_anchor_at_both_limits_and_reset_restores_the_view() {
+        let mut view = FloorViewport::default();
+        let anchor = point(px(100.), px(200.));
+        view.zoom_at(anchor, 240.);
+        assert_eq!(view.zoom, 2.);
+        close_point(view.offset, point(px(-100.), px(-200.)));
+        for delta in [480., 480., -480., -480., -480.] {
+            view.zoom_at(anchor, delta);
+            close_point((anchor - view.offset) * (1. / view.zoom), anchor);
+            assert!((0.5..=2.5).contains(&view.zoom));
+        }
+        assert_eq!(view.zoom, 0.5);
+        let before = view.offset;
+        view.zoom_at(anchor, f32::NAN);
+        assert_eq!(view.offset, before);
+        view.reset();
+        assert_eq!(view.zoom, 1.);
+        assert_eq!(view.offset, point(px(0.), px(0.)));
+        assert!(view.bounds.get().is_none(), "unmeasured bounds stay absent");
+    }
+
+    #[gpui::test]
+    fn ctrl_wheel_anchors_chart_geometry_without_resizing_the_pool_or_controls(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let pool = pool_member(&ws, cx, "Available");
+        ws.update(cx, |ws, cx| {
+            ws.chart.draw(
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(101),
+                threshing_floor::Rung::Read,
+            );
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let fixed_ids = [
+            "floor-relationship-composer",
+            "floor-pool-tile",
+            "floor-org-header",
+            "threshing-floor-search",
+        ];
+        let fixed = fixed_ids.map(|id| bounds(cx, id));
+        let pool_id = format!("floor-pane-{}", pool.entity_id().as_u64());
+        let pool_card = bounds(cx, &pool_id);
+        let outer_scale = cx.read(|cx| theme::outer_choice(cx).grade.scale);
+        let ids = ["floor-seat-100", "floor-connect-100", "floor-line-100-101"];
+        let before = ids.map(|id| bounds(cx, id));
+        let anchor = before[0].center();
+        chart_wheel(cx, anchor, 3.);
+        let zoom = ws.read_with(cx, |ws, _| ws.floor_view.zoom);
+        assert!(zoom > 1.);
+        for (id, prior) in ids.into_iter().zip(before) {
+            let after = bounds(cx, id);
+            close_point(after.origin, anchor + (prior.origin - anchor) * zoom);
+            assert!(
+                (f32::from(after.size.width - prior.size.width * zoom)).abs() < 1.5,
+                "{id} did not scale with its hit region"
+            );
+        }
+        assert_eq!(fixed_ids.map(|id| bounds(cx, id)), fixed);
+        assert_eq!(bounds(cx, &pool_id), pool_card);
+        assert_eq!(
+            cx.read(|cx| theme::outer_choice(cx).grade.scale),
+            outer_scale
+        );
+        let pool_at = bounds(cx, "threshing-floor-pool").center();
+        chart_wheel(cx, pool_at, 3.);
+        assert_eq!(ws.read_with(cx, |ws, _| ws.floor_view.zoom), zoom);
+        assert_eq!(
+            cx.read(|cx| theme::outer_choice(cx).grade.scale),
+            outer_scale
+        );
+        click(cx, "floor-view-reset");
+        assert_eq!(bounds(cx, "floor-seat-100"), before[0]);
+    }
+
+    #[gpui::test]
+    fn dragging_the_empty_surface_moves_every_card_and_stops_on_release_or_escape(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let viewport = bounds(cx, "threshing-floor-chart");
+        let start = viewport.bottom_right() - point(px(24.), px(24.));
+        let ids = ["floor-seat-100", "floor-seat-101", "floor-connect-100"];
+        let before = ids.map(|id| bounds(cx, id));
+        assert!(!before[0].contains(&start) && !before[1].contains(&start));
+        let pool_before = bounds(cx, "floor-pool-tile");
+        cx.simulate_mouse_down(start, MouseButton::Left, Default::default());
+        assert!(ws.read_with(cx, |ws, _| ws.floor_view.drag.is_some()));
+        let delta = point(px(48.), px(-24.));
+        cx.simulate_mouse_move(start + delta, MouseButton::Left, Default::default());
+        cx.run_until_parked();
+        for (id, prior) in ids.into_iter().zip(before) {
+            let after = bounds(cx, id);
+            close_point(after.origin, prior.origin + delta);
+            assert_eq!(after.size, prior.size);
+        }
+        assert_eq!(bounds(cx, "floor-pool-tile"), pool_before);
+        assert!(!cx.update(|_, cx| cx.has_active_drag()));
+        cx.simulate_mouse_up(start + delta, MouseButton::Left, Default::default());
+        assert!(ws.read_with(cx, |ws, _| ws.floor_view.drag.is_none()));
+        let card_at = bounds(cx, "floor-seat-100").center();
+        cx.simulate_mouse_down(card_at, MouseButton::Left, Default::default());
+        assert!(
+            ws.read_with(cx, |ws, _| ws.floor_view.drag.is_none()),
+            "a card press began a surface pan"
+        );
+        cx.simulate_mouse_up(card_at, MouseButton::Left, Default::default());
+        cx.run_until_parked();
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(ws.threshing_floor_pick, Some(threshing_floor::SeatId(100)));
+            assert!(ws.floor_view.drag.is_none());
+        });
+        cx.simulate_mouse_down(start, MouseButton::Left, Default::default());
+        cx.simulate_keystrokes("escape");
+        assert!(ws.read_with(cx, |ws, _| ws.threshing_floor
+            && ws.floor_view.drag.is_none()));
+        cx.simulate_mouse_up(start, MouseButton::Left, Default::default());
+    }
+
+    #[gpui::test]
+    fn transformed_cards_still_accept_tethers_and_transformed_labels_still_edit(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            ws.chart.draw(
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(101),
+                threshing_floor::Rung::Read,
+            );
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let anchor = bounds(cx, "floor-seat-100").center();
+        chart_wheel(cx, anchor, -3.);
+        let viewport = bounds(cx, "threshing-floor-chart");
+        let start = viewport.bottom_right() - point(px(12.), px(12.));
+        let end = start + point(px(-18.), px(-12.));
+        cx.simulate_mouse_down(start, MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(end, MouseButton::Left, Default::default());
+        cx.simulate_mouse_up(end, MouseButton::Left, Default::default());
+        cx.run_until_parked();
+        let actor = bounds(cx, "floor-seat-100");
+        let target = bounds(cx, "floor-seat-101");
+        let offset = ws.read_with(cx, |ws, _| ws.floor_view.offset);
+        let alt = gpui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        cx.simulate_mouse_down(actor.center(), MouseButton::Left, alt);
+        cx.simulate_mouse_move(
+            actor.center() + point(px(10.), px(5.)),
+            MouseButton::Left,
+            alt,
+        );
+        cx.simulate_mouse_move(target.center(), MouseButton::Left, alt);
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("floor-connection-tether").is_some());
+        assert_eq!(bounds(cx, "floor-seat-100"), actor);
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(ws.floor_view.offset, offset);
+            assert!(ws.floor_view.drag.is_none());
+        });
+        cx.simulate_mouse_up(target.center(), MouseButton::Left, alt);
+        cx.run_until_parked();
+        ws.read_with(cx, |ws, _| {
+            let draft = ws
+                .floor_relation
+                .as_ref()
+                .expect("drop must open the builder");
+            assert_eq!(
+                draft.actor,
+                Some(RelationMember::Seat(threshing_floor::SeatId(100)))
+            );
+            assert_eq!(
+                draft.targets,
+                vec![RelationMember::Seat(threshing_floor::SeatId(101))]
+            );
+        });
+        click(cx, "floor-rel-cancel");
+        click(cx, "floor-line-100-101");
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(
+                ws.floor_relation.as_ref().unwrap().editing,
+                Some((threshing_floor::SeatId(100), threshing_floor::SeatId(101)))
+            );
+            assert_eq!(ws.floor_view.offset, offset);
+        });
+    }
+
+    #[gpui::test]
+    fn narrow_composer_keeps_add_target_visible_after_several_selections(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let a = pool_member(&ws, cx, "One");
+        let b = pool_member(&ws, cx, "Two");
+        ws.update(cx, |ws, cx| {
+            ws.threshing_floor_begin_relation(Some(threshing_floor::SeatId(100)), None, cx);
+            ws.threshing_floor_choose_member(
+                RelationMember::Seat(threshing_floor::SeatId(101)),
+                cx,
+            );
+            ws.threshing_floor_choose_member(RelationMember::Pool(a.downgrade()), cx);
+            ws.threshing_floor_choose_member(RelationMember::Pool(b.downgrade()), cx);
+        });
+        cx.simulate_resize(size(px(900.), px(560.)));
+        cx.run_until_parked();
+        let composer = bounds(cx, "floor-relationship-composer");
+        let add = bounds(cx, "floor-rel-to");
+        assert!(composer.contains(&add.origin) && composer.contains(&add.bottom_right()));
+        assert!(add.origin.x >= bounds(cx, "floor-targets-strip").right());
+        assert!(composer.right() < bounds(cx, "floor-pool-tile").origin.x);
+        click(cx, "floor-rel-to");
+        ws.read_with(cx, |ws, _| {
+            let draft = ws.floor_relation.as_ref().unwrap();
+            assert_eq!(draft.targets.len(), 3);
+            assert!(matches!(draft.choosing, Some(RelationEnd::To)));
+        });
+        click(cx, "floor-rel-cancel");
+        assert!(a.read_with(cx, |v, _| v.seat.is_none()));
+        assert!(b.read_with(cx, |v, _| v.seat.is_none()));
     }
 
     #[gpui::test]
