@@ -449,7 +449,11 @@ impl Workspace {
                 total += 1;
                 let v = leaf.read(cx);
                 let name = threshing_floor::PaneName::new(&spine, &v.header_title());
-                if pane_search_score(&project, &name, &query).is_none() {
+                // The search narrows the pool only; the chart always shows the
+                // whole org, so typing never hides a member or its lines.
+                let org = v.seat.and_then(|seat| self.floor_orgs.owner(seat));
+                let charted = org.is_some() && org == self.floor_org;
+                if !charted && pane_search_score(&project, &name, &query).is_none() {
                     continue;
                 }
                 let vit = v
@@ -482,8 +486,7 @@ impl Workspace {
                     state: v.agent_status().state,
                     access: v.agent_access,
                 };
-                let org = facts.seat.and_then(|seat| self.floor_orgs.owner(seat));
-                if org.is_some() && org == self.floor_org {
+                if charted {
                     seats.push(facts);
                 } else if org.is_none() || !query.trim().is_empty() {
                     loose.push(facts);
@@ -6665,6 +6668,21 @@ mod tests {
                 assert_eq!(v.header_title(), "corner model chip");
             });
         });
+    }
+
+    #[gpui::test]
+    fn the_filter_narrows_the_pool_and_never_hides_a_chart_member(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (_ws, cx, _) = fixture(cx);
+        cx.simulate_keystrokes("l e a d");
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("floor-seat-100").is_some());
+        assert!(
+            cx.debug_bounds("floor-seat-101").is_some(),
+            "a filter that matches only the lead hid the worker from the chart"
+        );
     }
 
     #[gpui::test]
