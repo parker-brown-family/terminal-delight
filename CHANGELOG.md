@@ -9,6 +9,11 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### The Threshing Floor for 0.5.0 Development
 
+- Each press of the target **+** creates a visible empty card slot and scrolls
+  it into view. Choose a card or drop it onto a slot to fill it; empty slots
+  can be selected or removed, and Submit waits until every slot is filled.
+  The empty-slot prompt is localized in all nine packs, and the relationship
+  builder's Hindi labels now read in Hindi.
 - The pane pool starts beside the relationship builder and keeps its own
   full-height column, with more compact cards. The chart supports Ctrl+wheel
   zoom around the pointer, dragging its empty surface to pan, and a reset view.
