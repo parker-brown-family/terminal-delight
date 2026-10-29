@@ -417,6 +417,11 @@ pub struct Asleep {
     /// The model it was launched with, when its launch line named one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Which harness it ran, `CLAUDE` or `CODEX`, read from its launch line
+    /// when it fell asleep. `None` for a sleep recorded before this was kept,
+    /// or a launch line naming neither: the Floor then says AGENT, not a guess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
 }
 
 /// An agent the sleep signalled that had not exited by the sleep's own
@@ -1233,6 +1238,7 @@ mod tests {
             session: "fixture".into(),
             wake_file: "/unused".into(),
             model: None,
+            program: None,
         });
         rest.rest_from = Some(128);
         rest.usage = Usage {

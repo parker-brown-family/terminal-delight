@@ -5673,6 +5673,24 @@ impl TerminalView {
     /// thirty agent panes, string scanning was 11% of the main thread, nearly
     /// all of it on screens that had not changed. The bell is applied after the
     /// memo, because it changes without the screen changing.
+    /// Whether an agent lives in this pane, awake or not. A sleeping agent's
+    /// pane runs a shell, and a signalled one is on its way there, but the
+    /// conversation is kept and wakes on its first prompt: it is not a pure
+    /// shell, and the Threshing Floor must be able to seat it.
+    pub(crate) fn hosts_agent(&self) -> bool {
+        self.mode.is_agent()
+            || self.rest.dormancy.asleep().is_some()
+            || self.rest.stopping.is_some()
+    }
+
+    /// The sleep record behind this pane, when its agent is asleep or going.
+    pub(crate) fn sleep_record(&self) -> Option<&crate::agentrest::Asleep> {
+        self.rest
+            .dormancy
+            .asleep()
+            .or(self.rest.stopping.as_ref().map(|s| &s.asleep))
+    }
+
     pub fn agent_status(&self) -> crate::hud::AgentStatus {
         // The window's own word comes first: an asleep pane's screen is a shell,
         // and a resting one's is a frozen frame, so neither is the screen's call.

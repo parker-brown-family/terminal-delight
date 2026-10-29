@@ -325,6 +325,22 @@ pub fn conversation_saved(home: &std::path::Path, cwd: &std::path::Path, session
 
 /// The model word in a launch line, for the sleep card: Claude's `--model`, or
 /// Codex's `--model` / `-m`.
+/// The harness a launch line runs, as the Floor names it: the first word
+/// whose file name is `claude…` or `codex…`. A node wrapper's own path is
+/// passed over, since the script it runs is the program.
+fn program_of(argv: &[String]) -> Option<String> {
+    argv.iter().find_map(|a| {
+        let name = std::path::Path::new(a).file_name()?.to_str()?;
+        if name.starts_with("claude") {
+            Some("CLAUDE".to_string())
+        } else if name.starts_with("codex") {
+            Some("CODEX".to_string())
+        } else {
+            None
+        }
+    })
+}
+
 fn model_of(argv: &[String]) -> Option<String> {
     argv.iter()
         .enumerate()
@@ -445,6 +461,7 @@ fn sleep(
         session: session.to_owned(),
         wake_file,
         model: model_of(argv),
+        program: program_of(argv),
     };
     Ok(if gone {
         Ended::Gone(asleep)
@@ -588,6 +605,28 @@ mod tests {
     }
 
     #[test]
+    fn a_launch_line_names_its_harness_and_an_old_record_reads_as_unknown() {
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            program_of(&argv(&["/usr/bin/node", "/opt/claude/cli.js"])),
+            None
+        );
+        assert_eq!(
+            program_of(&argv(&["/home/p/.local/bin/claude", "--model", "opus"])).as_deref(),
+            Some("CLAUDE")
+        );
+        assert_eq!(
+            program_of(&argv(&["codex", "resume", "x"])).as_deref(),
+            Some("CODEX")
+        );
+        assert_eq!(program_of(&argv(&["bash"])), None);
+        // A sleep written before the harness was kept reads as unknown, not Claude.
+        let old: Asleep =
+            toml::from_str("since_ms = 1\nsession = \"s\"\nwake_file = \"/w.sh\"\n").unwrap();
+        assert_eq!(old.program, None);
+    }
+
+    #[test]
     fn the_store_round_trips_and_an_empty_one_reads_as_nothing_asleep() {
         let mut store = Store::default();
         store.asleep.insert(
@@ -597,6 +636,7 @@ mod tests {
                 session: "abc".into(),
                 wake_file: PathBuf::from("/w/abc.sh"),
                 model: Some("opus".into()),
+                program: Some("CODEX".into()),
             },
         );
         store.keep_awake.insert(4);

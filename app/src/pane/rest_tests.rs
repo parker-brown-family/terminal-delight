@@ -13,6 +13,7 @@ fn asleep() -> Asleep {
         session: "80915041-fe1f-413a-9f48-95217cb9ec6b".into(),
         wake_file: "/nonexistent/wake.sh".into(),
         model: Some("opus".into()),
+        program: Some("CLAUDE".into()),
     }
 }
 

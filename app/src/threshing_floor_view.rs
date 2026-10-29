@@ -503,8 +503,17 @@ impl Workspace {
                     seat: v.seat,
                     name,
                     project: project.clone(),
-                    program: v.mode.label().to_string(),
-                    model: vit.and_then(|x| x.model.clone()),
+                    // A sleeping agent's pane runs a shell, so its card reads
+                    // the sleep record: the harness and model it will wake as.
+                    program: match v.sleep_record() {
+                        Some(a) => a.program.clone().unwrap_or_else(|| "AGENT".to_string()),
+                        None => v.mode.label().to_string(),
+                    },
+                    model: vit.and_then(|x| x.model.clone()).or_else(|| {
+                        v.sleep_record().and_then(|a| a.model.as_deref()).map(|m| {
+                            crate::vitals::model_name(m).unwrap_or_else(|| m.to_uppercase())
+                        })
+                    }),
                     effort: vit.and_then(|x| x.effort.clone()),
                     message: v
                         .bench
@@ -1138,7 +1147,7 @@ impl Workspace {
             .gap_2();
         for f in &loose {
             let leaf = f.leaf.clone();
-            let is_agent = leaf.read(cx).mode.is_agent();
+            let is_agent = leaf.read(cx).hosts_agent();
             let owner = f.seat.and_then(|s| self.floor_orgs.owner(s));
             let pane_drag = PaneDrag {
                 leaf: leaf.clone(),
@@ -2783,7 +2792,7 @@ impl Workspace {
         confirmed: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.floor_orgs.get(org).is_none() || !leaf.read(cx).mode.is_agent() {
+        if self.floor_orgs.get(org).is_none() || !leaf.read(cx).hosts_agent() {
             return;
         }
         let old = leaf.read(cx).seat;
@@ -2823,7 +2832,7 @@ impl Workspace {
         org: threshing_floor::OrgId,
         cx: &mut Context<Self>,
     ) {
-        if self.floor_orgs.get(org).is_none() || !leaf.read(cx).mode.is_agent() {
+        if self.floor_orgs.get(org).is_none() || !leaf.read(cx).hosts_agent() {
             return;
         }
         let seat = leaf.read(cx).seat;
@@ -3050,7 +3059,7 @@ impl Workspace {
         let v = leaf.read(cx);
         match v.seat.and_then(|s| self.floor_orgs.owner(s)) {
             Some(org) if Some(org) == self.floor_org => v.seat.map(RelationMember::Seat),
-            None if v.mode.is_agent()
+            None if v.hosts_agent()
                 && v.seat
                     .is_none_or(|seat| !self.floor_orgs.has_membership(seat)) =>
             {
@@ -3233,8 +3242,7 @@ impl Workspace {
             match member {
                 RelationMember::Seat(s) if orgs.owner(*s) == Some(org) => Some(*s),
                 RelationMember::Pool(_)
-                    if v.mode.is_agent()
-                        && v.seat.is_none_or(|seat| !orgs.has_membership(seat)) =>
+                    if v.hosts_agent() && v.seat.is_none_or(|seat| !orgs.has_membership(seat)) =>
                 {
                     let seat = v.seat.unwrap_or_else(threshing_floor::SeatId::mint);
                     orgs.assign(seat, org);
@@ -6756,6 +6764,47 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_sleeping_agent_can_be_seated_and_a_plain_shell_cannot(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let sleeper = pool_member(&ws, cx, "Sleeper");
+        let shell = pool_member(&ws, cx, "Shell");
+        cx.update(|_, cx| {
+            sleeper.update(cx, |v, _| {
+                v.mode = pane::PaneMode::Shell;
+                v.rest.dormancy = crate::agentrest::Dormancy::Asleep(crate::agentrest::Asleep {
+                    since_ms: 1,
+                    session: "s".into(),
+                    wake_file: "/unused".into(),
+                    model: Some("opus".into()),
+                    program: Some("CLAUDE".into()),
+                });
+            });
+            shell.update(cx, |v, _| v.mode = pane::PaneMode::Shell);
+        });
+        ws.update(cx, |ws, cx| {
+            let org = ws.floor_org.unwrap();
+            assert!(sleeper.read(cx).hosts_agent());
+            assert!(!shell.read(cx).hosts_agent());
+            ws.threshing_floor_assign(&sleeper, org, true, cx);
+            ws.threshing_floor_assign(&shell, org, true, cx);
+            let sleeper_seat = sleeper.read(cx).seat.expect("the sleeper is seated");
+            assert_eq!(ws.floor_orgs.owner(sleeper_seat), Some(org));
+            assert!(
+                shell
+                    .read(cx)
+                    .seat
+                    .is_none_or(|s| ws.floor_orgs.owner(s) != Some(org)),
+                "a plain shell has no agent to seat"
+            );
+            // Seating it does not wake it.
+            assert!(sleeper.read(cx).rest.dormancy.asleep().is_some());
+        });
+    }
+
+    #[gpui::test]
     fn whole_card_drag_moves_membership_and_the_saved_record_keeps_identity(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -8225,6 +8274,7 @@ mod tests {
                     session: "s".into(),
                     wake_file: dir.join("wake.sh"),
                     model: None,
+                    program: None,
                 },
                 since: std::time::Instant::now(),
             });
