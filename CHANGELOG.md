@@ -9,6 +9,11 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### The Threshing Floor for 0.5.0 Development
 
+- The shared agent launch briefing opens with loose cues for choosing between
+  an existing TD teammate, a native subagent where allowed, and doing the work
+  directly. Agents can weigh useful context and independent work against the
+  handoff, without a routing score, mandatory team sweep or written explanation
+  for each choice. Current Floor permissions still govern contact with teammates.
 - Each press of the target **+** creates a visible empty card slot and scrolls
   it into view. Choose a card or drop it onto a slot to fill it; empty slots
   can be selected or removed, and Submit waits until every slot is filled.

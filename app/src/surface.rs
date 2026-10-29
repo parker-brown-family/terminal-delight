@@ -3291,7 +3291,9 @@ pub fn catalogue() -> Value {
 pub fn launch_briefing(dir: &str, kit: Option<&str>) -> String {
     let briefs = kit.map(brief_paragraph).unwrap_or_default();
     format!(
-        "You are running inside Terminal Delight, which can render your work as a native \
+        "{delegation}\n\
+         \n\
+         You are running inside Terminal Delight, which can render your work as a native \
          surface beside this terminal — a WORKBENCH face on this pane, toggled from its header.\n\
          \n\
          END EVERY TURN by presenting your reply as a `response` surface — the bench's OVERVIEW \
@@ -3344,9 +3346,21 @@ pub fn launch_briefing(dir: &str, kit: Option<&str>) -> String {
          \n\
          {floor}",
         kinds = catalogue_names().join(", "),
+        delegation = DELEGATION_PARAGRAPH,
         floor = FLOOR_PARAGRAPH,
     )
 }
+
+/// Loose cues for choosing help, without a routing procedure or a new grant
+/// of authority. Shared by Alt+A and the typed-agent briefing hook.
+const DELEGATION_PARAGRAPH: &str = "Use help when its likely contribution justifies the handoff. \
+     Lean toward a TD teammate when their existing context, expertise, ownership, or continuing \
+     involvement helps. A native subagent, where allowed, can suit bounded work that runs \
+     independently, needs little shared context, or benefits from a fresh view. Small or tightly \
+     coupled work is often easiest to do yourself. These are tendencies, not a required sequence. \
+     Use what you already know; look up the team when it could change your choice. Refresh Floor \
+     permissions before contacting a teammate, avoid duplicating work already underway, and check \
+     delegated results. Ordinary choices need no score, written justification, or routing report.";
 
 /// The briefing's paragraph on the Threshing Floor: what a line is, how an
 /// agent learns its own, how to answer a prompt that arrives along one, and
@@ -4686,7 +4700,7 @@ mod tests {
             without,
             "the kit adds one paragraph and changes nothing else"
         );
-        // The reply rule stays the first thing an agent reads.
+        // The reply rule still precedes the optional brief kit.
         let reply = with.find("END EVERY TURN").expect("the reply rule");
         let briefs = with.find("DECISION BRIEFS").expect("the brief paragraph");
         assert!(reply < briefs, "the brief paragraph never leads");
