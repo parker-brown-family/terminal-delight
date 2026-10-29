@@ -1968,8 +1968,10 @@ impl Workspace {
                 // A fraction of the scrim (it was 90 %) runs through the bottom
                 // bezel on a short widescreen or a resized window.
                 .pt(px((TOP_BAR_H + 10.) * frame_scale))
-                .pb(px((CHROME_GLYPH + 14. + 12.) * frame_scale))
-                .px(px(18. * frame_scale))
+                .pb(px((CHROME_GLYPH + 14. + 24.) * frame_scale))
+                .pl(px(28. * frame_scale))
+                // The spine column down the right edge is always drawn.
+                .pr(px((RIGHT_COLUMN_W + 28.) * frame_scale))
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                 .flex()
                 .items_center()
@@ -7163,7 +7165,11 @@ mod tests {
                 panel.origin.y >= px(TOP_BAR_H * scale),
                 "at {w}x{h} the panel runs into the top bar: {panel:?}"
             );
-            assert!(panel.right() <= px(w) && panel.origin.x >= px(0.));
+            assert!(
+                panel.right() <= px(w - RIGHT_COLUMN_W * scale),
+                "at {w}x{h} the panel runs into the spine: {panel:?}"
+            );
+            assert!(panel.origin.x >= px(0.));
         }
     }
 
