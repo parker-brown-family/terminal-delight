@@ -1892,8 +1892,7 @@ impl Workspace {
         let panel = div()
             .id("threshing-floor-panel")
             .debug_selector(|| "threshing-floor-panel".to_string())
-            .w(gpui::relative(0.95))
-            .h(gpui::relative(0.9))
+            .size_full()
             .min_w(px(0.))
             .min_h(px(0.))
             .overflow_hidden()
@@ -1955,12 +1954,22 @@ impl Workspace {
                     }),
             );
 
+        // The window frame's own scale, which sizes its bezels.
+        let frame_scale = th.grade.scale;
         Some(
             div()
                 .occlude()
                 .absolute()
                 .inset_0()
                 .bg(th.bg.alpha(0.70))
+                // The scrim spans the whole monitor, bezels included, so the
+                // panel keeps clear of the top bar and the bottom bezel by
+                // their own heights plus a margin, and fills only what is left.
+                // A fraction of the scrim (it was 90 %) runs through the bottom
+                // bezel on a short widescreen or a resized window.
+                .pt(px((TOP_BAR_H + 10.) * frame_scale))
+                .pb(px((CHROME_GLYPH + 14. + 12.) * frame_scale))
+                .px(px(18. * frame_scale))
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                 .flex()
                 .items_center()
@@ -7130,6 +7139,32 @@ mod tests {
             cx.debug_bounds("floor-seat-101").is_none(),
             "the worker is not a member any more, so it has no member card"
         );
+    }
+
+    /// The panel lives inside the window's frame at any shape: on a short
+    /// widescreen and on a tall narrow window its bottom stays clear of the
+    /// bottom bezel, and its top clear of the top bar.
+    #[gpui::test]
+    fn the_panel_keeps_clear_of_the_frame_at_any_window_shape(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (_ws, cx, _) = fixture(cx);
+        let scale = cx.read(|cx| theme::outer_choice(cx).grade.scale);
+        for (w, h) in [(2560., 720.), (900., 1400.)] {
+            cx.simulate_resize(size(px(w), px(h)));
+            cx.run_until_parked();
+            let panel = bounds(cx, "threshing-floor-panel");
+            assert!(
+                panel.bottom() <= px(h - (CHROME_GLYPH + 14.) * scale),
+                "at {w}x{h} the panel runs into the bottom bezel: {panel:?}"
+            );
+            assert!(
+                panel.origin.y >= px(TOP_BAR_H * scale),
+                "at {w}x{h} the panel runs into the top bar: {panel:?}"
+            );
+            assert!(panel.right() <= px(w) && panel.origin.x >= px(0.));
+        }
     }
 
     #[gpui::test]
