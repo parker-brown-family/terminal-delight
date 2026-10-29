@@ -30,7 +30,7 @@ Parker, 2026-10-29, on the Floor after the boxed card vitals landed: *"The syste
 - [x] 1 · One-row header with no title: groups, hover text, hints out, pads match, footer becomes an overlay, Connect removed.
 - [x] 2 · Sleeping agents count as agents in the pool and in relations; the card shows harness and model; no wake on add.
 - [x] 3 · Tidy-tree layout (each child centred under its own parent); org border on the chart; an outside lane for related agents and orgs; whole-org lines drawn.
-- [ ] 4 · System Map on the shared canvas: N org borders, zoom 20–250% with three levels, relationship builder folds away.
+- [x] 4 · System Map on the shared canvas: N org borders, zoom 20–250% with three levels. **The relationship builder does NOT fold** (see below).
 
 ## Facts the plan stands on (dev/0.5.0 at fdacb175)
 
@@ -58,3 +58,12 @@ Parker: *"build out EVERYTHING based on your own good judgement now... no human 
 - **Wires:** seat lines inside one org route like the chart. Seat lines across orgs and whole-org lines route as elbows between cards and borders, with a rung chip.
 - **The map's builder form stays**, since it is the only way to draw cross-org and whole-org lines. The list of cross-org relationships, with Remove, moves into a drawer under the builder, closed by default.
 - **The org view's relationship builder folds to a slim bar** until wiring starts: a card dropped on a card, a connector pulled, a line clicked, or the bar clicked.
+
+### Slice 4 as shipped, and the one recommendation not built
+- **The System Map is a canvas** on the chart's own pan and zoom. Each org is a bordered region with its member count, holding map cards in the chart's tidy tree. Orgs are packed largest first.
+- **Lines on the map:** seat lines across orgs and whole-org lines route as elbows with a rung chip. Lines inside an org route as on the chart.
+- **Cards and opening an org:** cards fall back to a state dot and a name under 60% zoom and add the message line above 140%. A card or an org's name opens that org's chart.
+- **The builder and the drawer:** the map's builder sits where the relationship builder sits. Its list of cross-org lines, with Remove, is a drawer, closed by default.
+- **`TD_THRESHING_FLOOR_DEMO=map`** opens the map for a rig.
+- **Question 8, the folding builder, was tried and reverted.** Folding it into a slim bar either pushes the chart down when a draft opens, which breaks the approved "opening a draft never moves the page" (`composer_is_reserved_and_filter_stays_editable_while_choosing`), or floats the draft over the chart. Four builder tests showed the second choice covers the very cards a person must click next. The chart got its room from the one-row header and the drag footer instead. Options for Parker: a shorter composer (one row of slots); a draft that docks over the pool; or accepting a page shift.
+- **Not photographed.** Both monitors were powered down (DPMS off) while Parker was away, so `grim -T` timed out for every rig, including the known-good slice 3 rig. Photograph after he is back: `docs/plans/floor-map-parity/evidence/floor-rig-map.sh <binary> <out> 1` with `TD_FLOOR_DEMO=map`.
