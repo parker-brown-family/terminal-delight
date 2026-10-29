@@ -572,16 +572,14 @@ impl Workspace {
         );
         let placed = threshing_floor::layout(&keys, &self.chart);
         let at = |seat: threshing_floor::SeatId| -> Option<(f32, f32)> {
-            placed.iter().find(|p| p.seat == seat).map(|p| {
-                (
-                    pad + p.col as f32 * (sw + cg),
-                    pad + p.row as f32 * (sh + rg),
-                )
-            })
+            placed
+                .iter()
+                .find(|p| p.seat == seat)
+                .map(|p| (pad + p.col * (sw + cg), pad + p.row as f32 * (sh + rg)))
         };
-        let cols = placed.iter().map(|p| p.col + 1).max().unwrap_or(0);
+        let cols = placed.iter().map(|p| p.col + 1.).fold(0., f32::max);
         let rows = placed.iter().map(|p| p.row + 1).max().unwrap_or(0);
-        let chart_w = (pad * 2. + cols as f32 * (sw + cg) - cg).max(420. * s);
+        let chart_w = (pad * 2. + cols * (sw + cg) - cg).max(420. * s);
         let chart_h = (pad * 2. + rows as f32 * (sh + rg) - rg).max(sh + pad * 2.);
 
         let rung_word = |r: threshing_floor::Rung| match r {

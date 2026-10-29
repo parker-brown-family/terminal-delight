@@ -583,52 +583,78 @@ impl Chart {
 }
 
 /// Where a seat is drawn in the Threshing Floor: its row (how deep it sits under
-/// managers) and its place in that row.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// managers) and its column. A column can be fractional: a manager sits centred
+/// over its own reports, which may fall between two whole columns.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub seat: SeatId,
     pub row: usize,
-    pub col: usize,
+    pub col: f32,
 }
 
-/// Lay seats out as an org chart. A seat sits one row under the seat it is
-/// drawn under ([`Chart::manager_of`], the oldest drawn line into it), so a
-/// seat with no manager on the chart is in the top row. Within a row, seats
-/// are ordered by project and then title, so one project's seats sit together
-/// (Gate 1, question 7). A loop of lines is cut where it is first met rather
-/// than followed forever.
+/// Lay seats out as an org chart, a tidy tree. A seat sits one row under the
+/// seat it is drawn under ([`Chart::manager_of`], the oldest drawn line into
+/// it), so a seat with no manager on the chart is a root in the top row. Each
+/// seat's reports take a run of columns of their own, and the seat is centred
+/// over that run, never over the whole row: Parker, 2026-10-29, on a
+/// three-tier org whose third tier sat under the wrong parent, "should be
+/// centered against JUST ITS parent!". Siblings, and the roots, are ordered by
+/// project and then title, so one project's seats sit together (Gate 1,
+/// question 7). A loop of lines is cut where it is first met rather than
+/// followed forever.
 pub fn layout(seats: &[(SeatId, String, String)], chart: &Chart) -> Vec<Placed> {
     use std::collections::{HashMap, HashSet};
     let here: HashSet<SeatId> = seats.iter().map(|(s, _, _)| *s).collect();
-    let depth_of = |start: SeatId| -> usize {
-        let mut seen = HashSet::from([start]);
-        let mut at = start;
-        let mut depth = 0;
-        while let Some(up) = chart.manager_of(at).filter(|m| here.contains(m)) {
-            if !seen.insert(up) {
-                break;
-            }
-            depth += 1;
-            at = up;
+    let mut sorted: Vec<&(SeatId, String, String)> = seats.iter().collect();
+    sorted.sort_by(|a, b| (&a.1, &a.2, a.0).cmp(&(&b.1, &b.2, b.0)));
+    let parent = |s: SeatId| chart.manager_of(s).filter(|m| here.contains(m) && *m != s);
+    let mut children: HashMap<SeatId, Vec<SeatId>> = HashMap::new();
+    for s in &sorted {
+        if let Some(p) = parent(s.0) {
+            children.entry(p).or_default().push(s.0);
         }
-        depth
-    };
-    let mut rows: HashMap<usize, Vec<&(SeatId, String, String)>> = HashMap::new();
-    for s in seats {
-        rows.entry(depth_of(s.0)).or_default().push(s);
     }
+    fn place(
+        seat: SeatId,
+        row: usize,
+        children: &HashMap<SeatId, Vec<SeatId>>,
+        seen: &mut HashSet<SeatId>,
+        next: &mut f32,
+        out: &mut Vec<Placed>,
+    ) -> f32 {
+        seen.insert(seat);
+        let mut span: Option<(f32, f32)> = None;
+        for &c in children.get(&seat).map(Vec::as_slice).unwrap_or_default() {
+            if seen.contains(&c) {
+                continue; // a loop, cut here
+            }
+            let col = place(c, row + 1, children, seen, next, out);
+            span = Some(span.map_or((col, col), |(first, _)| (first, col)));
+        }
+        let col = match span {
+            Some((first, last)) => (first + last) / 2.,
+            None => {
+                let col = *next;
+                *next += 1.;
+                col
+            }
+        };
+        out.push(Placed { seat, row, col });
+        col
+    }
+    let mut seen = HashSet::new();
+    let mut next = 0.;
     let mut out = Vec::new();
-    let mut depths: Vec<usize> = rows.keys().copied().collect();
-    depths.sort_unstable();
-    for (row, depth) in depths.iter().enumerate() {
-        let mut members = rows.remove(depth).unwrap_or_default();
-        members.sort_by(|a, b| (&a.1, &a.2, a.0).cmp(&(&b.1, &b.2, b.0)));
-        for (col, s) in members.iter().enumerate() {
-            out.push(Placed {
-                seat: s.0,
-                row,
-                col,
-            });
+    for s in &sorted {
+        if parent(s.0).is_none() {
+            place(s.0, 0, &children, &mut seen, &mut next, &mut out);
+        }
+    }
+    // Whatever no root reaches sits on a loop: the first seat met becomes a
+    // root, which cuts the loop at its line in.
+    for s in &sorted {
+        if !seen.contains(&s.0) {
+            place(s.0, 0, &children, &mut seen, &mut next, &mut out);
         }
     }
     out
@@ -2174,17 +2200,42 @@ mod tests {
         };
         assert_eq!(
             at(9),
-            Some((0, 0)),
-            "a seat with no manager is in the top row, by project"
+            Some((0, 0.)),
+            "a seat with no manager is a root in the top row, by project"
         );
-        assert_eq!(at(1), Some((0, 1)));
         assert_eq!(
             at(2),
-            Some((1, 0)),
-            "docsite sorts before server in the second row"
+            Some((1, 1.)),
+            "docsite sorts before server among siblings"
         );
-        assert_eq!(at(3), Some((1, 1)));
-        assert_eq!(at(4), Some((2, 0)));
+        assert_eq!(at(3), Some((1, 2.)));
+        assert_eq!(at(4), Some((2, 2.)), "a report sits under its own manager");
+        assert_eq!(
+            at(1),
+            Some((0, 1.5)),
+            "a manager is centred over its own reports"
+        );
+    }
+
+    /// Parker's three-tier case: a report's report sits under its own parent,
+    /// not under the first column of its row.
+    #[test]
+    fn a_third_tier_sits_under_its_own_parent() {
+        let mut chart = Chart::default();
+        line(&mut chart, 1, 2, Rung::Read);
+        line(&mut chart, 1, 3, Rung::Read);
+        line(&mut chart, 3, 4, Rung::Read);
+        let seats = vec![
+            (SeatId(1), "h".to_string(), "build harness".to_string()),
+            (SeatId(2), "g".to_string(), "HISTORY".to_string()),
+            (SeatId(3), "g".to_string(), "X algo".to_string()),
+            (SeatId(4), "o".to_string(), "omamaps".to_string()),
+        ];
+        let placed = layout(&seats, &chart);
+        let col = |s: u64| placed.iter().find(|p| p.seat == SeatId(s)).unwrap().col;
+        assert_eq!(col(4), col(3), "omamaps sits under X algo");
+        assert_ne!(col(4), col(2), "not under HISTORY");
+        assert_eq!(col(1), (col(2) + col(3)) / 2.);
     }
 
     #[test]
