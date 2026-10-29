@@ -73,9 +73,10 @@ struct PaneFacts {
     /// The pane's conversation is only guessed at, so its bench may hold
     /// another conversation's words: the card says so instead of quoting them.
     message_unproven: bool,
-    /// Its newest artifact, how many more it has handed over, and whether a
-    /// person has left feedback on the newest. `None`: nothing handed over yet.
-    artifact: Option<(String, usize, crate::feedback::Feedback)>,
+    /// Its newest artifact, how many more it has handed over, whether a
+    /// person has left feedback on the newest, and what kind of thing the
+    /// newest is. `None`: nothing handed over yet.
+    artifact: Option<(String, usize, crate::feedback::Feedback, ArtifactKind)>,
     size: Option<u64>,
     started_ms: Option<i64>,
     state: hud::AgentState,
@@ -365,6 +366,37 @@ enum DropStage {
     },
 }
 
+/// What an artifact is, as its card says it: the file's own extension
+/// (`mp4`, `html`, `md`) when it has one, `file` when it has none, `link` for
+/// a web address. Read from the address alone, so a render never touches the
+/// disk to say it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ArtifactKind {
+    Extension(String),
+    File,
+    Link,
+}
+
+impl ArtifactKind {
+    fn of(href: &str) -> Self {
+        let Some(path) = crate::handover::file_path(href) else {
+            return Self::Link;
+        };
+        path.extension()
+            .and_then(|e| e.to_str())
+            .filter(|e| !e.is_empty())
+            .map_or(Self::File, |e| Self::Extension(e.to_ascii_lowercase()))
+    }
+
+    fn word(&self, ui: &lang::Chrome) -> String {
+        match self {
+            Self::Extension(ext) => ext.clone(),
+            Self::File => ui.floor_artifact_file.to_string(),
+            Self::Link => ui.floor_artifact_link.to_string(),
+        }
+    }
+}
+
 /// Spaces match independent words anywhere in the name. Colons address
 /// project:tab:pane; empty segments leave that field unrestricted.
 fn pane_search_score(project: &str, name: &threshing_floor::PaneName, query: &str) -> Option<i64> {
@@ -479,6 +511,7 @@ impl Workspace {
                             h.label.clone(),
                             v.handovers().len().saturating_sub(1),
                             crate::feedback::of(&h.href),
+                            ArtifactKind::of(&h.href),
                         )
                     }),
                     size: vit.and_then(|x| x.tokens),
@@ -898,11 +931,21 @@ impl Workspace {
                                     .child(SharedString::from(state_line)),
                             ),
                     )
+                    // What it runs on sits in a sub-card of its own, gently
+                    // bordered, so the model, age and size read as one reading
+                    // apart from what the agent is saying and doing.
                     .child(
                         div()
+                            .id(SharedString::from(format!("floor-vitals-{}", seat.0)))
+                            .debug_selector(move || format!("floor-vitals-{}", seat.0))
                             .flex()
                             .flex_col()
                             .gap(px(2. * s))
+                            .px(px(6. * s))
+                            .py(px(4. * s))
+                            .rounded(sk.rad_raw(4.))
+                            .border_1()
+                            .border_color(th.text.alpha(0.12))
                             .child(
                                 div()
                                     .text_size(sk.text_px(8.5))
@@ -916,10 +959,19 @@ impl Workspace {
                     .child(
                         div()
                             .mt_auto()
-                            .pt(px(6. * s))
+                            .pt(px(4. * s))
                             .mr(px(30. * s))
                             .border_t_1()
                             .border_color(th.text.alpha(0.12))
+                            .flex()
+                            .flex_col()
+                            .gap(px(2. * s))
+                            .child(
+                                div()
+                                    .text_size(sk.text_px(7.))
+                                    .text_color(th.text.alpha(0.5))
+                                    .child(SharedString::from(ui.floor_artifacts.to_string())),
+                            )
                             .child(self.threshing_floor_artifact_row(f, seat, &sk, th, cx)),
                     )
                     .child(
@@ -2096,7 +2148,7 @@ impl Workspace {
     ) -> gpui::AnyElement {
         let ui = self.lang.strings().ui;
         let s = sk.scale;
-        let Some((label, more, feedback)) = &f.artifact else {
+        let Some((label, more, feedback, kind)) = &f.artifact else {
             return div()
                 .id(SharedString::from(format!("floor-no-artifact-{}", seat.0)))
                 .debug_selector(move || format!("floor-no-artifact-{}", seat.0))
@@ -2146,6 +2198,22 @@ impl Workspace {
             .whitespace_nowrap()
             .text_size(sk.text_px(8.5))
             .cursor_pointer()
+            .child(
+                div()
+                    .id(SharedString::from(format!(
+                        "floor-artifact-kind-{}",
+                        seat.0
+                    )))
+                    .debug_selector(move || format!("floor-artifact-kind-{}", seat.0))
+                    .flex_none()
+                    .px(px(4. * s))
+                    .rounded(sk.rad_raw(3.))
+                    .border_1()
+                    .border_color(th.text.alpha(0.25))
+                    .text_color(th.text.alpha(0.75))
+                    .text_size(sk.text_px(7.5))
+                    .child(SharedString::from(kind.word(ui))),
+            )
             .child(
                 div()
                     .min_w(px(0.))
@@ -6331,6 +6399,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_artifact_kind_is_its_extension_else_file_else_link() {
+        let kind = |href: &str| ArtifactKind::of(href);
+        assert_eq!(kind("/r/cut.MP4"), ArtifactKind::Extension("mp4".into()));
+        assert_eq!(
+            kind("file:///r/review.html"),
+            ArtifactKind::Extension("html".into())
+        );
+        assert_eq!(kind("/r/notes.md"), ArtifactKind::Extension("md".into()));
+        assert_eq!(kind("/r/Makefile"), ArtifactKind::File);
+        assert_eq!(kind("https://github.com/o/r/pull/1"), ArtifactKind::Link);
+        let ui = lang::Lang::En.strings().ui;
+        assert_eq!(ArtifactKind::File.word(ui), "file");
+        assert_eq!(ArtifactKind::Link.word(ui), "link");
+        assert_eq!(ui.floor_artifacts, "ARTIFACTS");
+    }
+
     /// A seat that has handed nothing over says so in the accent; once it hands
     /// a brief over, the card names the newest, counts the rest, and says a
     /// person annotated it only because a concur is saved in the file.
@@ -6383,6 +6468,14 @@ mod tests {
         cx.run_until_parked();
         assert!(cx.debug_bounds("floor-no-artifact-101").is_none());
         assert!(cx.debug_bounds("floor-artifact-101").is_some());
+        assert!(
+            cx.debug_bounds("floor-artifact-kind-101").is_some(),
+            "the newest artifact says what kind of thing it is"
+        );
+        assert!(
+            cx.debug_bounds("floor-vitals-101").is_some(),
+            "model, age and tokens sit in their own sub-card"
+        );
         assert!(
             cx.debug_bounds("floor-no-feedback-101").is_some(),
             "handed over and not yet annotated"
