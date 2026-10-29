@@ -27,7 +27,7 @@ Parker, 2026-10-29, on the Floor after the boxed card vitals landed: *"The syste
 
 ## Slices
 
-- [ ] 1 · One-row header with no title: groups, hover text, hints out, pads match, footer becomes an overlay, Connect removed.
+- [x] 1 · One-row header with no title: groups, hover text, hints out, pads match, footer becomes an overlay, Connect removed.
 - [ ] 2 · Sleeping agents count as agents in the pool and in relations; the card shows harness and model; no wake on add.
 - [ ] 3 · Tidy-tree layout (each child centred under its own parent); org border on the chart; an outside lane for related agents and orgs; whole-org lines drawn.
 - [ ] 4 · System Map on the shared canvas: N org borders, zoom 20–250% with three levels, relationship builder folds away.

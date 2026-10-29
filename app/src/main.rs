@@ -22990,40 +22990,77 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> [gpui::Stateful<gpui::Div>; 5] {
         let t = self.lang.strings();
+        let ui = t.ui;
+        // The Threshing Floor fits these into its one header row, so it wears
+        // the short words; the hover card carries the full meaning everywhere.
+        let compact = prefix == "war";
+        let pick = |short: &str, long: &str| if compact { short } else { long }.to_string();
+        let mark = |on: bool| if on { "\u{25c9}" } else { "\u{25cb}" };
+        // An agent that answered with no line drawn is the one number that
+        // should reach a person unasked: the server switch carries it as a dot.
+        let unlined = self.ask_numbers.as_ref().map_or(0, |n| n.unlined_answered);
+        let mut server_tip = vec![ui.floor_tip_server.to_string()];
+        if let Some(n) = self.ask_numbers.as_ref() {
+            server_tip.push(lang::fill(
+                ui.floor_asks,
+                &[
+                    ("cheap", &n.cheap_answers.to_string()),
+                    ("copies", &n.copy_answers.to_string()),
+                    ("unlined", &n.unlined_answered.to_string()),
+                ],
+            ));
+        }
         let enable_btn = Self::bezel_btn(
             sk,
-            &if self.mcp.enabled {
-                format!("\u{25c9} {}", t.m_server_on)
-            } else {
-                format!("\u{25cb} {}", t.m_server_off)
-            },
+            &format!(
+                "{} {}",
+                mark(self.mcp.enabled),
+                if self.mcp.enabled {
+                    pick(ui.floor_sw_server, t.m_server_on)
+                } else {
+                    pick(ui.floor_sw_server, t.m_server_off)
+                }
+            ),
             self.mcp.enabled,
         )
-        .id(SharedString::from(format!("{prefix}-btn-enable")))
-        .hover(|s| s.border_color(th.accent))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                cx.stop_propagation();
-                ws.mcp.enabled = !ws.mcp.enabled;
-                ws.save(cx);
-                cx.notify();
-            }),
-        );
-        let expose_btn = Self::bezel_btn(
-            sk,
-            format!(
+        .when(unlined > 0, |d| {
+            d.child(
+                div()
+                    .size(px(6.))
+                    .rounded(sk.radius_pill())
+                    .bg(th.ansi[1])
+                    .flex_none(),
+            )
+        })
+        .id(SharedString::from(format!("{prefix}-btn-enable")));
+        let enable_btn = with_tip(enable_btn, server_tip)
+            .hover(|s| s.border_color(th.accent))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp.enabled = !ws.mcp.enabled;
+                    ws.save(cx);
+                    cx.notify();
+                }),
+            );
+        let expose_label = match (compact, self.mcp.expose) {
+            (true, mcp::Expose::AgentsOnly) => ui.floor_sw_agents_only.to_string(),
+            (true, mcp::Expose::All) => ui.floor_sw_all_panes.to_string(),
+            (false, e) => format!(
                 "{} {}",
                 t.m_expose,
-                match self.mcp.expose {
+                match e {
                     mcp::Expose::AgentsOnly => t.exp_agents,
                     mcp::Expose::All => t.exp_all,
                 }
-            )
-            .as_str(),
-            false,
+            ),
+        };
+        let expose_btn = with_tip(
+            Self::bezel_btn(sk, &expose_label, false)
+                .id(SharedString::from(format!("{prefix}-btn-expose"))),
+            vec![ui.floor_tip_expose.to_string()],
         )
-        .id(SharedString::from(format!("{prefix}-btn-expose")))
         .hover(|s| s.border_color(th.accent))
         .on_mouse_down(
             MouseButton::Left,
@@ -23034,16 +23071,23 @@ impl Workspace {
                 cx.notify();
             }),
         );
-        let events_btn = Self::bezel_btn(
-            sk,
-            &if self.mcp.events {
-                format!("\u{25c9} {}", t.m_events_on)
-            } else {
-                format!("\u{25cb} {}", t.m_events_off)
-            },
-            self.mcp.events,
+        let events_btn = with_tip(
+            Self::bezel_btn(
+                sk,
+                &format!(
+                    "{} {}",
+                    mark(self.mcp.events),
+                    if self.mcp.events {
+                        pick(ui.floor_sw_events, t.m_events_on)
+                    } else {
+                        pick(ui.floor_sw_events, t.m_events_off)
+                    }
+                ),
+                self.mcp.events,
+            )
+            .id(SharedString::from(format!("{prefix}-btn-events"))),
+            vec![ui.floor_tip_events.to_string()],
         )
-        .id(SharedString::from(format!("{prefix}-btn-events")))
         .hover(|s| s.border_color(th.accent))
         .on_mouse_down(
             MouseButton::Left,
@@ -23061,16 +23105,23 @@ impl Workspace {
         // Writes opt-in: promotes the read-only watch surface to a
         // remote-control one (set_pane_config). A deliberate second switch —
         // appearance only, never a PTY. Mirrors the TD_MCP_WRITE env var.
-        let writes_btn = Self::bezel_btn(
-            sk,
-            &if self.mcp.writable {
-                format!("\u{25c9} {}", t.m_writes_on)
-            } else {
-                format!("\u{25cb} {}", t.m_writes_off)
-            },
-            self.mcp.writable,
+        let writes_btn = with_tip(
+            Self::bezel_btn(
+                sk,
+                &format!(
+                    "{} {}",
+                    mark(self.mcp.writable),
+                    if self.mcp.writable {
+                        pick(ui.floor_sw_writes, t.m_writes_on)
+                    } else {
+                        pick(ui.floor_sw_writes, t.m_writes_off)
+                    }
+                ),
+                self.mcp.writable,
+            )
+            .id(SharedString::from(format!("{prefix}-btn-writes"))),
+            vec![ui.floor_tip_writes.to_string()],
         )
-        .id(SharedString::from(format!("{prefix}-btn-writes")))
         .hover(|s| s.border_color(th.accent))
         .on_mouse_down(
             MouseButton::Left,
@@ -23087,16 +23138,23 @@ impl Workspace {
         // blanking the picture inside it, because an empty frame is not
         // cleaner than a full one.
         let show_art = wall_card_art(self.card_art);
-        let images_btn = Self::bezel_btn(
-            sk,
-            &if show_art {
-                format!("\u{25c9} {}", t.m_images_on)
-            } else {
-                format!("\u{25cb} {}", t.m_images_off)
-            },
-            show_art,
+        let images_btn = with_tip(
+            Self::bezel_btn(
+                sk,
+                &format!(
+                    "{} {}",
+                    mark(show_art),
+                    if show_art {
+                        pick(ui.floor_sw_images, t.m_images_on)
+                    } else {
+                        pick(ui.floor_sw_images, t.m_images_off)
+                    }
+                ),
+                show_art,
+            )
+            .id(SharedString::from(format!("{prefix}-btn-images"))),
+            vec![ui.floor_tip_images.to_string()],
         )
-        .id(SharedString::from(format!("{prefix}-btn-images")))
         .hover(|s| s.border_color(th.accent))
         .on_mouse_down(
             MouseButton::Left,
@@ -28240,6 +28298,18 @@ fn over_the_glass_tip(th: &theme::Theme, sk: &skin::Skin, s: f32) -> gpui::Div {
 /// a line per window naming it in the vendor's own words.
 struct SlotTooltip {
     lines: Vec<String>,
+}
+
+/// Hang a plain hover card on `el`: the first line is the heading, the rest
+/// read under it. One place hangs these, so the glass guard counts one site
+/// however many buttons say what they do.
+fn with_tip(el: gpui::Stateful<gpui::Div>, lines: Vec<String>) -> gpui::Stateful<gpui::Div> {
+    el.tooltip(move |_w, cx| {
+        cx.new(|_| SlotTooltip {
+            lines: lines.clone(),
+        })
+        .into()
+    })
 }
 
 impl Render for SlotTooltip {
@@ -39639,6 +39709,9 @@ mod tests {
             ("slider_row", 2),
             // the corner's two split buttons, both built by this one function
             ("split_button", 1),
+            // every plain "what this button does" card, the Threshing Floor's
+            // header and the MCP switches among them
+            ("with_tip", 1),
         ];
         for (name, count) in &hung {
             assert_eq!(

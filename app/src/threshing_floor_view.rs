@@ -478,13 +478,18 @@ impl Workspace {
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
-                total += 1;
                 let v = leaf.read(cx);
                 let name = threshing_floor::PaneName::new(&spine, &v.header_title());
                 // The search narrows the pool only; the chart always shows the
                 // whole org, so typing never hides a member or its lines.
                 let org = v.seat.and_then(|seat| self.floor_orgs.owner(seat));
                 let charted = org.is_some() && org == self.floor_org;
+                // The pool's count is its own: the panes it would list with
+                // nothing typed (off every org), or with a query, every pane
+                // off this chart, and how many of those the query keeps.
+                if !charted && (org.is_none() || !query.trim().is_empty()) {
+                    total += 1;
+                }
                 if !charted && pane_search_score(&project, &name, &query).is_none() {
                     continue;
                 }
@@ -527,7 +532,7 @@ impl Workspace {
             }
         }
         loose.sort_by_key(|f| std::cmp::Reverse(pane_search_score(&f.project, &f.name, &query)));
-        let shown = seats.len() + loose.len();
+        let shown = loose.len();
 
         // ---- lay the chart out ----
         let chrome_sk = sk;
@@ -608,22 +613,6 @@ impl Workspace {
                 })
             })
             .collect();
-
-        // ---- counts ----
-        let working = seats
-            .iter()
-            .filter(|f| f.state == hud::AgentState::Working)
-            .count();
-        let needs = seats.iter().filter(|f| f.state.needs_you()).count();
-        let counts = lang::fill(
-            ui.floor_counts,
-            &[
-                ("seats", &seats.len().to_string()),
-                ("working", &working.to_string()),
-                ("needs", &needs.to_string()),
-                ("off", &loose.len().to_string()),
-            ],
-        );
 
         // ---- the chart: wires on a canvas, seats and labels over it ----
         let line_ink = th.accent;
@@ -1329,164 +1318,77 @@ impl Workspace {
         }
 
         let switches = self.mcp_switch_buttons(&sk, th, "war", cx);
+        // The search is small and sits at the right end of the one header row:
+        // it narrows the pool, so it is a tool, not a heading.
+        let search = with_tip(
+            div()
+                .id("threshing-floor-search")
+                .debug_selector(|| "threshing-floor-search".to_string())
+                .flex_none()
+                .w(px(190.))
+                .h(px(24.))
+                .px_2()
+                .flex()
+                .items_center()
+                .gap_1()
+                .overflow_hidden()
+                .rounded(sk.rad_raw(6.))
+                .border_1()
+                .border_color(th.accent.alpha(0.45))
+                .cursor(gpui::CursorStyle::IBeam)
+                .child(render_edit_buffer(
+                    &self.threshing_floor_query,
+                    s,
+                    th.text,
+                    th.accent,
+                    th.accent.alpha(0.3),
+                ))
+                .when(query.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .text_color(th.text.alpha(0.5))
+                            .child(format!("\u{2315} {}", ui.floor_search_short)),
+                    )
+                })
+                .child(div().flex_1())
+                .when(!query.is_empty(), |d| {
+                    d.child(
+                        Self::bezel_btn(&sk, "\u{d7}", false)
+                            .id("threshing-floor-clear")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _, cx| {
+                                    cx.stop_propagation();
+                                    ws.threshing_floor_query = EditBuffer::seeded("");
+                                    cx.notify()
+                                }),
+                            ),
+                    )
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                        cx.stop_propagation();
+                        w.focus(&ws.focus_handle, cx)
+                    }),
+                ),
+            vec![ui.floor_tip_search.to_string()],
+        );
+        // One row: what you are looking at, what edits the org, what agents may
+        // do, and the search. No title and no counts: the work surface's own
+        // status chip already counts the agents.
         let header = div()
             .id("threshing-floor-header")
             .debug_selector(|| "threshing-floor-header".to_string())
             .flex_none()
             .min_w(px(0.))
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(
-                div()
-                    .h(px(22.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_size(sk.text_px(13.))
-                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                            .text_color(th.complement)
-                            .child(ui.floor_hdr),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .truncate()
-                            .text_size(sk.text_px(9.))
-                            .text_color(th.text.alpha(0.6))
-                            .child(SharedString::from(counts)),
-                    ),
-            )
-            .child(
-                div()
-                    .id("floor-access-controls")
-                    .h(px(27.))
-                    .flex_none()
-                    .min_w(px(0.))
-                    .overflow_x_scroll()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .children(switches),
-                    ),
-            )
-            .child(
-                div()
-                    .h(px(32.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .id("threshing-floor-search")
-                            .debug_selector(|| "threshing-floor-search".to_string())
-                            .flex_1()
-                            .min_w(px(0.))
-                            .h_full()
-                            .px_2()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .rounded(sk.rad_raw(6.))
-                            .border_1()
-                            .border_color(th.accent.alpha(0.45))
-                            .cursor(gpui::CursorStyle::IBeam)
-                            .child(render_edit_buffer(
-                                &self.threshing_floor_query,
-                                s,
-                                th.text,
-                                th.accent,
-                                th.accent.alpha(0.3),
-                            ))
-                            .when(query.is_empty(), |d| {
-                                d.child(div().text_color(th.text.alpha(0.5)).child(ui.floor_search))
-                            })
-                            .child(div().flex_1())
-                            .child(
-                                Self::bezel_btn(&sk, "×", false)
-                                    .id("threshing-floor-clear")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|ws, _: &MouseDownEvent, _, cx| {
-                                            cx.stop_propagation();
-                                            ws.threshing_floor_query = EditBuffer::seeded("");
-                                            cx.notify()
-                                        }),
-                                    ),
-                            )
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|ws, _: &MouseDownEvent, w, cx| {
-                                    cx.stop_propagation();
-                                    w.focus(&ws.focus_handle, cx)
-                                }),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_size(sk.text_px(8.5))
-                            .text_color(th.text.alpha(0.6))
-                            .child(SharedString::from(lang::fill(
-                                ui.floor_results,
-                                &[("shown", &shown.to_string()), ("total", &total.to_string())],
-                            ))),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .min_w(px(0.))
-                    .child(self.threshing_floor_org_controls(&sk, th, cx)),
-            );
-        let org_header = div()
-            .id("floor-org-header")
-            .debug_selector(|| "floor-org-header".to_string())
-            .flex_none()
-            .min_w(px(0.))
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(
-                div()
-                    .text_size(sk.text_px(8.5))
-                    .text_color(th.accent.alpha(0.85))
-                    .child(SharedString::from(
-                        if drag_active {
-                            ui.floor_drag_hint
-                        } else {
-                            ui.floor_view_hint
-                        }
-                        .to_string(),
-                    )),
-            )
-            // The session's numbers report on the floor rather than act on it:
-            // set a little apart from the org controls.
-            .children(self.ask_numbers.as_ref().map(|n| {
-                div()
-                    .text_size(sk.text_px(8.5))
-                    .text_color(if n.unlined_answered > 0 {
-                        th.ansi[1]
-                    } else {
-                        th.text.alpha(0.6)
-                    })
-                    .child(SharedString::from(lang::fill(
-                        ui.floor_asks,
-                        &[
-                            ("cheap", &n.cheap_answers.to_string()),
-                            ("copies", &n.copy_answers.to_string()),
-                            ("unlined", &n.unlined_answered.to_string()),
-                        ],
-                    )))
-            }));
+            .child(self.threshing_floor_org_controls(
+                &sk,
+                th,
+                switches,
+                search.into_any_element(),
+                cx,
+            ));
         let drop_chart_ink = th.accent;
         let view_bounds = self.floor_view.bounds.clone();
         let chart_tile = div()
@@ -1499,7 +1401,6 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
-            .child(org_header)
             // The active org titles its own chart, in its own ink — a cool
             // heading distinct from the room's pink header and the green field,
             // so the board reads as "this org's chart" instead of cards adrift
@@ -1667,7 +1568,14 @@ impl Workspace {
                         div()
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(th.text.alpha(0.85))
-                            .child(SharedString::from(ui.floor_off_hdr.to_string())),
+                            .child(SharedString::from(format!(
+                                "{} \u{b7} {}",
+                                ui.floor_off_hdr,
+                                lang::fill(
+                                    ui.floor_results,
+                                    &[("shown", &shown.to_string()), ("total", &total.to_string())],
+                                )
+                            ))),
                     )
                     .child(
                         div()
@@ -1749,9 +1657,16 @@ impl Workspace {
                             .child(self.threshing_floor_relationship_controls(&sk, th, cx))
                             .child(chart_tile),
                     )
-                    .child(pool_tile),
-            )
-            .child(self.threshing_floor_drag_footer(removing, drag_active, &sk, th, cx));
+                    .child(pool_tile)
+                    // The drag footer exists only while a drag is on, floating
+                    // over the foot of the work surface, so the panel's bottom
+                    // pad matches its top the rest of the time.
+                    .when(drag_active || removing, |d| {
+                        d.child(div().absolute().left_0().right_0().bottom_0().child(
+                            self.threshing_floor_drag_footer(removing, drag_active, &sk, th, cx),
+                        ))
+                    }),
+            );
 
         Some(
             div()
@@ -1809,7 +1724,7 @@ impl Workspace {
     fn threshing_floor_view_controls(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> gpui::Div {
         let mut controls = div().flex().items_center().gap_1().flex_none();
         for (id, glyph, delta) in [("floor-zoom-out", "−", -60.), ("floor-zoom-in", "+", 60.)] {
-            controls = controls.child(
+            controls = controls.child(with_tip(
                 Self::bezel_btn(sk, glyph, false)
                     .id(id)
                     .debug_selector(move || id.to_string())
@@ -1826,9 +1741,10 @@ impl Workspace {
                             cx.notify();
                         }
                     })),
-            );
+                vec![self.lang.strings().ui.floor_tip_zoom.to_string()],
+            ));
         }
-        controls.child(
+        controls.child(with_tip(
             Self::bezel_btn(
                 sk,
                 &format!(
@@ -1846,7 +1762,8 @@ impl Workspace {
                 ws.floor_view.reset();
                 cx.notify();
             })),
-        )
+            vec![self.lang.strings().ui.floor_tip_zoom.to_string()],
+        ))
     }
 
     fn threshing_floor_begin_drag(
@@ -2421,27 +2338,30 @@ impl Workspace {
         &self,
         sk: &skin::Skin,
         th: &theme::Theme,
+        switches: [gpui::Stateful<gpui::Div>; 5],
+        search: gpui::AnyElement,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let ui = self.lang.strings().ui;
         let dragging = self.floor_drag.is_some() && cx.has_active_drag();
-        let mut choices = div()
-            .flex()
-            .flex_row()
-            .flex_none()
-            .items_center()
-            .gap_1()
-            .child(SharedString::from(ui.floor_org.to_string()));
+        let mut choices = div().flex().flex_row().flex_none().items_center().gap_1();
         for org in self.floor_orgs.saved() {
             let id = org.id;
             let ink = th.accent;
+            let tip = lang::fill(
+                ui.floor_tip_org,
+                &[("org", &self.threshing_floor_org_label(id))],
+            );
             choices = choices.child(
-                Self::bezel_btn(
-                    sk,
-                    &self.threshing_floor_org_label(id),
-                    self.floor_org == Some(id),
+                with_tip(
+                    Self::bezel_btn(
+                        sk,
+                        &self.threshing_floor_org_label(id),
+                        self.floor_org == Some(id),
+                    )
+                    .id(SharedString::from(format!("floor-org-{}", id.0))),
+                    vec![tip],
                 )
-                .id(SharedString::from(format!("floor-org-{}", id.0)))
                 .debug_selector(move || format!("floor-org-{}", id.0))
                 .flex_none()
                 .max_w(px(240.))
@@ -2466,12 +2386,35 @@ impl Workspace {
                 })),
             );
         }
+        // The System Map is a way of looking, like an org tab, so it sits with
+        // the tabs; the edits stand apart, and Delete apart again.
+        let choices = choices.child(with_tip(
+            Self::bezel_btn(
+                sk,
+                &format!("\u{25c7} {}", ui.floor_map),
+                self.floor_map.is_some(),
+            )
+            .id("floor-system-map-toggle")
+            .debug_selector(|| "floor-system-map-toggle".to_string())
+            .on_click(cx.listener(|ws, _, _, cx| {
+                cx.stop_propagation();
+                // Toggle the higher-level view; its draft lives only
+                // while it is open.
+                ws.floor_map = match ws.floor_map {
+                    Some(_) => None,
+                    None => Some(SystemMap::default()),
+                };
+                cx.notify();
+            })),
+            vec![ui.floor_tip_map.to_string()],
+        ));
         let mut actions = div()
             .flex()
             .flex_row()
             .flex_none()
+            .items_center()
             .gap_1()
-            .child(
+            .child(with_tip(
                 Self::bezel_btn(sk, ui.floor_org_new, false)
                     .id("floor-org-new")
                     .debug_selector(|| "floor-org-new".to_string())
@@ -2481,24 +2424,11 @@ impl Workspace {
                         w.focus(&ws.focus_handle, cx);
                         cx.notify();
                     })),
-            )
-            .child(
-                Self::bezel_btn(sk, ui.floor_map, self.floor_map.is_some())
-                    .id("floor-system-map-toggle")
-                    .debug_selector(|| "floor-system-map-toggle".to_string())
-                    .on_click(cx.listener(|ws, _, _, cx| {
-                        cx.stop_propagation();
-                        // Toggle the higher-level view; its draft lives only
-                        // while it is open.
-                        ws.floor_map = match ws.floor_map {
-                            Some(_) => None,
-                            None => Some(SystemMap::default()),
-                        };
-                        cx.notify();
-                    })),
-            );
+                vec![ui.floor_tip_new.to_string()],
+            ));
         if let Some(id) = self.floor_org {
-            actions = actions.child(
+            let org = self.threshing_floor_org_label(id);
+            actions = actions.child(with_tip(
                 Self::bezel_btn(sk, ui.floor_org_rename, false)
                     .id("floor-org-rename")
                     .debug_selector(|| "floor-org-rename".to_string())
@@ -2513,8 +2443,9 @@ impl Workspace {
                         w.focus(&ws.focus_handle, cx);
                         cx.notify();
                     })),
-            );
-            actions = actions.child(
+                vec![lang::fill(ui.floor_tip_rename, &[("org", &org)])],
+            ));
+            actions = actions.child(div().w(px(10.))).child(with_tip(
                 Self::bezel_btn(sk, ui.floor_org_delete, false)
                     .id("floor-org-delete")
                     .debug_selector(|| "floor-org-delete".to_string())
@@ -2526,8 +2457,18 @@ impl Workspace {
                         ws.floor_org_edit = None;
                         cx.notify();
                     })),
-            );
+                vec![lang::fill(ui.floor_tip_delete, &[("org", &org)])],
+            ));
         }
+        let rule = || {
+            div()
+                .w(px(1.))
+                .h(px(18.))
+                .mx_2()
+                .flex_none()
+                .bg(th.text.alpha(0.22))
+        };
+        let [sw0, sw1, sw2, sw3, sw4] = switches;
         let mut controls = div().min_w(px(0.)).flex().flex_col().gap_2().child(
             div()
                 .min_w(px(0.))
@@ -2538,12 +2479,27 @@ impl Workspace {
                 .child(
                     div()
                         .id("floor-org-choices")
+                        .debug_selector(|| "floor-org-choices".to_string())
                         .min_w(px(0.))
-                        .flex_1()
                         .overflow_x_scroll()
                         .child(choices),
                 )
-                .child(actions.when(dragging, |d| d.opacity(0.3))),
+                .child(rule())
+                .child(actions.when(dragging, |d| d.opacity(0.3)))
+                .child(div().flex_1().min_w(px(8.)))
+                .child(
+                    div()
+                        .id("floor-access-controls")
+                        .debug_selector(|| "floor-access-controls".to_string())
+                        .flex_none()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .children([sw0, sw1, sw2, sw3, sw4]),
+                )
+                .child(rule())
+                .child(search),
         );
         if let Some(id) = self.floor_delete_org {
             let n = self.threshing_floor_org_relationship_count(id);
@@ -3462,16 +3418,7 @@ impl Workspace {
                     .text_color(th.accent)
                     .child(ui.floor_rel),
             )
-            .child(div().flex_1())
-            .child(
-                Self::bezel_btn(sk, ui.floor_rel_connect, editor.is_some())
-                    .id("floor-connect")
-                    .debug_selector(|| "floor-connect".to_string())
-                    .on_click(cx.listener(|ws, _, _, cx| {
-                        cx.stop_propagation();
-                        ws.threshing_floor_begin_relation(ws.threshing_floor_pick, None, cx);
-                    })),
-            );
+            .child(div().flex_1());
         if let Some(leaf) = self
             .threshing_floor_pick
             .and_then(|s| self.threshing_floor_seat_leaf(s, cx))
@@ -6713,7 +6660,7 @@ mod tests {
         );
         // Opening the relationship builder (Connect, or a connector drop) used
         // to wipe the filter mid-wiring. It must survive.
-        click(cx, "floor-connect");
+        click(cx, "floor-rel-from");
         ws.read_with(cx, |ws, _| {
             assert!(
                 ws.floor_relation.is_some(),
@@ -6775,6 +6722,36 @@ mod tests {
         assert!(
             cx.debug_bounds("floor-seat-101").is_some(),
             "a filter that matches only the lead hid the worker from the chart"
+        );
+    }
+
+    #[gpui::test]
+    fn the_header_is_one_row_with_a_small_search_at_its_right_end(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (_ws, cx, _) = fixture(cx);
+        let tabs = bounds(cx, "floor-org-choices");
+        let switches = bounds(cx, "floor-access-controls");
+        let search = bounds(cx, "threshing-floor-search");
+        // One row: every group's middle sits on the same line.
+        for b in [switches, search] {
+            assert!(
+                (b.center().y - tabs.center().y).abs() < px(6.),
+                "a header group left the one row: {b:?} against {tabs:?}"
+            );
+        }
+        assert!(
+            search.origin.x > switches.right(),
+            "the search sits right of the switches"
+        );
+        assert!(
+            search.size.width < px(260.),
+            "the search is small: {search:?}"
+        );
+        assert!(
+            cx.debug_bounds("floor-connect").is_none(),
+            "Connect is gone; a relationship starts from a card"
         );
     }
 
@@ -6991,11 +6968,7 @@ mod tests {
                 composer.right() < pool_tile.origin.x,
                 "the active glass must stop before the pool"
             );
-            let headers = [
-                "threshing-floor-header",
-                "floor-org-header",
-                "floor-pool-header",
-            ];
+            let headers = ["threshing-floor-header", "floor-pool-header"];
             let fixed = headers.map(|id| bounds(cx, id));
             let card = bounds(cx, &first);
             let member = bounds(cx, "floor-seat-100");
@@ -7141,7 +7114,7 @@ mod tests {
         let fixed_ids = [
             "floor-relationship-composer",
             "floor-pool-tile",
-            "floor-org-header",
+            "threshing-floor-header",
             "threshing-floor-search",
         ];
         let fixed = fixed_ids.map(|id| bounds(cx, id));
@@ -7473,8 +7446,7 @@ mod tests {
             "floor-pool-tile",
         ];
         let before = ids.map(|id| bounds(cx, id));
-        click(cx, "floor-seat-100");
-        click(cx, "floor-connect");
+        click(cx, "floor-connect-100");
         assert_eq!(
             ids.map(|id| bounds(cx, id)),
             before,
@@ -7605,8 +7577,7 @@ mod tests {
         let second = pool_member(&ws, cx, "Pool two");
         let first_id = format!("floor-pane-{}", first.entity_id().as_u64());
         let second_id = format!("floor-pane-{}", second.entity_id().as_u64());
-        click(cx, "floor-seat-100");
-        click(cx, "floor-connect");
+        click(cx, "floor-connect-100");
         click(cx, "floor-seat-101");
         drag(cx, &first_id, "floor-seat-101");
         click(cx, &second_id);
@@ -7661,8 +7632,7 @@ mod tests {
         let (ws, cx, _) = fixture(cx);
         let pool = pool_member(&ws, cx, "Candidate");
         let id = format!("floor-pane-{}", pool.entity_id().as_u64());
-        click(cx, "floor-seat-100");
-        click(cx, "floor-connect");
+        click(cx, "floor-connect-100");
         click(cx, &id);
         click(cx, "floor-rel-cancel");
         assert!(pool.read_with(cx, |v, _| v.seat.is_none()));
