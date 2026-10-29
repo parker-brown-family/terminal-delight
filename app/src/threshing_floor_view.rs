@@ -274,13 +274,46 @@ enum RelationMember {
 #[derive(Default)]
 pub(crate) struct RelationEditor {
     actor: Option<RelationMember>,
-    targets: Vec<RelationMember>,
+    /// Every requested slot exists before a pane is chosen for it.
+    targets: Vec<Option<RelationMember>>,
+    target_slot: Option<usize>,
+    targets_scroll: gpui::ScrollHandle,
     rung: Option<threshing_floor::Rung>,
     choosing: Option<RelationEnd>,
     editing: Option<(threshing_floor::SeatId, threshing_floor::SeatId)>,
     verbs_at: Option<Point<Pixels>>,
     error: Option<String>,
     labels: Vec<(RelationMember, String)>,
+}
+
+impl RelationEditor {
+    fn select_target_slot(&mut self, index: usize) -> bool {
+        if self.editing.is_some() || !matches!(self.targets.get(index), Some(None)) {
+            return false;
+        }
+        self.target_slot = Some(index);
+        self.choosing = Some(RelationEnd::To);
+        self.targets_scroll.scroll_to_item(index);
+        true
+    }
+
+    fn remove_target_slot(&mut self, index: usize) {
+        if self.editing.is_some() || index >= self.targets.len() {
+            return;
+        }
+        self.targets.remove(index);
+        self.target_slot = self
+            .target_slot
+            .and_then(|active| match active.cmp(&index) {
+                std::cmp::Ordering::Less => Some(active),
+                std::cmp::Ordering::Equal => self.targets.iter().position(Option::is_none),
+                std::cmp::Ordering::Greater => Some(active - 1),
+            });
+        if let Some(active) = self.target_slot {
+            self.targets_scroll.scroll_to_item(active);
+        }
+        self.error = None;
+    }
 }
 
 struct PreparedRelationship {
@@ -626,7 +659,8 @@ impl Workspace {
             let member = RelationMember::Seat(seat);
             let picked = pick == Some(seat)
                 || self.floor_relation.as_ref().is_some_and(|e| {
-                    e.actor.as_ref() == Some(&member) || e.targets.contains(&member)
+                    e.actor.as_ref() == Some(&member)
+                        || e.targets.iter().flatten().any(|m| m == &member)
                 });
             let state_ink = agent_state_glow(th, th.accent, f.state);
             let role = match self.chart.role_of(seat) {
@@ -3024,7 +3058,10 @@ impl Workspace {
         self.floor_relation = Some(RelationEditor {
             labels,
             actor: from.map(RelationMember::Seat),
-            targets: to.into_iter().map(RelationMember::Seat).collect(),
+            targets: to
+                .into_iter()
+                .map(|s| Some(RelationMember::Seat(s)))
+                .collect(),
             rung: from
                 .zip(to)
                 .and_then(|(a, t)| self.chart.line(a, t))
@@ -3058,10 +3095,32 @@ impl Workspace {
         if editor.choosing == Some(RelationEnd::From)
             || (editor.actor.is_none() && editor.choosing != Some(RelationEnd::To))
         {
-            editor.targets.retain(|m| m != &member);
+            for target in &mut editor.targets {
+                if target.as_ref() == Some(&member) {
+                    *target = None;
+                }
+            }
             editor.actor = Some(member);
-        } else if editor.actor.as_ref() != Some(&member) && !editor.targets.contains(&member) {
-            editor.targets.push(member);
+            editor.target_slot = editor.targets.iter().position(Option::is_none);
+        } else if editor.actor.as_ref() != Some(&member)
+            && !editor.targets.iter().flatten().any(|m| m == &member)
+        {
+            let slot = editor
+                .target_slot
+                .filter(|i| matches!(editor.targets.get(*i), Some(None)))
+                .or_else(|| editor.targets.iter().position(Option::is_none));
+            if let Some(index) = slot {
+                editor.targets[index] = Some(member);
+            } else {
+                editor.targets.push(Some(member));
+                editor
+                    .targets_scroll
+                    .scroll_to_item(editor.targets.len() - 1);
+            }
+            editor.target_slot = editor.targets.iter().position(Option::is_none);
+        }
+        if let Some(index) = editor.target_slot {
+            editor.targets_scroll.scroll_to_item(index);
         }
         editor.choosing = Some(if editor.actor.is_some() {
             RelationEnd::To
@@ -3125,7 +3184,7 @@ impl Workspace {
         self.floor_relation = Some(RelationEditor {
             labels,
             actor: Some(actor),
-            targets: vec![target],
+            targets: vec![Some(target)],
             choosing: Some(RelationEnd::To),
             ..Default::default()
         });
@@ -3137,8 +3196,11 @@ impl Workspace {
     fn threshing_floor_prepare_relation(&self, cx: &App) -> Option<PreparedRelationship> {
         let editor = self.floor_relation.as_ref()?;
         let org = self.floor_org?;
+        if editor.targets.iter().any(Option::is_none) {
+            return None;
+        }
         let mut members = Vec::new();
-        for member in editor.actor.iter().chain(editor.targets.iter()) {
+        for member in editor.actor.iter().chain(editor.targets.iter().flatten()) {
             if members.contains(member) {
                 return None;
             }
@@ -3167,6 +3229,7 @@ impl Workspace {
         let targets = editor
             .targets
             .iter()
+            .flatten()
             .map(&mut resolve)
             .collect::<Option<Vec<_>>>()?;
         let pairs = threshing_floor::RelationBatch {
@@ -3198,12 +3261,15 @@ impl Workspace {
                 .floor_relation
                 .as_ref()
                 .and_then(|e| {
-                    e.actor.iter().chain(e.targets.iter()).find(|member| {
-                        self.threshing_floor_member_leaf(member, cx)
-                            .is_none_or(|leaf| {
-                                self.threshing_floor_member(&leaf, cx).as_ref() != Some(member)
-                            })
-                    })
+                    e.actor
+                        .iter()
+                        .chain(e.targets.iter().flatten())
+                        .find(|member| {
+                            self.threshing_floor_member_leaf(member, cx)
+                                .is_none_or(|leaf| {
+                                    self.threshing_floor_member(&leaf, cx).as_ref() != Some(member)
+                                })
+                        })
                 })
                 .map(|member| self.threshing_floor_member_label(member, cx));
             let error = match missing {
@@ -3453,42 +3519,98 @@ impl Workspace {
                         ),
                 ),
             );
-        let mut target_row = div().flex().flex_row().gap_2().items_center().h(px(78.));
+        let mut target_strip = div()
+            .id("floor-targets-strip")
+            .debug_selector(|| "floor-targets-strip".to_string())
+            .flex_1()
+            .min_w(px(0.))
+            .h_full()
+            .flex()
+            .gap_2()
+            .overflow_x_scroll();
+        if let Some(editor) = editor {
+            target_strip = target_strip.track_scroll(&editor.targets_scroll);
+        }
         for (i, member) in targets.iter().enumerate() {
-            let mut card = self.threshing_floor_member_card(member, sk, th, cx);
+            let active = editor
+                .is_some_and(|e| e.choosing == Some(RelationEnd::To) && e.target_slot == Some(i));
+            let card = match member {
+                Some(member) => self.threshing_floor_member_card(member, sk, th, cx),
+                None => sk
+                    .action(
+                        div()
+                            .relative()
+                            .w(px(148.))
+                            .h(px(78.))
+                            .flex_none()
+                            .border_1()
+                            .border_color(if active {
+                                th.accent
+                            } else {
+                                th.accent.alpha(0.5)
+                            })
+                            .rounded(sk.radius())
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .gap_1(),
+                        active,
+                    )
+                    .child(div().text_size(sk.text_px(20.)).child("+"))
+                    .child(
+                        div()
+                            .text_size(sk.text_px(9.))
+                            .child(ui.floor_rel_empty_target),
+                    ),
+            };
+            let mut card = card
+                .id(SharedString::from(format!("floor-target-slot-{i}")))
+                .debug_selector(move || format!("floor-target-slot-{i}"))
+                .when(member.is_none(), |d| {
+                    d.cursor_pointer()
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            cx.stop_propagation();
+                            if let Some(e) = &mut ws.floor_relation {
+                                e.select_target_slot(i);
+                            }
+                            cx.notify();
+                        }))
+                        .on_drop(cx.listener(move |ws, d: &PaneDrag, _, cx| {
+                            cx.stop_propagation();
+                            if let Some(member) = ws.threshing_floor_member(&d.leaf, cx) {
+                                if ws
+                                    .floor_relation
+                                    .as_mut()
+                                    .is_some_and(|e| e.select_target_slot(i))
+                                {
+                                    ws.threshing_floor_choose_member(member, cx);
+                                }
+                            }
+                        }))
+                });
             if !locked {
                 card = card.child(
                     Self::bezel_btn(sk, "×", false)
                         .id(SharedString::from(format!("floor-target-remove-{i}")))
+                        .debug_selector(move || format!("floor-target-remove-{i}"))
                         .absolute()
                         .right_0()
                         .top_0()
                         .on_click(cx.listener(move |ws, _, _, cx| {
                             cx.stop_propagation();
                             if let Some(e) = &mut ws.floor_relation {
-                                if i < e.targets.len() {
-                                    e.targets.remove(i);
-                                    e.error = None
-                                }
+                                e.remove_target_slot(i);
                             }
                             cx.notify()
                         })),
                 );
             }
-            target_row = target_row.child(card);
+            target_strip = target_strip.child(card);
         }
         let mut target_rail = div().flex().gap_2().min_w(px(0.)).h(px(78.));
         if !targets.is_empty() {
-            target_rail = target_rail.child(
-                div()
-                    .id("floor-targets-strip")
-                    .debug_selector(|| "floor-targets-strip".to_string())
-                    .flex_1()
-                    .min_w(px(0.))
-                    .h_full()
-                    .overflow_x_scroll()
-                    .child(target_row),
-            );
+            target_rail = target_rail.child(target_strip);
         }
         if !locked {
             target_rail = target_rail.child(
@@ -3509,7 +3631,10 @@ impl Workspace {
                             ws.threshing_floor_begin_relation(ws.threshing_floor_pick, None, cx)
                         }
                         if let Some(e) = &mut ws.floor_relation {
-                            e.choosing = Some(RelationEnd::To)
+                            let index = e.targets.len();
+                            e.targets.push(None);
+                            e.select_target_slot(index);
+                            e.error = None;
                         }
                         cx.notify()
                     })),
@@ -3543,7 +3668,7 @@ impl Workspace {
             .map(|e| {
                 e.actor
                     .iter()
-                    .chain(e.targets.iter())
+                    .chain(e.targets.iter().flatten())
                     .filter(|m| matches!(m, RelationMember::Pool(_)))
                     .count()
             })
@@ -3565,7 +3690,7 @@ impl Workspace {
                     lang::fill(
                         ui.floor_rel_summary,
                         &[
-                            ("n", &targets.len().to_string()),
+                            ("n", &targets.iter().flatten().count().to_string()),
                             ("added", &staged.to_string()),
                             ("changed", &changed.to_string()),
                         ],
@@ -6083,7 +6208,7 @@ mod tests {
             ws.asks.open(threshing_floor::AskId(4), bypass);
             ws.floor_relation = Some(RelationEditor {
                 actor: Some(RelationMember::Seat(threshing_floor::SeatId(100))),
-                targets: vec![RelationMember::Seat(threshing_floor::SeatId(101))],
+                targets: vec![Some(RelationMember::Seat(threshing_floor::SeatId(101)))],
                 rung: Some(threshing_floor::Rung::See),
                 choosing: None,
                 ..Default::default()
@@ -6430,7 +6555,7 @@ mod tests {
             );
             assert_eq!(
                 editor.targets,
-                vec![RelationMember::Seat(threshing_floor::SeatId(101))]
+                vec![Some(RelationMember::Seat(threshing_floor::SeatId(101)))]
             );
             assert_eq!(editor.rung, None);
             assert!(
@@ -7022,7 +7147,7 @@ mod tests {
             );
             assert_eq!(
                 draft.targets,
-                vec![RelationMember::Seat(threshing_floor::SeatId(101))]
+                vec![Some(RelationMember::Seat(threshing_floor::SeatId(101)))]
             );
         });
         click(cx, "floor-rel-cancel");
@@ -7065,12 +7190,134 @@ mod tests {
         click(cx, "floor-rel-to");
         ws.read_with(cx, |ws, _| {
             let draft = ws.floor_relation.as_ref().unwrap();
-            assert_eq!(draft.targets.len(), 3);
+            assert_eq!(draft.targets.iter().flatten().count(), 3);
+            assert_eq!(draft.targets.len(), 4);
+            assert_eq!(draft.targets.last(), Some(&None));
             assert!(matches!(draft.choosing, Some(RelationEnd::To)));
         });
         click(cx, "floor-rel-cancel");
         assert!(a.read_with(cx, |v, _| v.seat.is_none()));
         assert!(b.read_with(cx, |v, _| v.seat.is_none()));
+    }
+
+    #[gpui::test]
+    fn each_add_target_press_creates_a_visible_slot_even_after_the_strip_overflows(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            ws.threshing_floor_begin_relation(
+                Some(threshing_floor::SeatId(100)),
+                Some(threshing_floor::SeatId(101)),
+                cx,
+            );
+        });
+        cx.simulate_resize(size(px(900.), px(560.)));
+        cx.run_until_parked();
+        for slot in 1..=8 {
+            click(cx, "floor-rel-to");
+            ws.read_with(cx, |ws, _| {
+                assert_eq!(
+                    ws.floor_relation.as_ref().unwrap().targets.len(),
+                    slot + 1,
+                    "pressing plus must create a slot before any card is chosen"
+                );
+            });
+            let card = bounds(cx, &format!("floor-target-slot-{slot}"));
+            let rail = bounds(cx, "floor-targets-strip");
+            let visible = card.intersect(&rail);
+            assert!(visible.size.width >= card.size.width.min(rail.size.width) - px(1.));
+            assert!(visible.size.height >= px(77.));
+        }
+        click(cx, "floor-rel-cancel");
+        assert!(ws.read_with(cx, |ws, _| ws.chart.saved().is_empty()));
+    }
+
+    #[gpui::test]
+    fn empty_target_slots_fill_in_place_and_removal_keeps_the_selected_slot_correct(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let first = pool_member(&ws, cx, "First");
+        let second = pool_member(&ws, cx, "Second");
+        let first_id = format!("floor-pane-{}", first.entity_id().as_u64());
+        let second_id = format!("floor-pane-{}", second.entity_id().as_u64());
+        cx.simulate_resize(size(px(2000.), px(1000.)));
+        ws.update(cx, |ws, cx| {
+            ws.threshing_floor_begin_relation(
+                Some(threshing_floor::SeatId(100)),
+                Some(threshing_floor::SeatId(101)),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        click(cx, "floor-rel-verb");
+        click(cx, "floor-rung-Read");
+        assert!(ws.read_with(cx, |ws, cx| ws
+            .threshing_floor_prepare_relation(cx)
+            .is_some()));
+        click(cx, "floor-rel-to");
+        click(cx, "floor-rel-to");
+        click(cx, "floor-target-slot-1");
+        ws.read_with(cx, |ws, cx| {
+            assert_eq!(ws.floor_relation.as_ref().unwrap().target_slot, Some(1));
+            assert!(ws.threshing_floor_prepare_relation(cx).is_none());
+        });
+        drag(cx, &first_id, "floor-target-slot-1");
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(
+                ws.floor_relation.as_ref().unwrap().targets,
+                vec![
+                    Some(RelationMember::Seat(threshing_floor::SeatId(101))),
+                    Some(RelationMember::Pool(first.downgrade())),
+                    None,
+                ]
+            );
+        });
+        click(cx, "floor-rel-to");
+        click(cx, "floor-target-remove-0");
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(ws.floor_relation.as_ref().unwrap().target_slot, Some(2));
+        });
+        click(cx, &second_id);
+        click(cx, "floor-seat-100");
+        click(cx, &first_id);
+        ws.read_with(cx, |ws, cx| {
+            assert_eq!(
+                ws.floor_relation.as_ref().unwrap().targets,
+                vec![
+                    Some(RelationMember::Pool(first.downgrade())),
+                    None,
+                    Some(RelationMember::Pool(second.downgrade())),
+                ],
+                "duplicates and the actor must leave the selected slot empty"
+            );
+            assert!(ws.threshing_floor_prepare_relation(cx).is_none());
+            assert!(first.read(cx).seat.is_none() && second.read(cx).seat.is_none());
+            assert!(ws.chart.saved().is_empty());
+        });
+        click(cx, "floor-target-slot-1");
+        click(cx, "floor-seat-101");
+        click(cx, "floor-rel-to");
+        assert!(ws.read_with(cx, |ws, cx| ws
+            .threshing_floor_prepare_relation(cx)
+            .is_none()));
+        click(cx, "floor-target-remove-3");
+        assert!(ws.read_with(cx, |ws, cx| ws
+            .threshing_floor_prepare_relation(cx)
+            .is_some()));
+        click(cx, "floor-rel-save");
+        ws.read_with(cx, |ws, cx| {
+            assert!(ws.floor_relation.is_none());
+            assert_eq!(ws.chart.saved().len(), 3);
+            assert!(first.read(cx).seat.is_some() && second.read(cx).seat.is_some());
+        });
     }
 
     #[gpui::test]
@@ -7106,7 +7353,7 @@ mod tests {
             );
             assert_eq!(
                 e.targets,
-                vec![RelationMember::Seat(threshing_floor::SeatId(101))]
+                vec![Some(RelationMember::Seat(threshing_floor::SeatId(101)))]
             );
         });
         click(cx, "floor-rel-cancel");
@@ -7142,7 +7389,7 @@ mod tests {
             );
             assert_eq!(
                 e.targets,
-                vec![RelationMember::Seat(threshing_floor::SeatId(101))]
+                vec![Some(RelationMember::Seat(threshing_floor::SeatId(101)))]
             );
             assert!(ws.chart.saved().is_empty());
             assert_eq!(
@@ -7305,7 +7552,7 @@ mod tests {
         ws.update(cx, |ws, cx| {
             ws.floor_relation = Some(RelationEditor {
                 actor: Some(RelationMember::Pool(pool.downgrade())),
-                targets: vec![RelationMember::Pool(pool.downgrade())],
+                targets: vec![Some(RelationMember::Pool(pool.downgrade()))],
                 rung: Some(threshing_floor::Rung::Read),
                 ..Default::default()
             });
@@ -7316,8 +7563,8 @@ mod tests {
             ws.floor_relation = Some(RelationEditor {
                 actor: Some(RelationMember::Seat(threshing_floor::SeatId(100))),
                 targets: vec![
-                    RelationMember::Pool(pool.downgrade()),
-                    RelationMember::Pool(pool.downgrade()),
+                    Some(RelationMember::Pool(pool.downgrade())),
+                    Some(RelationMember::Pool(pool.downgrade())),
                 ],
                 rung: Some(threshing_floor::Rung::Read),
                 ..Default::default()
