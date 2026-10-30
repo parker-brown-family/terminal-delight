@@ -1097,7 +1097,7 @@ impl Workspace {
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
                         if let Some(org) = open {
-                            ws.threshing_floor_set_org(org, cx);
+                            ws.threshing_floor_open_org(org, cx);
                         }
                     })),
             );
@@ -1697,7 +1697,7 @@ impl Workspace {
                                 .debug_selector(move || format!("floor-open-org-{}", org.0))
                                 .on_click(cx.listener(move |ws, _, _, cx| {
                                     cx.stop_propagation();
-                                    ws.threshing_floor_set_org(org, cx);
+                                    ws.threshing_floor_open_org(org, cx);
                                 })),
                         )
                     })
@@ -2300,9 +2300,7 @@ impl Workspace {
                             return;
                         };
                         if ws.floor_orgs.get(org).is_some() {
-                            ws.floor_map = None;
-                            ws.floor_view.reset();
-                            ws.threshing_floor_set_org(org, cx);
+                            ws.threshing_floor_open_org(org, cx);
                         }
                     }),
                 )
@@ -2827,6 +2825,20 @@ impl Workspace {
             .unwrap_or_else(|| self.lang.strings().ui.floor_org_unnamed.to_string())
     }
 
+    /// Open an org to look at it: a tab, Open org, Forward, an outside card, a
+    /// click on the map, a newly named org. From the System Map that leaves
+    /// the map, at a fresh view, because the map's zoom and pan are not the
+    /// chart's. Seating and moving go through set_org alone and stay put.
+    fn threshing_floor_open_org(&mut self, id: threshing_floor::OrgId, cx: &mut Context<Self>) {
+        if self.floor_orgs.get(id).is_none() {
+            return;
+        }
+        if self.floor_map.take().is_some() {
+            self.floor_view.reset();
+        }
+        self.threshing_floor_set_org(id, cx);
+    }
+
     fn threshing_floor_set_org(&mut self, id: threshing_floor::OrgId, cx: &mut Context<Self>) {
         if self.floor_orgs.get(id).is_none() {
             return;
@@ -2862,7 +2874,7 @@ impl Workspace {
             None => self.floor_orgs.create(&text),
         };
         if let Some(org) = org {
-            self.threshing_floor_set_org(org, cx);
+            self.threshing_floor_open_org(org, cx);
         }
     }
 
@@ -3207,12 +3219,7 @@ impl Workspace {
                 })
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     cx.stop_propagation();
-                    // From the System Map a tab opens that org, at a fresh
-                    // view, the way a click on the org's region does.
-                    if ws.floor_map.take().is_some() {
-                        ws.floor_view.reset();
-                    }
-                    ws.threshing_floor_set_org(id, cx);
+                    ws.threshing_floor_open_org(id, cx);
                 })),
             );
         }
@@ -5497,10 +5504,7 @@ impl Workspace {
                                     ws.threshing_floor_choose_member(RelationMember::Org(org), cx);
                                     return;
                                 }
-                                ws.floor_map = None;
-                                // The map's zoom and pan are not the chart's.
-                                ws.floor_view.reset();
-                                ws.threshing_floor_set_org(org, cx);
+                                ws.threshing_floor_open_org(org, cx);
                             })),
                     ),
             );
@@ -5591,10 +5595,7 @@ impl Workspace {
                             ws.threshing_floor_choose_endpoint(seat, cx);
                             return;
                         }
-                        ws.floor_map = None;
-                        // The map's zoom and pan are not the chart's.
-                        ws.floor_view.reset();
-                        ws.threshing_floor_set_org(org, cx);
+                        ws.threshing_floor_open_org(org, cx);
                     }));
                 if far {
                     // A dot and the name, set at a size that still reads.
@@ -8828,6 +8829,25 @@ mod tests {
         ws.read_with(cx, |ws, _| {
             assert!(ws.floor_map.is_none(), "the org tab left the map");
             assert_eq!(ws.floor_org, Some(org));
+        });
+        // So does a pool card's Open org, found by searching from the map.
+        let agent = pool_member(&ws, cx, "Elsewhere");
+        let other = ws.update(cx, |ws, cx| {
+            let other = ws.floor_orgs.create("Elsewhere org").unwrap();
+            ws.threshing_floor_assign(&agent, other, true, cx);
+            ws.threshing_floor_set_org(org, cx);
+            ws.threshing_floor_query = EditBuffer::seeded("Elsewhere");
+            ws.floor_map = Some(SystemMap::default());
+            ws.floor_view.zoom = 0.7;
+            cx.notify();
+            other
+        });
+        cx.run_until_parked();
+        click(cx, &format!("floor-open-org-{}", other.0));
+        ws.read_with(cx, |ws, _| {
+            assert!(ws.floor_map.is_none(), "Open org left the map");
+            assert_eq!(ws.floor_org, Some(other));
+            assert_eq!(ws.floor_view.zoom, 1., "the org opens at a fresh view");
         });
     }
 
