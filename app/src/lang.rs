@@ -2836,7 +2836,51 @@ mod tests {
     /// behind when the War Room's cards and header were redrawn. A name counts
     /// as read when `.name` appears outside the language pack with no further
     /// identifier character after it, so `floor_search` is not kept alive by
-    /// `floor_search_short`.
+    /// `floor_search_short`. Test code is left out of the scan (everything from
+    /// a file's `#[cfg(test)]` on, and any `tests.rs`), so a test reading a
+    /// string the product dropped cannot keep it alive. A read by destructuring
+    /// `Chrome` would not be seen; nothing reads it that way, so the scan stays
+    /// a plain `.name` search.
+    /// `text` with every `#[cfg(test)] mod name { … }` block cut out, found by
+    /// counting braces. Test-only items outside such a module stay in.
+    fn without_test_modules(text: &str) -> String {
+        let mut out = String::new();
+        let mut rest = text;
+        while let Some(at) = rest.find("#[cfg(test)]") {
+            let after = rest[at + "#[cfg(test)]".len()..].trim_start();
+            let is_mod = after.starts_with("mod ") || after.starts_with("pub(crate) mod ");
+            let open = after.find('{');
+            match (is_mod, open) {
+                (true, Some(open)) if !after[..open].contains(';') => {
+                    out.push_str(&rest[..at]);
+                    let body = &after[open..];
+                    let mut depth = 0usize;
+                    let mut end = body.len();
+                    for (i, c) in body.char_indices() {
+                        match c {
+                            '{' => depth += 1,
+                            '}' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    end = i + 1;
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    rest = &body[end..];
+                }
+                _ => {
+                    out.push_str(&rest[..at + "#[cfg(test)]".len()]);
+                    rest = &rest[at + "#[cfg(test)]".len()..];
+                }
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+
     #[test]
     fn every_chrome_string_is_read_outside_the_language_pack() {
         fn gather(dir: &std::path::Path, skip: &std::path::Path, code: &mut String) {
@@ -2847,8 +2891,11 @@ mod tests {
                 }
                 if path.is_dir() {
                     gather(&path, skip, code);
-                } else if path.extension().is_some_and(|e| e == "rs") {
-                    code.push_str(&std::fs::read_to_string(&path).expect("read source"));
+                } else if path.extension().is_some_and(|e| e == "rs")
+                    && path.file_name().is_none_or(|n| n != "tests.rs")
+                {
+                    let text = std::fs::read_to_string(&path).expect("read source");
+                    code.push_str(&without_test_modules(&text));
                 }
             }
         }
