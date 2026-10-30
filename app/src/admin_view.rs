@@ -47,10 +47,21 @@ struct BuildCount {
     in_use: usize,
     free: usize,
     free_bytes: u64,
+    /// Processes that may be TD and cannot be read: while there are any, which
+    /// builds run is unknown, the counts above are not facts, and pruning
+    /// refuses, so the panel says so instead of offering it.
+    uncertain: Vec<u32>,
 }
 
 fn count_builds(roots: &Roots) -> Result<BuildCount, String> {
-    let listing = builds::list(roots, &builds::live_procs);
+    count_builds_with(roots, &builds::live_procs)
+}
+
+fn count_builds_with(
+    roots: &Roots,
+    procs: &dyn Fn() -> Vec<(u32, std::path::PathBuf)>,
+) -> Result<BuildCount, String> {
+    let listing = builds::list(roots, procs);
     if let Some(e) = &listing.error {
         return Err(e.clone());
     }
@@ -65,7 +76,52 @@ fn count_builds(roots: &Roots) -> Result<BuildCount, String> {
             .count(),
         free: free.len(),
         free_bytes: free.iter().map(|b| b.bytes).sum(),
+        uncertain: listing.uncertain.clone(),
     })
+}
+
+/// The old-builds row's sentence. An unknown process comes first: no count of
+/// what is in use or removable is shown while the engine would refuse.
+fn builds_blurb(
+    ui: &crate::lang::Chrome,
+    builds: &Option<Result<BuildCount, String>>,
+    armed: bool,
+) -> String {
+    match builds {
+        None => ui.admin_builds_counting.to_string(),
+        Some(Err(e)) => ui.admin_failed.replace("{why}", e),
+        Some(Ok(c)) if !c.uncertain.is_empty() => ui
+            .admin_builds_unknown
+            .replace("{n}", &c.total.to_string())
+            .replace("{size}", &builds::human_bytes(c.bytes))
+            .replace(
+                "{pids}",
+                &c.uncertain
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+        Some(Ok(c)) if c.free == 0 => ui
+            .admin_builds_none
+            .replace("{n}", &c.total.to_string())
+            .replace("{size}", &builds::human_bytes(c.bytes)),
+        Some(Ok(c)) if armed => ui
+            .admin_builds_confirm
+            .replace("{free}", &c.free.to_string())
+            .replace("{free_size}", &builds::human_bytes(c.free_bytes)),
+        Some(Ok(c)) => ui
+            .admin_builds_blurb
+            .replace("{n}", &c.total.to_string())
+            .replace("{size}", &builds::human_bytes(c.bytes))
+            .replace("{used}", &c.in_use.to_string())
+            .replace("{free}", &c.free.to_string())
+            .replace("{free_size}", &builds::human_bytes(c.free_bytes)),
+    }
+}
+
+fn can_prune(builds: &Option<Result<BuildCount, String>>) -> bool {
+    matches!(builds, Some(Ok(c)) if c.free > 0 && c.uncertain.is_empty())
 }
 
 impl Workspace {
@@ -361,26 +417,8 @@ impl Workspace {
             Some(Some(bytes)) => builds::human_bytes(bytes),
             Some(None) => "?".to_string(),
         };
-        let builds_blurb = match &a.builds {
-            None => ui.admin_builds_counting.to_string(),
-            Some(Err(e)) => ui.admin_failed.replace("{why}", e),
-            Some(Ok(c)) if c.free == 0 => ui
-                .admin_builds_none
-                .replace("{n}", &c.total.to_string())
-                .replace("{size}", &builds::human_bytes(c.bytes)),
-            Some(Ok(c)) if a.prune_armed => ui
-                .admin_builds_confirm
-                .replace("{free}", &c.free.to_string())
-                .replace("{free_size}", &builds::human_bytes(c.free_bytes)),
-            Some(Ok(c)) => ui
-                .admin_builds_blurb
-                .replace("{n}", &c.total.to_string())
-                .replace("{size}", &builds::human_bytes(c.bytes))
-                .replace("{used}", &c.in_use.to_string())
-                .replace("{free}", &c.free.to_string())
-                .replace("{free_size}", &builds::human_bytes(c.free_bytes)),
-        };
-        let can_prune = matches!(&a.builds, Some(Ok(c)) if c.free > 0) && !a.prune_busy;
+        let builds_blurb = builds_blurb(ui, &a.builds, a.prune_armed);
+        let can_prune = can_prune(&a.builds) && !a.prune_busy;
 
         let mut panel = div()
             .id("admin-panel")
@@ -648,5 +686,42 @@ impl Workspace {
                 )
                 .child(panel),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_build_whose_use_cannot_be_read_offers_no_count_and_no_prune() {
+        let home = std::env::temp_dir().join(format!("td-admin-unknown-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let lib = home.join(".local/lib/terminal-delight");
+        std::fs::create_dir_all(&lib).unwrap();
+        for n in ["td-a-1", "td-b-2", "td-c-3", "td-d-4"] {
+            std::fs::write(lib.join(n), b"\x7fELF\x02\x01\x01\x00\x00\x00\x00").unwrap();
+        }
+        let h = home.clone();
+        let roots =
+            Roots::from_env(&move |k| (k == "HOME").then(|| std::ffi::OsString::from(&h))).unwrap();
+        // A process that may be TD and whose executable cannot be read.
+        let procs = || {
+            vec![
+                (std::process::id(), std::env::current_exe().unwrap()),
+                (4711, std::path::PathBuf::new()),
+            ]
+        };
+        let count = count_builds_with(&roots, &procs).unwrap();
+        assert_eq!(count.uncertain, vec![4711]);
+        let builds = Some(Ok(count));
+        let ui = crate::lang::Lang::En.strings().ui;
+        for armed in [false, true] {
+            let text = builds_blurb(ui, &builds, armed);
+            assert!(text.contains("4711") && text.contains("unknown"), "{text}");
+            assert!(!text.contains("nothing runs"), "{text}");
+        }
+        assert!(!can_prune(&builds));
+        std::fs::remove_dir_all(home).unwrap();
     }
 }
