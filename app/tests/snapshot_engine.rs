@@ -250,6 +250,78 @@ const NARROW: Geometry = Geometry {
 };
 
 #[test]
+fn svg_links_resolve_without_breaking_document_extraction() {
+    let Some(mut rig) = Rig::new("svg-links", Html::default(), Duration::from_secs(300)) else {
+        return;
+    };
+    let layout = rig
+        .open(&fixture("svg-links.html"), NARROW)
+        .expect("SVG href objects must not break extraction or link deserialization");
+    let local: Vec<_> = layout
+        .links
+        .iter()
+        .filter(|l| l.href == "#destination")
+        .collect();
+    assert_eq!(local.len(), 2, "both HTML and SVG links survive");
+    let destination = layout
+        .fragment_top_css("destination")
+        .expect("a visible destination");
+    assert!(destination > 0.0);
+    for link in &local {
+        assert_eq!(link.fragment_top_css, Some(destination));
+        assert_eq!(
+            link.resolved,
+            format!("file://{}#destination", fixture("svg-links.html").display())
+        );
+        assert!(link.rect.is_some());
+    }
+    let relative = layout
+        .links
+        .iter()
+        .find(|l| l.href == "brief.html#sec-2")
+        .unwrap();
+    assert_eq!(
+        relative.resolved,
+        format!("file://{}#sec-2", fixture("brief.html").display())
+    );
+    assert_eq!(relative.fragment_top_css, None);
+    let external = layout
+        .links
+        .iter()
+        .find(|l| l.href.starts_with("https:"))
+        .unwrap();
+    assert_eq!(external.resolved, external.href);
+    assert_eq!(external.fragment_top_css, None);
+    let malformed = layout
+        .links
+        .iter()
+        .find(|l| l.href == "http://[invalid")
+        .unwrap();
+    assert_eq!(
+        malformed.resolved, malformed.href,
+        "invalid URLs keep the browser's raw fallback"
+    );
+    assert_eq!(malformed.fragment_top_css, None);
+    let based = rig
+        .open(&fixture("svg-links-base.html"), NARROW)
+        .expect("a base-bearing SVG document renders");
+    assert_eq!(based.links.len(), 3);
+    for link in &based.links {
+        let want = if link.href == "#destination" {
+            "https://example.com/maps/#destination"
+        } else {
+            "https://example.com/maps/route.html"
+        };
+        assert_eq!(link.resolved, want);
+        assert_eq!(
+            link.fragment_top_css, None,
+            "the base points away from this document"
+        );
+    }
+    rig.done();
+}
+
+#[test]
 fn a_brief_renders_to_anchors_and_tiles_in_one_pass() {
     let Some(mut rig) = Rig::new("anchors", Html::default(), Duration::from_secs(300)) else {
         return;

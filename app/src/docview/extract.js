@@ -100,9 +100,19 @@
     return r.y + dy;
   }
 
+  /* HTML href is a string; SVG href is an SVGAnimatedString. Let an HTML
+     anchor resolve SVG's current value against this document's base, including
+     the browser's raw-string fallback for malformed URLs. */
+  function resolvedHref(a) {
+    if (typeof a.href === 'string') return a.href;
+    var resolver = document.createElement('a');
+    resolver.href = a.href && typeof a.href.animVal === 'string'
+      ? a.href.animVal : a.getAttribute('href');
+    return resolver.href;
+  }
+
   /* Where a same-page fragment's target starts, or null when it names nothing. */
-  function fragmentTop(a, dy) {
-    var url = a.href;
+  function fragmentTop(url, dy) {
     var hash = url.indexOf('#');
     if (hash < 0 || url.slice(0, hash) !== here()) return null;
     var id = url.slice(hash + 1);
@@ -129,12 +139,13 @@
 
   function linksIn(root, dx, dy) {
     return Array.prototype.map.call(root.querySelectorAll('a[href]'), function (a) {
+      var resolved = resolvedHref(a);
       return {
         href: a.getAttribute('href'),
-        resolved: a.href,
+        resolved: resolved,
         rect: box(a, dx, dy),
         dialog: dialogOf(a),
-        fragment_top_css: fragmentTop(a, window.scrollY)
+        fragment_top_css: fragmentTop(resolved, window.scrollY)
       };
     });
   }
