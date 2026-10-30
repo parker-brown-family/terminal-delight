@@ -25,9 +25,13 @@
 //! - **One at a time per worker.** Prompts to one worker go in send order, the
 //!   next only after the last has ended, so two senders never interleave.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::io::{self, Write as _};
+use std::os::unix::fs::OpenOptionsExt as _;
+use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use crate::threshing_floor::{AskId, Refusal, SeatId};
 
@@ -162,11 +166,17 @@ pub enum PromptStage {
     },
     /// Ended without the worker finishing it.
     Failed { why: String },
+    /// The key is known, but the detailed prompt record has been pruned or
+    /// was lost when the window reopened. Its outcome is no longer known here.
+    Expired,
 }
 
 impl PromptStage {
     pub fn is_open(&self) -> bool {
-        !matches!(self, Self::Finished { .. } | Self::Failed { .. })
+        !matches!(
+            self,
+            Self::Finished { .. } | Self::Failed { .. } | Self::Expired
+        )
     }
 
     /// Typed into the worker: past the point where it can be withdrawn.
@@ -183,6 +193,7 @@ impl PromptStage {
             Self::Working { .. } => "working",
             Self::Finished { .. } => "finished",
             Self::Failed { .. } => "failed",
+            Self::Expired => "expired",
         }
     }
 }
@@ -191,7 +202,8 @@ impl PromptStage {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PromptStatus {
     pub prompt_id: AskId,
-    /// The sender's own key, when it named one.
+    /// The sender's own key, when it named one and the detail remains. An
+    /// expired receipt keeps only its fingerprint, never the key's text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     /// The worker's shell pid, as `list_panes` names it.
@@ -284,10 +296,83 @@ pub struct NewPrompt {
     pub now_ms: u64,
 }
 
+/// A minimal, durable record that a sender used one key. It carries no brief,
+/// reply, or key text. The first receipt wins if a caller retries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyReceipt {
+    pub prompt_id: AskId,
+    pub sender_pane: u64,
+    pub key_sha256: String,
+    pub pid: u32,
+    pub sent_ms: u64,
+}
+
+impl KeyReceipt {
+    fn status(&self, now_ms: u64, key: Option<String>) -> PromptStatus {
+        PromptStatus {
+            prompt_id: self.prompt_id,
+            key,
+            pid: self.pid,
+            age_ms: now_ms.saturating_sub(self.sent_ms),
+            stage: PromptStage::Expired,
+        }
+    }
+}
+
+fn key_sha256(key: &str) -> String {
+    Sha256::digest(key.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The key ledger is independent of the short-lived prompt details.
+pub fn key_path_for(session: &str) -> PathBuf {
+    crate::askrecord::path_for(session).with_file_name("prompt-keys.jsonl")
+}
+
+/// Persist the receipt before a newly accepted keyed prompt can be delivered.
+pub fn append_key(path: &Path, receipt: &KeyReceipt) -> io::Result<()> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::other("key path has no parent"))?;
+    let mut created_dirs = Vec::new();
+    let mut cursor = dir;
+    while !cursor.exists() {
+        created_dirs.push(cursor.to_path_buf());
+        cursor = cursor
+            .parent()
+            .ok_or_else(|| io::Error::other("key path has no root"))?;
+    }
+    std::fs::create_dir_all(dir)?;
+    let new_file = !path.exists();
+    let mut line = serde_json::to_vec(receipt).map_err(io::Error::other)?;
+    line.push(b'\n');
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(&line)?;
+    file.sync_data()?;
+    // A synced new file can still disappear on power loss if its directory
+    // entry was never synced. This runs only for the first receipt in a file.
+    if new_file {
+        std::fs::File::open(dir)?.sync_all()?;
+    }
+    for created in created_dirs {
+        std::fs::File::open(created.parent().expect("created path has a parent"))?.sync_all()?;
+    }
+    Ok(())
+}
+
 /// Every prompt the window holds, open and recently ended, in send order.
+/// Key receipts outlive the detail limit so a late retry cannot become work.
 #[derive(Default, Debug)]
 pub struct PromptBook {
     sent: VecDeque<Sent>,
+    keys: HashMap<(u64, String), KeyReceipt>,
+    key_store_unavailable: bool,
 }
 
 /// What [`PromptBook::send`] did with a prompt.
@@ -300,6 +385,108 @@ pub enum Taken {
 }
 
 impl PromptBook {
+    /// Recover key receipts after a window reopens. A malformed ledger is an
+    /// error, not an empty ledger: treating it as empty would enable repeats.
+    pub fn restore(path: &Path) -> io::Result<Self> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e),
+        };
+        let mut book = Self::default();
+        for line in text.lines() {
+            let receipt: KeyReceipt = serde_json::from_str(line).map_err(io::Error::other)?;
+            if receipt.key_sha256.len() != 64
+                || !receipt.key_sha256.bytes().all(|c| c.is_ascii_hexdigit())
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "bad prompt key receipt",
+                ));
+            }
+            let name = (receipt.sender_pane, receipt.key_sha256.clone());
+            if book.keys.insert(name, receipt).is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "duplicate prompt key receipt",
+                ));
+            }
+        }
+        Ok(book)
+    }
+
+    /// Fail keyed admission closed when the previous receipts could not be
+    /// recovered. Unkeyed requests keep their existing behavior.
+    pub fn unavailable() -> Self {
+        Self {
+            key_store_unavailable: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn latest_receipt_id(&self) -> u64 {
+        self.keys.values().map(|r| r.prompt_id.0).max().unwrap_or(0)
+    }
+
+    /// A sender may read its own prompt after details have expired. Only the
+    /// id, target, and age remain; the outcome is explicitly unknown.
+    pub fn status_of_sender(
+        &self,
+        id: AskId,
+        sender_pane: u64,
+        now_ms: u64,
+    ) -> Option<PromptStatus> {
+        self.of_sender(id, sender_pane)
+            .map(|s| s.status(now_ms))
+            .or_else(|| {
+                self.keys
+                    .values()
+                    .find(|r| r.prompt_id == id && r.sender_pane == sender_pane)
+                    .map(|r| r.status(now_ms, None))
+            })
+    }
+
+    /// A retry is answered before target lookup and permission checks: the
+    /// original target may have gone, but the same key cannot mean new work.
+    pub fn status_for_key(&self, sender_pane: u64, key: &str, now_ms: u64) -> Option<PromptStatus> {
+        self.sent
+            .iter()
+            .find(|s| s.sender_pane == sender_pane && s.key.as_deref() == Some(key))
+            .map(|s| s.status(now_ms))
+            .or_else(|| {
+                self.keys
+                    .get(&(sender_pane, key_sha256(key).to_string()))
+                    .map(|r| r.status(now_ms, Some(key.to_string())))
+            })
+    }
+
+    /// The newly accepted receipt to write before delivery.
+    fn key_receipt(&self, id: AskId) -> Option<KeyReceipt> {
+        let s = self.get(id)?;
+        Some(KeyReceipt {
+            prompt_id: s.id,
+            sender_pane: s.sender_pane,
+            key_sha256: key_sha256(s.key.as_deref()?),
+            pid: s.target_pid,
+            sent_ms: s.sent_ms,
+        })
+    }
+
+    /// Undo an admission whose durable receipt could not be written. No tick
+    /// or terminal write has run yet, so no worker could have received it.
+    fn retract_new(&mut self, id: AskId) {
+        if let Some(i) = self
+            .sent
+            .iter()
+            .position(|s| s.id == id && matches!(s.stage, PromptStage::Waiting { .. }))
+        {
+            let s = self.sent.remove(i).expect("position came from the book");
+            if let Some(key) = s.key {
+                self.keys.remove(&(s.sender_pane, key_sha256(&key)));
+            }
+        }
+    }
+
     pub fn get(&self, id: AskId) -> Option<&Sent> {
         self.sent.iter().find(|s| s.id == id)
     }
@@ -324,12 +511,11 @@ impl PromptBook {
     /// the first is open is refused.
     pub fn send(&mut self, p: NewPrompt) -> Result<Taken, Refusal> {
         if let Some(key) = &p.key {
-            if let Some(s) = self
-                .sent
-                .iter()
-                .find(|s| s.sender_pane == p.sender_pane && s.key.as_deref() == Some(key))
-            {
-                return Ok(Taken::Again(s.status(p.now_ms)));
+            if let Some(status) = self.status_for_key(p.sender_pane, key, p.now_ms) {
+                return Ok(Taken::Again(status));
+            }
+            if self.key_store_unavailable {
+                return Err(Refusal::PromptKeyStoreUnavailable);
             }
         }
         if self
@@ -365,8 +551,39 @@ impl PromptBook {
             ended_ms: None,
         };
         let status = s.status(p.now_ms);
+        if let Some(key) = &s.key {
+            let receipt = KeyReceipt {
+                prompt_id: s.id,
+                sender_pane: s.sender_pane,
+                key_sha256: key_sha256(key),
+                pid: s.target_pid,
+                sent_ms: s.sent_ms,
+            };
+            self.keys
+                .insert((s.sender_pane, receipt.key_sha256.clone()), receipt);
+        }
         self.sent.push_back(s);
         Ok(Taken::New(status))
+    }
+
+    /// The production admission path. A keyed prompt is not returned to the
+    /// window's tick until its receipt is durable; a write failure retracts it.
+    pub fn send_durable(&mut self, p: NewPrompt, path: &Path) -> Result<Taken, Refusal> {
+        let taken = self.send(p)?;
+        if let Taken::New(status) = &taken {
+            if let Some(receipt) = self.key_receipt(status.prompt_id) {
+                if let Err(e) = append_key(path, &receipt) {
+                    eprintln!("[threshing-floor] prompt key receipt could not be written: {e}");
+                    self.retract_new(status.prompt_id);
+                    // The write may have left a complete line without durable
+                    // confirmation. Do not append another use of any key in
+                    // this process until the ledger has been inspected anew.
+                    self.key_store_unavailable = true;
+                    return Err(Refusal::PromptKeyStoreUnavailable);
+                }
+            }
+        }
+        Ok(taken)
     }
 
     /// The window could not do what an [`Act`] asked — the pane went between
@@ -707,7 +924,7 @@ fn step(s: &mut Sent, w: &Worker, now: u64, acts: &mut Vec<Act>) {
                 _ => {}
             }
         }
-        PromptStage::Finished { .. } | PromptStage::Failed { .. } => {}
+        PromptStage::Finished { .. } | PromptStage::Failed { .. } | PromptStage::Expired => {}
     }
 }
 
@@ -1451,6 +1668,173 @@ mod tests {
             b.send(new(4, 2, 501, Some("k"))),
             Ok(Taken::New(_))
         ));
+    }
+
+    /// The model check found that detail pruning turned an old key into new
+    /// work. The receipt outlives both the hour and the 64-detail cap.
+    #[test]
+    fn a_pruned_key_returns_expired_and_a_new_key_starts_work() {
+        let mut b = PromptBook::default();
+        b.send(new(1, 1, 500, Some("job-a"))).unwrap();
+        b.fail(AskId(1), "finished", T0 + 1);
+        let mut other = new(6, 2, 501, Some("other-work"));
+        other.now_ms = T0 + KEEP_ENDED_MS + 1;
+        b.send(other).unwrap();
+        b.tick(T0 + KEEP_ENDED_MS + 2, |_| worker(Seen::Ready));
+        assert!(b.get(AskId(1)).is_none());
+
+        let mut retry = new(2, 1, 999, Some("job-a"));
+        retry.now_ms = T0 + KEEP_ENDED_MS + 3;
+        let Taken::Again(status) = b.send(retry).unwrap() else {
+            panic!("the old key became new work");
+        };
+        assert_eq!(status.prompt_id, AskId(1));
+        assert_eq!(status.pid, 500, "the receipt names the original worker");
+        assert_eq!(status.stage, PromptStage::Expired);
+        assert!(b.get(AskId(2)).is_none());
+        assert_eq!(
+            b.status_of_sender(AskId(1), 1, T0 + KEEP_ENDED_MS + 3)
+                .unwrap()
+                .stage,
+            PromptStage::Expired
+        );
+        assert!(b.status_of_sender(AskId(1), 2, T0).is_none());
+
+        assert!(matches!(
+            b.send(new(3, 1, 500, Some("job-b"))),
+            Ok(Taken::New(_))
+        ));
+        assert!(matches!(
+            b.send(new(4, 2, 500, Some("job-a"))),
+            Ok(Taken::New(_))
+        ));
+    }
+
+    /// Replay the model's exact bug path through paste, Enter, work, reply,
+    /// another open prompt, and the retention clock. The pre-fix code returned
+    /// New for the last call.
+    #[test]
+    fn statechart_replay_a_late_retry_cannot_type_a_second_turn() {
+        let mut book = PromptBook::default();
+        assert!(matches!(
+            book.send(new(1, 1, 500, Some("job-a"))),
+            Ok(Taken::New(_))
+        ));
+        book.tick(T0 + 10, |_| worker(Seen::Ready));
+        let pasted_at = T0 + 10 + SETTLE_MS;
+        assert!(book
+            .tick(pasted_at, |_| worker(Seen::Ready))
+            .contains(&Act::Paste(AskId(1))));
+        assert!(book
+            .tick(pasted_at + E, |_| {
+                with_rows(
+                    worker(Seen::Ready),
+                    &["> [Threshing Floor prompt 1, from planner"],
+                )
+            })
+            .contains(&Act::Enter(AskId(1))));
+        book.tick(pasted_at + E + 1_000, |_| worker(Seen::Working));
+        let ready_at = pasted_at + E + 10_000;
+        book.tick(ready_at, |_| worker(Seen::Ready));
+        assert!(book
+            .tick(ready_at + SETTLE_MS, |_| worker(Seen::Ready))
+            .contains(&Act::ReadReply(AskId(1))));
+        let finished_at = ready_at + SETTLE_MS;
+        assert!(book.replied(AskId(1), Ok("done".into()), finished_at));
+
+        let mut other = new(2, 2, 501, Some("job-b"));
+        other.now_ms = finished_at + KEEP_ENDED_MS + 1;
+        assert!(matches!(book.send(other), Ok(Taken::New(_))));
+        book.tick(finished_at + KEEP_ENDED_MS + 2, |_| worker(Seen::Working));
+        assert!(book.get(AskId(1)).is_none());
+
+        let mut retry = new(3, 1, 500, Some("job-a"));
+        retry.now_ms = finished_at + KEEP_ENDED_MS + 3;
+        assert!(matches!(
+            book.send(retry),
+            Ok(Taken::Again(PromptStatus {
+                prompt_id: AskId(1),
+                stage: PromptStage::Expired,
+                ..
+            }))
+        ));
+        assert!(book.get(AskId(3)).is_none());
+    }
+
+    fn key_test_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "td-prompt-keys-{name}-{}-{}",
+            std::process::id(),
+            now_ms()
+        ))
+    }
+
+    #[test]
+    fn a_receipt_survives_reopen_without_keeping_the_key_or_brief() {
+        let root = key_test_path("reopen");
+        let path = root.join("nested").join("prompt-keys.jsonl");
+        let mut before = PromptBook::default();
+        assert!(matches!(
+            before.send_durable(new(7, 1, 500, Some("private-job-a")), &path),
+            Ok(Taken::New(_))
+        ));
+        let stored = std::fs::read_to_string(&path).unwrap();
+        assert!(!stored.contains("private-job-a"));
+        assert!(!stored.contains("do the thing"));
+        assert_eq!(
+            std::os::unix::fs::PermissionsExt::mode(
+                &std::fs::metadata(&path).unwrap().permissions()
+            ) & 0o777,
+            0o600
+        );
+        let mut after = PromptBook::restore(&path).unwrap();
+        assert_eq!(after.latest_receipt_id(), 7);
+        assert!(matches!(
+            after.send(new(8, 1, 500, Some("private-job-a"))),
+            Ok(Taken::Again(PromptStatus {
+                stage: PromptStage::Expired,
+                prompt_id: AskId(7),
+                ..
+            }))
+        ));
+        assert!(after.get(AskId(8)).is_none());
+        assert!(matches!(
+            after.send_durable(new(9, 1, 500, Some("new-work")), &path),
+            Ok(Taken::New(_))
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unwritable_or_corrupt_key_store_never_admits_keyed_work() {
+        let path = key_test_path("unwritable");
+        std::fs::create_dir(&path).unwrap();
+        let mut book = PromptBook::default();
+        assert_eq!(
+            book.send_durable(new(1, 1, 500, Some("job-a")), &path),
+            Err(Refusal::PromptKeyStoreUnavailable)
+        );
+        assert!(book.get(AskId(1)).is_none());
+        assert!(book.status_for_key(1, "job-a", T0).is_none());
+        std::fs::remove_dir(&path).unwrap();
+        assert_eq!(
+            book.send_durable(new(2, 1, 500, Some("new-job")), &path),
+            Err(Refusal::PromptKeyStoreUnavailable),
+            "a failed write must not be retried against uncertain storage"
+        );
+
+        std::fs::write(&path, b"{torn receipt\n").unwrap();
+        assert!(PromptBook::restore(&path).is_err());
+        let mut unavailable = PromptBook::unavailable();
+        assert_eq!(
+            unavailable.send(new(2, 1, 500, Some("job-a"))),
+            Err(Refusal::PromptKeyStoreUnavailable)
+        );
+        assert!(matches!(
+            unavailable.send(new(3, 1, 500, None)),
+            Ok(Taken::New(_))
+        ));
+        std::fs::remove_file(path).unwrap();
     }
 
     /// One in flight from a sender to a worker; another worker is fine.
