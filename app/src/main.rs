@@ -8602,6 +8602,10 @@ impl Workspace {
         if session::write_atomic(&path, &body).is_err() {
             return;
         }
+        // Recorded like the unpacked pictures, so an uninstall can prove it is TD's.
+        if let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
+            crate::art::record_asset(dir, &name.to_string_lossy(), body.as_bytes());
+        }
         let Ok(exe) = std::env::current_exe() else {
             return;
         };

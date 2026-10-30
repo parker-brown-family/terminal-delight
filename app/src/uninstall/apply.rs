@@ -11,6 +11,9 @@
 //! watch what the worker would have done without doing it.
 use super::blocks::{self, KeyBlock};
 use super::known;
+
+/// The receipt TD writes beside the loose files it unpacks (`art::record_asset`).
+pub(crate) const ASSET_MANIFEST: &str = "terminal-delight-assets.manifest";
 use super::plan::{host_dirs, Op, Plan, Report, Retention};
 use super::roots::{resolve_existing_prefix, Roots};
 use super::settings;
@@ -102,7 +105,10 @@ pub(crate) fn refusal(plan: &Plan, fresh: &Plan, roots: &Roots, out: &Path) -> O
         plan.steps.iter().any(|s| match &s.op {
             Op::RemoveTree { path }
             | Op::RemoveRecords { path }
-            | Op::RemoveDirIfEmpty { path } => o.starts_with(path),
+            | Op::RemoveDirIfEmpty { path } => {
+                o.starts_with(path)
+                    || resolve_existing_prefix(o).starts_with(resolve_existing_prefix(path))
+            }
             _ => false,
         })
     };
@@ -270,28 +276,49 @@ pub(crate) fn apply(
     receipt
 }
 
-/// The records sentence, read off what the steps did.
+/// The records sentence, read off what the steps did, root by root.
 fn records_outcome(plan: &Plan, statuses: &[Status]) -> String {
-    let done = |pred: &dyn Fn(&Op) -> bool| {
-        plan.steps
-            .iter()
-            .zip(statuses)
-            .filter(|(s, _)| pred(&s.op))
-            .all(|(_, st)| *st == Status::Done)
-            && plan.steps.iter().any(|s| pred(&s.op))
+    if plan.retention == Retention::Keep {
+        return "kept".into();
+    }
+    let export = plan
+        .steps
+        .iter()
+        .zip(statuses)
+        .find(|(s, _)| matches!(s.op, Op::Export { .. }))
+        .map(|(_, st)| *st == Status::Done);
+    let roots: Vec<(String, bool)> = plan
+        .steps
+        .iter()
+        .zip(statuses)
+        .filter_map(|(s, st)| match &s.op {
+            Op::RemoveRecords { path } => Some((path.display().to_string(), *st == Status::Done)),
+            _ => None,
+        })
+        .collect();
+    let removed: Vec<&str> = roots
+        .iter()
+        .filter(|(_, d)| *d)
+        .map(|(p, _)| p.as_str())
+        .collect();
+    let kept: Vec<&str> = roots
+        .iter()
+        .filter(|(_, d)| !*d)
+        .map(|(p, _)| p.as_str())
+        .collect();
+    let lead = match (plan.retention, export) {
+        (Retention::Export, Some(true)) => "exported and verified; ",
+        (Retention::Export, _) => "the export did not finish, so none were removed; ",
+        _ => "",
     };
-    let is_records = |op: &Op| matches!(op, Op::RemoveRecords { .. });
-    match plan.retention {
-        Retention::Keep => "kept".into(),
-        Retention::Export if done(&|o| matches!(o, Op::Export { .. })) && done(&is_records) => {
-            "exported, then removed".into()
-        }
-        Retention::Export if done(&|o| matches!(o, Op::Export { .. })) => {
-            "exported; their removal did not finish, so they are still there".into()
-        }
-        Retention::Export => "kept: the export did not finish".into(),
-        Retention::Delete if done(&is_records) => "removed".into(),
-        Retention::Delete => "still there: their removal did not finish".into(),
+    match (removed.is_empty(), kept.is_empty()) {
+        (_, true) if !removed.is_empty() => format!("{lead}removed"),
+        (true, _) => format!("{lead}still in place"),
+        _ => format!(
+            "{lead}removed {}; still in place: {}",
+            removed.join(", "),
+            kept.join(", ")
+        ),
     }
 }
 
@@ -406,7 +433,15 @@ impl Ctx<'_> {
                 })
             }
             Op::McpRemove {
-                argv, cwd, file, ..
+                argv,
+                cwd,
+                file,
+                client,
+                name,
+                scope,
+                project,
+                command,
+                args,
             } => {
                 if !self.fx.account_home() {
                     return Err(Halt::Skip(
@@ -414,6 +449,13 @@ impl Ctx<'_> {
                     ));
                 }
                 self.allowed(file)?;
+                match super::mcp::current_entry(client, file, scope, project.as_deref(), name) {
+                    Some((c, a)) if c == *command && a == *args => {}
+                    Some(_) => return Err(Halt::Fail(format!(
+                        "the \"{name}\" entry changed since the plan; it is not TD's to remove now"
+                    ))),
+                    None => return Ok("already gone".into()),
+                }
                 self.keep_copy(file)?;
                 self.fx
                     .run(argv, cwd.as_deref())
@@ -535,30 +577,60 @@ impl Ctx<'_> {
             }
             Op::RemoveLooseAssets { dir, demos_only } => {
                 self.allowed(dir)?;
+                // Only files whose bytes still hash to what TD recorded under
+                // that name when it wrote them; a TD-like name is not enough.
+                let manifest = dir.join(ASSET_MANIFEST);
+                let recorded: Vec<(String, String)> = std::fs::symlink_metadata(&manifest)
+                    .ok()
+                    .filter(|m| m.is_file())
+                    .and_then(|_| std::fs::read_to_string(&manifest).ok())
+                    .map(|t| {
+                        t.lines()
+                            .filter_map(|l| l.split_once('\t'))
+                            .map(|(h, n)| (h.to_string(), n.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 let uid = unsafe { libc::getuid() };
-                let (mut n, mut failed) = (0, Vec::new());
+                let (mut n, mut unproven, mut failed) = (0, 0, Vec::new());
                 for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
                     let name = e.file_name().to_string_lossy().into_owned();
-                    let mine = std::fs::symlink_metadata(e.path()).is_ok_and(|m| {
-                        m.is_file() && std::os::unix::fs::MetadataExt::uid(&m) == uid
-                    });
                     let wanted = if *demos_only {
                         demo_layout(&name)
                     } else {
                         loose_asset(&name)
                     };
-                    if wanted && mine {
-                        match std::fs::remove_file(e.path()) {
-                            Ok(()) => n += 1,
-                            Err(err) => failed.push(format!("{name}: {err}")),
-                        }
+                    let mine = std::fs::symlink_metadata(e.path()).is_ok_and(|m| {
+                        m.is_file() && std::os::unix::fs::MetadataExt::uid(&m) == uid
+                    });
+                    if !wanted || !mine {
+                        continue;
+                    }
+                    let proven = known::sha256_file(&e.path())
+                        .is_ok_and(|h| recorded.iter().any(|(rh, rn)| *rh == h && *rn == name));
+                    if !proven {
+                        unproven += 1;
+                        continue;
+                    }
+                    match std::fs::remove_file(e.path()) {
+                        Ok(()) => n += 1,
+                        Err(err) => failed.push(format!("{name}: {err}")),
                     }
                 }
+                // The receipt goes once nothing it names is left.
+                if recorded.iter().all(|(_, rn)| !dir.join(rn).exists()) && !recorded.is_empty() {
+                    let _ = std::fs::remove_file(&manifest);
+                }
+                let kept = if unproven > 0 {
+                    format!("; {unproven} kept: nothing records that TD wrote them (in a runtime directory they go at logout)")
+                } else {
+                    String::new()
+                };
                 if failed.is_empty() {
-                    Ok(format!("{n} file(s) removed"))
+                    Ok(format!("{n} file(s) removed{kept}"))
                 } else {
                     Err(Halt::Fail(format!(
-                        "{n} removed; could not remove {}",
+                        "{n} removed; could not remove {}{kept}",
                         failed.join(", ")
                     )))
                 }
@@ -769,22 +841,25 @@ impl Ctx<'_> {
                 if ours(p) {
                     return true;
                 }
+                let base = |s: &str| s.trim().rsplit('/').next().unwrap_or("").to_string();
+                let named_td = |s: &str| base(s) == "terminal-delight";
+                let versioned = |s: &str| base(s).starts_with("td-");
+                let unreadable = p.exe.as_os_str().is_empty();
+                // A process whose executable cannot be read but whose name
+                // says TD is a TD nobody can rule out, in either kind of run.
+                let unknown_td = unreadable
+                    && (named_td(&p.comm)
+                        || versioned(&p.comm)
+                        || p.argv.first().is_some_and(|a| named_td(a) || versioned(a)));
                 if !account {
-                    return !p.exe.as_os_str().is_empty() && p.exe.starts_with(&home);
+                    return unknown_td || (!unreadable && p.exe.starts_with(&home));
                 }
-                let named_td = |s: &str| {
-                    let base = s.rsplit('/').next().unwrap_or(s);
-                    base == "terminal-delight"
-                };
                 let exe_td = p
                     .exe
                     .file_name()
                     .and_then(|n| n.to_str())
                     .is_some_and(named_td);
-                let unreadable = p.exe.as_os_str().is_empty();
-                exe_td
-                    || (unreadable
-                        && (named_td(&p.comm) || p.argv.first().is_some_and(|a| named_td(a))))
+                exe_td || unknown_td
             })
             .map(|p| {
                 let what = if p.exe.as_os_str().is_empty() {
@@ -828,9 +903,11 @@ pub(crate) fn is_td_exe(exe: &Path, exes: &[PathBuf], builds: &Path) -> bool {
 
 /// `td-demo-<pid>-<nanos>.toml`, the layout a demo window is started from.
 pub(crate) fn demo_layout(name: &str) -> bool {
+    let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
     name.strip_prefix("td-demo-")
         .and_then(|r| r.strip_suffix(".toml"))
-        .is_some_and(|r| !r.is_empty() && r.chars().all(|c| c.is_ascii_digit() || c == '-'))
+        .and_then(|r| r.split_once('-'))
+        .is_some_and(|(a, b)| digits(a) && digits(b))
 }
 
 /// Files TD unpacks beside its runtime directory, or in the temp directory

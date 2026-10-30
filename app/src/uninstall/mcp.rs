@@ -119,11 +119,7 @@ pub(crate) fn is_td(
         path_var.and_then(|pv| {
             std::env::split_paths(pv)
                 .map(|d| d.join(command))
-                .find(|c| {
-                    use std::os::unix::fs::PermissionsExt;
-                    std::fs::metadata(c)
-                        .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-                })
+                .find(|c| std::fs::metadata(c).is_ok_and(|m| m.is_file()) && executable(c))
         })
     } else {
         None
@@ -134,6 +130,53 @@ pub(crate) fn is_td(
     td_exes
         .iter()
         .any(|e| std::fs::canonicalize(e).ok().as_deref() == Some(canon.as_path()))
+}
+
+/// Whether this account may execute `p`, as the client's own lookup would judge.
+fn executable(p: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(c) = std::ffi::CString::new(p.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: access reads the NUL-terminated path we own and nothing else.
+    unsafe { libc::access(c.as_ptr(), libc::X_OK) == 0 }
+}
+
+/// The entry `name` as it stands in `file` right now: its command and args.
+/// The worker reads this just before removal, so a registration somebody
+/// replaced under the same name since the plan is never removed.
+pub(crate) fn current_entry(
+    client: &str,
+    file: &Path,
+    scope: &str,
+    project: Option<&Path>,
+    name: &str,
+) -> Option<(String, Vec<String>)> {
+    if client == "codex" {
+        let t: toml::Table = std::fs::read_to_string(file).ok()?.parse().ok()?;
+        let s = t.get("mcp_servers")?.get(name)?;
+        let command = s.get("command")?.as_str()?.to_string();
+        let args = s
+            .get("args")
+            .and_then(|a| a.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        return Some((command, args));
+    }
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
+    let servers = match (client, scope, project) {
+        ("claude", "local", Some(p)) => v.get("projects")?.get(p.to_str()?)?.get("mcpServers")?,
+        _ => v.get("mcpServers")?,
+    };
+    let s = servers.get(name)?;
+    Some((
+        s.get("command")?.as_str()?.to_string(),
+        str_list(s.get("args")),
+    ))
 }
 
 /// A name or command that looks like TD's but is not TD itself: worth a line.

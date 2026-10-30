@@ -41,8 +41,44 @@ pub(crate) fn runtime_asset(name: &str, bytes: &[u8]) -> PathBuf {
     if !matches!(ok, Ok(true)) {
         let _ = std::fs::write(&p, bytes);
     }
+    record_asset(&base, name, bytes);
     p
 }
+
+/// The receipt for what [`runtime_asset`] unpacks: one `<sha256>\t<name>` line
+/// per file, in `terminal-delight-assets.manifest` beside the files, written
+/// once per name per process. The uninstaller removes a loose file only when
+/// its bytes still hash to what TD recorded under that name, so a file another
+/// program happened to give a TD-like name is never TD's to delete.
+pub(crate) fn record_asset(base: &std::path::Path, name: &str, bytes: &[u8]) {
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    let first = SEEN
+        .get_or_init(Default::default)
+        .lock()
+        .map(|mut seen| seen.insert(format!("{}/{name}", base.display())))
+        .unwrap_or(false);
+    if !first {
+        return;
+    }
+    let line = format!("{:x}\t{name}\n", Sha256::digest(bytes));
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(base.join(ASSET_MANIFEST))
+    {
+        // One short write under O_APPEND lands whole, beside other windows'.
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// The name of [`record_asset`]'s receipt.
+pub(crate) const ASSET_MANIFEST: &str = "terminal-delight-assets.manifest";
 
 /// The robot body (no blinker) — the WORKING glyph, and the steady base under
 /// the blinking needs-input overlay.

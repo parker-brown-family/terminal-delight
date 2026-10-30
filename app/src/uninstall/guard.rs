@@ -200,7 +200,7 @@ pub(crate) fn protect(
     Ok(path)
 }
 
-fn passwd_home() -> Option<PathBuf> {
+pub(crate) fn passwd_home() -> Option<PathBuf> {
     // SAFETY: getpwuid_r writes into the buffers we own and returns a pointer
     // into them; nothing is retained past this call.
     unsafe {

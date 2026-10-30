@@ -128,6 +128,18 @@ impl Fx {
         );
         w(&h(".cache/terminal-delight/pages/x"), "cache\n");
         w(&h("run/terminal-delight-glyph-cat.svg"), "<svg/>");
+        // TD's receipt for what it unpacked, as `art::record_asset` writes it.
+        w(
+            &h("run/terminal-delight-assets.manifest"),
+            &format!(
+                "{}\tterminal-delight-glyph-cat.svg\n",
+                known::sha256_bytes(b"<svg/>")
+            ),
+        );
+        w(
+            &h("run/terminal-delight-scene-storyboard.webp"),
+            "another tool's picture",
+        );
         w(&h("run/other.txt"), "not ours\n");
         std::fs::create_dir_all(h("run/terminal-delight")).unwrap();
         // A real socket, as a session host leaves one.
@@ -137,6 +149,10 @@ impl Fx {
         );
         w(&h("run/terminal-delight/session-1.log"), "log\n");
         w(&h("tmp/td-demo-9-1.toml"), "demo\n");
+        w(
+            &h("tmp/terminal-delight-assets.manifest"),
+            &format!("{}\ttd-demo-9-1.toml\n", known::sha256_bytes(b"demo\n")),
+        );
         // Helper with its receipt, settings that run it beside someone else's hook.
         let helper = bin.join("td-agent-hooks");
         w(&helper, "#!/bin/sh\n# td-agent-hooks fixture\n");
@@ -318,6 +334,7 @@ fn keep_records_removes_the_application_and_reports_the_rest() {
         ".config/terminal-delight/mobile/token",
         ".local/share/terminal-delight/palettes/army/colors",
         "run/other.txt",
+        "run/terminal-delight-scene-storyboard.webp",
         ".local/lib/terminal-delight/notes.txt",
         ".config/hypr/hyprland.lua",
         ".claude.json",
@@ -608,7 +625,7 @@ fn an_export_that_cannot_be_written_keeps_the_records() {
     assert!(rc.refused.is_none());
     assert!(fx.root.join(".config/terminal-delight/theme.toml").exists());
     assert!(fx.root.join(".local/state/terminal-delight").exists());
-    assert!(rc.records.starts_with("kept"), "{}", rc.records);
+    assert!(rc.records.contains("still in place"), "{}", rc.records);
     std::fs::remove_dir_all(outside).unwrap();
 }
 
@@ -762,4 +779,93 @@ fn a_bad_stamp_or_a_non_empty_journal_dir_refuses_before_writing() {
     );
     assert!(rc.refused.is_some());
     assert!(fx.root.join(".local/bin/td-agent-hooks").exists());
+}
+
+#[test]
+fn a_registration_replaced_during_the_run_is_left_alone() {
+    struct Swapper(Fake, PathBuf);
+    impl Effects for Swapper {
+        fn account_home(&self) -> bool {
+            true
+        }
+        fn self_pid(&self) -> u32 {
+            1
+        }
+        fn processes(&mut self) -> Vec<Proc> {
+            vec![]
+        }
+        fn signal(&mut self, _: u32, _: i32, _: &Path) -> bool {
+            false
+        }
+        fn close_host(&mut self, _: &Path, _: &dyn Fn(&Path) -> bool) -> Result<(), String> {
+            Ok(())
+        }
+        fn thaw(&mut self, _: &str) -> usize {
+            0
+        }
+        fn run(&mut self, a: &[String], c: Option<&Path>) -> Result<String, String> {
+            self.0.run(a, c)
+        }
+        fn default_terminal_off(&mut self, l: &Path, j: &Path) -> Result<String, String> {
+            // Mid-run, something else takes the name for its own server.
+            std::fs::write(
+                &self.1,
+                r#"{"mcpServers":{"terminal-delight":{"command":"/opt/other/server","args":[]}}}"#,
+            )
+            .unwrap();
+            self.0.default_terminal_off(l, j)
+        }
+        fn export(&mut self, _: &Path) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn sleep(&mut self, _: Duration) {}
+    }
+    let fx = Fx::new("mcpswap");
+    let p = fx.plan(Retention::Keep);
+    let mut sw = Swapper(fake(true), fx.root.join(".claude.json"));
+    let rc = apply(
+        &p,
+        &fx.plan(Retention::Keep),
+        &fx.roots(),
+        &out(&fx),
+        &mut sw,
+    );
+    assert!(rc
+        .outcomes
+        .iter()
+        .any(|o| o.status == Status::Failed && o.detail.contains("changed since the plan")));
+    assert!(
+        sw.0.ran.iter().all(|r| !r.starts_with("claude mcp remove")),
+        "{:?}",
+        sw.0.ran
+    );
+}
+
+#[test]
+fn a_runtime_dir_that_is_the_settings_dir_is_refused() {
+    let fx = Fx::new("rtalias");
+    let mut env = fx.env.clone();
+    env.retain(|(k, _)| k != "XDG_RUNTIME_DIR");
+    env.push((
+        "XDG_RUNTIME_DIR".into(),
+        fx.root.join(".config").display().to_string(),
+    ));
+    let lookup = |k: &str| {
+        env.iter()
+            .find(|(a, _)| a == k)
+            .map(|(_, v)| OsString::from(v))
+    };
+    let r = Roots::from_env(&lookup).unwrap();
+    let p = plan(&Inputs {
+        roots: &r,
+        env: &lookup,
+        machine: &machine(),
+        retention: Retention::Keep,
+        stamp: "20261030-120000",
+    });
+    assert!(
+        p.blocked.as_deref().unwrap_or("").contains("overlap"),
+        "{:?}",
+        p.blocked
+    );
 }

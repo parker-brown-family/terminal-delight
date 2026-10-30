@@ -764,3 +764,11 @@ mod tests {
         assert!(plan_markdown(&p).contains("refuses removal"));
     }
 }
+
+#[cfg(test)]
+mod manifest_name {
+    #[test]
+    fn the_worker_reads_the_receipt_art_writes() {
+        assert_eq!(super::apply::ASSET_MANIFEST, crate::art::ASSET_MANIFEST);
+    }
+}

@@ -54,6 +54,12 @@ pub(crate) enum Op {
         cwd: Option<PathBuf>,
         /// The client's configuration file, copied before its CLI edits it.
         file: PathBuf,
+        /// The entry as reviewed. It is read again just before removal, and a
+        /// replacement under the same name is left alone.
+        scope: String,
+        project: Option<PathBuf>,
+        command: String,
+        args: Vec<String>,
     },
     StripKeyBlock {
         file: PathBuf,
@@ -403,6 +409,10 @@ pub(crate) fn plan(i: &Inputs) -> Plan {
                     argv,
                     cwd,
                     file: e.file.clone(),
+                    scope: e.scope.into(),
+                    project: e.project.clone(),
+                    command: e.command.clone(),
+                    args: e.args.clone(),
                 },
                 format!(
                     "TD's MCP registration in {} ({} scope)",
@@ -882,7 +892,20 @@ fn proven_appimage(get: &dyn Fn(&str) -> Option<PathBuf>) -> Option<(PathBuf, Pa
         .is_ok()
         && head[..4] == *b"\x7fELF"
         && head[8..11] == *b"AI\x02";
-    (magic && is_elf(&payload)).then(|| (image, std::fs::canonicalize(&payload).unwrap_or(payload)))
+    if !(magic && is_elf(&payload)) {
+        return None;
+    }
+    // The payload has to be this very program: the running TD itself, or the
+    // worker's staged copy of it, byte for byte. An APPDIR and an APPIMAGE
+    // that merely both exist prove nothing about each other or about TD.
+    let me = std::env::current_exe().ok()?;
+    let payload = std::fs::canonicalize(&payload).unwrap_or(payload);
+    let same = std::fs::canonicalize(&me).ok().as_deref() == Some(payload.as_path())
+        || matches!(
+            (known::sha256_file(&me), known::sha256_file(&payload)),
+            (Ok(a), Ok(b)) if a == b
+        );
+    same.then_some((image, payload))
 }
 
 /// Why a plan for these roots must not run: two of TD's directories are one
@@ -891,13 +914,19 @@ fn proven_appimage(get: &dyn Fn(&str) -> Option<PathBuf>) -> Option<(PathBuf, Pa
 /// resolves outside that home.
 fn blocked(r: &Roots) -> Option<String> {
     use super::roots::resolve_existing_prefix;
-    let named = [
+    let runtime = r.runtime();
+    let fallback = host_dirs(r).pop().unwrap_or_default();
+    let mut named: Vec<(&str, &PathBuf)> = vec![
         ("settings", &r.config),
         ("records", &r.state),
         ("data", &r.data),
         ("cache", &r.cache),
         ("builds", &r.builds),
+        ("runtime fallback", &fallback),
     ];
+    if let Some(rt) = &runtime {
+        named.push(("runtime", rt));
+    }
     for (i, (a, pa)) in named.iter().enumerate() {
         for (b, pb) in &named[i + 1..] {
             let (x, y) = (resolve_existing_prefix(pa), resolve_existing_prefix(pb));
@@ -914,6 +943,17 @@ fn blocked(r: &Roots) -> Option<String> {
         return None;
     }
     let home = std::fs::canonicalize(&r.home).unwrap_or_else(|_| r.home.clone());
+    // A "fixture" home that holds the account's real home would reach the real
+    // install, and the real protection marker would not be read.
+    if let Some(real) = super::guard::passwd_home() {
+        let real = std::fs::canonicalize(&real).unwrap_or(real);
+        if real.starts_with(&home) {
+            return Some(format!(
+                "this home ({}) contains the account's own home, so a removal here could reach the real install",
+                r.home.display()
+            ));
+        }
+    }
     let mut all: Vec<&PathBuf> = vec![
         &r.config,
         &r.state,
