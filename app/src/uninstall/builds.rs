@@ -69,6 +69,11 @@ pub(crate) struct Listing {
     pub(crate) uncertain: Vec<u32>,
     /// Why the directory could not be read in full; the listing is then partial.
     pub(crate) error: Option<String>,
+    /// Why the launcher could not be read: which build it starts is unknown.
+    pub(crate) launcher_error: Option<String>,
+    /// Why prune would remove nothing at all, decided once with the listing so
+    /// that the panel, the CLI, its JSON and prune itself give one answer.
+    pub(crate) blocked: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -80,16 +85,58 @@ pub(crate) struct Pruned {
 }
 
 pub(crate) fn list(roots: &Roots, procs: &dyn Fn() -> Vec<(u32, PathBuf)>) -> Listing {
+    let mut listing = scan(roots, procs);
+    listing.blocked = blocker(&listing, roots);
+    listing
+}
+
+/// Every reason prune refuses outright: unknown is not "not running", a
+/// partial listing is not the whole directory, and a link is not the place.
+fn blocker(l: &Listing, roots: &Roots) -> Option<String> {
+    if !l.uncertain.is_empty() {
+        return Some(format!(
+            "a process that may be Terminal Delight cannot be inspected (pid {:?})",
+            l.uncertain
+        ));
+    }
+    if let Some(e) = &l.error {
+        return Some(format!(
+            "the builds directory could not be read in full ({e})"
+        ));
+    }
+    if let Some(e) = &l.launcher_error {
+        return Some(format!(
+            "the launcher cannot be read ({e}), so which build it starts is unknown"
+        ));
+    }
+    // On a home that is not the account's, the builds directory has to
+    // resolve inside it: a fixture never prunes the real builds.
+    if !super::guard::is_account_home(&roots.home) {
+        let home = fs::canonicalize(&roots.home).unwrap_or_else(|_| roots.home.clone());
+        if !super::roots::resolve_existing_prefix(&l.dir).starts_with(&home) {
+            return Some(format!("{} resolves outside this home", l.dir.display()));
+        }
+    }
+    if fs::symlink_metadata(&l.dir).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Some(format!("{} is a link to somewhere else", l.dir.display()));
+    }
+    None
+}
+
+fn scan(roots: &Roots, procs: &dyn Fn() -> Vec<(u32, PathBuf)>) -> Listing {
     let dir = roots.builds.clone();
+    let launcher = read_launcher(&roots.bin);
     let mut listing = Listing {
         dir: dir.clone(),
         present: fs::metadata(&dir).is_ok_and(|m| m.is_dir()),
         builds: Vec::new(),
         other: Vec::new(),
-        launcher_target: read_launcher(&roots.bin).ok().flatten(),
+        launcher_target: launcher.clone().ok().flatten(),
         unreadable_procs: scan_procs().1,
         uncertain: Vec::new(),
         error: None,
+        launcher_error: launcher.err(),
+        blocked: None,
     };
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
@@ -164,14 +211,13 @@ pub(crate) fn live_procs() -> Vec<(u32, PathBuf)> {
     scan_procs().0
 }
 
-/// The builds prune would remove, or none at all while a process that may be
-/// TD cannot be read: then which old build runs is unknown, prune refuses, and
-/// every caller (the panel, the CLI, its JSON) says unknown instead of a count.
-pub(crate) fn removable(listing: &Listing, keep_newest: usize) -> Option<Vec<&Build>> {
-    listing
-        .uncertain
-        .is_empty()
-        .then(|| prunable(listing, keep_newest))
+/// The builds prune would remove, or why it would remove none: then every
+/// caller (the panel, the CLI, its JSON) gives that reason instead of a count.
+pub(crate) fn removable(listing: &Listing, keep_newest: usize) -> Result<Vec<&Build>, &str> {
+    match &listing.blocked {
+        Some(why) => Err(why),
+        None => Ok(prunable(listing, keep_newest)),
+    }
 }
 
 fn prunable(listing: &Listing, keep_newest: usize) -> Vec<&Build> {
@@ -193,42 +239,11 @@ pub(crate) fn prune(
     let listing = list(roots, procs);
     let canon_dir = fs::canonicalize(&listing.dir).ok();
     let mut out = Pruned::default();
-    // Unknown is not "not running". A process that may be TD and cannot be
-    // read, or a builds directory that is a link to somewhere else, stops the
-    // whole prune rather than guessing.
-    if !listing.uncertain.is_empty() {
-        out.failed.push((
-            "builds".into(),
-            format!(
-                "a process that may be Terminal Delight cannot be inspected (pid {:?}), so nothing was removed",
-                listing.uncertain
-            ),
-        ));
-        return out;
-    }
-    // On a home that is not the account's, the builds directory has to
-    // resolve inside it: a fixture never prunes the real builds.
-    if !super::guard::is_account_home(&roots.home) {
-        let home = fs::canonicalize(&roots.home).unwrap_or_else(|_| roots.home.clone());
-        if !super::roots::resolve_existing_prefix(&listing.dir).starts_with(&home) {
-            out.failed.push((
-                "builds".into(),
-                format!(
-                    "{} resolves outside this home, so nothing was removed",
-                    listing.dir.display()
-                ),
-            ));
-            return out;
-        }
-    }
-    if fs::symlink_metadata(&listing.dir).is_ok_and(|m| m.file_type().is_symlink()) {
-        out.failed.push((
-            "builds".into(),
-            format!(
-                "{} is a link, so nothing was removed through it",
-                listing.dir.display()
-            ),
-        ));
+    // Unknown is not "not running", and a partial listing is not the whole
+    // directory: any blocker stops the whole prune rather than guessing.
+    if let Some(why) = &listing.blocked {
+        out.failed
+            .push(("builds".into(), format!("{why}, so nothing was removed")));
         return out;
     }
     for b in &listing.builds {
@@ -570,22 +585,23 @@ fn render_list(l: &Listing, keep: usize) -> String {
         }
     }
     let total: u64 = l.builds.iter().map(|b| b.bytes).sum();
+    // A listing that could not read the whole directory counts what it saw.
+    let at_least = if l.error.is_some() { "at least " } else { "" };
     out.push(format!(
-        "{} build{}, {}",
+        "{at_least}{} build{}, {at_least}{}",
         l.builds.len(),
         plural(l.builds.len()),
         human_bytes(total)
     ));
     match removable(l, keep) {
-        Some(gone) => out.push(format!(
+        Ok(gone) => out.push(format!(
             "{} removable ({}) — keeps the launcher's build, running builds and the newest {}",
             gone.len(),
             human_bytes(gone.iter().map(|b| b.bytes).sum()),
             keep.max(1)
         )),
-        None => out.push(format!(
-            "Which builds can be removed is unknown: a process that may be Terminal Delight cannot be inspected (pid {:?}), so prune removes nothing until it ends.",
-            l.uncertain
+        Err(why) => out.push(format!(
+            "Which builds can be removed is not known, so prune removes nothing: {why}."
         )),
     }
     if l.unreadable_procs > 0 {
@@ -639,10 +655,12 @@ fn list_json(l: &Listing, keep: usize) -> String {
     // null, never an empty list or 0, when which builds run is unknown.
     v["removable"] = gone
         .as_ref()
+        .ok()
         .map(|g| g.iter().map(|b| b.name.as_str()).collect::<Vec<_>>())
         .into();
     v["removable_bytes"] = gone
         .as_ref()
+        .ok()
         .map(|g| g.iter().map(|b| b.bytes).sum::<u64>())
         .into();
     serde_json::to_string_pretty(&v).unwrap_or_default()
@@ -767,9 +785,12 @@ mod tests {
         let f = fixture();
         let l = list(&f.roots, &|| vec![(4711, PathBuf::new())]);
         assert_eq!(l.uncertain, vec![4711]);
-        assert!(removable(&l, DEFAULT_KEEP).is_none());
+        assert!(removable(&l, DEFAULT_KEEP).is_err());
         let text = render_list(&l, DEFAULT_KEEP);
-        assert!(text.contains("unknown") && text.contains("4711"), "{text}");
+        assert!(
+            text.contains("not known") && text.contains("4711"),
+            "{text}"
+        );
         assert!(!text.contains(" removable ("), "{text}");
         let v: serde_json::Value = serde_json::from_str(&list_json(&l, DEFAULT_KEEP)).unwrap();
         assert!(
@@ -778,12 +799,46 @@ mod tests {
         );
         // Readable processes only: the count is a fact again.
         let l = list(&f.roots, &Vec::new);
-        assert!(removable(&l, DEFAULT_KEEP).is_some());
+        assert!(removable(&l, DEFAULT_KEEP).is_ok());
         let v: serde_json::Value = serde_json::from_str(&list_json(&l, DEFAULT_KEEP)).unwrap();
         assert!(
             v["removable"].is_array() && v["removable_bytes"].is_u64(),
             "{v}"
         );
+    }
+
+    #[test]
+    fn an_unreadable_builds_directory_is_a_refused_prune_not_an_empty_one() {
+        let f = fixture();
+        fs::set_permissions(f.lib(), fs::Permissions::from_mode(0o111)).unwrap();
+        let l = list(&f.roots, &Vec::new);
+        let p = prune(&f.roots, DEFAULT_KEEP, true, &Vec::new);
+        let text = render_list(&l, DEFAULT_KEEP);
+        fs::set_permissions(f.lib(), fs::Permissions::from_mode(0o755)).unwrap();
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        assert!(l.error.is_some() && l.blocked.is_some());
+        assert!(p.removed.is_empty() && !p.failed.is_empty(), "{p:?}");
+        assert!(text.contains("at least 0 builds"), "{text}");
+        let v: serde_json::Value = serde_json::from_str(&list_json(&l, DEFAULT_KEEP)).unwrap();
+        assert!(
+            v["removable"].is_null() && v["removable_bytes"].is_null(),
+            "{v}"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_launcher_blocks_the_prune_and_the_count() {
+        let f = fixture();
+        fs::set_permissions(&f.roots.bin, fs::Permissions::from_mode(0o000)).unwrap();
+        let l = list(&f.roots, &Vec::new);
+        fs::set_permissions(&f.roots.bin, fs::Permissions::from_mode(0o755)).unwrap();
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        assert!(l.launcher_error.is_some(), "{l:?}");
+        assert!(removable(&l, DEFAULT_KEEP).is_err());
     }
 
     fn elf(dir: &Path, name: &str, len: usize, age: u64) {
@@ -1037,9 +1092,13 @@ mod tests {
         let l = list(&f.roots, &Vec::new);
         assert_eq!(l.launcher_target, None);
         let p = prune(&f.roots, 2, false, &Vec::new);
+        // The whole prune refuses before any build is judged, and says why.
         assert!(p.removed.is_empty(), "{:?}", p.removed);
-        assert_eq!(kept_for(&p, "td-bbb-two"), Some("launcher unreadable"));
-        assert_eq!(kept_for(&p, "td-aaa-one"), Some("launcher unreadable"));
+        assert!(
+            p.failed.iter().any(|(_, why)| why.contains("launcher cannot be read")),
+            "{:?}",
+            p.failed
+        );
         fs::set_permissions(&f.roots.bin, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(f.exists("td-aaa-one") && f.exists("td-bbb-two"));
     }

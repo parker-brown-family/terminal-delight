@@ -45,9 +45,11 @@ struct BuildCount {
     total: usize,
     bytes: u64,
     in_use: usize,
-    /// How many builds prune would remove and their bytes; none while
-    /// `uncertain` holds a process, because then nobody knows.
+    /// How many builds prune would remove and their bytes; none while prune
+    /// would refuse, because then the count is not what a click would do.
     removable: Option<(usize, u64)>,
+    /// Why prune would refuse, in the engine's words.
+    blocked: Option<String>,
     /// Processes that may be TD and cannot be read: while there are any, which
     /// builds run is unknown, the counts above are not facts, and pruning
     /// refuses, so the panel says so instead of offering it.
@@ -67,6 +69,7 @@ fn count_builds_with(
         return Err(e.clone());
     }
     let removable = builds::removable(&listing, builds::DEFAULT_KEEP)
+        .ok()
         .map(|g| (g.len(), g.iter().map(|b| b.bytes).sum()));
     Ok(BuildCount {
         total: listing.builds.len(),
@@ -77,6 +80,7 @@ fn count_builds_with(
             .filter(|b| b.launcher || !b.running.is_empty())
             .count(),
         removable,
+        blocked: listing.blocked.clone(),
         uncertain: listing.uncertain.clone(),
     })
 }
@@ -91,6 +95,15 @@ fn builds_blurb(
     match builds {
         None => ui.admin_builds_counting.to_string(),
         Some(Err(e)) => ui.admin_failed.replace("{why}", e),
+        Some(Ok(
+            c @ BuildCount {
+                removable: None, ..
+            },
+        )) if c.uncertain.is_empty() => ui
+            .admin_builds_blocked
+            .replace("{n}", &c.total.to_string())
+            .replace("{size}", &builds::human_bytes(c.bytes))
+            .replace("{why}", c.blocked.as_deref().unwrap_or("?")),
         Some(Ok(
             c @ BuildCount {
                 removable: None, ..
@@ -740,6 +753,36 @@ mod tests {
             assert!(text.contains("4711") && text.contains("unknown"), "{text}");
             assert!(!text.contains("nothing runs"), "{text}");
         }
+        assert!(!can_prune(&builds));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_linked_builds_directory_offers_its_reason_and_no_prune() {
+        let home = std::env::temp_dir().join(format!("td-admin-linked-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let moved = home.join("elsewhere");
+        std::fs::create_dir_all(&moved).unwrap();
+        std::fs::create_dir_all(home.join(".local/lib")).unwrap();
+        std::os::unix::fs::symlink(&moved, home.join(".local/lib/terminal-delight")).unwrap();
+        for n in ["td-a-1", "td-b-2", "td-c-3", "td-d-4"] {
+            std::fs::write(moved.join(n), b"\x7fELF\x02\x01\x01\x00\x00\x00\x00").unwrap();
+        }
+        let h = home.clone();
+        let roots =
+            Roots::from_env(&move |k| (k == "HOME").then(|| std::ffi::OsString::from(&h))).unwrap();
+        let count = count_builds_with(&roots, &|| {
+            vec![(std::process::id(), std::env::current_exe().unwrap())]
+        })
+        .unwrap();
+        assert!(count.removable.is_none());
+        let builds = Some(Ok(count));
+        let ui = crate::lang::Lang::En.strings().ui;
+        let text = builds_blurb(ui, &builds, false);
+        assert!(
+            text.contains("is a link") && !text.contains("nothing runs"),
+            "{text}"
+        );
         assert!(!can_prune(&builds));
         std::fs::remove_dir_all(home).unwrap();
     }
