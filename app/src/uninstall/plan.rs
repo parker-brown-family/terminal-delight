@@ -900,14 +900,38 @@ fn appimage_payload(get: &dyn Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
     if !is_elf(&payload) {
         return None;
     }
-    let me = std::env::current_exe().ok()?;
     let payload = std::fs::canonicalize(&payload).unwrap_or(payload);
-    let same = std::fs::canonicalize(&me).ok().as_deref() == Some(payload.as_path())
-        || matches!(
-            (known::sha256_file(&me), known::sha256_file(&payload)),
-            (Ok(a), Ok(b)) if a == b
-        );
-    same.then_some(payload)
+    same_program(&payload).then_some(payload)
+}
+
+/// Whether `p` is this very program: the running TD, or the worker's staged
+/// copy of it, byte for byte. An ELF header proves only that it is a program.
+pub(crate) fn same_program(p: &Path) -> bool {
+    if !is_elf(p) {
+        return false;
+    }
+    let Ok(me) = std::env::current_exe() else {
+        return false;
+    };
+    if std::fs::canonicalize(&me).ok() == std::fs::canonicalize(p).ok() {
+        return true;
+    }
+    // This program's own hash, once per process: it does not change while it
+    // runs, and the panel plans on the interface thread.
+    static ME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let mine = ME.get_or_init(|| known::sha256_file(&me).ok());
+    mine.is_some() && known::sha256_file(p).ok() == *mine
+}
+
+/// An AppImage: an ELF file with the AppImage magic at offset 8.
+fn is_appimage(p: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 11];
+    is_elf(p)
+        && std::fs::File::open(p)
+            .and_then(|mut f| f.read_exact(&mut head))
+            .is_ok()
+        && head[8..11] == *b"AI\x02"
 }
 
 /// Why a plan for these roots must not run: two of TD's directories are one
@@ -1028,7 +1052,7 @@ pub(crate) fn td_executables(r: &Roots, appimage: Option<&Path>) -> Vec<PathBuf>
                     v.push(t);
                 }
             }
-        } else if is_elf(&launcher) {
+        } else if same_program(&launcher) {
             v.push(launcher.clone());
         }
     }
@@ -1266,14 +1290,33 @@ fn builds_and_launcher(b: &mut Builder, r: &Roots, after: &[usize]) {
                     Some(format!("rm {}", launcher.display())),
                 );
             }
-        } else if is_elf(&launcher) {
+        } else if same_program(&launcher) {
             b.step(
                 Op::RemoveFile {
                     path: launcher.clone(),
-                    sha256: None,
+                    sha256: known::sha256_file(&launcher).ok(),
                 },
-                "the terminal-delight program",
+                "the terminal-delight program, byte-identical to this one",
                 after.to_vec(),
+            );
+        } else if is_appimage(&launcher) {
+            b.report(
+                "An AppImage at the launcher's place",
+                Some(launcher.clone()),
+                "yours",
+                "the removal never deletes an AppImage: nothing proves it is the copy that was run",
+                Some(format!(
+                    "once the removal has finished, check it, then rm {}",
+                    launcher.display()
+                )),
+            );
+        } else if std::fs::symlink_metadata(&launcher).is_ok_and(|m| m.is_file()) {
+            b.report(
+                "A program named terminal-delight that is not this TD",
+                Some(launcher.clone()),
+                "yours",
+                "it differs from the running TD byte for byte, so it may be a wrapper of your own",
+                Some(format!("if it is TD's, rm {}", launcher.display())),
             );
         }
     }

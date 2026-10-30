@@ -975,3 +975,38 @@ fn an_unreadable_registration_is_a_failure_not_already_gone() {
         .iter()
         .any(|o| o.status == Status::Failed && o.detail.contains("cannot read it now")));
 }
+
+#[test]
+fn an_appimage_or_a_wrapper_at_the_launcher_stays_and_a_true_copy_goes() {
+    let fx = Fx::new("reglauncher");
+    let launcher = fx.root.join(".local/bin/terminal-delight");
+    let removes_launcher = |p: &super::plan::Plan| {
+        p.steps
+            .iter()
+            .any(|s| matches!(&s.op, Op::RemoveFile { path, .. } | Op::RemoveLink { path, .. } if *path == launcher))
+    };
+    // An AppImage moved into the launcher's place, as the install page allows.
+    std::fs::remove_file(&launcher).unwrap();
+    let mut image = b"\x7fELF\x02\x01\x01\x00AI\x02".to_vec();
+    image.extend_from_slice(&[0u8; 64]);
+    std::fs::write(&launcher, &image).unwrap();
+    let p = fx.plan(Retention::Keep);
+    assert!(!removes_launcher(&p));
+    assert!(p.reports.iter().any(|r| r.what.contains("AppImage")));
+    // A compiled wrapper of the person's own, which the documented MCP form
+    // now resolves to: neither removed nor taken for TD.
+    std::fs::write(&launcher, b"\x7fELF someone's wrapper").unwrap();
+    let p = fx.plan(Retention::Keep);
+    assert!(!removes_launcher(&p));
+    assert!(p
+        .steps
+        .iter()
+        .all(|s| !matches!(s.op, Op::McpRemove { .. })));
+    assert!(p.reports.iter().any(|r| r.what.contains("not this TD")));
+    // This very program in the launcher's place is TD's, and goes.
+    std::fs::remove_file(&launcher).unwrap();
+    if std::fs::hard_link(std::env::current_exe().unwrap(), &launcher).is_ok() {
+        let p = fx.plan(Retention::Keep);
+        assert!(removes_launcher(&p));
+    }
+}
