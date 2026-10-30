@@ -420,7 +420,7 @@ pub(crate) fn plan(i: &Inputs) -> Plan {
     let (entries, problems) = mcp::discover(r, i.env, &td_exes);
     for e in entries {
         if e.td {
-            let (argv, cwd) = e.remove_argv();
+            let (argv, cwd) = e.remove_argv(&r.home);
             integrations.push(b.step(
                 Op::McpRemove {
                     client: e.client.cli().into(),
@@ -464,7 +464,7 @@ pub(crate) fn plan(i: &Inputs) -> Plan {
                 Some(e.file.clone()),
                 "yours",
                 "it points at a wrapper, not at TD itself, so it is yours to keep or remove",
-                Some(e.manual()),
+                Some(e.manual(&r.home)),
             );
         }
     }
@@ -951,13 +951,10 @@ pub(crate) fn same_program(p: &Path) -> bool {
 
 /// An AppImage: an ELF file with the AppImage magic at offset 8.
 pub(crate) fn is_appimage(p: &Path) -> bool {
-    use std::io::Read;
-    let mut head = [0u8; 11];
     is_elf(p)
         && std::fs::File::open(p)
-            .and_then(|mut f| f.read_exact(&mut head))
-            .is_ok()
-        && head[8..11] == *b"AI\x02"
+            .and_then(|mut f| super::apply::ExeKind::of_reader(&mut f))
+            .is_ok_and(|k| k == super::apply::ExeKind::AppImage)
 }
 
 /// Why a plan for these roots must not run: two of TD's directories are one

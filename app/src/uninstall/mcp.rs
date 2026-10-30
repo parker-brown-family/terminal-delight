@@ -47,8 +47,50 @@ pub(crate) struct Entry {
 }
 
 impl Entry {
-    /// The client's own removal command, and the directory to run it in.
-    pub(crate) fn remove_argv(&self) -> (Vec<String>, Option<PathBuf>) {
+    /// The variable that moves this client's configuration, and the value that
+    /// points it at the file that was read: none when that file is where the
+    /// client looks by default.
+    fn root_pin(&self, home: &Path) -> (&'static str, Option<PathBuf>) {
+        let (var, default, root) = match self.client {
+            Client::Claude => (
+                "CLAUDE_CONFIG_DIR",
+                home.join(".claude.json"),
+                self.file.parent(),
+            ),
+            Client::Codex => (
+                "CODEX_HOME",
+                home.join(".codex/config.toml"),
+                self.file.parent(),
+            ),
+            Client::Gemini => (
+                "GEMINI_CLI_HOME",
+                home.join(".gemini/settings.json"),
+                self.file.parent().and_then(Path::parent),
+            ),
+        };
+        (
+            var,
+            (self.file != default).then(|| root.unwrap_or(home).to_path_buf()),
+        )
+    }
+
+    /// The client's own removal command, and the directory to run it in. The
+    /// command names the configuration root it must edit, so the client
+    /// changes the very file that was read and copied, whatever the worker's
+    /// own environment says.
+    pub(crate) fn remove_argv(&self, home: &Path) -> (Vec<String>, Option<PathBuf>) {
+        let (var, root) = self.root_pin(home);
+        let mut pin: Vec<String> = vec!["/usr/bin/env".into()];
+        match root {
+            None => pin.extend(["-u".into(), var.into()]),
+            Some(r) => pin.push(format!("{var}={}", r.display())),
+        }
+        let (argv, cwd) = self.client_argv();
+        pin.extend(argv);
+        (pin, cwd)
+    }
+
+    fn client_argv(&self) -> (Vec<String>, Option<PathBuf>) {
         let n = self.name.clone();
         match (self.client, self.scope) {
             (Client::Claude, "local") => (
@@ -89,8 +131,8 @@ impl Entry {
     }
 
     /// What a person runs or edits when the CLI is missing or this is a wrapper.
-    pub(crate) fn manual(&self) -> String {
-        let (argv, cwd) = self.remove_argv();
+    pub(crate) fn manual(&self, home: &Path) -> String {
+        let (argv, cwd) = self.remove_argv(home);
         let cmd = argv.join(" ");
         match cwd {
             Some(d) => format!("cd {} && {cmd}", d.display()),
@@ -369,7 +411,10 @@ pub(crate) fn discover(
         },
     }
 
-    let gemini = roots.home.join(".gemini/settings.json");
+    // GEMINI_CLI_HOME stands in for the home Gemini keeps its settings under.
+    let gemini = get("GEMINI_CLI_HOME")
+        .unwrap_or_else(|| roots.home.clone())
+        .join(".gemini/settings.json");
     match read_json(&gemini) {
         Ok(None) => {}
         Err(e) => problems.push(e),
@@ -513,14 +558,67 @@ mod tests {
         let user = found.iter().find(|e| e.scope == "user").unwrap();
         assert!(user.td);
         assert_eq!(
-            user.remove_argv().0.join(" "),
-            "claude mcp remove -s user terminal-delight"
+            user.remove_argv(&home).0.join(" "),
+            "/usr/bin/env -u CLAUDE_CONFIG_DIR claude mcp remove -s user terminal-delight"
         );
         let local = found.iter().find(|e| e.scope == "local").unwrap();
         assert!(!local.td);
-        assert_eq!(local.remove_argv().1, Some(PathBuf::from("/w/p")));
+        assert_eq!(local.remove_argv(&home).1, Some(PathBuf::from("/w/p")));
         assert!(found.iter().any(|e| e.client == Client::Codex && !e.td));
         assert_eq!(problems.len(), 1);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn gemini_is_read_and_edited_where_gemini_cli_home_points() {
+        let home = std::env::temp_dir().join(format!("td-mcp-gemini-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let work = home.join("gemini-work");
+        std::fs::create_dir_all(home.join(".gemini")).unwrap();
+        std::fs::create_dir_all(work.join(".gemini")).unwrap();
+        std::fs::create_dir_all(home.join(".local/lib/terminal-delight")).unwrap();
+        let build = home.join(".local/lib/terminal-delight/td-x");
+        std::fs::write(&build, b"\x7fELF").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&build, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let td = format!(
+            r#"{{"mcpServers":{{"terminal-delight":{{"command":"{}","args":["mcp"]}}}}}}"#,
+            build.display()
+        );
+        let other =
+            r#"{"mcpServers":{"terminal-delight":{"command":"/opt/mine/server","args":[]}}}"#;
+        // TD's entry where GEMINI_CLI_HOME points, a stranger's in the default.
+        std::fs::write(work.join(".gemini/settings.json"), &td).unwrap();
+        std::fs::write(home.join(".gemini/settings.json"), other).unwrap();
+        let h = home.clone();
+        let roots = Roots::from_env(&move |k| (k == "HOME").then(|| OsString::from(&h))).unwrap();
+        let w = OsString::from(&work);
+        let (found, _) = discover(
+            &roots,
+            &move |k| (k == "GEMINI_CLI_HOME").then(|| w.clone()),
+            &[build.clone()],
+        );
+        let g = found.iter().find(|e| e.client == Client::Gemini).unwrap();
+        assert_eq!(g.file, work.join(".gemini/settings.json"));
+        assert!(g.td);
+        let argv = g.remove_argv(&home).0;
+        assert_eq!(
+            argv[..2],
+            [
+                "/usr/bin/env".to_string(),
+                format!("GEMINI_CLI_HOME={}", work.display())
+            ]
+        );
+        // Without the variable the default file is read, and the command
+        // unsets it so the worker's own environment cannot move the edit.
+        let (found, _) = discover(&roots, &|_| None, &[build]);
+        let g = found.iter().find(|e| e.client == Client::Gemini).unwrap();
+        assert_eq!(g.file, home.join(".gemini/settings.json"));
+        assert!(!g.td);
+        assert_eq!(
+            g.remove_argv(&home).0[..3],
+            ["/usr/bin/env", "-u", "GEMINI_CLI_HOME"]
+        );
         std::fs::remove_dir_all(home).unwrap();
     }
 }

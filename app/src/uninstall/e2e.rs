@@ -298,11 +298,7 @@ fn keep_records_removes_the_application_and_reports_the_rest() {
     assert!(failed.is_empty(), "{failed:#?}");
     // The fixture is not the account home: other programs' CLIs and the
     // systemd bus were not touched, and the receipt does not claim complete.
-    assert!(
-        f.ran.iter().all(|r| !r.starts_with("claude")),
-        "{:?}",
-        f.ran
-    );
+    assert!(f.ran.iter().all(|r| !r.contains("claude")), "{:?}", f.ran);
     assert!(f.thawed.is_empty());
     assert!(!rc.complete);
     assert_eq!(f.signalled, vec![(4242, libc::SIGTERM)]);
@@ -383,7 +379,8 @@ fn delete_and_export_remove_records_only_after_the_export() {
     assert!(
         f.ran
             .iter()
-            .any(|r| r == "claude mcp remove -s user terminal-delight"),
+            .any(|r| r
+                == "/usr/bin/env -u CLAUDE_CONFIG_DIR claude mcp remove -s user terminal-delight"),
         "{:?}",
         f.ran
     );
@@ -854,7 +851,7 @@ fn a_registration_replaced_during_the_run_is_left_alone() {
         .iter()
         .any(|o| o.status == Status::Failed && o.detail.contains("changed since the plan")));
     assert!(
-        sw.0.ran.iter().all(|r| !r.starts_with("claude mcp remove")),
+        sw.0.ran.iter().all(|r| !r.contains("claude mcp remove")),
         "{:?}",
         sw.0.ran
     );
@@ -1073,32 +1070,53 @@ fn an_export_cannot_be_written_where_a_removal_would_delete_it() {
     }
 }
 
+/// The three AppImages there are: type 2, type 1 with its marker, and an
+/// older type 1 that carries only the ISO 9660 volume it is built around.
+fn appimages() -> Vec<(&'static str, Vec<u8>)> {
+    let mut two = b"\x7fELF\x02\x01\x01\x00AI\x02".to_vec();
+    two.extend_from_slice(&[0u8; 32]);
+    let mut one = b"\x7fELF\x01\x01\x01\x00AI\x01".to_vec();
+    one.extend_from_slice(&[0u8; 32]);
+    let mut iso = b"\x7fELF\x01\x01\x01\x00\x00\x00\x00".to_vec();
+    iso.resize(32769, 0);
+    iso.extend_from_slice(b"CD001\x01");
+    vec![("type 2", two), ("type 1", one), ("type 1, ISO only", iso)]
+}
+
 #[test]
 fn an_appimage_in_the_builds_directory_is_never_a_build() {
-    let fx = Fx::new("buildsimage");
-    let image = fx
-        .root
-        .join(".local/lib/terminal-delight/td-release.AppImage");
-    let mut bytes = b"\x7fELF\x02\x01\x01\x00AI\x02".to_vec();
-    bytes.extend_from_slice(&[0u8; 32]);
-    std::fs::write(&image, &bytes).unwrap();
-    let p = fx.plan(Retention::Keep);
-    assert!(p
-        .steps
-        .iter()
-        .all(|s| !matches!(&s.op, Op::RemoveFile { path, .. } if *path == image)));
-    for s in &p.steps {
-        if let Op::StopProcesses { exes, .. } = &s.op {
-            assert!(!exes.contains(&image));
+    for (kind, bytes) in appimages() {
+        let fx = Fx::new("buildsimage");
+        let image = fx
+            .root
+            .join(".local/lib/terminal-delight/td-release.AppImage");
+        std::fs::write(&image, &bytes).unwrap();
+        let p = fx.plan(Retention::Keep);
+        assert!(
+            p.steps
+                .iter()
+                .all(|s| !matches!(&s.op, Op::RemoveFile { path, .. } if *path == image)),
+            "{kind}"
+        );
+        for s in &p.steps {
+            if let Op::StopProcesses { exes, .. } = &s.op {
+                assert!(!exes.contains(&image), "{kind}");
+            }
         }
+        // Old-build pruning never counts it either.
+        let listing = super::builds::list(&fx.roots(), &Vec::new);
+        assert!(listing.builds.iter().all(|b| b.path != image), "{kind}");
+        assert!(
+            listing
+                .other
+                .iter()
+                .any(|o| o.name == "td-release.AppImage"),
+            "{kind}"
+        );
+        // And a process running it is never a build.
+        let kind_read = ExeKind::of_reader(&mut std::io::Cursor::new(&bytes)).unwrap();
+        assert_eq!(kind_read, ExeKind::AppImage, "{kind}");
     }
-    // Old-build pruning never counts it either.
-    let listing = super::builds::list(&fx.roots(), &Vec::new);
-    assert!(listing.builds.iter().all(|b| b.path != image));
-    assert!(listing
-        .other
-        .iter()
-        .any(|o| o.name == "td-release.AppImage"));
 }
 
 #[test]
@@ -1218,16 +1236,13 @@ fn a_program_in_the_builds_directory_that_cannot_be_read_blocks_instead_of_being
 
 #[test]
 fn only_the_running_programs_own_bytes_make_it_a_build() {
-    assert_eq!(ExeKind::of_head(None), ExeKind::Unknown);
-    assert_eq!(ExeKind::of_head(Some(b"#!/bin/sh\n")), ExeKind::Other);
-    assert_eq!(
-        ExeKind::of_head(Some(b"\x7fELF\x02\x01\x01\x00AI\x02")),
-        ExeKind::AppImage
-    );
-    assert_eq!(
-        ExeKind::of_head(Some(b"\x7fELF\x02\x01\x01\x00\x00\x00\x00")),
-        ExeKind::Build
-    );
+    let kind = |b: &[u8]| ExeKind::of_reader(&mut std::io::Cursor::new(b)).unwrap();
+    assert_eq!(kind(b"#!/bin/sh\n"), ExeKind::Other);
+    assert_eq!(kind(b""), ExeKind::Other);
+    assert_eq!(kind(b"\x7fELF\x02\x01\x01\x00\x00\x00\x00"), ExeKind::Build);
+    for (what, bytes) in appimages() {
+        assert_eq!(kind(&bytes), ExeKind::AppImage, "{what}");
+    }
 }
 
 #[test]

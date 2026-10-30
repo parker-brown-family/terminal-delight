@@ -50,13 +50,31 @@ pub(crate) enum ExeKind {
 }
 
 impl ExeKind {
-    pub(crate) fn of_head(head: Option<&[u8]>) -> ExeKind {
-        match head {
-            None => ExeKind::Unknown,
-            Some(h) if h.len() < 4 || h[..4] != *b"\x7fELF" => ExeKind::Other,
-            Some(h) if h.len() >= 11 && h[8..11] == *b"AI\x02" => ExeKind::AppImage,
-            Some(_) => ExeKind::Build,
+    /// What an executable's bytes say it is, the one test every part of the
+    /// removal and the old-builds tool uses. An AppImage carries "AI" and its
+    /// type, 1 or 2, at offset 8; an older type 1 image may carry only the
+    /// ISO 9660 volume descriptor it is built around, at 32769. An ELF with
+    /// neither is a build.
+    pub(crate) fn of_reader<R: std::io::Read + std::io::Seek>(
+        r: &mut R,
+    ) -> std::io::Result<ExeKind> {
+        use std::io::{Read, SeekFrom};
+        let mut head = Vec::with_capacity(11);
+        (&mut *r).take(11).read_to_end(&mut head)?;
+        if !head.starts_with(b"\x7fELF") {
+            return Ok(ExeKind::Other);
         }
+        if matches!(head.get(8..11), Some(b"AI\x01" | b"AI\x02")) {
+            return Ok(ExeKind::AppImage);
+        }
+        let mut iso = Vec::with_capacity(5);
+        r.seek(SeekFrom::Start(32769))?;
+        (&mut *r).take(5).read_to_end(&mut iso)?;
+        Ok(if iso == b"CD001" {
+            ExeKind::AppImage
+        } else {
+            ExeKind::Build
+        })
     }
 }
 

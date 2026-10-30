@@ -13,7 +13,7 @@ use super::roots::Roots;
 use serde::Serialize;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{self, Read};
+use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
@@ -328,21 +328,18 @@ fn judge(path: &Path) -> Result<fs::Metadata, &'static str> {
     if !meta.file_type().is_file() {
         return Err(NOT_FILE);
     }
-    let mut magic = Vec::with_capacity(11);
     // O_NOFOLLOW and O_NONBLOCK: a symlink or a FIFO swapped in after the
     // look above is refused rather than followed or waited on.
     let read = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
-        .and_then(|f| f.take(11).read_to_end(&mut magic));
+        .and_then(|mut f| super::apply::ExeKind::of_reader(&mut f));
     match read {
+        Ok(super::apply::ExeKind::Build) => Ok(meta),
         // An AppImage is a container the person keeps, not a build: it is
         // never pruned or removed, whatever its name.
-        Ok(_) if magic.starts_with(b"\x7fELF") && magic.get(8..11) == Some(b"AI\x02") => {
-            Err(APPIMAGE)
-        }
-        Ok(_) if magic.starts_with(b"\x7fELF") => Ok(meta),
+        Ok(super::apply::ExeKind::AppImage) => Err(APPIMAGE),
         Ok(_) => Err(NOT_ELF),
         Err(_) => Err(UNREADABLE),
     }

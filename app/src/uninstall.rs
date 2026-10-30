@@ -424,19 +424,9 @@ fn exe_of(pid: u32) -> Option<PathBuf> {
 /// What the program running as `pid` is, read through `/proc/<pid>/exe`,
 /// which opens the running file itself even after it was deleted or replaced.
 fn exe_kind(pid: u32) -> apply::ExeKind {
-    use std::io::Read;
-    let mut head = [0u8; 11];
-    let mut got = 0;
-    let read = std::fs::File::open(format!("/proc/{pid}/exe")).and_then(|mut f| {
-        while got < head.len() {
-            match f.read(&mut head[got..])? {
-                0 => break,
-                n => got += n,
-            }
-        }
-        Ok(())
-    });
-    apply::ExeKind::of_head(read.ok().map(|_| &head[..got]))
+    std::fs::File::open(format!("/proc/{pid}/exe"))
+        .and_then(|mut f| apply::ExeKind::of_reader(&mut f))
+        .unwrap_or(apply::ExeKind::Unknown)
 }
 
 impl Effects for RealEffects<'_> {
