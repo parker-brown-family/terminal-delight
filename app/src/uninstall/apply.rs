@@ -287,39 +287,49 @@ fn records_outcome(plan: &Plan, statuses: &[Status]) -> String {
         .zip(statuses)
         .find(|(s, _)| matches!(s.op, Op::Export { .. }))
         .map(|(_, st)| *st == Status::Done);
-    let roots: Vec<(String, bool)> = plan
+    let roots: Vec<(String, &Status)> = plan
         .steps
         .iter()
         .zip(statuses)
         .filter_map(|(s, st)| match &s.op {
-            Op::RemoveRecords { path } => Some((path.display().to_string(), *st == Status::Done)),
+            Op::RemoveRecords { path } => Some((path.display().to_string(), st)),
             _ => None,
         })
         .collect();
-    let removed: Vec<&str> = roots
-        .iter()
-        .filter(|(_, d)| *d)
-        .map(|(p, _)| p.as_str())
-        .collect();
-    let kept: Vec<&str> = roots
-        .iter()
-        .filter(|(_, d)| !*d)
-        .map(|(p, _)| p.as_str())
-        .collect();
+    let pick = |want: &dyn Fn(&Status) -> bool| -> Vec<&str> {
+        roots
+            .iter()
+            .filter(|(_, st)| want(st))
+            .map(|(p, _)| p.as_str())
+            .collect()
+    };
+    let removed = pick(&|s| *s == Status::Done);
+    // A recursive removal that failed may have taken part of the tree first.
+    let partial = pick(&|s| *s == Status::Failed);
+    let untouched = pick(&|s| matches!(s, Status::Blocked | Status::Skipped));
     let lead = match (plan.retention, export) {
         (Retention::Export, Some(true)) => "exported and verified; ",
         (Retention::Export, _) => "the export did not finish, so none were removed; ",
         _ => "",
     };
-    match (removed.is_empty(), kept.is_empty()) {
-        (_, true) if !removed.is_empty() => format!("{lead}removed"),
-        (true, _) => format!("{lead}still in place"),
-        _ => format!(
-            "{lead}removed {}; still in place: {}",
-            removed.join(", "),
-            kept.join(", ")
-        ),
+    let mut parts = Vec::new();
+    if !removed.is_empty() {
+        parts.push(if partial.is_empty() && untouched.is_empty() {
+            "removed".to_string()
+        } else {
+            format!("removed {}", removed.join(", "))
+        });
     }
+    if !partial.is_empty() {
+        parts.push(format!("possibly partly removed: {}", partial.join(", ")));
+    }
+    if !untouched.is_empty() {
+        parts.push(format!("still in place: {}", untouched.join(", ")));
+    }
+    if parts.is_empty() {
+        parts.push("still in place".into());
+    }
+    format!("{lead}{}", parts.join("; "))
 }
 
 enum Halt {
@@ -450,11 +460,14 @@ impl Ctx<'_> {
                 }
                 self.allowed(file)?;
                 match super::mcp::current_entry(client, file, scope, project.as_deref(), name) {
-                    Some((c, a)) if c == *command && a == *args => {}
-                    Some(_) => return Err(Halt::Fail(format!(
+                    Ok(Some((c, a))) if c == *command && a == *args => {}
+                    Ok(Some(_)) => {
+                        return Err(Halt::Fail(format!(
                         "the \"{name}\" entry changed since the plan; it is not TD's to remove now"
-                    ))),
-                    None => return Ok("already gone".into()),
+                    )))
+                    }
+                    Ok(None) => return Ok("already gone".into()),
+                    Err(e) => return Err(Halt::Fail(format!("cannot read it now: {e}"))),
                 }
                 self.keep_copy(file)?;
                 self.fx
@@ -580,9 +593,14 @@ impl Ctx<'_> {
                 // Only files whose bytes still hash to what TD recorded under
                 // that name when it wrote them; a TD-like name is not enough.
                 let manifest = dir.join(ASSET_MANIFEST);
+                // Trusted only as a regular file this account owns and nobody
+                // else can write: in a shared /tmp another user could plant one.
                 let recorded: Vec<(String, String)> = std::fs::symlink_metadata(&manifest)
                     .ok()
-                    .filter(|m| m.is_file())
+                    .filter(|m| {
+                        use std::os::unix::fs::MetadataExt;
+                        m.is_file() && m.uid() == unsafe { libc::getuid() } && m.mode() & 0o022 == 0
+                    })
                     .and_then(|_| std::fs::read_to_string(&manifest).ok())
                     .map(|t| {
                         t.lines()

@@ -900,6 +900,25 @@ fn proven_appimage(get: &dyn Fn(&str) -> Option<PathBuf>) -> Option<(PathBuf, Pa
     // that merely both exist prove nothing about each other or about TD.
     let me = std::env::current_exe().ok()?;
     let payload = std::fs::canonicalize(&payload).unwrap_or(payload);
+    // And the image has to be the one mounted at APPDIR: the AppImage runtime
+    // names its FUSE filesystem after the image it serves.
+    let image_name = image.file_name()?.to_string_lossy().into_owned();
+    let appdir = payload.parent()?.parent()?.parent()?.to_path_buf();
+    let mounted = std::fs::read_to_string("/proc/self/mountinfo").is_ok_and(|info| {
+        info.lines().any(|l| {
+            let mut halves = l.splitn(2, " - ");
+            let (pre, post) = (halves.next().unwrap_or(""), halves.next().unwrap_or(""));
+            let point = pre.split(' ').nth(4).map(PathBuf::from);
+            let mut fields = post.split(' ');
+            let (fstype, source) = (fields.next().unwrap_or(""), fields.next().unwrap_or(""));
+            point.as_deref() == Some(appdir.as_path())
+                && fstype.starts_with("fuse")
+                && (fstype.contains(&image_name) || source.contains(&image_name))
+        })
+    });
+    if !mounted {
+        return None;
+    }
     let same = std::fs::canonicalize(&me).ok().as_deref() == Some(payload.as_path())
         || matches!(
             (known::sha256_file(&me), known::sha256_file(&payload)),
@@ -926,6 +945,20 @@ fn blocked(r: &Roots) -> Option<String> {
     ];
     if let Some(rt) = &runtime {
         named.push(("runtime", rt));
+    }
+    // Older copies under HOME are kept whenever records are kept or exported,
+    // so nothing else may land on them either.
+    let legacy = [
+        r.home.join(".config/terminal-delight"),
+        r.home.join(".local/state/terminal-delight"),
+    ];
+    for (what, l) in [
+        ("older settings", &legacy[0]),
+        ("older records", &legacy[1]),
+    ] {
+        if l.exists() && *l != r.config && *l != r.state {
+            named.push((what, l));
+        }
     }
     for (i, (a, pa)) in named.iter().enumerate() {
         for (b, pb) in &named[i + 1..] {

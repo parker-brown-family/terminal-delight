@@ -65,13 +65,23 @@ pub(crate) fn record_asset(base: &std::path::Path, name: &str, bytes: &[u8]) {
         return;
     }
     let line = format!("{:x}\t{name}\n", Sha256::digest(bytes));
-    if let Ok(mut f) = std::fs::OpenOptions::new()
+    // Never blocks (a FIFO in its place fails to open instead of waiting for a
+    // reader) and writes only into a regular file this account owns, private
+    // to it; anything else there is left alone and nothing is recorded.
+    let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(base.join(ASSET_MANIFEST))
-    {
+    else {
+        return;
+    };
+    let ours = f.metadata().is_ok_and(|m| {
+        use std::os::unix::fs::MetadataExt;
+        m.is_file() && m.uid() == unsafe { libc::getuid() } && m.mode() & 0o022 == 0
+    });
+    if ours {
         // One short write under O_APPEND lands whole, beside other windows'.
         let _ = f.write_all(line.as_bytes());
     }

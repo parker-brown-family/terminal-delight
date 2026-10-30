@@ -151,11 +151,22 @@ pub(crate) fn current_entry(
     scope: &str,
     project: Option<&Path>,
     name: &str,
-) -> Option<(String, Vec<String>)> {
+) -> Result<Option<(String, Vec<String>)>, String> {
+    // A file that cannot be read or parsed is an error, never "the entry is
+    // gone": only a successfully read file can say an entry is absent.
+    let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
     if client == "codex" {
-        let t: toml::Table = std::fs::read_to_string(file).ok()?.parse().ok()?;
-        let s = t.get("mcp_servers")?.get(name)?;
-        let command = s.get("command")?.as_str()?.to_string();
+        let t: toml::Table = text
+            .parse()
+            .map_err(|e| format!("{}: {e}", file.display()))?;
+        let Some(s) = t.get("mcp_servers").and_then(|m| m.get(name)) else {
+            return Ok(None);
+        };
+        let command = s
+            .get("command")
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
         let args = s
             .get("args")
             .and_then(|a| a.as_array())
@@ -165,18 +176,25 @@ pub(crate) fn current_entry(
                     .collect()
             })
             .unwrap_or_default();
-        return Some((command, args));
+        return Ok(Some((command, args)));
     }
-    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
+    let v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?;
     let servers = match (client, scope, project) {
-        ("claude", "local", Some(p)) => v.get("projects")?.get(p.to_str()?)?.get("mcpServers")?,
-        _ => v.get("mcpServers")?,
+        ("claude", "local", Some(p)) => p
+            .to_str()
+            .and_then(|p| v.get("projects")?.get(p)?.get("mcpServers")),
+        _ => v.get("mcpServers"),
     };
-    let s = servers.get(name)?;
-    Some((
-        s.get("command")?.as_str()?.to_string(),
-        str_list(s.get("args")),
-    ))
+    let Some(s) = servers.and_then(|m| m.get(name)) else {
+        return Ok(None);
+    };
+    let command = s
+        .get("command")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok(Some((command, str_list(s.get("args")))))
 }
 
 /// A name or command that looks like TD's but is not TD itself: worth a line.

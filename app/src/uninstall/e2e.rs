@@ -869,3 +869,109 @@ fn a_runtime_dir_that_is_the_settings_dir_is_refused() {
         p.blocked
     );
 }
+
+#[test]
+fn a_runtime_dir_on_top_of_older_records_is_refused() {
+    let fx = Fx::new("legacyrt");
+    // Current settings live elsewhere; an older copy stays at the default.
+    std::fs::create_dir_all(fx.root.join("custom-config/terminal-delight")).unwrap();
+    let mut env = fx.env.clone();
+    env.retain(|(k, _)| k != "XDG_RUNTIME_DIR");
+    env.push((
+        "XDG_CONFIG_HOME".into(),
+        fx.root.join("custom-config").display().to_string(),
+    ));
+    env.push((
+        "XDG_RUNTIME_DIR".into(),
+        fx.root.join(".config").display().to_string(),
+    ));
+    let lookup = |k: &str| {
+        env.iter()
+            .find(|(a, _)| a == k)
+            .map(|(_, v)| OsString::from(v))
+    };
+    let r = Roots::from_env(&lookup).unwrap();
+    let p = plan(&Inputs {
+        roots: &r,
+        env: &lookup,
+        machine: &machine(),
+        retention: Retention::Keep,
+        stamp: "20261030-120000",
+    });
+    assert!(
+        p.blocked
+            .as_deref()
+            .unwrap_or("")
+            .contains("older settings"),
+        "{:?}",
+        p.blocked
+    );
+}
+
+#[test]
+fn a_receipt_others_can_write_proves_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = Fx::new("openmanifest");
+    let manifest = fx.root.join("run/terminal-delight-assets.manifest");
+    std::fs::set_permissions(&manifest, std::fs::Permissions::from_mode(0o666)).unwrap();
+    let p = fx.plan(Retention::Keep);
+    apply(
+        &p,
+        &fx.plan(Retention::Keep),
+        &fx.roots(),
+        &out(&fx),
+        &mut fake(false),
+    );
+    assert!(fx.root.join("run/terminal-delight-glyph-cat.svg").exists());
+}
+
+#[test]
+fn an_unreadable_registration_is_a_failure_not_already_gone() {
+    struct Breaker(Fake, PathBuf);
+    impl Effects for Breaker {
+        fn account_home(&self) -> bool {
+            true
+        }
+        fn self_pid(&self) -> u32 {
+            1
+        }
+        fn processes(&mut self) -> Vec<Proc> {
+            vec![]
+        }
+        fn signal(&mut self, _: u32, _: i32, _: &Path) -> bool {
+            false
+        }
+        fn close_host(&mut self, _: &Path, _: &dyn Fn(&Path) -> bool) -> Result<(), String> {
+            Ok(())
+        }
+        fn thaw(&mut self, _: &str) -> usize {
+            0
+        }
+        fn run(&mut self, a: &[String], c: Option<&Path>) -> Result<String, String> {
+            self.0.run(a, c)
+        }
+        fn default_terminal_off(&mut self, l: &Path, j: &Path) -> Result<String, String> {
+            // Mid-run, the client is halfway through rewriting its config.
+            std::fs::write(&self.1, "{\"mcpServers\": {").unwrap();
+            self.0.default_terminal_off(l, j)
+        }
+        fn export(&mut self, _: &Path) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn sleep(&mut self, _: Duration) {}
+    }
+    let fx = Fx::new("mcpbroken");
+    let p = fx.plan(Retention::Keep);
+    let mut b = Breaker(fake(true), fx.root.join(".claude.json"));
+    let rc = apply(
+        &p,
+        &fx.plan(Retention::Keep),
+        &fx.roots(),
+        &out(&fx),
+        &mut b,
+    );
+    assert!(rc
+        .outcomes
+        .iter()
+        .any(|o| o.status == Status::Failed && o.detail.contains("cannot read it now")));
+}
