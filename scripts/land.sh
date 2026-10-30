@@ -7,7 +7,8 @@
 #   scripts/land.sh <pr-number> <label>          e.g. scripts/land.sh 684 fast-scan
 #
 # Run from any worktree of this repository. It checks that worktree out to the
-# merged main, so run it from a worktree of your own — never from one another
+# merged base branch (main, or a dev/* branch such as dev/0.5.0), so run it
+# from a worktree of your own — never from one another
 # agent is living in. Every step prints, any failure stops the chain, and
 # nothing half-installed reaches the next person to restart a window.
 #
@@ -30,6 +31,11 @@ LIB=${TD_BUILD_DIR:-$HOME/.local/lib/terminal-delight}
 BIN=${TD_LAUNCHER:-$HOME/.local/bin/terminal-delight}
 cd "$WT" || exit 2
 
+# The branch the pull request merges into is the branch that gets built: a
+# dev/0.5.0 pull request must install dev/0.5.0, never main (#1220).
+BASE=$(gh pr view "$PR" --json baseRefName --jq .baseRefName 2>/dev/null) || BASE=
+[ -n "$BASE" ] || { echo "cannot read the base branch of #$PR"; exit 1; }
+
 echo "== waiting on CI for #$PR"
 if ! gh pr checks "$PR" --watch --interval 30 --fail-fast >/dev/null 2>&1; then
   echo "CI FAILED — leaving the pull request open, nothing installed"
@@ -39,9 +45,9 @@ fi
 echo "== CI green; merging"
 gh pr merge "$PR" --merge 2>&1 | tail -1 || { echo "merge refused"; exit 1; }
 git fetch -q origin
-git checkout -q --detach origin/main
+git checkout -q --detach "origin/$BASE"
 SHA=$(git rev-parse --short HEAD)
-echo "== main is now $(git log --oneline -1)"
+echo "== $BASE is now $(git log --oneline -1)"
 
 echo "== the whole suite, on the merged tree"
 # Run once and decide on that run: a failure is retried alone, a flake is
