@@ -60,6 +60,8 @@ pub(crate) enum Op {
         project: Option<PathBuf>,
         command: String,
         args: Vec<String>,
+        /// The PATH the entry sets for its own server, if any.
+        path: Option<String>,
     },
     StripKeyBlock {
         file: PathBuf,
@@ -425,6 +427,7 @@ pub(crate) fn plan(i: &Inputs) -> Plan {
                     project: e.project.clone(),
                     command: e.command.clone(),
                     args: e.args.clone(),
+                    path: e.path.clone(),
                 },
                 format!(
                     "TD's MCP registration in {} ({} scope)",
@@ -1033,7 +1036,11 @@ pub(crate) fn td_executables(r: &Roots, appimage: Option<&Path>) -> Vec<PathBuf>
     if let Ok(rd) = std::fs::read_dir(&r.builds) {
         for e in rd.flatten() {
             let p = e.path();
-            if e.file_name().to_string_lossy().starts_with("td-") && is_elf(&p) && in_builds(&p) {
+            if e.file_name().to_string_lossy().starts_with("td-")
+                && is_elf(&p)
+                && !is_appimage(&p)
+                && in_builds(&p)
+            {
                 v.push(p);
             }
         }
@@ -1235,7 +1242,18 @@ fn builds_and_launcher(b: &mut Builder, r: &Roots, after: &[usize]) {
         entries.sort_by_key(|e| e.file_name());
         for e in entries {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name.starts_with("td-") && is_elf(&e.path()) {
+            if name.starts_with("td-") && is_appimage(&e.path()) {
+                b.report(
+                    format!("{name}, an AppImage in TD's builds directory"),
+                    Some(e.path()),
+                    "yours",
+                    "the removal never deletes an AppImage: nothing proves it is TD's",
+                    Some(format!(
+                        "once the removal has finished, check it, then rm {}",
+                        e.path().display()
+                    )),
+                );
+            } else if name.starts_with("td-") && is_elf(&e.path()) {
                 gone.push(b.step(
                     Op::RemoveFile {
                         path: e.path(),
@@ -1272,7 +1290,15 @@ fn builds_and_launcher(b: &mut Builder, r: &Roots, after: &[usize]) {
             } else {
                 r.bin.join(&t)
             };
-            if abs.starts_with(&r.builds) {
+            // Where the link really leads, not how its text begins: a target
+            // spelled through `..`, or itself a link elsewhere, is not a build.
+            let real = std::fs::canonicalize(&abs).ok();
+            let builds = std::fs::canonicalize(&r.builds).ok();
+            let into_builds = matches!((&real, &builds), (Some(t), Some(b)) if t.parent() == Some(b.as_path()))
+                && real
+                    .as_deref()
+                    .is_some_and(|t| is_elf(t) && !is_appimage(t));
+            if into_builds {
                 b.step(
                     Op::RemoveLink {
                         path: launcher.clone(),

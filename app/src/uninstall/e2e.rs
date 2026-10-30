@@ -1010,3 +1010,70 @@ fn an_appimage_or_a_wrapper_at_the_launcher_stays_and_a_true_copy_goes() {
         assert!(removes_launcher(&p));
     }
 }
+
+#[test]
+fn a_registration_with_its_own_path_to_a_wrapper_is_not_td() {
+    let fx = Fx::new("mcppath");
+    // The person's wrapper, first on the PATH the entry itself sets.
+    let wrapper = fx.root.join("custom-mcp/bin/terminal-delight");
+    elf(&wrapper);
+    std::fs::write(&wrapper, b"\x7fELF my wrapper").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    w(
+        &fx.root.join(".claude.json"),
+        &format!(
+            "{{\"mcpServers\":{{\"terminal-delight\":{{\"command\":\"terminal-delight\",\"args\":[\"mcp\"],\"env\":{{\"PATH\":\"{}\"}}}}}}}}",
+            fx.root.join("custom-mcp/bin").display()
+        ),
+    );
+    let p = fx.plan(Retention::Keep);
+    assert!(p
+        .steps
+        .iter()
+        .all(|s| !matches!(s.op, Op::McpRemove { .. })));
+    assert!(p.reports.iter().any(|r| r.what.contains("MCP entry")));
+}
+
+#[test]
+fn an_export_cannot_be_written_where_a_removal_would_delete_it() {
+    let fx = Fx::new("exportdest");
+    let r = fx.roots();
+    let uid = unsafe { libc::getuid() };
+    for dest in [
+        r.temp.join(format!("terminal-delight-{uid}/my-export")),
+        fx.root.join(".local/state/terminal-delight/my-export"),
+    ] {
+        assert!(r.is_inside_td(&dest), "{}", dest.display());
+    }
+}
+
+#[test]
+fn an_appimage_in_the_builds_directory_is_never_a_build() {
+    let fx = Fx::new("buildsimage");
+    let image = fx
+        .root
+        .join(".local/lib/terminal-delight/td-release.AppImage");
+    let mut bytes = b"\x7fELF\x02\x01\x01\x00AI\x02".to_vec();
+    bytes.extend_from_slice(&[0u8; 32]);
+    std::fs::write(&image, &bytes).unwrap();
+    let p = fx.plan(Retention::Keep);
+    assert!(p
+        .steps
+        .iter()
+        .all(|s| !matches!(&s.op, Op::RemoveFile { path, .. } if *path == image)));
+    for s in &p.steps {
+        if let Op::StopProcesses { exes, .. } = &s.op {
+            assert!(!exes.contains(&image));
+        }
+    }
+    // Old-build pruning never counts it either.
+    let listing = super::builds::list(&fx.roots(), &Vec::new);
+    assert!(listing.builds.iter().all(|b| b.path != image));
+    assert!(listing
+        .other
+        .iter()
+        .any(|o| o.name == "td-release.AppImage"));
+}

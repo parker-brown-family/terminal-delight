@@ -76,7 +76,22 @@ pub(crate) fn receipts(state_root: &Path) -> Vec<Receipt> {
                 .to_str()?
                 .strip_suffix(".receipt")?
                 .to_string();
-            let text = std::fs::read_to_string(&path).ok()?;
+            // A FIFO or a link here must not hang the panel or point the
+            // reader elsewhere: opened without blocking or following, judged
+            // on that descriptor, read from it.
+            let mut f = {
+                use std::os::unix::fs::OpenOptionsExt;
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                    .open(&path)
+                    .ok()?
+            };
+            if !f.metadata().is_ok_and(|m| m.is_file()) {
+                return None;
+            }
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut f, &mut text).ok()?;
             Some(Receipt {
                 component: name,
                 lines: parse_receipt(&text),

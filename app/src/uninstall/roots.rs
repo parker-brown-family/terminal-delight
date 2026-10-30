@@ -109,6 +109,14 @@ impl Roots {
             self.builds.clone(),
         ];
         v.extend(self.runtime());
+        // Also what any removal mode may delete beyond the current roots: the
+        // runtime fallback in the temp directory, and older copies under HOME.
+        let uid = unsafe { libc::getuid() };
+        v.push(self.temp.join(format!("terminal-delight-{uid}")));
+        v.push(self.home.join(".config/terminal-delight"));
+        v.push(self.home.join(".local/state/terminal-delight"));
+        v.sort();
+        v.dedup();
         v
     }
 

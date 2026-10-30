@@ -25,6 +25,7 @@ pub(crate) const DEFAULT_KEEP: usize = 3;
 const NOT_TD: &str = "not td-*";
 const NOT_FILE: &str = "not a regular file";
 const NOT_ELF: &str = "not an executable (ELF)";
+const APPIMAGE: &str = "an AppImage, kept";
 const UNREADABLE: &str = "could not be read";
 const GONE: &str = "gone";
 
@@ -327,18 +328,22 @@ fn judge(path: &Path) -> Result<fs::Metadata, &'static str> {
     if !meta.file_type().is_file() {
         return Err(NOT_FILE);
     }
-    let mut magic = [0u8; 4];
+    let mut magic = Vec::with_capacity(11);
     // O_NOFOLLOW and O_NONBLOCK: a symlink or a FIFO swapped in after the
     // look above is refused rather than followed or waited on.
     let read = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
-        .and_then(|mut f| f.read_exact(&mut magic));
+        .and_then(|f| f.take(11).read_to_end(&mut magic));
     match read {
-        Ok(()) if &magic == b"\x7fELF" => Ok(meta),
-        Ok(()) => Err(NOT_ELF),
-        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Err(NOT_ELF),
+        // An AppImage is a container the person keeps, not a build: it is
+        // never pruned or removed, whatever its name.
+        Ok(_) if magic.starts_with(b"\x7fELF") && magic.get(8..11) == Some(b"AI\x02") => {
+            Err(APPIMAGE)
+        }
+        Ok(_) if magic.starts_with(b"\x7fELF") => Ok(meta),
+        Ok(_) => Err(NOT_ELF),
         Err(_) => Err(UNREADABLE),
     }
 }

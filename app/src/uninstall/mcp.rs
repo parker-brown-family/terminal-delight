@@ -39,6 +39,9 @@ pub(crate) struct Entry {
     pub(crate) name: String,
     pub(crate) command: String,
     pub(crate) args: Vec<String>,
+    /// The PATH the entry sets for its own server, which is what its client
+    /// resolves a bare command against.
+    pub(crate) path: Option<String>,
     /// The command is TD itself, run as `mcp`.
     pub(crate) td: bool,
 }
@@ -118,6 +121,7 @@ pub(crate) fn is_td(
     } else if !command.contains('/') {
         path_var.and_then(|pv| {
             std::env::split_paths(pv)
+                .filter(|d| d.is_absolute())
                 .map(|d| d.join(command))
                 .find(|c| std::fs::metadata(c).is_ok_and(|m| m.is_file()) && executable(c))
         })
@@ -132,6 +136,27 @@ pub(crate) fn is_td(
         .any(|e| std::fs::canonicalize(e).ok().as_deref() == Some(canon.as_path()))
 }
 
+/// The PATH an entry sets for its own server, from JSON or TOML alike.
+fn entry_path<T: EnvLookup>(s: &T) -> Option<String> {
+    s.env_path()
+}
+
+trait EnvLookup {
+    fn env_path(&self) -> Option<String>;
+}
+
+impl EnvLookup for serde_json::Value {
+    fn env_path(&self) -> Option<String> {
+        self.get("env")?.get("PATH")?.as_str().map(String::from)
+    }
+}
+
+impl EnvLookup for toml::Value {
+    fn env_path(&self) -> Option<String> {
+        self.get("env")?.get("PATH")?.as_str().map(String::from)
+    }
+}
+
 /// Whether this account may execute `p`, as the client's own lookup would judge.
 fn executable(p: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
@@ -142,6 +167,10 @@ fn executable(p: &Path) -> bool {
     unsafe { libc::access(c.as_ptr(), libc::X_OK) == 0 }
 }
 
+/// What identifies a registration at removal time: its command, its args and
+/// the PATH it sets for its own server.
+pub(crate) type Identity = (String, Vec<String>, Option<String>);
+
 /// The entry `name` as it stands in `file` right now: its command and args.
 /// The worker reads this just before removal, so a registration somebody
 /// replaced under the same name since the plan is never removed.
@@ -151,7 +180,7 @@ pub(crate) fn current_entry(
     scope: &str,
     project: Option<&Path>,
     name: &str,
-) -> Result<Option<(String, Vec<String>)>, String> {
+) -> Result<Option<Identity>, String> {
     // A file that cannot be read or parsed is an error, never "the entry is
     // gone": only a successfully read file can say an entry is absent.
     let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -176,7 +205,7 @@ pub(crate) fn current_entry(
                     .collect()
             })
             .unwrap_or_default();
-        return Ok(Some((command, args)));
+        return Ok(Some((command, args, entry_path(s))));
     }
     let v: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -194,7 +223,7 @@ pub(crate) fn current_entry(
         .and_then(|c| c.as_str())
         .unwrap_or("")
         .to_string();
-    Ok(Some((command, str_list(s.get("args")))))
+    Ok(Some((command, str_list(s.get("args")), entry_path(s))))
 }
 
 /// A name or command that looks like TD's but is not TD itself: worth a line.
@@ -243,7 +272,15 @@ pub(crate) fn discover(
                         .unwrap_or("")
                         .to_string();
                     let args = str_list(s.get("args"));
-                    let td = is_td(&command, &args, td_exes, path_var.as_deref());
+                    let path = entry_path(s);
+                    let td = is_td(
+                        &command,
+                        &args,
+                        td_exes,
+                        path.as_ref()
+                            .map(std::ffi::OsStr::new)
+                            .or(path_var.as_deref()),
+                    );
                     if td || looks_like_td(name, &command) {
                         out.push(Entry {
                             client: Client::Claude,
@@ -253,6 +290,7 @@ pub(crate) fn discover(
                             name: name.clone(),
                             command,
                             args,
+                            path,
                             td,
                         });
                     }
@@ -292,7 +330,15 @@ pub(crate) fn discover(
                                     .collect()
                             })
                             .unwrap_or_default();
-                        let td = is_td(&command, &args, td_exes, path_var.as_deref());
+                        let path = entry_path(s);
+                        let td = is_td(
+                            &command,
+                            &args,
+                            td_exes,
+                            path.as_ref()
+                                .map(std::ffi::OsStr::new)
+                                .or(path_var.as_deref()),
+                        );
                         if td || looks_like_td(name, &command) {
                             out.push(Entry {
                                 client: Client::Codex,
@@ -302,6 +348,7 @@ pub(crate) fn discover(
                                 name: name.clone(),
                                 command,
                                 args,
+                                path,
                                 td,
                             });
                         }
@@ -324,7 +371,15 @@ pub(crate) fn discover(
                         .unwrap_or("")
                         .to_string();
                     let args = str_list(s.get("args"));
-                    let td = is_td(&command, &args, td_exes, path_var.as_deref());
+                    let path = entry_path(s);
+                    let td = is_td(
+                        &command,
+                        &args,
+                        td_exes,
+                        path.as_ref()
+                            .map(std::ffi::OsStr::new)
+                            .or(path_var.as_deref()),
+                    );
                     if td || looks_like_td(name, &command) {
                         out.push(Entry {
                             client: Client::Gemini,
@@ -334,6 +389,7 @@ pub(crate) fn discover(
                             name: name.clone(),
                             command,
                             args,
+                            path,
                             td,
                         });
                     }

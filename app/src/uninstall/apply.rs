@@ -452,6 +452,7 @@ impl Ctx<'_> {
                 project,
                 command,
                 args,
+                path,
             } => {
                 if !self.fx.account_home() {
                     return Err(Halt::Skip(
@@ -460,7 +461,7 @@ impl Ctx<'_> {
                 }
                 self.allowed(file)?;
                 match super::mcp::current_entry(client, file, scope, project.as_deref(), name) {
-                    Ok(Some((c, a))) if c == *command && a == *args => {}
+                    Ok(Some((c, a, pth))) if c == *command && a == *args && pth == *path => {}
                     Ok(Some(_)) => {
                         return Err(Halt::Fail(format!(
                         "the \"{name}\" entry changed since the plan; it is not TD's to remove now"
