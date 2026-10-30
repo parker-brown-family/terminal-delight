@@ -90,13 +90,19 @@ tool_version="1.9.1"
 tool_sha256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
 [ "$arch" = "x86_64" ] || { echo "no pinned appimagetool digest for $arch" >&2; exit 1; }
 tool="$build/appimagetool-$tool_version-$arch.AppImage"
-if [ ! -x "$tool" ]; then
+# The digest is checked on every run, cached copy included: a file that was
+# verified once and then altered must not run unchecked on a later build.
+if [ -f "$tool" ] && ! echo "$tool_sha256  $tool" | sha256sum --check --quiet --status; then
+    echo "cached appimagetool fails its digest; fetching it again" >&2
+    rm -f "$tool"
+fi
+if [ ! -f "$tool" ]; then
     url="https://github.com/AppImage/appimagetool/releases/download/$tool_version/appimagetool-$arch.AppImage"
     curl -fL --retry 3 -o "$tool.part" "$url"
     echo "$tool_sha256  $tool.part" | sha256sum --check --quiet
-    chmod +x "$tool.part"
     mv "$tool.part" "$tool"
 fi
+chmod +x "$tool"
 
 echo "==> Packing AppImage"
 mkdir -p "$dist"
