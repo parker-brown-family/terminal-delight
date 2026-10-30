@@ -132,9 +132,14 @@ pub(crate) struct Report {
 pub(crate) struct Size {
     pub(crate) what: String,
     pub(crate) path: PathBuf,
-    /// Absent when the directory is not there: unknown is not zero.
+    /// Absent when the directory is not there or not all of it could be
+    /// read: unknown is not zero.
     pub(crate) bytes: Option<u64>,
     pub(crate) files: Option<u64>,
+    /// Whether the path is there: absent when looking failed for any reason
+    /// but its not existing, which says nothing about whether records exist.
+    #[serde(default)]
+    pub(crate) present: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -429,11 +434,23 @@ pub(crate) fn plan(i: &Inputs) -> Plan {
                     args: e.args.clone(),
                     path: e.path.clone(),
                 },
-                format!(
-                    "TD's MCP registration in {} ({} scope)",
-                    e.client.cli(),
-                    e.scope
-                ),
+                if e.command.contains('/') || e.path.is_some() {
+                    format!(
+                        "TD's MCP registration in {} ({} scope)",
+                        e.client.cli(),
+                        e.scope
+                    )
+                } else {
+                    // A bare command is found on the PATH the client starts
+                    // with, which nothing on disk records; this program's PATH
+                    // stands in for it, and the receipt says so.
+                    format!(
+                        "TD's MCP registration in {} ({} scope), \"{}\" as found on the PATH this removal runs with; the client's configuration is copied first",
+                        e.client.cli(),
+                        e.scope,
+                        e.command
+                    )
+                },
                 first.clone(),
             ));
         } else {
@@ -748,11 +765,17 @@ pub(crate) fn plan(i: &Inputs) -> Plan {
         ("builds", r.builds.clone()),
     ] {
         let (bytes, files) = dir_size(&p);
+        let present = match std::fs::symlink_metadata(&p) {
+            Ok(_) => Some(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(false),
+            Err(_) => None,
+        };
         sizes.push(Size {
             what: what.into(),
             path: p,
             bytes,
             files,
+            present,
         });
     }
     if i.retention == Retention::Keep {

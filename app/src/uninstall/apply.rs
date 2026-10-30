@@ -34,6 +34,30 @@ pub(crate) struct Proc {
     pub(crate) argv: Vec<String>,
     /// `/proc/<pid>/comm`, readable even when `exe` is not.
     pub(crate) comm: String,
+    /// What the running executable is, read through the process itself, so a
+    /// file deleted or replaced on disk still answers for the program running.
+    pub(crate) kind: ExeKind,
+}
+
+/// The running executable's own bytes, never the path's: a build is an ELF
+/// that is not an AppImage, and anything unreadable is unknown rather than one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExeKind {
+    Build,
+    AppImage,
+    Other,
+    Unknown,
+}
+
+impl ExeKind {
+    pub(crate) fn of_head(head: Option<&[u8]>) -> ExeKind {
+        match head {
+            None => ExeKind::Unknown,
+            Some(h) if h.len() < 4 || h[..4] != *b"\x7fELF" => ExeKind::Other,
+            Some(h) if h.len() >= 11 && h[8..11] == *b"AI\x02" => ExeKind::AppImage,
+            Some(_) => ExeKind::Build,
+        }
+    }
 }
 
 pub(crate) trait Effects {
@@ -45,7 +69,11 @@ pub(crate) trait Effects {
     fn signal(&mut self, pid: u32, sig: i32, exe: &Path) -> bool;
     /// Ask the session host at `socket` to save and close, but only when the
     /// process listening there passes `allow`, judged by its executable.
-    fn close_host(&mut self, socket: &Path, allow: &dyn Fn(&Path) -> bool) -> Result<(), String>;
+    fn close_host(
+        &mut self,
+        socket: &Path,
+        allow: &dyn Fn(&Path, ExeKind) -> bool,
+    ) -> Result<(), String>;
     fn thaw(&mut self, session: &str) -> usize;
     /// Run a program; `Err` carries why, starting "not installed" when it is not.
     fn run(&mut self, argv: &[String], cwd: Option<&Path>) -> Result<String, String>;
@@ -491,7 +519,7 @@ impl Ctx<'_> {
                 socks.sort();
                 let exes = self.td_exes.clone();
                 let builds = self.td_builds.clone();
-                let allow = move |exe: &Path| is_td_exe(exe, &exes, &builds);
+                let allow = move |exe: &Path, kind: ExeKind| is_td_exe(exe, kind, &exes, &builds);
                 let mut left = Vec::new();
                 for s in &socks {
                     // A real socket in this directory, never a link to one
@@ -794,7 +822,7 @@ impl Ctx<'_> {
         let me = self.fx.self_pid();
         let exes = self.confined(exes);
         let builds = builds.to_path_buf();
-        let ours = |p: &Proc| p.pid != me && is_td_exe(&p.exe, &exes, &builds);
+        let ours = |p: &Proc| p.pid != me && is_td_exe(&p.exe, p.kind, &exes, &builds);
         let targets: Vec<(u32, PathBuf)> = self
             .fx
             .processes()
@@ -851,6 +879,11 @@ impl Ctx<'_> {
                 let named_td = |s: &str| base(s) == "terminal-delight";
                 let versioned = |s: &str| base(s).starts_with("td-");
                 let unreadable = p.exe.as_os_str().is_empty();
+                // Where TD's builds run from, but its bytes cannot be read: a
+                // TD nobody can rule out, so it is neither signalled nor ignored.
+                let unproven = !unreadable
+                    && p.kind == ExeKind::Unknown
+                    && is_td_exe(&p.exe, ExeKind::Build, &exes, &builds);
                 // A process whose executable cannot be read but whose name
                 // says TD is a TD nobody can rule out, in either kind of run.
                 let unknown_td = unreadable
@@ -858,14 +891,14 @@ impl Ctx<'_> {
                         || versioned(&p.comm)
                         || p.argv.first().is_some_and(|a| named_td(a) || versioned(a)));
                 if !account {
-                    return unknown_td || (!unreadable && p.exe.starts_with(&home));
+                    return unknown_td || unproven || (!unreadable && p.exe.starts_with(&home));
                 }
                 let exe_td = p
                     .exe
                     .file_name()
                     .and_then(|n| n.to_str())
                     .is_some_and(named_td);
-                exe_td || unknown_td
+                exe_td || unknown_td || unproven
             })
             .map(|p| {
                 let what = if p.exe.as_os_str().is_empty() {
@@ -894,8 +927,10 @@ impl Ctx<'_> {
 /// Whether a process running `exe` is TD's: one of the plan's executables, or
 /// a `td-*` build in TD's builds directory, including one that has since been
 /// replaced or removed (its path then still names that directory).
-pub(crate) fn is_td_exe(exe: &Path, exes: &[PathBuf], builds: &Path) -> bool {
-    if exe.as_os_str().is_empty() {
+pub(crate) fn is_td_exe(exe: &Path, kind: ExeKind, exes: &[PathBuf], builds: &Path) -> bool {
+    // Only a running program proven to be a build is TD's to signal; an
+    // AppImage, an unreadable one or anything else never is.
+    if exe.as_os_str().is_empty() || kind != ExeKind::Build {
         return false;
     }
     let canon_builds = std::fs::canonicalize(builds).unwrap_or_else(|_| builds.to_path_buf());
@@ -904,9 +939,7 @@ pub(crate) fn is_td_exe(exe: &Path, exes: &[PathBuf], builds: &Path) -> bool {
             && exe
                 .file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("td-"))
-            // An AppImage there is never TD's; a build already deleted is.
-            && !super::plan::is_appimage(exe))
+                .is_some_and(|n| n.starts_with("td-")))
 }
 
 /// TD's loose-file receipt, opened once without following a link or blocking,

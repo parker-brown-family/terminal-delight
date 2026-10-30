@@ -421,6 +421,24 @@ fn exe_of(pid: u32) -> Option<PathBuf> {
     ))
 }
 
+/// What the program running as `pid` is, read through `/proc/<pid>/exe`,
+/// which opens the running file itself even after it was deleted or replaced.
+fn exe_kind(pid: u32) -> apply::ExeKind {
+    use std::io::Read;
+    let mut head = [0u8; 11];
+    let mut got = 0;
+    let read = std::fs::File::open(format!("/proc/{pid}/exe")).and_then(|mut f| {
+        while got < head.len() {
+            match f.read(&mut head[got..])? {
+                0 => break,
+                n => got += n,
+            }
+        }
+        Ok(())
+    });
+    apply::ExeKind::of_head(read.ok().map(|_| &head[..got]))
+}
+
 impl Effects for RealEffects<'_> {
     fn account_home(&self) -> bool {
         self.account
@@ -453,8 +471,12 @@ impl Effects for RealEffects<'_> {
             sent
         }
     }
-    fn close_host(&mut self, socket: &Path, allow: &dyn Fn(&Path) -> bool) -> Result<(), String> {
-        let judge = |pid: u32| exe_of(pid).is_some_and(|exe| allow(&exe));
+    fn close_host(
+        &mut self,
+        socket: &Path,
+        allow: &dyn Fn(&Path, apply::ExeKind) -> bool,
+    ) -> Result<(), String> {
+        let judge = |pid: u32| exe_of(pid).is_some_and(|exe| allow(&exe, exe_kind(pid)));
         crate::hostctl::close_at(socket, Duration::from_secs(5), &judge).map_err(|e| e.to_string())
     }
     fn thaw(&mut self, session: &str) -> usize {
@@ -546,6 +568,7 @@ pub(crate) fn own_processes() -> Vec<Proc> {
             exe,
             argv,
             comm,
+            kind: exe_kind(pid),
         });
     }
     v
@@ -660,12 +683,11 @@ pub(crate) fn plan_markdown(p: &Plan) -> String {
     s.push_str("## Size\n\n");
     for z in &p.sizes {
         // No size for a folder that is there means part of it could not be read.
-        let size = match z.bytes {
-            Some(b) => export::human_bytes(b),
-            None if std::fs::symlink_metadata(&z.path).is_ok() => {
-                "unknown, part of it cannot be read".into()
-            }
-            None => "not present".into(),
+        let size = match (z.bytes, z.present) {
+            (Some(b), _) => export::human_bytes(b),
+            (None, Some(false)) => "not present".into(),
+            (None, Some(true)) => "unknown, part of it cannot be read".into(),
+            (None, None) => "unknown, it cannot be looked at".into(),
         };
         s.push_str(&format!("- {}: {size} — `{}`\n", z.what, z.path.display()));
     }

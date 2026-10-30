@@ -3,7 +3,7 @@
 //! builds behind a launcher, runtime leftovers and a companion product's files
 //! inside TD's own directory. Every effect outside the filesystem is a fake
 //! that records what it was asked to do.
-use super::apply::{apply, Effects, Proc, Status};
+use super::apply::{apply, Effects, ExeKind, Proc, Status};
 use super::guard::{self, Machine};
 use super::known;
 use super::plan::{plan, Inputs, Op, Retention};
@@ -40,7 +40,11 @@ impl Effects for Fake {
         self.procs.retain(|p| p.pid != pid);
         true
     }
-    fn close_host(&mut self, s: &Path, _allow: &dyn Fn(&Path) -> bool) -> Result<(), String> {
+    fn close_host(
+        &mut self,
+        s: &Path,
+        _allow: &dyn Fn(&Path, ExeKind) -> bool,
+    ) -> Result<(), String> {
         self.closed.push(s.to_path_buf());
         let _ = std::fs::remove_file(s);
         Ok(())
@@ -281,6 +285,7 @@ fn keep_records_removes_the_application_and_reports_the_rest() {
         exe: fx.root.join(".local/lib/terminal-delight/td-aaa-current"),
         argv: vec![],
         comm: String::new(),
+        kind: ExeKind::Build,
     });
     let fresh = fx.plan(Retention::Keep);
     let rc = apply(&p, &fresh, &fx.roots(), &out, &mut f);
@@ -401,7 +406,11 @@ fn a_failed_export_keeps_the_records() {
         fn signal(&mut self, _: u32, _: i32, _: &Path) -> bool {
             false
         }
-        fn close_host(&mut self, _: &Path, _: &dyn Fn(&Path) -> bool) -> Result<(), String> {
+        fn close_host(
+            &mut self,
+            _: &Path,
+            _: &dyn Fn(&Path, ExeKind) -> bool,
+        ) -> Result<(), String> {
             Ok(())
         }
         fn thaw(&mut self, _: &str) -> usize {
@@ -498,7 +507,11 @@ fn a_running_build_that_will_not_stop_blocks_the_file_removals() {
             self.0.signalled.push((p, s));
             true
         }
-        fn close_host(&mut self, _: &Path, _: &dyn Fn(&Path) -> bool) -> Result<(), String> {
+        fn close_host(
+            &mut self,
+            _: &Path,
+            _: &dyn Fn(&Path, ExeKind) -> bool,
+        ) -> Result<(), String> {
             Ok(())
         }
         fn thaw(&mut self, _: &str) -> usize {
@@ -522,6 +535,7 @@ fn a_running_build_that_will_not_stop_blocks_the_file_removals() {
         exe: fx.root.join(".local/lib/terminal-delight/td-bbb-old"),
         argv: vec![],
         comm: String::new(),
+        kind: ExeKind::Build,
     });
     let p = fx.plan(Retention::Keep);
     let rc = apply(
@@ -694,6 +708,7 @@ fn a_fixture_launcher_cannot_make_a_live_build_a_target() {
         exe: live.join("td-live-build"),
         argv: vec![],
         comm: String::new(),
+        kind: ExeKind::Build,
     });
     let rc = apply(
         &p,
@@ -797,7 +812,11 @@ fn a_registration_replaced_during_the_run_is_left_alone() {
         fn signal(&mut self, _: u32, _: i32, _: &Path) -> bool {
             false
         }
-        fn close_host(&mut self, _: &Path, _: &dyn Fn(&Path) -> bool) -> Result<(), String> {
+        fn close_host(
+            &mut self,
+            _: &Path,
+            _: &dyn Fn(&Path, ExeKind) -> bool,
+        ) -> Result<(), String> {
             Ok(())
         }
         fn thaw(&mut self, _: &str) -> usize {
@@ -941,7 +960,11 @@ fn an_unreadable_registration_is_a_failure_not_already_gone() {
         fn signal(&mut self, _: u32, _: i32, _: &Path) -> bool {
             false
         }
-        fn close_host(&mut self, _: &Path, _: &dyn Fn(&Path) -> bool) -> Result<(), String> {
+        fn close_host(
+            &mut self,
+            _: &Path,
+            _: &dyn Fn(&Path, ExeKind) -> bool,
+        ) -> Result<(), String> {
             Ok(())
         }
         fn thaw(&mut self, _: &str) -> usize {
@@ -1122,6 +1145,7 @@ fn a_running_appimage_in_the_builds_directory_is_never_signalled() {
         exe: image.clone(),
         argv: vec![],
         comm: String::new(),
+        kind: ExeKind::AppImage,
     });
     let p = fx.plan(Retention::Keep);
     apply(
@@ -1150,5 +1174,96 @@ fn an_unreadable_tree_has_no_size_rather_than_zero() {
     // Running as root reads anything; then there is nothing to prove here.
     if unsafe { libc::geteuid() } != 0 {
         assert_eq!((bytes, files), (None, None));
+    }
+}
+
+#[test]
+fn a_program_in_the_builds_directory_that_cannot_be_read_blocks_instead_of_being_signalled() {
+    // An AppImage launched from TD's builds directory and then deleted: the
+    // path still names a td- file there, and nothing can show what it was.
+    let fx = Fx::new("deletedimage");
+    let gone = fx
+        .root
+        .join(".local/lib/terminal-delight/td-other.AppImage");
+    let mut f = fake(false);
+    f.procs.push(Proc {
+        pid: 32,
+        exe: gone,
+        argv: vec![],
+        comm: String::new(),
+        kind: ExeKind::Unknown,
+    });
+    let p = fx.plan(Retention::Keep);
+    let rc = apply(
+        &p,
+        &fx.plan(Retention::Keep),
+        &fx.roots(),
+        &out(&fx),
+        &mut f,
+    );
+    assert!(
+        f.signalled.iter().all(|(pid, _)| *pid != 32),
+        "{:?}",
+        f.signalled
+    );
+    assert!(rc
+        .outcomes
+        .iter()
+        .any(|o| o.status == Status::Failed && o.detail.contains("left alone")));
+    assert!(fx
+        .root
+        .join(".local/lib/terminal-delight/td-bbb-old")
+        .exists());
+}
+
+#[test]
+fn only_the_running_programs_own_bytes_make_it_a_build() {
+    assert_eq!(ExeKind::of_head(None), ExeKind::Unknown);
+    assert_eq!(ExeKind::of_head(Some(b"#!/bin/sh\n")), ExeKind::Other);
+    assert_eq!(
+        ExeKind::of_head(Some(b"\x7fELF\x02\x01\x01\x00AI\x02")),
+        ExeKind::AppImage
+    );
+    assert_eq!(
+        ExeKind::of_head(Some(b"\x7fELF\x02\x01\x01\x00\x00\x00\x00")),
+        ExeKind::Build
+    );
+}
+
+#[test]
+fn a_records_folder_that_cannot_be_looked_at_is_unknown_not_absent() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = Fx::new("noaccess");
+    let base = fx.root.join(".local/state");
+    std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let p = fx.plan(Retention::Keep);
+    std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let records = p.sizes.iter().find(|z| z.what == "records").unwrap();
+    assert_eq!((records.bytes, records.present), (None, None));
+    let gone = p.sizes.iter().find(|z| z.what == "data").unwrap();
+    if gone.bytes.is_none() {
+        assert_eq!(gone.present, Some(false));
+    }
+}
+
+#[test]
+fn a_bare_mcp_command_says_which_path_found_it() {
+    let fx = Fx::new("mcpbare");
+    w(
+        &fx.root.join(".claude.json"),
+        r#"{"mcpServers":{"terminal-delight":{"command":"terminal-delight","args":["mcp"]}}}"#,
+    );
+    let p = fx.plan(Retention::Keep);
+    let steps: Vec<_> = p
+        .steps
+        .iter()
+        .filter(|s| matches!(s.op, Op::McpRemove { .. }))
+        .collect();
+    assert!(!steps.is_empty());
+    for s in steps {
+        assert!(s.why.contains("as found on the PATH"), "{}", s.why);
     }
 }
