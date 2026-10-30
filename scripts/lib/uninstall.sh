@@ -2,15 +2,63 @@
 # Shared conservative edits for the legacy integration installers. Callers use
 # set -euo pipefail. This is not a complete application uninstaller.
 
+td_cleanup_temps() {
+  rm -f -- "${TD_EDIT_STAGE:-}" "${TD_EDIT_SNAPSHOT:-}" \
+    "${TD_BACKUP_PENDING:-}" "${TD_RECEIPT_STAGE:-}"
+}
+trap td_cleanup_temps EXIT
+
+td_state_dir() {
+  printf '%s/terminal-delight' "${XDG_STATE_HOME:-$HOME/.local/state}"
+}
+
+td_receipt_init() {
+  TD_COMPONENT=$1
+  TD_RECEIPT="$(td_state_dir)/receipts/$TD_COMPONENT.receipt"
+  [[ ! -L $TD_RECEIPT && ( ! -e $TD_RECEIPT || -f $TD_RECEIPT ) ]] || {
+    echo "Refusing non-regular receipt: $TD_RECEIPT" >&2; return 1;
+  }
+}
+
+td_receipt_begin() {
+  local dir=${TD_RECEIPT%/*}
+  [[ ! -L $dir ]] || { echo "Refusing symlink receipt directory: $dir" >&2; return 1; }
+  (umask 077; mkdir -p -- "$dir")
+  TD_RECEIPT_STAGE=$(mktemp "$dir/.${TD_COMPONENT}.XXXXXXXX")
+  printf '# Terminal Delight install receipt: %s\n' "$TD_COMPONENT" > "$TD_RECEIPT_STAGE"
+}
+
+td_receipt_record() {
+  local field
+  for field in "$@"; do
+    [[ $field != *$'\t'* && $field != *$'\n'* && $field != *$'\r'* ]] || {
+      echo "Receipt fields cannot contain tabs or newlines" >&2; return 1;
+    }
+  done
+  printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$TD_RECEIPT_STAGE"
+}
+
+td_receipt_file() {
+  [[ $1 == /* && -f $1 && ! -L $1 ]] || {
+    echo "Receipt requires an absolute regular file: $1" >&2; return 1;
+  }
+  local digest
+  digest=$(sha256sum < "$1")
+  td_receipt_record file "${digest%% *}" "$1"
+}
+
+td_receipt_commit() { mv -T -- "$TD_RECEIPT_STAGE" "$TD_RECEIPT"; }
+td_receipt_remove() { rm -f -- "$TD_RECEIPT"; }
+
 td_edit_begin() {
+  td_cleanup_temps
   TD_EDIT_PATH=$1
   [[ ! -L $TD_EDIT_PATH && -f $TD_EDIT_PATH ]] || {
     echo "Refusing non-regular or symlink settings: $TD_EDIT_PATH" >&2; return 1;
   }
-  TD_EDIT_SNAPSHOT=$(mktemp "${TD_EDIT_PATH}.td-backup.XXXXXXXX")
-  cp -p -- "$TD_EDIT_PATH" "$TD_EDIT_SNAPSHOT"
+  TD_EDIT_SNAPSHOT=$(mktemp "${TD_EDIT_PATH}.td-snapshot.XXXXXXXX")
+  cat -- "$TD_EDIT_PATH" > "$TD_EDIT_SNAPSHOT"
   TD_EDIT_STAGE=$(mktemp "${TD_EDIT_PATH}.td-edit.XXXXXXXX")
-  trap 'rm -f -- "${TD_EDIT_STAGE:-}"' EXIT
 }
 
 td_edit_commit() {
@@ -20,9 +68,18 @@ td_edit_commit() {
   if cmp -s -- "$TD_EDIT_STAGE" "$TD_EDIT_SNAPSHOT"; then
     rm -f -- "$TD_EDIT_STAGE" "$TD_EDIT_SNAPSHOT"
   else
+    local dir
+    dir="$(td_state_dir)/backups"
+    [[ ! -L $dir ]] || { echo "Refusing symlink backup directory: $dir" >&2; return 1; }
+    (umask 077; mkdir -p -- "$dir")
+    TD_BACKUP_PENDING=$(mktemp "$dir/${TD_EDIT_PATH##*/}.$(date -u +%Y%m%dT%H%M%S).XXXXXXXX")
+    cat -- "$TD_EDIT_SNAPSHOT" > "$TD_BACKUP_PENDING"
     chmod --reference="$TD_EDIT_PATH" "$TD_EDIT_STAGE"
     mv -T -- "$TD_EDIT_STAGE" "$TD_EDIT_PATH"
-    echo "Backup: $TD_EDIT_SNAPSHOT"
+    local committed_backup=$TD_BACKUP_PENDING
+    TD_BACKUP_PENDING=
+    echo "Backup: $committed_backup"
+    rm -f -- "$TD_EDIT_SNAPSHOT"
   fi
 }
 
@@ -65,13 +122,27 @@ td_unhook() {
 }
 
 td_remove_helper() {
-  local installed=$1 source=$2
+  local installed=$1 source=${2:-} digest known repo_path
   [[ -e $installed || -L $installed ]] || return 0
-  if [[ -L $installed || ! -f $installed ]] || ! cmp -s -- "$installed" "$source"; then
-    echo "Retained changed or unverified helper: $installed" >&2
-    return 1
+  if [[ ! -L $installed && -f $installed ]]; then
+    digest=$(sha256sum < "$installed")
+    digest=${digest%% *}
+    if [[ -n ${TD_RECEIPT:-} && -f $TD_RECEIPT ]] &&
+        awk -F '\t' -v hash="$digest" -v path="$installed" \
+          '$1 == "file" && $2 == hash && $3 == path && NF == 3 { found=1 } END { exit !found }' "$TD_RECEIPT"; then
+      rm -- "$installed"; return
+    fi
+    if [[ -n $source ]] && cmp -s -- "$installed" "$source"; then
+      rm -- "$installed"; return
+    fi
+    known="${REPO}/app/src/uninstall/known_hashes.txt"
+    repo_path=${source#"$REPO/"}
+    if [[ -n $source && -f $known ]] && grep -qxF -- "$digest  $repo_path" "$known"; then
+      rm -- "$installed"; return
+    fi
   fi
-  rm -- "$installed"
+  echo "Retained changed or unverified helper: $installed" >&2
+  return 1
 }
 
 td_strip_key_block() {

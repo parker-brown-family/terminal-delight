@@ -150,14 +150,28 @@ cd app &amp;&amp; cargo run</code></pre>
 <div class="pair">
   <div class="term">
 <h3>Removing it</h3>
-<p>Keep settings, sessions and saved work by default. First inspect the installation and restore its owned integrations while the executable and undo records still exist. Check a replacement terminal before removing the selected application. Projects, native agent histories, unrelated hooks and later desktop changes belong to you.</p>
-<p>The development build adds a read-only preview and an optional Markdown handoff for an agent. It lists candidate paths and unresolved ownership; it does not stop TD, export data or delete anything. Full application removal is still being built. Older releases may not have this command.</p>
-<p>Use the matching source installer for a legacy hook only after checking its paths and shared consumers. A malformed settings file, changed helper or uncertain binding stops cleanup for review. Keep backups and receipts until every integration is resolved. GNOME shortcuts installed without an ownership receipt require manual review.</p>
+<p>Removal keeps settings, sessions and saved work by default. Exporting or deleting those records is a separate choice. Projects, native agent histories, unrelated hooks and later desktop changes stay yours.</p>
+<ol>
+<li>Open another terminal and check that it works. While TD and its undo records still exist, turn off the briefing hook and restore the previous default terminal with the commands alongside.</li>
+<li>If you installed the source hooks, run their matching uninstallers from the source checkout, using the same <code>CLAUDE_SETTINGS</code> and <code>DEST</code> overrides you used at installation. Unrelated nested hooks are preserved. If cleanup reports a changed file, uncertain reference or damaged block, resolve it before proceeding.</li>
+<li>In this release, open <strong>CONFIG › ADMIN › Uninstall</strong>, review the proposed changes and choose the removal that keeps records. The command-line equivalent below writes a readable plan and a JSON plan, then prints their paths; read the readable plan before running the JSON plan. The worker writes a removal receipt outside TD's directories and reports anything it retained or could not finish. Agent assistance and an AI review of your workflow are optional.</li>
+<li>After the worker finishes, check its receipt for the AppImage and launcher. Remove a remaining downloaded AppImage only after confirming its exact path. The commands alongside cover this page's optional move onto PATH and its original download filename. Keep backups and receipts until the removal is resolved.</li>
+</ol>
+<p>Older releases may lack ADMIN and the plan command. Keep the executable until its briefing hook, default-terminal choice and source integrations are undone. The current source key-sheet, GNOME hotkey, plugin and desktop installers each accept <code>--uninstall</code>; use only those you installed. GNOME shortcuts without an ownership receipt require the manual review printed by their installer. Then remove the AppImage you downloaded and its launcher, if you created one. Do not delete TD's settings or state directories when keeping records.</p>
   </div>
   <div class="bench">
-<pre class="cmd"><code>terminal-delight uninstall preview</code></pre>
-<pre class="cmd"><code>terminal-delight uninstall preview --handoff</code></pre>
-<p>Save the handoff to a new file outside TD's data directories, then give it to an agent of your choice. It carries inspection-only authority in this milestone. Agent assistance and later workflow analysis are optional.</p>
+<pre class="cmd"><code>terminal-delight briefing hook off
+terminal-delight default-terminal off</code></pre>
+<p>For source hooks you installed, from the checkout:</p>
+<pre class="cmd"><code>bash scripts/install-agent-hooks.sh --uninstall
+bash scripts/install-recovery-hook.sh --uninstall</code></pre>
+<p>Save and inspect the removal plan, then run it from the replacement terminal:</p>
+<pre class="cmd"><code>terminal-delight uninstall plan</code></pre>
+<pre class="cmd"><code>terminal-delight uninstall run --plan "${XDG_CACHE_HOME:-$HOME/.cache}/terminal-delight/admin/uninstall-plan.json"</code></pre>
+<p>If you used this page's optional move onto PATH and the receipt says that file remains:</p>
+<pre class="cmd"><code>rm -- "$HOME/.local/bin/terminal-delight"</code></pre>
+<p>Otherwise, from the directory where you downloaded the AppImage, after confirming it is the copy you intend to remove:</p>
+<pre class="cmd"><code>rm -- ./terminal-delight-x86_64.AppImage</code></pre>
   </div>
 </div>
 

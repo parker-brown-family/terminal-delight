@@ -34,6 +34,8 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # Ownership hashes cover every committed source version.
 
       # poppler-utils is not a build dependency: the PDF test in
       # docview/poppler.rs drives the real pdfinfo and pdftoppm, and fails
@@ -54,7 +56,9 @@ jobs:
             libcap-dev meson ninja-build jq
 
       - name: Uninstall integration fixtures (no live desktop)
-        run: python3 ../scripts/tests/test_uninstall.py -v
+        run: |
+          ../scripts/known-hashes.sh --check
+          python3 ../scripts/tests/test_uninstall.py -v
 
       # The distro helper lacks descriptor mounts. Use a fixed upstream release
       # with safe setup-path resolution; the runtime also refuses older helpers.
