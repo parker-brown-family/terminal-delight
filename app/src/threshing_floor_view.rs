@@ -5621,53 +5621,68 @@ impl Workspace {
                         }
                         ws.threshing_floor_open_org(org, cx);
                     }));
+                // The System Map reads as three centered information groups.
+                // Type follows the card's world scale; only the smallest view
+                // has a screen-space floor, so the labels still have pixels.
+                let secondary = if far {
+                    (18. * s).max(6. * ui_scale)
+                } else {
+                    12. * s
+                };
+                card = card
+                    .p(px((8. * s).max(2. * ui_scale)))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .text_center()
+                    .gap(px(if far { 6. * s } else { 4. * s }))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("floor-map-name-{}", seat.0)))
+                            .debug_selector(move || format!("floor-map-name-{}", seat.0))
+                            .max_w_full()
+                            .min_w(px(0.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .gap(px(4. * s))
+                            .child(
+                                div()
+                                    .size(px((5. * s).max(2. * ui_scale)))
+                                    .flex_none()
+                                    .rounded(sk.radius_pill())
+                                    .bg(state_ink),
+                            )
+                            .child(
+                                div()
+                                    .min_w(px(0.))
+                                    .truncate()
+                                    .text_size(px((22. * s).max(6. * ui_scale)))
+                                    .line_height(px((26.4 * s).max(7.2 * ui_scale)))
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(th.text)
+                                    .child(SharedString::from(name)),
+                            ),
+                    );
                 if far {
-                    // Keep all three readings, with no harness, effort,
-                    // metrics or artifact title in the compact view.
-                    let compact_text = (10. * s).max(6. * ui_scale);
-                    card = card
-                        .p(px(3. * s))
-                        .flex()
-                        .flex_col()
-                        .justify_center()
-                        .gap(px(s))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(3. * s))
-                                .child(
-                                    div()
-                                        .size(px(4. * ui_scale))
-                                        .flex_none()
-                                        .rounded(sk.radius_pill())
-                                        .bg(state_ink),
-                                )
-                                .child(
-                                    div()
-                                        .min_w(px(0.))
-                                        .truncate()
-                                        .text_size(px(9. * ui_scale))
-                                        .line_height(px(11. * ui_scale))
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(th.text)
-                                        .child(SharedString::from(name)),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("floor-map-model-{}", seat.0)))
-                                .debug_selector(move || format!("floor-map-model-{}", seat.0))
-                                .truncate()
-                                .text_size(px(compact_text))
-                                .line_height(px(compact_text * 1.2))
-                                .text_color(th.text.alpha(0.75))
-                                .child(SharedString::from(
-                                    f.and_then(|f| f.model.as_deref())
-                                        .unwrap_or(ui.floor_model_unknown)
-                                        .to_string(),
-                                )),
-                        );
+                    card = card.child(
+                        div()
+                            .id(SharedString::from(format!("floor-map-model-{}", seat.0)))
+                            .debug_selector(move || format!("floor-map-model-{}", seat.0))
+                            .max_w_full()
+                            .flex_none()
+                            .truncate()
+                            .text_size(px(secondary))
+                            .line_height(px(secondary * 1.2))
+                            .text_color(th.text.alpha(0.85))
+                            .child(SharedString::from(
+                                f.and_then(|f| f.model.as_deref())
+                                    .unwrap_or(ui.floor_model_unknown)
+                                    .to_string(),
+                            )),
+                    );
                 } else {
                     let model = f
                         .map(|f| {
@@ -5679,48 +5694,53 @@ impl Workspace {
                             )
                         })
                         .unwrap_or_else(|| ui.floor_model_unknown.to_string());
+                    // A local typography projection: the shared org-card
+                    // renderer and the org's skin retain their own dimensions.
+                    let mut map_skin = sk.clone();
+                    map_skin.scale = s;
+                    map_skin.type_scale *= zoom * 1.5;
                     card = card
-                        .p(px(8. * s))
-                        .flex()
-                        .flex_col()
-                        .gap(px(3. * s))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(5. * s))
-                                .child(
-                                    div()
-                                        .size(px(6. * s))
-                                        .flex_none()
-                                        .rounded(sk.radius_pill())
-                                        .bg(state_ink),
-                                )
-                                .child(
-                                    div()
-                                        .truncate()
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(th.text)
-                                        .child(SharedString::from(name)),
-                                ),
-                        )
                         .when_some(f, |d, f| {
-                            d.child(self.threshing_floor_vitals(seat, f, &model, s, sk, th))
+                            d.child(
+                                self.threshing_floor_vitals(seat, f, &model, s, &map_skin, th)
+                                    .w_full()
+                                    .flex_none()
+                                    .items_center()
+                                    .text_center()
+                                    .line_height(px(16. * s))
+                                    .overflow_hidden(),
+                            )
                         })
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("floor-map-artifact-{}", seat.0)))
-                                .debug_selector(move || format!("floor-map-artifact-{}", seat.0))
-                                .mt_auto()
-                                .min_h(px(11. * s))
-                                .truncate()
-                                .text_size(px(8.5 * s))
-                                .line_height(px(11. * s))
-                                .text_color(th.text)
-                                .when_some(artifact, |d, (label, _, _, _)| {
-                                    d.child(SharedString::from(label.clone()))
-                                }),
-                        );
+                        .when(f.is_none(), |d| {
+                            d.child(
+                                div()
+                                    .max_w_full()
+                                    .truncate()
+                                    .text_size(px(12.75 * s))
+                                    .line_height(px(16. * s))
+                                    .text_color(th.text.alpha(0.85))
+                                    .child(SharedString::from(model)),
+                            )
+                        })
+                        .when_some(artifact, |d, (label, _, _, _)| {
+                            d.child(
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "floor-map-artifact-{}",
+                                        seat.0
+                                    )))
+                                    .debug_selector(move || {
+                                        format!("floor-map-artifact-{}", seat.0)
+                                    })
+                                    .max_w_full()
+                                    .flex_none()
+                                    .truncate()
+                                    .text_size(px(secondary))
+                                    .line_height(px(15. * s))
+                                    .text_color(th.text)
+                                    .child(SharedString::from(label.clone())),
+                            )
+                        });
                 }
                 card = card.child(
                     div()
@@ -5729,17 +5749,11 @@ impl Workspace {
                             seat.0
                         )))
                         .debug_selector(move || format!("floor-map-provenance-{}", seat.0))
+                        .max_w_full()
+                        .flex_none()
                         .truncate()
-                        .text_size(px(if far {
-                            (10. * s).max(6. * ui_scale)
-                        } else {
-                            8.5 * s
-                        }))
-                        .line_height(px(if far {
-                            (12. * s).max(7.2 * ui_scale)
-                        } else {
-                            11. * s
-                        }))
+                        .text_size(px(secondary))
+                        .line_height(px(if far { secondary * 1.2 } else { 15. * s }))
                         .text_color(provenance_ink)
                         .child(SharedString::from(provenance.to_string())),
                 );
@@ -8473,12 +8487,24 @@ mod tests {
             cx.run_until_parked();
             for seat in [100, 101] {
                 let card = bounds(cx, &format!("floor-map-seat-{seat}"));
+                let name = bounds(cx, &format!("floor-map-name-{seat}"));
                 let model = bounds(cx, &format!("floor-map-model-{seat}"));
                 let provenance = bounds(cx, &format!("floor-map-provenance-{seat}"));
                 assert!(model.origin.y >= card.origin.y);
                 assert!(provenance.origin.y >= model.bottom());
                 assert!(provenance.bottom() <= card.bottom(), "at zoom {zoom}");
                 assert!(provenance.size.height > px(0.));
+                for row in [name, model, provenance] {
+                    assert!(row.size.width > px(0.));
+                    assert!(row.origin.x >= card.origin.x + px(2.));
+                    assert!(row.right() <= card.right() - px(2.));
+                    assert!((row.center().x - card.center().x).abs() < px(1.5));
+                }
+                let content_height = provenance.bottom() - name.origin.y;
+                assert!(content_height >= card.size.height * 0.4, "at zoom {zoom}");
+                assert!(model.size.height >= card.size.height * 0.1);
+                let content_center = name.origin.y + content_height / 2.;
+                assert!((content_center - card.center().y).abs() < px(1.5));
             }
             assert!(cx.debug_bounds("floor-vitals-101").is_none());
             assert!(cx.debug_bounds("floor-map-artifact-101").is_none());
