@@ -58,3 +58,13 @@ No install, live uninstall, TD process stop, desktop reload, deployment or repla
 The worktree now lives at `/home/parker/Work/td-uninstall-lab/terminal-delight`, beside its private renderer. `/home/parker/Work/td-uninstall-preview` is a stable symlink to it. No source commit, push, PR, merge or release was made in this turn. Implementation evidence is under `reports/2026-10-30-uninstall-implementation-evidence/` in that worktree.
 
 At delivery, the TD endpoint reported window 2269143 / `td-4cc995cf-0.5-floor-map-pool-drop`, whereas the earlier endpoint was window 1552933 / `td-7150fb1b-0.5-floor-map-builder`. The cause is unverified. This task issued no TD stop, install, replacement or reload. Do not claim that the live instance remained globally unchanged during concurrent work.
+
+## CONFIG › ADMIN, built end to end (October 30, afternoon)
+
+Parker concurred on all six decisions of the second-look review and asked for CONFIG › ADMIN (Export, Uninstall) built end to end while away. `01-admin-build.md` records the shape and contracts in place of gates 2–4. Difficulty 8/10.
+
+- **Built:** the ⚙ ADMIN panel (`admin_view.rs`), export with a verified manifest, old-build listing and pruning, the removal planner and worker (`app/src/uninstall/`), `terminal-delight admin export|builds|guard|protect` and `uninstall preview|plan|run`, installer receipts and a table of every shipped hash (Codex, `scripts/`), and the install page's removal steps.
+- **The Legion:** `~/.config/terminal-delight/protected` names its machine id. The worker, the panel and the handoff refuse removal on it; a read-only plan against this machine confirms the refusal. No removal, prune, export, stop or swap was run here.
+- **Proof:** the engine's whole-removal fixtures; a real-binary qualification on a fixture home (a decoy TD process from a fixture build stopped, the operator's own relays untouched, the person's settings and another program's hook kept, nothing left beside the settings file, the worker deleting its own copy); photographs of the panel in both states from hidden windows on fixture homes.
+- **Adversarial review:** the Codex sibling reviewed in rounds. Round 1: 1 critical, 14 high, 5 medium, all fixed. Round 2: 1 critical, 9 high, 6 medium, fixed except two stated limits (loose runtime files are matched by TD's exact names, not hashed; a same-account process racing the worker can redirect it).
+- **Not done:** live qualification on another machine (the other Lenovo's identity is unverified); GNOME removal stays manual; installing this build on the Legion is Parker's call.

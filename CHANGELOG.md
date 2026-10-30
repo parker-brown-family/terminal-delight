@@ -7,12 +7,60 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Installer ownership and cleanup
+
+- Source installers record the hashes and paths of installed hooks, key-sheet
+  files, plugins and desktop files in private component receipts. Cleanup accepts
+  those receipts, current source bytes or a table of committed file versions;
+  changed and unverified files stay in place. The table is regenerated from git
+  history, including renames, and checked in CI with the cleanup fixtures.
+- Failed settings edits discard temporary snapshots. Successful edits keep one
+  pre-edit copy, mode 0600, under the XDG state directory's
+  `terminal-delight/backups/`, and print its path. Hook installation uses the
+  same backup policy.
+- The key-sheet installer checks for a legacy td-send block before installing
+  anything and prints manual removal steps. Desktop and plugin installers gain
+  ownership-checked `--uninstall` modes and reject unknown option flags. Desktop
+  cleanup refreshes the application and icon caches.
+- GNOME hotkey installation saves its intent before clearing the built-in key.
+  A failed install leaves that intent and the previous binding for review. When
+  a successful-install receipt is missing, cleanup prints exact inspection and
+  manual cleanup commands.
+
+### CONFIG › ADMIN: export, old builds, uninstall
+
+- ⚙ ADMIN in the CONFIG menu opens a centred panel. **Export settings** copies
+  settings, layouts and sessions into a new `~/terminal-delight-export-<stamp>/`
+  with a manifest of every file's hash, re-reads every copy before calling it
+  verified, and leaves out the phone pairing token, lock files and the undo
+  records bound to this machine; **Export settings and records** adds notes,
+  conversations and the resume lines of sleeping agents. **Remove old builds**
+  lists the versioned builds with their size and removes the ones nothing runs,
+  keeping the launcher's build, every running build and the newest three; a
+  process that may be TD and cannot be inspected stops it.
+- **Uninstall** keeps records by default, or exports and verifies them before
+  removing them, or removes them. It writes the plan for the person to read
+  first, and a second click runs exactly the plan they read. A worker staged
+  outside every TD directory closes the session hosts (each saves its session),
+  then TD's windows and the MCP relays agents started, matched by executable,
+  never by name; restores the default terminal and refuses to remove the program
+  while TD is still a default terminal; takes TD's entries, and nothing else,
+  out of Claude Code's settings, the key sheet out of `bindings.lua`, and TD's
+  MCP registration out of Claude Code, Codex and Gemini through their own CLIs;
+  removes owned helpers, desktop files, runtime files, caches, builds, the
+  launcher and the AppImage. It writes a receipt of what it removed, what failed
+  and what it left for the person, with a copy of every shared file it edited.
+- A protection marker naming this machine's id makes removal refuse in the
+  worker, the panel and the agent handoff alike; `terminal-delight admin protect`
+  writes one and deleting it lifts it. The same tools run headless as
+  `terminal-delight uninstall preview|plan|run` and `terminal-delight admin
+  export|builds|guard|protect`.
+
 ### Linux removal preparation (release unassigned)
 
 - A headless `uninstall preview` inventories candidate paths without opening a
   window or changing files. `--json` carries structured evidence; `--handoff`
-  prints an optional agent brief. Records stay in place, unknown ownership and
-  active writers remain explicit, and this milestone cannot execute removal.
+  prints an optional agent brief.
 - Legacy hook cleanup preserves unrelated nested commands and group metadata.
   Invalid settings or unrecognized helper references stop cleanup. Edited
   helpers and damaged Hyprland blocks are retained for review.
@@ -419,7 +467,8 @@ the changes you may notice in the first hour.
 - **SUPER+ALT+T opens the key menu instead of sending a tile.** On Omarchy that
   chord used to move the focused terminal into Terminal Delight. It now opens
   the list of Terminal Delight's keys, and `scripts/install-keys-hotkey.sh`
-  removes the old binding when it adds the new one. `td-send` still works when
+  refuses an existing td-send block until it is reviewed and removed manually.
+  `td-send` still works when
   run by hand. (#921)
 - **The Field design is now Tactical.** A window or pane saved on Field opens
   on Tactical, keeping any palette you picked and its dials. Field and
