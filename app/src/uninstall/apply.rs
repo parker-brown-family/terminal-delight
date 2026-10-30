@@ -597,6 +597,37 @@ impl Ctx<'_> {
                 std::fs::remove_file(path).map_err(fail)?;
                 Ok("removed".into())
             }
+            Op::RemoveBuild { path } => {
+                self.allowed(path)?;
+                match std::fs::symlink_metadata(path) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        return Ok("already gone".into())
+                    }
+                    Err(e) => return Err(fail(e)),
+                    Ok(m) if !m.is_file() => {
+                        return Err(Halt::Fail("no longer a regular file; left".into()))
+                    }
+                    Ok(_) => {}
+                }
+                // Read again, without following a link or waiting on a FIFO:
+                // only bytes that still say build are removed.
+                let kind = std::fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                    .open(path)
+                    .and_then(|mut f| ExeKind::of_reader(&mut f));
+                match kind {
+                    Ok(ExeKind::Build) => {}
+                    Ok(_) => return Err(Halt::Fail("no longer a build; left".into())),
+                    Err(e) => {
+                        return Err(Halt::Fail(format!(
+                            "its bytes could not be read ({e}); left"
+                        )))
+                    }
+                }
+                std::fs::remove_file(path).map_err(fail)?;
+                Ok("removed".into())
+            }
             Op::RemoveLink { path, target } => {
                 self.allowed(path)?;
                 match std::fs::symlink_metadata(path) {
@@ -1048,6 +1079,7 @@ pub(crate) fn summary(op: &Op) -> String {
         Op::RemoveFile { path, .. } | Op::RemoveLink { path, .. } => {
             format!("remove {}", path.display())
         }
+        Op::RemoveBuild { path } => format!("remove build {}", path.display()),
         Op::RemoveTree { path } => format!("remove {}/", path.display()),
         Op::RemoveRecords { path } => format!("remove records in {}/", path.display()),
         Op::RemoveLooseAssets { dir, .. } => {

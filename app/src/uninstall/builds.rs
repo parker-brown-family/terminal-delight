@@ -1095,7 +1095,9 @@ mod tests {
         // The whole prune refuses before any build is judged, and says why.
         assert!(p.removed.is_empty(), "{:?}", p.removed);
         assert!(
-            p.failed.iter().any(|(_, why)| why.contains("launcher cannot be read")),
+            p.failed
+                .iter()
+                .any(|(_, why)| why.contains("launcher cannot be read")),
             "{:?}",
             p.failed
         );

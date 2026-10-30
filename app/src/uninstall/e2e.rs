@@ -1095,7 +1095,7 @@ fn an_appimage_in_the_builds_directory_is_never_a_build() {
         assert!(
             p.steps
                 .iter()
-                .all(|s| !matches!(&s.op, Op::RemoveFile { path, .. } if *path == image)),
+                .all(|s| !matches!(&s.op, Op::RemoveFile { path, .. } | Op::RemoveBuild { path } if *path == image)),
             "{kind}"
         );
         for s in &p.steps {
@@ -1324,4 +1324,63 @@ fn a_launcher_pointing_at_a_persons_own_program_in_the_builds_directory_keeps_bo
     );
     assert!(std::fs::symlink_metadata(&launcher).is_ok());
     assert!(wrapper.exists());
+}
+
+/// A reader whose first bytes are an ELF header and whose ISO descriptor
+/// read fails, as a damaged block would.
+struct FailsAtTheVolume(std::io::Cursor<Vec<u8>>);
+impl std::io::Read for FailsAtTheVolume {
+    fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+        if self.0.position() >= 32769 {
+            return Err(std::io::Error::other("damaged block"));
+        }
+        self.0.read(b)
+    }
+}
+impl std::io::Seek for FailsAtTheVolume {
+    fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.0.seek(to)
+    }
+}
+
+#[test]
+fn a_classifier_that_cannot_finish_reading_proves_nothing() {
+    let mut bytes = b"\x7fELF\x01\x01\x01\x00\x00\x00\x00".to_vec();
+    bytes.resize(40000, 0);
+    let err = ExeKind::of_reader(&mut FailsAtTheVolume(std::io::Cursor::new(bytes)));
+    assert!(err.is_err());
+    // And the planner's own reading of a file it cannot open is no kind at all.
+    use std::os::unix::fs::PermissionsExt;
+    let fx = Fx::new("unrdbld");
+    let f = fx.root.join(".local/lib/terminal-delight/td-locked");
+    elf(&f);
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let kind = super::plan::exe_kind_of(&f);
+    let p = fx.plan(Retention::Keep);
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    assert_eq!(kind, None);
+    assert!(p.steps.iter().all(
+        |s| !matches!(&s.op, Op::RemoveFile { path, .. } | Op::RemoveBuild { path } if *path == f)
+    ));
+}
+
+#[test]
+fn the_worker_removes_a_build_only_while_its_bytes_still_say_build() {
+    let fx = Fx::new("rebldck");
+    let b = fx.root.join(".local/lib/terminal-delight/td-bbb-old");
+    let p = fx.plan(Retention::Keep);
+    assert!(p
+        .steps
+        .iter()
+        .any(|s| matches!(&s.op, Op::RemoveBuild { path } if *path == b)));
+    // Between the review and the run it became an AppImage.
+    let mut image = b"\x7fELF\x02\x01\x01\x00AI\x02".to_vec();
+    image.extend_from_slice(&[0u8; 32]);
+    std::fs::write(&b, &image).unwrap();
+    let mut f = fake(false);
+    apply(&p, &p.clone(), &fx.roots(), &out(&fx), &mut f);
+    assert!(b.exists());
 }

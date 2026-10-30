@@ -84,6 +84,12 @@ pub(crate) enum Op {
         path: PathBuf,
         sha256: Option<String>,
     },
+    /// A build in TD's builds directory. It has no hash to check, so the
+    /// worker reads its bytes again and removes it only if they still say
+    /// build: an AppImage, or a file it cannot read in full, stays.
+    RemoveBuild {
+        path: PathBuf,
+    },
     RemoveLink {
         path: PathBuf,
         target: PathBuf,
@@ -949,12 +955,26 @@ pub(crate) fn same_program(p: &Path) -> bool {
     mine.is_some() && known::sha256_file(p).ok() == *mine
 }
 
-/// An AppImage: an ELF file with the AppImage magic at offset 8.
+/// What a regular file's bytes say it is, or nothing when they cannot all be
+/// read: a failed read proves neither build nor AppImage, and nothing that
+/// needs proof is decided on it.
+pub(crate) fn exe_kind_of(p: &Path) -> Option<super::apply::ExeKind> {
+    if !std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file()) {
+        return None;
+    }
+    std::fs::File::open(p)
+        .and_then(|mut f| super::apply::ExeKind::of_reader(&mut f))
+        .ok()
+}
+
+/// An AppImage, positively: an ELF with an AppImage mark.
 pub(crate) fn is_appimage(p: &Path) -> bool {
-    is_elf(p)
-        && std::fs::File::open(p)
-            .and_then(|mut f| super::apply::ExeKind::of_reader(&mut f))
-            .is_ok_and(|k| k == super::apply::ExeKind::AppImage)
+    exe_kind_of(p) == Some(super::apply::ExeKind::AppImage)
+}
+
+/// A plain ELF, positively: every byte the classifier needs was read.
+fn is_build_bytes(p: &Path) -> bool {
+    exe_kind_of(p) == Some(super::apply::ExeKind::Build)
 }
 
 /// Why a plan for these roots must not run: two of TD's directories are one
@@ -1057,8 +1077,7 @@ pub(crate) fn td_executables(r: &Roots) -> Vec<PathBuf> {
         for e in rd.flatten() {
             let p = e.path();
             if e.file_name().to_string_lossy().starts_with("td-")
-                && is_elf(&p)
-                && !is_appimage(&p)
+                && is_build_bytes(&p)
                 && in_builds(&p)
             {
                 v.push(p);
@@ -1093,8 +1112,7 @@ fn is_build_file(p: &Path) -> bool {
     p.file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| n.starts_with("td-"))
-        && is_elf(p)
-        && !is_appimage(p)
+        && is_build_bytes(p)
 }
 
 pub(crate) fn is_elf(p: &Path) -> bool {
@@ -1278,7 +1296,9 @@ fn builds_and_launcher(b: &mut Builder, r: &Roots, after: &[usize]) {
         entries.sort_by_key(|e| e.file_name());
         for e in entries {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name.starts_with("td-") && is_appimage(&e.path()) {
+            let td = name.starts_with("td-");
+            let kind = exe_kind_of(&e.path());
+            if td && kind == Some(super::apply::ExeKind::AppImage) {
                 b.report(
                     format!("{name}, an AppImage in TD's builds directory"),
                     Some(e.path()),
@@ -1289,15 +1309,20 @@ fn builds_and_launcher(b: &mut Builder, r: &Roots, after: &[usize]) {
                         e.path().display()
                     )),
                 );
-            } else if name.starts_with("td-") && is_elf(&e.path()) {
+            } else if td && kind == Some(super::apply::ExeKind::Build) {
                 gone.push(b.step(
-                    Op::RemoveFile {
-                        path: e.path(),
-                        sha256: None,
-                    },
+                    Op::RemoveBuild { path: e.path() },
                     format!("build {name}"),
                     after.to_vec(),
                 ));
+            } else if td && kind.is_none() && is_elf(&e.path()) {
+                b.report(
+                    format!("{name} in TD's builds directory"),
+                    Some(e.path()),
+                    "unknown",
+                    "its bytes could not all be read, so nothing proves it is a build rather than an AppImage, and it stays",
+                    None,
+                );
             } else {
                 b.report(
                     format!("{name} in TD's builds directory"),
