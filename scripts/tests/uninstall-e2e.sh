@@ -44,6 +44,10 @@ if ((account)); then
   for p in "$HOME/.local/lib/terminal-delight" "$HOME/.local/bin/terminal-delight" "$HOME/.config/terminal-delight"; do
     if [[ -e $p || -L $p ]]; then echo "refusing: $p exists, so this home already has a Terminal Delight" >&2; exit 2; fi
   done
+  # The account's own folders, whatever the caller's environment says: a
+  # runner's XDG_CONFIG_HOME, say, would point every installer and the binary
+  # at somebody else's home.
+  unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR CLAUDE_CONFIG_DIR CODEX_HOME GEMINI_CLI_HOME
   H=$HOME
 else
   H=$(mktemp -d "${TMPDIR:-/tmp}/td-uninstall-e2e.XXXXXX")

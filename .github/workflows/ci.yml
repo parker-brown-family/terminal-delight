@@ -142,7 +142,8 @@ jobs:
           install -m755 target/release/terminal-delight "$e2e/terminal-delight"
           chmod -R a+rX "$e2e"
           sudo useradd --create-home --shell /bin/bash td-e2e
-          sudo -u td-e2e -H env PATH=/usr/bin:/bin TD_E2E_DISPOSABLE_HOME=1 \
+          sudo -u td-e2e -H env -i HOME=/home/td-e2e USER=td-e2e LOGNAME=td-e2e \
+            PATH=/usr/bin:/bin LANG=C.UTF-8 TD_E2E_DISPOSABLE_HOME=1 \
             bash "$e2e/scripts/tests/uninstall-e2e.sh" --account-home "$e2e/terminal-delight"
 
   js:
