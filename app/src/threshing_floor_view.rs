@@ -5208,7 +5208,8 @@ impl Workspace {
     /// The System Map, drawn the way the org chart is: on the same pan and zoom,
     /// every org a bordered region holding its seats in the chart's own tidy
     /// tree, with the lines between orgs routed border to border. Cards show
-    /// a name and vitals, then only a name and dot under 60% zoom. A card or
+    /// a name, vitals and artifact; under 60% zoom the model and artifact
+    /// provenance remain as compact lines. A card or
     /// an org's name opens that org's chart.
     fn floor_map_canvas(
         &self,
@@ -5554,6 +5555,20 @@ impl Workspace {
                 });
                 let name =
                     f.map_or_else(|| ui.floor_unavailable.to_string(), |f| f.name.tab.clone());
+                let artifact = f.and_then(|f| f.artifact.as_ref());
+                let (provenance, provenance_ink) = match (f, artifact) {
+                    (None, _) => (ui.floor_map_comments_unknown, th.text.alpha(0.55)),
+                    (_, None) => (ui.floor_map_no_artifact, th.accent),
+                    (_, Some((_, _, crate::feedback::Feedback::Annotated, _))) => {
+                        (ui.floor_map_human_comments, th.human)
+                    }
+                    (_, Some((_, _, crate::feedback::Feedback::None, _))) => {
+                        (ui.floor_map_no_comments, th.text.alpha(0.65))
+                    }
+                    (_, Some((_, _, crate::feedback::Feedback::Unknown, _))) => {
+                        (ui.floor_map_comments_unknown, th.text.alpha(0.55))
+                    }
+                };
                 let card_drag = f.map(|f| PaneDrag {
                     leaf: f.leaf.clone(),
                     title: f.name.tab.clone(),
@@ -5607,27 +5622,51 @@ impl Workspace {
                         ws.threshing_floor_open_org(org, cx);
                     }));
                 if far {
-                    // A dot and the name, set at a size that still reads.
+                    // Keep all three readings, with no harness, effort,
+                    // metrics or artifact title in the compact view.
+                    let compact_text = (10. * s).max(6. * ui_scale);
                     card = card
-                        .px(px(4.))
+                        .p(px(3. * s))
                         .flex()
-                        .items_center()
-                        .gap(px(4.))
+                        .flex_col()
+                        .justify_center()
+                        .gap(px(s))
                         .child(
                             div()
-                                .size(px(6.))
-                                .flex_none()
-                                .rounded(sk.radius_pill())
-                                .bg(state_ink),
+                                .flex()
+                                .items_center()
+                                .gap(px(3. * s))
+                                .child(
+                                    div()
+                                        .size(px(4. * ui_scale))
+                                        .flex_none()
+                                        .rounded(sk.radius_pill())
+                                        .bg(state_ink),
+                                )
+                                .child(
+                                    div()
+                                        .min_w(px(0.))
+                                        .truncate()
+                                        .text_size(px(9. * ui_scale))
+                                        .line_height(px(11. * ui_scale))
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(th.text)
+                                        .child(SharedString::from(name)),
+                                ),
                         )
                         .child(
                             div()
-                                .min_w(px(0.))
+                                .id(SharedString::from(format!("floor-map-model-{}", seat.0)))
+                                .debug_selector(move || format!("floor-map-model-{}", seat.0))
                                 .truncate()
-                                .text_size(px(9. * ui_scale))
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(th.text)
-                                .child(SharedString::from(name)),
+                                .text_size(px(compact_text))
+                                .line_height(px(compact_text * 1.2))
+                                .text_color(th.text.alpha(0.75))
+                                .child(SharedString::from(
+                                    f.and_then(|f| f.model.as_deref())
+                                        .unwrap_or(ui.floor_model_unknown)
+                                        .to_string(),
+                                )),
                         );
                 } else {
                     let model = f
@@ -5667,8 +5706,43 @@ impl Workspace {
                         )
                         .when_some(f, |d, f| {
                             d.child(self.threshing_floor_vitals(seat, f, &model, s, sk, th))
-                        });
+                        })
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("floor-map-artifact-{}", seat.0)))
+                                .debug_selector(move || format!("floor-map-artifact-{}", seat.0))
+                                .mt_auto()
+                                .min_h(px(11. * s))
+                                .truncate()
+                                .text_size(px(8.5 * s))
+                                .line_height(px(11. * s))
+                                .text_color(th.text)
+                                .when_some(artifact, |d, (label, _, _, _)| {
+                                    d.child(SharedString::from(label.clone()))
+                                }),
+                        );
                 }
+                card = card.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "floor-map-provenance-{}",
+                            seat.0
+                        )))
+                        .debug_selector(move || format!("floor-map-provenance-{}", seat.0))
+                        .truncate()
+                        .text_size(px(if far {
+                            (10. * s).max(6. * ui_scale)
+                        } else {
+                            8.5 * s
+                        }))
+                        .line_height(px(if far {
+                            (12. * s).max(7.2 * ui_scale)
+                        } else {
+                            11. * s
+                        }))
+                        .text_color(provenance_ink)
+                        .child(SharedString::from(provenance.to_string())),
+                );
                 world = world.child(card);
             }
         }
@@ -8377,6 +8451,38 @@ mod tests {
             "a concur saved in the file is a person's feedback"
         );
         assert!(cx.debug_bounds("floor-no-feedback-101").is_none());
+        // The System Map ends with the current title and provenance on
+        // separate lines, and retains model/provenance at every far zoom.
+        ws.update(cx, |ws, cx| {
+            ws.floor_map = Some(SystemMap::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let card = bounds(cx, "floor-map-seat-101");
+        let vitals = bounds(cx, "floor-vitals-101");
+        let title = bounds(cx, "floor-map-artifact-101");
+        let provenance = bounds(cx, "floor-map-provenance-101");
+        assert!(title.origin.y >= vitals.bottom());
+        assert!(provenance.origin.y >= title.bottom());
+        assert!(provenance.bottom() <= card.bottom());
+        for zoom in [0.59, 0.3, MIN_ZOOM] {
+            ws.update(cx, |ws, cx| {
+                ws.floor_view.zoom = zoom;
+                cx.notify();
+            });
+            cx.run_until_parked();
+            for seat in [100, 101] {
+                let card = bounds(cx, &format!("floor-map-seat-{seat}"));
+                let model = bounds(cx, &format!("floor-map-model-{seat}"));
+                let provenance = bounds(cx, &format!("floor-map-provenance-{seat}"));
+                assert!(model.origin.y >= card.origin.y);
+                assert!(provenance.origin.y >= model.bottom());
+                assert!(provenance.bottom() <= card.bottom(), "at zoom {zoom}");
+                assert!(provenance.size.height > px(0.));
+            }
+            assert!(cx.debug_bounds("floor-vitals-101").is_none());
+            assert!(cx.debug_bounds("floor-map-artifact-101").is_none());
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
