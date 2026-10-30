@@ -5,902 +5,907 @@
 
 use super::Plural;
 
+/// Every field is `pub(crate)`, never `pub`, so the compiler's dead-code lint
+/// names any string the product no longer reads, and clippy's `-D warnings`
+/// fails CI on it. Reads from test code do not count in that build. Fifteen
+/// unread strings had piled up by 2026-10-30 while the fields were `pub`, which
+/// exempts them from the lint.
 pub struct Chrome {
     /// Default name given to the very first tab and its pane in a brand-new window, teaching that right-click renames.
-    pub tab_first_run_hint: &'static str,
+    pub(crate) tab_first_run_hint: &'static str,
     /// Title of a sticky note the app puts on a restored pane when two tabs claimed the same agent conversation.
-    pub dup_note_title: &'static str,
+    pub(crate) dup_note_title: &'static str,
     /// Body of that note: two tabs pointed at the same agent conversation;
-    pub dup_note_text: &'static str,
+    pub(crate) dup_note_text: &'static str,
     /// Generated name of a tab group nobody has named;
-    pub bar_unnamed_group: &'static str,
+    pub(crate) bar_unnamed_group: &'static str,
     /// Generated name of an unnamed project;
-    pub bar_unnamed_project: &'static str,
+    pub(crate) bar_unnamed_project: &'static str,
     /// Fallback label for a project branch whose record is missing.
-    pub bar_project_fallback: &'static str,
+    pub(crate) bar_project_fallback: &'static str,
     /// Name of the bucket holding tabs not filed under any project.
-    pub bar_unfiled: &'static str,
+    pub(crate) bar_unfiled: &'static str,
     /// Fallback label for an unnamed tab when it is closed into the trash;
-    pub tab_unnamed_trash: &'static str,
+    pub(crate) tab_unnamed_trash: &'static str,
     /// Fallback label for a closed pane whose tab is unnamed;
-    pub pane_unnamed_trash: &'static str,
+    pub(crate) pane_unnamed_trash: &'static str,
     /// Fallback tab name in an 'agent finished' notification when the tab is unnamed;
-    pub notif_tab_fallback: &'static str,
+    pub(crate) notif_tab_fallback: &'static str,
     /// Brief message after ctrl+shift+z reopened a pane into its original split position.
-    pub bay_landed_seat: &'static str,
+    pub(crate) bay_landed_seat: &'static str,
     /// Reopened pane went back into its old tab, but as a new split because the old spot is gone.
-    pub bay_landed_tab: &'static str,
+    pub(crate) bay_landed_tab: &'static str,
     /// Reopened pane's tab no longer existed, so it came back as a new tab.
-    pub bay_landed_newtab: &'static str,
+    pub(crate) bay_landed_newtab: &'static str,
     /// Shown once, the first time something is closed: it is being held and the shortcut reopens it.
-    pub bay_held: &'static str,
+    pub(crate) bay_held: &'static str,
     /// Shown when the reopen shortcut is pressed but the trash is empty.
-    pub bay_empty: &'static str,
+    pub(crate) bay_empty: &'static str,
     /// Error: the app cannot find a program that collects AI-subscription usage data.
-    pub use_no_collector: &'static str,
+    pub(crate) use_no_collector: &'static str,
     /// Empty state: no usage records yet;
-    pub use_no_records: &'static str,
+    pub(crate) use_no_records: &'static str,
     /// Explains where usage data comes from when there is none.
-    pub use_explain_records: &'static str,
+    pub(crate) use_explain_records: &'static str,
     /// Lists the directories searched for usage records;
-    pub use_looked_in: &'static str,
+    pub(crate) use_looked_in: &'static str,
     /// Time until a usage limit resets;
-    pub use_resets_in: &'static str,
+    pub(crate) use_resets_in: &'static str,
     /// Beside a remaining-money amount when the figure is an estimate.
-    pub use_left_estimated: &'static str,
+    pub(crate) use_left_estimated: &'static str,
     /// Beside a remaining-money amount ('$12.40 left').
-    pub use_left: &'static str,
+    pub(crate) use_left: &'static str,
     /// Money spent vs money funded on a prepaid plan;
-    pub use_spent_of_funded: &'static str,
+    pub(crate) use_spent_of_funded: &'static str,
     /// Today's totals.
-    pub use_today_full: &'static str,
+    pub(crate) use_today_full: &'static str,
     /// Today's token total when only tokens are known.
-    pub use_today_tokens: &'static str,
+    pub(crate) use_today_tokens: &'static str,
     /// Section header.
-    pub use_hdr_today: &'static str,
+    pub(crate) use_hdr_today: &'static str,
     /// Section header.
-    pub use_hdr_last7: &'static str,
+    pub(crate) use_hdr_last7: &'static str,
     /// Section header: tokens broken down by AI model.
-    pub use_hdr_by_model: &'static str,
+    pub(crate) use_hdr_by_model: &'static str,
     /// Token breakdown: input, output, cache read, cache write.
-    pub use_token_split: &'static str,
+    pub(crate) use_token_split: &'static str,
     /// When the data was collected;
-    pub use_collected_ago: &'static str,
+    pub(crate) use_collected_ago: &'static str,
     /// Lifetime totals.
-    pub use_totals: &'static str,
+    pub(crate) use_totals: &'static str,
     /// Refresh button while it is running.
-    pub use_collecting: &'static str,
+    pub(crate) use_collecting: &'static str,
     /// Button that re-collects usage data.
-    pub use_refresh: &'static str,
+    pub(crate) use_refresh: &'static str,
     /// Collapsible section header for default harness/model/effort used to launch agents.
-    pub lcfg_hdr: &'static str,
+    pub(crate) lcfg_hdr: &'static str,
     /// CONFIG menu entry for the Agents page.
-    pub cfg_agents: &'static str,
+    pub(crate) cfg_agents: &'static str,
     /// Agents page title.
-    pub ag_hdr: &'static str,
+    pub(crate) ag_hdr: &'static str,
     /// Agents page subtitle.
-    pub ag_blurb: &'static str,
+    pub(crate) ag_blurb: &'static str,
     /// Section header: rest and sleep for idle agents.
-    pub ag_rest_hdr: &'static str,
+    pub(crate) ag_rest_hdr: &'static str,
     /// Switch: rest idle agents.
-    pub ag_rest_name: &'static str,
+    pub(crate) ag_rest_name: &'static str,
     /// What resting does.
-    pub ag_rest_blurb: &'static str,
+    pub(crate) ag_rest_blurb: &'static str,
     /// Slider label: minutes untouched before an agent rests.
-    pub ag_rest_after: &'static str,
+    pub(crate) ag_rest_after: &'static str,
     /// Switch: let resting agents fall asleep.
-    pub ag_sleep_name: &'static str,
+    pub(crate) ag_sleep_name: &'static str,
     /// What sleeping does.
-    pub ag_sleep_blurb: &'static str,
+    pub(crate) ag_sleep_blurb: &'static str,
     /// Slider label: minutes of rest before an agent sleeps.
-    pub ag_sleep_after: &'static str,
+    pub(crate) ag_sleep_after: &'static str,
     /// Live readout; {resting} {asleep} are counts, {back} {held} are sizes like 1.2 GB.
-    pub ag_now: &'static str,
+    pub(crate) ag_now: &'static str,
     /// Readout: panes whose memory could not be read; {n} is a count.
-    pub ag_unmeasured: &'static str,
+    pub(crate) ag_unmeasured: &'static str,
     // Agent counter hover: cached memory and comparison coverage.
-    pub am_title: &'static str,
-    pub am_awake: &'static str,
-    pub am_ram: &'static str,
-    pub am_swap: &'static str,
-    pub am_decrease: &'static str,
-    pub am_coverage: &'static str,
-    pub am_updated: &'static str,
-    pub am_waiting: &'static str,
-    pub am_scope: &'static str,
+    pub(crate) am_title: &'static str,
+    pub(crate) am_awake: &'static str,
+    pub(crate) am_ram: &'static str,
+    pub(crate) am_swap: &'static str,
+    pub(crate) am_decrease: &'static str,
+    pub(crate) am_coverage: &'static str,
+    pub(crate) am_updated: &'static str,
+    pub(crate) am_waiting: &'static str,
+    pub(crate) am_scope: &'static str,
     /// Readout lead-in before refusal counts.
-    pub ag_not_resting: &'static str,
+    pub(crate) ag_not_resting: &'static str,
     /// Refusal: the agent is working, asking or using CPU.
-    pub ag_why_busy: &'static str,
+    pub(crate) ag_why_busy: &'static str,
     /// Refusal: touched or looked at recently.
-    pub ag_why_touched: &'static str,
+    pub(crate) ag_why_touched: &'static str,
     /// Refusal: a command or a server is running under the agent.
-    pub ag_why_running: &'static str,
+    pub(crate) ag_why_running: &'static str,
     /// Refusal: pinned awake by the person.
-    pub ag_why_kept: &'static str,
+    pub(crate) ag_why_kept: &'static str,
     /// Refusal: a fact could not be read, so it was left alone.
-    pub ag_why_unknown: &'static str,
+    pub(crate) ag_why_unknown: &'static str,
     /// Refusal: rest is switched off.
-    pub ag_why_off: &'static str,
+    pub(crate) ag_why_off: &'static str,
     /// Section header: the other agent settings.
-    pub ag_more_hdr: &'static str,
+    pub(crate) ag_more_hdr: &'static str,
     /// Button: open the agent-finished notification settings.
-    pub ag_notices: &'static str,
+    pub(crate) ag_notices: &'static str,
     /// Label before the Threshing Floor / MCP switches.
-    pub ag_mcp: &'static str,
+    pub(crate) ag_mcp: &'static str,
     /// Label before the agent-colour toggle.
-    pub ag_tint: &'static str,
+    pub(crate) ag_tint: &'static str,
     /// A file-only setting, shown with its path; {path} is a file path.
-    pub ag_local: &'static str,
+    pub(crate) ag_local: &'static str,
     /// Minutes unit after a number, e.g. '10 min'.
-    pub ag_unit_min: &'static str,
+    pub(crate) ag_unit_min: &'static str,
     /// Hours unit after a number, e.g. '2 h'.
-    pub ag_unit_h: &'static str,
+    pub(crate) ag_unit_h: &'static str,
     /// Row label: which agent program (claude/codex/local) to launch.
-    pub lcfg_harness: &'static str,
+    pub(crate) lcfg_harness: &'static str,
     /// Row label: AI model.
-    pub lcfg_model: &'static str,
+    pub(crate) lcfg_model: &'static str,
     /// Row label: reasoning effort level.
-    pub lcfg_effort: &'static str,
+    pub(crate) lcfg_effort: &'static str,
     /// Tag at the end of a row when the user has saved a default.
-    pub lcfg_chosen: &'static str,
+    pub(crate) lcfg_chosen: &'static str,
     /// Tag when no default is saved for that row.
-    pub lcfg_unset: &'static str,
+    pub(crate) lcfg_unset: &'static str,
     /// Shown instead of model/effort rows when the local harness is selected.
-    pub lcfg_local_note: &'static str,
+    pub(crate) lcfg_local_note: &'static str,
     /// Subtitle beside the lean-ctx logo.
-    pub sav_token_savings: &'static str,
+    pub(crate) sav_token_savings: &'static str,
     /// Wordmark word 1 of the usage face header (Σ Subscription usage).
-    pub sav_subscription: &'static str,
+    pub(crate) sav_subscription: &'static str,
     /// Wordmark word 2.
-    pub sav_usage_word: &'static str,
+    pub(crate) sav_usage_word: &'static str,
     /// Subtitle under the usage wordmark.
-    pub sav_usage_sub: &'static str,
+    pub(crate) sav_usage_sub: &'static str,
     /// Toggle chip stating current mode: left-bar allowance bars show what remains.
-    pub sav_bar_left: &'static str,
+    pub(crate) sav_bar_left: &'static str,
     /// Same chip, other mode: bars show what is used.
-    pub sav_bar_spent: &'static str,
+    pub(crate) sav_bar_spent: &'static str,
     /// Tooltip line 1: what the chip controls.
-    pub sav_tip_rails: &'static str,
+    pub(crate) sav_tip_rails: &'static str,
     /// Tooltip line 2.
-    pub sav_tip_length: &'static str,
+    pub(crate) sav_tip_length: &'static str,
     /// Tooltip line 3.
-    pub sav_tip_colour: &'static str,
+    pub(crate) sav_tip_colour: &'static str,
     /// Tab chip switching to the token-savings face.
-    pub sav_tab_savings: &'static str,
+    pub(crate) sav_tab_savings: &'static str,
     /// Tab chip switching to the subscription-usage face.
-    pub sav_tab_usage: &'static str,
+    pub(crate) sav_tab_usage: &'static str,
     /// Caption under big number.
-    pub sav_stat_tokens: &'static str,
+    pub(crate) sav_stat_tokens: &'static str,
     /// Caption under a percentage.
-    pub sav_stat_compression: &'static str,
+    pub(crate) sav_stat_compression: &'static str,
     /// Caption under a dollar amount.
-    pub sav_stat_usd: &'static str,
+    pub(crate) sav_stat_usd: &'static str,
     /// Intro to the per-agent list.
-    pub sav_across_agents: &'static str,
+    pub(crate) sav_across_agents: &'static str,
     /// Tool calls made by that agent.
-    pub sav_calls: &'static str,
+    pub(crate) sav_calls: &'static str,
     /// Header over list of files with best compression.
-    pub sav_top_files: &'static str,
+    pub(crate) sav_top_files: &'static str,
     /// Empty state: plugin not asked yet;
-    pub sav_no_rollup: &'static str,
+    pub(crate) sav_no_rollup: &'static str,
     /// Keyboard/mouse hint at the bottom of the card.
-    pub sav_footer: &'static str,
+    pub(crate) sav_footer: &'static str,
     /// Harvest failed because the context-delight plugin isn't installed.
-    pub plg_cdx_missing: &'static str,
+    pub(crate) plg_cdx_missing: &'static str,
     /// Could not create the output directory;
-    pub plg_cannot_create: &'static str,
+    pub(crate) plg_cannot_create: &'static str,
     /// Harvest error;
-    pub plg_harvest_failed: &'static str,
+    pub(crate) plg_harvest_failed: &'static str,
     /// Savings unavailable because plugin isn't installed.
-    pub plg_leanctx_missing: &'static str,
+    pub(crate) plg_leanctx_missing: &'static str,
     /// Error fetching savings.
-    pub plg_savings_failed: &'static str,
+    pub(crate) plg_savings_failed: &'static str,
     /// Refusal: the 'send notes to agent' button found no agent pane next to the document;
-    pub doc_no_agent_beside: &'static str,
+    pub(crate) doc_no_agent_beside: &'static str,
     /// Suffix: one note edit couldn't be saved into the file.
-    pub doc_unsaved: Plural,
+    pub(crate) doc_unsaved: Plural,
     /// Confirmation after notes are pasted (not sent) into an agent's prompt;
-    pub doc_landed_in: &'static str,
+    pub(crate) doc_landed_in: &'static str,
     /// Left-bar background menu: create a project.
-    pub bar_m_new_project: &'static str,
+    pub(crate) bar_m_new_project: &'static str,
     /// Left-bar background menu: create a tab group.
-    pub bar_m_new_group: &'static str,
+    pub(crate) bar_m_new_group: &'static str,
     /// Menu row: file unfiled tabs into projects matching their working directory.
-    pub bar_m_adopt_loose: &'static str,
+    pub(crate) bar_m_adopt_loose: &'static str,
     /// Disabled row when the trash holds nothing.
-    pub bar_m_nothing_recover: &'static str,
+    pub(crate) bar_m_nothing_recover: &'static str,
     /// Danger row: permanently discard everything held in the trash.
-    pub bar_m_empty_trash: &'static str,
+    pub(crate) bar_m_empty_trash: &'static str,
     /// Project/group menu: new tab inside this branch.
-    pub bar_m_new_tab_here: &'static str,
+    pub(crate) bar_m_new_tab_here: &'static str,
     /// Project menu: new group inside this project.
-    pub bar_m_new_group_here: &'static str,
+    pub(crate) bar_m_new_group_here: &'static str,
     /// Rename this project/group/tab (same text at 11740, 11801).
-    pub bar_m_rename: &'static str,
+    pub(crate) bar_m_rename: &'static str,
     /// Collapse every branch under this project.
-    pub bar_m_fold_beneath: &'static str,
+    pub(crate) bar_m_fold_beneath: &'static str,
     /// Open the colour chooser for this group.
-    pub bar_m_colour: &'static str,
+    pub(crate) bar_m_colour: &'static str,
     /// Tab menu: new tab next to this one.
-    pub bar_m_new_tab_beside: &'static str,
+    pub(crate) bar_m_new_tab_beside: &'static str,
     /// Tab menu: take the tab out of its group.
-    pub bar_m_remove_from_group: &'static str,
+    pub(crate) bar_m_remove_from_group: &'static str,
     /// Danger row: close this tab (single pane).
-    pub bar_m_close: &'static str,
+    pub(crate) bar_m_close: &'static str,
     /// Recover row plus time remaining before it is gone;
-    pub bar_m_recover_left: &'static str,
+    pub(crate) bar_m_recover_left: &'static str,
     /// Danger row: close a tab that has n (>1) panes.
-    pub bar_m_close_panes: &'static str,
+    pub(crate) bar_m_close_panes: &'static str,
     /// Danger row: delete this branch (nothing inside).
-    pub bar_m_delete: &'static str,
+    pub(crate) bar_m_delete: &'static str,
     /// Danger row listing what will be deleted, e.g.
-    pub bar_m_delete_with: &'static str,
+    pub(crate) bar_m_delete_with: &'static str,
     /// Count of groups.
-    pub bar_count_group: Plural,
+    pub(crate) bar_count_group: Plural,
     /// Count of tabs.
-    pub bar_count_tab: Plural,
+    pub(crate) bar_count_tab: Plural,
     /// Count of panes.
-    pub bar_count_pane: Plural,
+    pub(crate) bar_count_pane: Plural,
     /// Title when searching all panes.
-    pub find_hdr_all: &'static str,
+    pub(crate) find_hdr_all: &'static str,
     /// Title when searching one pane.
-    pub find_hdr_pane: &'static str,
+    pub(crate) find_hdr_pane: &'static str,
     /// Placeholder in empty search box.
-    pub find_placeholder: &'static str,
+    pub(crate) find_placeholder: &'static str,
     /// Hit count, n=1.
-    pub find_match: Plural,
+    pub(crate) find_match: Plural,
     /// Empty state before a query.
-    pub find_empty_prompt: &'static str,
+    pub(crate) find_empty_prompt: &'static str,
     /// Empty result.
-    pub find_no_matches: &'static str,
+    pub(crate) find_no_matches: &'static str,
     /// Key legend.
-    pub find_footer: &'static str,
+    pub(crate) find_footer: &'static str,
     /// Detail on a sticky-note row when the note is pinned.
-    pub lk_pinned: &'static str,
+    pub(crate) lk_pinned: &'static str,
     /// Placeholder in the empty lookup box.
-    pub lk_placeholder: &'static str,
+    pub(crate) lk_placeholder: &'static str,
     /// Panel title.
-    pub lk_hdr: &'static str,
+    pub(crate) lk_hdr: &'static str,
     /// Hit count.
-    pub lk_match: Plural,
+    pub(crate) lk_match: Plural,
     /// Tiny tag on the row you are currently in (8px).
-    pub lk_here: &'static str,
+    pub(crate) lk_here: &'static str,
     /// Empty result.
-    pub lk_no_match: &'static str,
+    pub(crate) lk_no_match: &'static str,
     /// Key legend.
-    pub lk_footer: &'static str,
+    pub(crate) lk_footer: &'static str,
     /// Empty state with install instructions.
-    pub plg_none_found: &'static str,
+    pub(crate) plg_none_found: &'static str,
     /// Panel title.
-    pub plg_hdr: &'static str,
+    pub(crate) plg_hdr: &'static str,
     /// Count of installed plugins.
-    pub plg_installed: &'static str,
+    pub(crate) plg_installed: &'static str,
     /// Explainer under the title.
-    pub plg_blurb: &'static str,
+    pub(crate) plg_blurb: &'static str,
     /// Panel title.
-    pub ntf_hdr: &'static str,
+    pub(crate) ntf_hdr: &'static str,
     /// Explainer under title.
-    pub ntf_blurb: &'static str,
+    pub(crate) ntf_blurb: &'static str,
     /// Switch row name: desktop pop-up notifications.
-    pub ntf_system_name: &'static str,
+    pub(crate) ntf_system_name: &'static str,
     /// Description of that switch.
-    pub ntf_system_blurb: &'static str,
+    pub(crate) ntf_system_blurb: &'static str,
     /// Switch row name: a banner with chasing light bulbs at the top of the window.
-    pub ntf_marquee_name: &'static str,
+    pub(crate) ntf_marquee_name: &'static str,
     /// Description of the marquee switch.
-    pub ntf_marquee_blurb: &'static str,
+    pub(crate) ntf_marquee_blurb: &'static str,
     /// Demo text shown in the marquee banner the moment the switch is turned on.
-    pub ntf_marquee_test: &'static str,
+    pub(crate) ntf_marquee_test: &'static str,
     /// Footnote explaining behaviour when both switches are off.
-    pub ntf_both_off: &'static str,
+    pub(crate) ntf_both_off: &'static str,
     /// Bug-report panel title.
-    pub bug_hdr: &'static str,
+    pub(crate) bug_hdr: &'static str,
     /// The privacy promise under the title: no terminal content, one click per step.
-    pub bug_blurb: &'static str,
+    pub(crate) bug_blurb: &'static str,
     /// Shown when TD recorded a crash since the last prepared report.
-    pub bug_crashed: &'static str,
+    pub(crate) bug_crashed: &'static str,
     /// Step 1 row name: write the report locally.
-    pub bug_prepare_name: &'static str,
+    pub(crate) bug_prepare_name: &'static str,
     /// What step 1 writes, and that nothing is sent.
-    pub bug_prepare_blurb: &'static str,
+    pub(crate) bug_prepare_blurb: &'static str,
     /// Label before the path of the report just written.
-    pub bug_prepared: &'static str,
+    pub(crate) bug_prepared: &'static str,
     /// Step 2 row name; `{agent}` is the agent program's name.
-    pub bug_agent_name: &'static str,
+    pub(crate) bug_agent_name: &'static str,
     /// What step 2 sends and to whom; `{agent}` is the agent program's name.
-    pub bug_agent_blurb: &'static str,
+    pub(crate) bug_agent_blurb: &'static str,
     /// Step 2 is waiting for step 1.
-    pub bug_agent_first: &'static str,
+    pub(crate) bug_agent_first: &'static str,
     /// No agent program TD can start was found.
-    pub bug_agent_none: &'static str,
+    pub(crate) bug_agent_none: &'static str,
     /// Step 3 row name: file by hand on GitHub.
-    pub bug_github_name: &'static str,
+    pub(crate) bug_github_name: &'static str,
     /// What step 3 opens.
-    pub bug_github_blurb: &'static str,
+    pub(crate) bug_github_blurb: &'static str,
     /// Label before the error when the report could not be written.
-    pub bug_failed: &'static str,
+    pub(crate) bug_failed: &'static str,
     /// Placeholder in the search box.
-    pub lng_placeholder: &'static str,
+    pub(crate) lng_placeholder: &'static str,
     /// Panel title.
-    pub lng_hdr: &'static str,
+    pub(crate) lng_hdr: &'static str,
     /// Empty result.
-    pub lng_no_match: &'static str,
+    pub(crate) lng_no_match: &'static str,
     /// Key legend.
-    pub lng_footer: &'static str,
+    pub(crate) lng_footer: &'static str,
     /// Panel title.
-    pub la_hdr: &'static str,
+    pub(crate) la_hdr: &'static str,
     /// Subtitle: the launched agent runs in a host-owned terminal.
-    pub la_sub: &'static str,
+    pub(crate) la_sub: &'static str,
     /// Section header: choose a project directory.
-    pub la_project: &'static str,
+    pub(crate) la_project: &'static str,
     /// Project filter found nothing;
-    pub la_no_match: &'static str,
+    pub(crate) la_no_match: &'static str,
     /// Section header: agent program (claude/codex/local).
-    pub la_harness: &'static str,
+    pub(crate) la_harness: &'static str,
     /// Section header.
-    pub la_model: &'static str,
+    pub(crate) la_model: &'static str,
     /// Section header: reasoning effort.
-    pub la_effort: &'static str,
+    pub(crate) la_effort: &'static str,
     /// Section header: permission level/scope the agent gets.
-    pub la_reach: &'static str,
+    pub(crate) la_reach: &'static str,
     /// Shown when local harness chosen.
-    pub la_local_note: &'static str,
+    pub(crate) la_local_note: &'static str,
     /// Key legend;
-    pub la_footer: &'static str,
+    pub(crate) la_footer: &'static str,
     /// What Enter does: start the agent in the current pane.
-    pub la_land_here: &'static str,
+    pub(crate) la_land_here: &'static str,
     /// What Enter does: open a new tab for the agent.
-    pub la_land_newtab: &'static str,
+    pub(crate) la_land_newtab: &'static str,
     /// Panel title.
-    pub logo_hdr: &'static str,
+    pub(crate) logo_hdr: &'static str,
     /// Field label: file name filter.
-    pub logo_fld_name: &'static str,
+    pub(crate) logo_fld_name: &'static str,
     /// Placeholder for NAME field.
-    pub logo_fld_name_ph: &'static str,
+    pub(crate) logo_fld_name_ph: &'static str,
     /// Field label: folder to search in.
-    pub logo_fld_in: &'static str,
+    pub(crate) logo_fld_in: &'static str,
     /// Placeholder for IN field.
-    pub logo_fld_in_ph: &'static str,
+    pub(crate) logo_fld_in_ph: &'static str,
     /// Search waits until 3 characters typed or a folder set.
-    pub logo_gated_now: &'static str,
+    pub(crate) logo_gated_now: &'static str,
     /// Tab key moves between fields.
-    pub logo_hint_tab: &'static str,
+    pub(crate) logo_hint_tab: &'static str,
     /// Enter sets the logo for this directory and its subdirectories, saved.
-    pub logo_sets_dir_default: &'static str,
+    pub(crate) logo_sets_dir_default: &'static str,
     /// Enter sets this pane's logo only.
-    pub logo_sets_pane: &'static str,
+    pub(crate) logo_sets_pane: &'static str,
     /// Row that removes a directory's default logo.
-    pub logo_remove_dir: &'static str,
+    pub(crate) logo_remove_dir: &'static str,
     /// Row that removes this pane's logo.
-    pub logo_remove: &'static str,
+    pub(crate) logo_remove: &'static str,
     /// Empty state: no images found at all.
-    pub logo_none_found: &'static str,
+    pub(crate) logo_none_found: &'static str,
     /// Empty state while gated.
-    pub logo_gated: &'static str,
+    pub(crate) logo_gated: &'static str,
     /// Empty result.
-    pub logo_no_match: &'static str,
+    pub(crate) logo_no_match: &'static str,
     /// Key legend.
-    pub logo_footer: &'static str,
+    pub(crate) logo_footer: &'static str,
     /// Header naming the open file;
-    pub focus_hdr: &'static str,
+    pub(crate) focus_hdr: &'static str,
     /// Close hint.
-    pub focus_esc: &'static str,
+    pub(crate) focus_esc: &'static str,
     /// Toggle: the reader adopts its pane's theme and curvature.
-    pub focus_inherit_btn: &'static str,
+    pub(crate) focus_inherit_btn: &'static str,
     /// Toggle state: pane content anchored to the top edge.
-    pub pal_anchor_top: &'static str,
+    pub(crate) pal_anchor_top: &'static str,
     /// Toggle state: content anchored to the bottom (default).
-    pub pal_anchor_bottom: &'static str,
+    pub(crate) pal_anchor_bottom: &'static str,
     /// Toggle state: panes following outer wear per-program colour presets.
-    pub pal_term_presets: &'static str,
+    pub(crate) pal_term_presets: &'static str,
     /// Toggle state: panes wear the window theme.
-    pub pal_term_follows: &'static str,
+    pub(crate) pal_term_follows: &'static str,
     /// Single-letter marker on the wheel for the TEXT colour.
-    pub wheel_marker_text: &'static str,
+    pub(crate) wheel_marker_text: &'static str,
     /// Single-letter marker for the COMPLEMENT colour.
-    pub wheel_marker_complement: &'static str,
+    pub(crate) wheel_marker_complement: &'static str,
     /// Under the fire/bin icons while a dragged tree row hovers over the open trash bay;
-    pub bay_release_to_delete: &'static str,
+    pub(crate) bay_release_to_delete: &'static str,
     /// Under the fire/bin icons while a tree row is being dragged but is not yet over the bay.
-    pub bay_drop_here_to_delete: &'static str,
+    pub(crate) bay_drop_here_to_delete: &'static str,
     /// Count drawn on the shut bay doors: how many deleted things can still be brought back.
-    pub bay_recoverable_count: &'static str,
+    pub(crate) bay_recoverable_count: &'static str,
     /// Name used for a usage window (e.g.
-    pub slot_window_fallback: &'static str,
+    pub(crate) slot_window_fallback: &'static str,
     /// Hover-card line for one usage window of an AI subscription when no usage number is known.
-    pub slot_no_reading: &'static str,
+    pub(crate) slot_no_reading: &'static str,
     /// Hover-card line: share of a usage window already spent, with how old that reading is ({age} is a short duration like '3m' from slot.rs).
-    pub slot_spent_stale: &'static str,
+    pub(crate) slot_spent_stale: &'static str,
     /// Hover-card line: share of a usage window already spent, fresh reading.
-    pub slot_spent: &'static str,
+    pub(crate) slot_spent: &'static str,
     /// Menu row on a project/group: raise this branch's attention priority.
-    pub bar_menu_promote: &'static str,
+    pub(crate) bar_menu_promote: &'static str,
     /// Menu row on a project/group: lower this branch's attention priority.
-    pub bar_menu_demote: &'static str,
+    pub(crate) bar_menu_demote: &'static str,
     /// Header of the attention queue: number of agents waiting on the person.
-    pub rail_hdr_needs_me: &'static str,
+    pub(crate) rail_hdr_needs_me: &'static str,
     /// Keyboard legend in the queue header: arrow keys move between rows.
-    pub rail_key_go: &'static str,
+    pub(crate) rail_key_go: &'static str,
     /// Keyboard legend: Enter jumps to the agent's pane.
-    pub rail_key_pane: &'static str,
+    pub(crate) rail_key_pane: &'static str,
     /// Keyboard legend: the 'o' key opens the row's deliverable.
-    pub rail_key_open: &'static str,
+    pub(crate) rail_key_open: &'static str,
     /// Keyboard legend: the 'b' key opens the deliverable in a pane beside.
-    pub rail_key_beside: &'static str,
+    pub(crate) rail_key_beside: &'static str,
     /// Keyboard legend/clickable: 'p' docks (pins) the queue open beside the panes.
-    pub rail_key_pin: &'static str,
+    pub(crate) rail_key_pin: &'static str,
     /// Same control when already pinned: 'p' undocks the queue.
-    pub rail_key_unpin: &'static str,
+    pub(crate) rail_key_unpin: &'static str,
     /// Empty state of the attention queue.
-    pub rail_empty: &'static str,
+    pub(crate) rail_empty: &'static str,
     /// Small chip on a queue row's deliverable: open the document in a pane beside the agent's pane.
-    pub rail_beside_chip: &'static str,
+    pub(crate) rail_beside_chip: &'static str,
     /// Answer button on an agent's permission ask (allow).
-    pub rail_btn_yes: &'static str,
+    pub(crate) rail_btn_yes: &'static str,
     /// Answer button on an agent's permission ask (refuse).
-    pub rail_btn_no: &'static str,
+    pub(crate) rail_btn_no: &'static str,
     /// Footer under the queue: one agent pane's state could not be classified.
-    pub rail_unreadable: Plural,
+    pub(crate) rail_unreadable: Plural,
     /// Header of the outer paint card;
-    pub paint_outer_hdr: &'static str,
+    pub(crate) paint_outer_hdr: &'static str,
     /// Legend fragment: Down arrow moves the paint aim to the panes.
-    pub paint_outer_legend_panes: &'static str,
+    pub(crate) paint_outer_legend_panes: &'static str,
     /// Legend fragment: the 'd' key resets the outer to its default look.
-    pub paint_outer_legend_default: &'static str,
+    pub(crate) paint_outer_legend_default: &'static str,
     /// Legend when the outer card is folded (a pane is being painted): Up arrow or a click aims painting at the outer.
-    pub paint_outer_legend_unaimed: &'static str,
+    pub(crate) paint_outer_legend_unaimed: &'static str,
     /// Clickable line in the hover card of the 'custom' theme: opens the live theme TOML in the desktop editor.
-    pub theme_tip_open_editor: &'static str,
+    pub(crate) theme_tip_open_editor: &'static str,
     /// Second line of a palette hover card when its colours cannot be loaded;
-    pub pal_tip_unavailable: &'static str,
+    pub(crate) pal_tip_unavailable: &'static str,
     /// Hover help on a DESIGN (screen theme) button in the STYLE column, describing the CRT look it applies.
-    pub pal_help_theme_clean: &'static str,
+    pub(crate) pal_help_theme_clean: &'static str,
     /// Hover help on a DESIGN (screen theme) button in the STYLE column, describing the CRT look it applies.
-    pub pal_help_theme_intrusive: &'static str,
+    pub(crate) pal_help_theme_intrusive: &'static str,
     /// Hover help on a DESIGN (screen theme) button in the STYLE column, describing the CRT look it applies.
-    pub pal_help_theme_deco: &'static str,
+    pub(crate) pal_help_theme_deco: &'static str,
     /// Hover help on a DESIGN (screen theme) button in the STYLE column, describing the CRT look it applies.
-    pub pal_help_theme_hacker: &'static str,
+    pub(crate) pal_help_theme_hacker: &'static str,
     /// Hover help on a DESIGN (screen theme) button in the STYLE column, describing the CRT look it applies.
-    pub pal_help_theme_custom: &'static str,
+    pub(crate) pal_help_theme_custom: &'static str,
     /// Caption under the 'deco' design button.
-    pub pal_thm_deco: &'static str,
+    pub(crate) pal_thm_deco: &'static str,
     /// Caption under a chrome-skin button;
-    pub pal_skin_default: &'static str,
+    pub(crate) pal_skin_default: &'static str,
     /// Caption under a chrome-skin button;
-    pub pal_skin_deco: &'static str,
+    pub(crate) pal_skin_deco: &'static str,
     /// Caption under a chrome-skin button;
     /// Caption under the chalk skin button (paper and chalk strokes).
-    pub pal_skin_chalk: &'static str,
-    pub pal_skin_ops: &'static str,
-    pub pal_skin_clean: &'static str,
+    pub(crate) pal_skin_chalk: &'static str,
+    pub(crate) pal_skin_ops: &'static str,
+    pub(crate) pal_skin_clean: &'static str,
     /// Caption under a chrome-skin button;
-    pub pal_skin_custom: &'static str,
+    pub(crate) pal_skin_custom: &'static str,
     /// Hover help on a SKIN (control styling) button.
-    pub pal_help_skin_default: &'static str,
+    pub(crate) pal_help_skin_default: &'static str,
     /// Hover help on a SKIN (control styling) button.
-    pub pal_help_skin_deco: &'static str,
+    pub(crate) pal_help_skin_deco: &'static str,
     /// Hover help on a SKIN (control styling) button.
     /// Hover help on the chalk SKIN button.
-    pub pal_help_skin_chalk: &'static str,
-    pub pal_help_skin_ops: &'static str,
-    pub pal_help_skin_clean: &'static str,
-    pub cfg_config: &'static str,
-    pub cfg_surfaces: &'static str,
-    pub cfg_sliders: &'static str,
-    pub cfg_scale: &'static str,
-    pub cfg_allowance: &'static str,
+    pub(crate) pal_help_skin_chalk: &'static str,
+    pub(crate) pal_help_skin_ops: &'static str,
+    pub(crate) pal_help_skin_clean: &'static str,
+    pub(crate) cfg_config: &'static str,
+    pub(crate) cfg_surfaces: &'static str,
+    pub(crate) cfg_sliders: &'static str,
+    pub(crate) cfg_scale: &'static str,
+    pub(crate) cfg_allowance: &'static str,
     /// The 📜 glyph's name: its row in CONFIG and the artifact rail's title.
-    pub cfg_artifacts: &'static str,
+    pub(crate) cfg_artifacts: &'static str,
     /// The artifact rail with no card on it.
-    pub art_empty: &'static str,
-    pub art_archive: &'static str,
+    pub(crate) art_empty: &'static str,
+    pub(crate) art_archive: &'static str,
     /// After a count, on a card: how many older handovers its agent made.
-    pub art_earlier: &'static str,
-    pub cfg_ui: &'static str,
-    pub cfg_surface: &'static str,
-    pub cfg_close: &'static str,
-    pub ui_hdr: &'static str,
-    pub ui_panes: &'static str,
-    pub ui_set_design: &'static str,
-    pub ui_yours: &'static str,
-    pub ui_menu_glyphs: &'static str,
-    pub ui_app_mark: &'static str,
-    pub ui_git_notice: &'static str,
-    pub ui_agent_counter: &'static str,
-    pub ui_left_bar: &'static str,
-    pub ui_bar_header: &'static str,
-    pub ui_allowance: &'static str,
-    pub ui_spine: &'static str,
-    pub ui_splits: &'static str,
-    pub ui_counts: &'static str,
-    pub ui_scale: &'static str,
-    pub ui_option_rows: &'static str,
-    pub ui_logo: &'static str,
-    pub ui_mode: &'static str,
-    pub ui_face: &'static str,
-    pub ui_handover: &'static str,
-    pub ui_surface: &'static str,
-    pub ui_sliders: &'static str,
-    pub ui_close: &'static str,
-    pub ui_notes: &'static str,
-    pub ui_new_windows: &'static str,
-    pub ui_use_this: &'static str,
-    pub ui_saved: &'static str,
-    pub look_reset_to: &'static str,
-    pub look_undo: &'static str,
-    pub look_pin: &'static str,
-    pub look_unpin: &'static str,
-    pub look_dial_reset: &'static str,
+    pub(crate) art_earlier: &'static str,
+    pub(crate) cfg_ui: &'static str,
+    pub(crate) cfg_surface: &'static str,
+    pub(crate) cfg_close: &'static str,
+    pub(crate) ui_hdr: &'static str,
+    pub(crate) ui_panes: &'static str,
+    pub(crate) ui_set_design: &'static str,
+    pub(crate) ui_yours: &'static str,
+    pub(crate) ui_menu_glyphs: &'static str,
+    pub(crate) ui_app_mark: &'static str,
+    pub(crate) ui_git_notice: &'static str,
+    pub(crate) ui_agent_counter: &'static str,
+    pub(crate) ui_left_bar: &'static str,
+    pub(crate) ui_bar_header: &'static str,
+    pub(crate) ui_allowance: &'static str,
+    pub(crate) ui_spine: &'static str,
+    pub(crate) ui_splits: &'static str,
+    pub(crate) ui_counts: &'static str,
+    pub(crate) ui_scale: &'static str,
+    pub(crate) ui_option_rows: &'static str,
+    pub(crate) ui_logo: &'static str,
+    pub(crate) ui_mode: &'static str,
+    pub(crate) ui_face: &'static str,
+    pub(crate) ui_handover: &'static str,
+    pub(crate) ui_surface: &'static str,
+    pub(crate) ui_sliders: &'static str,
+    pub(crate) ui_close: &'static str,
+    pub(crate) ui_notes: &'static str,
+    pub(crate) ui_new_windows: &'static str,
+    pub(crate) ui_use_this: &'static str,
+    pub(crate) ui_saved: &'static str,
+    pub(crate) look_reset_to: &'static str,
+    pub(crate) look_undo: &'static str,
+    pub(crate) look_pin: &'static str,
+    pub(crate) look_unpin: &'static str,
+    pub(crate) look_dial_reset: &'static str,
     /// Hover help on a SKIN (control styling) button.
-    pub pal_help_skin_custom: &'static str,
+    pub(crate) pal_help_skin_custom: &'static str,
     /// Hover help on a STICKY NOTE paper-colour button (THEME column).
-    pub pal_help_note_contrast: &'static str,
+    pub(crate) pal_help_note_contrast: &'static str,
     /// Hover help on a STICKY NOTE paper-colour button (THEME column).
-    pub pal_help_note_accent: &'static str,
+    pub(crate) pal_help_note_accent: &'static str,
     /// Hover help on a STICKY NOTE paper-colour button (THEME column).
-    pub pal_help_note_mute: &'static str,
+    pub(crate) pal_help_note_mute: &'static str,
     /// Hover help on a PROGRAM COLOUR mode button (ansi / mono / theme).
-    pub pal_help_color_ansi: &'static str,
+    pub(crate) pal_help_color_ansi: &'static str,
     /// Hover help on a PROGRAM COLOUR mode button (ansi / mono / theme).
-    pub pal_help_color_mono: &'static str,
+    pub(crate) pal_help_color_mono: &'static str,
     /// Hover help on a PROGRAM COLOUR mode button (ansi / mono / theme).
-    pub pal_help_color_theme: &'static str,
+    pub(crate) pal_help_color_theme: &'static str,
     /// Hover help on SYNTAX 'off'.
-    pub pal_help_syntax_off: &'static str,
+    pub(crate) pal_help_syntax_off: &'static str,
     /// Hover help on a SYNTAX highlighting scheme button.
-    pub pal_help_syntax_code: &'static str,
+    pub(crate) pal_help_syntax_code: &'static str,
     /// Hover help on a SYNTAX highlighting scheme button.
-    pub pal_help_syntax_agentic: &'static str,
+    pub(crate) pal_help_syntax_agentic: &'static str,
     /// Hover help on a SYNTAX highlighting scheme button.
-    pub pal_help_syntax_logs: &'static str,
+    pub(crate) pal_help_syntax_logs: &'static str,
     /// Hover help on a SYNTAX highlighting scheme button.
-    pub pal_help_syntax_mark: &'static str,
+    pub(crate) pal_help_syntax_mark: &'static str,
     /// Switch row: swap dark and light treatment.
-    pub pal_rule_invert: &'static str,
+    pub(crate) pal_rule_invert: &'static str,
     /// Hover help on INVERT.
-    pub pal_help_invert: &'static str,
+    pub(crate) pal_help_invert: &'static str,
     /// Switch row (window scope only): follow the desktop (Omarchy) theme.
-    pub pal_rule_inherit: &'static str,
+    pub(crate) pal_rule_inherit: &'static str,
     /// Same switch when it is on but Omarchy's current theme cannot be read.
-    pub pal_rule_inherit_unavailable: &'static str,
+    pub(crate) pal_rule_inherit_unavailable: &'static str,
     /// Hover help on INHERIT.
-    pub pal_help_inherit: &'static str,
+    pub(crate) pal_help_inherit: &'static str,
     /// Hover-card title on the hand-built custom palette tile at the end of the palette grid (other tiles show proper palette names).
-    pub pal_tip_custom: &'static str,
+    pub(crate) pal_tip_custom: &'static str,
     /// Title of the left area (palette grid + sticky-note paper).
-    pub pal_hdr_theme: &'static str,
+    pub(crate) pal_hdr_theme: &'static str,
     /// Title of the middle area (design, skin, program colour, syntax).
-    pub pal_hdr_style: &'static str,
+    pub(crate) pal_hdr_style: &'static str,
     /// Sub-heading above the chrome-skin buttons (window scope only).
-    pub pal_hdr_skin: &'static str,
+    pub(crate) pal_hdr_skin: &'static str,
     /// Title of the right area (scope, invert, inherit, terminal state, anchor, pass-down).
-    pub pal_hdr_rules: &'static str,
+    pub(crate) pal_hdr_rules: &'static str,
     /// Sub-heading above the global toggle deciding whether panes that follow the outer theme wear its tint (toggle label itself lives in terminal_state_toggle, main.r
-    pub pal_hdr_terminal_state: &'static str,
+    pub(crate) pal_hdr_terminal_state: &'static str,
     /// Sub-heading above the toggle that pins terminal content to the top or bottom edge (toggle label in anchor_top_toggle, main.rs:17529, first half).
-    pub pal_hdr_anchor: &'static str,
+    pub(crate) pal_hdr_anchor: &'static str,
     /// Hover help on the ANCHOR toggle.
-    pub pal_help_anchor: &'static str,
+    pub(crate) pal_help_anchor: &'static str,
     /// Hover help on the '⤓ pass theme down' button (Strings.pass_down): re-links panes to the window theme.
-    pub pal_help_pass_down: &'static str,
+    pub(crate) pal_help_pass_down: &'static str,
     /// Hover help on the pane-scope 'follow outer' switch (Strings.follow_outer).
-    pub pal_help_follow_outer: &'static str,
+    pub(crate) pal_help_follow_outer: &'static str,
     /// Group header/filter chip for tabs in no group (also main.rs:28784).
-    pub grp_ungrouped: &'static str,
+    pub(crate) grp_ungrouped: &'static str,
     /// Filter chip that clears the group filter, followed by a count.
-    pub chip_all: &'static str,
+    pub(crate) chip_all: &'static str,
     /// Filter chip that clears the program (claude/codex/shell…) filter, followed by a count.
-    pub mcp_chip_any_program: &'static str,
+    pub(crate) mcp_chip_any_program: &'static str,
     /// Filter chip that clears the agent-state filter, followed by a count.
-    pub mcp_chip_any_state: &'static str,
+    pub(crate) mcp_chip_any_state: &'static str,
     /// Bottom-right status pip caption on a non-agent pane card (7.5px).
-    pub mcp_status_idle: &'static str,
+    pub(crate) mcp_status_idle: &'static str,
     /// Label of a small stat box on an agent card;
-    pub mcp_stat_agent: &'static str,
+    pub(crate) mcp_stat_agent: &'static str,
     /// Label of the stat box shown when the agent is asking the person something;
-    pub mcp_stat_call: &'static str,
+    pub(crate) mcp_stat_call: &'static str,
     /// Label of the stat box on a non-agent (shell/service) card;
-    pub mcp_stat_service: &'static str,
+    pub(crate) mcp_stat_service: &'static str,
     /// Title of the agent wall overlay.
-    pub mcp_hdr_agent_wall: &'static str,
+    pub(crate) mcp_hdr_agent_wall: &'static str,
     /// Threshing Floor: the Threshing Floor panel's title.
-    pub floor_hdr: &'static str,
-    pub floor_org_unnamed: &'static str,
-    pub floor_org_new: &'static str,
-    pub floor_org_rename: &'static str,
-    pub floor_org_save: &'static str,
-    pub floor_org_delete: &'static str,
-    pub floor_org_delete_confirm: &'static str,
-    pub floor_org_delete_go: &'static str,
-    pub floor_map: &'static str,
-    pub floor_map_arrange: &'static str,
-    pub floor_map_rels: &'static str,
-    pub floor_map_empty: &'static str,
-    pub floor_map_whole_org: &'static str,
-    pub floor_map_remove: &'static str,
-    pub floor_org_empty: &'static str,
-    pub floor_org_drop: &'static str,
-    pub floor_org_add: &'static str,
-    pub floor_org_open: &'static str,
-    pub floor_org_unknown: &'static str,
-    pub floor_rel: &'static str,
-    pub floor_rel_from: &'static str,
-    pub floor_rel_to: &'static str,
-    pub floor_rel_empty_target: &'static str,
-    pub floor_rel_choose: &'static str,
-    pub floor_rel_save: &'static str,
-    pub floor_rel_sentence: &'static str,
-    pub floor_rel_can: &'static str,
-    pub floor_rel_verb: &'static str,
-    pub floor_rel_summary: &'static str,
-    pub floor_rel_invalid: &'static str,
-    pub floor_rel_done: &'static str,
+    pub(crate) floor_hdr: &'static str,
+    pub(crate) floor_org_unnamed: &'static str,
+    pub(crate) floor_org_new: &'static str,
+    pub(crate) floor_org_rename: &'static str,
+    pub(crate) floor_org_save: &'static str,
+    pub(crate) floor_org_delete: &'static str,
+    pub(crate) floor_org_delete_confirm: &'static str,
+    pub(crate) floor_org_delete_go: &'static str,
+    pub(crate) floor_map: &'static str,
+    pub(crate) floor_map_arrange: &'static str,
+    pub(crate) floor_map_rels: &'static str,
+    pub(crate) floor_map_empty: &'static str,
+    pub(crate) floor_map_whole_org: &'static str,
+    pub(crate) floor_map_remove: &'static str,
+    pub(crate) floor_org_empty: &'static str,
+    pub(crate) floor_org_drop: &'static str,
+    pub(crate) floor_org_add: &'static str,
+    pub(crate) floor_org_open: &'static str,
+    pub(crate) floor_org_unknown: &'static str,
+    pub(crate) floor_rel: &'static str,
+    pub(crate) floor_rel_from: &'static str,
+    pub(crate) floor_rel_to: &'static str,
+    pub(crate) floor_rel_empty_target: &'static str,
+    pub(crate) floor_rel_choose: &'static str,
+    pub(crate) floor_rel_save: &'static str,
+    pub(crate) floor_rel_sentence: &'static str,
+    pub(crate) floor_rel_can: &'static str,
+    pub(crate) floor_rel_verb: &'static str,
+    pub(crate) floor_rel_summary: &'static str,
+    pub(crate) floor_rel_invalid: &'static str,
+    pub(crate) floor_rel_done: &'static str,
     /// The short label drawn ON a relationship wire: a directional reading of
     /// the rung, e.g. "may prompt \u{2192}". `{rung}` is the rung word.
-    pub floor_rel_wire: &'static str,
-    pub floor_move_hint: &'static str,
-    pub floor_move_confirm: &'static str,
-    pub floor_unavailable: &'static str,
+    pub(crate) floor_rel_wire: &'static str,
+    pub(crate) floor_move_hint: &'static str,
+    pub(crate) floor_move_confirm: &'static str,
+    pub(crate) floor_unavailable: &'static str,
     /// Threshing Floor: number of matching panes, {shown} of {total}.
-    pub floor_results: &'static str,
-    pub floor_age: &'static str,
-    pub floor_tokens: &'static str,
+    pub(crate) floor_results: &'static str,
+    pub(crate) floor_age: &'static str,
+    pub(crate) floor_tokens: &'static str,
     /// Threshing Floor: heading over the agent panes nobody seated.
-    pub floor_off_hdr: &'static str,
+    pub(crate) floor_off_hdr: &'static str,
     /// Threshing Floor: button that takes a seat off the chart.
-    pub floor_unseat_btn: &'static str,
-    pub floor_drag_hint: &'static str,
-    pub floor_drop_remove: &'static str,
+    pub(crate) floor_unseat_btn: &'static str,
+    pub(crate) floor_drag_hint: &'static str,
+    pub(crate) floor_drop_remove: &'static str,
     /// Threshing Floor: the choice popup when a pane is dropped on a different org.
-    pub floor_drop_title: &'static str,
-    pub floor_drop_move: &'static str,
-    pub floor_drop_relate_org: &'static str,
-    pub floor_drop_relate_member: &'static str,
-    pub floor_drop_pick: &'static str,
-    pub floor_drop_draw: &'static str,
-    pub floor_drop_back: &'static str,
-    pub floor_remove: &'static str,
-    pub floor_access_off: &'static str,
-    pub floor_removed: &'static str,
-    pub floor_view_reset: &'static str,
+    pub(crate) floor_drop_title: &'static str,
+    pub(crate) floor_drop_move: &'static str,
+    pub(crate) floor_drop_relate_org: &'static str,
+    pub(crate) floor_drop_relate_member: &'static str,
+    pub(crate) floor_drop_pick: &'static str,
+    pub(crate) floor_drop_draw: &'static str,
+    pub(crate) floor_drop_back: &'static str,
+    pub(crate) floor_remove: &'static str,
+    pub(crate) floor_access_off: &'static str,
+    pub(crate) floor_removed: &'static str,
+    pub(crate) floor_view_reset: &'static str,
     /// Threshing Floor: a line that lets its sender see the pane.
-    pub floor_rung_see: &'static str,
+    pub(crate) floor_rung_see: &'static str,
     /// Threshing Floor: a line that lets its sender read the pane.
-    pub floor_rung_read: &'static str,
+    pub(crate) floor_rung_read: &'static str,
     /// Threshing Floor: a line that lets its sender ask the pane.
-    pub floor_rung_ask: &'static str,
+    pub(crate) floor_rung_ask: &'static str,
     /// Threshing Floor: a line that lets its sender prompt the pane: a turn in
     /// the worker's own conversation.
-    pub floor_rung_prompt: &'static str,
+    pub(crate) floor_rung_prompt: &'static str,
     /// Threshing Floor: a granted bypass (an ask line); {n} uses left.
-    pub floor_bypass: &'static str,
+    pub(crate) floor_bypass: &'static str,
     /// Threshing Floor: role: draws lines, none drawn to it.
-    pub floor_role_orchestrator: &'static str,
+    pub(crate) floor_role_orchestrator: &'static str,
     /// Threshing Floor: role: lines in and out.
-    pub floor_role_manager: &'static str,
+    pub(crate) floor_role_manager: &'static str,
     /// Threshing Floor: role: only lines in.
-    pub floor_role_worker: &'static str,
+    pub(crate) floor_role_worker: &'static str,
     /// Threshing Floor: role: seated with no line.
-    pub floor_role_alone: &'static str,
+    pub(crate) floor_role_alone: &'static str,
     /// Threshing Floor: a fact nobody could read.
-    pub floor_unknown: &'static str,
+    pub(crate) floor_unknown: &'static str,
     /// Threshing Floor: the model line when the transcript never named a model.
-    pub floor_model_unknown: &'static str,
+    pub(crate) floor_model_unknown: &'static str,
     /// Threshing Floor: an agent that has handed nothing over yet.
-    pub floor_no_artifact: &'static str,
+    pub(crate) floor_no_artifact: &'static str,
     /// Threshing Floor: heading over the lane of agents and orgs related to this org from outside.
-    pub floor_outside: &'static str,
+    pub(crate) floor_outside: &'static str,
     /// Threshing Floor: an outside org related as a whole.
-    pub floor_whole_org: &'static str,
+    pub(crate) floor_whole_org: &'static str,
     /// Threshing Floor: the MCP server switch, short.
-    pub floor_sw_server: &'static str,
+    pub(crate) floor_sw_server: &'static str,
     /// Threshing Floor: exposure switch reading all panes, short.
-    pub floor_sw_all_panes: &'static str,
+    pub(crate) floor_sw_all_panes: &'static str,
     /// Threshing Floor: exposure switch reading agents only, short.
-    pub floor_sw_agents_only: &'static str,
+    pub(crate) floor_sw_agents_only: &'static str,
     /// Threshing Floor: the tool-call events switch, short.
-    pub floor_sw_events: &'static str,
+    pub(crate) floor_sw_events: &'static str,
     /// Threshing Floor: the appearance-writes switch, short.
-    pub floor_sw_writes: &'static str,
+    pub(crate) floor_sw_writes: &'static str,
     /// Threshing Floor: the card artwork switch, short.
-    pub floor_sw_images: &'static str,
+    pub(crate) floor_sw_images: &'static str,
     /// Threshing Floor: the small search box's placeholder.
-    pub floor_search_short: &'static str,
+    pub(crate) floor_search_short: &'static str,
     /// Hover on an org tab. {org} is its name.
-    pub floor_tip_org: &'static str,
+    pub(crate) floor_tip_org: &'static str,
     /// Hover on the System Map toggle.
-    pub floor_tip_map: &'static str,
-    pub floor_tip_arrange: &'static str,
+    pub(crate) floor_tip_map: &'static str,
+    pub(crate) floor_tip_arrange: &'static str,
     /// Hover on + New org.
-    pub floor_tip_new: &'static str,
+    pub(crate) floor_tip_new: &'static str,
     /// Hover on Rename. {org} is the org's name.
-    pub floor_tip_rename: &'static str,
+    pub(crate) floor_tip_rename: &'static str,
     /// Hover on Delete org. {org} is the org's name.
-    pub floor_tip_delete: &'static str,
+    pub(crate) floor_tip_delete: &'static str,
     /// Hover on the MCP server switch.
-    pub floor_tip_server: &'static str,
+    pub(crate) floor_tip_server: &'static str,
     /// Hover on the exposure switch.
-    pub floor_tip_expose: &'static str,
+    pub(crate) floor_tip_expose: &'static str,
     /// Hover on the tool-call events switch.
-    pub floor_tip_events: &'static str,
+    pub(crate) floor_tip_events: &'static str,
     /// Hover on the appearance-writes switch.
-    pub floor_tip_writes: &'static str,
+    pub(crate) floor_tip_writes: &'static str,
     /// Hover on the card artwork switch.
-    pub floor_tip_images: &'static str,
+    pub(crate) floor_tip_images: &'static str,
     /// Hover on the Floor's search box.
-    pub floor_tip_search: &'static str,
+    pub(crate) floor_tip_search: &'static str,
     /// Hover on the zoom buttons.
-    pub floor_tip_zoom: &'static str,
+    pub(crate) floor_tip_zoom: &'static str,
     /// Threshing Floor: the settings tray's title word (the tray reads "SETTINGS — THRESHING FLOOR").
-    pub floor_settings: &'static str,
+    pub(crate) floor_settings: &'static str,
     /// Threshing Floor settings tray: the heading over the five MCP switches.
-    pub floor_set_access: &'static str,
+    pub(crate) floor_set_access: &'static str,
     /// Hover on the Threshing Floor's settings cog.
-    pub floor_tip_settings: &'static str,
+    pub(crate) floor_tip_settings: &'static str,
     /// Threshing Floor: the heading over a card's newest artifact.
-    pub floor_artifacts: &'static str,
+    pub(crate) floor_artifacts: &'static str,
     /// Threshing Floor: an artifact's type when its file has no extension.
-    pub floor_artifact_file: &'static str,
+    pub(crate) floor_artifact_file: &'static str,
     /// Threshing Floor: an artifact's type when it is a web address.
-    pub floor_artifact_link: &'static str,
+    pub(crate) floor_artifact_link: &'static str,
     /// Threshing Floor: a pill — the newest artifact can take notes and has none.
-    pub floor_no_feedback: &'static str,
+    pub(crate) floor_no_feedback: &'static str,
     /// Threshing Floor: a pill — a person saved a note or a concur on it.
-    pub floor_annotated: &'static str,
+    pub(crate) floor_annotated: &'static str,
     /// Threshing Floor: why a seat's card is unavailable.
-    pub floor_unavailable_why: &'static str,
+    pub(crate) floor_unavailable_why: &'static str,
     /// Threshing Floor: an unavailable seat's artifacts cannot be read.
-    pub floor_artifacts_unknown: &'static str,
+    pub(crate) floor_artifacts_unknown: &'static str,
     /// Threshing Floor: a pane whose conversation is only guessed at.
-    pub floor_conversation_unknown: &'static str,
+    pub(crate) floor_conversation_unknown: &'static str,
     /// Threshing Floor: erase a line.
-    pub floor_erase: &'static str,
+    pub(crate) floor_erase: &'static str,
     /// Threshing Floor: help row: where the Threshing Floor's door is.
-    pub floor_counter_key: &'static str,
+    pub(crate) floor_counter_key: &'static str,
     /// Threshing Floor: help row: what the Threshing Floor is.
-    pub floor_help: &'static str,
+    pub(crate) floor_help: &'static str,
     /// Threshing Floor: the ask record's numbers; {cheap} {copies} {unlined}.
-    pub floor_asks: &'static str,
+    pub(crate) floor_asks: &'static str,
     /// Header button opening the lean-ctx savings view.
-    pub mcp_btn_savings: &'static str,
+    pub(crate) mcp_btn_savings: &'static str,
     /// Header button opening the AI-subscription usage view.
-    pub mcp_btn_usage: &'static str,
+    pub(crate) mcp_btn_usage: &'static str,
     /// Titled card holding the MCP server switches (enable/expose/events/writes).
-    pub mcp_sec_server: &'static str,
+    pub(crate) mcp_sec_server: &'static str,
     /// Titled card holding the agent-state filter chips.
-    pub mcp_sec_agent_state: &'static str,
+    pub(crate) mcp_sec_agent_state: &'static str,
     /// Project name for a dead session with no working directory;
-    pub dead_project_unknown: &'static str,
+    pub(crate) dead_project_unknown: &'static str,
     /// Card title for a dead agent session with no summary;
-    pub dead_session_fallback: &'static str,
+    pub(crate) dead_session_fallback: &'static str,
     /// Meta line on a dead-session card: directory, age (from recover.rs, e.g.
-    pub dead_meta_kb: &'static str,
+    pub(crate) dead_meta_kb: &'static str,
     /// Fallback name of an unnamed tab (1-based), also at main.rs:31309 in the tab menu title.
-    pub tab_unnamed: &'static str,
+    pub(crate) tab_unnamed: &'static str,
     /// Red confirm button when the tab has one pane.
-    pub close_btn_tab: &'static str,
+    pub(crate) close_btn_tab: &'static str,
     /// Red confirm button when the tab holds several panes (n is always ≥ 2 here;
-    pub close_btn_panes: Plural,
+    pub(crate) close_btn_panes: Plural,
     /// Dialog body: closing the only tab (one pane) ends the shell and quits the app.
-    pub close_body_last_one: &'static str,
+    pub(crate) close_body_last_one: &'static str,
     /// Dialog body: closing the only tab holding n (≥2) panes.
-    pub close_body_last_many: &'static str,
+    pub(crate) close_body_last_many: &'static str,
     /// Dialog body: a closed tab is kept running in the trash 'bay' and can be reopened with the shortcut for {hours} hours.
-    pub close_body_bay_one: &'static str,
+    pub(crate) close_body_bay_one: &'static str,
     /// Dialog body: same, tab holding n (≥2) panes.
-    pub close_body_bay_many: &'static str,
+    pub(crate) close_body_bay_many: &'static str,
     /// Cancel button on the danger dialogs (also main.rs:30615).
-    pub dlg_cancel: &'static str,
+    pub(crate) dlg_cancel: &'static str,
     /// Dialog title.
-    pub close_title: &'static str,
+    pub(crate) close_title: &'static str,
     /// Keyboard hint at the foot of the dialog.
-    pub close_hint: &'static str,
+    pub(crate) close_hint: &'static str,
     /// Confirm button.
-    pub del_btn_project: &'static str,
+    pub(crate) del_btn_project: &'static str,
     /// Confirm button for a group (noun 'group', line 30592).
-    pub del_btn_group: &'static str,
+    pub(crate) del_btn_group: &'static str,
     /// Dialog title, project.
-    pub del_title_project: &'static str,
+    pub(crate) del_title_project: &'static str,
     /// Dialog title, group.
-    pub del_title_group: &'static str,
+    pub(crate) del_title_group: &'static str,
     /// Dialog body.
-    pub del_body_project: &'static str,
+    pub(crate) del_body_project: &'static str,
     /// Same body for a group.
-    pub del_body_group: &'static str,
+    pub(crate) del_body_group: &'static str,
     /// Plural phrase substituted for {tabs}.
-    pub del_tabs: Plural,
+    pub(crate) del_tabs: Plural,
     /// Plural phrase substituted for {panes}.
-    pub del_panes: Plural,
+    pub(crate) del_panes: Plural,
     /// Keyboard hint at the foot of the dialog.
-    pub del_hint: &'static str,
+    pub(crate) del_hint: &'static str,
     /// Size preset button (small/medium/large/extra-large) for the menu bar scale.
-    pub scale_s: &'static str,
+    pub(crate) scale_s: &'static str,
     /// Size preset button (small/medium/large/extra-large) for the menu bar scale.
-    pub scale_m: &'static str,
+    pub(crate) scale_m: &'static str,
     /// Size preset button (small/medium/large/extra-large) for the menu bar scale.
-    pub scale_l: &'static str,
+    pub(crate) scale_l: &'static str,
     /// Size preset button (small/medium/large/extra-large) for the menu bar scale.
-    pub scale_xl: &'static str,
+    pub(crate) scale_xl: &'static str,
     /// Key column of a shortcut row: mouse wheel with Ctrl.
-    pub help_key_ctrl_wheel: &'static str,
+    pub(crate) help_key_ctrl_wheel: &'static str,
     /// Toggle: the colour applies to the tab's fill (also main.rs:31629 in the group menu).
-    pub tab_menu_pip_fill: &'static str,
+    pub(crate) tab_menu_pip_fill: &'static str,
     /// Toggle: the colour applies to the tab's text.
-    pub tab_menu_pip_text: &'static str,
+    pub(crate) tab_menu_pip_text: &'static str,
     /// Remove the custom colour (also 31679).
-    pub tab_menu_clear: &'static str,
+    pub(crate) tab_menu_clear: &'static str,
     /// 9px section label above the group actions.
-    pub tab_menu_group_hdr: &'static str,
+    pub(crate) tab_menu_group_hdr: &'static str,
     /// Take this tab out of its group.
-    pub tab_menu_remove_from_group: &'static str,
+    pub(crate) tab_menu_remove_from_group: &'static str,
     /// Make a new group starting with this tab.
-    pub tab_menu_new_group: &'static str,
+    pub(crate) tab_menu_new_group: &'static str,
     /// Label before chips naming other groups this tab can join.
-    pub tab_menu_add_to: &'static str,
+    pub(crate) tab_menu_add_to: &'static str,
     /// Section label: the tab's project, inherited through its group.
-    pub tab_menu_project_via_group: &'static str,
+    pub(crate) tab_menu_project_via_group: &'static str,
     /// Section label above project chips.
-    pub tab_menu_project: &'static str,
+    pub(crate) tab_menu_project: &'static str,
     /// Create a new project from this tab (or its group) and rename it.
-    pub tab_menu_new_project: &'static str,
+    pub(crate) tab_menu_new_project: &'static str,
     /// Unfold the collapsed group.
-    pub group_menu_expand: &'static str,
+    pub(crate) group_menu_expand: &'static str,
     /// Fold the group.
-    pub group_menu_collapse: &'static str,
+    pub(crate) group_menu_collapse: &'static str,
     /// Disband the group, keeping its tabs.
-    pub group_menu_ungroup: &'static str,
+    pub(crate) group_menu_ungroup: &'static str,
     /// Title of the group menu.
-    pub group_menu_title: &'static str,
+    pub(crate) group_menu_title: &'static str,
     /// Reader header when shown inline in the pane (also 32134, bare).
-    pub focus_hdr_chat_history: &'static str,
+    pub(crate) focus_hdr_chat_history: &'static str,
     /// Right side of the FOCUS reader header.
-    pub focus_esc_to_close: &'static str,
+    pub(crate) focus_esc_to_close: &'static str,
     /// Name of the 'no project' area of the tree when it is the drop target.
-    pub drag_unfiled: &'static str,
+    pub(crate) drag_unfiled: &'static str,
     /// Chip following the cursor while dragging a tree row: dropping files it inside {name}.
-    pub drag_into: &'static str,
+    pub(crate) drag_into: &'static str,
     /// Chip: dropping places it above {name}.
-    pub drag_above: &'static str,
+    pub(crate) drag_above: &'static str,
     /// Chip: dropping places it below {name}.
-    pub drag_below: &'static str,
+    pub(crate) drag_below: &'static str,
     /// Chip following the cursor while a pane (sub-tab) is dragged.
-    pub drag_moving_subtab: &'static str,
+    pub(crate) drag_moving_subtab: &'static str,
     /// Where the notes map was pasted, when the target pane has no name of its own: into the agent's prompt line.
-    pub doc_agents_prompt: &'static str,
+    pub(crate) doc_agents_prompt: &'static str,
     /// Where the notes map was pasted, when the target pane has no name: into the agent's message composer on the workbench face.
-    pub doc_agents_composer: &'static str,
+    pub(crate) doc_agents_composer: &'static str,
     /// Where the notes map was pasted: into the prompt line of the pane named {who} (a pane or tab name a person chose).
-    pub doc_named_prompt: &'static str,
+    pub(crate) doc_named_prompt: &'static str,
     /// Where the notes map was pasted: into the message composer on the workbench of the pane named {who}.
-    pub doc_named_composer: &'static str,
+    pub(crate) doc_named_composer: &'static str,
     /// Left-bar trash menu row: bring back a deleted project named {label}.
-    pub bar_m_recover_project: &'static str,
+    pub(crate) bar_m_recover_project: &'static str,
     /// Left-bar trash menu row: bring back a deleted tab group named {label}.
-    pub bar_m_recover_group: &'static str,
+    pub(crate) bar_m_recover_group: &'static str,
     /// Left-bar trash menu row: bring back a closed tab named {label}.
-    pub bar_m_recover_tab: &'static str,
+    pub(crate) bar_m_recover_tab: &'static str,
     /// Left-bar trash menu row: bring back a closed pane (one split of a tab) named {label}.
-    pub bar_m_recover_pane: &'static str,
+    pub(crate) bar_m_recover_pane: &'static str,
     /// Header of the pace card in the usage tray.
-    pub use_pace_hdr: &'static str,
+    pub(crate) use_pace_hdr: &'static str,
     /// Pace line when spending matches the time elapsed in the week.
-    pub use_pace_even: &'static str,
+    pub(crate) use_pace_even: &'static str,
     /// Pace line: percentage points spent ahead of the week.
-    pub use_pace_over: Plural,
+    pub(crate) use_pace_over: Plural,
     /// Pace line: percentage points left unspent against the week.
-    pub use_pace_banked: Plural,
+    pub(crate) use_pace_banked: Plural,
     /// Toggle opening the usage history blocks.
-    pub use_history_toggle: &'static str,
+    pub(crate) use_history_toggle: &'static str,
     /// Pace verdict chip: spending matches the week.
-    pub use_verdict_on_pace: &'static str,
+    pub(crate) use_verdict_on_pace: &'static str,
     /// Pace verdict chip: spending below the week, margin saved.
-    pub use_verdict_banked: &'static str,
+    pub(crate) use_verdict_banked: &'static str,
     /// Pace verdict chip: spending ahead of the week (over pace).
-    pub use_verdict_behind: &'static str,
+    pub(crate) use_verdict_behind: &'static str,
     /// Pace verdict chip: spending far ahead of the week.
-    pub use_verdict_way_over: &'static str,
+    pub(crate) use_verdict_way_over: &'static str,
 }
 
 pub const EN: Chrome = Chrome {
