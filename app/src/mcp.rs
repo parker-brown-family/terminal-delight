@@ -1550,13 +1550,13 @@ fn tool_defs() -> Value {
         },
         {
             "name": "prompt_agent",
-            "description": "Prompt another agent pane: your words typed into its own conversation as its next turn, the way its person would type them, so it works on them with everything it already knows. This is how a coordinating agent hands work to another agent in the same window. Only along a line a person drew from your seat at prompt in the Threshing Floor; an ask line, a bypass, a read-only pane and an off-limits pane are refused by name. The words go in only when the worker is at rest at its own prompt: a working worker is waited for (up to ten minutes), a resting or asleep one is woken, and a pane whose person is typing or which shows a permission prompt or a dialog is never typed into. A header line names you as the sender. A key names one assignment, not a whole project: reuse it for a retry, and choose a new key for each deliberate follow-up. Returns at once with a prompt_id; follow it with prompt_status. One prompt at a time from you to each pane. Only the length and fingerprint of your words are recorded. Slow is expected: the window waits for a settled worker and a quiet pane, and the work runs while its person is away. Write the prompt as a work order: what to make, how you will judge it done, what is not known yet, and where the work it builds on lives. Check the reply against that and prompt again if it falls short; after two or three tries on the same piece without it coming right, stop and hand it to your person.",
+            "description": "Prompt another agent pane: your words typed into its own conversation as its next turn, the way its person would type them, so it works on them with everything it already knows. This is how a coordinating agent hands work to another agent in the same window. Only along a line a person drew from your seat at prompt in the Threshing Floor; an ask line, a bypass, a read-only pane and an off-limits pane are refused by name. The words go in only when the worker is at rest at its own prompt: a working worker is waited for (up to ten minutes), a resting or asleep one is woken, and a pane whose person is typing or which shows a permission prompt or a dialog is never typed into. A header line names you as the sender. A key names one assignment, not a whole project: reuse it if the tool response was lost to read the original assignment without sending another turn. A failed attempt needs a new key to try again; inspect the worker first if text may have been pasted or sent. Choose a new key for each deliberate follow-up. Returns at once with a prompt_id; follow it with prompt_status. One prompt at a time from you to each pane. Only the length and fingerprint of your words are recorded. Slow is expected: the window waits for a settled worker and a quiet pane, and the work runs while its person is away. Write the prompt as a work order: what to make, how you will judge it done, what is not known yet, and where the work it builds on lives. Check the reply against that and prompt again if it falls short; after two or three tries on the same piece without it coming right, stop and hand it to your person.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "pid": { "type": "integer", "description": "The pane to prompt, from list_panes." },
                     "prompt": { "type": "string", "description": "What you want the agent to do, up to 32,000 characters. Every control character but newline and tab is removed; the window presses Enter." },
-                    "key": { "type": "string", "description": "Your own name for this one assignment, up to 64 characters. Retry the same assignment with the same key: it never types a second turn. When the old details have expired, you get an explicit expired result with no new work sent. For deliberately new work, choose a new key." }
+                    "key": { "type": "string", "description": "Your own name for this one assignment, up to 64 characters. Reuse the same key to recover a lost response: it reports the original attempt and never types a second turn, even if that attempt failed. For a deliberate retry after failure or new work, choose a new key. Inspect the worker first if the attempt may have been pasted or sent." }
                 },
                 "required": ["pid", "prompt"],
                 "additionalProperties": false
@@ -2665,8 +2665,10 @@ fn prompt_said(status: &crate::prompt::PromptStatus) -> Value {
             "prompt {id}: the worker finished; its last message is not known ({}).",
             reply_unknown.as_deref().unwrap_or("not read")
         ),
-        PromptStage::Failed { why } => format!("prompt {id}: failed: {why}"),
-        PromptStage::Expired => format!("prompt {id}: this key was used before, but its details have expired and its outcome is not known here. Retrying this key sends no new work. For a deliberate new assignment, choose a new key."),
+        PromptStage::Failed { why } => format!(
+            "prompt {id}: failed: {why}\n\nThe same key only reports this attempt. Resolve the cause and use a new key to try again. If text may have been pasted or Enter may have been pressed, inspect the worker first."
+        ),
+        PromptStage::Expired => format!("prompt {id}: this key was used before, but its details have expired and its outcome is not known here. Retrying this key sends no new work. Inspect the worker before trying again; if the work still needs doing, choose a new key."),
     };
     tool_ok(text, serde_json::to_value(status).unwrap_or(Value::Null))
 }
@@ -5190,6 +5192,27 @@ mod tests {
     }
 
     #[test]
+    fn failed_prompt_status_explains_how_to_retry_without_blind_resubmission() {
+        let out = prompt_said(&crate::prompt::PromptStatus {
+            prompt_id: crate::threshing_floor::AskId(5),
+            key: Some("job-a".into()),
+            pid: 200,
+            age_ms: 1_000,
+            stage: crate::prompt::PromptStage::Failed {
+                why: "pasted, not sent: Enter was not pressed".into(),
+            },
+        });
+        assert_eq!(out["structuredContent"]["stage"], "failed");
+        let text = text_of(&out);
+        assert!(
+            text.contains("same key only reports this attempt"),
+            "{text}"
+        );
+        assert!(text.contains("use a new key to try again"), "{text}");
+        assert!(text.contains("inspect the worker first"), "{text}");
+    }
+
+    #[test]
     fn expired_prompt_status_says_a_retry_sends_no_work_and_new_work_uses_a_new_key() {
         let out = prompt_said(&crate::prompt::PromptStatus {
             prompt_id: crate::threshing_floor::AskId(5),
@@ -5206,6 +5229,10 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("choose a new key"), "{text}");
+        assert!(
+            text.contains("Inspect the worker before trying again"),
+            "{text}"
+        );
         assert!(!text.contains("finished"), "the outcome is unknown: {text}");
     }
 
