@@ -1,0 +1,22 @@
+[background:shell_e9864a9c0c7c4134 completed, exit 0]
+   Compiling gpui_util v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/gpui_util)
+   Compiling collections v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/collections)
+    Checking util v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/util)
+   Compiling gpui v0.2.2 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/gpui)
+   Compiling perf v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/tooling/perf)
+   Compiling derive_refineable v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/refineable/derive_refineable)
+    Checking scheduler v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/scheduler)
+    Checking refineable v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/refineable)
+    Checking http_client v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/http_client)
+   Compiling util_macros v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/util_macros)
+    Checking sum_tree v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/sum_tree)
+    Checking gpui_shared_string v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/gpui_shared_string)
+   Compiling gpui_macros v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/gpui_macros)
+    Checking gpui_wgpu v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/gpui_wgpu)
+    Checking gpui_linux v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/gpui_linux)
+    Checking gpui_platform v0.1.0 (/home/parker/Work/td-uninstall-lab/zed-upstream/crates/gpui_platform)
+    Checking terminal-delight v0.4.0-rc.3 (/home/parker/Work/td-uninstall-lab/terminal-delight/app)
+    Finished `dev` profile [unoptimized] target(s) in 1m 16s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+

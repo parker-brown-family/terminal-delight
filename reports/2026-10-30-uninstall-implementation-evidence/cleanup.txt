@@ -1,0 +1,19 @@
+test_changed_helper_and_symlink_settings_retained (__main__.Cleanup.test_changed_helper_and_symlink_settings_retained) ... ok
+test_gnome_changed_shortcut_or_missing_receipt_blocks (__main__.Cleanup.test_gnome_changed_shortcut_or_missing_receipt_blocks) ... ok
+test_gnome_failed_write_keeps_evidence (__main__.Cleanup.test_gnome_failed_write_keeps_evidence) ... ok
+test_gnome_keeps_later_terminal_choice (__main__.Cleanup.test_gnome_keeps_later_terminal_choice) ... ok
+test_gnome_missing_backup_never_guesses_default (__main__.Cleanup.test_gnome_missing_backup_never_guesses_default) ... ok
+test_gnome_missing_receipt_preserves_all_settings (__main__.Cleanup.test_gnome_missing_receipt_preserves_all_settings) ... ok
+test_gnome_restores_only_recorded_binding (__main__.Cleanup.test_gnome_restores_only_recorded_binding) ... ok
+test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) ... ok
+test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) ... ok
+test_keys_exact_block_removal_keeps_tail (__main__.Cleanup.test_keys_exact_block_removal_keeps_tail) ... ok
+test_keys_keep_unterminated_user_tail_bytes (__main__.Cleanup.test_keys_keep_unterminated_user_tail_bytes) ... ok
+test_missing_hooks_remains_byte_identical_and_repeated_cleanup_works (__main__.Cleanup.test_missing_hooks_remains_byte_identical_and_repeated_cleanup_works) ... ok
+test_mixed_nested_hooks_preserve_siblings_and_metadata (__main__.Cleanup.test_mixed_nested_hooks_preserve_siblings_and_metadata) ... ok
+test_unrecognized_reference_blocks_helper_removal (__main__.Cleanup.test_unrecognized_reference_blocks_helper_removal) ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 4.817s
+
+OK
