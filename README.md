@@ -148,8 +148,9 @@ script so the sheet works without a checkout; run the installer again after the
 page changes. `td-keybindings --print` writes the same list to stdout, and
 `--uninstall` on the installer reverts the binding.
 
-SUPER+ALT+T used to be td-send's. That hotkey is retired, and the installer
-takes the seat back from it, but `scripts/td-send` still runs by hand: focus a
+SUPER+ALT+T used to be td-send's. That hotkey is retired. If its old block is
+still present, the installer stops before writing files and explains how to
+review and remove the block manually. `scripts/td-send` still runs by hand: focus a
 terminal tile (foot, Alacritty, kitty, Ghostty, `org.omarchy.*`) and the
 session migrates into a Terminal Delight pane — idle shells re-open at their
 cwd, `claude`/`codex` agents resume by session id, tmux attaches re-attach.

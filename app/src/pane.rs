@@ -2852,6 +2852,13 @@ pub struct Presentation {
     /// Who the document pane was opened beside: a repaired document pane is
     /// still beside the same agent.
     doc_opened_by: Option<u64>,
+    /// The Threshing Floor seat and the person's access mark. A pane rebuilt
+    /// from a fresh snapshot, or an asleep agent woken into a fresh shell, is
+    /// still the pane a person seated and marked: without these it came back
+    /// unseated, every line to it gone, and a pane marked off-limits came
+    /// back open to agents.
+    seat: Option<crate::threshing_floor::SeatId>,
+    agent_access: crate::threshing_floor::AgentAccess,
 }
 
 /// A document view on its way from a pane being replaced to its replacement.
@@ -2915,15 +2922,19 @@ pub struct TerminalView {
     /// (agents may watch and ask, never write or type into its bench) or
     /// off-limits (no agent reads it or writes to it through MCP, except the
     /// one running inside it acting on its own pane — see
-    /// `warroom::may_write` — and the control socket's bench verbs never pick
+    /// `threshing_floor::may_write` — and the control socket's bench verbs never pick
     /// it). Set and cleared ONLY by a person: the terminal's right-click menu,
     /// or a Yes on the rail to an agent's `request_access` — no control-socket
     /// or MCP verb reaches it, because both answer agents, and a lock an agent
     /// can lift is decoration. Persisted per leaf in the state file.
-    pub agent_access: crate::warroom::AgentAccess,
-    /// This pane's seat in the War Room, once a person seats it. Saved with
-    /// the leaf so it outlives the pane's number (see `warroom::SeatId`).
-    pub seat: Option<crate::warroom::SeatId>,
+    pub agent_access: crate::threshing_floor::AgentAccess,
+    /// The agent's model and effort for the header (`OPUS 5.5 MAX`), handed
+    /// down by the window from the transcript vitals it already reads for the
+    /// Threshing Floor. `None` until a transcript has named the model.
+    pub(crate) model_label: Option<String>,
+    /// This pane's seat in the Threshing Floor, once a person seats it. Saved with
+    /// the leaf so it outlives the pane's number (see `threshing_floor::SeatId`).
+    pub seat: Option<crate::threshing_floor::SeatId>,
     /// Whether this pane is in the tab being shown, written by the workspace
     /// on every draw (`Workspace::render`). An atomic so the workspace can set
     /// it while only reading the pane, and so it is never a frame stale.
@@ -3069,6 +3080,15 @@ pub struct TerminalView {
     /// played, the tab wears its 🔔 badge and the header reads "● done" until
     /// the focus-in edge acknowledges it ([`Self::ack_bell`]).
     bell: bool,
+    /// When a person last typed or pasted into this pane, in ms since the
+    /// epoch: a prompt another agent sent waits while a person may have a line
+    /// half-typed here (`prompt::QUIET_MS`). A `Cell`, because the paste path
+    /// borrows the pane shared.
+    person_key_ms: std::cell::Cell<Option<u64>>,
+    /// When this pane's own scan last saw a turn begin, in ms since the epoch:
+    /// a prompt's worker took it if a turn began after Enter, even one that
+    /// began and ended between two of the prompt clock's looks.
+    turn_began_ms: Option<u64>,
     /// The agent is stopped WAITING ON A HUMAN — a picker or permission prompt
     /// is on screen (see [`wants_human`]). Live state maintained by the 120ms
     /// scan, never latched: true exactly while the prompt is up. Drives the
@@ -3183,6 +3203,10 @@ pub struct TerminalView {
     doc_holding: bool,
     /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
     was_focused: bool,
+    /// Rest and sleep: this pane's memory group, its freezer gate, the clocks
+    /// that say how long it has been untouched and quiet, and whether it is
+    /// awake, resting or asleep. See `agentrest`.
+    pub(crate) rest: crate::agentrest::PaneRest,
     /// Last observed agent working state; absent until the first settled scan.
     agent_thinking: Option<bool>,
     /// Throttle for the (cheap) grid scan that detects the agent spinner.
@@ -3567,6 +3591,10 @@ impl gpui::EventEmitter<OffLimitsChanged> for TerminalView {}
 /// or the launch needs a new tab; the entry point never writes to the PTY.
 pub struct OpenAgentLauncher;
 impl gpui::EventEmitter<OpenAgentLauncher> for TerminalView {}
+
+/// A key or a click on an asleep pane: bring its agent back.
+pub struct WakeAsleep;
+impl gpui::EventEmitter<WakeAsleep> for TerminalView {}
 
 /// Click on this pane's header logo (or the `＋ logo` placeholder when none is
 /// set) — ask the workspace to open the image-file picker scoped to this pane.
@@ -4367,7 +4395,11 @@ impl TerminalView {
     fn live_runtime(&self) -> crate::session::PaneRuntime {
         match (self.session.master.as_ref(), self.session.shell_pid) {
             // Our own terminal: ask the kernel through the descriptor we hold.
-            (Some(master), Some(pid)) => crate::session::capture(Some(master), pid),
+            (Some(master), Some(pid)) => master
+                .file()
+                .map_or_else(crate::session::PaneRuntime::default, |file| {
+                    crate::session::capture(Some(&file), pid)
+                }),
             // Somebody else's: the descriptor is theirs, so the same questions
             // are asked of /proc instead. Same answers, one hop further away.
             (None, Some(pid)) => crate::session::capture_via_proc(pid),
@@ -4378,11 +4410,22 @@ impl TerminalView {
         }
     }
 
+    /// Explicit user close for a terminal this window owns. Dropping a replica
+    /// or disconnecting a window is deliberately not a close request.
+    pub fn close_owned_terminal(&self) {
+        if self.session.master.is_some() {
+            self.session.notifier.shutdown();
+        }
+    }
+
     /// The pane's live cwd, cheaply (no agent-session scan) — polled by the
     /// workspace's dir-logo sweep and read at picker-open / pick time.
     pub fn current_cwd(&self) -> Option<String> {
         let pid = self.session.shell_pid?;
-        crate::session::capture_cwd(self.session.master.as_ref(), pid)
+        match &self.session.master {
+            Some(master) => crate::session::capture_cwd(Some(master.file()?.as_ref()), pid),
+            None => crate::session::capture_cwd(None, pid),
+        }
     }
 
     /// This pane's shell pid — the kernel handle behind its identity. Ephemeral
@@ -4409,6 +4452,11 @@ impl TerminalView {
         self.pane_id
     }
 
+    #[cfg(test)]
+    pub(crate) fn fixture_set_pane_id(&mut self, id: u64) {
+        self.pane_id = Some(id);
+    }
+
     /// Everything this WINDOW decided about the pane, lifted off it so it can be
     /// put back on a replacement replica. See [`Presentation`].
     pub fn presentation(&self) -> Presentation {
@@ -4431,6 +4479,8 @@ impl TerminalView {
             }),
             float: self.float.as_ref().map(FloatingDoc::carry),
             doc_opened_by: self.doc_opened_by,
+            seat: self.seat,
+            agent_access: self.agent_access,
         }
     }
 
@@ -4468,6 +4518,9 @@ impl TerminalView {
             self.float = Some(Self::float_back(f, cx));
         }
         self.doc_opened_by = from.doc_opened_by;
+        // A restore, not a decision: the person's own seat and mark, carried.
+        self.seat = from.seat;
+        self.agent_access = from.agent_access;
     }
 
     /// Whether this pane has reported an ending that has not been explained yet.
@@ -4692,7 +4745,7 @@ impl TerminalView {
     /// bench input held while it did not.
     pub(crate) fn set_agent_access(
         &mut self,
-        access: crate::warroom::AgentAccess,
+        access: crate::threshing_floor::AgentAccess,
         cx: &mut Context<Self>,
     ) {
         if self.agent_access == access {
@@ -4706,11 +4759,11 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Seat this pane in the War Room, or take it off. Called from the War
+    /// Seat this pane in the Threshing Floor, or take it off. Called from the War
     /// Room panel only — a person's click — and saved with the leaf.
     pub(crate) fn set_seat(
         &mut self,
-        seat: Option<crate::warroom::SeatId>,
+        seat: Option<crate::threshing_floor::SeatId>,
         cx: &mut Context<Self>,
     ) {
         if self.seat != seat {
@@ -4719,9 +4772,92 @@ impl TerminalView {
         }
     }
 
-    /// This pane as the War Room's rules see it.
-    pub(crate) fn party(&self) -> crate::warroom::Party {
-        crate::warroom::Party {
+    /// Row #10 of `docs/security/terminal-input.md`: a prompt another agent
+    /// sent along a line a person drew at prompt, typed when `prompt.rs`
+    /// decides and `Workspace::prompt_tick` acts. Two shapes and no others:
+    /// the prompt's words as one bracketed paste ([`crate::prompt::paste`]),
+    /// which a program that asked for bracketing takes as text however many
+    /// newlines it holds; and one carriage return, pressed once, after the
+    /// paste has shown at the worker's prompt. Nothing is written — `false` —
+    /// to a pane that is not an agent, one a person marked read-only or
+    /// off-limits, one asleep, or, for the paste, a prompt that never asked
+    /// for bracketing.
+    pub(crate) fn type_prompt(&mut self, keys: crate::prompt::Keys<'_>) -> bool {
+        if !self.mode.is_agent()
+            || !self.agent_access.takes_writes()
+            || self.rest.dormancy.asleep().is_some()
+        {
+            return false;
+        }
+        let bytes = match keys {
+            crate::prompt::Keys::Paste(text) => {
+                match crate::prompt::paste(text, self.takes_bracketed_paste()) {
+                    Some(bytes) => bytes,
+                    None => return false,
+                }
+            }
+            crate::prompt::Keys::Enter => b"\r".to_vec(),
+        };
+        self.session.notifier.notify(bytes);
+        true
+    }
+
+    /// Whether the program in this pane has asked for bracketed paste.
+    pub(crate) fn takes_bracketed_paste(&self) -> bool {
+        self.session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::BRACKETED_PASTE)
+    }
+
+    /// When a person last typed or pasted here.
+    pub(crate) fn person_key_ms(&self) -> Option<u64> {
+        self.person_key_ms.get()
+    }
+
+    /// When this pane's scan last saw a turn begin.
+    pub(crate) fn turn_began_ms(&self) -> Option<u64> {
+        self.turn_began_ms
+    }
+
+    /// Whether a picker the workbench's dial raised is on screen.
+    pub(crate) fn dial_picker_up(&self) -> bool {
+        self.wb_dial_sent.is_some()
+    }
+
+    /// What a prompt sees of this pane: the screen's own word, before the
+    /// finish bell. The bell turns a screen nobody could read into "done" as
+    /// readily as a resting one, so `Ready` here is the idle furniture on
+    /// screen and nothing else.
+    pub(crate) fn prompt_seen(&self) -> crate::prompt::Seen {
+        use crate::hud::AgentState;
+        use crate::prompt::Seen;
+        if self.rest.dormancy.asleep().is_some() || self.rest.dormancy.is_resting() {
+            return Seen::Dormant;
+        }
+        if !self.mode.is_agent() {
+            return Seen::Gone;
+        }
+        let rows = self.live_rows();
+        let cached = match self.status_memo.borrow().as_ref() {
+            Some((seen, st)) if std::rc::Rc::ptr_eq(seen, &rows) => Some(st.state),
+            _ => None,
+        };
+        let state = cached.unwrap_or_else(|| crate::hud::parse_status_line(&rows).state);
+        match state {
+            AgentState::Idle => Seen::Ready,
+            AgentState::Working => Seen::Working,
+            AgentState::Blocked => Seen::Blocked,
+            AgentState::Error => Seen::Errored,
+            AgentState::Resting | AgentState::Asleep => Seen::Dormant,
+            AgentState::Finished | AgentState::Unknown => Seen::Unreadable,
+        }
+    }
+
+    /// This pane as the Threshing Floor's rules see it.
+    pub(crate) fn party(&self) -> crate::threshing_floor::Party {
+        crate::threshing_floor::Party {
             seat: self.seat,
             is_agent: self.mode.is_agent(),
             access: self.agent_access,
@@ -4732,9 +4868,9 @@ impl TerminalView {
     /// it: closing makes the pane off-limits, opening makes it fully open.
     pub(crate) fn set_off_limits(&mut self, on: bool, cx: &mut Context<Self>) {
         let access = if on {
-            crate::warroom::AgentAccess::OffLimits
+            crate::threshing_floor::AgentAccess::OffLimits
         } else {
-            crate::warroom::AgentAccess::Open
+            crate::threshing_floor::AgentAccess::Open
         };
         self.set_agent_access(access, cx);
     }
@@ -4831,6 +4967,7 @@ impl TerminalView {
                 seed: n.seed,
                 edit: None,
                 pinned: n.pinned,
+                by: n.by,
             });
         let mut events = session.events.take().expect("events taken once");
         cx.spawn(async move |this, cx| {
@@ -4869,7 +5006,9 @@ impl TerminalView {
                         }
                         let detected = match (view.session.master.as_ref(), view.session.shell_pid)
                         {
-                            (Some(master), Some(pid)) => Some(foreground_mode(master, pid)),
+                            (Some(master), Some(pid)) => {
+                                master.file().map(|file| foreground_mode(&file, pid))
+                            }
                             // Somebody else's terminal, or nobody's: not this
                             // window's question to answer.
                             _ => None,
@@ -4915,6 +5054,17 @@ impl TerminalView {
                     #[cfg(test)]
                     {
                         view.housekeeping_ticks += 1;
+                    }
+                    // Rest's clocks: a changed screen is output, a write is a
+                    // touch, and a thaw on the pump thread is a wake to show.
+                    {
+                        let now = Instant::now();
+                        let generation = view.session.content_generation();
+                        view.rest.saw_generation(generation, now);
+                        view.rest.saw_writes(now);
+                        if view.rest.absorb_wake(now) {
+                            cx.notify();
+                        }
                     }
                     let th = theme::theme(cx);
                     if view.fx.tick(&th) {
@@ -4975,6 +5125,7 @@ impl TerminalView {
                                 cx.emit(AgentWorkingChanged);
                                 if thinking {
                                     view.think_since = Some(Instant::now());
+                                    view.turn_began_ms = Some(crate::prompt::now_ms());
                                     view.not_thinking_since = None;
                                     // A turn is running, so whatever was paused
                                     // is over. THE RISING EDGE, at 120ms, rather
@@ -5168,7 +5319,8 @@ impl TerminalView {
             pane_id,
             guard,
             superseded: false,
-            agent_access: crate::warroom::AgentAccess::Open,
+            agent_access: crate::threshing_floor::AgentAccess::Open,
+            model_label: None,
             seat: None,
             staged: restore.clone(),
             title: DEFAULT_TITLE.into(),
@@ -5211,6 +5363,8 @@ impl TerminalView {
             appearance: PaneTheme::default(),
             ctx_menu: None,
             bell: false,
+            person_key_ms: std::cell::Cell::new(None),
+            turn_began_ms: None,
             needs_input: false,
             answered_on: None,
             attention_since: None,
@@ -5256,6 +5410,7 @@ impl TerminalView {
             doc_rect: std::rc::Rc::new(std::cell::Cell::new(None)),
             doc_holding: false,
             was_focused: false,
+            rest: crate::agentrest::PaneRest::new(Instant::now()),
             pending_pty: None,
             cell_px,
             last_scroll_offset: None,
@@ -5518,7 +5673,33 @@ impl TerminalView {
     /// thirty agent panes, string scanning was 11% of the main thread, nearly
     /// all of it on screens that had not changed. The bell is applied after the
     /// memo, because it changes without the screen changing.
+    /// Whether an agent lives in this pane, awake or not. A sleeping agent's
+    /// pane runs a shell, and a signalled one is on its way there, but the
+    /// conversation is kept and wakes on its first prompt: it is not a pure
+    /// shell, and the Threshing Floor must be able to seat it.
+    pub(crate) fn hosts_agent(&self) -> bool {
+        self.mode.is_agent()
+            || self.rest.dormancy.asleep().is_some()
+            || self.rest.stopping.is_some()
+    }
+
+    /// The sleep record behind this pane, when its agent is asleep or going.
+    pub(crate) fn sleep_record(&self) -> Option<&crate::agentrest::Asleep> {
+        self.rest
+            .dormancy
+            .asleep()
+            .or(self.rest.stopping.as_ref().map(|s| &s.asleep))
+    }
+
     pub fn agent_status(&self) -> crate::hud::AgentStatus {
+        // The window's own word comes first: an asleep pane's screen is a shell,
+        // and a resting one's is a frozen frame, so neither is the screen's call.
+        if self.rest.dormancy.asleep().is_some() {
+            return crate::hud::AgentStatus {
+                state: crate::hud::AgentState::Asleep,
+                ..Default::default()
+            };
+        }
         if !self.mode.is_agent() {
             return crate::hud::AgentStatus::default();
         }
@@ -5535,13 +5716,121 @@ impl TerminalView {
             st
         });
         st.state = crate::hud::with_bell(st.state, self.bell);
+        // After the bell, so a latched bell cannot turn rest into a finish.
+        if self.rest.dormancy.is_resting() {
+            st.state = crate::hud::AgentState::Resting;
+        }
         st
+    }
+
+    /// Whether this pane is on screen and held the keyboard focus when it
+    /// last drew. A pane in a tab that is not shown stops drawing, so its
+    /// last-drawn focus goes stale; it is not being looked at.
+    pub fn focused_last_frame(&self) -> bool {
+        self.was_focused && self.shown.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The RESTING or ASLEEP chip for the header, or nothing while awake.
+    fn rest_chip(
+        &self,
+        th: &Theme,
+        fg: Hsla,
+        sk: &crate::skin::Skin,
+        scale: f32,
+    ) -> Option<gpui::Div> {
+        let parts = crate::lang::current().strings().parts;
+        let (glyph, word) = match &self.rest.dormancy {
+            crate::agentrest::Dormancy::Awake => return None,
+            crate::agentrest::Dormancy::Resting { since } => (
+                '\u{f0594}',
+                format!(
+                    "{} · {}",
+                    parts.hud_state_resting.to_uppercase(),
+                    crate::agentrest::short_age(since.elapsed())
+                ),
+            ),
+            crate::agentrest::Dormancy::Asleep(_) => {
+                ('\u{f04b2}', parts.hud_state_asleep.to_uppercase())
+            }
+        };
+        let tint = fg.alpha(0.85);
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(3. * scale))
+                .px(px(5. * scale))
+                .rounded(sk.rad(4.))
+                .border_1()
+                .border_color(tint.alpha(0.5))
+                .text_color(tint)
+                .text_size(sk.text_px(9.5 * scale))
+                .child(
+                    div()
+                        .when_some(chrome_glyph_font(glyph, th), |d, family| {
+                            d.font_family(family)
+                        })
+                        .child(glyph.to_string()),
+                )
+                .child(word),
+        )
+    }
+
+    /// What this pane costs: everything its group holds in RAM and swap, or,
+    /// while it rests, what is left in RAM and what went out. `unmeasured`
+    /// where the group could not be made or read, never a smaller number.
+    fn memory_figure(&self, fg: Hsla, sk: &crate::skin::Skin, scale: f32) -> Option<gpui::Div> {
+        use crate::agentrest::short_bytes;
+        let parts = crate::lang::current().strings().parts;
+        let u = self.rest.usage;
+        let text = match (self.rest.group.is_some(), u.resident) {
+            (true, Some(ram)) if self.rest.dormancy.is_resting() => match u.swapped {
+                Some(out) => format!(
+                    "{} + {} {}",
+                    short_bytes(ram),
+                    short_bytes(out),
+                    parts.pane_mem_out
+                ),
+                None => format!("{} + ?", short_bytes(ram)),
+            },
+            (true, Some(ram)) => match u.swapped {
+                Some(out) => short_bytes(ram + out),
+                None => format!("{} + ?", short_bytes(ram)),
+            },
+            (true, None) => parts.pane_mem_unmeasured.to_string(),
+            (false, _) if self.rest.group_error.is_some() => parts.pane_mem_unmeasured.to_string(),
+            // Not looked at yet: a blank, not a guess.
+            (false, _) => return None,
+        };
+        Some(
+            div()
+                .flex_none()
+                .text_color(fg.alpha(0.62))
+                .text_size(sk.text_px(9.5 * scale))
+                .child(text),
+        )
+    }
+
+    /// An agent pane, or one whose agent is asleep. Asleep panes run a shell
+    /// in the foreground, and anything that counts agents by mode alone would
+    /// lose them.
+    pub fn counts_as_agent(&self) -> bool {
+        self.mode.is_agent() || self.rest.dormancy.asleep().is_some()
     }
 
     /// Tokens this agent has spent this session: banked completed turns plus the
     /// running peak of any turn in flight. Zero for non-agent panes.
     pub fn session_tokens(&self) -> u64 {
         self.tokens_banked.saturating_add(self.turn_peak_tokens)
+    }
+
+    /// Give a window-level fixture the same reader cleanup as the pane harness.
+    #[cfg(test)]
+    pub(crate) fn fixture_shutdown(&self) -> impl FnOnce() + 'static {
+        let notifier = self.session.notifier.clone();
+        move || notifier.shutdown()
     }
 
     /// Should a working poll open a new live-turn via the spinner fallback?
@@ -6541,6 +6830,13 @@ impl TerminalView {
     /// Type `bytes` at the PTY: drop any selection, snap the view back to the
     /// prompt, and mark the pane as having pending input.
     fn send(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        // An asleep pane has a shell behind its card. A key that would type
+        // asks for the agent back instead — the workspace does that in a fresh
+        // pane — and a chord the key table handles still works as it would.
+        if self.rest.dormancy.asleep().is_some() {
+            cx.emit(WakeAsleep);
+            return;
+        }
         {
             let mut term = self.session.term.lock();
             term.clear_selection();
@@ -6549,6 +6845,7 @@ impl TerminalView {
         // a real keystroke ends any keyboard selection in progress
         self.kbd_sel = None;
         self.pending_input = Some(Instant::now());
+        self.person_key_ms.set(Some(crate::prompt::now_ms()));
         self.session.notifier.notify(bytes);
         cx.notify();
     }
@@ -6811,23 +7108,38 @@ impl TerminalView {
 
     /// The OSC title as a person reads it. Until the shell names itself the
     /// title is the placeholder [`DEFAULT_TITLE`], which stays English in
-    /// `title` (agents read it from the census as "nobody has named this")
-    /// and is drawn in the reader's language here.
+    /// `title` (agents read it from the census as "nobody has named this").
+    /// A person sees the pane's number there instead, which tells two unnamed
+    /// panes apart. A pane that is this window's own child has no number, and
+    /// keeps the placeholder word in the reader's language.
     pub fn shown_title(&self) -> String {
-        if self.title == DEFAULT_TITLE {
-            crate::lang::current()
+        if self.title != DEFAULT_TITLE {
+            return self.title.clone();
+        }
+        match self.pane_id {
+            Some(id) => id.to_string(),
+            None => crate::lang::current()
                 .strings()
                 .parts
                 .pane_title_default_shell
-                .to_string()
-        } else {
-            self.title.clone()
+                .to_string(),
+        }
+    }
+
+    /// What leads this pane's header: an agent's model and effort as its
+    /// transcript names them (`OPUS 5.5 MAX`, `SOL 6 XHIGH`), never the harness
+    /// running it. Until the transcript has said which model, the harness is
+    /// all that is known, so it stands in. Every other pane leads with its mode.
+    pub(crate) fn header_lead(&self) -> std::borrow::Cow<'static, str> {
+        match self.model_label.clone().filter(|_| self.mode.is_agent()) {
+            Some(model) => std::borrow::Cow::Owned(model),
+            None => self.mode.label_i18n(),
         }
     }
 
     /// The title on this pane's own header: the name a person gave it, else,
     /// on the Document face, the file's name (the shell's own title describes
-    /// a terminal that is not on screen), else the OSC title. The War Room
+    /// a terminal that is not on screen), else the OSC title. The Threshing Floor
     /// names a pane with this too, so the two cannot disagree.
     pub fn header_title(&self) -> String {
         let document = (self.bench.face() == crate::workbench::Face::Document)
@@ -6865,6 +7177,7 @@ impl TerminalView {
             text,
             seed: note.seed,
             pinned: note.pinned,
+            by: note.by,
         })
     }
 
@@ -6874,6 +7187,10 @@ impl TerminalView {
     /// that has finished, not a person holding the pen. A replaced note keeps
     /// its lean — same paper, new words — where a brand-new one rolls a fresh
     /// seed, so an agent updating its own note doesn't twitch the sheet.
+    ///
+    /// Everything that arrives here was written by something other than the
+    /// person at the keyboard, so the note is the agent's and wears the
+    /// robot stamp.
     pub fn note_post(
         &mut self,
         title: Option<String>,
@@ -6892,6 +7209,7 @@ impl TerminalView {
             seed,
             edit: None,
             pinned: pin,
+            by: Some(crate::sticky::Author::Agent),
         });
         self.note_hover = None;
         cx.emit(StickyChanged);
@@ -6933,6 +7251,7 @@ impl TerminalView {
             self.sticky_peel(cx);
             return;
         }
+        note.by = crate::sticky::author_after_edit(note.by, &note.text, &text);
         note.text = text;
         note.edit = None;
         cx.emit(StickyChanged);
@@ -7104,6 +7423,7 @@ impl TerminalView {
     /// `if ks.key.as_str() == …` added here is how the order grows back.
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
+        self.rest.touch(Instant::now());
         // Typing into the pane is attention too — covers the frozen-badge case
         // where the pane kept idle keyboard focus across the whole latch, so
         // no focus-in edge ever fired. No-op when nothing is latched.
@@ -8460,6 +8780,7 @@ impl TerminalView {
         if bytes.is_empty() {
             return;
         }
+        self.person_key_ms.set(Some(crate::prompt::now_ms()));
         self.session.notifier.notify(bytes);
     }
     fn has_selection(&self) -> bool {
@@ -10414,6 +10735,12 @@ impl Render for TerminalView {
             };
             let s = crate::lang::current().strings();
             let mut menu = div()
+                .id("pane-context-menu")
+                .debug_selector(|| "pane-context-menu".to_string())
+                .on_mouse_down_out(cx.listener(|v, _, _, cx| {
+                    v.ctx_menu = None;
+                    cx.notify();
+                }))
                 .flex()
                 .flex_col()
                 .min_w(px(168.))
@@ -10557,7 +10884,7 @@ impl Render for TerminalView {
                 // may watch and ask, never write or type into the bench), and
                 // off-limits. Picking one is a person's choice of the position.
                 .children({
-                    use crate::warroom::AgentAccess;
+                    use crate::threshing_floor::AgentAccess;
                     let parts = crate::lang::current().strings().parts;
                     [
                         (
@@ -10803,6 +11130,8 @@ impl Render for TerminalView {
             self.was_focused = focused_now;
             if focused_now {
                 self.ack_bell(cx);
+                // Looking at a resting pane wakes it: a fifth of a second.
+                self.rest.touch(Instant::now());
             }
             if self
                 .session
@@ -11012,6 +11341,105 @@ impl Render for TerminalView {
 
         // The ⋯ overflow menu lists exactly the controls hidden at this width, in
         // the same order they collapse. Mirrors the right-click menu's look.
+        // An asleep pane: its last screen dimmed under a card that says when,
+        // what it will come back as, and what it will come back without. A
+        // click on it wakes the agent, the same as a key.
+        let sleep_el = self.rest.dormancy.asleep().cloned().map(|asleep| {
+            let lang = crate::lang::current();
+            let parts = lang.strings().parts;
+            let when = crate::surface::stamp_local(asleep.since_ms, lang)
+                .unwrap_or_else(|| "?".to_string());
+            let mut kept = parts.sleep_card_kept.to_string();
+            if let Some(model) = &asleep.model {
+                kept = format!("{kept} \u{b7} {model}");
+            }
+            let refused = matches!(
+                &self.rest.refusal,
+                Some(crate::agentrest::Refusal::AgentBusy(Some(why))) if why == "open elsewhere"
+            );
+            let (surf, txt, acc) = (th.surface, th.text, th.accent);
+            let violet = gpui::hsla(0.72, 0.45, 0.72, 1.);
+            div()
+                .id("sleep-card")
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::black().alpha(0.55))
+                .cursor_pointer()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.rest.touch(Instant::now());
+                        cx.emit(WakeAsleep);
+                    }),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(5.))
+                        .max_w(px(360.))
+                        .px(px(16.))
+                        .py(px(12.))
+                        .rounded(px(9.))
+                        .bg(surf.alpha(0.94))
+                        .border_1()
+                        .border_color(violet.alpha(0.55))
+                        .shadow_md()
+                        .text_color(txt)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(6.))
+                                .text_size(px(14.))
+                                .child(
+                                    div()
+                                        .text_color(violet)
+                                        .when_some(chrome_glyph_font('\u{f04b2}', &th), |d, f| {
+                                            d.font_family(f)
+                                        })
+                                        .child("\u{f04b2}"),
+                                )
+                                .child(crate::lang::fill(
+                                    parts.sleep_card_since,
+                                    &[("when", &when)],
+                                )),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(txt.alpha(0.75))
+                                .child(kept),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.5))
+                                .text_color(if refused {
+                                    gpui::hsla(0.11, 0.85, 0.60, 1.)
+                                } else {
+                                    acc
+                                })
+                                .child(if refused {
+                                    parts.sleep_card_open_elsewhere
+                                } else {
+                                    parts.sleep_card_wake
+                                }),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(txt.alpha(0.55))
+                                .child(parts.sleep_card_lost),
+                        ),
+                )
+        });
         let overflow_el = self.hdr_overflow.map(|pos| {
             let (acc, surf, txt, human, _ff) = (
                 th.accent,
@@ -11156,6 +11584,37 @@ impl Render for TerminalView {
                         cx.notify();
                     }),
                 ));
+            }
+            // Rest and sleep, by hand: pin an agent awake, or send an idle
+            // one to sleep now (the clocks are skipped, never the refusals).
+            if self.counts_as_agent() && self.pane_id.is_some() {
+                let parts = crate::lang::current().strings().parts;
+                let label = if self.rest.keep_awake {
+                    format!("{} \u{2713}", parts.pane_keep_awake)
+                } else {
+                    parts.pane_keep_awake.to_string()
+                };
+                menu = menu.child(item("\u{2615}", &label).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        v.rest.keep_awake = !v.rest.keep_awake;
+                        v.rest.touch(Instant::now());
+                        cx.notify();
+                    }),
+                ));
+                if self.mode.is_agent() && self.rest.dormancy.asleep().is_none() {
+                    menu = menu.child(item("\u{1f4a4}", parts.pane_sleep_now).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.hdr_overflow = None;
+                            v.rest.sleep_now = true;
+                            cx.notify();
+                        }),
+                    ));
+                }
             }
             if !show_handover && self.has_handovers() {
                 let word = crate::lang::current().strings().artifacts_word;
@@ -11507,7 +11966,7 @@ impl Render for TerminalView {
                     .items_center()
                     .gap_2()
                     .when(ui_logo, |d| d.child(logo_el))
-                    .child(format!("▸ {} · {buf}", self.mode.label_i18n()))
+                    .child(format!("▸ {} · {buf}", self.header_lead()))
                     .child(div().w(px(6.)).h(px(13.)).bg(th.cursor))
                     .into_any_element()
             } else {
@@ -11556,9 +12015,9 @@ impl Render for TerminalView {
                         // UI CONFIG put the mode away: the title alone.
                         label.clone()
                     } else if focused_now && sk.chevron("»").is_some() {
-                        format!("{} · {label}", self.mode.label_i18n())
+                        format!("{} · {label}", self.header_lead())
                     } else {
-                        format!("▸ {} · {label}", self.mode.label_i18n())
+                        format!("▸ {} · {label}", self.header_lead())
                     })
                     .on_mouse_down(
                         MouseButton::Left,
@@ -11771,11 +12230,11 @@ impl Render for TerminalView {
                     .children({
                         let parts = crate::lang::current().strings().parts;
                         match self.agent_access {
-                            crate::warroom::AgentAccess::Open => None,
-                            crate::warroom::AgentAccess::ReadOnly => {
+                            crate::threshing_floor::AgentAccess::Open => None,
+                            crate::threshing_floor::AgentAccess::ReadOnly => {
                                 Some(parts.pane_read_only_badge)
                             }
-                            crate::warroom::AgentAccess::OffLimits => {
+                            crate::threshing_floor::AgentAccess::OffLimits => {
                                 Some(parts.pane_off_limits_badge)
                             }
                         }
@@ -11791,6 +12250,10 @@ impl Render for TerminalView {
                                 .child(badge)
                         })
                     })
+                    // Rest and sleep: whether the window has frozen or ended
+                    // this pane's agent, and what the pane costs.
+                    .children(self.rest_chip(&th, bar_fg, &sk, scale))
+                    .children(self.memory_figure(bar_fg, &sk, scale))
                     .child(status)
                     .when(ui_close, |d| {
                         d.child(
@@ -12320,6 +12783,7 @@ impl Render for TerminalView {
             .when(th.bezel > 0.001 && sk.glass(), |el| {
                 el.child(crt::bezel(&th))
             })
+            .children(sleep_el)
             .children(ctx_menu_el)
             .children(overflow_el)
             // the paint overlay is the topmost surface — painted last, above
@@ -17677,3 +18141,5 @@ mod behaviour;
 mod harness;
 #[cfg(test)]
 mod housekeeping_tests;
+#[cfg(test)]
+mod rest_tests;

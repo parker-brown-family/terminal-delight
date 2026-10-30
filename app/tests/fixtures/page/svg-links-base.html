@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<base href="https://example.com/maps/">
+<title>SVG links respect the document base</title>
+<a href="#destination">HTML destination</a>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 120">
+  <a href="#destination"><text x="10" y="20">SVG destination</text></a>
+  <a href="route.html"><text x="10" y="45">Relative document</text></a>
+</svg>
+<h2 id="destination">A local name does not override the base</h2>
+</html>

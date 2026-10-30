@@ -69,7 +69,6 @@ const BUILTIN_SKINS: &[(&str, &str)] = &[
     ("chalk", include_str!("../skins/chalk.toml")),
     ("default", DEFAULT_SKIN_TOML),
     ("deco", include_str!("../skins/deco.toml")),
-    ("console", include_str!("../skins/console.toml")),
     ("ops", include_str!("../skins/ops.toml")),
     ("clean", include_str!("../skins/clean.toml")),
 ];
@@ -1155,7 +1154,7 @@ impl Skin {
     /// A name's letters, as the heading face sets them: capitals, when the skin
     /// has a heading face of its own, and the string untouched otherwise. Kept
     /// apart from [`Skin::caps`], which is the LABEL strategy and already has
-    /// its own answer in deco and console.
+    /// its own answer in deco and ops.
     pub fn heading_text(&self, text: &str) -> String {
         if self.heading_family == self.font_family {
             text.to_string()
@@ -2153,6 +2152,12 @@ impl Skin {
             .rounded(self.radius())
             .border_1()
             .text_size(px(11. * s))
+            // A button's label is one line: never let a narrow flex row shrink it
+            // below its content and char-wrap it into a vertical column (the War
+            // Room relationship panel's From/To boxes did exactly that). A label
+            // too long for its box clips; callers that expect long text add
+            // `max_w` + `text_ellipsis` for a clean "…".
+            .whitespace_nowrap()
             .cursor_pointer();
         if self.is_paper() {
             return self.paper_control(base, active);
@@ -2722,7 +2727,7 @@ pub fn spec(cx: &App) -> Arc<SkinSpec> {
 }
 
 /// The most buttons the SKIN picker can draw: every builtin, plus the `custom`
-/// slot that appears once the user has a skin file.
+/// slot, which the picker shows only while the user's skin file is drawing.
 ///
 /// The WORST case on purpose — the tray has to fit when that file exists, and a
 /// geometry test that assumed it did not would pass on this machine and fail on
@@ -2799,6 +2804,25 @@ pub fn select(cx: &mut App, id: &str) -> Result<String, String> {
     cx.global_mut::<SkinRegistry>().active_id = id.to_string();
     cx.refresh_windows();
     Ok(active_id(cx))
+}
+
+/// Hold the skin that is drawing now, so a change of DESIGN cannot move it.
+///
+/// A window that never picked a skin draws the one its design asks for
+/// (`skin = "ops"` at the top of a design file), and a skin that follows the
+/// design changes when the design does. Parker, 2026-10-25, after Chalk turned
+/// into OPS when he picked Hacker: *"These are intended to move independently."*
+/// Every path that changes the window's design calls this first, so the two
+/// rows stay independent for a window that never touched the SKIN row as well
+/// as for one that did. A skin already chosen is left exactly as it is.
+pub fn hold(cx: &mut App) {
+    if is_pinned(cx) {
+        return;
+    }
+    let drawing = active_id(cx);
+    if let Err(e) = select(cx, &drawing) {
+        eprintln!("terminal-delight: {e}");
+    }
 }
 
 /// The skin a chrome region draws with: the active spec, baked against the
@@ -2941,11 +2965,16 @@ pub(crate) fn init_embedded(cx: &mut App) {
 // ---------------------------------------------------------------------------
 
 /// The embedded TOML of one builtin skin, by id.
+/// Skins that were offered once and have since been retired, read back as the
+/// skin that replaced them — a saved selection, a `ctl skin` or a new-window
+/// template naming one still lands on a skin that exists. Console was retired
+/// on 2026-10-25 ("remove the console skin") and reads back as OPS, the 0.5.0
+/// default and the other flat, upper-case trim.
 fn canonical_id(id: &str) -> &str {
-    if id == "paper" {
-        "chalk"
-    } else {
-        id
+    match id {
+        "paper" => "chalk",
+        "console" => "ops",
+        _ => id,
     }
 }
 
@@ -3031,7 +3060,8 @@ fn list_skins() -> i32 {
         "                                        you say `ctl skin theme`",
         "  2. $TD_SKIN=<path>                    a file, read at launch",
         "  3. your own skin.toml                 hot-reloaded on save (path above)",
-        "  4. skin = \"<name>\" in a theme file    so picking a theme moves both axes",
+        "  4. skin = \"<name>\" in a theme file    the skin a window starts in; picking",
+        "                                        another design later keeps it",
         "  5. default                            the house look — round, lit, ringed",
     ] {
         println!("{line}");
@@ -3039,7 +3069,7 @@ fn list_skins() -> i32 {
     println!(
         "\nShape and colour are separate axes on purpose: every skin works on every\n\
          palette. `terminal-delight skin --skin deco --theme hacker` shows what that\n\
-         means, and `--skin console --theme deco` is the same palette wearing a\n\
+         means, and `--skin chalk --theme deco` is the same palette wearing a\n\
          different look."
     );
     0
@@ -3379,7 +3409,7 @@ mod tests {
     fn paper_ui_handwriting_does_not_change_the_terminal_font() {
         let spec = parse(include_str!("../skins/chalk.toml")).unwrap();
         assert!(spec.unknown.is_empty(), "{:?}", spec.unknown);
-        for id in ["clean", "tactical-overdrive", "hacker"] {
+        for id in ["clean", "deco", "hacker"] {
             let th = theme::parse(theme::builtin_toml(id).unwrap()).unwrap();
             let terminal_font = th.font_family.clone();
             let sk = spec.bake(&th, 1.0);
@@ -3506,37 +3536,13 @@ mod tests {
         );
     }
 
-    /// The third skin is a FILE. No Rust was added for `console`, and this test
-    /// is the assertion of that: it checks the look it produces is genuinely a
-    /// different look — not merely a different set of colours — using only
-    /// strategies that already existed.
+    /// Console is no longer offered, and a window that saved it opens in OPS
+    /// rather than failing to find its skin.
     #[test]
-    fn the_console_skin_is_a_third_look_made_of_nothing_but_a_file() {
-        let th = palette();
-        let sk = parse(include_str!("../skins/console.toml"))
-            .unwrap()
-            .bake(&th, 1.0);
-        assert_eq!(sk.shape.boundary, Boundary::None, "regions carry no edge");
-        assert_eq!(sk.shape.emphasis, Emphasis::Rail);
-        assert_eq!(sk.shape.caps, Caps::Upper, "upper, but NOT tracked");
-        assert_eq!(sk.shape.shine, Shine::Flat);
-        assert_eq!(sk.radius(), px(0.));
-
-        // Separating by space rather than by line only works if a raised surface
-        // is actually lighter than the ground. With `boundary = none` this is the
-        // ONLY thing distinguishing a bar from what it sits on.
-        assert!(
-            sk.ink.panel_raised.l > sk.ink.panel.l,
-            "a console's bar must lift off its ground: {:?} vs {:?}",
-            sk.ink.panel_raised,
-            sk.ink.panel
-        );
-        // And its rail has to be thicker than deco's, because it is the only mark
-        // on a screen with no other lines on it.
-        let deco = parse(include_str!("../skins/deco.toml"))
-            .unwrap()
-            .bake(&th, 1.0);
-        assert!(sk.m.rail > deco.m.rail);
+    fn a_retired_console_skin_reads_back_as_ops() {
+        assert!(!BUILTIN_SKINS.iter().any(|(id, _)| *id == "console"));
+        assert_eq!(canonical_id("console"), "ops");
+        assert_eq!(builtin_toml("console"), builtin_toml("ops"));
     }
 
     /// Only a skin that NAMES a heading or data face changes the chrome's type,

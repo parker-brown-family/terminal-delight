@@ -1,0 +1,24 @@
+backend  https://openrouter.ai/api  (OPENROUTER_API_KEY from /home/parker/Work/jev-integrations/.env)   model jev-latest
+file     reports/2026-10-28-floor-canvas.html
+4 sections, 1 request each, 5 questions batched per request
+
+ #  unexpl  ident  seam  pulls  role          heading
+    0-3 lo 0-1 lo 0-3lo 0-1 hi
+------------------------------------------------------------------------------------------------
+ 1    1.23   0.13    --   0.08  turn          Floor canvas
+ 2    1.50   0.33  0.75   0.07  aside         The working area
+ 3    1.16   0.15  0.84   0.11  turn          The view
+ 4    1.70   0.28  1.08   0.43  aside         Verification
+
+Document
+  opens cold to a stranger     0.07   (high is good: a stranger could say what it is about)
+  headings tell the story      0.32   (high is good)
+  arc                        argument
+
+Worst first — repair these
+   2  The working area                                     ends flat
+   4  Verification                                         ok
+   3  The view                                             ends flat
+   1  Floor canvas                                         ends flat
+
+4 section requests + 1 document request in 530 ms wall, slowest 338 ms

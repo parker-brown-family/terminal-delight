@@ -1,0 +1,31 @@
+{
+  "cleanup": {
+    "exit": 0,
+    "command": [
+      "python3",
+      "scripts/tests/test_uninstall.py",
+      "-v"
+    ]
+  },
+  "baseline": {
+    "exit": 1,
+    "command": [
+      "env",
+      "TD_TEST_BASELINE=28054220a8d5a913cc7a9154b676442afae85636",
+      "python3",
+      "scripts/tests/test_uninstall.py",
+      "-q"
+    ]
+  },
+  "shellcheck": {
+    "exit": 0,
+    "command": [
+      "shellcheck",
+      "scripts/lib/uninstall.sh",
+      "scripts/install-agent-hooks.sh",
+      "scripts/install-recovery-hook.sh",
+      "scripts/install-keys-hotkey.sh",
+      "scripts/install-hotkey.sh"
+    ]
+  }
+}

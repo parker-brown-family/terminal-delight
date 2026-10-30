@@ -53,16 +53,21 @@ enum UiReq {
     Snapshot(mpsc::Sender<mcp::Snapshot>),
     /// Apply a parsed `set_pane_config` batch and report the per-target outcome.
     Apply(Vec<mcp::ConfigUpdate>, mpsc::Sender<Vec<mcp::ApplyOutcome>>),
-    /// `grep`: search every exposed pane's scrollback for an exact substring
-    /// (needle, lines-per-pane cap) and report the per-pane matches.
-    Search(String, usize, mpsc::Sender<Vec<mcp::PaneMatches>>),
+    /// `grep`: carry the verified caller to the grid read, so queued searches
+    /// cannot keep using a relationship that was revoked after the snapshot.
+    Search(
+        String,
+        usize,
+        Option<u64>,
+        mpsc::Sender<Vec<mcp::PaneMatches>>,
+    ),
     /// `open_document`: open a document in the caller's pane or tab. The
     /// reply is the router's own line, which for a split arrives only once the
     /// workspace has handled the pane's request — after this tick — so the
     /// sender travels with the request rather than being answered here.
     Open(mcp::OpenRequest, mpsc::Sender<String>),
     /// `ask_agent`: an agent's question for another, decided and answered by
-    /// the window, which holds the War Room's chart and the seat facts.
+    /// the window, which holds the Threshing Floor's chart and the seat facts.
     Ask(mcp::AskCall, mpsc::Sender<mcp::AskReply>),
 }
 
@@ -204,8 +209,8 @@ pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::
                             }
                         }
                     }
-                    Ok(UiReq::Search(needle, cap, reply)) => {
-                        match this.update(cx, |ws, cx| ws.mcp_search(&needle, cap, cx)) {
+                    Ok(UiReq::Search(needle, cap, caller, reply)) => {
+                        match this.update(cx, |ws, cx| ws.mcp_search(&needle, cap, caller, cx)) {
                             Ok(hits) => {
                                 let _ = reply.send(hits);
                             }
@@ -231,8 +236,9 @@ pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::
                                 let _ = reply.send(answer);
                             }
                             Err(_) => {
-                                let _ = reply
-                                    .send(mcp::AskReply::Refused(crate::warroom::Refusal::Gone));
+                                let _ = reply.send(mcp::AskReply::Refused(
+                                    crate::threshing_floor::Refusal::Gone,
+                                ));
                                 alive = false;
                             }
                         }
@@ -288,6 +294,7 @@ fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot
         engineering_allowed: ws.coordination_full_scope(),
         documents: ws.mcp_documents(cx),
         chart: ws.chart.clone(),
+        orgs: ws.floor_orgs.clone(),
     }
 }
 
@@ -376,7 +383,8 @@ pub(crate) fn respond_as(
             // grep never invoke this closure.
             let search = |needle: &str, cap: usize| -> Vec<mcp::PaneMatches> {
                 let (tx, rx) = mpsc::channel();
-                if !bridge_send(UiReq::Search(needle.to_string(), cap, tx)) {
+                let caller = snap.caller.as_ref().and_then(|c| c.pane);
+                if !bridge_send(UiReq::Search(needle.to_string(), cap, caller, tx)) {
                     return Vec::new();
                 }
                 rx.recv_timeout(SNAPSHOT_BUDGET).unwrap_or_default()
@@ -395,7 +403,7 @@ pub(crate) fn respond_as(
                 }
             };
             let ask = |call: &mcp::AskCall| -> mcp::AskReply {
-                let gone = || mcp::AskReply::Refused(crate::warroom::Refusal::Gone);
+                let gone = || mcp::AskReply::Refused(crate::threshing_floor::Refusal::Gone);
                 // A copy is priced here, on this connection's thread: which
                 // conversation the pane holds is a fact about the whole
                 // window, and reading its size is file work the window's
@@ -529,13 +537,16 @@ fn notify_loop(
             .panes
             .iter()
             .map(|p| mcp::PaneInfo {
-                reach: Some(crate::warroom::anonymous_reach(&snap.config, &p.party())),
+                reach: Some(crate::threshing_floor::anonymous_reach(
+                    &snap.config,
+                    &p.party(),
+                )),
                 ..p.clone()
             })
             .collect();
         for p in pushable
             .iter()
-            .filter(|p| p.is_agent && p.reach >= Some(crate::warroom::Reach::Read))
+            .filter(|p| p.is_agent && p.reach >= Some(crate::threshing_floor::Reach::Read))
         {
             let events = match bound.get(&p.pid) {
                 Some(path) => mcp_tail::tail_tool_events(path, PUSH_TAIL),
@@ -582,7 +593,7 @@ mod tests {
                 tool: None,
                 note: None,
                 reach: None,
-                access: crate::warroom::AgentAccess::Open,
+                access: crate::threshing_floor::AgentAccess::Open,
                 seat: None,
                 grade: mcp::GradeReport::default(),
             }],
@@ -597,7 +608,8 @@ mod tests {
             coordination: None,
             engineering_allowed: false,
             documents: vec![],
-            chart: crate::warroom::Chart::default(),
+            chart: crate::threshing_floor::Chart::default(),
+            orgs: crate::threshing_floor::Orgs::default(),
         }
     }
 

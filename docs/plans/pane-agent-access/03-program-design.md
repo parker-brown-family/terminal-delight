@@ -1,4 +1,4 @@
-# Program Design: the War Room, first step
+# Program Design: the Threshing Floor, first step
 
 Status: **APPROVED 2026-10-22**: seven concurs, no notes, then "go!", on `reports/2026-10-22-war-room-program-design.html`. Signatures are written against `origin/dev/0.5.0` at `d17d0661`; existing names are quoted from that ref, and new ones are proposals. No implementation bodies.
 
@@ -8,11 +8,11 @@ New:
 - `app/src/warroom.rs` — the rules, with no gpui: seats, lines, rungs, roles, `reach`, risk, bypass spending, and the in-flight ask book. Tested like `access.rs` and `hud.rs`.
 - `app/src/askcopy.rs` — plans and runs one read-only copy: argv, cleaned environment, Claude's tool-list check, Codex version pin, and the answer.
 - `app/src/askrecord.rs` — the append-only ask record (JSONL) and the two Gate 1 numbers read back from it.
-- `app/src/war_room_view.rs` — draws the panel (seats, lines, seat facts, the switch row), beside `coordination_view.rs`, so `main.rs` does not grow by a panel.
+- `app/src/threshing_floor_view.rs` — draws the panel (seats, lines, seat facts, the switch row), beside `coordination_view.rs`, so `main.rs` does not grow by a panel.
 
 Changed:
 - `app/src/mcp.rs`:
-  - `PaneInfo.exposed: bool` becomes `reach: warroom::Reach` plus `line: Option<warroom::LineView>`. Deleting the bool makes the compiler list every exposure site.
+  - `PaneInfo.exposed: bool` becomes `reach: threshing_floor::Reach` plus `line: Option<threshing_floor::LineView>`. Deleting the bool makes the compiler list every exposure site.
   - New verbs `ask_agent` and `ask_answer` go in `tool_defs`, `tools_call` and `provenance`, and `request_access` gains `ask_line`.
   - A new generic closure `ask: &A` joins `tail`, `apply`, `search` and `open`.
   - `list_panes` gains `hidden`.
@@ -25,22 +25,22 @@ Changed:
 - `app/src/main.rs`:
   - `StateFile` gains `lines` and `ask_press_tokens`.
   - `SavedNode::Leaf` and its mirror `LeafFields` gain `seat` and `agents`.
-  - `Workspace` gains `war_room`, `chart` and `asks`.
-  - The counter's click and the `more-mcp` row open the War Room, and the help rows change.
-  - The switch row is extracted as `mcp_switch_row`, shared by the wall and the War Room.
+  - `Workspace` gains `threshing_floor`, `chart` and `asks`.
+  - The counter's click and the `more-mcp` row open the Threshing Floor, and the help rows change.
+  - The switch row is extracted as `mcp_switch_row`, shared by the wall and the Threshing Floor.
   - `rail_ink` takes a risk, and `rail_answer` handles `AskLine` and `Copy`.
   - The door test is rewritten.
-- `app/src/pane.rs` — `TerminalView` gains `seat: Option<SeatId>` and `agents: AgentAccess`, which replaces `off_limits: bool`. `set_seat` is called only from the War Room.
+- `app/src/pane.rs` — `TerminalView` gains `seat: Option<SeatId>` and `agents: AgentAccess`, which replaces `off_limits: bool`. `set_seat` is called only from the Threshing Floor.
 - `app/src/vitals.rs` — reads a Codex rollout's last `token_count` and `turn_context` model into the same `Vitals.tokens` and `.model`.
 - `app/src/workbench.rs` — `Bench::latest_response()`, the newest `Kind::Response` whatever the person has selected.
 - `app/src/model_catalog.rs` — `Transport` becomes `pub(crate)` with `start_with(command, deadline)`. It is the shared runner, so no fourth spawner is written.
-- `app/src/ctl.rs` — the refusal text names the War Room.
+- `app/src/ctl.rs` — the refusal text names the Threshing Floor.
 - `app/src/lang/*.rs` — every new string, in nine languages.
 
 ## Types & signatures
 
 ```rust
-// ---- warroom.rs ----------------------------------------------------------
+// ---- threshing_floor.rs ----------------------------------------------------------
 
 /// Minted once, when a person seats a pane; saved on the pane's leaf so it
 /// survives any respawn. Pane ids restart with the host (host.rs:547).
@@ -76,7 +76,7 @@ impl Chart {
     pub fn from_saved(lines: Vec<Line>) -> Self;
     pub fn saved(&self) -> &[Line];
     pub fn line(&self, from: SeatId, to: SeatId) -> Option<&Line>;
-    /// Only the War Room panel and rail_answer call these (source test).
+    /// Only the Threshing Floor panel and rail_answer call these (source test).
     pub fn draw(&mut self, from: SeatId, to: SeatId, rung: Rung);
     pub fn grant_bypass(&mut self, from: SeatId, to: SeatId, prompts: u8);
     pub fn erase(&mut self, from: SeatId, to: SeatId);
@@ -198,7 +198,7 @@ pub struct Entry<'a> {
     pub program: Option<&'a str>, pub model: Option<&'a str>,
     pub reads_tokens: Option<u64>, pub tokens_read: Option<u64>, pub cost_usd: Option<f64>,
 }
-pub fn path_for(session: &str) -> PathBuf; // $XDG_STATE_HOME/terminal-delight/warroom/<session>/asks.jsonl
+pub fn path_for(session: &str) -> PathBuf; // $XDG_STATE_HOME/terminal-delight/threshing-floor/<session>/asks.jsonl
 pub fn append(path: &Path, entry: &Entry) -> io::Result<()>;
 pub struct Numbers { pub unlined_answered: u64, pub tokens_per_answer_cheap: Option<f64>, pub tokens_per_answer_copy: Option<f64> }
 pub fn numbers(path: &Path) -> io::Result<Numbers>;
@@ -206,7 +206,7 @@ pub fn numbers(path: &Path) -> io::Result<Numbers>;
 // ---- mcp.rs (changed) ----------------------------------------------------
 
 pub struct AskRequest { pub caller: Caller, pub pid: u32, pub question: String, pub copy: bool }
-pub enum AskReply { Cheap(warroom::CheapAnswer), Started(AskId, Option<u64>), Awaiting(AskId, Option<u64>), Refused(warroom::Refusal) }
+pub enum AskReply { Cheap(threshing_floor::CheapAnswer), Started(AskId, Option<u64>), Awaiting(AskId, Option<u64>), Refused(threshing_floor::Refusal) }
 fn ask_agent<A>(args: &Value, snap: &Snapshot, ask: &A) -> Value where A: Fn(&AskRequest) -> AskReply;
 fn ask_answer<A>(args: &Value, snap: &Snapshot, ask: &A) -> Value; // reads the book through the same bridge
 // tools_call / dispatch / handle_line_full gain:  A: Fn(&AskRequest) -> AskReply
@@ -218,20 +218,20 @@ pub const ALL: [Change; 6];   // the wire changes; Copy is not among them
 pub struct Ask { pub change: Change, pub pid: Option<u32>, pub title: Option<String>,
                  pub why: String, pub at: Instant,
                  pub risk: crate::coordination::Severity,
-                 pub ask_id: Option<crate::warroom::AskId> }
+                 pub ask_id: Option<crate::threshing_floor::AskId> }
 pub struct Now<'a> { pub pane_off_limits: Option<bool>, pub mcp: &'a McpConfig,
-                     pub line: Option<crate::warroom::Rung> }
+                     pub line: Option<crate::threshing_floor::Rung> }
 
 // ---- main.rs (changed) ---------------------------------------------------
 
 // StateFile:
-#[serde(default, skip_serializing_if = "Vec::is_empty")] lines: Vec<warroom::Line>,
+#[serde(default, skip_serializing_if = "Vec::is_empty")] lines: Vec<threshing_floor::Line>,
 #[serde(default, skip_serializing_if = "Option::is_none")] ask_press_tokens: Option<u64>, // None = 400_000
 // SavedNode::Leaf and LeafFields:
-#[serde(default, skip_serializing_if = "Option::is_none")] seat: Option<warroom::SeatId>,
+#[serde(default, skip_serializing_if = "Option::is_none")] seat: Option<threshing_floor::SeatId>,
 #[serde(default, skip_serializing_if = "Option::is_none")] agents: Option<String>, // "read-only"; unknown → OffLimits; off_limits = true wins
 // Workspace:
-war_room: bool, chart: warroom::Chart, asks: warroom::AskBook,
+threshing_floor: bool, chart: threshing_floor::Chart, asks: threshing_floor::AskBook,
 fn rail_ink(kind: attention::AttentionKind, risk: Option<coordination::Severity>, th: &theme::Theme, sk: &skin::Skin) -> Hsla;
 fn mcp_switch_row(&self, th: &theme::Theme, s: f32, cx: &mut Context<Self>) -> gpui::Div;
 fn ask_bridge(&mut self, req: &mcp::AskRequest, cx: &mut Context<Self>) -> mcp::AskReply;
@@ -239,7 +239,7 @@ fn ask_bridge(&mut self, req: &mcp::AskRequest, cx: &mut Context<Self>) -> mcp::
 // ---- elsewhere -----------------------------------------------------------
 
 impl Bench { pub fn latest_response(&self) -> Option<&crate::surface::Response>; }
-impl TerminalView { pub fn set_seat(&mut self, seat: Option<warroom::SeatId>, cx: &mut Context<Self>); }
+impl TerminalView { pub fn set_seat(&mut self, seat: Option<threshing_floor::SeatId>, cx: &mut Context<Self>); }
 // model_catalog.rs
 pub(crate) struct Transport { /* unchanged fields */ }
 impl Transport { pub(crate) fn start_with(command: &mut Command, deadline: Duration) -> Result<Self, String>; }
@@ -249,12 +249,12 @@ fn codex_window(body: &str) -> Option<(u64 /*last input tokens*/, Option<String>
 
 ## Call stack
 
-**The counter.** `render_agent_counter` click → `ws.war_room = true` → `war_room_view::render(ws, …)`. That draws `ws.mcp_switch_row(…)`, the seats (each from `agent_status()`, `agent_vitals[shell_pid]`, `bench.latest_response()`, `saved_note()`) and `chart.saved()`.
+**The counter.** `render_agent_counter` click → `ws.threshing_floor = true` → `threshing_floor_view::render(ws, …)`. That draws `ws.mcp_switch_row(…)`, the seats (each from `agent_status()`, `agent_vitals[shell_pid]`, `bench.latest_response()`, `saved_note()`) and `chart.saved()`.
 
 **A cheap ask.**
 1. Agent → `mcp::handle_line_full` → `tools_call` → `ask_agent(args, snap, ask)`.
 2. → `ask(&AskRequest{copy:false})` → transport bridge → `Workspace::ask_bridge`. It finds the caller by `Caller.pane`, set from peer credentials, and the target by pid.
-3. → `warroom::reach(cfg, chart, caller, target, own)`, which must be at least `Ask`, else `Refused(NoLine | …)`.
+3. → `threshing_floor::reach(cfg, chart, caller, target, own)`, which must be at least `Ask`, else `Refused(NoLine | …)`.
 4. → build `CheapAnswer` (seat facts, latest response, note, `tail(pane, 10)`).
 5. → `askrecord::append(stage "cheap")` → `AskReply::Cheap`.
 6. → `ask_agent` labels it untrusted terminal data, as `pane_events` is labelled.
@@ -264,7 +264,7 @@ fn codex_window(body: &str) -> Option<(u64 /*last input tokens*/, Option<String>
 2. → `paneident::resolve` for the target. It must be `Bond::Declared`, and no other pane may hold the same `session_id`. Otherwise it refuses with `ConversationUnnamed` or `ConversationShared`.
 3. → reads `reads = agent_vitals[target].tokens` (None = unknown) and `asks.open(…)`.
 4. If `reads` is known and at most `ask_press_tokens`: set the stage to `Running` and `spawn_copy`. Otherwise:
-   - build `access::Ask{change: Copy, risk: warroom::risk(Copy{reads, limit}), ask_id}`;
+   - build `access::Ask{change: Copy, risk: threshing_floor::risk(Copy{reads, limit}), ask_id}`;
    - store it in the asker's `access_ask`, holding the `OnePending` rule;
    - set the stage to `AwaitingPress` and return `Awaiting(id, reads)`.
 5. `spawn_copy`: on a background thread, `askcopy::plan(…)` → `askcopy::run(plan, question)`:
@@ -284,14 +284,14 @@ fn codex_window(body: &str) -> Option<(u64 /*last input tokens*/, Option<String>
 5. `answer_line(...)` tells the asker, as today.
 
 **Seating and lines (a person only).**
-1. Click "Seat" on a pane in the War Room → `SeatId::mint()` → `TerminalView::set_seat` → `save`.
+1. Click "Seat" on a pane in the Threshing Floor → `SeatId::mint()` → `TerminalView::set_seat` → `save`.
 2. Click a seat, then another → `chart.draw(a, b, Ask)`.
 3. Click the line to change its rung or erase it.
 4. Taking a seat off → `chart.forget_seat`.
 
 ## Test plan
 
-The rules, in `warroom.rs`:
+The rules, in `threshing_floor.rs`:
 - `mcp_off_hides_every_pane`
 - `an_off_limits_pane_is_hidden_from_every_line` — a line of rung Ask into an off-limits pane gives Hidden.
 - `a_seated_pane_without_a_line_is_hidden`
@@ -331,13 +331,13 @@ The server, in `mcp.rs`:
 The rail and asks, in `access.rs` and `main.rs`:
 - `copy_is_not_a_wire_change` — an agent cannot raise the Copy card itself.
 - `no_agent_facing_surface_can_answer_an_ask` (existing) is extended to AskLine and Copy.
-- `only_the_war_room_and_the_rail_draw_lines` — a source scan of `Chart::draw`, `grant_bypass` and `erase`.
+- `only_the_threshing_floor_and_the_rail_draw_lines` — a source scan of `Chart::draw`, `grant_bypass` and `erase`.
 - `rail_ink_follows_risk_for_access_asks`
 - `one_pending_ask_per_asking_pane`
 
 The doors and saving, in `main.rs`:
-- `the_counter_opens_the_war_room` — replaces `the_agent_wall_opens_from_the_counter_that_summarises_it`.
-- `the_menu_row_opens_the_war_room`
+- `the_counter_opens_the_threshing_floor` — replaces `the_agent_wall_opens_from_the_counter_that_summarises_it`.
+- `the_menu_row_opens_the_threshing_floor`
 - `only_ctrl_shift_a_opens_the_wall`
 - `the_switch_row_is_drawn_by_one_function`
 - `a_seat_survives_a_respawn` — `plan_attach` under a new pane id keeps the leaf's seat.

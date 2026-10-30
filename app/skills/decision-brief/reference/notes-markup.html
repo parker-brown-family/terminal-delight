@@ -6,8 +6,6 @@
   <span class="cnt"><b id="note-count">0</b> notes</span>
   <button id="btn-export" class="primary" data-note-action="export"
           title="Anchored note map for pasting into a prompt">&#x1F4CB; copy map</button>
-  <button id="btn-embed" data-note-action="embed"
-          title="Download this file with your notes baked in">&#x1F4BE; save into file</button>
   <button id="btn-clear" data-note-action="clear" title="Delete every note">&#x2715;</button>
 </div>
 
@@ -23,11 +21,11 @@
     <ul id="note-list"></ul>
     <p id="note-none">No notes on this yet.</p>
     <textarea id="note-text"
-      placeholder="Your note. Saved against this element and readable by an agent once you save into the file."></textarea>
+      placeholder="Your comment. Submitting saves it into the original HTML in Terminal Delight."></textarea>
     <div class="note-actions">
-      <button class="save" data-note-action="add">Add note</button>
+      <button class="save" data-note-action="add">Submit comment</button>
       <button data-close>Close</button>
-      <span class="hintk">Ctrl+Enter to add</span>
+      <span class="hintk">Ctrl+Enter to submit</span>
     </div>
   </div>
 </dialog>
@@ -55,13 +53,13 @@
   </div>
 </dialog>
 
-<!-- Notes and concurs are baked in here by "save into file". Leave them empty and leave them in,
+<!-- Terminal Delight saves submitted annotations here in the original file. Leave them empty and leave them in,
      with their data-format: it names the format notes.js writes, and other writers check it. -->
 <script type="application/json" id="report-notes" data-format="1">{}</script>
 <script type="application/json" id="report-concurs" data-format="1">{}</script>
 
 <script>
-  /* Set before notes.js runs. Used for the storage key and the download filename. */
+  /* Set before notes.js runs. Used for the storage key and the note map header. */
   window.NOTES_FILE = '<YYYY-MM-DD>-<topic-slug>.html';
 </script>
 <!-- then paste the contents of assets/notes.js inline, inside a <script> tag -->

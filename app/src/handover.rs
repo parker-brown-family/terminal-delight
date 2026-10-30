@@ -496,14 +496,17 @@ impl Ledger {
     }
 }
 
-/// What the tests count. The window never needs a number: the chip names the
-/// newest handover rather than counting them, and the page counts its rows.
-#[cfg(test)]
 impl Ledger {
+    /// How many handovers the pane has made. The chip names the newest rather
+    /// than counting them; a Threshing Floor card counts the rest beside it.
     pub fn len(&self) -> usize {
         self.items.len()
     }
+}
 
+/// What the tests count.
+#[cfg(test)]
+impl Ledger {
     pub fn unopened(&self) -> usize {
         self.items
             .iter()
@@ -540,6 +543,7 @@ pub fn surface_doc(h: &Handover) -> Value {
         "kind": "artifact",
         "id": surface_id(&h.key()),
         "title": h.label,
+        "handover_at_ms": h.at_ms,
         "model": {
             "href": h.href,
             "handover": h.source.word(),

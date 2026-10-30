@@ -7,8 +7,204 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### SVG Links in HTML Documents
+
+- HTML briefs containing linked SVG diagrams now render in the document reader.
+  SVG links resolve to ordinary URL strings, preserving local fragment jumps
+  and document base URLs instead of failing with `url.indexOf is not a function`.
+
+### Installer ownership and cleanup
+
+- Source installers record the hashes and paths of installed hooks, key-sheet
+  files, plugins and desktop files in private component receipts. Cleanup accepts
+  those receipts, current source bytes or a table of committed file versions;
+  changed and unverified files stay in place. The table is regenerated from git
+  history, including renames, and checked in CI with the cleanup fixtures.
+- Failed settings edits discard temporary snapshots. Successful edits keep one
+  pre-edit copy, mode 0600, under the XDG state directory's
+  `terminal-delight/backups/`, and print its path. Hook installation uses the
+  same backup policy.
+- The key-sheet installer checks for a legacy td-send block before installing
+  anything and prints manual removal steps. Desktop and plugin installers gain
+  ownership-checked `--uninstall` modes and reject unknown option flags. Desktop
+  cleanup refreshes the application and icon caches.
+- GNOME hotkey installation saves its intent before clearing the built-in key.
+  A failed install leaves that intent and the previous binding for review. When
+  a successful-install receipt is missing, cleanup prints exact inspection and
+  manual cleanup commands.
+
+### CONFIG › ADMIN: export, old builds, uninstall
+
+- ⚙ ADMIN in the CONFIG menu opens a centred panel. **Export settings** copies
+  settings, layouts and sessions into a new `~/terminal-delight-export-<stamp>/`
+  with a manifest of every file's hash, re-reads every copy before calling it
+  verified, and leaves out the phone pairing token, lock files and the undo
+  records bound to this machine; **Export settings and records** adds notes,
+  conversations and the resume lines of sleeping agents. **Remove old builds**
+  lists the versioned builds with their size and removes the ones nothing runs,
+  keeping the launcher's build, every running build and the newest three; a
+  process that may be TD and cannot be inspected stops it.
+- **Uninstall** keeps records by default, or exports and verifies them before
+  removing them, or removes them. It writes the plan for the person to read
+  first, and a second click runs exactly the plan they read. A worker staged
+  outside every TD directory closes the session hosts (each saves its session),
+  then TD's windows and the MCP relays agents started, matched by executable,
+  never by name; restores the default terminal and refuses to remove the program
+  while TD is still a default terminal; takes TD's entries, and nothing else,
+  out of Claude Code's settings, the key sheet out of `bindings.lua`, and TD's
+  MCP registration out of Claude Code, Codex and Gemini through their own CLIs;
+  removes owned helpers, desktop files, the runtime files TD recorded writing,
+  caches, builds and the launcher, and names the AppImage for the person to
+  delete, since nothing on disk proves which file was mounted. It writes a
+  receipt of what it removed, what failed and what it left for the person, with
+  a copy of every shared file it edited.
+- A protection marker naming this machine's id makes removal refuse in the
+  worker, the panel and the agent handoff alike; `terminal-delight admin protect`
+  writes one and deleting it lifts it. The same tools run headless as
+  `terminal-delight uninstall preview|plan|run` and `terminal-delight admin
+  export|builds|guard|protect`.
+
+### Linux removal preparation (release unassigned)
+
+- A headless `uninstall preview` inventories candidate paths without opening a
+  window or changing files. `--json` carries structured evidence; `--handoff`
+  prints an optional agent brief.
+- Legacy hook cleanup preserves unrelated nested commands and group metadata.
+  Invalid settings or unrecognized helper references stop cleanup. Edited
+  helpers and damaged Hyprland blocks are retained for review.
+- GNOME cleanup compares recorded shortcut values and preserves later terminal
+  choices. Old installs without an ownership receipt require review. The
+  removal guide retains records and undo evidence before application removal.
+
+### The Threshing Floor for 0.5.0 Development
+
+- System Map card content is centered with a small inset at every zoom. Names,
+  models and artifact provenance use more of the card, scaling with its size.
+  Org cards retain their existing layout.
+- System Map cards end with the current artifact title and its human-comment
+  state on separate lines. Below 60% zoom, cards keep the model and version plus
+  No artifact, No comments, or Human comments; unreadable comment evidence says
+  Comments unknown.
+- The System Map uses the org view's Actor → CAN → Targets builder. Drag a
+  whole org from its frame or header tab, or drag an agent card, into a slot.
+  Map cards show the agent name and vitals; cross-org lines appear as one wire
+  per directed org pair with the strongest rung and a count.
+- Mouse Back opens the System Map from an org and mouse Forward returns. Orgs
+  can be dragged into a saved arrangement, with Arrange restoring automatic
+  packing. Cross-org arrows follow their endpoints as orgs move.
+- The shared agent launch briefing opens with loose cues for choosing between
+  an existing TD teammate, a native subagent where allowed, and doing the work
+  directly. Agents can weigh useful context and independent work against the
+  handoff, without a routing score, mandatory team sweep or written explanation
+  for each choice. Current Floor permissions still govern contact with teammates.
+- Each press of the target **+** creates a visible empty card slot and scrolls
+  it into view. Choose a card or drop it onto a slot to fill it; empty slots
+  can be selected or removed, and Submit waits until every slot is filled.
+  The empty-slot prompt is localized in all nine packs, and the relationship
+  builder's Hindi labels now read in Hindi.
+- The pane pool starts beside the relationship builder and keeps its own
+  full-height column, with more compact cards. The chart supports Ctrl+wheel
+  zoom around the pointer, dragging its empty surface to pan, and a reset view.
+  Chart cards, connectors and relationship labels move and scale together;
+  the builder and pool keep their size. The add-target button stays visible
+  beside the target cards when several are selected.
+- Relationships are built in a persistent Actor → Can → Targets area above the
+  Floor. Dropping one card onto another or Alt-dragging a line fills the builder;
+  targets are chosen on the chart and in the filtered pane pool. Submit saves
+  every target together and adds staged pool cards to the org. Cancel leaves
+  membership unchanged. Related controls are grouped with more space.
+- The War Room is now called the Threshing Floor, everywhere a person reads it:
+  the panel, its help row, the docs and the site, in all nine languages. The
+  name is meant to be calm: a threshing floor is where a harvest is sorted.
+- Orgs saved before the rename load unchanged, and are still saved under the
+  same keys, so a build on either side of the rename reads the same window
+  state. The ask record is now written under `threshing-floor/<session>/`; the
+  record older builds kept under `warroom/<session>/` is still read and counted,
+  and never moved.
+- `TD_WAR_ROOM_DEMO` is now `TD_THRESHING_FLOOR_DEMO`.
+- A line can now reach `prompt`, a rung of its own above `ask`. Along a prompt
+  line, `prompt_agent` gives another agent work: the words are typed into its
+  own conversation as its next turn, once it is at rest at its prompt, and
+  `prompt_status` reports the stages and the worker's last message. A
+  coordinating agent can now treat the other agents in the window as its
+  sub-agents, Claude Code and Codex alike. A worker that is working is waited
+  for; a resting or asleep one is woken; a permission prompt, a dialog or a
+  person typing is never typed into, and Enter is pressed once, only after the
+  paste shows. Ask lines and rail bypasses never prompt, read-only panes are
+  never prompted, and lines drawn before this stay ask lines. The ask rung now
+  reads "ask" rather than "prompt".
+- An optional prompt key stays bound to its first assignment after detailed
+  status expires or the window reopens. A retry returns `expired` without
+  typing again; a new key follows the existing prompt line and worker checks.
+  The lasting receipt holds no prompt, reply or raw key.
+- Prompting waits longer and holds nothing back. A worker must sit settled at
+  its prompt for five seconds, not two, before it is typed into; a pane its
+  person typed in waits a minute, not twenty seconds; and Enter comes a second
+  after the paste shows. Words a failed prompt left unsent no longer stop the
+  worker taking prompts: the next one is pasted after them.
+- An agent Terminal Delight starts is told about the Threshing Floor in its
+  briefing: what a line is, how to read where it stands, how to answer a prompt
+  from another agent, and how to hand work out (a work order with how it will
+  be judged done, another try when a reply falls short, and its person told
+  after two or three). The new `floor_position` tool answers where an agent
+  stands, including which panes may prompt it.
+- An agent the sleep ends is always recorded asleep. One slower than five
+  seconds to exit used to be ended with its pane left a plain shell that no
+  key or prompt would resume; the window now follows it up and marks the pane
+  asleep once it has gone, and leaves it awake if it is still running a minute
+  after the signal. A worker woken from sleep for a prompt is told, under the
+  prompt's header, that its old process's shells and session permissions are
+  gone.
+- A pane rebuilt from a fresh snapshot, and an asleep agent woken into a fresh
+  shell, keep their Threshing Floor seat and the read-only or off-limits mark a
+  person set. Before, both came back unseated, and an off-limits pane came back
+  open to agents.
+
+### Agent Memory Hover for 0.5.0 Development
+
+- MENU GLYPHS includes a saved 🤖 Agents shortcut toggle. The toolbar button
+  opens Agents settings; CONFIG keeps the same entry when the glyph is hidden.
+  Standard and All show it, while Clean folds it into CONFIG.
+- Hover the top-right agent counter to see RAM and swap for awake, resting and
+  sleeping panes, the observed RAM decrease since rest, measurement coverage
+  and sample age. The card uses cached measurements and keeps the Threshing Floor click.
+- Unavailable process lists, swap readings and comparison baselines remain
+  unmeasured. Partial totals say how many panes were measured. Memory figures
+  use binary units (KiB, MiB and GiB); shared services outside pane scopes are
+  excluded.
+
+### Agaro Permission Follow-Through for 0.5.0 Development
+
+- Agents can propose opening an off-limits pane without learning whether the
+  supplied PID exists. Real, missing and already-open targets occupy the same
+  one-request queue. Only a person's Yes can change access; a missing or
+  replaced target cannot acquire a stale approval.
+- A paired MCP/control-socket regression test preserves the existing refusal
+  of unbound document opens. Ordinary windows require UI actions for commands
+  that act as the person; scripted rigs retain their explicit launch opt-in.
+- MCP documentation now describes read-only tool hints, sticky-note writer
+  provenance and the ordinary-window control-socket fence.
+
 ### Upgrading from 0.4.0 (0.5.0 development)
 
+- **Markdown review notes now keep their source evidence.** A new note records the
+  quotation, neighbouring passages and SHA-256 of the document as it was read.
+  Notes stores advance to format 2 on the next successful save. Existing notes
+  remain readable, with their unavailable evidence labelled; no old quotation or
+  revision is invented. Older builds that only understand format 1 refuse to
+  overwrite an upgraded store. Keep the notes folder when backing up TD.
+- **Artifact captures use local storage.** New artifact handovers can save one
+  content-addressed copy per local revision under the workbench store's
+  `artifact-revisions/` directory. Capture is limited to regular files of at most
+  16 MiB; remote links, symlinks, special files and unavailable bytes remain links
+  with an explanation. Linked assets are not copied. Existing history is indexed
+  without pretending today's bytes were delivered in the past. No automatic
+  retention limit deletes saved revisions in this version.
+- **Existing terminal hosts must restart before using the new cleanup code.**
+  Replacing a window preserves the old host and its live terminals. Artifact and
+  note changes take effect in the new window; hosted process cleanup takes effect
+  in hosts started from this build. Ordinary client disconnection still leaves
+  terminals running.
 - **First launch opens in Clean; the other designs default to Ops and Standard.**
   Standard keeps the artifact, palette and slider glyphs and hides counts, scale,
   split buttons, graveyard, notifications, bug report and plugins. `all` still
@@ -16,6 +212,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   remain authoritative. Fresh windows use ANSI program colours, Markdown syntax
   and desktop palette inheritance, with bottom anchoring, contrast sticky notes
   and terminal-state tint off. A saved new-window template still takes priority.
+- **DESIGN and SKIN move independently; Tactical and Console are retired.**
+  Picking a design, resetting one, or painting DESKTOP never changes the skin.
+  A window that never picked a skin keeps the one it was drawing when its
+  design changes. Designs no longer remember a skin, so a saved per-design skin
+  is ignored and no longer lights a design's dot. A saved Tactical design opens
+  as Hacker, a saved Console skin as Ops. The DESIGN and SKIN rows no longer
+  offer `custom`; `theme.toml` and `skin.toml` still load, `ctl skin custom`
+  still selects the skin file, and a window already wearing either still shows
+  its tile.
 - **`open_document` with placement `here` can answer `held`.** When a square
   is already open over the calling pane, nothing opens, the file becomes the
   pane's handover, and the answer begins `held` (MCP: a success with
@@ -25,35 +230,83 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - **`ctl mcp …` no longer changes MCP policy from a script.** `ctl mcp on|off`,
   `ctl mcp writes on|off` and `ctl mcp expose agents|all` now answer `err` and
   change nothing, unless the window was started with `TD_MCP_SCRIPTED=1`. A
-  keybinding or bar widget that used them should open the War Room (the agent
+  keybinding or bar widget that used them should open the Threshing Floor (the agent
   counter, top right) instead; a script that launches its own window sets the
   variable where it launches it. `ctl mcp status` still answers.
 - **`list_panes` says `reach` where it said `exposed`.** Each pane's `reach` is
   how far the caller reaches it: `seen`, `read` or `ask`. Beside the panes, a
   `hidden` count says how many the caller cannot see, without naming them. A
-  pane nobody has seated in the War Room is `read`, as every listed pane was.
-- **The agent counter opens the War Room, not the agent wall.** Ctrl+Shift+A
+  pane nobody has seated in the Threshing Floor is `read`, as every listed pane was.
+- **The agent counter opens the Threshing Floor, not the agent wall.** Ctrl+Shift+A
   is now the wall's only door, and the wall's row on the key sheet is gone.
 - **A second `request_access` from one pane is refused while its first is on
   the rail.** It used to replace the first ask, which could hide it from the
   person who was about to answer it.
 - **The pushed events leave out seated panes.** The feed cannot tell who is
   listening, so `agent_appeared`, `tool_call` and `agent_vanished` now carry only
-  panes nobody seated in the War Room. A watcher that counts agents from the feed
+  panes nobody seated in the Threshing Floor. A watcher that counts agents from the feed
   sees only unseated ones.
 - **The layout file gains `seat` and `agents` on a pane, `[[lines]]`, and
   `ask_press_tokens`.** A 0.4 window reads a read-only pane as open and does not
   know seats or lines; nothing is written for it.
 
+### Artifact and Review Continuity for 0.5.0 Development
+
+- **The artifact rail has an Archive action.** It opens a searchable local page in the default browser
+  assembled from the existing conversation records, including conversations whose
+  panes have closed. Each entry separates its current target from an available
+  captured revision. Unknown conversation identity, missing captures, unreadable
+  records and changed snapshot bytes remain visible. A handover before conversation
+  binding survives restart in an explicitly unbound record; the exact event joins
+  its later conversation without guessing from a matching pathname.
+- **Explicit repeat declarations capture changed files without duplicating cards.**
+  A target keeps its stable artifact identity while its revisions have separate
+  content hashes. Identical bytes reuse a snapshot. Background capture has a bounded
+  queue, and replaying a mailbox does not manufacture a new historic revision.
+  Capture time is recorded separately from handover time: the saved bytes are
+  those the worker reads, not an atomic copy made by the declaration itself.
+  The archive verifies a saved copy's hash before offering it.
+- **Markdown notes follow uniquely identified passages.** Unchanged quotations can
+  reattach after a move. Repeated quotations need distinguishing neighbours; ties
+  remain unresolved. A small wording edit needs both substantial shared wording
+  and matching context. The note map and note box preserve the original quotation
+  and source hash, and state how the passage was matched. Legacy notes retain their
+  existing anchor with an explicit evidence-unavailable status.
+- **Simultaneous note saves retain one another's edits.** Notes serialize their
+  read/modify/write operation through a per-document lock. A note deleted while
+  its save is running queues the deletion without discarding the next pending
+  note. Deletion after reattachment addresses the original stored note.
+
+### Explicit Terminal Cleanup for 0.5.0 Development
+
+- **Ending a terminal no longer waits indefinitely for a program that ignores
+  hangup.** The PTY owner closes its master, allows a 250 ms hangup grace period,
+  escalates to kill, then allows 250 ms to observe exit. Each of two process scans
+  has a 100 ms budget. A kernel-blocked child is handed to a reaper and reported as
+  pending; this is a bounded wait, not a guarantee that the kernel has ended it.
+- **Signals follow owned identities.** The owner retains its unreaped child through
+  the final group signal. Jobs in the same Unix session are addressed through
+  pidfds, including interactive-shell jobs in separate process groups. A late
+  close cannot signal a reused cached shell PID. A deliberately detached session
+  is outside this terminal's close operation.
+- **Observers do not keep a closed PTY alive.** Foreground-process and resize
+  inspection use a weak reference to the owner's master. Explicitly ending the
+  last window-owned view uses the same cleanup path. Hosted cleanup runs away from
+  the GUI thread. Existing hold-for-undo and client-disconnection behavior remain.
+- **The host close reply reports what was observed.** Its optional `cleanup` record
+  separates hangup/kill signal acceptance, direct-child exit, remaining observed
+  jobs and errors. Missing evidence remains absent. Older hosts and clients retain
+  compatibility with the existing close reply.
+
 ### Security for 0.5.0 development
 
 - **No agent prompts another without a line a person drew.** `ask_agent` asks
-  only along a War Room line that reaches `ask`, or a bypass a person granted on
+  only along a Threshing Floor line that reaches `ask`, or a bypass a person granted on
   the rail, and a pane nobody seated is never asked. A seated pane is hidden from
   every agent except along a line from that agent's own seat. Off-limits beats
   every line, and read-only caps a line at ask. Only a person draws, changes or
   erases a line: no MCP or `ctl` verb can, and the answering code is named by no
-  agent-facing surface (`only_the_war_room_and_the_rail_draw_lines`,
+  agent-facing surface (`only_the_threshing_floor_and_the_rail_draw_lines`,
   `no_agent_facing_surface_can_answer_an_ask`).
 - **A copy of another agent can only read, and waits for your Yes.** A copy
   forks only a conversation its own agent named, and no other pane names. Claude's
@@ -65,7 +318,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   transcript, and its process group is killed when it answers, fails, or passes
   five minutes. By default every copy waits on the rail for a person's Yes.
 - **The record of asks keeps no words.** Every ask writes a line per stage to
-  `$XDG_STATE_HOME/terminal-delight/warroom/<session>/asks.jsonl`, with the
+  `$XDG_STATE_HOME/terminal-delight/threshing-floor/<session>/asks.jsonl`, with the
   question's length and SHA-256, never the question and never the answer.
 - **Your shell can no longer change MCP policy over the control socket.** Any
   program running as you, an agent included, could turn MCP writes on in one
@@ -102,23 +355,32 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Added for 0.5.0 development
 
-- **War Room pane search and session cards.** Type fuzzy words across project,
+- **Named Threshing Floor orgs and a relationship builder.** Create and rename orgs;
+  drag fixed-size pane cards into an org with a lightweight text preview.
+  Drag a card's connector to another member, choose See, Read or Ask, then save
+  the directed relationship. Clicking a line edits or erases it. Membership
+  alone grants no access. Moving a connected member asks before removing its
+  old connections. Legacy charts retain their seats and lines in an unnamed org.
+  Global search finds members of other orgs and offers Open org. The expanded
+  selected-agent context panel is removed. The fixed frame holds the org chart
+  on the left and the pane pool on the right. Headers and filters stay visible
+  while each tile scrolls its own contents, with overflow clipped at its bounds.
+- **Threshing Floor pane search and session cards.** Type fuzzy words across project,
   tab and pane title, or use `project:tab:pane` to search each field separately.
   Every pane has a card with session age and current context tokens. Age comes
   from the conversation's first recorded timestamp and survives a resume;
   unavailable measurements say unknown. Escape clears the search, then closes
   the panel. Searching clears any half-drawn line.
-- **The War Room: an org chart of agents that decides who may ask whom.** The
+- **The Threshing Floor: an org chart of agents that decides who may ask whom.** The
   agent counter, top right, opens it over the panes (and the `…` menu lists it
-  when the counter is hidden). Seat an agent with its **Seat** button, then click
-  one seat and another to draw a line. A line carries a rung, and a click on its
-  label cycles it: `ask` (may ask it a question), `see` (may find it in
-  `list_panes`), `read` (may also read it), then erase. Seats are arranged in rows
+  when the counter is hidden). Add an agent to an org, then connect members with
+  the relationship builder. A line carries a rung: `ask` (may ask it a question),
+  `see` (may find it in `list_panes`), or `read` (may also read it). Seats are arranged in rows
   by their lines. Every agent is named the way a person finds it: where its tab
   sits on the left bar, then its header's title (*TERMINAL DELIGHT › MCP work ·
   ✳ Per-pane MCP least privilege*), on the chart, off it and on the rail's asks.
-  Each seat's card shows its agent's latest summary, state,
-  model, size, sticky note and lines in and out. Agents nobody seated are listed
+  Each seat's compact card shows state, model, session age and context tokens.
+  Agents nobody seated are listed
   off the chart and behave as before, except that no agent can ever ask them
   anything. The window's five MCP switches are here as well as on the wall, and
   the bottom line counts this session's asks: answered from what was visible, by
@@ -220,7 +482,8 @@ the changes you may notice in the first hour.
 - **SUPER+ALT+T opens the key menu instead of sending a tile.** On Omarchy that
   chord used to move the focused terminal into Terminal Delight. It now opens
   the list of Terminal Delight's keys, and `scripts/install-keys-hotkey.sh`
-  removes the old binding when it adds the new one. `td-send` still works when
+  refuses an existing td-send block until it is reviewed and removed manually.
+  `td-send` still works when
   run by hand. (#921)
 - **The Field design is now Tactical.** A window or pane saved on Field opens
   on Tactical, keeping any palette you picked and its dials. Field and

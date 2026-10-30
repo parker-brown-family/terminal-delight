@@ -31,6 +31,7 @@ scale           = false
 artifacts       = false   # 📜 folds into CONFIG, and its dot with it
 surfaces        = false   # the menu glyphs fold into CONFIG
 sliders         = false
+agents          = false   # 🤖 folds into CONFIG
 graveyard       = false
 notifications   = false
 bug_report      = false

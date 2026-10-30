@@ -27,6 +27,7 @@ scale           = true    # the ▭ 100% button
 artifacts       = true    # 📜 — the artifact rail
 surfaces        = true    # 🎨 — the painter palette
 sliders         = true    # the bar chart — display sliders
+agents          = true    # 🤖 — Agents settings
 graveyard       = true    # 🪦
 notifications   = true    # 🔔
 bug_report      = true    # 🐞

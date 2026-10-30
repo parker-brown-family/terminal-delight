@@ -172,18 +172,46 @@ fn read_maybe(path: &Path) -> Result<Option<String>, String> {
     }
 }
 
-/// Write by rename, so a reader never sees half a file.
+/// Write by rename, so a reader never sees half a file. The temporary file is
+/// created new, under a name nobody can predict, without following a link,
+/// and written through the descriptor that created it: whatever already sits
+/// in a shared directory under a guessable name is never written through.
 fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
     let dir = path
         .parent()
         .ok_or_else(|| format!("{} has no directory", path.display()))?;
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let tmp = dir.join(format!(
-        ".{}.tmp-{}",
-        path.file_name().unwrap_or_default().to_string_lossy(),
-        std::process::id()
-    ));
-    std::fs::write(&tmp, text).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let mut made = None;
+    for n in 0..16u32 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or_default();
+        let tmp = dir.join(format!(".{name}.tmp-{}-{nanos:09}-{n}", std::process::id()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o644)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&tmp)
+        {
+            Ok(f) => {
+                made = Some((tmp, f));
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("cannot write {}: {e}", tmp.display())),
+        }
+    }
+    let (tmp, mut f) = made.ok_or_else(|| format!("cannot write beside {}", path.display()))?;
+    if let Err(e) = f.write_all(text.as_bytes()) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("cannot write {}: {e}", tmp.display()));
+    }
+    drop(f);
     std::fs::rename(&tmp, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("cannot write {}: {e}", path.display())
@@ -369,6 +397,35 @@ mod tests {
             entry_dirs: vec![apps],
         };
         (root, p)
+    }
+
+    /// A link planted under the name the temporary file used to have, in a
+    /// directory another account can write, is never written through, and the
+    /// list ends up a file, not that link.
+    #[test]
+    fn restoring_never_writes_through_a_planted_temporary_link() {
+        let (root, p) = machine("dt-planted");
+        std::fs::create_dir_all(p.list.parent().unwrap()).unwrap();
+        std::fs::write(&p.list, "foot.desktop\n").unwrap();
+        on(&p).unwrap();
+        let sentinel = root.join("private.txt");
+        std::fs::write(&sentinel, "mine, byte for byte\n").unwrap();
+        let old_tmp = p
+            .list
+            .parent()
+            .unwrap()
+            .join(format!(".xdg-terminals.list.tmp-{}", std::process::id()));
+        std::os::unix::fs::symlink(&sentinel, &old_tmp).unwrap();
+        off(&p).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&sentinel).unwrap(),
+            "mine, byte for byte\n"
+        );
+        assert!(std::fs::symlink_metadata(&p.list)
+            .unwrap()
+            .file_type()
+            .is_file());
+        assert_eq!(std::fs::read_to_string(&p.list).unwrap(), "foot.desktop\n");
     }
 
     /// With no list there before, `on` writes one naming Terminal Delight and

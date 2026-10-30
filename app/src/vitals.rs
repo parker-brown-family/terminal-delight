@@ -296,6 +296,13 @@ pub struct Vitals {
 }
 
 impl Vitals {
+    /// The model and effort as one label, `OPUS 5.5 MAX`: what leads an agent
+    /// pane's header. `None` when the transcript has not named the model; an
+    /// effort it never named is left off rather than guessed.
+    pub fn model_and_effort(&self) -> Option<String> {
+        model_and_effort(self.model.as_deref(), self.effort.as_deref())
+    }
+
     /// The single persistent label: `OPUS · MAX`.
     ///
     /// Replaces the old MODEL/EFFORT pair, which never once showed a model —
@@ -312,6 +319,15 @@ impl Vitals {
     pub fn bars(&self) -> [&Bar; 3] {
         [&self.window, &self.fatigue, &self.relevance]
     }
+}
+
+/// See [`Vitals::model_and_effort`].
+fn model_and_effort(model: Option<&str>, effort: Option<&str>) -> Option<String> {
+    let model = model?;
+    Some(match effort.map(str::trim).filter(|e| !e.is_empty()) {
+        Some(effort) => format!("{model} {}", effort.to_uppercase()),
+        None => model.to_string(),
+    })
 }
 
 pub fn model_name(raw: &str) -> Option<String> {
@@ -2197,6 +2213,23 @@ pub fn run_cli(args: &[String]) -> i32 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_header_label_is_model_and_effort_and_never_invents_either() {
+        assert_eq!(
+            model_and_effort(Some("OPUS 5.5"), Some("max")).as_deref(),
+            Some("OPUS 5.5 MAX")
+        );
+        assert_eq!(
+            model_and_effort(Some("SOL 6"), Some(" ")).as_deref(),
+            Some("SOL 6")
+        );
+        assert_eq!(
+            model_and_effort(Some("SOL 6"), None).as_deref(),
+            Some("SOL 6")
+        );
+        assert_eq!(model_and_effort(None, Some("high")), None);
+    }
+
     // ── fixtures ───────────────────────────────────────────────────────────
 
     struct Build {
@@ -2322,7 +2355,7 @@ mod tests {
     }
 
     /// A Codex rollout's size is its last call's input, cached input
-    /// included, and its model is the last turn's — the War Room prices a
+    /// included, and its model is the last turn's — the Threshing Floor prices a
     /// copy from these. Before any call there is no size, not a size of zero.
     #[test]
     fn a_codex_rollout_gives_its_last_call_size_and_model() {

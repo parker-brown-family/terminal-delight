@@ -1,0 +1,33 @@
+{
+  "source_commit": "c12e07b6",
+  "binary_sha256": "b5c0f33706b233ea648a7f9448c26f50f5fc624731402f114652f5c572bbcf3f",
+  "before_gui": {
+    "pid": 4147161,
+    "start_tick": 95972675,
+    "exe": "/home/parker/.local/lib/terminal-delight/td-1cb31700-0.5-dev-note-stamp"
+  },
+  "after_gui": {
+    "pid": 357460,
+    "start_tick": 96124367,
+    "exe": "/home/parker/.local/lib/terminal-delight/td-c12e07b6-0.5-artifact-continuity"
+  },
+  "host_before": {
+    "pid": 2108452,
+    "start_tick": 55894047,
+    "exe": "/home/parker/.local/lib/terminal-delight/td-babe2dc-translations"
+  },
+  "host_after": {
+    "pid": 2108452,
+    "start_tick": 55894047,
+    "exe": "/home/parker/.local/lib/terminal-delight/td-babe2dc-translations"
+  },
+  "live_panes": 36,
+  "exposed_panes": 32,
+  "host_and_pane_identities_preserved": true,
+  "persistent_layout_mcp_policy_geometry_and_split_document_preserved": true,
+  "closed_panes": [],
+  "proof_directory": "/home/parker/Work/td-authority-lab/deploy-dev-c12e07b6",
+  "host_cleanup_activation": "The existing host still runs td-babe2dc-translations; new cleanup begins after a host restart. No live host migration was attempted.",
+  "rollback_binary": "/home/parker/.local/lib/terminal-delight/td-1cb31700-0.5-dev-note-stamp",
+  "qualification_limit": "The hidden native fixture verified capture and note recovery, not the Archive-button gesture. Browser search and Rust archive tests were checked separately."
+}

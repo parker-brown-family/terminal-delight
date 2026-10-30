@@ -40,3 +40,7 @@ files that can read or execute beyond the documented schema. The vendored
 Zed/gpui graph is upstream's; please report renderer/framework issues to
 [zed-industries/zed](https://github.com/zed-industries/zed) directly, but feel
 free to flag them here too if they affect us specifically.
+
+**What Terminal Delight does to an idle agent's processes —
+[`docs/security/agent-rest.md`](docs/security/agent-rest.md)** — the freeze, the memory push-out,
+the one SIGTERM, and every guard in front of them.

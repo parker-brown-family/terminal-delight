@@ -1,0 +1,65 @@
+active = 0
+panes = 6
+left_bar = true
+[mcp]
+enabled = true
+expose = "all"
+events = false
+writable = true
+[[war_orgs]]
+id = 1
+name = "QA One"
+seats = [101,102,104,105]
+[[war_orgs]]
+id = 2
+name = "QA Two"
+seats = [103]
+[[lines]]
+from = 101
+to = 102
+rung = "ask"
+[[lines]]
+from = 101
+to = 104
+rung = "ask"
+[[lines]]
+from = 101
+to = 105
+rung = "ask"
+[[tabs]]
+name = "QA A"
+[tabs.node.Leaf]
+cwd = "/tmp/mcp-security-native-1/A"
+resume = "/usr/bin/python3 /home/parker/BROWN-FAMILY-SPORTS/Software/apes/projects/terminal-delight/scripts/mcp-security-battery/mcp-security-battery.py actor /tmp/mcp-security-native-1 A /home/parker/Work/td-authority-lab/war-room-release-target/release/terminal-delight"
+seat = 101
+[[tabs]]
+name = "QA B"
+[tabs.node.Leaf]
+cwd = "/tmp/mcp-security-native-1/B"
+resume = "/usr/bin/python3 /home/parker/BROWN-FAMILY-SPORTS/Software/apes/projects/terminal-delight/scripts/mcp-security-battery/mcp-security-battery.py actor /tmp/mcp-security-native-1 B /home/parker/Work/td-authority-lab/war-room-release-target/release/terminal-delight"
+seat = 102
+[[tabs]]
+name = "QA C"
+[tabs.node.Leaf]
+cwd = "/tmp/mcp-security-native-1/C"
+resume = "/usr/bin/python3 /home/parker/BROWN-FAMILY-SPORTS/Software/apes/projects/terminal-delight/scripts/mcp-security-battery/mcp-security-battery.py actor /tmp/mcp-security-native-1 C /home/parker/Work/td-authority-lab/war-room-release-target/release/terminal-delight"
+seat = 103
+[[tabs]]
+name = "QA D"
+[tabs.node.Leaf]
+cwd = "/tmp/mcp-security-native-1/D"
+resume = "/usr/bin/python3 /home/parker/BROWN-FAMILY-SPORTS/Software/apes/projects/terminal-delight/scripts/mcp-security-battery/mcp-security-battery.py actor /tmp/mcp-security-native-1 D /home/parker/Work/td-authority-lab/war-room-release-target/release/terminal-delight"
+seat = 104
+agents = "read-only"
+[[tabs]]
+name = "QA E"
+[tabs.node.Leaf]
+cwd = "/tmp/mcp-security-native-1/E"
+resume = "/usr/bin/python3 /home/parker/BROWN-FAMILY-SPORTS/Software/apes/projects/terminal-delight/scripts/mcp-security-battery/mcp-security-battery.py actor /tmp/mcp-security-native-1 E /home/parker/Work/td-authority-lab/war-room-release-target/release/terminal-delight"
+seat = 105
+agents = "off-limits"
+[[tabs]]
+name = "QA F"
+[tabs.node.Leaf]
+cwd = "/tmp/mcp-security-native-1/F"
+resume = "/usr/bin/python3 /home/parker/BROWN-FAMILY-SPORTS/Software/apes/projects/terminal-delight/scripts/mcp-security-battery/mcp-security-battery.py actor /tmp/mcp-security-native-1 F /home/parker/Work/td-authority-lab/war-room-release-target/release/terminal-delight"

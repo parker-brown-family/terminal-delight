@@ -7,7 +7,6 @@
 //! pane must bounce it through the notifier, or interactive programs hang
 //! waiting for an answer.
 
-use std::fs::File;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -117,7 +116,7 @@ pub struct Session {
     /// replica: the kernel object belongs to the session host, and the only
     /// honest thing a client can say about a file descriptor it does not have
     /// is that it does not have it.
-    pub master: Option<File>,
+    pub master: Option<vt::pty::Monitor>,
     /// The process at the far end of this terminal.
     ///
     /// `Some`, and our own child, when we forked it. `Some`, and somebody
@@ -205,7 +204,7 @@ pub fn spawn_in(
     let pty = spawn_pty(&spec)?;
     // Read before the pseudoterminal is handed to the loop, which takes
     // ownership of it and asks only what every source can answer.
-    let master = pty.file().try_clone().ok();
+    let master = Some(pty.monitor());
     let shell_pid = pty.child().id();
     wire_pump(
         Box::new(pty),
@@ -255,7 +254,7 @@ pub fn spawn_pty(spec: &SpawnSpec) -> io::Result<vt::pty::PtySource> {
 pub fn wire_pump(
     source: Box<dyn vt::pump::Source>,
     size: TermSize,
-    master: Option<File>,
+    master: Option<vt::pty::Monitor>,
     shell_pid: Option<u32>,
     answers: Answers,
     tap: Option<Box<dyn vt::pump::Tap>>,
@@ -288,6 +287,8 @@ pub struct AttachStreams {
     /// A resize is a control verb, never a byte-stream fact. Called from the
     /// read loop's own thread, hence `Send`.
     pub announce_resize: Box<dyn FnMut(WindowSize) + Send + 'static>,
+    /// The pane's rest gate; `None` where nothing will ever freeze the pane.
+    pub gate: Option<std::sync::Arc<crate::panegroup::Gate>>,
 }
 
 /// THE SEAM: a terminal this process does not own, driven by TD's read loop
@@ -311,8 +312,9 @@ pub fn attach_in(
     let AttachStreams {
         bytes,
         announce_resize,
+        gate,
     } = streams;
-    let source = vt::socket::SocketSource::with_resize(bytes, announce_resize)?;
+    let source = vt::socket::SocketSource::with_resize(bytes, announce_resize)?.with_gate(gate);
     // Shared with the loop's tap: the count of bytes that have actually reached
     // this replica's parser, which is the clock the divergence guard reads.
     let consumed = Arc::new(AtomicU64::new(0));
@@ -356,7 +358,7 @@ pub(crate) fn spawn_program(
     };
     let size = size.with_cell(cell_px.0, cell_px.1);
     let pty = vt::pty::spawn(&options, size.window_size())?;
-    let master = pty.file().try_clone().ok();
+    let master = Some(pty.monitor());
     let shell_pid = pty.child().id();
     wire_pump(
         Box::new(pty),
@@ -570,6 +572,7 @@ mod echo_bench {
                             },
                         );
                     }),
+                    gate: None,
                 },
                 Some(info.shell_pid),
             )
@@ -725,6 +728,7 @@ mod attached {
                 announce_resize: Box::new(move |size| {
                     heard.lock().expect("announced").push(size);
                 }),
+                gate: None,
             },
             shell_pid,
         )

@@ -28,7 +28,12 @@
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
 mod access;
+mod admin_view;
+mod agentcfg;
+mod agentrest;
+mod agentrest_io;
 mod art;
+mod artifact_archive;
 mod artifact_rail;
 mod askcopy;
 mod askrecord;
@@ -57,6 +62,7 @@ mod docview;
 mod emphasis;
 mod engstate;
 mod fav;
+mod feedback;
 mod glyph;
 mod gridwire;
 mod handover;
@@ -82,10 +88,12 @@ mod notify;
 mod paint;
 mod palette;
 mod pane;
+mod panegroup;
 mod paneident;
 mod paper;
 mod picturewire;
 mod plugins;
+mod prompt;
 mod ptyscan;
 mod readrows;
 mod recover;
@@ -93,7 +101,8 @@ mod restricted;
 mod screenread;
 mod session;
 mod skin;
-mod war_room_view;
+mod threshing_floor_view;
+mod uninstall;
 use skin::parts::{color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn};
 mod slot;
 mod sticky;
@@ -105,6 +114,7 @@ mod terminal_state;
 #[cfg(test)]
 mod testsync;
 mod theme;
+mod threshing_floor;
 mod toolprop;
 mod transcript;
 mod tree;
@@ -113,7 +123,6 @@ mod usage;
 mod vitals;
 mod vt;
 mod warp;
-mod warroom;
 mod workbench;
 
 use std::fs;
@@ -391,9 +400,9 @@ const OVERLAYS_OVER_PANES: [(&str, Warped); 7] = [
     ),
     ("mcp_menu panel", Warped::Tube("register_focus_tube")),
     (
-        "war room panel",
+        "threshing floor panel",
         Warped::FlatByDesign {
-            flag: "war_room",
+            flag: "threshing_floor",
             why: "a chart of lines between seats, drawn as straight segments \
                   between boxes: under a tube the segments would bow away from \
                   the boxes they join, and every click would land beside the \
@@ -816,6 +825,7 @@ impl Node {
                     text: n.text,
                     seed: n.seed,
                     pinned: n.pinned,
+                    by: n.by,
                 }),
                 pane_id: view.pane_id(),
                 document: view
@@ -840,8 +850,8 @@ struct LeafState {
     note: Option<SavedNote>,
     pane_id: Option<u64>,
     document: Option<SavedDocument>,
-    access: warroom::AgentAccess,
-    seat: Option<warroom::SeatId>,
+    access: threshing_floor::AgentAccess,
+    seat: Option<threshing_floor::SeatId>,
 }
 
 /// The document a pane was showing on its Document face, on its way into the
@@ -881,6 +891,12 @@ struct SavedNote {
     /// with no pin rather than failing to load the whole layout.
     #[serde(default)]
     pinned: bool,
+    /// Who wrote it: `"person"` or `"agent"`. Absent on every note saved before
+    /// notes recorded this, which reads back as unknown — never as the
+    /// person's — so a file from an older build cannot quietly attribute an
+    /// agent's words to them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    by: Option<sticky::Author>,
 }
 
 // A transient (de)serialization DTO for the layout tree — built, written, and
@@ -917,21 +933,21 @@ enum SavedNode {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         document: Option<SavedDocument>,
         /// A person marked this pane off-limits to agents (see
-        /// [`warroom::reach`]). Written only when set, and absent in every
+        /// [`threshing_floor::reach`]). Written only when set, and absent in every
         /// file written before the mark existed — which reads back as NOT
         /// marked, exactly how those panes behaved. It wins over `agents`.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         off_limits: bool,
         /// Any other position a person gave the pane: `"read-only"`. Absent
         /// means open. A word this build does not know reads as off-limits
-        /// ([`warroom::AgentAccess::from_saved`]); nothing is written for older
+        /// ([`threshing_floor::AgentAccess::from_saved`]); nothing is written for older
         /// builds, which read a read-only pane as open.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agents: Option<String>,
-        /// The pane's War Room seat, once a person seats it. Saved here, with
+        /// The pane's Threshing Floor seat, once a person seats it. Saved here, with
         /// the pane, because pane ids restart when the host does.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        seat: Option<warroom::SeatId>,
+        seat: Option<threshing_floor::SeatId>,
     },
     Split {
         dir: SplitDir,
@@ -972,7 +988,7 @@ impl<'de> Deserialize<'de> for SavedNode {
             #[serde(default)]
             agents: Option<String>,
             #[serde(default)]
-            seat: Option<warroom::SeatId>,
+            seat: Option<threshing_floor::SeatId>,
         }
         // A leaf's appearance: the new per-group form if present, else migrate a
         // legacy `theme` override, else pristine (follows outer for everything).
@@ -1178,6 +1194,7 @@ fn dedupe_resumes(tabs: &mut [SavedTab]) {
                     text: said.text,
                     seed: said.seed,
                     pinned: said.pinned,
+                    by: said.by,
                 });
             }
         });
@@ -2851,16 +2868,32 @@ struct StateFile {
     /// interface ever offered it as a setting. The rest is on [`SavedScope`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scope: Option<SavedScope>,
-    /// Read-only MCP control-surface policy (the War Room's switches). Absent
+    /// Read-only MCP control-surface policy (the Threshing Floor's switches). Absent
     /// on pre-feature files → the locked-down [`mcp::McpConfig`] default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mcp: Option<mcp::McpConfig>,
-    /// The War Room's lines between seats (see [`warroom`]). Absent → nobody is
-    /// seated, and every pane behaves as it did before the War Room.
+    /// The Threshing Floor's lines between seats (see [`threshing_floor`]). Absent → nobody is
+    /// seated, and every pane behaves as it did before the Threshing Floor.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    lines: Vec<warroom::Line>,
+    lines: Vec<threshing_floor::Line>,
+    /// The Threshing Floor's lines to or from a whole org (see [`threshing_floor::OrgLine`]).
+    /// Absent on every pre-cross-org file → no org lines, which is the
+    /// fail-closed truth: an org grants nothing until a person draws to or from
+    /// it. Written only beside `floor_orgs`, so a legacy chart never grows one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    org_lines: Vec<threshing_floor::OrgLine>,
+    /// Absent means a legacy unnamed chart; Some([]) means explicitly no orgs.
+    ///
+    /// Saved under the key it had before the Threshing Floor was renamed, so a build
+    /// on either side of the rename reads the same file: a swap that rolls back to
+    /// an older build must not lose a person's orgs.
+    #[serde(default, rename = "war_orgs", skip_serializing_if = "Option::is_none")]
+    floor_orgs: Option<Vec<threshing_floor::Org>>,
+    /// Saved under its pre-rename key, for the same reason as `floor_orgs`.
+    #[serde(default, rename = "war_org", skip_serializing_if = "Option::is_none")]
+    floor_org: Option<threshing_floor::OrgId>,
     /// The size above which a copy of an agent waits for a person's press.
-    /// Absent → the default, [`warroom::ASK_PRESS_TOKENS`].
+    /// Absent → the default, [`threshing_floor::ASK_PRESS_TOKENS`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ask_press_tokens: Option<u64>,
     /// Global FOCUS-reader preference: inherit the read pane's CRT look (barrel
@@ -2965,6 +2998,9 @@ impl Default for StateFile {
             scope: None,
             mcp: None,
             lines: vec![],
+            org_lines: vec![],
+            floor_orgs: None,
+            floor_org: None,
             ask_press_tokens: None,
             // A fresh install's reader wears the pane it reads. With the CRT
             // off that is a flat screen either way; switch the tube on and the
@@ -4532,32 +4568,62 @@ struct Workspace {
     /// Read-only MCP control-surface policy (persisted). The 🤖 mother-bar
     /// button edits this; the live snapshot it would expose is derived per-frame.
     mcp: mcp::McpConfig,
-    /// The War Room's lines: which seat may reach which. Changed only by a
-    /// person, in the War Room or by a Yes on the rail.
-    chart: warroom::Chart,
+    /// The Threshing Floor's lines: which seat may reach which. Changed only by a
+    /// person, in the Threshing Floor or by a Yes on the rail.
+    chart: threshing_floor::Chart,
+    floor_orgs: threshing_floor::Orgs,
+    floor_org: Option<threshing_floor::OrgId>,
+    floor_org_edit: Option<(Option<threshing_floor::OrgId>, EditBuffer)>,
+    floor_relation: Option<threshing_floor_view::RelationEditor>,
+    floor_move: Option<(Entity<TerminalView>, threshing_floor::OrgId)>,
+    /// An org a person has asked to delete, held until they confirm the count of
+    /// relationships it will take with it. Deleting is destructive and nothing
+    /// is kept dormant, so it waits for a yes.
+    floor_delete_org: Option<threshing_floor::OrgId>,
+    /// The Threshing Floor's settings tray (the cog at the header's right end):
+    /// the five MCP switches and the open org's Rename and Delete. Closed on open.
+    floor_settings: bool,
+    /// The System Map, the higher-level view across every org. `Some` holds its
+    /// cross-org relationship draft while it is open.
+    floor_map: Option<threshing_floor_view::SystemMap>,
+    /// A pane dropped on a *different* org, held while the person chooses whether
+    /// to move the agent in or build a relationship (with the org, or a member).
+    /// `Some` means the drop popup is open.
+    floor_drop: Option<threshing_floor_view::DropChoice>,
+    /// Transient membership gesture; GPUI remains the authority on its lifetime.
+    floor_drag: Option<Entity<TerminalView>>,
+    floor_tether: Option<Point<Pixels>>,
+    floor_view: threshing_floor_view::FloorViewport,
+    floor_context: Option<(Entity<TerminalView>, Point<Pixels>)>,
+    floor_feedback: Option<String>,
     /// A person's limit for a copy before it needs their press; `None` is the
-    /// default, [`warroom::ASK_PRESS_TOKENS`].
+    /// default, [`threshing_floor::ASK_PRESS_TOKENS`].
     ask_press_tokens: Option<u64>,
     /// The 🤖 MCP control panel is open. Outer-only (global), so a plain bool.
     mcp_menu: bool,
-    /// The War Room is open: the panel the agent counter and the `…` row
+    /// The Threshing Floor is open: the panel the agent counter and the `…` row
     /// raise. The agent wall stays reachable only by Ctrl+Shift+A.
-    war_room: bool,
+    threshing_floor: bool,
     /// Fuzzy search across project, tab and pane title while the panel is open.
-    war_room_query: EditBuffer,
-    /// The seat a person clicked first in the War Room; a click on another
+    threshing_floor_query: EditBuffer,
+    /// The seat a person clicked first in the Threshing Floor; a click on another
     /// seat draws a line from this one to it.
-    war_room_pick: Option<warroom::SeatId>,
+    threshing_floor_pick: Option<threshing_floor::SeatId>,
     /// The last ask id handed out; each ask's id is later than the last and
     /// than the clock, so ids stay unique across window restarts.
     ask_seq: u64,
-    /// The ask record read back: Gate 1's two numbers, shown in the War Room.
+    /// The ask record read back: Gate 1's two numbers, shown in the Threshing Floor.
     /// `None` until the record is first read, which is not zero asks.
     ask_numbers: Option<askrecord::Numbers>,
     /// Copy asks, from the ask to the answer: what `ask_answer` reads and the
     /// rail's copy card presses. Held in memory only; the record keeps each
     /// stage without the words.
-    asks: warroom::AskBook,
+    asks: threshing_floor::AskBook,
+    /// Prompts, from `prompt_agent` to the worker's last word: what
+    /// `prompt_status` reads and the prompt clock moves. Details are in memory;
+    /// key receipts survive pruning and reopening without keeping the words.
+    prompts: prompt::PromptBook,
+    prompt_key_path: std::path::PathBuf,
     /// The menu-bar SIZE popover, raised by the ▭ button in the mother bar. The
     /// scrub track used to live inline on that row; on a thin tile it was the
     /// widest thing there and had nowhere to go, so it moved behind a button.
@@ -4613,6 +4679,9 @@ struct Workspace {
     notif_menu: bool,
     /// The 🐞 bug-report panel is open (see [`diag`]).
     bug_menu: bool,
+    /// The ⚙ ADMIN panel is open: export, old builds, uninstall (see [`admin_view`]).
+    admin_menu: bool,
+    admin: admin_view::AdminState,
     /// What step 1 of the bug report did while the panel was open: the report
     /// it wrote, or why it could not. Step 2 is offered only after a report
     /// exists, and closing the panel starts the ladder again.
@@ -4666,6 +4735,19 @@ struct Workspace {
     /// Each field is an `Option` all the way here: see [`launchpref`] for why
     /// *nobody chose* must not be stored as the thing that would have happened.
     launch_defaults: launchpref::Prefs,
+    /// How idle agents rest and sleep (`agents.toml`), read once and written
+    /// through on every change from CONFIG › Agents.
+    agents_prefs: agentcfg::Prefs,
+    /// Whether the CONFIG › Agents page is open.
+    agents_menu: bool,
+    /// Which agents-page slider is being dragged, if any: 0 rest, 1 sleep.
+    agents_drag: Option<u8>,
+    /// Where the two sliders' tracks were drawn, for mapping a pointer.
+    agents_tracks: [std::sync::Arc<std::sync::Mutex<Option<Bounds<Pixels>>>>; 2],
+    /// What the last rest-and-sleep tick did, for the Agents page's readout.
+    rest_census: RestCensus,
+    /// The sleepers and pins last written for the next window.
+    rest_store_saved: agentrest_io::Store,
     /// Whether the LAUNCH AGENT CONFIG block on the usage card is unfolded.
     ///
     /// Closed on a fresh window, because the card's job is *what has this plan
@@ -5173,6 +5255,14 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     cx.subscribe_in(
         pane,
         window,
+        |ws, pane, _ev: &pane::WakeAsleep, window, cx| {
+            ws.wake_sleeper(pane, window, cx);
+        },
+    )
+    .detach();
+    cx.subscribe_in(
+        pane,
+        window,
         |ws, pane, _ev: &pane::OpenAgentLauncher, window, cx| {
             let cwd = pane.read(cx).current_cwd();
             ws.open_agent_launcher(cwd, Some(pane.entity_id()), window, cx);
@@ -5243,7 +5333,7 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     })
     .detach();
     cx.subscribe(pane, |ws, _pane, _ev: &OpenAgentPanel, cx| {
-        ws.war_room = false;
+        ws.close_threshing_floor();
         ws.mcp_menu = true;
         cx.notify();
     })
@@ -5327,6 +5417,20 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
 #[derive(Clone)]
 struct AttachCtx {
     link: Arc<hostctl::HostLink>,
+}
+
+/// How often the rest-and-sleep policy looks at every pane.
+const REST_SWEEP_SECS: u64 = 15;
+
+/// What the last rest-and-sleep tick found across the window, for the
+/// CONFIG › Agents page.
+#[derive(Debug, Clone, Default)]
+struct RestCensus {
+    memory: agentrest::MemoryCensus,
+    /// Start of the last completed sampling pass; absent before the first pass.
+    sampled_at: Option<Instant>,
+    /// Why panes are not resting, by kind.
+    refusals: Vec<(agentrest::RefusalClass, u32)>,
 }
 
 /// What to do with one saved leaf when a host is holding the terminals.
@@ -5451,6 +5555,8 @@ fn duplicate_leaf_note_in(l: lang::Lang) -> sticky::Saved {
         text: ui.dup_note_text.into(),
         seed: 0,
         pinned: false,
+        // Terminal Delight wrote it, not the person: it wears the stamp.
+        by: Some(sticky::Author::Agent),
     }
 }
 
@@ -5469,6 +5575,7 @@ fn note_on_reattach(note: Option<&SavedNote>, bound: bool) -> Option<sticky::Sav
             text: n.text.clone(),
             seed: n.seed,
             pinned: n.pinned,
+            by: n.by,
         })
 }
 
@@ -5560,6 +5667,7 @@ fn plan_attach(saved: &[SavedTab], live: &[hostproto::PaneInfo]) -> AttachPlan {
                     text: n.text.clone(),
                     seed: n.seed,
                     pinned: n.pinned,
+                    by: n.by,
                 })
             };
             plans.push(match bound {
@@ -5845,8 +5953,12 @@ fn make_pane_attached(
     let stream = ctx.link.open_pane_stream(info.pane)?;
     let link = ctx.link.clone();
     let pane_id = info.pane;
+    // One gate, held by the stream (every write thaws through it) and by the
+    // view (the policy freezes through it).
+    let gate: std::sync::Arc<panegroup::Gate> = Default::default();
     let streams = term::AttachStreams {
         bytes: stream,
+        gate: Some(gate.clone()),
         announce_resize: Box::new(move |size: vt::WindowSize| {
             link.announce_resize(
                 pane_id,
@@ -5860,7 +5972,10 @@ fn make_pane_attached(
         }),
     };
     // The pid is the host's, and only an attribute: this window did not start
-    // that process and will never signal it.
+    // that process and never signals it. The one signal the window ever sends
+    // under a pane is rest-and-sleep's SIGTERM to an idle agent the shell runs
+    // (`agentrest_io`), never to the shell, and never SIGKILL — see
+    // docs/security/agent-rest.md.
     let (session, guard) = term::attach_in(
         grid.with_cell(geom.cell_width, geom.cell_height),
         streams,
@@ -5875,6 +5990,7 @@ fn make_pane_attached(
     });
     pane.update(cx, |view, cx| {
         view.appearance = PaneTheme::house();
+        view.rest.gate = gate;
         // The host has been watching this terminal; a window that has just
         // arrived has not. Where it has classified the pane, that is the better
         // answer — and where it has not, the pane is left alone rather than
@@ -5884,6 +6000,17 @@ fn make_pane_attached(
         }
     });
     wire_pane(&pane, window, cx);
+    // Give the pane its own memory group now rather than at the next rest
+    // tick: a woken agent's script waits for it, so the agent is born there.
+    if agentrest::enabled_by_env() {
+        let (pane_no, shell) = (pane_id.0, info.shell_pid as i32);
+        let session = crate::instance::key().to_owned();
+        cx.background_executor()
+            .spawn(async move {
+                let _ = panegroup::adopt(&session, pane_no, shell);
+            })
+            .detach();
+    }
     Ok(pane)
 }
 
@@ -6045,7 +6172,7 @@ fn build_node_attached(
             // pristine one, which means "follow the outer cabinet".
             let appearance = appearance.clone();
             let name = name.clone();
-            let access = warroom::AgentAccess::from_saved(*off_limits, agents.as_deref());
+            let access = threshing_floor::AgentAccess::from_saved(*off_limits, agents.as_deref());
             let seat = *seat;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
@@ -6099,6 +6226,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
                         text: n.text.clone(),
                         seed: n.seed,
                         pinned: n.pinned,
+                        by: n.by,
                     }),
                 },
                 window,
@@ -6110,7 +6238,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             // hence this applies unconditionally, not just when non-pristine.
             let appearance = appearance.clone();
             let name = name.clone();
-            let access = warroom::AgentAccess::from_saved(*off_limits, agents.as_deref());
+            let access = threshing_floor::AgentAccess::from_saved(*off_limits, agents.as_deref());
             let seat = *seat;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
@@ -6227,6 +6355,15 @@ impl Workspace {
             c
         });
         uiconfig::init(cx, ui);
+        let prompt_key_path = prompt::key_path_for(instance::key());
+        let prompts = match prompt::PromptBook::restore(&prompt_key_path) {
+            Ok(book) => book,
+            Err(e) => {
+                eprintln!("[threshing-floor] prompt key receipts could not be read: {e}");
+                prompt::PromptBook::unavailable()
+            }
+        };
+        let ask_seq = prompts.latest_receipt_id();
         let mut ws = Self {
             tabs: vec![],
             active: 0,
@@ -6250,15 +6387,31 @@ impl Workspace {
             osd_at: None,
             osd_eggs: OsdEggs::default(),
             mcp: saved.mcp.clone().unwrap_or_default(),
-            chart: warroom::Chart::from_saved(saved.lines.clone()),
+            chart: threshing_floor::Chart::from_saved(saved.lines.clone(), saved.org_lines.clone()),
+            floor_orgs: threshing_floor::Orgs::default(),
+            floor_org: None,
+            floor_org_edit: None,
+            floor_relation: None,
+            floor_move: None,
+            floor_delete_org: None,
+            floor_settings: false,
+            floor_map: None,
+            floor_drop: None,
+            floor_drag: None,
+            floor_tether: None,
+            floor_view: Default::default(),
+            floor_context: None,
+            floor_feedback: None,
             ask_press_tokens: saved.ask_press_tokens,
             mcp_menu: false,
-            war_room: false,
-            war_room_query: EditBuffer::seeded(""),
-            war_room_pick: None,
-            ask_seq: 0,
+            threshing_floor: false,
+            threshing_floor_query: EditBuffer::seeded(""),
+            threshing_floor_pick: None,
+            ask_seq,
             ask_numbers: None,
-            asks: warroom::AskBook::default(),
+            asks: threshing_floor::AskBook::default(),
+            prompts,
+            prompt_key_path,
             scale_menu: false,
             more_menu: false,
             art_rail: false,
@@ -6281,6 +6434,8 @@ impl Workspace {
             plugins_menu: false,
             notif_menu: false,
             bug_menu: false,
+            admin_menu: false,
+            admin: Default::default(),
             bug_report: None,
             bug_unseen: diag::unseen_crashes(),
             notif: notifpref::load(),
@@ -6303,6 +6458,12 @@ impl Workspace {
             usage_status: None,
             usage_refreshing: false,
             launch_defaults: launchpref::load(),
+            agents_prefs: agentcfg::load(),
+            agents_menu: false,
+            agents_drag: None,
+            agents_tracks: Default::default(),
+            rest_census: RestCensus::default(),
+            rest_store_saved: Default::default(),
             launch_defaults_open: false,
             usage_history_open: false,
             agent_vitals: std::collections::HashMap::new(),
@@ -6545,6 +6706,20 @@ impl Workspace {
             ws.active = saved.active.min(ws.tabs.len() - 1);
             ws.focus_active(window, cx);
         }
+        if !scratch {
+            let mut seats = Vec::new();
+            for tab in &ws.tabs {
+                let mut leaves = Vec::new();
+                tab.root.leaves(&mut leaves);
+                seats.extend(leaves.into_iter().filter_map(|p| p.read(cx).seat));
+            }
+            seats.extend(ws.chart.saved().iter().flat_map(|l| [l.from, l.to]));
+            ws.floor_orgs = threshing_floor::Orgs::restore(saved.floor_orgs.clone(), &seats);
+            ws.floor_org = saved
+                .floor_org
+                .filter(|id| ws.floor_orgs.get(*id).is_some())
+                .or_else(|| ws.floor_orgs.saved().first().map(|o| o.id));
+        }
         if ws.eng_table {
             window.focus(&ws.focus_handle, cx);
         }
@@ -6643,20 +6818,24 @@ impl Workspace {
         // because a context window does not move fast enough to be worth
         // watching at 2s. Same shape as the sweeps above: gather on the main
         // thread, do the I/O on the pool, apply back.
+        let mut vitals_tick: u32 = 0;
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(Duration::from_secs(10))
                 .await;
+            vitals_tick = vitals_tick.wrapping_add(1);
             let Ok(reqs) = this.update(cx, |ws: &mut Workspace, cx| {
-                // Only while the wall is actually on screen. The sweep runs
-                // `edges` over every transcript in each live pane's project
-                // directory — one of those directories holds 47 — so leaving it
-                // ticking behind a closed overlay was tens of megabytes of reads
-                // every ten seconds, permanently, to compute bars nobody could
-                // see. The wall is a glance surface; it costs nothing to keep
-                // one until it is looked at.
-                if !(ws.mcp_menu || ws.war_room) || ws.vitals_refreshing {
-                    return Vec::new(); // closed, or a pass is still out
+                // Every ten seconds while the wall is on screen; once a minute
+                // behind a closed one. The sweep re-reads every transcript that
+                // grew, and a working agent's always has, so ticking at the
+                // wall's pace behind a closed overlay was tens of megabytes of
+                // reads every ten seconds, permanently. The slow pass is still
+                // owed: each pane's header leads with its model and effort, and
+                // a `/model` switch must reach it within a minute, not wait for
+                // someone to open the wall.
+                let wall = ws.mcp_menu || ws.threshing_floor;
+                if (!wall && !vitals_tick.is_multiple_of(6)) || ws.vitals_refreshing {
+                    return Vec::new(); // not this tick, or a pass is still out
                 }
                 let reqs = ws.vitals_requests(cx);
                 ws.vitals_refreshing = !reqs.is_empty();
@@ -6721,6 +6900,25 @@ impl Workspace {
                 }
             });
             if alive.is_err() {
+                break;
+            }
+        })
+        .detach();
+        // THRESHING FLOOR: the prompt clock. Half a second, because a prompt
+        // pastes on one look and presses Enter on a later one (`prompt.rs`),
+        // and a worker that finished should be reported while its sender is
+        // still waiting on `prompt_status`. A tick with no open prompt returns
+        // before it reads a pane.
+        cx.spawn_in(window, async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(500))
+                .await;
+            if this
+                .update_in(cx, |ws: &mut Workspace, window, cx| {
+                    ws.prompt_tick(window, cx)
+                })
+                .is_err()
+            {
                 break;
             }
         })
@@ -6989,7 +7187,7 @@ impl Workspace {
         if std::env::var_os("TD_MCP").is_some() {
             // A SECOND, explicit opt-in promotes the read-only watch surface to a
             // remote-control one (an agent may change pane appearance via
-            // set_pane_config). The War Room persists this in state; the env
+            // set_pane_config). The Threshing Floor persists this in state; the env
             // var forces it on for a headless / orchestrated launch.
             if std::env::var_os("TD_MCP_WRITE").is_some() {
                 ws.mcp.writable = true;
@@ -7131,6 +7329,7 @@ impl Workspace {
         Self::watch_for_divergence(ctx.clone(), window, cx);
         self.listen_to_the_host(ctx.clone(), cx);
         Self::reconcile_modes(ctx.clone(), cx);
+        Self::rest_idle_agents(cx);
         Self::watch_the_save(cx);
     }
 
@@ -7327,6 +7526,399 @@ impl Workspace {
                 }
             }
         }
+        cx.notify();
+    }
+
+    /// Rest and sleep, on a clock (see `agentrest`).
+    ///
+    /// Every hosted pane is given a memory group of its own on its first turn,
+    /// so its header can say what it costs. Then each idle agent is looked at:
+    /// one untouched and quiet past the rest threshold, with nothing else
+    /// running under it, is frozen and its memory pushed out; one that has
+    /// rested past the sleep threshold is ended and its conversation kept.
+    /// The window only gathers and applies; everything that reads `/proc`,
+    /// talks to systemd or waits on a process runs on the background executor.
+    fn rest_idle_agents(cx: &mut Context<Self>) {
+        if !agentrest::enabled_by_env() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let session = crate::instance::key().to_owned();
+            let mut first = true;
+            loop {
+                let wait = if first { 3 } else { REST_SWEEP_SECS };
+                cx.background_executor()
+                    .timer(Duration::from_secs(wait))
+                    .await;
+                let looked = Instant::now();
+                let gathered = this.update(cx, |ws: &mut Workspace, cx| {
+                    if first {
+                        ws.restore_rest_store(&session, cx);
+                    }
+                    ws.rest_jobs(cx)
+                });
+                first = false;
+                let Ok((jobs, live)) = gathered else {
+                    break;
+                };
+                let key = session.clone();
+                let outcomes = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let outcomes: Vec<agentrest_io::Outcome> =
+                            jobs.into_iter().map(agentrest_io::run).collect();
+                        // A frozen scope no live pane of this window owns holds
+                        // a hangup it can never receive: thaw it so its
+                        // processes can end. Only this window freezes, and only
+                        // its own live panes may stay frozen.
+                        for orphan in panegroup::orphans(&key, &live) {
+                            if panegroup::frozen(&orphan) == Some(true) {
+                                panegroup::thaw_dir(&orphan.dir);
+                            }
+                        }
+                        outcomes
+                    })
+                    .await;
+                let applied = this.update(cx, |ws: &mut Workspace, cx| {
+                    ws.apply_rest(&session, looked, outcomes, cx)
+                });
+                if applied.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Every pane view in every tab.
+    fn every_view(&self) -> Vec<Entity<TerminalView>> {
+        let mut out = Vec::new();
+        for tab in &self.tabs {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            out.extend(leaves.into_iter().cloned());
+        }
+        out
+    }
+
+    /// One job per hosted pane, with what only the window knows filled in.
+    fn rest_jobs(&self, cx: &App) -> (Vec<agentrest_io::Job>, Vec<(u64, i32)>) {
+        use agentrest::{Agent, Dormancy};
+        use agentrest_io::Stage;
+        let prefs = &self.agents_prefs;
+        let thresholds = prefs.thresholds();
+        let now = Instant::now();
+        let mut jobs = Vec::new();
+        let mut live = Vec::new();
+        for e in self.every_view() {
+            let v = e.read(cx);
+            let (Some(pane), Some(shell)) = (v.pane_id(), v.shell_pid()) else {
+                continue;
+            };
+            let shell = shell as i32;
+            live.push((pane, shell));
+            let agent = match v.mode {
+                pane::PaneMode::Claude => Some(Agent::Claude),
+                pane::PaneMode::Codex => Some(Agent::Codex),
+                _ => None,
+            };
+            let stage = match &v.rest.dormancy {
+                Dormancy::Awake | Dormancy::Resting { .. } if v.rest.sleep_now => Stage::SleepNow,
+                Dormancy::Awake => Stage::Awake,
+                Dormancy::Resting { since } => Stage::Resting {
+                    rested: now.saturating_duration_since(*since),
+                },
+                Dormancy::Asleep(_) => Stage::Asleep,
+            };
+            let screen_at_prompt = match v.agent_status().state {
+                hud::AgentState::Idle | hud::AgentState::Finished => Some(true),
+                hud::AgentState::Working | hud::AgentState::Blocked | hud::AgentState::Error => {
+                    Some(false)
+                }
+                _ => None,
+            };
+            let look = agentrest::Look {
+                enabled: prefs.rest_on(),
+                agent,
+                focused: v.focused_last_frame(),
+                keep_awake: v.rest.keep_awake,
+                since_touch: Some(now.saturating_duration_since(v.rest.last_touch)),
+                since_output: Some(now.saturating_duration_since(v.rest.last_output)),
+                screen_at_prompt,
+                ..Default::default()
+            };
+            jobs.push(agentrest_io::Job {
+                pane,
+                shell,
+                session: crate::instance::key().to_owned(),
+                gate: v.rest.gate.clone(),
+                group: v.rest.group.clone(),
+                agent,
+                stage,
+                look,
+                cpu_prev: v.rest.cpu_prev,
+                thresholds,
+                rest_on: prefs.rest_on(),
+                sleep_on: prefs.sleep_on(),
+                epoch: v.rest.gate.writes(),
+                stopping: v
+                    .rest
+                    .stopping
+                    .as_ref()
+                    .map(|s| (s.pid, s.start, s.asleep.clone())),
+            });
+        }
+        (jobs, live)
+    }
+
+    /// Carry out what the background half found, pane by pane.
+    fn apply_rest(
+        &mut self,
+        session: &str,
+        looked: Instant,
+        outcomes: Vec<agentrest_io::Outcome>,
+        cx: &mut Context<Self>,
+    ) {
+        use agentrest::Dormancy;
+        use agentrest_io::Act;
+        let now = Instant::now();
+        let views = self.every_view();
+        let mut census = RestCensus::default();
+        let mut reasons: std::collections::BTreeMap<agentrest::RefusalClass, u32> =
+            Default::default();
+        for o in outcomes {
+            let Some(e) = views.iter().find(|e| e.read(cx).pane_id() == Some(o.pane)) else {
+                continue;
+            };
+            e.update(cx, |v, cx| {
+                match &o.group {
+                    Ok(g) => {
+                        v.rest.group = Some(g.clone());
+                        v.rest.group_error = None;
+                    }
+                    Err(err) => v.rest.group_error = Some(err.clone()),
+                }
+                v.rest.usage = o.usage;
+                if o.cpu.is_some() {
+                    v.rest.cpu_prev = o.cpu;
+                }
+                let mut gave_up = false;
+                // A pending stop is answered by every outcome: `Stopping` puts
+                // it back, anything else settles it.
+                let pending = v.rest.stopping.take();
+                match &o.act {
+                    Act::Rested { before } => {
+                        // Touched while the freeze was on its way: undo it now
+                        // rather than at the next keystroke.
+                        if v.rest.last_touch > looked || v.rest.dormancy != Dormancy::Awake {
+                            v.rest.gate.release();
+                        } else {
+                            v.rest.dormancy = Dormancy::Resting { since: now };
+                            v.rest.rest_from = *before;
+                        }
+                    }
+                    Act::FoundResting => {
+                        if v.rest.dormancy == Dormancy::Awake {
+                            v.rest.dormancy = Dormancy::Resting { since: now };
+                        }
+                    }
+                    Act::Woke => {
+                        if pending.is_some() {
+                            eprintln!(
+                                "terminal-delight: pane {}'s agent ended after the sleep's signal, but another agent was started there first; it stays awake",
+                                o.pane
+                            );
+                        }
+                        if v.rest.dormancy.is_resting() {
+                            v.rest.dormancy = Dormancy::Awake;
+                        }
+                    }
+                    Act::Slept(asleep) => {
+                        if let Some(late) = &pending {
+                            eprintln!(
+                                "terminal-delight: pane {}'s agent ended {} ms after the sleep signalled it; asleep",
+                                o.pane,
+                                now.saturating_duration_since(late.since).as_millis()
+                            );
+                        }
+                        v.rest.gate.set_blocked(true);
+                        v.rest.dormancy = Dormancy::Asleep(asleep.clone());
+                    }
+                    Act::Stopping { pid, start, asleep } => {
+                        let since = pending.as_ref().map_or(now, |s| s.since);
+                        match agentrest::stop_look(false, false, now.saturating_duration_since(since)) {
+                            agentrest::StopLook::GaveUp => {
+                                eprintln!(
+                                    "terminal-delight: pane {}'s agent did not end within a minute of the sleep's signal; it stays awake",
+                                    o.pane
+                                );
+                                v.rest.stopping = None;
+                                gave_up = true;
+                                if v.rest.dormancy.is_resting() {
+                                    v.rest.dormancy = Dormancy::Awake;
+                                }
+                            }
+                            _ => {
+                                v.rest.stopping = Some(agentrest::Stopping {
+                                    pid: *pid,
+                                    start: *start,
+                                    asleep: asleep.clone(),
+                                    since,
+                                });
+                            }
+                        }
+                    }
+                    Act::Nothing => {}
+                }
+                v.rest.refusal = if gave_up {
+                    Some(agentrest::Refusal::AgentBusy(Some("did not stop".into())))
+                } else {
+                    o.refusal.clone()
+                };
+                // A request is answered once, slept or refused, never retried.
+                v.rest.sleep_now = false;
+                cx.notify();
+            });
+            let v = e.read(cx);
+            if let Some(class) = v.rest.refusal.as_ref().and_then(|r| r.class()) {
+                *reasons.entry(class).or_default() += 1;
+            }
+        }
+        // Include agent panes without a hosted reading as unmeasured. A shell
+        // whose agent sleeps still counts; ordinary shell panes do not.
+        for e in &views {
+            let v = e.read(cx);
+            if v.counts_as_agent() {
+                census.memory.add(&v.rest);
+            }
+        }
+        census.sampled_at = Some(looked);
+        census.refusals = reasons.into_iter().collect();
+        self.rest_census = census;
+        let store = self.rest_store(cx);
+        if store != self.rest_store_saved {
+            agentrest_io::save_store(session, &store);
+            self.rest_store_saved = store;
+        }
+        cx.notify();
+    }
+
+    /// What must outlive this window, read off the panes.
+    fn rest_store(&self, cx: &App) -> agentrest_io::Store {
+        let mut store = agentrest_io::Store::default();
+        for e in self.every_view() {
+            let v = e.read(cx);
+            let Some(pane) = v.pane_id() else { continue };
+            if let Some(asleep) = v.rest.dormancy.asleep() {
+                store.asleep.insert(pane.to_string(), asleep.clone());
+            }
+            if v.rest.keep_awake {
+                store.keep_awake.insert(pane);
+            }
+        }
+        store
+    }
+
+    /// A new window takes up the sleepers and the pins the last one left.
+    /// A record whose pane is running an agent again is dropped: somebody woke
+    /// it another way, and the record would now be wrong.
+    fn restore_rest_store(&mut self, session: &str, cx: &mut Context<Self>) {
+        let store = agentrest_io::load_store(session);
+        for e in self.every_view() {
+            e.update(cx, |v, cx| {
+                let Some(pane) = v.pane_id() else { return };
+                v.rest.keep_awake = store.keep_awake.contains(&pane);
+                if let Some(asleep) = store.asleep.get(&pane.to_string()) {
+                    if !v.mode.is_agent() {
+                        v.rest.gate.set_blocked(true);
+                        v.rest.dormancy = agentrest::Dormancy::Asleep(asleep.clone());
+                        cx.notify();
+                    }
+                }
+            });
+        }
+        self.rest_store_saved = store;
+    }
+
+    /// A key or a click on an asleep pane: bring its agent back, in a fresh
+    /// pane in the same place, through the same spawn-time path a restore uses.
+    /// The window never types into the shell that held the sleeper.
+    fn wake_sleeper(
+        &mut self,
+        old: &Entity<TerminalView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.wake_sleeper_as(old, true, window, cx);
+    }
+
+    /// Wake an asleep agent in a fresh pane. `focus`: whether the fresh pane
+    /// takes the keyboard — yes for a person's key in the pane, no for a
+    /// prompt another agent sent, which must not move the person's focus.
+    pub(crate) fn wake_sleeper_as(
+        &mut self,
+        old: &Entity<TerminalView>,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ctx) = self.attach.clone() else {
+            return;
+        };
+        let (asleep, cwd, keep_awake) = {
+            let v = old.read(cx);
+            let Some(asleep) = v.rest.dormancy.asleep().cloned() else {
+                return;
+            };
+            (asleep, v.runtime().cwd, v.rest.keep_awake)
+        };
+        // Never two processes on one conversation.
+        if let Some(pid) = agentrest_io::conversation_holder(&asleep.session) {
+            eprintln!(
+                "terminal-delight: not waking: conversation {} is open in process {pid}",
+                asleep.session
+            );
+            old.update(cx, |v, cx| {
+                v.rest.refusal = Some(agentrest::Refusal::AgentBusy(Some("open elsewhere".into())));
+                cx.notify();
+            });
+            return;
+        }
+        let Some(file) = asleep.wake_file.to_str() else {
+            return;
+        };
+        let restore = session::PaneRestore {
+            cwd,
+            resume: Some(format!("bash {}", agentrest::shell_quote(file))),
+            ..Default::default()
+        };
+        let carried = old.read(cx).presentation();
+        let fresh = match make_pane_host_spawned(restore, &ctx, window, cx) {
+            Ok(fresh) => fresh,
+            Err(err) => {
+                eprintln!("terminal-delight: could not wake the agent: {err}");
+                return;
+            }
+        };
+        fresh.update(cx, |v, cx| {
+            v.adopt_presentation(carried, cx);
+            v.rest.keep_awake = keep_awake;
+        });
+        let old_id = old.entity_id();
+        for tab in &mut self.tabs {
+            if tab.root.replace_leaf(
+                &|e: &Entity<TerminalView>| e.entity_id() == old_id,
+                fresh.clone(),
+            ) {
+                break;
+            }
+        }
+        // The shell that held the sleeper is no longer shown; end it.
+        self.hangup(std::slice::from_ref(old), cx);
+        if focus {
+            window.focus(&fresh.focus_handle(cx), cx);
+        }
+        self.save(cx);
         cx.notify();
     }
 
@@ -7728,6 +8320,19 @@ impl Workspace {
     /// showing — a running agent, closed by tidying away the blank decoy of
     /// itself. See [`hangups_of`] for the arithmetic and what it cannot see.
     fn hangup(&self, leaves: &[Entity<TerminalView>], cx: &App) {
+        let closing_entities: Vec<u64> = leaves.iter().map(|l| l.entity_id().as_u64()).collect();
+        let mut shown_entities = Vec::new();
+        for tab in &self.tabs {
+            let mut held = Vec::new();
+            tab.root.leaves(&mut held);
+            shown_entities.extend(held.iter().map(|l| l.entity_id().as_u64()));
+        }
+        let owned_to_close = hangups_of(&shown_entities, &closing_entities);
+        for leaf in leaves {
+            if owned_to_close.contains(&leaf.entity_id().as_u64()) {
+                leaf.read(cx).close_owned_terminal();
+            }
+        }
         let Some(ctx) = &self.attach else { return };
         let mut shown = vec![];
         for tab in &self.tabs {
@@ -7749,9 +8354,16 @@ impl Workspace {
             }
         }
         for pane in dying {
-            if let Err(err) = ctx.link.close_pane(hostproto::PaneId(pane)) {
-                eprintln!("terminal-delight: the session host would not close pane {pane}: {err}");
-            }
+            let link = ctx.link.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    if let Err(err) = link.close_pane(hostproto::PaneId(pane)) {
+                        eprintln!(
+                            "terminal-delight: the session host would not close pane {pane}: {err}"
+                        );
+                    }
+                })
+                .detach();
         }
     }
 
@@ -7874,6 +8486,9 @@ impl Workspace {
             scope: None,
             mcp: Some(self.mcp.clone()),
             lines: self.chart.saved().to_vec(),
+            org_lines: self.chart.org_lines().to_vec(),
+            floor_orgs: Some(self.floor_orgs.saved().to_vec()),
+            floor_org: self.floor_org,
             ask_press_tokens: self.ask_press_tokens,
             focus_inherit: self.focus_inherit_theme,
             anchor_top: self.anchor_top,
@@ -7987,6 +8602,10 @@ impl Workspace {
         if session::write_atomic(&path, &body).is_err() {
             return;
         }
+        // Recorded like the unpacked pictures, so an uninstall can prove it is TD's.
+        if let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
+            crate::art::record_asset(dir, &name.to_string_lossy(), body.as_bytes());
+        }
         let Ok(exe) = std::env::current_exe() else {
             return;
         };
@@ -8050,6 +8669,7 @@ impl Workspace {
                         title: n.title,
                         text: n.text,
                         pinned: n.pinned,
+                        by: n.by,
                     }),
                     reach: None,
                     access: p.agent_access,
@@ -8099,18 +8719,34 @@ impl Workspace {
         Self::grade_report(&theme::outer_choice(cx).grade)
     }
 
-    /// Search every EXPOSED pane's recent scrollback for `needle` (exact,
-    /// case-insensitive) — the main-thread half of the MCP `grep` tool. Mirrors
-    /// `mcp_snapshot`'s walk + policy filter, so the operator's expose toggle
-    /// governs on-screen-content disclosure exactly as it gates `list_panes`.
-    fn mcp_search(&self, needle: &str, cap: usize, cx: &App) -> Vec<mcp::PaneMatches> {
+    /// Search recent scrollback using the caller's CURRENT reach. The protocol
+    /// also caps the result by its admission snapshot; neither an old grant nor
+    /// a grant added while the request waited may expand what it returns.
+    fn mcp_search(
+        &self,
+        needle: &str,
+        cap: usize,
+        caller_pane: Option<u64>,
+        cx: &App,
+    ) -> Vec<mcp::PaneMatches> {
+        let caller = caller_pane.and_then(|id| self.leaf_by_pane_id(id, cx));
+        let caller_party = caller.as_ref().map(|leaf| leaf.read(cx).party());
         let mut out = vec![];
         for (ti, tab) in self.tabs.iter().enumerate() {
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
                 let p = leaf.read(cx);
-                if !warroom::visible_to_some_agent(&self.mcp, &p.party()) {
+                let own = caller.as_ref().is_some_and(|caller| caller == leaf);
+                if threshing_floor::reach(
+                    &self.mcp,
+                    &self.chart,
+                    &self.floor_orgs,
+                    caller_party.as_ref(),
+                    &p.party(),
+                    own,
+                ) < threshing_floor::Reach::Read
+                {
                     continue;
                 }
                 let hits = p.grep_grid(needle, cap);
@@ -8306,6 +8942,17 @@ impl Workspace {
                     out.push((target.clone(), Ok(report)));
                 }
                 mcp::Target::Pane(pid) => {
+                    // Resolve the SENDER's current seat and pane live, so the
+                    // reach recheck below follows the chart as it is now, not as
+                    // the request's snapshot saw it (#1133). A sender that has
+                    // moved seats, been unseated, or exited loses its authority
+                    // here; its own pane is recognised by identity rather than a
+                    // captured flag, so a replaced target is never exempted.
+                    let sender = patch
+                        .caller_pane
+                        .and_then(|pane| self.leaf_with_pane_id(pane, cx));
+                    let sender_seat = sender.as_ref().and_then(|l| l.read(cx).seat);
+                    let sender_shell = sender.as_ref().and_then(|l| l.read(cx).shell_pid());
                     // locate an EXPOSED leaf with this shell pid (collect the
                     // handle first so the &self.tabs borrow ends before we mutate)
                     let mut hit = None;
@@ -8318,13 +8965,20 @@ impl Workspace {
                                 // An off-limits pane still takes an update aimed
                                 // at it by the agent running INSIDE it — its own
                                 // note, deliverable or bench — and nothing from
-                                // anywhere else (see `warroom::may_write`). The
-                                // protocol layer has already checked the caller's
-                                // reach; this re-checks the position at the effect.
-                                let exposed = warroom::position_takes_writes(
+                                // anywhere else. The request-time `write_gate`
+                                // already checked reach; this re-checks it at the
+                                // effect against the LIVE chart and the sender's
+                                // current seat, so a line revoked or reseated while
+                                // the write was queued stops it. Own-ness is the
+                                // sender BEING this pane, resolved by identity.
+                                let own = sender_shell == Some(*pid);
+                                let exposed = threshing_floor::may_write_live(
                                     &self.mcp,
+                                    &self.chart,
+                                    &self.floor_orgs,
+                                    sender_seat,
                                     &p.party(),
-                                    patch.own_pane,
+                                    own,
                                 );
                                 hit = Some((leaf.clone(), exposed));
                                 break 'find;
@@ -8363,13 +9017,10 @@ impl Workspace {
                                         }
                                     }
                                 };
-                            // An ask, checked against what this window knows
-                            // before anything is stored: the pane it names is
-                            // here, and what it asks for is not already so. A
-                            // row whose Yes would do nothing teaches a person
-                            // the buttons are decoration. The pane's name is
-                            // read now, for the person — the agent named it by
-                            // pid, and a pid is not how anyone thinks of a pane.
+                            // Resolve the target for the person, never for the
+                            // proposing agent. Open-pane requests also occupy
+                            // the queue for absent and already-open targets;
+                            // otherwise a follow-up request becomes an oracle.
                             let ask_change: Result<Option<access::Ask>, String> = match &patch.ask {
                                 None => Ok(None),
                                 Some(ask) => {
@@ -8378,7 +9029,8 @@ impl Workspace {
                                         .and_then(|p| self.leaf_by_shell_pid(p, cx))
                                         .filter(|target| {
                                             let v = target.read(cx);
-                                            !v.agent_access.is_off_limits()
+                                            ask.change == access::Change::OpenPane
+                                                || !v.agent_access.is_off_limits()
                                                 || v.shell_pid() == Some(*pid)
                                         });
                                     let (off, title) = match &named {
@@ -8386,7 +9038,16 @@ impl Workspace {
                                             Some(t.read(cx).agent_access.is_off_limits()),
                                             Some(self.pane_name(t, cx).full()),
                                         ),
-                                        None => (None, None),
+                                        None => (
+                                            None,
+                                            ask.pid.map(|p| {
+                                                let t = lang::current().strings().gc;
+                                                format!(
+                                                    "{} {p} ({})",
+                                                    t.count_pane.one, t.unavailable
+                                                )
+                                            }),
+                                        ),
                                     };
                                     // For a bypass: a line runs between seats, so
                                     // both panes must be seated, and asking is
@@ -8396,13 +9057,14 @@ impl Workspace {
                                     let line_reaches_ask = target_party
                                         .filter(|t| asker_party.seat.is_some() && t.seat.is_some())
                                         .map(|t| {
-                                            warroom::reach(
+                                            threshing_floor::reach(
                                                 &self.mcp,
                                                 &self.chart,
+                                                &self.floor_orgs,
                                                 Some(&asker_party),
                                                 &t,
                                                 false,
-                                            ) >= warroom::Reach::Ask
+                                            ) >= threshing_floor::Reach::Ask
                                         });
                                     let now = access::Now {
                                         pane_off_limits: off,
@@ -8416,16 +9078,16 @@ impl Workspace {
                                             .and_then(|ti| self.place_of(ti).project)
                                     };
                                     let facts = match ask.change {
-                                        access::Change::AskLine => warroom::RiskFacts::Bypass {
+                                        access::Change::AskLine => threshing_floor::RiskFacts::Bypass {
                                             across_projects: named.as_ref().is_some_and(|t| {
                                                 project_of(t) != project_of(&leaf)
                                             }),
                                             into_read_only: target_party.is_some_and(|t| {
-                                                t.access == warroom::AgentAccess::ReadOnly
+                                                t.access == threshing_floor::AgentAccess::ReadOnly
                                             }),
                                             prompts: ask.prompts,
                                         },
-                                        other => warroom::RiskFacts::Pane(other),
+                                        other => threshing_floor::RiskFacts::Pane(other),
                                     };
                                     if leaf.read(cx).access_ask.is_some() {
                                         // One ask at a time per agent (Gate 3,
@@ -8439,7 +9101,10 @@ impl Workspace {
                                             Some(why) => Err(why),
                                             None => Ok(Some(access::Ask {
                                                 title,
-                                                risk: Some(warroom::risk(&facts)),
+                                                target_key: named
+                                                    .as_ref()
+                                                    .map(|p| p.entity_id().as_u64()),
+                                                risk: Some(threshing_floor::risk(&facts)),
                                                 ..ask.clone()
                                             })),
                                         }
@@ -9536,6 +10201,7 @@ impl Workspace {
         }
         self.vitals_refreshing = false;
         if changed {
+            self.hand_down_model_labels(cx);
             cx.notify();
         }
     }
@@ -11512,7 +12178,7 @@ impl Workspace {
         // Always the caller's own pane (`caller_pane` in mcp.rs resolved it),
         // so its off-limits mark does not stop the agent inside opening a
         // document in its own tab.
-        if !warroom::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent()) {
+        if !threshing_floor::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent()) {
             let _ = reply.send(format!(
                 "err pane {} is not exposed under the current policy",
                 request.pid
@@ -14268,8 +14934,8 @@ impl Workspace {
                     mode: v.mode.label().into(),
                     agent: Self::coordination_agent(&v.mode),
                     session: coordination::session_identity(rt.resume.as_deref()),
-                    exposed: warroom::anonymous_reach(&self.mcp, &v.party())
-                        >= warroom::Reach::Read,
+                    exposed: threshing_floor::anonymous_reach(&self.mcp, &v.party())
+                        >= threshing_floor::Reach::Read,
                     full_scope,
                 };
                 let Some(cwd) = v.current_cwd() else {
@@ -17046,6 +17712,418 @@ impl Workspace {
         )
     }
 
+    /// A threshold as the Agents page writes it: `10 min`, `2 h`, `1 h 30 min`.
+    fn agents_minutes_label(&self, minutes: u32) -> String {
+        let ui = self.lang.strings().ui;
+        match (minutes / 60, minutes % 60) {
+            (0, m) => format!("{m} {}", ui.ag_unit_min),
+            (h, 0) => format!("{h} {}", ui.ag_unit_h),
+            (h, m) => format!("{h} {} {m} {}", ui.ag_unit_h, ui.ag_unit_min),
+        }
+    }
+
+    /// One threshold slider: smooth to drag, and a press lands on the nearest
+    /// of the thresholds through a wide target (Parker, 2026-10-26: *"CLICKING
+    /// will hit the threshold value and SLIDING allows specific adjustments"*).
+    fn agents_slider(
+        &self,
+        which: u8,
+        label: &str,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let (scale, detents) = Self::agents_scale(which);
+        let minutes = if which == 0 {
+            self.agents_prefs.rest_after_min()
+        } else {
+            self.agents_prefs.sleep_after_rest_min()
+        };
+        let frac = scale.position_of(f64::from(minutes)) as f32;
+        let store = self.agents_tracks[usize::from(which)].clone();
+        let id = if which == 0 {
+            "agents-rest-track"
+        } else {
+            "agents-sleep-track"
+        };
+        let track = div()
+            .id(id)
+            .w(px(250.))
+            .h(px(14.))
+            .relative()
+            .cursor_pointer()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.agents_drag = Some(which);
+                    if let Some(pos) = ws.agents_track_pos(which, ev.position.x) {
+                        let (scale, detents) = Self::agents_scale(which);
+                        let landed = agentrest::click(detents, scale.minutes_at(pos));
+                        ws.set_agents_minutes(which, landed);
+                    }
+                    cx.notify();
+                }),
+            )
+            .child(
+                canvas(
+                    move |bounds, _, _| {
+                        *store.lock().unwrap() = Some(bounds);
+                    },
+                    |_, _, _, _| {},
+                )
+                .size_full(),
+            )
+            .child(sk.scrubber(frac));
+        let ticks = detents
+            .iter()
+            .fold(div().relative().w(px(250.)).h(px(12.)), |row, d| {
+                let x = scale.position_of(f64::from(d.minutes)) as f32;
+                row.child(
+                    div()
+                        .absolute()
+                        .left(px(x * 250. - 10.))
+                        .w(px(20.))
+                        .flex()
+                        .justify_center()
+                        .text_size(sk.text_px(7.5))
+                        .text_color(if d.minutes == minutes {
+                            th.accent
+                        } else {
+                            th.text.alpha(0.45)
+                        })
+                        .child(SharedString::from(self.agents_minutes_label(d.minutes))),
+                )
+            });
+        div()
+            .flex()
+            .flex_row()
+            .items_start()
+            .gap_3()
+            .px_2()
+            .child(
+                div()
+                    .w(px(118.))
+                    .flex()
+                    .flex_col()
+                    .child(SharedString::from(label.to_string()))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.accent)
+                            .child(SharedString::from(self.agents_minutes_label(minutes))),
+                    ),
+            )
+            .child(div().flex().flex_col().gap_0p5().child(track).child(ticks))
+    }
+
+    fn open_agents(&mut self, cx: &mut Context<Self>) {
+        self.more_menu = false;
+        self.agents_prefs = agentcfg::load();
+        self.agents_menu = true;
+        cx.notify();
+    }
+
+    /// CONFIG › Agents: every agent setting in one place. The new ones — rest,
+    /// sleep and their thresholds — live here; the ones another page already
+    /// owns are drawn by that page's own function (launch defaults, the MCP
+    /// switches, agent colours) or opened from here (notices), so no setting
+    /// has two implementations.
+    fn render_agents_overlay(
+        &self,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        if !self.agents_menu {
+            return None;
+        }
+        let sk = skin::for_theme(cx, th, th.grade.scale);
+        let ui = self.lang.strings().ui;
+        let p = self.agents_prefs.clone();
+        let sk1 = skin::for_theme(cx, th, 1.);
+        let switch_row = |glyph: &str, name: &str, blurb: &str, on: bool, id: &'static str| {
+            div()
+                .id(SharedString::from(id))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_2()
+                .py_2()
+                .rounded(sk.radius())
+                .border_1()
+                .border_color(if on {
+                    th.accent.alpha(0.55)
+                } else {
+                    th.text.alpha(0.12)
+                })
+                .when(sk.m.frost > 0., |d| sk.action(d, on))
+                .child(
+                    div()
+                        .text_size(sk.text_px(15.))
+                        .child(SharedString::from(glyph.to_string())),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(if on { th.text } else { th.text.alpha(0.75) })
+                                .child(SharedString::from(name.to_string())),
+                        )
+                        .child(
+                            div()
+                                .text_size(sk.text_px(8.5))
+                                .text_color(th.text.alpha(0.6))
+                                .child(SharedString::from(blurb.to_string())),
+                        ),
+                )
+                .child(slider_switch(on, th, &sk1))
+        };
+        let section = |title: &str| {
+            div()
+                .pt_2()
+                .text_size(sk.text_px(9.))
+                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                .text_color(th.complement)
+                .child(SharedString::from(title.to_string()))
+        };
+        let c = &self.rest_census;
+        let mut now = lang::fill(
+            ui.ag_now,
+            &[
+                ("resting", &c.memory.resting.panes().to_string()),
+                ("asleep", &c.memory.asleep.panes().to_string()),
+                (
+                    "back",
+                    &c.memory
+                        .decrease
+                        .label(self.lang.strings().parts.pane_mem_unmeasured),
+                ),
+                (
+                    "held",
+                    &c.memory
+                        .held
+                        .label(self.lang.strings().parts.pane_mem_unmeasured),
+                ),
+            ],
+        );
+        let unmeasured = c.memory.held.panes - c.memory.held.measured;
+        if unmeasured > 0 {
+            now = format!(
+                "{now} \u{b7} {}",
+                lang::fill(ui.ag_unmeasured, &[("n", &unmeasured.to_string())])
+            );
+        }
+        let why = c
+            .refusals
+            .iter()
+            .map(|(class, n)| {
+                let word = match class {
+                    agentrest::RefusalClass::Busy => ui.ag_why_busy,
+                    agentrest::RefusalClass::Touched => ui.ag_why_touched,
+                    agentrest::RefusalClass::Running => ui.ag_why_running,
+                    agentrest::RefusalClass::KeptAwake => ui.ag_why_kept,
+                    agentrest::RefusalClass::Unknown => ui.ag_why_unknown,
+                    agentrest::RefusalClass::Off => ui.ag_why_off,
+                };
+                format!("{word} {n}")
+            })
+            .collect::<Vec<_>>()
+            .join(" \u{b7} ");
+        let [m0, m1, m2, m3, m4] = self.mcp_switch_buttons(&sk, th, "agents", cx);
+        let local = launcher::LocalAdapter::config_path();
+        let panel = div()
+            .id("agents-panel")
+            .debug_selector(|| "agents-panel".into())
+            .w(px(520.))
+            .max_h(px(self.tray_card_h()))
+            .overflow_x_hidden()
+            .overflow_y_scroll()
+            .p_3()
+            .rounded(sk.radius_lg())
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
+            .bg(darken(th.surface, 0.6))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .text_size(sk.text_px(10.))
+            .text_color(th.text)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            )
+            .map(|d| sk.chrome(sk.finish(d)))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .text_size(sk.text_px(13.))
+                    .child(div().text_size(sk.text_px(18.)).child("\u{1f916}"))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .text_color(th.complement)
+                            .child(ui.ag_hdr),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(sk.text_px(8.5))
+                    .text_color(th.accent.alpha(0.85))
+                    .child(ui.ag_blurb),
+            )
+            .child(section(ui.ag_rest_hdr))
+            .child(
+                switch_row(
+                    "\u{1f319}",
+                    ui.ag_rest_name,
+                    ui.ag_rest_blurb,
+                    p.rest_on(),
+                    "agents-rest",
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.agents_prefs.rest = Some(!ws.agents_prefs.rest_on());
+                        agentcfg::save(&ws.agents_prefs);
+                        cx.notify();
+                    }),
+                ),
+            )
+            .child(self.agents_slider(0, ui.ag_rest_after, th, &sk, cx))
+            .child(
+                switch_row(
+                    "\u{1f4a4}",
+                    ui.ag_sleep_name,
+                    ui.ag_sleep_blurb,
+                    p.sleep_on(),
+                    "agents-sleep",
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        let on = !ws.agents_prefs.sleep_on();
+                        ws.agents_prefs.sleep = Some(on);
+                        // Sleep needs rest: switching sleep on switches rest on.
+                        if on {
+                            ws.agents_prefs.rest = Some(true);
+                        }
+                        agentcfg::save(&ws.agents_prefs);
+                        cx.notify();
+                    }),
+                ),
+            )
+            .child(self.agents_slider(1, ui.ag_sleep_after, th, &sk, cx))
+            .child(
+                div()
+                    .px_2()
+                    .text_size(sk.text_px(8.5))
+                    .text_color(th.text.alpha(0.7))
+                    .child(SharedString::from(format!("{now}\n{}", ui.am_coverage))),
+            )
+            .when(!why.is_empty(), |d| {
+                d.child(
+                    div()
+                        .px_2()
+                        .text_size(sk.text_px(8.))
+                        .text_color(th.text.alpha(0.5))
+                        .child(SharedString::from(format!("{} {why}", ui.ag_not_resting))),
+                )
+            })
+            .child(self.render_launch_defaults(th, cx))
+            .child(section(ui.ag_more_hdr))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .child(SharedString::from(ui.ag_mcp.to_string()))
+                    .child(m0)
+                    .child(m1)
+                    .child(m2)
+                    .child(m3)
+                    .child(m4),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .child(SharedString::from(ui.ag_tint.to_string()))
+                    .child(self.terminal_state_toggle(&sk, cx)),
+            )
+            .child(
+                div()
+                    .id("agents-notices")
+                    .mx_2()
+                    .px_2()
+                    .py_1()
+                    .rounded(sk.radius())
+                    .border_1()
+                    .border_color(th.text.alpha(0.18))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(th.accent.alpha(0.14)))
+                    .child(SharedString::from(format!("\u{1f514} {}", ui.ag_notices)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.agents_menu = false;
+                            ws.notif = notifpref::load();
+                            ws.notif_menu = true;
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .px_2()
+                    .text_size(sk.text_px(8.))
+                    .text_color(th.text.alpha(0.5))
+                    .child(SharedString::from(lang::fill(
+                        ui.ag_local,
+                        &[("path", &local.display().to_string())],
+                    ))),
+            );
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .bg(th.bg.alpha(0.70))
+                .flex()
+                .items_center()
+                .justify_center()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        if ws.agents_drag.take().is_some() {
+                            agentcfg::save(&ws.agents_prefs);
+                        }
+                        ws.agents_menu = false;
+                        cx.notify();
+                    }),
+                )
+                .child(panel),
+        )
+    }
+
     fn render_lang_picker(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<gpui::Div> {
         let sk = skin::for_theme(cx, th, th.grade.scale);
         let lp = self.lang_picker.as_ref()?;
@@ -18632,6 +19710,38 @@ impl Workspace {
     const CARD_MIN: f32 = 0.7;
     const CARD_MAX: f32 = 1.6;
     /// Window-x → 0..1 fraction along the dashboard card-size slider track.
+    /// The track and the click thresholds of an Agents-page slider: 0 rest,
+    /// 1 sleep.
+    fn agents_scale(which: u8) -> (agentrest::Scale, &'static [agentrest::Detent]) {
+        if which == 0 {
+            (agentrest::REST_SCALE, agentrest::REST_DETENTS)
+        } else {
+            (agentrest::SLEEP_SCALE, agentrest::SLEEP_DETENTS)
+        }
+    }
+
+    /// Where along an Agents-page track `x` falls, `0..=1`.
+    fn agents_track_pos(&self, which: u8, x: Pixels) -> Option<f64> {
+        let store = self.agents_tracks.get(usize::from(which))?;
+        let b = (*store.lock().unwrap())?;
+        let w = f32::from(b.size.width);
+        if w <= 0.0 {
+            return None;
+        }
+        Some(f64::from(
+            ((f32::from(x) - f32::from(b.origin.x)) / w).clamp(0.0, 1.0),
+        ))
+    }
+
+    /// Set a threshold. Written to `agents.toml` when the press or drag ends.
+    fn set_agents_minutes(&mut self, which: u8, minutes: u32) {
+        if which == 0 {
+            self.agents_prefs.rest_after_min = Some(minutes);
+        } else {
+            self.agents_prefs.sleep_after_rest_min = Some(minutes);
+        }
+    }
+
     fn card_scale_from_pos(&self, x: Pixels) -> Option<f32> {
         let b = (*self.card_scale_bounds.lock().unwrap())?;
         let w = f32::from(b.size.width);
@@ -19149,11 +20259,13 @@ impl Workspace {
             || self.more_menu
             || self.art_rail
             || self.mcp_menu
-            || self.war_room
+            || self.threshing_floor
             || self.dead_menu
             || self.plugins_menu
             || self.notif_menu
+            || self.agents_menu
             || self.bug_menu
+            || self.admin_menu
             || self.savings_menu
     }
 
@@ -19280,8 +20392,16 @@ impl Workspace {
             self.notif_menu = false;
             return true;
         }
+        if self.agents_menu {
+            self.agents_menu = false;
+            return true;
+        }
         if self.bug_menu {
             self.close_bug_menu();
+            return true;
+        }
+        if self.admin_menu {
+            self.close_admin();
             return true;
         }
         // Standalone modals (only one is ever open at a time; order is moot).
@@ -19312,14 +20432,14 @@ impl Workspace {
             self.more_menu = false;
             return true;
         }
-        // The artifact rail is drawn over the War Room, so it closes first.
+        // The artifact rail is drawn over the Threshing Floor, so it closes first.
         if self.art_rail {
             self.art_close();
             return true;
         }
-        // The War Room sits over the panes like the wall, and closes before it.
-        if self.war_room {
-            self.close_war_room();
+        // The Threshing Floor sits over the panes like the wall, and closes before it.
+        if self.threshing_floor {
+            self.close_threshing_floor();
             return true;
         }
         // The base layer: the agent wall itself.
@@ -20264,9 +21384,13 @@ impl Workspace {
                 || self.tab_light_drag
                 || self.focus_zoom_drag
                 || self.card_scale_drag
+                || self.agents_drag.is_some()
                 || self.focus_sel_drag
                 || self.drag_split.is_some())
         {
+            if self.agents_drag.take().is_some() {
+                agentcfg::save(&self.agents_prefs);
+            }
             self.scrubbing = false;
             self.wheel_drag = None;
             self.light_drag = false;
@@ -20331,6 +21455,14 @@ impl Workspace {
         if self.card_scale_drag && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(frac) = self.card_scale_from_pos(ev.position.x) {
                 self.set_card_scale(frac, cx);
+            }
+        }
+        // The Agents page's thresholds: a drag is smooth, to the minute.
+        if let (Some(which), Some(MouseButton::Left)) = (self.agents_drag, ev.pressed_button) {
+            if let Some(pos) = self.agents_track_pos(which, ev.position.x) {
+                let (scale, _) = Self::agents_scale(which);
+                self.set_agents_minutes(which, agentrest::drag(&scale, pos));
+                cx.notify();
             }
         }
         // Extend the FOCUS reader selection as the cursor drags — the head moves to
@@ -20453,6 +21585,11 @@ impl Workspace {
             return;
         }
         if std::mem::take(&mut self.card_scale_drag) {
+            cx.notify();
+            return;
+        }
+        if self.agents_drag.take().is_some() {
+            agentcfg::save(&self.agents_prefs);
             cx.notify();
             return;
         }
@@ -21067,6 +22204,25 @@ impl Workspace {
             });
             self.save(cx);
             cx.notify();
+        }
+    }
+
+    /// Give each pane the model label its header leads with, from the vitals
+    /// the window already reads by shell pid. A pane whose vitals are gone
+    /// loses its label and falls back to its harness, never to a stale model.
+    fn hand_down_model_labels(&mut self, cx: &mut Context<Self>) {
+        for leaf in self.all_leaves() {
+            let label = leaf
+                .read(cx)
+                .shell_pid()
+                .and_then(|pid| self.agent_vitals.get(&pid))
+                .and_then(|v| v.model_and_effort());
+            if leaf.read(cx).model_label != label {
+                leaf.update(cx, |v, cx| {
+                    v.model_label = label;
+                    cx.notify();
+                });
+            }
         }
     }
 
@@ -21854,7 +23010,7 @@ impl Workspace {
     }
 
     /// The window's five MCP switches — server on, which panes agents may see,
-    /// pushed events, writes, card images — as the agent wall and the War Room
+    /// pushed events, writes, card images — as the agent wall and the Threshing Floor
     /// both draw them. One function, so the two can never disagree about what
     /// a switch does; `prefix` keeps their element ids apart.
     fn mcp_switch_buttons(
@@ -21865,40 +23021,79 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> [gpui::Stateful<gpui::Div>; 5] {
         let t = self.lang.strings();
+        let ui = t.ui;
+        // The Threshing Floor fits these into its one header row, so it wears
+        // the short words; the hover card carries the full meaning everywhere.
+        let compact = prefix == "war";
+        let pick = |short: &str, long: &str| if compact { short } else { long }.to_string();
+        let mark = |on: bool| if on { "\u{25c9}" } else { "\u{25cb}" };
+        // An agent that answered with no line drawn is the one number that
+        // should reach a person unasked: the server switch carries it as a dot.
+        let unlined = self.ask_numbers.as_ref().map_or(0, |n| n.unlined_answered);
+        let mut server_tip = vec![ui.floor_tip_server.to_string()];
+        if let Some(n) = self.ask_numbers.as_ref() {
+            server_tip.push(lang::fill(
+                ui.floor_asks,
+                &[
+                    ("cheap", &n.cheap_answers.to_string()),
+                    ("copies", &n.copy_answers.to_string()),
+                    ("unlined", &n.unlined_answered.to_string()),
+                ],
+            ));
+        }
         let enable_btn = Self::bezel_btn(
             sk,
-            &if self.mcp.enabled {
-                format!("\u{25c9} {}", t.m_server_on)
-            } else {
-                format!("\u{25cb} {}", t.m_server_off)
-            },
+            &format!(
+                "{} {}",
+                mark(self.mcp.enabled),
+                if self.mcp.enabled {
+                    pick(ui.floor_sw_server, t.m_server_on)
+                } else {
+                    pick(ui.floor_sw_server, t.m_server_off)
+                }
+            ),
             self.mcp.enabled,
         )
+        .when(unlined > 0, |d| {
+            d.child(
+                div()
+                    .size(px(6.))
+                    .rounded(sk.radius_pill())
+                    .bg(th.ansi[1])
+                    .flex_none(),
+            )
+        })
         .id(SharedString::from(format!("{prefix}-btn-enable")))
-        .hover(|s| s.border_color(th.accent))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                cx.stop_propagation();
-                ws.mcp.enabled = !ws.mcp.enabled;
-                ws.save(cx);
-                cx.notify();
-            }),
-        );
-        let expose_btn = Self::bezel_btn(
-            sk,
-            format!(
+        .debug_selector(move || format!("{prefix}-btn-enable"));
+        let enable_btn = with_tip(enable_btn, server_tip)
+            .hover(|s| s.border_color(th.accent))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp.enabled = !ws.mcp.enabled;
+                    ws.save(cx);
+                    cx.notify();
+                }),
+            );
+        let expose_label = match (compact, self.mcp.expose) {
+            (true, mcp::Expose::AgentsOnly) => ui.floor_sw_agents_only.to_string(),
+            (true, mcp::Expose::All) => ui.floor_sw_all_panes.to_string(),
+            (false, e) => format!(
                 "{} {}",
                 t.m_expose,
-                match self.mcp.expose {
+                match e {
                     mcp::Expose::AgentsOnly => t.exp_agents,
                     mcp::Expose::All => t.exp_all,
                 }
-            )
-            .as_str(),
-            false,
+            ),
+        };
+        let expose_btn = with_tip(
+            Self::bezel_btn(sk, &expose_label, false)
+                .id(SharedString::from(format!("{prefix}-btn-expose")))
+                .debug_selector(move || format!("{prefix}-btn-expose")),
+            vec![ui.floor_tip_expose.to_string()],
         )
-        .id(SharedString::from(format!("{prefix}-btn-expose")))
         .hover(|s| s.border_color(th.accent))
         .on_mouse_down(
             MouseButton::Left,
@@ -21909,16 +23104,24 @@ impl Workspace {
                 cx.notify();
             }),
         );
-        let events_btn = Self::bezel_btn(
-            sk,
-            &if self.mcp.events {
-                format!("\u{25c9} {}", t.m_events_on)
-            } else {
-                format!("\u{25cb} {}", t.m_events_off)
-            },
-            self.mcp.events,
+        let events_btn = with_tip(
+            Self::bezel_btn(
+                sk,
+                &format!(
+                    "{} {}",
+                    mark(self.mcp.events),
+                    if self.mcp.events {
+                        pick(ui.floor_sw_events, t.m_events_on)
+                    } else {
+                        pick(ui.floor_sw_events, t.m_events_off)
+                    }
+                ),
+                self.mcp.events,
+            )
+            .id(SharedString::from(format!("{prefix}-btn-events")))
+            .debug_selector(move || format!("{prefix}-btn-events")),
+            vec![ui.floor_tip_events.to_string()],
         )
-        .id(SharedString::from(format!("{prefix}-btn-events")))
         .hover(|s| s.border_color(th.accent))
         .on_mouse_down(
             MouseButton::Left,
@@ -21936,16 +23139,24 @@ impl Workspace {
         // Writes opt-in: promotes the read-only watch surface to a
         // remote-control one (set_pane_config). A deliberate second switch —
         // appearance only, never a PTY. Mirrors the TD_MCP_WRITE env var.
-        let writes_btn = Self::bezel_btn(
-            sk,
-            &if self.mcp.writable {
-                format!("\u{25c9} {}", t.m_writes_on)
-            } else {
-                format!("\u{25cb} {}", t.m_writes_off)
-            },
-            self.mcp.writable,
+        let writes_btn = with_tip(
+            Self::bezel_btn(
+                sk,
+                &format!(
+                    "{} {}",
+                    mark(self.mcp.writable),
+                    if self.mcp.writable {
+                        pick(ui.floor_sw_writes, t.m_writes_on)
+                    } else {
+                        pick(ui.floor_sw_writes, t.m_writes_off)
+                    }
+                ),
+                self.mcp.writable,
+            )
+            .id(SharedString::from(format!("{prefix}-btn-writes")))
+            .debug_selector(move || format!("{prefix}-btn-writes")),
+            vec![ui.floor_tip_writes.to_string()],
         )
-        .id(SharedString::from(format!("{prefix}-btn-writes")))
         .hover(|s| s.border_color(th.accent))
         .on_mouse_down(
             MouseButton::Left,
@@ -21962,16 +23173,24 @@ impl Workspace {
         // blanking the picture inside it, because an empty frame is not
         // cleaner than a full one.
         let show_art = wall_card_art(self.card_art);
-        let images_btn = Self::bezel_btn(
-            sk,
-            &if show_art {
-                format!("\u{25c9} {}", t.m_images_on)
-            } else {
-                format!("\u{25cb} {}", t.m_images_off)
-            },
-            show_art,
+        let images_btn = with_tip(
+            Self::bezel_btn(
+                sk,
+                &format!(
+                    "{} {}",
+                    mark(show_art),
+                    if show_art {
+                        pick(ui.floor_sw_images, t.m_images_on)
+                    } else {
+                        pick(ui.floor_sw_images, t.m_images_off)
+                    }
+                ),
+                show_art,
+            )
+            .id(SharedString::from(format!("{prefix}-btn-images")))
+            .debug_selector(move || format!("{prefix}-btn-images")),
+            vec![ui.floor_tip_images.to_string()],
         )
-        .id(SharedString::from(format!("{prefix}-btn-images")))
         .hover(|s| s.border_color(th.accent))
         .on_mouse_down(
             MouseButton::Left,
@@ -23125,7 +24344,9 @@ impl Workspace {
             tab.root.leaves(&mut leaves);
             for e in leaves {
                 let p = e.read(cx);
-                if !p.mode.is_agent() {
+                // An asleep pane's foreground is a shell, and it is still an
+                // agent: counting it by mode alone would make it vanish.
+                if !p.counts_as_agent() {
                     continue;
                 }
                 match p.agent_status().state {
@@ -23134,6 +24355,8 @@ impl Workspace {
                     hud::AgentState::Error => t.errored += 1,
                     hud::AgentState::Finished => t.finished += 1,
                     hud::AgentState::Idle => t.idle += 1,
+                    hud::AgentState::Resting => t.resting += 1,
+                    hud::AgentState::Asleep => t.asleep += 1,
                     hud::AgentState::Unknown => t.unknown += 1,
                 }
             }
@@ -23901,18 +25124,25 @@ impl Workspace {
         let rad = sk.radius();
         let text = th.text;
         let tally = self.slot_tally(cx);
+        let owner = cx.entity().downgrade();
         // The robot is `U+F06A9` out of the Nerd Font TD resolves, checked
         // against `fc-list :charset` rather than assumed: the mock's `🤖`
         // (`U+1F916`) is in no monospace font on this machine and would paint
         // as blank space, which reads as a broken feature rather than as a
         // missing character. The pause is `U+2016` for the same reason —
         // `U+23F8`, which `hud::AgentState::badge` returns, is absent too.
-        let cells: [(hud::AgentState, u32, &str); 6] = [
+        //
+        // Rest and sleep are Nerd Font glyphs for the same reason: the moon
+        // (`U+F0594`) and the zzz (`U+F04B2`) are in the font TD resolves, and
+        // the plain `☾` is only in a symbols font the bar may not reach.
+        let cells: [(hud::AgentState, u32, &str); 8] = [
             (hud::AgentState::Working, tally.working, "\u{25b6}"),
             (hud::AgentState::Blocked, tally.blocked, "\u{2016}"),
             (hud::AgentState::Error, tally.errored, "\u{2715}"),
             (hud::AgentState::Finished, tally.finished, "\u{2713}"),
             (hud::AgentState::Idle, tally.idle, "\u{25cb}"),
+            (hud::AgentState::Resting, tally.resting, "\u{f0594}"),
+            (hud::AgentState::Asleep, tally.asleep, "\u{f04b2}"),
             // The bar is on screen constantly, which makes it the one place a
             // parser gap must not be invisible.
             (hud::AgentState::Unknown, tally.unknown, "?"),
@@ -23921,6 +25151,18 @@ impl Workspace {
         let mut counter = sk
             .sheet()
             .id("agent-rollup")
+            .debug_selector(|| "agent-rollup".into())
+            .tooltip(move |_w, cx| {
+                cx.new(|cx| {
+                    if let Some(ws) = owner.upgrade() {
+                        cx.observe(&ws, |_, _, cx| cx.notify()).detach();
+                    }
+                    AgentMemoryTooltip {
+                        owner: owner.clone(),
+                    }
+                })
+                .into()
+            })
             .flex_none()
             .flex()
             .flex_row()
@@ -23945,9 +25187,8 @@ impl Workspace {
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
                     ws.mcp_menu = false;
-                    ws.war_room = true;
-                    ws.ask_numbers =
-                        askrecord::numbers(&askrecord::path_for(crate::instance::key())).ok();
+                    ws.threshing_floor = true;
+                    ws.ask_numbers = askrecord::numbers_for(crate::instance::key()).ok();
                     cx.notify();
                 }),
             )
@@ -23985,6 +25226,14 @@ impl Workspace {
                     })
                     .text_size(sk.text_px(10.0 * s))
                     .text_color(col)
+                    .when_some(
+                        glyph
+                            .chars()
+                            .next()
+                            .filter(|c| ('\u{f0000}'..='\u{fffff}').contains(c))
+                            .and_then(|c| pane::chrome_glyph_font(c, th)),
+                        |d, family| d.font_family(family),
+                    )
                     .child(glyph.to_string())
                     .child(
                         div()
@@ -24328,7 +25577,7 @@ impl Workspace {
                             why: "the migration failed there and I need its last 50 lines to \
                                   say why"
                                 .into(),
-                            risk: Some(warroom::risk(&warroom::RiskFacts::Pane(
+                            risk: Some(threshing_floor::risk(&threshing_floor::RiskFacts::Pane(
                                 access::Change::OpenPane,
                             ))),
                             bypass: None,
@@ -24494,12 +25743,13 @@ impl Workspace {
                 let to = ask
                     .pid
                     .and_then(|pid| self.leaf_by_shell_pid(pid, cx))
+                    .filter(|t| Some(t.entity_id().as_u64()) == ask.target_key)
                     .and_then(|t| t.read(cx).seat);
                 match from.zip(to) {
                     None => access::Outcome::Gone,
                     Some((from, to)) => {
                         let reaches = self.chart.line(from, to).is_some_and(|l| {
-                            !l.is_bypass() && l.rung.known() >= Some(warroom::Rung::Ask)
+                            !l.is_bypass() && l.rung.known() >= Some(threshing_floor::Rung::Ask)
                         });
                         if reaches {
                             access::Outcome::AlreadySo
@@ -24513,9 +25763,13 @@ impl Workspace {
             access::Answer::Yes => match access::grant_config(ask.change, &mut self.mcp) {
                 Some(outcome) => outcome,
                 None => {
-                    // A pane change: the pane is found by the pid the agent
-                    // named, as it is everywhere an agent names a pane.
-                    match ask.pid.and_then(|pid| self.leaf_by_shell_pid(pid, cx)) {
+                    // A Yes applies only to the pane captured when asked.
+                    // An absent or replaced target cannot acquire approval.
+                    match ask
+                        .pid
+                        .and_then(|pid| self.leaf_by_shell_pid(pid, cx))
+                        .filter(|t| Some(t.entity_id().as_u64()) == ask.target_key)
+                    {
                         None => access::Outcome::Gone,
                         Some(target) => target.update(cx, |v, cx| {
                             let (mark, outcome) =
@@ -27082,6 +28336,18 @@ struct SlotTooltip {
     lines: Vec<String>,
 }
 
+/// Hang a plain hover card on `el`: the first line is the heading, the rest
+/// read under it. One place hangs these, so the glass guard counts one site
+/// however many buttons say what they do.
+fn with_tip(el: gpui::Stateful<gpui::Div>, lines: Vec<String>) -> gpui::Stateful<gpui::Div> {
+    el.tooltip(move |_w, cx| {
+        cx.new(|_| SlotTooltip {
+            lines: lines.clone(),
+        })
+        .into()
+    })
+}
+
 impl Render for SlotTooltip {
     fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = theme::theme(cx);
@@ -27104,8 +28370,100 @@ impl Render for SlotTooltip {
     }
 }
 
+/// The counter's hover reads only the sampling loop's cache. Observing the
+/// workspace keeps an open card current without doing I/O on hover.
+struct AgentMemoryTooltip {
+    owner: gpui::WeakEntity<Workspace>,
+}
+
+impl Render for AgentMemoryTooltip {
+    fn render(&mut self, w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let th = theme::theme(cx);
+        let s = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, s);
+        let strings = lang::current().strings();
+        let ui = strings.ui;
+        let census = self
+            .owner
+            .upgrade()
+            .map(|ws| ws.read(cx).rest_census.clone())
+            .unwrap_or_default();
+        let mut card = over_the_glass_tip(&th, &sk, s)
+            .id("agent-memory-tooltip")
+            .debug_selector(|| "agent-memory-tooltip".into())
+            .w(px(410. * s))
+            .max_w((w.viewport_size().width - px(16.)).max(px(0.)))
+            .gap(px(5. * s))
+            .text_size(sk.text_px(10.5 * s))
+            .text_color(sk.ink.ink_dim)
+            .child(
+                div()
+                    .text_color(sk.ink.ink)
+                    .text_size(sk.text_px(12. * s))
+                    .child(ui.am_title),
+            );
+        if let Some(sampled) = census.sampled_at {
+            let memory = &census.memory;
+            let row = |key: &str, label: String, ram: String, swap: String| {
+                div()
+                    .id(SharedString::from(format!("agent-memory-{key}")))
+                    .debug_selector(|| format!("agent-memory-{key}"))
+                    .flex()
+                    .flex_row()
+                    .gap(px(6. * s))
+                    .child(div().w(px(104. * s)).flex_none().child(label))
+                    .child(div().flex_1().min_w_0().map(|d| sk.data(d)).child(ram))
+                    .child(div().flex_1().min_w_0().map(|d| sk.data(d)).child(swap))
+            };
+            card = card.child(row(
+                "head",
+                String::new(),
+                ui.am_ram.into(),
+                ui.am_swap.into(),
+            ));
+            for (key, label, values) in [
+                ("awake", ui.am_awake, &memory.awake),
+                ("resting", strings.parts.hud_state_resting, &memory.resting),
+                ("asleep", strings.parts.hud_state_asleep, &memory.asleep),
+            ] {
+                card = card.child(row(
+                    key,
+                    format!("{label} · {}", values.panes()),
+                    values.ram.label(strings.parts.pane_mem_unmeasured),
+                    values.swap.label(strings.parts.pane_mem_unmeasured),
+                ));
+            }
+            card = card
+                .child(
+                    div()
+                        .mt(px(4. * s))
+                        .border_t_1()
+                        .border_color(sk.ink.ink_dim.alpha(0.25))
+                        .pt(px(5. * s))
+                        .text_color(sk.ink.ink)
+                        .child(format!(
+                            "{}: {}",
+                            ui.am_decrease,
+                            memory.decrease.label(strings.parts.pane_mem_unmeasured)
+                        )),
+                )
+                .child(ui.am_coverage)
+                .child(lang::fill(
+                    ui.am_updated,
+                    &[
+                        ("age", &agentrest::short_age(sampled.elapsed())),
+                        ("seconds", &REST_SWEEP_SECS.to_string()),
+                    ],
+                ));
+        } else {
+            card = card.child(ui.am_waiting);
+        }
+        card.child(ui.am_scope)
+    }
+}
+
 /// Hover popup for a theme button. Shows the full theme name (the in-button
-/// caption is truncated — e.g. `tactical` for `tactical-overdrive`). For the
+/// caption is the id's first segment, and may be truncated). For the
 /// hot-reloaded `custom` slot it also shows the resolved file path on THIS
 /// machine and a clickable "Open in editor" line.
 struct ThemeTooltip {
@@ -27405,6 +28763,10 @@ fn agent_state_glow(th: &theme::Theme, idle: Hsla, state: hud::AgentState) -> Hs
         hud::AgentState::Error => hsla(0., 0.75, 0.60, 1.),
         hud::AgentState::Finished => hsla(0.34, 0.85, 0.58, 1.),
         hud::AgentState::Idle => idle,
+        // Rest and sleep are cool and dim: the window put them there, and
+        // neither wants a person.
+        hud::AgentState::Resting => hsla(0.62, 0.55, 0.70, 1.),
+        hud::AgentState::Asleep => hsla(0.72, 0.35, 0.66, 1.),
         // An unreadable screen is drawn as quiet, never as activity.
         hud::AgentState::Unknown => idle,
     }
@@ -28056,23 +29418,13 @@ impl Workspace {
     fn wearing(&self, cx: &App) -> looks::Wearing {
         looks::Wearing {
             grade: theme::outer_choice(cx).grade,
-            skin: skin::is_pinned(cx).then(|| skin::active_id(cx)),
             ui: uiconfig::choice(cx),
         }
     }
 
-    /// Put a look on the window: its choice, its skin pin, its UI CONFIG.
-    fn wear(
-        &mut self,
-        choice: ThemeChoice,
-        skin_pin: Option<String>,
-        ui: uiconfig::UiChoice,
-        cx: &mut Context<Self>,
-    ) {
-        let id = skin_pin.unwrap_or_else(|| skin::FOLLOW_THEME.to_string());
-        if let Err(e) = skin::select(cx, &id) {
-            eprintln!("terminal-delight: {e}");
-        }
+    /// Put a look on the window: its choice and its UI CONFIG. The skin is not
+    /// part of a look (see `looks`, rule 2) and is left as it is.
+    fn wear(&mut self, choice: ThemeChoice, ui: uiconfig::UiChoice, cx: &mut Context<Self>) {
         uiconfig::set_choice(cx, ui);
         theme::select_outer(cx, choice);
         self.ui_changed(cx);
@@ -28080,11 +29432,10 @@ impl Workspace {
 
     /// Everything one undo restores.
     fn look_undo_point(&self, cx: &App) -> LookUndo {
-        let now = self.wearing(cx);
         LookUndo {
             choice: theme::outer_choice(cx),
-            skin: now.skin,
-            ui: now.ui,
+            skin: skin::is_pinned(cx).then(|| skin::active_id(cx)),
+            ui: uiconfig::choice(cx),
             looks: self.looks.clone(),
         }
     }
@@ -28098,6 +29449,7 @@ impl Workspace {
             return;
         }
         self.look_undo = Some(self.look_undo_point(cx));
+        skin::hold(cx);
         let now = self.wearing(cx);
         let next = looks::switch(&mut self.looks, &cur.id, &now, &to, |id| {
             theme::design_stock(cx, id)
@@ -28107,7 +29459,7 @@ impl Workspace {
             grade: next.grade,
             ..cur
         };
-        self.wear(choice, next.skin, next.ui, cx);
+        self.wear(choice, next.ui, cx);
     }
 
     /// "Reset to as designed": forget what a design remembers, and if it is
@@ -28121,7 +29473,6 @@ impl Workspace {
             theme::design_stock(cx, id).apply(&mut grade, &self.looks.pinned);
             self.wear(
                 ThemeChoice { grade, ..cur },
-                None,
                 uiconfig::UiChoice::default(),
                 cx,
             );
@@ -28135,7 +29486,13 @@ impl Workspace {
     fn undo_look(&mut self, cx: &mut Context<Self>) {
         if let Some(u) = self.look_undo.take() {
             self.looks = u.looks;
-            self.wear(u.choice, u.skin, u.ui, cx);
+            // Exactly as it was, including a skin that was following the
+            // design until the switch held it.
+            let id = u.skin.unwrap_or_else(|| skin::FOLLOW_THEME.to_string());
+            if let Err(e) = skin::select(cx, &id) {
+                eprintln!("terminal-delight: {e}");
+            }
+            self.wear(u.choice, u.ui, cx);
         }
     }
 
@@ -28353,13 +29710,15 @@ impl Render for Workspace {
                 || self.theme_menu.is_some()
                 || self.osd_menu.is_some()
                 || self.mcp_menu
-                || self.war_room
+                || self.threshing_floor
                 || self.scale_menu
                 || self.more_menu
                 || self.art_rail
                 || self.plugins_menu
                 || self.notif_menu
+                || self.agents_menu
                 || self.bug_menu
+                || self.admin_menu
                 || self.savings_menu
                 || self.dead_menu
                 || self.group_menu.is_some()
@@ -28414,6 +29773,7 @@ impl Render for Workspace {
                     "coordination" => self.eng_table = true,
                     "notifications" => self.notif_menu = true,
                     "bug" => self.bug_menu = true,
+                    "admin" => self.open_admin(cx),
                     "language" => {
                         self.lang_picker = Some(LangPicker {
                             query: EditBuffer::seeded(""),
@@ -28492,12 +29852,16 @@ impl Render for Workspace {
             self.confirm_close = Some(self.active);
             cx.notify();
         }
-        // demo/capture hook (TD_WAR_ROOM_DEMO): open the War Room for a rig that
-        // cannot click the counter; a number picks that seat, so its card shows.
-        if let Ok(how) = std::env::var("TD_WAR_ROOM_DEMO") {
-            if !self.war_room {
-                self.war_room = true;
-                self.war_room_pick = how.parse().ok().map(warroom::SeatId);
+        // demo/capture hook (TD_THRESHING_FLOOR_DEMO): open the Threshing Floor for a rig that
+        // cannot click the counter; a number selects that seat without granting access.
+        if let Ok(how) = std::env::var("TD_THRESHING_FLOOR_DEMO") {
+            if !self.threshing_floor {
+                self.threshing_floor = true;
+                self.threshing_floor_pick = how.parse().ok().map(threshing_floor::SeatId);
+                // `map` opens the System Map instead of an org's chart.
+                if how == "map" {
+                    self.floor_map = Some(Default::default());
+                }
                 cx.notify();
             }
         }
@@ -29190,7 +30554,7 @@ impl Render for Workspace {
         // them hidden and CONFIG takes the corner — the `…` menu a narrow
         // window already folds its glyphs into, named, and opened by choice.
         let ui_on = |k: uiconfig::Key| uiconfig::shown(cx, k);
-        let ui_glyph: [bool; 7] = [
+        let ui_glyph: [bool; 8] = [
             ui_on(uiconfig::Key::Surfaces),
             ui_on(uiconfig::Key::Sliders),
             ui_on(uiconfig::Key::Graveyard),
@@ -29198,6 +30562,7 @@ impl Render for Workspace {
             ui_on(uiconfig::Key::BugReport),
             ui_on(uiconfig::Key::Plugins),
             ui_on(uiconfig::Key::Artifacts),
+            ui_on(uiconfig::Key::Agents),
         ];
         let ui_counts = ui_on(uiconfig::Key::Counts);
         let ui_scale = ui_on(uiconfig::Key::Scale);
@@ -29231,6 +30596,19 @@ impl Render for Workspace {
                     cx.stop_propagation();
                     ws.open_osd(MenuScope::Outer, None);
                     cx.notify();
+                }),
+            );
+        let ic_agents = Self::hicon_s(&sk, self.agents_menu, scale)
+            .id("toolbar-agents")
+            .debug_selector(|| "toolbar-agents".into())
+            .text_size(sk.text_px(CHROME_GLYPH * scale))
+            .line_height(px(CHROME_GLYPH * scale))
+            .child("\u{1f916}")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.open_agents(cx);
                 }),
             );
         // The agent wall has no glyph on the chrome any more. Its door is the
@@ -29420,6 +30798,7 @@ impl Render for Workspace {
                     })
                     .when(ui_glyph[0], |d| d.child(ic_theme))
                     .when(ui_glyph[1], |d| d.child(ic_osd))
+                    .when(ui_glyph[7], |d| d.child(ic_agents))
                     .when(ui_glyph[2], |d| d.child(ic_dead))
                     .when(ui_glyph[3], |d| d.child(ic_notif))
                     .when(ui_glyph[4], |d| d.child(ic_bug))
@@ -29642,9 +31021,8 @@ impl Render for Workspace {
                 MenuScope::Outer => false,
             };
             let selection = PaletteSelection::of(cx, &cur);
-            // THEME picker (retained — hacker/custom/quiet/tactical are the base
-            // theming). The dynamics glyph column is an orthogonal dimension
-            // layered on top of whichever theme is active here.
+            // DESIGN picker. The dynamics glyph column is an orthogonal
+            // dimension layered on top of whichever design is active here.
             // UI CONFIG's `option_rows` off: each row shows only what it is set
             // to, until a hover (`FOLD_OPEN_MS`) or a click opens it.
             let folded = !uiconfig::shown(cx, uiconfig::Key::OptionRows);
@@ -29661,11 +31039,17 @@ impl Render for Workspace {
                 if closed_design && !active {
                     continue;
                 }
+                // The hot-reloaded user file is not offered here (Parker,
+                // 2026-10-25: "REMOVE the CUSTOM on both"). A window already
+                // wearing it — an old session — still shows it, so the row
+                // never reads as wearing nothing.
+                if id == "custom" && !active {
+                    continue;
+                }
                 let cur_c = cur.clone();
                 let tip_path = (id == "custom").then(theme::theme_path);
                 let tlbl = match lbl.as_str() {
                     "clean" => t.thm_clean,
-                    "tactical" => t.thm_tactical,
                     "hacker" => t.thm_hacker,
                     "intrusive" => t.thm_intrusive,
                     "custom" => t.thm_custom,
@@ -29674,7 +31058,6 @@ impl Render for Workspace {
                 };
                 let help = match lbl.as_str() {
                     "clean" => t.ui.pal_help_theme_clean,
-                    "tactical" => t.ui.pal_help_theme_tactical,
                     "intrusive" => t.ui.pal_help_theme_intrusive,
                     "deco" => t.ui.pal_help_theme_deco,
                     "hacker" => t.ui.pal_help_theme_hacker,
@@ -29767,6 +31150,13 @@ impl Render for Workspace {
                 if closed_skin && !lit {
                     continue;
                 }
+                // Your own skin.toml is not offered here either; the skin
+                // workshop selects it through `ctl skin custom`. While it is
+                // what is drawing, it still shows, for the same reason as the
+                // DESIGN row's.
+                if id == skin::USER_FILE && !lit {
+                    continue;
+                }
                 let click_id = id.clone();
                 // The id is the skin's file name and stays as it is; only the
                 // caption under the icon speaks the reader's language, and a
@@ -29774,7 +31164,6 @@ impl Render for Workspace {
                 let caption = match id.as_str() {
                     "default" => t.ui.pal_skin_default,
                     "deco" => t.ui.pal_skin_deco,
-                    "console" => t.ui.pal_skin_console,
                     "chalk" => t.ui.pal_skin_chalk,
                     "ops" => t.ui.pal_skin_ops,
                     "clean" => t.ui.pal_skin_clean,
@@ -29790,7 +31179,6 @@ impl Render for Workspace {
                                 match id.as_str() {
                                     "default" => t.ui.pal_help_skin_default,
                                     "deco" => t.ui.pal_help_skin_deco,
-                                    "console" => t.ui.pal_help_skin_console,
                                     "chalk" => t.ui.pal_help_skin_chalk,
                                     "ops" => t.ui.pal_help_skin_ops,
                                     "clean" => t.ui.pal_help_skin_clean,
@@ -30565,12 +31953,13 @@ impl Render for Workspace {
                         .child(switch(t.ui.ui_close, &[K::PaneClose], "ui-p-close", cx))
                         .child(switch(t.ui.ui_notes, &[K::PaneNotes], "ui-p-notes", cx))
                 } else {
-                    // The seven corner glyphs: as a group, or one at a time.
+                    // The corner glyphs: as a group, or one at a time.
                     let mut chips = div().flex().flex_row().flex_wrap().gap_1().pb_1();
                     for (glyph, key, id) in [
                         ("\u{1f4dc}", K::Artifacts, "ui-g-artifacts"),
                         ("\u{1f3a8}", K::Surfaces, "ui-g-surfaces"),
                         ("\u{1f4ca}", K::Sliders, "ui-g-sliders"),
+                        ("\u{1f916}", K::Agents, "ui-g-agents"),
                         ("\u{1faa6}", K::Graveyard, "ui-g-graveyard"),
                         ("\u{1f514}", K::Notifications, "ui-g-notifications"),
                         ("\u{1f41e}", K::BugReport, "ui-g-bug"),
@@ -30580,6 +31969,7 @@ impl Render for Workspace {
                         chips = chips.child(
                             sk.chip(on)
                                 .id(id)
+                                .debug_selector(move || id.into())
                                 .cursor_pointer()
                                 .when(!on, |d| d.opacity(0.35))
                                 .child(glyph)
@@ -30710,7 +32100,6 @@ impl Render for Workspace {
                     let n = self.design_changes(&id, cx);
                     let name = match id.as_str() {
                         "clean" => t.thm_clean,
-                        "tactical-overdrive" => t.thm_tactical,
                         "hacker" => t.thm_hacker,
                         "intrusive" => t.thm_intrusive,
                         "custom" => t.thm_custom,
@@ -31221,7 +32610,9 @@ impl Render for Workspace {
         let agent_launcher_overlay = self.render_agent_launcher(&th, cx);
         let plugins_overlay = self.render_plugins_overlay(&th, cx);
         let notif_overlay = self.render_notif_overlay(&th, cx);
+        let agents_overlay = self.render_agents_overlay(&th, cx);
         let bug_overlay = self.render_bug_overlay(&th, cx);
+        let admin_overlay = self.render_admin_overlay(&th, cx);
         // The marquee, while it lives. It ages out on its own — nothing
         // clears it — and it keeps asking for frames so the bulbs chase and
         // the fade actually runs.
@@ -31233,7 +32624,7 @@ impl Render for Workspace {
             window.request_animation_frame();
         }
         let savings_overlay = self.render_savings_overlay(&th, chrome_vw, cx);
-        let war_room_overlay = self.render_war_room(&th, cx);
+        let threshing_floor_overlay = self.render_threshing_floor(&th, cx);
 
         // ---- MCP control: the read-only agent-watch surface (the 🤖 button) ----
         let mcp_overlay = self.mcp_menu.then(|| {
@@ -31243,7 +32634,7 @@ impl Render for Workspace {
             let total = panes.len();
             let exposed = panes
                 .iter()
-                .filter(|p| warroom::visible_to_some_agent(&self.mcp, &p.party()))
+                .filter(|p| threshing_floor::visible_to_some_agent(&self.mcp, &p.party()))
                 .count();
             let vp_h = f32::from(window.viewport_size().height);
             let filt = self.mcp_filter;
@@ -31305,6 +32696,7 @@ impl Render for Workspace {
             let mut visible_agent_total = 0u32;
             let (mut v_work, mut v_block, mut v_err, mut v_done, mut v_idle, mut v_unknown) =
                 (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
+            let (mut v_rest, mut v_asleep) = (0u32, 0u32);
             let mut visible_program_total = 0u32;
             let mut programs_present: Vec<(String, Hsla, u32)> = Vec::new();
             // (group key, display name, band colour, pane count) in first-seen order.
@@ -31337,7 +32729,7 @@ impl Render for Workspace {
                     let program_matches = program_filt
                         .as_deref()
                         .is_none_or(|program| program == mode_lbl.as_str());
-                    if p.mode.is_agent() {
+                    if p.counts_as_agent() {
                         let st = p.agent_status();
                         turn_tok_total += st.turn_tokens.unwrap_or(0);
                         sess_tok_total += p.session_tokens();
@@ -31349,6 +32741,8 @@ impl Render for Workspace {
                                 hud::AgentState::Error => v_err += 1,
                                 hud::AgentState::Finished => v_done += 1,
                                 hud::AgentState::Idle => v_idle += 1,
+                                hud::AgentState::Resting => v_rest += 1,
+                                hud::AgentState::Asleep => v_asleep += 1,
                                 hud::AgentState::Unknown => v_unknown += 1,
                             }
                         }
@@ -31624,6 +33018,8 @@ impl Render for Workspace {
                 (hud::AgentState::Error, v_err),
                 (hud::AgentState::Finished, v_done),
                 (hud::AgentState::Idle, v_idle),
+                (hud::AgentState::Resting, v_rest),
+                (hud::AgentState::Asleep, v_asleep),
                 // Unknown gets its own chip rather than being folded into idle:
                 // a filter you cannot select is a state you cannot inspect, and
                 // this is the one people will want to inspect first.
@@ -31765,7 +33161,7 @@ impl Render for Workspace {
                         .or_else(|| (!p.title.is_empty()).then(|| p.shown_title()))
                         .unwrap_or_else(|| p.mode.label().to_string());
                     let rt = p.runtime();
-                    let exposed = warroom::visible_to_some_agent(&self.mcp, &p.party());
+                    let exposed = threshing_floor::visible_to_some_agent(&self.mcp, &p.party());
                     let status = p.agent_status();
                     // The card's chat-scroller. An IDLE agent's live input box is
                     // wasted space — show the LAST USER PROMPT (what you asked it)
@@ -32951,6 +34347,11 @@ impl Render for Workspace {
                             live.insert(id);
                         }
                     }
+                    // A sleeping agent is not dead: offering it for resurrection
+                    // would put a second process on its conversation when it wakes.
+                    if let Some(asleep) = p.rest.dormancy.asleep() {
+                        live.insert(asleep.session.clone());
+                    }
                 }
             }
             let mut dead = recover::scan_dead(&live, &home_path, 80);
@@ -33836,18 +35237,19 @@ impl Render for Workspace {
                 // of its glyph row, and a list of the window's surfaces that
                 // left out the one TD is steered from would be a list with a
                 // hole in it.
-                .child(entry("\u{f06a9}", s.ui.wr_hdr, "more-mcp").on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.more_menu = false;
-                        ws.mcp_menu = false;
-                        ws.war_room = true;
-                        ws.ask_numbers =
-                            askrecord::numbers(&askrecord::path_for(crate::instance::key())).ok();
-                        cx.notify();
-                    }),
-                ))
+                .child(
+                    entry("\u{f06a9}", s.ui.floor_hdr, "more-mcp").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.more_menu = false;
+                            ws.mcp_menu = false;
+                            ws.threshing_floor = true;
+                            ws.ask_numbers = askrecord::numbers_for(crate::instance::key()).ok();
+                            cx.notify();
+                        }),
+                    ),
+                )
                 .child(
                     entry("\u{1f3a8}", s.ui.cfg_surfaces, "more-theme").on_mouse_down(
                         MouseButton::Left,
@@ -33894,6 +35296,17 @@ impl Render for Workspace {
                     ),
                 )
                 .child(
+                    entry("\u{1f916}", s.ui.cfg_agents, "more-agents")
+                        .debug_selector(|| "more-agents".into())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.open_agents(cx);
+                            }),
+                        ),
+                )
+                .child(
                     entry("\u{1f41e}", s.report_bug, "more-bug")
                         .relative()
                         .when(crashed, |d| {
@@ -33916,6 +35329,17 @@ impl Render for Workspace {
                                 cx.notify();
                             }),
                         ),
+                )
+                .child(
+                    entry("\u{2699}", s.ui.cfg_admin, "more-admin").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.more_menu = false;
+                            ws.open_admin(cx);
+                            cx.notify();
+                        }),
+                    ),
                 )
                 .child(entry("\u{1f9e9}", s.plugins, "more-plugins").on_mouse_down(
                     MouseButton::Left,
@@ -34218,7 +35642,10 @@ impl Render for Workspace {
                         row(s.k_input_colour, s.input_colour),
                         row("Ctrl+Shift+N", s.rail),
                         row("Ctrl+Shift+M", s.handed_over),
-                        row(&format!("\u{f06a9} {}", s.ui.wr_counter_key), s.ui.wr_help),
+                        row(
+                            &format!("\u{f06a9} {}", s.ui.floor_counter_key),
+                            s.ui.floor_help,
+                        ),
                         row("Ctrl+Shift+U / Y", s.usage),
                     ],
                 ))
@@ -35623,7 +37050,7 @@ impl Render for Workspace {
             // when the pane it reads does not hold the keyboard, and otherwise by
             // that pane, which has to hear the Esc (`escape_closes_the_reader`).
             .capture_key_down(cx.listener(|ws, ev: &KeyDownEvent, window, cx| {
-                if ws.war_room_capture_key(&ev.keystroke, cx) {
+                if ws.threshing_floor_capture_key(&ev.keystroke, window, cx) {
                     cx.stop_propagation();
                     return;
                 }
@@ -35730,11 +37157,13 @@ impl Render for Workspace {
                     .children(menu_overlay)
                     .children(osd_overlay)
                     .children(mcp_overlay)
-                    .children(war_room_overlay)
+                    .children(threshing_floor_overlay)
                     .children(dead_overlay)
                     .children(plugins_overlay)
                     .children(notif_overlay)
+                    .children(agents_overlay)
                     .children(bug_overlay)
+                    .children(admin_overlay)
                     .children(marquee)
                     .children(savings_overlay)
                     .children(confirm_overlay)
@@ -35789,6 +37218,262 @@ mod tests {
         assert!(restored.theme == saved.theme);
         let legacy: StateFile = toml::from_str("active = 0\ntabs = []\n").unwrap();
         assert!(legacy.skin.is_none());
+    }
+
+    #[gpui::test]
+    fn agent_memory_hover_uses_cached_samples_and_keeps_the_threshing_floor_click(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(968.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let pane = ws.read_with(cx, |ws, _| ws.every_view()[0].clone());
+        let stop = pane.read_with(cx, |v, _| v.fixture_shutdown());
+        cx.on_quit(stop);
+        ws.update(cx, |_, cx| {
+            uiconfig::flip(cx, uiconfig::Key::AgentCounter, true)
+        });
+        cx.run_until_parked();
+        cx.update(|w, cx| {
+            w.refresh();
+            w.draw(cx).clear();
+        });
+        let counter = cx.debug_bounds("agent-rollup").expect("counter is drawn");
+        cx.simulate_mouse_move(counter.center(), None, gpui::Modifiers::default());
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        cx.update(|w, cx| {
+            w.refresh();
+            w.draw(cx).clear();
+        });
+        assert!(
+            cx.debug_bounds("agent-memory-tooltip").is_some(),
+            "hover opens the card"
+        );
+        assert!(
+            cx.debug_bounds("agent-memory-resting").is_none(),
+            "no invented rows before a sample"
+        );
+
+        ws.update(cx, |ws, cx| {
+            pane.update(cx, |v, _| {
+                v.mode = pane::PaneMode::Claude;
+                v.rest.dormancy = agentrest::Dormancy::Resting {
+                    since: Instant::now(),
+                };
+                v.rest.usage.resident = Some(5 * 1024 * 1024);
+                v.rest.usage.swapped = None;
+                v.rest.rest_from = None;
+            });
+            let mut memory = agentrest::MemoryCensus::default();
+            memory.add(&pane.read(cx).rest);
+            ws.rest_census = RestCensus {
+                memory,
+                sampled_at: Some(Instant::now()),
+                ..Default::default()
+            };
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.update(|w, cx| {
+            w.refresh();
+            w.draw(cx).clear();
+        });
+        let bounds = cx
+            .debug_bounds("agent-memory-tooltip")
+            .expect("open card updates from cache");
+        assert!(bounds.origin.x >= px(0.) && bounds.origin.x + bounds.size.width <= px(968.));
+        assert!(cx.debug_bounds("agent-memory-resting").is_some());
+        pane.read_with(cx, |v, _| {
+            assert!(v.rest.dormancy.is_resting(), "hover must not wake a pane");
+            assert_eq!(v.rest.usage.resident, Some(5 * 1024 * 1024));
+            assert_eq!(v.rest.usage.swapped, None);
+            assert_eq!(v.rest.rest_from, None);
+            assert_eq!(v.rest.group, None, "hover must not adopt or scan a group");
+        });
+        cx.simulate_mouse_down(
+            counter.center(),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            counter.center(),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        assert!(
+            ws.read_with(cx, |ws, _| ws.threshing_floor),
+            "click still opens the Threshing Floor"
+        );
+    }
+
+    #[gpui::test]
+    fn agents_toolbar_toggle_keeps_both_settings_doors_and_the_counter(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(1200.), px(1000.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let stop = ws.read_with(cx, |ws, cx| ws.every_view()[0].read(cx).fixture_shutdown());
+        cx.on_quit(stop);
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+        };
+        let click = |cx: &mut gpui::VisualTestContext, selector: &'static str| {
+            let bounds = cx.debug_bounds(selector).expect(selector);
+            cx.simulate_mouse_down(
+                bounds.center(),
+                MouseButton::Left,
+                gpui::Modifiers::default(),
+            );
+            cx.simulate_mouse_up(
+                bounds.center(),
+                MouseButton::Left,
+                gpui::Modifiers::default(),
+            );
+        };
+        ws.update(cx, |_, cx| {
+            uiconfig::flip(cx, uiconfig::Key::Agents, true);
+            uiconfig::flip(cx, uiconfig::Key::AgentCounter, true);
+        });
+        draw(cx);
+        click(cx, "toolbar-agents");
+        draw(cx);
+        assert!(cx.debug_bounds("agents-panel").is_some());
+
+        ws.update(cx, |ws, cx| {
+            ws.agents_menu = false;
+            ws.theme_menu = Some(MenuScope::Outer);
+            ws.ui_cfg_panes = false;
+            cx.notify();
+        });
+        draw(cx);
+        click(cx, "ui-g-agents");
+        draw(cx);
+        ws.read_with(cx, |_, cx| {
+            assert!(!uiconfig::shown(cx, uiconfig::Key::Agents));
+            assert!(uiconfig::shown(cx, uiconfig::Key::AgentCounter));
+            assert!(uiconfig::config_in_corner(cx));
+            let wire = toml::to_string(&uiconfig::choice(cx)).unwrap();
+            let restored: uiconfig::UiChoice = toml::from_str(&wire).unwrap();
+            assert_eq!(restored.flipped(uiconfig::Key::Agents), Some(false));
+        });
+        assert!(cx.debug_bounds("toolbar-agents").is_none());
+        assert!(cx.debug_bounds("agent-rollup").is_some());
+        click(cx, "ui-g-agents");
+        draw(cx);
+        assert!(cx.debug_bounds("toolbar-agents").is_some());
+
+        ws.update(cx, |ws, cx| {
+            ws.theme_menu = None;
+            ws.flip_ui(&[uiconfig::Key::Agents], false, cx);
+            ws.more_menu = true;
+            cx.notify();
+        });
+        draw(cx);
+        click(cx, "more-agents");
+        draw(cx);
+        assert!(cx.debug_bounds("agents-panel").is_some());
+    }
+
+    /// Parker, 2026-10-25, wearing Chalk under Tactical: he picked Hacker and
+    /// the skin changed too. *"These are intended to move independently."*
+    /// Every way a window's design changes — the DESIGN row, a reset, an undo,
+    /// DESKTOP in the paint overlay — leaves the skin that is drawing alone,
+    /// whether it was picked or only followed the design.
+    #[gpui::test]
+    fn changing_the_design_never_changes_the_skin(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        // Scratch and demo: it neither reads nor writes the real session.
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(1200.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        cx.update(|cx| {
+            ws.update(cx, |ws, cx| {
+                // Never picked: Clean draws its own trim, and leaving Clean
+                // keeps it.
+                assert_eq!(theme::outer_choice(cx).id, theme::CLEAN);
+                assert_eq!(skin::active_id(cx), "clean");
+                ws.switch_outer_design("hacker".into(), cx);
+                assert_eq!(theme::outer_choice(cx).id, "hacker");
+                assert_eq!(skin::active_id(cx), "clean", "a followed skin is held");
+
+                // Picked: Chalk under Deco, then Hacker, then Intrusive.
+                ws.switch_outer_design("deco".into(), cx);
+                skin::select(cx, "chalk").unwrap();
+                for design in ["hacker", "intrusive", theme::CLEAN, "deco"] {
+                    ws.switch_outer_design(design.into(), cx);
+                    assert_eq!(skin::active_id(cx), "chalk", "under {design}");
+                }
+                // No design counts the skin as a change of its own.
+                for design in ["hacker", "intrusive", theme::CLEAN, "deco"] {
+                    assert_eq!(ws.design_changes(design, cx), 0, "{design}");
+                }
+
+                // A reset and an undo move the design, not the skin.
+                ws.reset_design("deco", cx);
+                assert_eq!(skin::active_id(cx), "chalk", "after a reset");
+                ws.switch_outer_design("hacker".into(), cx);
+                ws.undo_look(cx);
+                assert_eq!(theme::outer_choice(cx).id, "deco");
+                assert_eq!(skin::active_id(cx), "chalk", "after an undo");
+            });
+            // DESKTOP puts the house design back; the skin stays.
+            paint::apply_outer(cx, &paint::Pick::Default);
+            assert_eq!(theme::outer_choice(cx).id, theme::CLEAN);
+            assert_eq!(skin::active_id(cx), "chalk", "after DESKTOP");
+        });
     }
 
     use super::*;
@@ -38071,6 +39756,7 @@ mod tests {
         let known: &[(&str, usize)] = &[
             ("render_savings_overlay", 1),
             ("render_bar_slot", 1),
+            ("render_agent_counter", 1),
             ("terminal_state_toggle", 1),
             // Concise palette help, including Custom's interactive editor link.
             ("palette_help", 2),
@@ -38078,6 +39764,9 @@ mod tests {
             ("slider_row", 2),
             // the corner's two split buttons, both built by this one function
             ("split_button", 1),
+            // every plain "what this button does" card, the Threshing Floor's
+            // header and the MCP switches among them
+            ("with_tip", 1),
         ];
         for (name, count) in &hung {
             assert_eq!(
@@ -38880,7 +40569,7 @@ mod tests {
             .expect("the ask");
         assert!(pending < asked, "the pending check comes first");
         assert!(
-            apply.contains("risk: Some(warroom::risk(&facts))"),
+            apply.contains("risk: Some(threshing_floor::risk(&facts))"),
             "every ask is assessed"
         );
     }
@@ -38909,7 +40598,7 @@ mod tests {
     }
 
     /// The window's five MCP switches are drawn by one function, which the
-    /// wall and the War Room both call — so the two can never disagree about
+    /// wall and the Threshing Floor both call — so the two can never disagree about
     /// what a switch does.
     #[test]
     fn the_switch_row_is_drawn_by_one_function() {
@@ -38932,23 +40621,29 @@ mod tests {
             "the wall"
         );
         assert!(
-            include_str!("war_room_view.rs")
+            include_str!("threshing_floor_view.rs")
                 .contains("self.mcp_switch_buttons(&sk, th, \"war\", cx)"),
-            "the War Room"
+            "the Threshing Floor"
         );
     }
 
-    /// Seats and lines are a person's: only the War Room panel seats a pane or
+    /// Seats and lines are a person's: only the Threshing Floor panel seats a pane or
     /// draws, changes and erases a line. The control socket and MCP answer
     /// agents, and a chart an agent could redraw would be decoration.
     #[test]
-    fn only_the_war_room_and_the_rail_draw_lines() {
+    fn only_the_threshing_floor_and_the_rail_draw_lines() {
         let cut = |src: &'static str, marker: &str| -> &'static str {
             &src[..src.find(marker).unwrap_or(src.len())]
         };
         let files = [
             ("main.rs", shipped_src()),
-            ("war_room_view.rs", include_str!("war_room_view.rs")),
+            // Cut at its tests like the others: a test fixture that grants a
+            // bypass changes no live chart, and was only unseen here while
+            // rustfmt split its call over two lines.
+            (
+                "threshing_floor_view.rs",
+                cut(include_str!("threshing_floor_view.rs"), "\n#[cfg(test)]"),
+            ),
             ("pane.rs", cut(include_str!("pane.rs"), "\n#[cfg(test)]")),
             ("ctl.rs", cut(include_str!("ctl.rs"), "\n#[cfg(test)]")),
             ("mcp.rs", cut(include_str!("mcp.rs"), "\n#[cfg(test)]")),
@@ -38986,23 +40681,23 @@ mod tests {
             calls,
             vec![
                 "main.rs: .chart.grant_bypass(",
-                "war_room_view.rs: .chart.draw(",
-                "war_room_view.rs: .chart.erase(",
-                "war_room_view.rs: .chart.forget_seat(",
-                "war_room_view.rs: .set_seat(",
+                "threshing_floor_view.rs: .chart.draw(",
+                "threshing_floor_view.rs: .chart.erase(",
+                "threshing_floor_view.rs: .chart.forget_seat(",
+                "threshing_floor_view.rs: .set_seat(",
             ],
-            "something other than the War Room panel or the rail's answer changes the chart"
+            "something other than the Threshing Floor panel or the rail's answer changes the chart"
         );
     }
 
-    /// The War Room and its rail name a pane the way a person finds it: where
+    /// The Threshing Floor and its rail name a pane the way a person finds it: where
     /// its tab sits on the left bar, then the title on its header. Parker,
     /// 2026-10-22, at row after row of "shell · CLAUDE": the list *"should be
     /// based on the left spine + pane title"*. The rule itself is
-    /// `warroom::PaneName`'s test; this one holds every surface to it.
+    /// `threshing_floor::PaneName`'s test; this one holds every surface to it.
     #[test]
-    fn the_war_room_names_a_pane_by_the_left_bar_and_its_header() {
-        let view = include_str!("war_room_view.rs");
+    fn the_threshing_floor_names_a_pane_by_the_left_bar_and_its_header() {
+        let view = include_str!("threshing_floor_view.rs");
         let code: Vec<&str> = view
             .lines()
             .chain(shipped_src().lines())
@@ -39012,11 +40707,11 @@ mod tests {
         let has = |s: &str| code.iter().any(|l| l.contains(s));
         for (site, what) in [
             (
-                "warroom::PaneName::new(&spine, &v.header_title())",
+                "threshing_floor::PaneName::new(&spine, &v.header_title())",
                 "the seats and the rows off the chart",
             ),
             (
-                "warroom::PaneName::new(&spine, &leaf.read(cx).header_title())",
+                "threshing_floor::PaneName::new(&spine, &leaf.read(cx).header_title())",
                 "the one helper",
             ),
             (
@@ -39041,7 +40736,7 @@ mod tests {
                 .lines()
                 .map(str::trim)
                 .any(|l| !l.starts_with("//") && l.contains("tab_index_of(")),
-            "the War Room looks a pane's tab up with tab_with_leaf"
+            "the Threshing Floor looks a pane's tab up with tab_with_leaf"
         );
         assert!(
             has("self.tab_with_leaf(l.entity_id())"),
@@ -39049,7 +40744,7 @@ mod tests {
         );
     }
 
-    /// The War Room opens from the counter that summarises the agents, and
+    /// The Threshing Floor opens from the counter that summarises the agents, and
     /// that counter is in the top right. Parker, 2026-10-22: *"This will USE THE
     /// EXISTING agent wall rail (don't change look - just change where it goes)
     /// -- the agent wal will be an easter egg now"*. Before that the counter
@@ -39061,8 +40756,39 @@ mod tests {
     /// two, and the survivor is the one carrying the numbers. It lived in the
     /// tree's bottom slot until Parker put it where the glyph had been:
     /// *"Agents counter is in the top right"*.
+    /// Every state an agent can be in has a cell in the top-right counter.
+    /// The match makes a new variant a compile error here; the scan makes a
+    /// missing cell a failure.
     #[test]
-    fn the_counter_opens_the_war_room() {
+    fn the_counter_has_a_cell_for_every_agent_state() {
+        use hud::AgentState::*;
+        let all = [
+            Working, Blocked, Error, Finished, Idle, Resting, Asleep, Unknown,
+        ];
+        for st in all {
+            match st {
+                Working | Blocked | Error | Finished | Idle | Resting | Asleep | Unknown => {}
+            }
+        }
+        let src = shipped_src();
+        let at = src.find("fn render_agent_counter(").expect("the counter");
+        let cells = &src[at..at + src[at..].find("let acc = th.accent;").expect("cells end")];
+        for st in all {
+            assert!(
+                cells.contains(&format!("(hud::AgentState::{st:?},")),
+                "the counter has no cell for {st:?}"
+            );
+        }
+        let tally = src.find("fn slot_tally(").expect("the tally");
+        let body = &src[tally..tally + src[tally..].find("\n    }\n").expect("its end")];
+        assert!(
+            body.contains("p.counts_as_agent()"),
+            "an asleep pane runs a shell, so counting by mode alone loses it"
+        );
+    }
+
+    #[test]
+    fn the_counter_opens_the_threshing_floor() {
         let src = shipped_src();
         let body = |sig: &str| -> &str {
             let at = src.find(sig).unwrap_or_else(|| panic!("{sig} not found"));
@@ -39072,9 +40798,9 @@ mod tests {
         let counter = body("    fn render_agent_counter(");
         assert!(
             counter.contains(".id(\"agent-rollup\")")
-                && counter.contains("ws.war_room = true")
+                && counter.contains("ws.threshing_floor = true")
                 && !counter.contains("ws.mcp_menu = true"),
-            "the counter must be the War Room's door, and no longer the wall's"
+            "the counter must be the Threshing Floor's door, and no longer the wall's"
         );
         assert!(
             counter.contains("cx.stop_propagation();"),
@@ -39102,9 +40828,9 @@ mod tests {
         };
         assert!(
             more.contains("more-mcp")
-                && more.contains("ws.war_room = true")
+                && more.contains("ws.threshing_floor = true")
                 && !more.contains("ws.mcp_menu = true"),
-            "the … menu lists the War Room, for a window whose counter is switched off"
+            "the … menu lists the Threshing Floor, for a window whose counter is switched off"
         );
         assert!(
             more.contains("over_the_footer(div().id(\"more-panel\")"),
@@ -39968,6 +41694,7 @@ mod tests {
                 text: "sign in before this can continue".into(),
                 seed: 99,
                 pinned: true,
+                by: None,
             });
         }
         let saved = vec![
@@ -40176,8 +41903,8 @@ mod tests {
             pane_id: Some(7),
             document: None,
             off_limits: false,
-            agents: Some(warroom::READ_ONLY_WORD.into()),
-            seat: Some(warroom::SeatId(42)),
+            agents: Some(threshing_floor::READ_ONLY_WORD.into()),
+            seat: Some(threshing_floor::SeatId(42)),
         };
         let text = toml::to_string(&seated).expect("a leaf serialises");
         assert!(
@@ -40198,10 +41925,10 @@ mod tests {
             panic!("a leaf")
         };
         assert_eq!(
-            warroom::AgentAccess::from_saved(off_limits, agents.as_deref()),
-            warroom::AgentAccess::ReadOnly
+            threshing_floor::AgentAccess::from_saved(off_limits, agents.as_deref()),
+            threshing_floor::AgentAccess::ReadOnly
         );
-        assert_eq!(seat, Some(warroom::SeatId(42)));
+        assert_eq!(seat, Some(threshing_floor::SeatId(42)));
 
         // A leaf as every file before today wrote it.
         let old: SavedNode =
@@ -40217,7 +41944,7 @@ mod tests {
         ));
     }
 
-    /// A saved window from before the War Room reads back with nobody seated
+    /// A saved window from before the Threshing Floor reads back with nobody seated
     /// and no lines; one with lines keeps them, a rung word this build does not
     /// know included, and writes them back unchanged.
     #[test]
@@ -40225,16 +41952,21 @@ mod tests {
         let legacy: StateFile = toml::from_str("active = 0\ntabs = []\n").unwrap();
         assert!(legacy.lines.is_empty());
         assert_eq!(legacy.ask_press_tokens, None);
-        assert!(warroom::Chart::from_saved(legacy.lines.clone())
-            .saved()
-            .is_empty());
+        assert!(
+            threshing_floor::Chart::from_saved(legacy.lines.clone(), legacy.org_lines.clone())
+                .saved()
+                .is_empty()
+        );
+        assert!(legacy.org_lines.is_empty());
         let with = "active = 0\ntabs = []\nask_press_tokens = 250000\n\n\
                     [[lines]]\nfrom = 1\nto = 2\nrung = \"ask\"\n\n\
                     [[lines]]\nfrom = 2\nto = 3\nrung = \"assign\"\nprompts_left = 3\n";
         let back: StateFile = toml::from_str(with).unwrap();
         assert_eq!(back.ask_press_tokens, Some(250_000));
         assert_eq!(
-            warroom::Chart::from_saved(back.lines.clone()).saved().len(),
+            threshing_floor::Chart::from_saved(back.lines.clone(), back.org_lines.clone())
+                .saved()
+                .len(),
             2
         );
         let again = toml::to_string(&back).unwrap();
@@ -40242,6 +41974,28 @@ mod tests {
         assert!(
             !toml::to_string(&legacy).unwrap().contains("lines"),
             "nothing new is written"
+        );
+    }
+
+    /// Orgs a person saved before the rename load in a build after it, and a build
+    /// after it writes them under the same keys, so a swap that rolls back to an
+    /// older build still finds them.
+    #[test]
+    fn saved_orgs_keep_their_keys_across_the_rename() {
+        let before = "active = 0\ntabs = []\nwar_org = 1\n\n\
+                      [[war_orgs]]\nid = 1\nname = \"Cinema crew\"\nseats = [1, 2]\n";
+        let back: StateFile = toml::from_str(before).unwrap();
+        let orgs = back
+            .floor_orgs
+            .clone()
+            .expect("orgs saved before the rename load");
+        assert_eq!(orgs.len(), 1);
+        assert_eq!(orgs[0].name.as_deref(), Some("Cinema crew"));
+        assert_eq!(back.floor_org, Some(threshing_floor::OrgId(1)));
+        let again = toml::to_string(&back).unwrap();
+        assert!(
+            again.contains("[[war_orgs]]") && again.contains("war_org = 1"),
+            "{again}"
         );
     }
 
@@ -40323,6 +42077,9 @@ mod tests {
             vec![
                 "main.rs build_node: view.agent_access = access;",
                 "main.rs build_node_attached: view.agent_access = access;",
+                // A restore: the pane rebuilt from a snapshot, or an asleep
+                // agent woken into a fresh shell, wears the mark it had.
+                "pane.rs adopt_presentation: self.agent_access = from.agent_access;",
                 "pane.rs set_agent_access: self.agent_access = access;",
             ],
             "something other than a person's gesture or a restore writes the position"
@@ -40392,15 +42149,15 @@ mod tests {
             .find("\n#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests")
             .unwrap_or(src.len())];
         // The old yes/no gate is gone; nothing may bring it back beside the
-        // War Room's rules, where it would answer without the caller's lines.
+        // Threshing Floor's rules, where it would answer without the caller's lines.
         let old_gate = ["mcp::", "should_expose("].concat();
         assert!(!code.contains(&old_gate), "the old gate is back");
         // Every window-side decision hands the rules the pane's own party —
         // its position and seat — rather than a mark it remembered to read.
         for (gate, sites) in [
-            ("warroom::visible_to_some_agent(", 3),
-            ("warroom::anonymous_reach(", 1),
-            ("warroom::position_takes_writes(", 1),
+            ("threshing_floor::visible_to_some_agent(", 2),
+            ("threshing_floor::anonymous_reach(", 1),
+            ("threshing_floor::may_write_live(", 1),
         ] {
             let calls: Vec<&str> = code.split(gate).skip(1).collect();
             assert_eq!(calls.len(), sites, "{gate}");
@@ -40414,15 +42171,18 @@ mod tests {
         }
         // `policy_admits` asks the switches alone, so it is kept to the one
         // site that is always the caller's own pane.
-        assert_eq!(code.matches("warroom::policy_admits(").count(), 1);
+        assert_eq!(code.matches("threshing_floor::policy_admits(").count(), 1);
         let open = live_fn("fn mcp_open(");
-        assert!(open.contains("warroom::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent())"));
+        assert!(open
+            .contains("threshing_floor::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent())"));
         let writes = live_fn("fn apply_mcp_config(");
         assert!(
-            writes.contains("warroom::position_takes_writes(")
+            writes.contains("threshing_floor::may_write_live(")
+                && writes.contains("&self.chart")
                 && writes.contains("p.party()")
-                && writes.contains("patch.own_pane"),
-            "the write gate reads the position and the own-pane exception: {writes}"
+                && writes.contains("sender_shell == Some(*pid)"),
+            "the write gate rechecks the LIVE chart with the pane's position and the own-pane \
+             exception at the effect: {writes}"
         );
         let snapshot = live_fn("fn mcp_snapshot(");
         assert!(
@@ -40609,7 +42369,7 @@ mod tests {
             "a held open bumps the rail's door: {open}"
         );
         assert!(
-            open.contains("warroom::policy_admits("),
+            open.contains("threshing_floor::policy_admits("),
             "the policy is asked again: {open}"
         );
         let route = live_fn("fn open_doc_beside(");
@@ -43120,6 +44880,8 @@ mod tests {
         assert_eq!(
             streams,
             [
+                ("admin", &["help"][..]),
+                ("uninstall", &["help"][..]),
                 ("restricted", &["help"][..]),
                 ("skin", &["--list"][..]),
                 ("conversation", &["zzz-no-such-conversation"][..]),
@@ -43308,6 +45070,7 @@ mod tests {
             text: text.to_string(),
             seed: 0,
             pinned: false,
+            by: None,
         };
         let claim = |pane: Option<u64>, resume: Option<&str>, text: &str| SavedNode::Leaf {
             off_limits: false,
@@ -43403,6 +45166,7 @@ mod tests {
                 text: "what I was doing".into(),
                 seed: 3,
                 pinned: true,
+                by: None,
             }),
             pane_id: pane,
             document: None,
@@ -43552,12 +45316,14 @@ mod tests {
             text: ours.text.clone(),
             seed: 0,
             pinned: false,
+            by: None,
         };
         let theirs = SavedNote {
             title: Some("DUPLICATE TAB".into()),
             text: "I opened this one twice on purpose".into(),
             seed: 5,
             pinned: true,
+            by: None,
         };
         assert!(
             note_on_reattach(Some(&stamped), true).is_none(),
@@ -43575,6 +45341,58 @@ mod tests {
         );
     }
 
+    /// Who wrote a note survives the state file, and a note from a file written
+    /// before notes recorded it comes back as unknown rather than as the
+    /// person's: the robot stamp is a claim, and an old file cannot back it
+    /// either way.
+    #[test]
+    fn a_notes_writer_survives_the_state_file_and_an_old_one_reads_unknown() {
+        for by in [Some(sticky::Author::Agent), Some(sticky::Author::Person)] {
+            let note = SavedNote {
+                title: Some("DONE".into()),
+                text: "tests green".into(),
+                seed: 9,
+                pinned: false,
+                by,
+            };
+            let file = toml::to_string(&note).unwrap();
+            assert_eq!(toml::from_str::<SavedNote>(&file).unwrap(), note, "{file}");
+        }
+        let agent = SavedNote {
+            title: None,
+            text: "x".into(),
+            seed: 1,
+            pinned: false,
+            by: Some(sticky::Author::Agent),
+        };
+        assert!(
+            toml::to_string(&agent).unwrap().contains("by = \"agent\""),
+            "the writer is not spelled the way the doc says"
+        );
+        let old: SavedNote = toml::from_str("text = \"back at 7\"\nseed = 4\n").unwrap();
+        assert_eq!(old.by, None, "an unattributed note was attributed");
+    }
+
+    /// The note Terminal Delight leaves on a respawned leaf is not the
+    /// person's, so it wears the stamp; and an agent reading `list_panes` is
+    /// told who wrote a note, or nothing when the window cannot say.
+    #[test]
+    fn the_terminals_own_note_is_stamped_and_the_census_says_who_wrote_it() {
+        assert_eq!(duplicate_leaf_note().by, Some(sticky::Author::Agent));
+        let report = |by| mcp::NoteReport {
+            title: None,
+            text: "x".into(),
+            pinned: false,
+            by,
+        };
+        let said = serde_json::to_value(report(Some(sticky::Author::Agent))).unwrap();
+        assert_eq!(said["by"], "agent");
+        let said = serde_json::to_value(report(Some(sticky::Author::Person))).unwrap();
+        assert_eq!(said["by"], "person");
+        let said = serde_json::to_value(report(None)).unwrap();
+        assert!(said.get("by").is_none(), "unknown was reported as {said}");
+    }
+
     /// A duplicate note saved by a window speaking German is still ours after
     /// the window switches language: the session file keeps the words it was
     /// written in, so the recogniser has to know every language's wording.
@@ -43586,6 +45404,7 @@ mod tests {
             text: german.text.clone(),
             seed: 0,
             pinned: false,
+            by: None,
         };
         assert!(
             is_duplicate_leaf_note(&stamped),
@@ -43600,6 +45419,7 @@ mod tests {
             text: LEGACY_DUPLICATE_NOTE.1.into(),
             seed: 0,
             pinned: false,
+            by: None,
         };
         assert!(
             is_duplicate_leaf_note(&legacy),
@@ -43612,6 +45432,7 @@ mod tests {
                 text: n.text,
                 seed: 0,
                 pinned: false,
+                by: None,
             };
             assert!(
                 is_duplicate_leaf_note(&saved),
@@ -44299,7 +46120,7 @@ warp = 1.5
             win: Some((12.0, 34.0, 1280.0, 720.0)),
             scale: Some(1.0),
             theme: Some(ThemeChoice {
-                id: "tactical-overdrive".into(),
+                id: "deco".into(),
                 seed: Some("#31d7ff".into()),
                 ..Default::default()
             }),
@@ -44339,7 +46160,7 @@ warp = 1.5
         };
         let body = toml::to_string(&state).expect("serializes");
         let back: StateFile = toml::from_str(&body).expect("round-trips");
-        assert_eq!(back.theme.as_ref().unwrap().id, "tactical-overdrive");
+        assert_eq!(back.theme.as_ref().unwrap().id, "deco");
         assert_eq!(back.win, Some((12.0, 34.0, 1280.0, 720.0)));
         let SavedNode::Leaf { appearance, .. } = &back.tabs[0].node else {
             panic!("leaf override lost");
@@ -45721,6 +47542,12 @@ Usage:
   terminal-delight default-terminal [status|on|off]
                                  make Terminal Delight the terminal Omarchy opens, or put
                                  back exactly what was there before
+  terminal-delight uninstall preview|plan|run
+                                 what a removal would do, the plan to review, and
+                                 the worker that carries a reviewed plan out
+  terminal-delight admin export|builds|guard|protect
+                                 export settings, list or prune old builds, and
+                                 protect this machine from uninstall
   terminal-delight ctl <cmd>     drive a RUNNING instance over its control socket
   terminal-delight mcp           relay MCP over stdio into a RUNNING instance
   terminal-delight restricted    explicitly run an offline command with limited access (help)
@@ -45973,6 +47800,10 @@ enum Verb {
     /// started by typing — what Claude Code's `SessionStart` hook runs — and
     /// put that hook in or take it out (see [`briefhook`]).
     Briefing,
+    /// Preview, plan and carry out a removal of Terminal Delight.
+    Uninstall,
+    /// CONFIG › ADMIN from a terminal: export, old builds, machine protection.
+    Admin,
 }
 
 /// Whether the broken-pipe gate in `tests/broken_pipe.rs` can run a verb — and
@@ -46009,6 +47840,18 @@ enum Piping {
 /// Every roster now reads this one, so a verb added below is a verb the
 /// dispatch test, the usage test and the broken-pipe gate all pick up.
 const VERBS: &[VerbSpec] = &[
+    VerbSpec {
+        word: "admin",
+        verb: Verb::Admin,
+        typed: true,
+        piping: Piping::Streams(&["help"]),
+    },
+    VerbSpec {
+        word: "uninstall",
+        verb: Verb::Uninstall,
+        typed: true,
+        piping: Piping::Streams(&["help"]),
+    },
     VerbSpec {
         word: "restricted",
         verb: Verb::Restricted,
@@ -46272,6 +48115,8 @@ fn main() {
                 Verb::Conversation => benchstore::run_cli(&argv[2..]),
                 Verb::DefaultTerminal => defaultterm::run_cli(&argv[2..]),
                 Verb::Briefing => briefhook::run_cli(&argv[2..]),
+                Verb::Uninstall => uninstall::run_cli(&argv[2..]),
+                Verb::Admin => uninstall::admin_cli(&argv[2..]),
             };
             std::process::exit(code);
         }
@@ -46496,6 +48341,18 @@ fn main() {
             async move {}
         })
         .detach();
+        // A pane stays frozen only while a window that can thaw it is up. One
+        // that quits thaws its session's panes, so whatever runs next — this
+        // build, or an older one that knows nothing of rest and would show a
+        // frozen agent answering no key — finds them awake. A crash skips
+        // this; docs/security/agent-rest.md has the one-line recovery.
+        if agentrest::enabled_by_env() {
+            cx.on_app_quit(|_cx| {
+                panegroup::thaw_session(crate::instance::key());
+                async move {}
+            })
+            .detach();
+        }
         let bounds = if demo {
             // open the demo at the cloned window's geometry, else a generous centre
             match load_demo_state().win {

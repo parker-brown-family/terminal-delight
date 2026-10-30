@@ -18,7 +18,7 @@
 //! makes (the repo name less `omarchy-` and `-theme`), which is why tcballard's
 //! two rockets are `theme-liftoff` and `theme-tokyo-liftoff`. It covers the 22
 //! themes Omarchy ships, the 30 most-starred published themes on 2026-10-16, and
-//! seven chosen on purpose. Any other theme draws its first letter in its accent,
+//! eight chosen on purpose. Any other theme draws its first letter in its accent,
 //! so a theme published tomorrow still gets a tile; giving it a picture is a line
 //! here.
 
@@ -109,6 +109,8 @@ const MAP: &[(&str, Mark)] = &[
     ("highlands", icon!("image-filter-hdr")),
     ("pripyat", icon!("ferris-wheel")),
     ("quattrocento", icon!("pillar")),
+    // DHH's cool-jade edition of his Year of the Horse theme
+    ("jade-horse", icon!("horse")),
 ];
 
 /// The mark for a theme, by its install name, if the map has one.
@@ -175,7 +177,7 @@ mod tests {
         for (id, _) in MAP {
             assert!(seen.insert(*id), "{id} is mapped twice");
         }
-        assert_eq!(MAP.len(), 59, "22 stock + 30 most-starred + 7 chosen");
+        assert_eq!(MAP.len(), 60, "22 stock + 30 most-starred + 8 chosen");
     }
 
     #[test]

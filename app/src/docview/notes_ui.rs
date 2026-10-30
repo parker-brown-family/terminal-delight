@@ -13,7 +13,7 @@
 //! has a note; the rule down an anchor's left edge that the brief's stylesheet
 //! gives an anchor with notes; the dashed space that takes a CONCUR stamp,
 //! and the stamp at the angle the brief's own notes.js would give it; and a
-//! bar that counts them, copies the map and saves.
+//! bar that counts them and copies or sends the map.
 //!
 //! # What a browser shows
 //!
@@ -22,16 +22,12 @@
 //! file with no notes island takes no notes, and the bar says so in those
 //! words rather than counting nothing: read-only is not empty.
 //!
-//! # Notes are deltas until they are saved
+//! # Submitted annotations are saved immediately
 //!
-//! A note added, a note deleted, a stamp put down or peeled off is held here
-//! as an edit ([`NoteEdit`]) on top of what the file said, and the page shows
-//! the two together. Nothing reaches the disk until the bar's save is pressed;
-//! the bar says how many edits are waiting. A save reads the file fresh and
-//! applies the edits to what it holds then, so a note another writer added
-//! meanwhile survives, and a note deleted is found by its words rather than
-//! its place. A crash loses what was not saved, which is least-confident
-//! decision 6, taken with open eyes.
+//! Each submitted note, deletion and concurrence is applied to the original
+//! HTML before its input handler returns. The writer reads the file fresh,
+//! preserving annotations another writer added. A failed write leaves the
+//! edits here, reports the reason and keeps the close guard active.
 //!
 //! # No handlers
 //!
@@ -230,7 +226,6 @@ pub enum Zone {
     CopyMap,
     /// ↪: the map, into the prompt of the agent the brief sits beside.
     Send,
-    Save,
     /// Notes on words a Markdown file no longer has: opens them.
     Gone,
     /// Anywhere on the bar that is not a button.
@@ -469,6 +464,8 @@ pub struct NotesLayer {
     concur: ConcurSupport,
     /// The edits made here and not yet saved, oldest first.
     pending: Vec<NoteEdit>,
+    md_frame: Option<super::md_notes::Frame>,
+    md_contexts: Vec<super::md_notes::evidence::EditContext>,
     /// `base` with `pending` applied: what the page shows. `None` unless the
     /// file's notes can be shown at all.
     applied: Option<(NoteMap, ConcurMap)>,
@@ -476,12 +473,13 @@ pub struct NotesLayer {
     writable: Result<(), Refusal>,
     note_box: Option<NoteBox>,
     said: Option<Said>,
-    /// What came of the last ↪, kept apart from `said` because a send saves:
+    /// What came of the last ↪, kept apart from persistence status:
     /// the save's own progress would otherwise write over where the notes
     /// landed before anyone had read it.
     sent: Option<Said>,
     /// A save is running: another waits for it.
     saving: bool,
+    saving_count: usize,
     /// The file is not on disk any more. The page stays up; saving is off.
     gone: bool,
     /// Escape was pressed once with edits unsaved, and the bar said so: the
@@ -507,26 +505,22 @@ pub enum LayerPress {
     Pass,
     /// Taken, with nothing more for the view to do.
     Took,
-    /// The bar's save: the view saves, since it holds the engine and the file.
-    Save,
+    /// A submitted annotation changed: the view must persist it now.
+    Edited,
     /// The bar's ↪: the map goes to the pane the brief sits beside, which
-    /// only the workspace can reach, and the view saves as it goes when
-    /// [`Sending::saves`] says so.
+    /// only the workspace can reach. Sending never writes the file.
     Send(Sending),
     /// A picture's delete in the note box: the view takes it off the list
     /// and deletes its file, off the main thread.
     Unattach(Unattaching),
 }
 
-/// What a press on ↪ does: the map it pastes, and whether it saves.
+/// What a press on ↪ sends, including any annotations whose write failed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Sending {
     /// The map as shown, unsaved edits and all: copy map's text.
     pub map: String,
-    /// The press saves the waiting edits into the file as it sends them.
-    pub saves: bool,
-    /// Edits in the map that will not be in the file after the press: all of
-    /// them where no save can be made, none where one is under way.
+    /// Edits whose automatic write failed; sending does not retry that write.
     pub unsaved: usize,
 }
 
@@ -588,12 +582,15 @@ impl NotesLayer {
             base,
             concur,
             pending: Vec::new(),
+            md_frame: None,
+            md_contexts: Vec::new(),
             applied: None,
             writable,
             note_box: None,
             said: None,
             sent: None,
             saving: false,
+            saving_count: 0,
             gone: false,
             close_warned: false,
             revealing: false,
@@ -634,12 +631,15 @@ impl NotesLayer {
             base,
             concur: ConcurSupport::NotSupported,
             pending: Vec::new(),
+            md_frame: None,
+            md_contexts: Vec::new(),
             applied: None,
             writable,
             note_box: None,
             said: None,
             sent: None,
             saving: false,
+            saving_count: 0,
             gone: false,
             close_warned: false,
             revealing: false,
@@ -741,9 +741,11 @@ impl NotesLayer {
     /// its draft, and what the bar last said.
     pub fn carry_from(&mut self, old: NotesLayer) {
         self.pending = old.pending;
+        self.md_contexts = old.md_contexts;
         self.said = old.said;
         self.sent = old.sent;
         self.saving = old.saving;
+        self.saving_count = old.saving_count;
         self.note_box = old.note_box;
         // The pictures are TD's, not the page's: a new render of the same
         // brief has the same ones.
@@ -898,7 +900,7 @@ impl NotesLayer {
             Shown::Notes { notes, concurs } => {
                 let (mut n, mut c) = (notes.clone(), concurs.clone());
                 let supported = self.concur == ConcurSupport::Supported;
-                for e in &self.pending {
+                for (i, e) in self.pending.iter().enumerate() {
                     let _ = apply(
                         &mut n,
                         &mut c,
@@ -906,6 +908,9 @@ impl NotesLayer {
                         &[nid_of(e)],
                         supported,
                     );
+                    if let Some(context) = self.md_contexts.get(i) {
+                        super::md_notes::evidence::enrich_last(&mut n, e, context);
+                    }
                 }
                 Some((n, c))
             }
@@ -934,6 +939,14 @@ impl NotesLayer {
             (Some((_, c)), ConcurSupport::Supported) => Some(c),
             _ => None,
         }
+    }
+
+    pub fn set_markdown_frame(&mut self, frame: super::md_notes::Frame) {
+        self.md_frame = Some(frame);
+    }
+
+    pub fn markdown_contexts(&self) -> Vec<super::md_notes::evidence::EditContext> {
+        self.md_contexts.clone()
     }
 
     /// The notes on one anchor, saved and waiting.
@@ -1078,8 +1091,7 @@ impl NotesLayer {
     /// or that pane's name when the tab holds more than one — and `None`
     /// means there is none, so there is no button: a brief with nobody beside
     /// it has nobody to send to. A page that shows no notes has no map to
-    /// send, and draws none either. With edits waiting that a press would
-    /// save, the words say it saves too.
+    /// send, and draws none either.
     ///
     /// In English, as the report's `send_to`; the bar draws
     /// [`Self::send_button_in`].
@@ -1098,18 +1110,10 @@ impl NotesLayer {
         let who = beside?;
         self.notes()?;
         let t = &l.strings().parts;
-        let words = if self.saves_on_send() {
-            t.notes_send_button_save_send
-        } else {
-            t.notes_send_button_send
-        };
-        Some((fill(words, &[("who", who)]), self.mappable(anchors)))
-    }
-
-    /// A press on ↪ now would save: there are edits waiting, and a save
-    /// could be made.
-    fn saves_on_send(&self) -> bool {
-        !self.pending.is_empty() && self.can_save().is_ok()
+        Some((
+            fill(t.notes_send_button_send, &[("who", who)]),
+            self.mappable(anchors),
+        ))
     }
 
     /// The first-time line drawn above the bar, in `l`: how to note, how to
@@ -1148,26 +1152,15 @@ impl NotesLayer {
         Some(clauses.join(" · "))
     }
 
-    /// What ↪ does: the map exactly as copy map would give it, notes not yet
-    /// saved included, and whether the press saves them. `None` with nothing
-    /// to send.
-    ///
-    /// A send saves. Parker, 2026-09-25: *"The Send to Agent button should
-    /// also save the doc."* Notes that reached the agent's prompt and not the
-    /// file were gone the next time the brief opened, and the agent reading
-    /// the file found none of them. Where no save can be made — a build
-    /// input, a format newer than TD, a file gone from disk, a save already
-    /// running — the map still goes as shown, and `unsaved` counts what the
-    /// file will not hold, so the bar can say so.
+    /// The same map as copy map, with the count of edits whose write failed.
+    /// Sending is independent of persistence: submitting an annotation saves it.
     pub fn send(&self, anchors: &[Anchor]) -> Option<Sending> {
         if !self.mappable(anchors) {
             return None;
         }
-        let saves = self.saves_on_send();
         Some(Sending {
             map: self.map(anchors)?,
-            saves,
-            unsaved: if saves { 0 } else { self.unsaved() },
+            unsaved: self.unsaved(),
         })
     }
 
@@ -1353,14 +1346,8 @@ impl NotesLayer {
         }
         self.close_warned = true;
         let n = self.pending.len();
-        let in_store = self.in_store();
         self.said = Some(Said::Refused(Words::said(|l| {
-            let t = &l.strings().parts;
-            if in_store {
-                l.count(&t.notes_close_not_kept_n, n)
-            } else {
-                l.count(&t.notes_close_unsaved_n, n)
-            }
+            l.count(&l.strings().parts.notes_close_not_kept_n, n)
         })));
         true
     }
@@ -1501,12 +1488,21 @@ impl NotesLayer {
 
     /// Add a note to an anchor, open or not: the control socket's way in.
     pub fn add_note(&mut self, nid: String, title: String, text: String, ts: String) {
-        self.pending.push(NoteEdit::Add {
+        let edit = NoteEdit::Add {
             nid,
             title,
             text,
             ts,
-        });
+        };
+        if self.in_store() {
+            self.md_contexts
+                .push(super::md_notes::evidence::edit_context(
+                    self.md_frame.as_ref(),
+                    self.notes(),
+                    &edit,
+                ));
+        }
+        self.pending.push(edit);
         self.said = None;
         self.sent = None;
         self.refresh();
@@ -1528,15 +1524,33 @@ impl NotesLayer {
 
     /// Delete a note by its words: the control socket's way in.
     pub fn delete_note(&mut self, nid: String, text: String, ts: Option<String>) {
-        let unsaved = self.pending.iter().rposition(|e| {
-            matches!(e, NoteEdit::Add { nid: n, text: t, ts: s, .. }
+        let unsaved = self
+            .pending
+            .iter()
+            .rposition(|e| {
+                matches!(e, NoteEdit::Add { nid: n, text: t, ts: s, .. }
                 if *n == nid && *t == text && ts.as_ref().is_none_or(|ts| ts == s))
-        });
+            })
+            .filter(|i| !self.saving || *i >= self.saving_count);
         match unsaved {
             Some(i) => {
                 self.pending.remove(i);
+                if self.in_store() && i < self.md_contexts.len() {
+                    self.md_contexts.remove(i);
+                }
             }
-            None => self.pending.push(NoteEdit::Delete { nid, text, ts }),
+            None => {
+                let edit = NoteEdit::Delete { nid, text, ts };
+                if self.in_store() {
+                    self.md_contexts
+                        .push(super::md_notes::evidence::edit_context(
+                            self.md_frame.as_ref(),
+                            self.notes(),
+                            &edit,
+                        ));
+                }
+                self.pending.push(edit);
+            }
         }
         self.said = None;
         self.sent = None;
@@ -1554,11 +1568,15 @@ impl NotesLayer {
             return Err(Refusal::ConcursUnsupported(nid.into()).sentence());
         }
         let on = self.concurs().is_some_and(|c| c.has(nid));
-        let undo = self.pending.iter().rposition(|e| match e {
-            NoteEdit::Concur { nid: n, .. } => on && n == nid,
-            NoteEdit::Unconcur { nid: n } => !on && n == nid,
-            _ => false,
-        });
+        let undo = self
+            .pending
+            .iter()
+            .rposition(|e| match e {
+                NoteEdit::Concur { nid: n, .. } => on && n == nid,
+                NoteEdit::Unconcur { nid: n } => !on && n == nid,
+                _ => false,
+            })
+            .filter(|i| !self.saving || *i >= self.saving_count);
         match (undo, on) {
             (Some(i), _) => {
                 self.pending.remove(i);
@@ -1580,6 +1598,7 @@ impl NotesLayer {
     /// The edits a save starts with: everything waiting now. What is added
     /// while it runs waits for the next one.
     pub fn begin_save(&mut self) -> Vec<NoteEdit> {
+        self.saving_count = self.pending.len();
         self.saving = true;
         // A note kept as it is written says nothing while it is kept.
         if !self.in_store() {
@@ -1597,6 +1616,7 @@ impl NotesLayer {
     pub fn kept(&mut self, made: usize, notes: NoteMap) {
         self.saving = false;
         self.pending.drain(..made.min(self.pending.len()));
+        self.md_contexts.drain(..made.min(self.md_contexts.len()));
         self.base = Shown::Notes {
             notes,
             concurs: ConcurMap::default(),
@@ -1701,10 +1721,11 @@ impl NotesLayer {
         if self.note_box.is_some() {
             match hit {
                 Some(Zone::CloseBox) => self.note_box = None,
-                Some(Zone::AddNote) => {
-                    self.add(now);
+                Some(Zone::AddNote) if self.add(now) => return LayerPress::Edited,
+                Some(Zone::Delete(i)) if self.can_delete() => {
+                    self.delete_shown(i);
+                    return LayerPress::Edited;
                 }
-                Some(Zone::Delete(i)) if self.can_delete() => self.delete_shown(i),
                 Some(Zone::DeletePicture(i)) if self.can_delete() => {
                     if let Some(u) = self.unattaching(i) {
                         return LayerPress::Unattach(u);
@@ -1724,7 +1745,6 @@ impl NotesLayer {
                 Some(sending) => LayerPress::Send(sending),
                 None => LayerPress::Took,
             },
-            Some(Zone::Save) => LayerPress::Save,
             Some(Zone::Gone) => {
                 if let Some((nid, title)) = self.orphans(anchors).into_iter().next() {
                     self.open_gone(nid, title);
@@ -2034,13 +2054,6 @@ impl NotesLayer {
                     // unless keeping failed, which `said` carries.
                     Ok(()) if self.in_store() => {}
                     Ok(()) if !self.gone => {
-                        row = row.child(self.button(
-                            t.notes_save_into_file,
-                            Zone::Save,
-                            self.can_save().is_ok(),
-                            th,
-                            sk,
-                        ));
                         if !self.pending.is_empty() {
                             row = row.child(
                                 div()
@@ -2054,7 +2067,7 @@ impl NotesLayer {
                 }
             }
         }
-        // Where the notes went, then the save that went with them.
+        // Delivery and persistence have separate status messages.
         for said in [&self.sent, &self.said].into_iter().flatten() {
             row = row.child(
                 div()
@@ -2232,6 +2245,13 @@ impl NotesLayer {
             list = list.child(div().text_color(th.text.alpha(0.6)).child(t.notes_empty));
         }
         for (i, n) in notes.iter().enumerate() {
+            let evidence = self
+                .in_store()
+                .then(|| {
+                    self.notes()
+                        .and_then(|map| super::md_notes::evidence::summary_at(map, &b.nid, i))
+                })
+                .flatten();
             let mut head = div()
                 .flex()
                 .flex_row()
@@ -2260,7 +2280,15 @@ impl NotesLayer {
                     .border_color(th.accent)
                     .bg(th.bg.alpha(0.5))
                     .child(head)
-                    .child(div().child(n.text.to_string())),
+                    .child(div().child(n.text.to_string()))
+                    .when_some(evidence, |d, evidence| {
+                        d.child(
+                            div()
+                                .text_size(px(body * 0.72))
+                                .text_color(th.faint)
+                                .child(evidence),
+                        )
+                    }),
             );
         }
         let pill = |label: &str, zone: Zone, primary: bool| {
@@ -3175,7 +3203,7 @@ mod tests {
         assert!(l.report(&[])["said"]
             .as_str()
             .unwrap()
-            .contains("1 unsaved"));
+            .contains("1 not kept"));
         assert!(!l.guard_close(), "the second closes");
         l.add_note(
             "a".into(),
@@ -3485,7 +3513,7 @@ mod tests {
     fn the_report_says_in_english_what_the_bar_says_in_the_readers_language() {
         use crate::lang::Lang;
         let mut l = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
-        let unsaved = |lang: Lang| lang.count(&lang.strings().parts.notes_close_unsaved_n, 2);
+        let unsaved = |lang: Lang| lang.count(&lang.strings().parts.notes_close_not_kept_n, 2);
         l.say(Said::Refused(Words::said_in(Lang::De, |lang| {
             format!("{} · {}", lang.code(), unsaved(lang))
         })));
@@ -3507,17 +3535,13 @@ mod tests {
         assert_eq!(why.english(), "en: disk full");
     }
 
-    /// ↪ sends what the bar shows, unsaved notes included, and saves them
-    /// as it goes; the button says so while there is something to save.
-    ///
-    /// Mutation-tested: `saves_on_send` answering false, and `send` counting
-    /// the pending edits as unsaved when it saves, each fail this.
+    /// A send never retries or claims persistence, even with edits waiting.
     #[test]
-    fn send_carries_the_map_as_shown_and_saves_it() {
+    fn send_carries_the_map_without_saving() {
         let anchors = vec![anchor("a", Some(rect_css(0.0, 0.0, 700.0, 200.0)), false)];
         let mut l = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
         let clean = l.send(&anchors).expect("a saved note is a map");
-        assert!(!clean.saves, "nothing waiting: a send is only a send");
+        assert_eq!(clean.unsaved, 0);
         l.add_note(
             "a".into(),
             "a title".into(),
@@ -3531,11 +3555,14 @@ mod tests {
             s.map
         );
         assert_eq!(s.map, l.map(&anchors).unwrap(), "the copy map's text");
-        assert!(s.saves, "an unsaved note is saved by the send");
-        assert_eq!(s.unsaved, 0, "none left out of the file");
+        assert_eq!(
+            s.unsaved, 1,
+            "sending does not claim a failed write succeeded"
+        );
+        assert_eq!(l.unsaved(), 1, "sending does not mutate the pending edits");
         assert_eq!(
             l.send_button(&anchors, Some("agent")).map(|b| b.0),
-            Some("↪ save & send to agent".to_string())
+            Some("↪ send to agent".to_string())
         );
     }
 
@@ -3554,7 +3581,6 @@ mod tests {
         );
         l.set_gone(true);
         let s = l.send(&anchors).expect("still a map");
-        assert!(!s.saves, "a file gone from disk takes no save");
         assert_eq!(s.unsaved, 1);
         assert_eq!(
             l.send_button(&anchors, Some("agent")).map(|b| b.0),
@@ -3738,5 +3764,61 @@ mod tests {
         assert_eq!(l.unsaved(), 1, "a delete waiting to be kept");
         let brief = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
         assert!(brief.orphans(&[]).is_empty(), "a brief has no such notes");
+    }
+    #[test]
+    fn deleting_a_note_during_its_save_does_not_discard_the_next_review() {
+        let scratch = crate::testsync::Scratch::new("markdown-inflight-delete");
+        let doc = scratch.path().join("plan.md");
+        let store = scratch.path().join("notes.json");
+        let source = "The reviewed paragraph has these exact original words.";
+        let frame = super::super::md_notes::Frame {
+            revision: Some(crate::artifact_archive::digest(source.as_bytes())),
+            anchors: super::super::md_notes::anchors(&super::super::markdown::parse(source, None)),
+        };
+        let anchor = frame.anchors[0].clone();
+        let mut layer = NotesLayer::for_markdown(&doc, Ok(NoteMap::default()));
+        layer.set_markdown_frame(frame.clone());
+        layer.add_note(
+            anchor.nid.clone(),
+            anchor.title.clone(),
+            "First note".into(),
+            "first".into(),
+        );
+        let first = layer.begin_save();
+        let first_context = layer.markdown_contexts();
+        layer.add_note(
+            anchor.nid.clone(),
+            anchor.title,
+            "Second note".into(),
+            "second".into(),
+        );
+        layer.delete_note(
+            anchor.nid.clone(),
+            "First note".into(),
+            Some("first".into()),
+        );
+        let saved =
+            super::super::md_notes::keep_with_evidence(&store, &doc, &first, &first_context)
+                .unwrap();
+        layer.kept(1, super::super::md_notes::evidence::display(&saved, &frame));
+        assert_eq!(
+            layer.unsaved(),
+            2,
+            "the second add and the queued delete both remain"
+        );
+        assert_eq!(
+            layer.notes().unwrap().on(&anchor.nid)[0].text,
+            "Second note"
+        );
+        let edits = layer.begin_save();
+        let kept = super::super::md_notes::keep_with_evidence(
+            &store,
+            &doc,
+            &edits,
+            &layer.markdown_contexts(),
+        )
+        .unwrap();
+        assert_eq!(kept.count(), 1);
+        assert_eq!(kept.on(&anchor.nid)[0].text, "Second note");
     }
 }

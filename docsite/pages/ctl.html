@@ -13,7 +13,7 @@
 <pre class="cmd"><code>terminal-delight ctl tab name "deploy"
 terminal-delight ctl mcp status
 terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
-<p>It names and groups tabs, turns panes to their workbench, opens documents, reports the <a href="/mcp">MCP server</a>'s switches (a person changes them in the War Room), picks a skin, and hands a new terminal to a window. Each command gets one line back, <code>ok</code> or <code>err</code> with the reason. By default it talks to the windows on your active Hyprland workspace, or the window you're running in for tab commands; <code>--all</code> or <code>--pid</code> choose others.</p>
+<p>It names and groups tabs, turns panes to their workbench, opens documents, reports the <a href="/mcp">MCP server</a>'s switches (a person changes them in the Threshing Floor), picks a skin, and hands a new terminal to a window. Each command gets one line back, <code>ok</code> or <code>err</code> with the reason. By default it talks to the windows on your active Hyprland workspace, or the window you're running in for tab commands; <code>--all</code> or <code>--pid</code> choose others.</p>
 <p class="invite">Technical lists every command and its reply.</p>
 </section>
 
@@ -53,7 +53,7 @@ terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
     <tr><td><code>doc beside &lt;path&gt;</code></td><td></td><td>Open it in a pane beside the focused one.</td></tr>
     <tr><td><code>doc close</code>, <code>doc scroll &lt;pixels&gt;</code></td><td></td><td>Close the floating document; scroll a document pane.</td></tr>
     <tr><td><code>mcp status</code></td><td><code>enabled=on writes=off expose=agents events=on</code></td><td></td></tr>
-    <tr><td><code>mcp on|off</code>, <code>mcp writes on|off</code>, <code>mcp expose all|agents</code></td><td><code>err</code> unless scripted</td><td>In 0.5 development all global mutations require the War Room or a window launched with <code>TD_MCP_SCRIPTED=1</code>. Disabling other workloads also requires that operator authority. Agents propose wider access through <code>request_access</code>.</td></tr>
+    <tr><td><code>mcp on|off</code>, <code>mcp writes on|off</code>, <code>mcp expose all|agents</code></td><td><code>err</code> unless scripted</td><td>In 0.5 development all global mutations require the Threshing Floor or a window launched with <code>TD_MCP_SCRIPTED=1</code>. Disabling other workloads also requires that operator authority. Agents propose wider access through <code>request_access</code>.</td></tr>
     <tr><td><code>mcp rpc &lt;json&gt;</code></td><td>the JSON-RPC answer</td><td>One MCP call. <code>mcp-none</code> for a notification.</td></tr>
     <tr><td><code>adopt --cwd &lt;dir&gt; [--run &lt;cmd&gt;]</code></td><td><code>ok</code></td><td>Open a new pane in a directory, running a command. Used by <code>td-send</code>, which moves an Omarchy terminal tile into a pane.</td></tr>
     <tr><td><code>tab name [&lt;text&gt;]</code></td><td><code>ok 1</code></td><td>Name your own tab; no text clears it.</td></tr>

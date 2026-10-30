@@ -1,0 +1,608 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Agent pane: awake, resting, asleep</title>
+<style>/* decision-brief — glass over an Omarchy wallpaper.
+ *
+ * The look is Terminal Delight's docs redesign (td-docs, docsite/redesign/redesign.css):
+ * the theme's wallpaper, blurred, under a scrim of the theme's own ground; the Omarchy
+ * kiosk's glass on every surface that is not a terminal; milky, lit glass for the one
+ * element the reader must not miss; and code on opaque black, because a terminal you
+ * can see the wall through is not a terminal.
+ *
+ * Still ONE design and no theme toggle — tps-report shipped four themes and nobody ever
+ * switched. What changes per brief is the palette, and it is not a choice anyone makes:
+ * scripts/brief-wall picks a random Omarchy theme at build time, and paints its wallpaper
+ * and its colour roles into a <style id="brief-wall"> block that goes straight after this
+ * file. Without that block the page wears Last Voyage, the kiosk family's default, over a
+ * glow instead of a wallpaper, and still looks finished.
+ *
+ * What the theme may NOT touch: the status and categorical colours. A red box means a
+ * decision is waiting in every brief, whatever the wallpaper, so --critical, --serious,
+ * --warning, --good and --s1..--s8 are fixed hex. They are the validated dataviz default
+ * palette (dark steps), which clears the CVD, chroma, lightness and contrast gates on the
+ * adjacent pairlist. If you change them, re-run the validator; do not eyeball it.
+ *
+ * Everything below sits in @layer brief, so a brief's own style block beats it without a
+ * specificity fight, whatever order the two are pasted in. The one exception is at the
+ * very bottom: the notes UI's glass, which has to beat notes.css.
+ */
+@layer brief {
+
+:root {
+  color-scheme: dark;
+
+  /* Colour roles, as the Terminal Delight kiosk family names them (assets/kiosk-theme.js).
+     Last Voyage until brief-wall overwrites them. */
+  --bg: #14100c;  --bg2: #201913;  --bg0: #0b0907;
+  --fg: #e2c79a;  --fg2: #a07a50;  --fgb: #f3d69b;
+  --acc: #dd6d16; --mut: #6c4727;  --sel: #54351e;
+  --red: #e2542a; --grn: #93663b;  --yel: #d8a55e; --blu: #a1561c; --mag: #b7935e; --cyn: #f58e28;
+  --dim: color-mix(in srgb, var(--fg) 60%, var(--fg2));   /* brief-wall measures and writes this */
+
+  --wall: none;          /* brief-wall: url("data:image/webp;base64,…") */
+  --scrim: 80%;          /* how much of the theme's ground lies over the wall */
+  --wall-label: "";      /* brief-wall: which wallpaper, printed under the footer */
+
+  --line:  color-mix(in srgb, var(--dim) 28%, transparent);
+  --line2: color-mix(in srgb, var(--dim) 48%, transparent);
+
+  /* The Omarchy kiosk's glass: a hard top highlight, a dark bottom lip and a wide inner
+     bloom, so it reads as a thick pane rather than a tinted rectangle. */
+  --glass-tint: #ffffff1a; --glass-tint-2: #ffffff05; --glass-edge: #ffffff2e;
+  --glass: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 58%, transparent);
+  --glass-shadow: 0 12px 34px #00000047, inset 0 1px 0 #ffffff5c, inset 0 -1px 0 #00000038, inset 0 0 30px #ffffff0d;
+  --glass-blur: blur(16px) saturate(1.5);
+
+  /* The names this file used before the glass, kept so notes.css and every brief's own
+     style block still resolve. They are opaque on purpose: notes.css sets text in
+     var(--surface-1) on amber, and see-through ink on amber is mud. */
+  --surface-0: var(--bg0);
+  --surface-1: var(--bg);
+  --surface-2: var(--bg2);
+  --surface-3: color-mix(in srgb, var(--bg2) 80%, var(--fg));
+  --text-primary:   var(--fgb);
+  --text-secondary: var(--fg);
+  --text-muted:     var(--dim);
+
+  /* categorical — assign in fixed order, never cycle. Not themed. */
+  --s1: #3987e5;  --s2: #d95926;  --s3: #199e70;  --s4: #c98500;
+  --s5: #d55181;  --s6: #008300;  --s7: #9085e9;  --s8: #e66767;
+
+  /* status — reserved. Never reuse as "series 5". Always ship with a label. Not themed. */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  --mono: "JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; background: var(--bg0); scrollbar-color: var(--line2) transparent; }
+body {
+  margin: 0; min-height: 100vh; background: transparent; color: var(--fg);
+  font: 16px/1.62 var(--sans); -webkit-font-smoothing: antialiased;
+}
+::selection { background: color-mix(in srgb, var(--acc) 42%, transparent); color: var(--fgb); }
+:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+a { color: var(--acc); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { color: var(--fgb); }
+
+/* ---- the wall ----
+   Two fixed layers under everything, so every glass surface has something to blur and no
+   markup is needed. The wall is blurred a little and scrimmed a lot; without one, two soft
+   glows in the theme's accent stand in. The scanlines sit UNDER the text, never over it. */
+body::before {
+  content: ""; position: fixed; inset: -14px; z-index: -2; pointer-events: none;
+  background:
+    linear-gradient(color-mix(in srgb, var(--bg) var(--scrim), transparent), color-mix(in srgb, var(--bg) var(--scrim), transparent)),
+    var(--wall) center / cover no-repeat,
+    radial-gradient(60rem 42rem at 88% -8%, color-mix(in srgb, var(--acc) 26%, transparent), transparent 70%),
+    radial-gradient(52rem 40rem at -6% 34%, color-mix(in srgb, var(--cyn) 16%, transparent), transparent 70%),
+    var(--bg0);
+  filter: blur(2.5px) saturate(1.1);
+}
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, #00000024 0 1px, transparent 1px 3px),
+    radial-gradient(130% 110% at 50% 40%, transparent 55%, #00000073 100%);
+}
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px 120px; }
+header.top .wrap { padding-bottom: 0; }   /* the wrap's bottom padding is for the page, not the header */
+header.top, .wrap > header:first-child, body > header { padding: 64px 0 26px; }
+header.top .wrap > :last-child, .wrap > header > :last-child { margin-bottom: 0; }
+
+/* ---- the masthead ----
+   A heading names the thing. It does not explain it — an em-dash gloss after a heading
+   breaks the heading. The body does the explaining. */
+.eyebrow, header .meta, .kicker {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 18px; font: 700 11.5px/1.4 var(--mono); letter-spacing: .16em;
+  text-transform: uppercase; color: var(--acc);
+}
+.eyebrow::before, header .meta::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--acc); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acc) 20%, transparent), 0 0 14px var(--acc);
+}
+h1 {
+  margin: 0 0 20px; max-width: 22ch; color: var(--fgb);
+  font: 760 clamp(2.3rem, 4.8vw, 4.3rem)/1.02 var(--sans); letter-spacing: -.035em;
+  text-wrap: balance; text-shadow: 0 2px 30px color-mix(in srgb, var(--bg0) 70%, transparent);
+}
+h1 .n { font: 700 .82em/1 var(--mono); letter-spacing: -.02em; color: var(--dim); margin-right: .3em; }
+h1 .hi { color: var(--acc); }
+.lede {
+  max-width: 68ch; margin: 0 0 22px; color: var(--fg);
+  font-size: clamp(17px, 1.5vw, 19.5px); line-height: 1.6;
+}
+.stamps, .stamp-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.stamp {
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px; border-radius: 999px;
+  font: 700 10.5px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--fg);
+}
+.stamp::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+.stamp.good::before, .stamp.live::before { background: var(--good); box-shadow: 0 0 0 3px #0ca30c33, 0 0 10px var(--good); }
+.stamp.warn::before { background: var(--warning); box-shadow: 0 0 0 3px #fab21933; }
+.stamp.crit::before { background: var(--critical); box-shadow: 0 0 0 3px #d03b3b33; }
+
+/* ---- headings ---- */
+h2 {
+  margin: 68px 0 16px; color: var(--fgb); text-wrap: balance;
+  font: 740 clamp(1.5rem, 2.7vw, 2.15rem)/1.12 var(--sans); letter-spacing: -.025em;
+  scroll-margin-top: 24px;
+}
+h2 .n { font: 700 .8em/1 var(--mono); color: var(--dim); letter-spacing: 0; margin-right: .45em; }
+/* the label form: mono small caps, a lit number, and a hairline running out to the edge */
+h2.sec {
+  display: flex; align-items: center; gap: 14px; margin: 64px 0 20px;
+  font: 700 12.5px/1.3 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--fgb);
+}
+h2.sec::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--line2), transparent); }
+h2.sec .n { color: var(--acc); font-size: 1em; margin: 0; }
+h3 { margin: 0 0 8px; color: var(--fgb); font: 650 17.5px/1.3 var(--sans); letter-spacing: -.01em; }
+p { margin: 0 0 14px; }
+b, strong { color: var(--fgb); font-weight: 650; }
+ul, ol { padding-left: 22px; }
+li { margin-bottom: 6px; }
+hr { border: 0; height: 1px; margin: 44px 0; background: linear-gradient(90deg, transparent, var(--line2), transparent); }
+.dim { color: var(--dim); }
+
+/* ---- glass: every surface that is not a terminal ---- */
+.panel, .card, .finding, .tile, .grill .ask, .grill .q, .grill-q, .callout, .esc-list > li,
+.facts, .stamp, table, blockquote, .linkbtn, .open-dialog, button[data-dlg] {
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  background: var(--glass); border: 1px solid var(--glass-edge); box-shadow: var(--glass-shadow);
+}
+.panel { padding: 18px 20px; border-radius: 16px; margin: 0 0 16px; }
+
+/* ---- milky glass: the element the reader must not miss ----
+   Put the headline verdict in one. Bright, lit from above, the wall blurred through it, a
+   sheen across the top, a streak, and the faint scanlines of Terminal Delight's CRT.
+   One or two per page; a page of them is a page of nothing. */
+.glass {
+  position: relative; isolation: isolate; overflow: hidden;
+  padding: 22px 26px; margin: 0 0 22px; border-radius: 18px; color: var(--bg0);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7); backdrop-filter: blur(20px) saturate(1.7);
+  background: linear-gradient(180deg, #ffffffa8 0%, #ffffff30 38%, #ffffff00 60%), color-mix(in srgb, var(--fgb) 84%, transparent);
+  border: 1px solid #ffffffb0;
+  box-shadow: 0 18px 40px -12px #00000090, inset 0 1px 0 #ffffffe6, inset 0 -2px 0 #0000002e, inset 0 0 26px #ffffff40, inset 0 -18px 30px -18px #00000030;
+}
+.glass::before {
+  content: ""; position: absolute; z-index: -1; left: 1px; right: 1px; top: 1px; height: 50%;
+  border-radius: 17px 17px 0 0; pointer-events: none;
+  background: linear-gradient(180deg, #ffffffb0 0%, #ffffff40 45%, #ffffff00 100%);
+}
+.glass::after {
+  content: ""; position: absolute; z-index: -1; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(115deg, transparent 38%, #ffffff38 46%, transparent 54%),
+    repeating-linear-gradient(0deg, #0000000d 0 1px, transparent 1px 3px);
+}
+.glass :is(h1, h2, h3, h4, b, strong, a) { color: var(--bg0); text-shadow: none; }
+.glass p:last-child { margin-bottom: 0; }
+.glass :is(.lbl, .k, .kicker, .eyebrow, .h) { color: color-mix(in srgb, var(--bg0) 62%, var(--fgb)); }
+.glass > .h { display: block; margin: 0 0 8px; font: 700 11.5px/1.3 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+.glass code { background: color-mix(in srgb, var(--bg0) 12%, transparent); color: var(--bg0); }
+.glass .tag { color: var(--bg0); background: color-mix(in srgb, var(--bg0) 10%, transparent); border-color: color-mix(in srgb, var(--bg0) 30%, transparent); box-shadow: none; }
+.glass .tag::before { box-shadow: none; }
+.glass pre { margin-top: 12px; }
+
+/* ---- two faces: the prose on the left, its evidence level with it on the right ---- */
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 40px; align-items: start; margin: 0 0 18px; }
+.pair > * > :first-child { margin-top: 0; }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 0 0 16px; padding: 13px 16px; border-radius: 14px; font-size: 14px; }
+.facts .cap { grid-column: 1 / -1; margin-bottom: 3px; font: 700 10.5px var(--mono); letter-spacing: .15em; text-transform: uppercase; color: var(--yel); }
+.facts dt { font: 12px/1.75 var(--mono); color: var(--dim); }
+.facts dd { margin: 0; font: 13px/1.75 var(--mono); color: var(--fgb); overflow-wrap: anywhere; }
+
+/* ---- read-first: ranked, hard cap of five ---- */
+.esc-list { list-style: none; margin: 0 0 26px; padding: 0; display: grid; gap: 10px; counter-reset: rf; }
+.esc-list > li {
+  position: relative; margin: 0; padding: 16px 22px 16px 68px; border-radius: 16px; counter-increment: rf;
+}
+.esc-list > li::before, .esc-list .esc-n {
+  position: absolute; left: 22px; top: 15px; font: 700 19px/1.2 var(--mono); color: var(--acc);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--acc) 55%, transparent);
+}
+.esc-list > li::before { content: counter(rf, decimal-leading-zero); }
+.esc-list > li:has(.esc-n)::before { content: none; }
+.esc-list > li > b { color: var(--fgb); font-size: 16px; }
+.esc-list > li > span:not(.tag):not(.esc-n) { display: block; margin-top: 4px; color: var(--fg); }
+
+/* ---- cards, one lit ---- */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; margin: 0 0 22px; }
+.card { padding: 20px 22px; border-radius: 16px; }
+.card h3 { margin: 10px 0 8px; }
+.card p { font-size: 15px; }
+.card .why { margin: 12px 0 0; padding-top: 11px; border-top: 1px dashed var(--line2); color: var(--dim); font-size: 14px; }
+.badge {
+  display: inline-block; padding: 3px 10px; border: 1px solid var(--line2); border-radius: 999px;
+  font: 700 10px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim);
+}
+.card.rec {
+  border-color: color-mix(in srgb, var(--s3) 75%, transparent);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--s3) 20%, transparent), transparent 60%), var(--glass);
+  box-shadow: var(--glass-shadow), 0 0 0 1px var(--s3) inset, 0 18px 50px -18px color-mix(in srgb, var(--s3) 70%, transparent);
+}
+.card.rec .badge { color: #6fe0b4; border-color: var(--s3); background: color-mix(in srgb, var(--s3) 20%, transparent); }
+
+/* ---- stat tiles ---- */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 0 0 22px; }
+.tile { display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; border-radius: 16px; }
+.tile .k { font: 700 10.5px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.tile > b, .tile .big {
+  font: 780 2.3rem/1 var(--sans); letter-spacing: -.045em; color: var(--acc);
+  text-shadow: 0 0 26px color-mix(in srgb, var(--acc) 40%, transparent);
+}
+.tile .u { font-size: 13px; color: var(--dim); }
+
+/* ---- findings ---- */
+.finding { margin: 0 0 12px; padding: 16px 20px; border-radius: 16px; }
+.finding .t { color: var(--fgb); font-weight: 650; }
+.finding .w { margin-top: 6px; color: var(--fg); }
+
+/* ---- the grill: red is "a decision is waiting", so the grill is lit red, softly ---- */
+.grill .ask, .grill .q, .grill-q {
+  margin: 0 0 14px; padding: 20px 22px; border-radius: 18px;
+  border-color: color-mix(in srgb, var(--critical) 38%, var(--glass-edge));
+  background: linear-gradient(150deg, color-mix(in srgb, var(--critical) 13%, transparent), transparent 55%), var(--glass);
+}
+.grill .ask h3, .grill .q > b:first-child { color: var(--fgb); }
+:is(.ask, .q, .grill-q) .rec {
+  display: block; margin: 12px 0 0; padding: 10px 14px; border-radius: 10px; color: var(--fgb);
+  border-left: 3px solid var(--s3); background: color-mix(in srgb, var(--s3) 14%, transparent);
+}
+
+/* ---- figures: dark glass, because what is drawn on them was drawn for a dark page ---- */
+figure {
+  margin: 0 0 28px; padding: 20px 22px 16px; border-radius: 18px; border: 1px solid var(--glass-edge);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3);
+  background: linear-gradient(165deg, color-mix(in srgb, var(--bg2) 74%, transparent), color-mix(in srgb, var(--bg0) 90%, transparent) 72%);
+  box-shadow: 0 26px 60px -24px #000000c0, inset 0 1px 0 #ffffff2a, inset 0 0 40px #ffffff08;
+}
+figure > .lbl {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 14px;
+  font: 700 11px/1.3 var(--mono); letter-spacing: .15em; text-transform: uppercase; color: var(--dim);
+}
+figure > .lbl::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--acc); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acc) 18%, transparent);
+}
+figcaption { margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--line); font-size: 14.5px; color: var(--fg); }
+figcaption b { color: var(--fgb); }
+figure svg { display: block; width: 100%; height: auto; }
+figure img { display: block; max-width: 100%; height: auto; border-radius: 10px; }
+.scroller { overflow-x: auto; }
+.gutter { margin-top: 10px; font: 11.5px/1.5 var(--mono); color: var(--dim); }
+
+/* Figure ink for inline SVG, so a drawing wears the theme it sits in. Classes, because a
+   presentation attribute cannot read var(). Hex attributes still work; these are optional.
+   The six meanings are the fixed ones from reference/pictures.md. */
+svg .ink { fill: var(--fgb); }   svg .ink2 { fill: var(--dim); }   svg .ink-acc { fill: var(--acc); }
+svg .box { fill: color-mix(in srgb, var(--bg2) 88%, var(--bg0)); stroke: var(--line2); }
+svg .wire { fill: none; stroke: var(--dim); }
+svg .crit { --k: var(--critical); } svg .fail { --k: var(--serious); } svg .ready { --k: var(--s3); }
+svg .struct { --k: var(--s1); } svg .mine { --k: var(--warning); } svg .unk { --k: var(--dim); }
+svg :is(.crit, .fail, .ready, .struct, .mine, .unk):not(text):not(line):not(path) { fill: color-mix(in srgb, var(--k) 16%, var(--bg0)); stroke: var(--k); }
+svg :is(line, path):is(.crit, .fail, .ready, .struct, .mine, .unk) { stroke: var(--k); }
+svg text:is(.crit, .fail, .ready, .struct, .mine, .unk) { fill: var(--k); }
+svg .unk:not(text) { stroke-dasharray: 5 4; }
+
+/* ---- code: the only thing on the page that looks like a terminal, because it is one.
+   Opaque on purpose. ---- */
+/* inline-block, so a flag like --theme moves to the next line whole instead of breaking
+   after its hyphens; a path longer than the line still wraps, inside its own box */
+code {
+  display: inline-block; max-width: 100%; vertical-align: baseline;
+  font: .86em/1.5 var(--mono); color: var(--fgb); padding: 0 6px; border-radius: 5px;
+  background: color-mix(in srgb, var(--sel) 62%, transparent); overflow-wrap: anywhere;
+}
+pre {
+  margin: 0 0 16px; padding: 14px 17px; overflow-x: auto; border-radius: 12px;
+  background: color-mix(in srgb, var(--bg0) 95%, transparent); border: 1px solid var(--line2);
+  box-shadow: inset 0 1px 0 #ffffff12, 0 12px 28px -16px #000000d0;
+}
+pre code { display: inline; background: none; padding: 0; color: var(--fgb); font-size: 13px; line-height: 1.72; overflow-wrap: normal; }
+pre .ln { display: flex; gap: 10px; white-space: pre-wrap; word-break: break-all; }   /* wrap at the edge, as a terminal does */
+pre .ln::before { content: "$"; color: var(--grn); flex: none; user-select: none; }
+
+/* ---- tables ---- */
+table {
+  width: 100%; margin: 0 0 18px; border-collapse: separate; border-spacing: 0;
+  border-radius: 14px; overflow: hidden; font-size: 14px;
+}
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font: 700 10.5px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+  background: color-mix(in srgb, var(--bg0) 42%, transparent);
+}
+td { color: var(--fg); }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: color-mix(in srgb, var(--acc) 7%, transparent); }
+td b, td strong { color: var(--fgb); }
+
+blockquote {
+  margin: 0 0 16px; padding: 14px 20px; border-radius: 4px 14px 14px 4px;
+  border-left: 3px solid var(--acc); color: var(--fg); font-size: 15px; font-style: italic;
+}
+
+.callout {
+  margin: 0 0 18px; padding: 15px 20px; border-radius: 4px 14px 14px 4px; border-left: 3px solid var(--warning);
+  background: linear-gradient(90deg, #fab2191c, transparent 70%), var(--glass);
+}
+.callout.crit { border-left-color: var(--critical); background: linear-gradient(90deg, #d03b3b24, transparent 70%), var(--glass); }
+.callout.good { border-left-color: var(--good);     background: linear-gradient(90deg, #0ca30c1f, transparent 70%), var(--glass); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .lbl {
+  display: block; margin: 0 0 7px; font: 700 10.5px/1.3 var(--mono); letter-spacing: .12em;
+  text-transform: uppercase; color: var(--dim);
+}
+
+/* ---- confidence labels. Never assert without one. ---- */
+.tag {
+  display: inline-flex; align-items: center; gap: 6px; margin-right: 7px; padding: 3px 9px 3px 8px;
+  border: 1px solid; border-radius: 999px; vertical-align: 2px;
+  font: 700 10px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+}
+.tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 7px currentColor; }
+.tag:is(.v, .measured)                { color: #6cd46c; background: #0ca30c2e; border-color: #0ca30c66; }
+.tag:is(.w, .inferred)                { color: #f5c95f; background: #fab21924; border-color: #fab21961; }
+.tag:is(.c, .hunch, .contradicted)    { color: #f08a8a; background: #d03b3b29; border-color: #d03b3b66; }
+.tag:is(.u, .unknown)                 { color: var(--dim); background: color-mix(in srgb, var(--dim) 12%, transparent); border-color: var(--line2); border-style: dashed; }
+.glass .tag:is(.v, .measured)::before { background: var(--good); }
+.glass .tag:is(.w, .inferred)::before { background: var(--s4); }
+.glass .tag:is(.c, .hunch, .contradicted)::before { background: var(--critical); }
+
+/* ---- buttons that open a modal ---- */
+.linkbtn, .open-dialog, button[data-dlg] {
+  display: inline-flex; align-items: center; gap: 8px; margin: 0 8px 8px 0; padding: 8px 15px; border-radius: 999px;
+  font: 600 13px/1.2 var(--mono); color: var(--fgb); cursor: pointer;
+  transition: transform .12s ease, border-color .12s ease;
+}
+.linkbtn:hover, .open-dialog:hover, button[data-dlg]:hover {
+  transform: translateY(-1px); border-color: color-mix(in srgb, var(--acc) 70%, transparent);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--acc) 24%, transparent);
+}
+
+/* ---- modal shell: where depth lives ---- */
+dialog {
+  max-width: 880px; width: calc(100vw - 44px); max-height: 86vh; padding: 0; overflow: hidden;
+  color: var(--fg); border: 1px solid var(--glass-edge); border-radius: 18px;
+  -webkit-backdrop-filter: blur(24px) saturate(1.4); backdrop-filter: blur(24px) saturate(1.4);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 88%, transparent);
+  box-shadow: 0 40px 120px #000000b3, inset 0 1px 0 #ffffff47;
+}
+dialog::backdrop { background: color-mix(in srgb, var(--bg0) 62%, transparent); backdrop-filter: blur(6px); }
+.dlg-head {
+  position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: flex-start; gap: 20px;
+  padding: 20px 26px; border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg2) 94%, var(--bg0));
+}
+.dlg-head h3 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.015em; }
+.dlg-head .repo { margin: 0; font: 11.5px/1.5 var(--mono); color: var(--dim); }
+.x {
+  flex: none; width: 32px; height: 32px; border-radius: 999px; cursor: pointer;
+  font-size: 17px; line-height: 1; color: var(--fg);
+  background: color-mix(in srgb, var(--bg0) 45%, transparent); border: 1px solid var(--line2);
+}
+.x:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+.dlg-body { padding: 24px 26px 34px; overflow-y: auto; max-height: calc(86vh - 78px); }
+.dlg-body h4 {
+  margin: 30px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line);
+  font: 700 11.5px/1.3 var(--mono); letter-spacing: .13em; text-transform: uppercase; color: var(--dim);
+}
+.dlg-body h4:first-child { margin-top: 0; }
+.dlg-body p, .dlg-body ul { font-size: 15px; color: var(--fg); }
+.dlg-body ul { margin: 0 0 15px; padding-left: 20px; }
+.dlg-body li { margin-bottom: 8px; }
+
+footer {
+  margin-top: 76px; padding-top: 24px; border-top: 1px solid var(--line);
+  font: 12px/1.6 var(--mono); color: var(--dim);
+}
+footer p { margin: 0 0 7px; }
+footer::after { content: var(--wall-label); display: block; margin-top: 12px; opacity: .75; }
+
+@media (max-width: 900px) {
+  .pair { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .wrap { padding: 0 16px 80px; }
+  header.top, .wrap > header:first-child, body > header { padding-top: 40px; }
+  h1 { font-size: clamp(2rem, 9vw, 2.6rem); }
+  h2 { margin-top: 52px; }
+  .esc-list > li { padding: 14px 16px 14px 56px; }
+  .esc-list > li::before, .esc-list .esc-n { left: 16px; font-size: 17px; }
+  figure { padding: 14px 14px 12px; border-radius: 14px; }
+}
+@media print {
+  body::before, body::after { display: none; }
+}
+
+} /* @layer brief */
+
+/* ---- the notes UI, in glass ----
+   Outside the layer and one step more specific than notes.css, which it has to beat.
+   notes.css itself is left alone: its bytes are pinned by fixtures/notes-format, and
+   Terminal Delight vendors those. It already reads every colour from the tokens above. */
+:root .notebar {
+  padding: 7px 8px 7px 16px; border-radius: 999px; border-color: var(--glass-edge);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg2) 80%, transparent);
+  box-shadow: 0 16px 44px #00000080, inset 0 1px 0 #ffffff55;
+}
+:root .notebar button { border-radius: 999px; background: color-mix(in srgb, var(--bg0) 45%, transparent); border-color: var(--line2); }
+@media (max-width: 640px) { :root .notebar { border-radius: 18px; padding: 8px 10px; } }   /* notes.css wraps it to two rows here */
+:root .note-btn { border-radius: 999px; }
+:root :is(#note-text, #export-out) { background: color-mix(in srgb, var(--bg0) 92%, transparent); border-color: var(--line2); border-radius: 10px; }
+:root #note-list li { background: var(--glass); border-color: var(--glass-edge); border-left-color: var(--warning); }
+</style><style id="brief-wall">
+/* brief-wall — theme lupine (light, turned dark), wallpaper 06-omarchy.png
+   scrim 0.86; contrast over the wall's brightest tenth: fg 10.38:1, fgb 13.68:1, dim 7.91:1, acc 4.72:1
+   lightened to clear it: acc */
+:root {
+  --bg: #090909;
+  --bg2: #0d0d0d;
+  --bg0: #050505;
+  --fg: #dcdcdc;
+  --fg2: #989898;
+  --fgb: #fafafa;
+  --acc: #6d91f1;
+  --mut: #6d6d6d;
+  --sel: #121212;
+  --red: #d53ad1;
+  --grn: #8471df;
+  --yel: #2080e2;
+  --blu: #4b77ed;
+  --mag: #9860dc;
+  --cyn: #2979e2;
+  --dim: #c1c1c1;
+  --scrim: 86%;
+  --wall-label: "wallpaper · lupine · 06-omarchy.png";
+  --wall: url("data:image/webp;base64,UklGRjwaAABXRUJQVlA4IDAaAACQnQGdASpABoQDPsFgsFGnryUioZHYGeAYCWlu+BUn/vy7/j3FflZ8fkrqwYAT+lS/9j+3+FTL/wP9J/bejn6F01v5filHv7E87f+F/5/6q/CrzEv7Z/Q/159+voo8xn7Resl6jPQA/zXpG+rd/d/VV8tb2k/7rkwPnz+8/079ivin0e88bGVth+c9cv8R4J+mvP7878Cn6d5zv1nmJppP1D0LOU5pHAviEwBVjQe5Tly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5crDiusxDK9ilAEinQIvfALg/3MQad+eMvHTWUqSQFZtv7VsIJUx+2sxDAwyAL5IftrMQpzS7hNMngjdQn1yEj0/FqQmAKsaD3KcuXLly5cuXLly5cuXLly5cIFxkvnAUKSwkTEYpMqAHejIUbEYuiiGu4OoROoZMz6gXejWCNfEYhqLFhDGkdBkPx9/GizFpLZ3BICtj6EgKRJ0bfYBC95Ahx1AD78mDUJ4S67c7lHISILN2QfXm2Juh7PXduwLDgNoTdTMSm4HDCezWyksDoR0poqG4Y6QmAKsaD3KcuXLly5cuXLly5cuXLlwm4WK9uPDtYYa9oY7/tTnhifkTXJea6frRu25jds/a737cxvAmZC1JXUrJ1qwKM/Q5A7Kc6KBYWdgIe03Zdx97cEdRcTXvxVY0HuU5cuXLly5cuXLly5cuXLly5cuXKzP7hHYC1lNBUATNXtzG8CXaGO7bmN4Eu4I81nftGlsYJ4ZbXQgMe4bPI+CsGGxPII3gS7gjqVMvk3DHSEwBVjQe5Tly5cuXLly5cuXLly5crM/uJo3gS7gjqbM1e3MbwJA5brpQl9Bo2iegogrKLEmukFmuEAB40B6llaoJZKmgPa3lxMzV7WMAAZeAyGzGwruj482D/9X4HMHd1wrAs/VHpdZjuFZ8O4XpA9ynLly5cuXLly5cuXLly5cuXLly5cuVmf3E0bwJdwR1Np0o44Al1EOHJbBeGhNRXBVWbKQoJwlDJ0DH0pSp4USvVoKHr2envgN1o0tk5Rwvh9DBsn/fUDPj6GJXcF1LNxOmQS2dVvx/59jcRxURVBW7i4/gFWNB7lOXLly5cuXLly5cuXLly5cuXLlwpvB/KN4Eu4I6mzNXtzG8CXa6z+4RfBkGa5ACQg7IGTUNi1Z2OtNGlsZvASM1x3fmAWmLP25jeB7UOhPxT7k6vlh6lTTaW9UFqQmAKsaD3KcuXLly5cuXLly5cuXKwHbAIV2PTdJr92Yw/OhCvAK6CF496H9Y7od++eURFbBzyV1q4mjeBMiOGNAvjtfB/vNUj6u//OdGgCZqsSCwLudprWSBWgX+bPII3gTIki4TbpeCw6easrTz7jKq64X/OWITLCYAqxoPcpy5cuXLly5cuXLly5cuXLly5WKJXr7AcZWuerzsY3PZjNTXQbfHVWYGGhFRCiZ7D/D0Htsy/cQ1AANxdZdkhVYS5MOfrHp08FVujTP1irUqS4JNrgKmrGov8C1813iNpgxjkcTkAirBseJkCMp66wuWDFXJpEbetOGGswRIs6rj1WLbAIvtz3RoqsaD3KcuXLly5cuXLly5cuXLly5cuXLlZ0E/M1C/V81817FatbzTcoJ+jJlwudeHd0kq0fyzBF1qLpnMmXB7azjN2CrcLUkVFslAq3BrEcBVjQe5Tly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLlysic/EYSu164ohlbBJJB9R46+Ckg9ynLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXx6czNtekg9ynLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuXLly5cuVgAD+/8RgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdL7j+k3eQTjHjCrakHmK5vamYxKI8/EtW3AHTsK0pJoV8lDNjkVxWKeppEsrWF1LPI/M50SYxyRRIQs+rfU7ntyPnBXyv1rwb/rE/uFlW3yuojVw9VnyH55UdlnLdZfElM8VumQhZBaD3TNLnnGTsgaY+txSE+qGkJ9z9/hUT2v9vOHfdJ/fDMLEB0XNoRD51M9D2JZ4Y2nbib26uX3rvmUbZ69YNa6lQ3MXwLwKr+DtXmbjd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");
+}
+</style>
+<style>/* at-size pane mockups: a Terminal Delight agent pane, its header, its screen */
+.panes3 { display: grid; grid-template-columns: repeat(3, minmax(250px, 1fr)); gap: 14px; }
+@media (max-width: 860px) { .panes3 { grid-template-columns: 1fr; } }
+.pane { border-radius: 8px; overflow: hidden; background: #0b0b0c; border: 1px solid rgba(255,255,255,.10);
+  box-shadow: 0 6px 18px rgba(0,0,0,.35); font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px; position: relative; }
+.pane .ph { display: flex; align-items: center; gap: 8px; padding: 6px 9px; background: rgba(255,255,255,.05);
+  border-bottom: 1px solid rgba(255,255,255,.08); color: #cfcfcf; white-space: nowrap; }
+.pane .ph .t { overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.pane .chip { font-size: 9.5px; letter-spacing: .06em; padding: 1px 6px; border-radius: 3px; border: 1px solid currentColor; }
+.chip.claude { color: #d6875c; } .chip.codex { color: #8fb0ff; }
+.chip.rest { color: #9fb6ff; } .chip.sleep { color: #c8b6ff; } .chip.awake { color: #6fd29b; }
+.pane .mem { color: #e8e8e8; font-variant-numeric: tabular-nums; }
+.pane .mem small { color: #8b8a80; font-size: 10px; }
+.pane .scr { padding: 8px 10px 6px; color: #d4d4d4; line-height: 1.45; min-height: 190px; white-space: pre-wrap; }
+.scr .u { color: #9a9a9a; } .scr .a { color: #e2e2e2; } .scr .g { color: #6fd29b; } .scr .o { color: #d6875c; }
+.scr .box { border-top: 1px solid #3a3a3a; border-bottom: 1px solid #3a3a3a; margin: 6px 0 2px; padding: 2px 0; }
+.scr .foot { color: #8b8a80; font-size: 10.5px; }
+.pane.asleep .scr { filter: grayscale(1) brightness(.38); }
+.pane .sleepcard { position: absolute; left: 10%; right: 10%; top: 58px; background: rgba(20,18,30,.94);
+  border: 1px solid rgba(200,182,255,.45); border-radius: 8px; padding: 10px 12px; color: #e6e1ff; box-shadow: 0 8px 22px rgba(0,0,0,.5); }
+.sleepcard .z { font-size: 13px; color: #fff; margin-bottom: 4px; }
+.sleepcard .w { color: #c8b6ff; margin: 6px 0 4px; }
+.sleepcard .s { color: #a8a3bd; font-size: 10.5px; line-height: 1.45; }
+.stateflag { font-family: var(--mono, ui-monospace, monospace); font-size: 10.5px; color: var(--dim); margin: 6px 2px 0; }
+/* memory readout */
+.readouts { display: grid; grid-template-columns: repeat(3, minmax(230px, 1fr)); gap: 14px; }
+@media (max-width: 860px) { .readouts { grid-template-columns: 1fr; } }
+.ro { background: #0b0b0c; border: 1px solid rgba(255,255,255,.10); border-radius: 8px; padding: 10px 12px;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px; color: #d4d4d4; }
+.ro h4 { margin: 0 0 6px; font-size: 12px; color: #fafafa; font-weight: 600; display: flex; justify-content: space-between; }
+.ro .row { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; border-bottom: 1px dashed rgba(255,255,255,.07); }
+.ro .row span:last-child { font-variant-numeric: tabular-nums; }
+.ro .unk { color: #8b8a80; font-style: italic; }
+.ro .note { color: #8b8a80; font-size: 10.5px; margin-top: 6px; line-height: 1.4; }
+/* chopped bars */
+.bars { display: grid; gap: 7px; }
+.bar { display: grid; grid-template-columns: 210px 1fr 74px; align-items: center; gap: 10px; font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px; }
+@media (max-width: 700px) { .bar { grid-template-columns: 130px 1fr 60px; font-size: 10.5px; } }
+.bar .k { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar .v { text-align: right; color: var(--fgb, #fff); font-variant-numeric: tabular-nums; }
+.bar .track { height: 16px; display: flex; gap: 2px; }
+.bar .seg { height: 100%; transform: skewX(-18deg); border-radius: 2px; }
+.seg.res { background: #3987e5; box-shadow: 0 0 8px rgba(57,135,229,.45); }
+.seg.swp { background: repeating-linear-gradient(90deg, rgba(57,135,229,.55) 0 3px, rgba(57,135,229,.18) 3px 6px); }
+.seg.ctx { background: #8b8a80; opacity: .55; }
+.seg.mine { background: #c98500; box-shadow: 0 0 8px rgba(201,133,0,.45); }
+.seg.mineswp { background: repeating-linear-gradient(90deg, rgba(201,133,0,.6) 0 3px, rgba(201,133,0,.2) 3px 6px); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-family: var(--mono, ui-monospace, monospace); font-size: 10.5px; color: var(--dim); margin-top: 10px; }
+.legend i { display: inline-block; width: 14px; height: 9px; margin-right: 5px; vertical-align: middle; transform: skewX(-18deg); }
+/* fence */
+.fence { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 700px) { .fence { grid-template-columns: 1fr; } }
+.fence > div { border-radius: 8px; padding: 10px 12px; }
+.fence .in { border: 1px solid rgba(25,158,112,.6); background: rgba(25,158,112,.08); }
+.fence .out { border: 1px solid rgba(236,131,90,.6); background: rgba(236,131,90,.08); }
+.fence h4 { margin: 0 0 6px; font-size: 12.5px; }
+.fence ul { margin: 0; padding-left: 18px; font-size: 13px; }
+.fence li { margin: 3px 0; }
+/* case table */
+table.cases td:first-child { white-space: nowrap; }
+.yes { color: #199e70; font-weight: 600; } .no { color: #ec835a; font-weight: 600; } .q { color: #c98500; font-weight: 600; }
+.bignum { font-size: 30px; font-weight: 700; color: var(--acc); text-shadow: 0 0 14px color-mix(in srgb, var(--acc) 45%, transparent); line-height: 1; }
+.timeline { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+@media (max-width: 760px) { .timeline { grid-template-columns: 1fr; } }
+.panes3 > div, .readouts > div { min-width: 0; }
+@media (max-width: 520px) { .pane .ph { flex-wrap: wrap; white-space: normal; } .pane .ph .t { flex-basis: 100%; } }
+</style></head><body><div class="wrap">
+<p class="eyebrow">idle agents &middot; Gate 1 mockup &middot; throwaway</p>
+<figure>
+    <span class="lbl">06 &middot; The same pane, three ways</span>
+    <div class="panes3">
+      <div>
+        <div class="pane">
+          <div class="ph"><span class="t">◑ Theme contrast pass</span><span class="chip claude">CLAUDE</span><span class="mem">412 MB</span></div>
+          <div class="scr"><span class="a">⏺ Both themes use the brighter ink.</span>
+<span class="a">  Deep Quiet keeps its ground.</span>
+
+<span class="u">  2 files changed, 14 lines</span>
+<span class="u">  contrast 7.9:1 on both</span>
+
+<span class="g">✻ Worked for 4m 12s</span>
+<div class="box">❯ </div><span class="foot">  ⏵⏵ auto mode on (shift+tab to cycle)</span></div>
+        </div>
+        <p class="stateflag">AWAKE &middot; as today, plus the cost in the header</p>
+      </div>
+      <div>
+        <div class="pane">
+          <div class="ph"><span class="t">◑ Theme contrast pass</span><span class="chip rest">☾ RESTING · 2h</span><span class="mem">9 MB <small>+ 340 out</small></span></div>
+          <div class="scr"><span class="a">⏺ Both themes use the brighter ink.</span>
+<span class="a">  Deep Quiet keeps its ground.</span>
+
+<span class="u">  2 files changed, 14 lines</span>
+<span class="u">  contrast 7.9:1 on both</span>
+
+<span class="g">✻ Worked for 4m 12s</span>
+<div class="box">❯ </div><span class="foot">  ⏵⏵ auto mode on (shift+tab to cycle)</span></div>
+        </div>
+        <p class="stateflag">RESTING &middot; screen unchanged; look or type and it is awake</p>
+      </div>
+      <div>
+        <div class="pane asleep">
+          <div class="ph"><span class="t">◑ Theme contrast pass</span><span class="chip sleep">☾ ASLEEP</span><span class="mem">0 MB</span></div>
+          <div class="scr"><span class="a">⏺ Both themes use the brighter ink.</span>
+<span class="a">  Deep Quiet keeps its ground.</span>
+
+<span class="u">  2 files changed, 14 lines</span>
+<span class="u">  contrast 7.9:1 on both</span>
+
+<span class="g">✻ Worked for 4m 12s</span>
+<div class="box">❯ </div><span class="foot">  ⏵⏵ auto mode on (shift+tab to cycle)</span></div>
+          <div class="sleepcard">
+            <div class="z">☾ Asleep since Tue 20 Oct, 15:42</div>
+            <div class="s">Conversation kept &middot; auto mode &middot; opus</div>
+            <div class="w">Press any key to wake &mdash; about 2 s</div>
+            <div class="s">Comes back without: 1 "allow for this session" grant</div>
+          </div>
+        </div>
+        <p class="stateflag">ASLEEP &middot; last screen dimmed, what will not come back named</p>
+      </div>
+    </div>
+    <figcaption>One pane, at the width of a column in your three-pane tabs. <b>Rest is invisible apart from the header</b>: the screen is exactly what it was, because the process is still there. Sleep keeps the last screen under a card that says when, with which model and mode, and anything the agent will come back without. The screen text and the numbers are illustrative.</figcaption>
+  </figure>
+</div></body></html>

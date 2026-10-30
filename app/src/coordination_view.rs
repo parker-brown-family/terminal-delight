@@ -138,8 +138,8 @@ impl Workspace {
                 self.coord_off_limits_seen |= p.agent_access.is_off_limits();
                 // The coordination view serves every agent at once, so a seated
                 // pane (reachable only along a line) is not in it.
-                if crate::warroom::anonymous_reach(&self.mcp, &p.party())
-                    >= crate::warroom::Reach::Read
+                if crate::threshing_floor::anonymous_reach(&self.mcp, &p.party())
+                    >= crate::threshing_floor::Reach::Read
                 {
                     authorized_projects.insert(id.clone(), name.clone());
                     visible.push(format!(

@@ -1,0 +1,37 @@
+{
+  "cleanup_methods": 14,
+  "baseline_failed_assertions": 24,
+  "preview_module_tests": 4,
+  "native_uninstall_tests": null,
+  "other_lenovo_identity": null,
+  "full_application_check": "passed: cargo check --locked --tests; private renderer with all twelve required patches",
+  "glass_gate": "pass, 43/255",
+  "narrative": "journey; cold opening 0.75",
+  "browser": {
+    "widths_css_px": [
+      1405,
+      389
+    ],
+    "horizontal_overflow": false,
+    "notes_preserved": 5,
+    "concurs_preserved": 4,
+    "all_original_note_anchors_present": true,
+    "protection_banner_animation": "legion-signal; reduced motion disables it"
+  },
+  "worktree": "/home/parker/Work/td-uninstall-lab/terminal-delight",
+  "stable_worktree_alias": "/home/parker/Work/td-uninstall-preview",
+  "full_application_test_execution": null,
+  "installed_or_deployed": false,
+  "td_mutating_actions_by_this_work": 0,
+  "live_endpoint_observation": {
+    "start": {
+      "window_pid": 1552933,
+      "build": "td-7150fb1b-0.5-floor-map-builder"
+    },
+    "delivery": {
+      "window_pid": 2269143,
+      "build": "td-4cc995cf-0.5-floor-map-pool-drop"
+    },
+    "cause": "unverified; this work issued no TD stop, install, replacement or reload"
+  }
+}
