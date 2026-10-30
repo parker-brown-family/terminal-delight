@@ -2836,66 +2836,187 @@ mod tests {
     /// behind when the War Room's cards and header were redrawn. A name counts
     /// as read when `.name` appears outside the language pack with no further
     /// identifier character after it, so `floor_search` is not kept alive by
-    /// `floor_search_short`. Test code is left out of the scan (everything from
-    /// a file's `#[cfg(test)]` on, and any `tests.rs`), so a test reading a
+    /// `floor_search_short`. Test code is left out of the scan (every
+    /// `#[cfg(test)]` module, and any `tests.rs`), so a test reading a
     /// string the product dropped cannot keep it alive. A read by destructuring
     /// `Chrome` would not be seen; nothing reads it that way, so the scan stays
     /// a plain `.name` search.
-    /// `text` with every `#[cfg(test)] mod name { … }` block cut out, found by
-    /// counting braces. Test-only items outside such a module stay in.
-    fn without_test_modules(text: &str) -> String {
-        let mut out = String::new();
-        let mut rest = text;
-        while let Some(at) = rest.find("#[cfg(test)]") {
-            let after = rest[at + "#[cfg(test)]".len()..].trim_start();
-            let is_mod = after.starts_with("mod ") || after.starts_with("pub(crate) mod ");
-            let open = after.find('{');
-            match (is_mod, open) {
-                (true, Some(open)) if !after[..open].contains(';') => {
-                    out.push_str(&rest[..at]);
-                    let body = &after[open..];
-                    let mut depth = 0usize;
-                    let mut end = body.len();
-                    for (i, c) in body.char_indices() {
-                        match c {
-                            '{' => depth += 1,
-                            '}' => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    end = i + 1;
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
+    /// Where the `{ … }` block opening at `chars[open]` closes, skipping
+    /// braces inside comments, strings, raw strings and char literals.
+    fn block_end(chars: &[char], open: usize) -> usize {
+        let (mut depth, mut i) = (0usize, open);
+        while i < chars.len() {
+            let c = chars[i];
+            let next = chars.get(i + 1).copied();
+            match c {
+                '/' if next == Some('/') => {
+                    while i < chars.len() && chars[i] != '\n' {
+                        i += 1;
                     }
-                    rest = &body[end..];
                 }
-                _ => {
-                    out.push_str(&rest[..at + "#[cfg(test)]".len()]);
-                    rest = &rest[at + "#[cfg(test)]".len()..];
+                '/' if next == Some('*') => {
+                    let mut nest = 1;
+                    i += 2;
+                    while i < chars.len() && nest > 0 {
+                        if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                            nest += 1;
+                            i += 1;
+                        } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                            nest -= 1;
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                    continue;
                 }
+                'r' if matches!(next, Some('"') | Some('#'))
+                    && !chars
+                        .get(i.wrapping_sub(1))
+                        .is_some_and(|p| p.is_alphanumeric() || *p == '_') =>
+                {
+                    let mut j = i + 1;
+                    let mut hashes = 0;
+                    while chars.get(j) == Some(&'#') {
+                        hashes += 1;
+                        j += 1;
+                    }
+                    if chars.get(j) == Some(&'"') {
+                        j += 1;
+                        loop {
+                            if j >= chars.len() {
+                                break;
+                            }
+                            if chars[j] == '"'
+                                && (1..=hashes).all(|h| chars.get(j + h) == Some(&'#'))
+                            {
+                                j += hashes;
+                                break;
+                            }
+                            j += 1;
+                        }
+                        i = j;
+                    }
+                }
+                '"' => {
+                    i += 1;
+                    while i < chars.len() && chars[i] != '"' {
+                        if chars[i] == '\\' {
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                }
+                '\'' if next == Some('\\') => {
+                    i += 2;
+                    while i < chars.len() && chars[i] != '\'' {
+                        i += 1;
+                    }
+                }
+                '\'' if chars.get(i + 2) == Some(&'\'') => i += 2,
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return i;
+                    }
+                }
+                _ => {}
             }
+            i += 1;
         }
-        out.push_str(rest);
-        out
+        chars.len().saturating_sub(1)
+    }
+
+    /// `text` with every item marked `#[cfg(test)]` or `#[test]` cut out
+    /// (further attributes before the item are skipped), plus the names of
+    /// test-only modules it declares by `mod name;`, whose files hold nothing
+    /// but tests.
+    fn without_test_modules(text: &str) -> (String, Vec<String>) {
+        let chars: Vec<char> = text.chars().collect();
+        let mut out = String::new();
+        let mut declared = Vec::new();
+        let mut i = 0;
+        let markers: [Vec<char>; 2] = ["#[cfg(test)]", "#[test]"].map(|m| m.chars().collect());
+        while i < chars.len() {
+            if let Some(marker) = markers.iter().find(|m| chars[i..].starts_with(m)) {
+                let mut j = i + marker.len();
+                loop {
+                    while j < chars.len() && chars[j].is_whitespace() {
+                        j += 1;
+                    }
+                    if chars.get(j) == Some(&'#') && chars.get(j + 1) == Some(&'[') {
+                        while j < chars.len() && chars[j] != '\n' {
+                            j += 1;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                let line_end = (j..chars.len())
+                    .find(|&k| chars[k] == '\n')
+                    .unwrap_or(chars.len());
+                let header: String = chars[j..line_end].iter().collect();
+                let name = header
+                    .trim_start_matches("pub(crate) ")
+                    .strip_prefix("mod ")
+                    .map(|rest| {
+                        rest.chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                            .collect::<String>()
+                    });
+                if let Some(name) = name.filter(|_| header.trim_end().ends_with(';')) {
+                    declared.push(name);
+                    i = line_end;
+                    continue;
+                }
+                // The item runs to its block's end, or to its `;` if one
+                // comes before any `{` (a test-only `use` or `const`).
+                match (j..chars.len()).find(|&k| chars[k] == '{' || chars[k] == ';') {
+                    Some(k) if chars[k] == '{' => i = block_end(&chars, k) + 1,
+                    Some(k) => i = k + 1,
+                    None => i = chars.len(),
+                }
+                continue;
+            }
+            out.push(chars[i]);
+            i += 1;
+        }
+        (out, declared)
     }
 
     #[test]
     fn every_chrome_string_is_read_outside_the_language_pack() {
-        fn gather(dir: &std::path::Path, skip: &std::path::Path, code: &mut String) {
-            for entry in std::fs::read_dir(dir).expect("read src") {
-                let path = entry.expect("dir entry").path();
-                if path == skip {
+        fn gather(dir: &std::path::Path, skip: &mut Vec<std::path::PathBuf>, code: &mut String) {
+            let mut entries: Vec<_> = std::fs::read_dir(dir)
+                .expect("read src")
+                .map(|e| e.expect("dir entry").path())
+                .collect();
+            // Files before directories, so a parent's `#[cfg(test)] mod x;`
+            // is seen before x's own file or folder.
+            entries.sort_by_key(|p| (p.is_dir(), p.clone()));
+            for path in entries {
+                if skip.iter().any(|s| path.starts_with(s)) {
                     continue;
                 }
                 if path.is_dir() {
                     gather(&path, skip, code);
-                } else if path.extension().is_some_and(|e| e == "rs")
-                    && path.file_name().is_none_or(|n| n != "tests.rs")
-                {
+                } else if path.extension().is_some_and(|e| e == "rs") {
                     let text = std::fs::read_to_string(&path).expect("read source");
-                    code.push_str(&without_test_modules(&text));
+                    let (product, declared) = without_test_modules(&text);
+                    let stem = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or_default();
+                    let home = if matches!(stem, "mod" | "main" | "lib") {
+                        dir.to_path_buf()
+                    } else {
+                        dir.join(stem)
+                    };
+                    for name in declared {
+                        skip.push(home.join(format!("{name}.rs")));
+                        skip.push(home.join(&name));
+                    }
+                    code.push_str(&product);
                 }
             }
         }
@@ -2910,7 +3031,14 @@ mod tests {
             .collect();
         assert!(fields.len() > 400, "the field scan broke: {}", fields.len());
         let mut code = String::new();
-        gather(&src, &src.join("lang"), &mut code);
+        gather(&src, &mut vec![src.join("lang")], &mut code);
+        // A `#[test]` left in means a test module escaped the cut, and its
+        // reads would keep dead strings alive.
+        assert!(
+            !code.contains("#[test]"),
+            "a test module escaped the cut: {}",
+            &code[code.find("#[test]").unwrap_or(0)..][..120.min(code.len())]
+        );
         let read = |name: &str| {
             let needle = format!(".{name}");
             code.match_indices(&needle).any(|(at, _)| {
