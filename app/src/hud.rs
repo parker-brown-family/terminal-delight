@@ -65,6 +65,20 @@ impl AgentState {
         }
     }
 
+    /// Glyphs supported by the chrome font, shared by the counter and pool.
+    pub fn rail_badge(self) -> &'static str {
+        match self {
+            Self::Working => "\u{25b6}",
+            Self::Blocked => "\u{2016}",
+            Self::Error => "\u{2715}",
+            Self::Finished => "\u{2713}",
+            Self::Idle => "\u{25cb}",
+            Self::Resting => "\u{f0594}",
+            Self::Asleep => "\u{f04b2}",
+            Self::Unknown => "?",
+        }
+    }
+
     /// The state's name. English always: it is part of an element id
     /// (`mcps-working` in main.rs) and is what agents read; [`Self::label_in`]
     /// is the same word for a person.

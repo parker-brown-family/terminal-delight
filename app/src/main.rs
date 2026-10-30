@@ -25119,17 +25119,17 @@ impl Workspace {
         // Rest and sleep are Nerd Font glyphs for the same reason: the moon
         // (`U+F0594`) and the zzz (`U+F04B2`) are in the font TD resolves, and
         // the plain `☾` is only in a symbols font the bar may not reach.
-        let cells: [(hud::AgentState, u32, &str); 8] = [
-            (hud::AgentState::Working, tally.working, "\u{25b6}"),
-            (hud::AgentState::Blocked, tally.blocked, "\u{2016}"),
-            (hud::AgentState::Error, tally.errored, "\u{2715}"),
-            (hud::AgentState::Finished, tally.finished, "\u{2713}"),
-            (hud::AgentState::Idle, tally.idle, "\u{25cb}"),
-            (hud::AgentState::Resting, tally.resting, "\u{f0594}"),
-            (hud::AgentState::Asleep, tally.asleep, "\u{f04b2}"),
+        let cells: [(hud::AgentState, u32); 8] = [
+            (hud::AgentState::Working, tally.working),
+            (hud::AgentState::Blocked, tally.blocked),
+            (hud::AgentState::Error, tally.errored),
+            (hud::AgentState::Finished, tally.finished),
+            (hud::AgentState::Idle, tally.idle),
+            (hud::AgentState::Resting, tally.resting),
+            (hud::AgentState::Asleep, tally.asleep),
             // The bar is on screen constantly, which makes it the one place a
             // parser gap must not be invisible.
-            (hud::AgentState::Unknown, tally.unknown, "?"),
+            (hud::AgentState::Unknown, tally.unknown),
         ];
         let acc = th.accent;
         let mut counter = sk
@@ -25186,7 +25186,8 @@ impl Workspace {
                     })
                     .child("\u{f06a9}"),
             );
-        for (state, n, glyph) in cells {
+        for (state, n) in cells {
+            let glyph = state.rail_badge();
             let hot = n > 0;
             let col = if hot {
                 agent_state_glow(th, text.alpha(0.55), state)

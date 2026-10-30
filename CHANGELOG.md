@@ -9,6 +9,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### The Threshing Floor for 0.5.0 Development
 
+- Pane pool cards show each agent's state with the counter's glyph and color.
+  A Go to pane button below the org action closes the Floor and focuses that
+  pane, including sleeping agents and shells.
 - The System Map uses the org view's Actor → CAN → Targets builder. Drag a
   whole org from its frame or header tab, or drag an agent card, into a slot.
   Map cards show the agent name and vitals; cross-org lines appear as one wire
