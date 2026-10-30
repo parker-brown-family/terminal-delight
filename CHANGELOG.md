@@ -72,6 +72,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### The Threshing Floor for 0.5.0 Development
 
+- System Map card content is centered with a small inset at every zoom. Names,
+  models and artifact provenance use more of the card, scaling with its size.
+  Org cards retain their existing layout.
 - System Map cards end with the current artifact title and its human-comment
   state on separate lines. Below 60% zoom, cards keep the model and version plus
   No artifact, No comments, or Human comments; unreadable comment evidence says
