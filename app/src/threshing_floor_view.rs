@@ -22,6 +22,9 @@ const PAD: f32 = 14.;
 
 /// A view over the chart, never a change to its seats or permissions. Bounds
 /// are measured at prepaint; before then the pointer anchor is unavailable.
+const MIN_ZOOM: f32 = 0.2;
+const MAX_ZOOM: f32 = 2.5;
+
 pub(crate) struct FloorViewport {
     zoom: f32,
     offset: Point<Pixels>,
@@ -47,11 +50,27 @@ impl FloorViewport {
         self.drag = None;
     }
 
+    /// Zoom out (never in) until a world of `world` map units fits `bounds`,
+    /// then put the map point `at` in the middle. `scale` is the grade's UI
+    /// scale, the factor between map units and pixels at zoom 1.
+    fn center_on(&mut self, bounds: Bounds<Pixels>, at: (f32, f32), world: (f32, f32), scale: f32) {
+        let fit = (f32::from(bounds.size.width) / (world.0 * scale))
+            .min(f32::from(bounds.size.height) / (world.1 * scale))
+            .clamp(MIN_ZOOM, MAX_ZOOM);
+        self.zoom = self.zoom.min(fit);
+        let s = scale * self.zoom;
+        self.offset = point(
+            bounds.size.width / 2. - px(at.0 * s),
+            bounds.size.height / 2. - px(at.1 * s),
+        );
+    }
+
     fn zoom_at(&mut self, anchor: Point<Pixels>, delta: f32) {
         if !delta.is_finite() {
             return;
         }
-        let next = (self.zoom * 2_f32.powf(delta.clamp(-480., 480.) / 240.)).clamp(0.2, 2.5);
+        let next =
+            (self.zoom * 2_f32.powf(delta.clamp(-480., 480.) / 240.)).clamp(MIN_ZOOM, MAX_ZOOM);
         self.offset = anchor - (anchor - self.offset) * (next / self.zoom);
         self.zoom = next;
     }
@@ -1809,21 +1828,20 @@ impl Workspace {
         let map_drag_scale = th.grade.scale.clamp(0.7, 1.6) * self.floor_view.zoom;
         let view_bounds = self.floor_view.bounds.clone();
         let nav_layout = self.floor_map_layout(&map_keys);
-        let nav_org = self.floor_org.and_then(|id| {
+        let world_w = nav_layout.iter().map(|o| o.x + o.w).fold(0., f32::max) + PAD;
+        let world_h = nav_layout.iter().map(|o| o.y + o.h).fold(0., f32::max) + PAD;
+        let middle_of = |id: threshing_floor::OrgId| {
             let o = nav_layout.iter().find(|o| o.org == id)?;
-            let world_w = nav_layout.iter().map(|o| o.x + o.w).fold(0., f32::max) + PAD;
-            let world_h = nav_layout.iter().map(|o| o.y + o.h).fold(0., f32::max) + PAD;
-            Some((id, o.x + o.w / 2., o.y + o.h / 2., world_w, world_h))
-        });
-        let pending_nav = self.floor_map.as_ref().and_then(|m| {
-            m.pending_center.then(|| {
-                let id = m.came_from?;
-                let o = nav_layout.iter().find(|o| o.org == id)?;
-                let world_w = nav_layout.iter().map(|o| o.x + o.w).fold(0., f32::max) + PAD;
-                let world_h = nav_layout.iter().map(|o| o.y + o.h).fold(0., f32::max) + PAD;
-                Some((o.x + o.w / 2., o.y + o.h / 2., world_w, world_h))
-            })?
-        });
+            Some((o.x + o.w / 2., o.y + o.h / 2., world_w, world_h))
+        };
+        let nav_org = self
+            .floor_org
+            .and_then(|id| middle_of(id).map(|(ox, oy, w, h)| (id, ox, oy, w, h)));
+        let pending_nav = self
+            .floor_map
+            .as_ref()
+            .and_then(|m| m.pending_center.then_some(m.came_from?))
+            .and_then(middle_of);
         let nav_scale = ui_scale;
         let weak_ws = cx.entity().downgrade();
         let chart_tile = div()
@@ -2008,18 +2026,11 @@ impl Workspace {
                                             {
                                                 return;
                                             }
-                                            let fit = (f32::from(bounds.size.width)
-                                                / (world_w * nav_scale))
-                                                .min(
-                                                    f32::from(bounds.size.height)
-                                                        / (world_h * nav_scale),
-                                                )
-                                                .clamp(0.2, 2.5);
-                                            ws.floor_view.zoom = ws.floor_view.zoom.min(fit);
-                                            let s = nav_scale * ws.floor_view.zoom;
-                                            ws.floor_view.offset = point(
-                                                bounds.size.width / 2. - px(ox * s),
-                                                bounds.size.height / 2. - px(oy * s),
+                                            ws.floor_view.center_on(
+                                                bounds,
+                                                (ox, oy),
+                                                (world_w, world_h),
+                                                nav_scale,
                                             );
                                             if let Some(map) = ws.floor_map.as_mut() {
                                                 map.pending_center = false;
@@ -2263,14 +2274,11 @@ impl Workspace {
                             return;
                         };
                         if let Some(bounds) = ws.floor_view.bounds.get() {
-                            let fit = (f32::from(bounds.size.width) / (world_w * nav_scale))
-                                .min(f32::from(bounds.size.height) / (world_h * nav_scale))
-                                .clamp(0.2, 2.5);
-                            ws.floor_view.zoom = ws.floor_view.zoom.min(fit);
-                            let s = nav_scale * ws.floor_view.zoom;
-                            ws.floor_view.offset = point(
-                                bounds.size.width / 2. - px(ox * s),
-                                bounds.size.height / 2. - px(oy * s),
+                            ws.floor_view.center_on(
+                                bounds,
+                                (ox, oy),
+                                (world_w, world_h),
+                                nav_scale,
                             );
                         } else {
                             ws.floor_view.offset = point(px(0.), px(0.));
@@ -3264,6 +3272,7 @@ impl Workspace {
                 .when(unlined > 0, |d| {
                     d.child(
                         div()
+                            .debug_selector(|| "floor-settings-dot".to_string())
                             .size(px(6.))
                             .rounded(sk.radius_pill())
                             .bg(th.ansi[1])
@@ -8687,6 +8696,47 @@ mod tests {
         assert!(
             cx.debug_bounds("floor-connect").is_none(),
             "Connect is gone; a relationship starts from a card"
+        );
+    }
+
+    #[gpui::test]
+    fn an_unlined_answer_marks_the_cog_while_the_tray_is_closed(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let numbers = |unlined| crate::askrecord::Numbers {
+            unlined_answered: unlined,
+            cheap_answers: 0,
+            copy_answers: 0,
+            copy_tokens: None,
+        };
+        ws.update(cx, |ws, cx| {
+            ws.ask_numbers = Some(numbers(0));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("floor-settings-dot").is_none(),
+            "no unlined answer, no dot"
+        );
+        // An agent that answered with no line drawn is the one number that must
+        // reach a person unasked, so it shows on the closed cog, not only in
+        // the tray behind it.
+        ws.update(cx, |ws, cx| {
+            ws.ask_numbers = Some(numbers(1));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(
+            ws.read_with(cx, |ws, _| !ws.floor_settings),
+            "the tray is closed"
+        );
+        let dot = bounds(cx, "floor-settings-dot");
+        let cog = bounds(cx, "floor-settings");
+        assert!(
+            cog.contains(&dot.center()),
+            "the dot sits on the cog: {dot:?} {cog:?}"
         );
     }
 

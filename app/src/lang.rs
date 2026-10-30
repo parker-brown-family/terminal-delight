@@ -2831,6 +2831,55 @@ pub const HI: Strings = Strings {
 mod tests {
     use super::*;
 
+    /// A string nothing reads is a translation nobody sees, kept up in nine
+    /// languages for no one. Fifteen had piled up by 2026-10-30, most left
+    /// behind when the War Room's cards and header were redrawn. A name counts
+    /// as read when `.name` appears outside the language pack with no further
+    /// identifier character after it, so `floor_search` is not kept alive by
+    /// `floor_search_short`.
+    #[test]
+    fn every_chrome_string_is_read_outside_the_language_pack() {
+        fn gather(dir: &std::path::Path, skip: &std::path::Path, code: &mut String) {
+            for entry in std::fs::read_dir(dir).expect("read src") {
+                let path = entry.expect("dir entry").path();
+                if path == skip {
+                    continue;
+                }
+                if path.is_dir() {
+                    gather(&path, skip, code);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    code.push_str(&std::fs::read_to_string(&path).expect("read source"));
+                }
+            }
+        }
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let pack = std::fs::read_to_string(src.join("lang").join("chrome.rs")).expect("chrome.rs");
+        let fields: Vec<&str> = pack
+            .lines()
+            .filter_map(|line| {
+                let (name, ty) = line.trim().strip_prefix("pub ")?.split_once(':')?;
+                ty.trim().starts_with("&'static str").then_some(name)
+            })
+            .collect();
+        assert!(fields.len() > 400, "the field scan broke: {}", fields.len());
+        let mut code = String::new();
+        gather(&src, &src.join("lang"), &mut code);
+        let read = |name: &str| {
+            let needle = format!(".{name}");
+            code.match_indices(&needle).any(|(at, _)| {
+                code[at + needle.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+            })
+        };
+        let unread: Vec<&str> = fields.into_iter().filter(|f| !read(f)).collect();
+        assert!(
+            unread.is_empty(),
+            "strings nothing reads; delete each from Chrome and all nine languages: {unread:?}"
+        );
+    }
+
     #[test]
     fn every_language_resolves_with_search_keys() {
         // each language has a non-empty autonym, English name, and code, and
