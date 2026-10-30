@@ -595,20 +595,7 @@ impl Ctx<'_> {
                 let manifest = dir.join(ASSET_MANIFEST);
                 // Trusted only as a regular file this account owns and nobody
                 // else can write: in a shared /tmp another user could plant one.
-                let recorded: Vec<(String, String)> = std::fs::symlink_metadata(&manifest)
-                    .ok()
-                    .filter(|m| {
-                        use std::os::unix::fs::MetadataExt;
-                        m.is_file() && m.uid() == unsafe { libc::getuid() } && m.mode() & 0o022 == 0
-                    })
-                    .and_then(|_| std::fs::read_to_string(&manifest).ok())
-                    .map(|t| {
-                        t.lines()
-                            .filter_map(|l| l.split_once('\t'))
-                            .map(|(h, n)| (h.to_string(), n.to_string()))
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let recorded = read_receipt(&manifest);
                 let uid = unsafe { libc::getuid() };
                 let (mut n, mut unproven, mut failed) = (0, 0, Vec::new());
                 for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
@@ -917,6 +904,32 @@ pub(crate) fn is_td_exe(exe: &Path, exes: &[PathBuf], builds: &Path) -> bool {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.starts_with("td-")))
+}
+
+/// TD's loose-file receipt, opened once without following a link or blocking,
+/// judged on that very descriptor (a regular file this account owns that no
+/// one else can write) and read from it, so the file judged is the file read.
+fn read_receipt(path: &Path) -> Vec<(String, String)> {
+    use std::io::Read;
+    use std::os::unix::fs::MetadataExt;
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    else {
+        return Vec::new();
+    };
+    let trusted = f.metadata().is_ok_and(|m| {
+        m.is_file() && m.uid() == unsafe { libc::getuid() } && m.mode() & 0o022 == 0
+    });
+    let mut text = String::new();
+    if !trusted || f.read_to_string(&mut text).is_err() {
+        return Vec::new();
+    }
+    text.lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(h, n)| (h.to_string(), n.to_string()))
+        .collect()
 }
 
 /// `td-demo-<pid>-<nanos>.toml`, the layout a demo window is started from.

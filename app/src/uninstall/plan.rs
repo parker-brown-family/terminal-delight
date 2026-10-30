@@ -389,15 +389,27 @@ pub(crate) fn plan(i: &Inputs) -> Plan {
     }
 
     // MCP registrations, through each client's own CLI.
-    let appimage = proven_appimage(&get);
-    let mut td_exes = td_executables(r, appimage.as_ref().map(|a| a.0.as_path()));
+    let payload = appimage_payload(&get);
+    let mut td_exes = td_executables(r, None);
     // The program inside a mounted AppImage is what its processes run.
-    if let Some((_, payload)) = &appimage {
-        td_exes.push(payload.clone());
+    if let Some(p) = &payload {
+        td_exes.push(p.clone());
         td_exes.sort();
         td_exes.dedup();
     }
-    let appimage = appimage.map(|a| a.0);
+    let appimage = payload.as_ref().and(get("APPIMAGE"));
+    if let Some(image) = &appimage {
+        b.report(
+            "The AppImage TD runs from",
+            Some(image.clone()),
+            "yours",
+            "the removal never deletes it: nothing on disk proves which file was mounted",
+            Some(format!(
+                "once the removal has finished, check it is the file you downloaded, then rm {}",
+                image.display()
+            )),
+        );
+    }
     let (entries, problems) = mcp::discover(r, i.env, &td_exes);
     for e in entries {
         if e.td {
@@ -696,7 +708,7 @@ pub(crate) fn plan(i: &Inputs) -> Plan {
     // Builds, launcher, AppImage: last. They wait on TD having stopped and on
     // the default terminal being put back: removing the program while it is
     // still the terminal Omarchy opens would leave the person with none.
-    builds_and_launcher(&mut b, r, appimage.as_deref(), &last);
+    builds_and_launcher(&mut b, r, &last);
 
     // Receipts of components that are now gone, when records are kept.
     if i.retention == Retention::Keep {
@@ -877,54 +889,25 @@ pub(crate) fn host_dirs(r: &Roots) -> Vec<PathBuf> {
 
 /// The executables a running TD process could have: the launcher's target,
 /// every build, the launcher itself if it is a binary, the AppImage.
-/// The AppImage this TD came from, and the program inside it, only when the
-/// AppImage runtime's own variables agree: `APPIMAGE` names a file with the
-/// AppImage magic, and `APPDIR`, its mount, holds a terminal-delight program.
-/// An `APPIMAGE` inherited from some other AppImage that started TD names
-/// another application and is never taken as TD's.
-fn proven_appimage(get: &dyn Fn(&str) -> Option<PathBuf>) -> Option<(PathBuf, PathBuf)> {
-    use std::io::Read;
-    let image = get("APPIMAGE")?;
+/// The program inside the AppImage this TD runs from, when `APPDIR/usr/bin/
+/// terminal-delight` is byte-identical to the running program (or to the
+/// worker's staged copy of it). That program is stopped like any other TD.
+/// The image file itself is never removed: nothing short of a receipt can
+/// prove which file on disk was mounted, so it is named for the person to
+/// delete, as the install page already asks them to.
+fn appimage_payload(get: &dyn Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
     let payload = get("APPDIR")?.join("usr/bin/terminal-delight");
-    let mut head = [0u8; 11];
-    let magic = std::fs::File::open(&image)
-        .and_then(|mut f| f.read_exact(&mut head))
-        .is_ok()
-        && head[..4] == *b"\x7fELF"
-        && head[8..11] == *b"AI\x02";
-    if !(magic && is_elf(&payload)) {
+    if !is_elf(&payload) {
         return None;
     }
-    // The payload has to be this very program: the running TD itself, or the
-    // worker's staged copy of it, byte for byte. An APPDIR and an APPIMAGE
-    // that merely both exist prove nothing about each other or about TD.
     let me = std::env::current_exe().ok()?;
     let payload = std::fs::canonicalize(&payload).unwrap_or(payload);
-    // And the image has to be the one mounted at APPDIR: the AppImage runtime
-    // names its FUSE filesystem after the image it serves.
-    let image_name = image.file_name()?.to_string_lossy().into_owned();
-    let appdir = payload.parent()?.parent()?.parent()?.to_path_buf();
-    let mounted = std::fs::read_to_string("/proc/self/mountinfo").is_ok_and(|info| {
-        info.lines().any(|l| {
-            let mut halves = l.splitn(2, " - ");
-            let (pre, post) = (halves.next().unwrap_or(""), halves.next().unwrap_or(""));
-            let point = pre.split(' ').nth(4).map(PathBuf::from);
-            let mut fields = post.split(' ');
-            let (fstype, source) = (fields.next().unwrap_or(""), fields.next().unwrap_or(""));
-            point.as_deref() == Some(appdir.as_path())
-                && fstype.starts_with("fuse")
-                && (fstype.contains(&image_name) || source.contains(&image_name))
-        })
-    });
-    if !mounted {
-        return None;
-    }
     let same = std::fs::canonicalize(&me).ok().as_deref() == Some(payload.as_path())
         || matches!(
             (known::sha256_file(&me), known::sha256_file(&payload)),
             (Ok(a), Ok(b)) if a == b
         );
-    same.then_some((image, payload))
+    same.then_some(payload)
 }
 
 /// Why a plan for these roots must not run: two of TD's directories are one
@@ -1221,7 +1204,7 @@ fn png_file(p: &Path) -> bool {
         && head == *b"\x89PNG\r\n\x1a\n"
 }
 
-fn builds_and_launcher(b: &mut Builder, r: &Roots, appimage: Option<&Path>, after: &[usize]) {
+fn builds_and_launcher(b: &mut Builder, r: &Roots, after: &[usize]) {
     let mut gone = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&r.builds) {
         let mut entries: Vec<_> = rd.flatten().collect();
@@ -1265,7 +1248,7 @@ fn builds_and_launcher(b: &mut Builder, r: &Roots, appimage: Option<&Path>, afte
             } else {
                 r.bin.join(&t)
             };
-            if abs.starts_with(&r.builds) || Some(abs.as_path()) == appimage {
+            if abs.starts_with(&r.builds) {
                 b.step(
                     Op::RemoveLink {
                         path: launcher.clone(),
@@ -1290,18 +1273,6 @@ fn builds_and_launcher(b: &mut Builder, r: &Roots, appimage: Option<&Path>, afte
                     sha256: None,
                 },
                 "the terminal-delight program",
-                after.to_vec(),
-            );
-        }
-    }
-    if let Some(a) = appimage {
-        if a != launcher && is_elf(a) {
-            b.step(
-                Op::RemoveFile {
-                    path: a.to_path_buf(),
-                    sha256: None,
-                },
-                "the AppImage you downloaded",
                 after.to_vec(),
             );
         }

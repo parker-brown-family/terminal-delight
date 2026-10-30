@@ -47,9 +47,11 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   while TD is still a default terminal; takes TD's entries, and nothing else,
   out of Claude Code's settings, the key sheet out of `bindings.lua`, and TD's
   MCP registration out of Claude Code, Codex and Gemini through their own CLIs;
-  removes owned helpers, desktop files, runtime files, caches, builds, the
-  launcher and the AppImage. It writes a receipt of what it removed, what failed
-  and what it left for the person, with a copy of every shared file it edited.
+  removes owned helpers, desktop files, the runtime files TD recorded writing,
+  caches, builds and the launcher, and names the AppImage for the person to
+  delete, since nothing on disk proves which file was mounted. It writes a
+  receipt of what it removed, what failed and what it left for the person, with
+  a copy of every shared file it edited.
 - A protection marker naming this machine's id makes removal refuse in the
   worker, the panel and the agent handoff alike; `terminal-delight admin protect`
   writes one and deleting it lifts it. The same tools run headless as
