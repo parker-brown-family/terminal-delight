@@ -9,6 +9,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### The Threshing Floor for 0.5.0 Development
 
+- Mouse Back opens the System Map from an org and mouse Forward returns. Orgs
+  can be dragged into a saved arrangement, with Arrange restoring automatic
+  packing. Cross-org arrows follow their endpoints as orgs move.
 - The shared agent launch briefing opens with loose cues for choosing between
   an existing TD teammate, a native subagent where allowed, and doing the work
   directly. Agents can weigh useful context and independent work against the

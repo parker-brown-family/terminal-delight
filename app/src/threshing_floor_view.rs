@@ -10,7 +10,7 @@
 
 use super::*;
 use crate::surfacefeed::now_ms;
-use gpui::{anchored, deferred, PathBuilder};
+use gpui::{anchored, deferred, NavigationDirection, PathBuilder};
 
 /// A seat's box at scale 1: place, title, latest message, program and model,
 /// state and role, age and tokens, and the newest artifact.
@@ -358,6 +358,83 @@ pub(crate) struct SystemMap {
     /// The drawer listing every cross-org and whole-org line, with Remove.
     /// Closed by default: the canvas draws them, the drawer edits them.
     rels_open: bool,
+    from_org: Option<threshing_floor::OrgId>,
+    came_from: Option<threshing_floor::OrgId>,
+    pending_center: bool,
+    drag: Option<MapOrgDrag>,
+    suppress_click: bool,
+}
+
+struct MapOrg {
+    org: threshing_floor::OrgId,
+    w: f32,
+    h: f32,
+    x: f32,
+    y: f32,
+    placed: Vec<threshing_floor::Placed>,
+}
+
+struct MapOrgDrag {
+    org: threshing_floor::OrgId,
+    start: Point<Pixels>,
+    origin: (f32, f32),
+    at: [i32; 2],
+    active: bool,
+    /// The arrangement at press time. Pinning is deferred until drop so Escape
+    /// leaves the saved state untouched.
+    rects: Vec<(threshing_floor::OrgId, f32, f32, f32, f32)>,
+}
+
+fn map_grid(value: f32) -> i32 {
+    ((value / 20.).round() * 20.).clamp(0., i32::MAX as f32) as i32
+}
+
+fn map_drop_position(
+    at: [i32; 2],
+    moving: threshing_floor::OrgId,
+    rects: &[(threshing_floor::OrgId, f32, f32, f32, f32)],
+) -> [i32; 2] {
+    let Some((_, _, _, w, h)) = rects.iter().find(|r| r.0 == moving).copied() else {
+        return at;
+    };
+    let mut x = at[0].max(0) as f32;
+    let mut y = at[1].max(0) as f32;
+    for _ in 0..128 {
+        let Some((_, ox, oy, ow, oh)) = rects.iter().find(|(id, ox, oy, ow, oh)| {
+            *id != moving
+                && x < ox + ow + 24.
+                && x + w + 24. > *ox
+                && y < oy + oh + 24.
+                && y + h + 24. > *oy
+        }) else {
+            return [x as i32, y as i32];
+        };
+        let mut choices = vec![
+            (((ox + ow + 24.) / 20.).ceil() * 20., y),
+            (x, ((oy + oh + 24.) / 20.).ceil() * 20.),
+        ];
+        let left = ((ox - w - 24.) / 20.).floor() * 20.;
+        let above = ((oy - h - 24.) / 20.).floor() * 20.;
+        if left >= 0. {
+            choices.push((left, y));
+        }
+        if above >= 0. {
+            choices.push((x, above));
+        }
+        let (next_x, next_y) = choices
+            .into_iter()
+            .min_by(|a, b| {
+                ((a.0 - x).abs() + (a.1 - y).abs()).total_cmp(&((b.0 - x).abs() + (b.1 - y).abs()))
+            })
+            .unwrap();
+        x = next_x;
+        y = next_y;
+    }
+    // A crowded or malformed saved map cannot trap the drag forever.
+    [
+        x as i32,
+        map_grid(rects.iter().map(|r| r.2 + r.4 + 70.).fold(y, f32::max)),
+    ]
 }
 
 /// What a pane card dropped onto a *different* org can become. Dropping used to
@@ -490,6 +567,8 @@ impl Workspace {
         let mut total = 0;
         let map_open = self.floor_map.is_some();
         let mut map_facts: Vec<PaneFacts> = Vec::new();
+        let mut map_keys: std::collections::HashMap<threshing_floor::SeatId, (String, String)> =
+            std::collections::HashMap::new();
         for (ti, tab) in self.tabs.iter().enumerate() {
             let project = self
                 .place_of(ti)
@@ -515,9 +594,13 @@ impl Workspace {
                 }
                 let matches = pane_search_score(&project, &name, &query).is_some();
                 // The System Map draws every seated pane, whatever is typed.
-                let mapped = map_open
-                    && v.seat
-                        .is_some_and(|seat| self.floor_orgs.has_membership(seat));
+                let on_map = v.seat.filter(|seat| self.floor_orgs.has_membership(*seat));
+                if let Some(seat) = on_map {
+                    map_keys
+                        .entry(seat)
+                        .or_insert_with(|| (project.clone(), name.full()));
+                }
+                let mapped = map_open && on_map.is_some();
                 if !charted && !matches && !mapped {
                     continue;
                 }
@@ -1686,6 +1769,25 @@ impl Workspace {
             .child(self.threshing_floor_org_controls(&sk, th, switches, cx));
         let drop_chart_ink = th.accent;
         let view_bounds = self.floor_view.bounds.clone();
+        let nav_layout = self.floor_map_layout(&map_keys);
+        let nav_org = self.floor_org.and_then(|id| {
+            let o = nav_layout.iter().find(|o| o.org == id)?;
+            let world_w = nav_layout.iter().map(|o| o.x + o.w).fold(0., f32::max) + PAD;
+            let world_h = nav_layout.iter().map(|o| o.y + o.h).fold(0., f32::max) + PAD;
+            Some((id, o.x + o.w / 2., o.y + o.h / 2., world_w, world_h))
+        });
+        let pending_nav = self.floor_map.as_ref().and_then(|m| {
+            m.pending_center.then(|| {
+                let id = m.came_from?;
+                let o = nav_layout.iter().find(|o| o.org == id)?;
+                let world_w = nav_layout.iter().map(|o| o.x + o.w).fold(0., f32::max) + PAD;
+                let world_h = nav_layout.iter().map(|o| o.y + o.h).fold(0., f32::max) + PAD;
+                Some((o.x + o.w / 2., o.y + o.h / 2., world_w, world_h))
+            })?
+        });
+        let nav_scale = ui_scale;
+        let drag_scale = ui_scale;
+        let weak_ws = cx.entity().downgrade();
         let chart_tile = div()
             .id("floor-org-tile")
             .debug_selector(|| "floor-org-tile".to_string())
@@ -1735,7 +1837,23 @@ impl Workspace {
                         .gap_2()
                         .child(SharedString::from(format!("\u{25c7} {}", ui.floor_map)))
                         .child(div().flex_1())
-                        .child(self.threshing_floor_view_controls(&sk, cx)),
+                        .child(self.threshing_floor_view_controls(&sk, cx))
+                        .child(with_tip(
+                            Self::bezel_btn(&sk, ui.floor_map_arrange, false)
+                                .id("floor-map-arrange")
+                                .debug_selector(|| "floor-map-arrange".to_string())
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(cx.listener(|ws, _, _, cx| {
+                                    cx.stop_propagation();
+                                    ws.floor_orgs.clear_map_at();
+                                    if let Some(map) = ws.floor_map.as_mut() {
+                                        map.came_from = None;
+                                    }
+                                    ws.save(cx);
+                                    cx.notify();
+                                })),
+                            vec![ui.floor_tip_arrange.to_string()],
+                        )),
                 )
             })
             .child(
@@ -1777,6 +1895,9 @@ impl Workspace {
                                 return;
                             }
                             cx.stop_propagation();
+                            if let Some(map) = ws.floor_map.as_mut() {
+                                map.came_from = None;
+                            }
                             ws.floor_view.drag = Some((ev.position, ws.floor_view.offset));
                             cx.notify();
                         }),
@@ -1815,14 +1936,47 @@ impl Workspace {
                     }))
                     .child(
                         gpui::canvas(
-                            move |bounds, _, _| view_bounds.set(Some(bounds)),
+                            move |bounds, _, app| {
+                                view_bounds.set(Some(bounds));
+                                if let Some((ox, oy, world_w, world_h)) = pending_nav {
+                                    let weak_ws = weak_ws.clone();
+                                    app.defer(move |app| {
+                                        let _ = weak_ws.update(app, |ws, cx| {
+                                            if !ws
+                                                .floor_map
+                                                .as_ref()
+                                                .is_some_and(|m| m.pending_center)
+                                            {
+                                                return;
+                                            }
+                                            let fit = (f32::from(bounds.size.width)
+                                                / (world_w * nav_scale))
+                                                .min(
+                                                    f32::from(bounds.size.height)
+                                                        / (world_h * nav_scale),
+                                                )
+                                                .clamp(0.2, 2.5);
+                                            ws.floor_view.zoom = ws.floor_view.zoom.min(fit);
+                                            let s = nav_scale * ws.floor_view.zoom;
+                                            ws.floor_view.offset = point(
+                                                bounds.size.width / 2. - px(ox * s),
+                                                bounds.size.height / 2. - px(oy * s),
+                                            );
+                                            if let Some(map) = ws.floor_map.as_mut() {
+                                                map.pending_center = false;
+                                            }
+                                            cx.notify();
+                                        });
+                                    });
+                                }
+                            },
                             |_, _, _, _| {},
                         )
                         .absolute()
                         .inset_0(),
                     )
                     .child(if map_open {
-                        self.floor_map_canvas(&map_facts, &sk, th, cx)
+                        self.floor_map_canvas(&map_facts, &map_keys, &sk, th, cx)
                             .into_any_element()
                     } else {
                         chart.into_any_element()
@@ -2006,13 +2160,28 @@ impl Workspace {
                     cx.set_active_drag_cursor_style(gpui::CursorStyle::ClosedHand, window);
                 })
                 .capture_any_mouse_up(cx.listener(|ws, _, _, cx| {
+                    let moved_org = ws.floor_map_end_drag(cx);
                     let panning = ws.floor_view.drag.take().is_some();
-                    if ws.floor_drag.take().is_some() || ws.floor_tether.is_some() || panning {
+                    if ws.floor_drag.take().is_some()
+                        || ws.floor_tether.is_some()
+                        || panning
+                        || moved_org
+                    {
                         ws.floor_tether = None;
                         cx.notify();
                     }
                 }))
-                .on_mouse_move(cx.listener(|ws, ev: &MouseMoveEvent, _, cx| {
+                .on_mouse_move(cx.listener(move |ws, ev: &MouseMoveEvent, _, cx| {
+                    if ws.floor_map.as_ref().is_some_and(|m| m.drag.is_some()) {
+                        if ev.pressed_button == Some(MouseButton::Left) {
+                            let s = drag_scale * ws.floor_view.zoom;
+                            ws.floor_map_move_drag(ev.position, s, cx);
+                        } else if let Some(map) = ws.floor_map.as_mut() {
+                            map.drag = None;
+                        }
+                        cx.stop_propagation();
+                        return;
+                    }
                     if let Some((start, offset)) = ws.floor_view.drag {
                         if ev.pressed_button == Some(MouseButton::Left) {
                             ws.floor_view.offset = offset + ev.position - start;
@@ -2029,6 +2198,59 @@ impl Workspace {
                         cx.stop_propagation();
                         ws.floor_context = None;
                         cx.notify();
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Navigate(NavigationDirection::Back),
+                    cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        if ws.floor_map.is_some() || ws.floor_view.drag.is_some() {
+                            return;
+                        }
+                        let Some((org, ox, oy, world_w, world_h)) = nav_org else {
+                            return;
+                        };
+                        if let Some(bounds) = ws.floor_view.bounds.get() {
+                            let fit = (f32::from(bounds.size.width) / (world_w * nav_scale))
+                                .min(f32::from(bounds.size.height) / (world_h * nav_scale))
+                                .clamp(0.2, 2.5);
+                            ws.floor_view.zoom = ws.floor_view.zoom.min(fit);
+                            let s = nav_scale * ws.floor_view.zoom;
+                            ws.floor_view.offset = point(
+                                bounds.size.width / 2. - px(ox * s),
+                                bounds.size.height / 2. - px(oy * s),
+                            );
+                        } else {
+                            ws.floor_view.offset = point(px(0.), px(0.));
+                        }
+                        ws.floor_map = Some(SystemMap {
+                            from_org: Some(org),
+                            came_from: Some(org),
+                            pending_center: true,
+                            ..Default::default()
+                        });
+                        cx.notify();
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Navigate(NavigationDirection::Forward),
+                    cx.listener(|ws, _, _, cx| {
+                        cx.stop_propagation();
+                        if ws.floor_view.drag.is_some() {
+                            return;
+                        }
+                        let Some(org) = ws
+                            .floor_map
+                            .as_ref()
+                            .and_then(|m| m.drag.is_none().then_some(m.from_org).flatten())
+                        else {
+                            return;
+                        };
+                        if ws.floor_orgs.get(org).is_some() {
+                            ws.floor_map = None;
+                            ws.floor_view.reset();
+                            ws.threshing_floor_set_org(org, cx);
+                        }
                     }),
                 )
                 .on_mouse_down(
@@ -2287,6 +2509,14 @@ impl Workspace {
             return false;
         }
         if key.key == "escape" {
+            if self
+                .floor_map
+                .as_mut()
+                .is_some_and(|m| m.drag.take().is_some())
+            {
+                cx.notify();
+                return true;
+            }
             if self.floor_view.drag.take().is_some() {
                 cx.notify();
                 return true;
@@ -4702,6 +4932,147 @@ impl Workspace {
             .child(drawer)
     }
 
+    fn floor_map_move_drag(
+        &mut self,
+        pointer: Point<Pixels>,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(drag) = self.floor_map.as_mut().and_then(|m| m.drag.as_mut()) else {
+            return false;
+        };
+        let delta = pointer - drag.start;
+        if !drag.active && f32::from(delta.x).powi(2) + f32::from(delta.y).powi(2) <= 16. {
+            return true;
+        }
+        drag.active = true;
+        drag.at = [
+            map_grid(drag.origin.0 + f32::from(delta.x) / s),
+            map_grid(drag.origin.1 + f32::from(delta.y) / s),
+        ];
+        cx.notify();
+        true
+    }
+
+    fn floor_map_end_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(drag) = self.floor_map.as_mut().and_then(|m| m.drag.take()) else {
+            return false;
+        };
+        if !drag.active {
+            return false;
+        }
+        let at = map_drop_position(drag.at, drag.org, &drag.rects);
+        for (id, x, y, _, _) in &drag.rects {
+            if self.floor_orgs.get(*id).is_some_and(|o| o.map_at.is_none()) {
+                self.floor_orgs
+                    .set_map_at(*id, Some([x.round() as i32, y.round() as i32]));
+            }
+        }
+        self.floor_orgs.set_map_at(drag.org, Some(at));
+        if let Some(map) = self.floor_map.as_mut() {
+            map.suppress_click = true;
+        }
+        self.save(cx);
+        cx.notify();
+        true
+    }
+
+    /// Layout uses map units, independent of the current zoom and UI grade.
+    /// With no saved positions this is the original largest-first wrapping pack.
+    fn floor_map_layout(
+        &self,
+        by_seat: &std::collections::HashMap<threshing_floor::SeatId, (String, String)>,
+    ) -> Vec<MapOrg> {
+        let mut orgs: Vec<MapOrg> = self
+            .floor_orgs
+            .saved()
+            .iter()
+            .map(|o| {
+                let keys: Vec<_> = o
+                    .seats
+                    .iter()
+                    .map(|seat| match by_seat.get(seat) {
+                        Some((project, name)) => (*seat, project.clone(), name.clone()),
+                        None => (
+                            *seat,
+                            String::new(),
+                            self.lang.strings().ui.floor_unavailable.to_string(),
+                        ),
+                    })
+                    .collect();
+                let placed = threshing_floor::layout(&keys, &self.chart);
+                let cols = placed.iter().map(|p| p.col + 1.).fold(0., f32::max);
+                let rows = placed.iter().map(|p| p.row + 1).max().unwrap_or(0) as f32;
+                let w = (PAD * 2. + cols * (SEAT_W + COL_GAP) - COL_GAP).max(SEAT_W + PAD * 2.);
+                let top = PAD + 18.;
+                let h =
+                    (top + rows * (SEAT_H + ROW_GAP) - ROW_GAP + PAD).max(top + SEAT_H * 0.5 + PAD);
+                MapOrg {
+                    org: o.id,
+                    w,
+                    h,
+                    x: o.map_at.map_or(0., |at| at[0] as f32),
+                    y: o.map_at.map_or(0., |at| at[1] as f32),
+                    placed,
+                }
+            })
+            .collect();
+        orgs.sort_by(|a, b| {
+            b.placed
+                .len()
+                .cmp(&a.placed.len())
+                .then(a.org.0.cmp(&b.org.0))
+        });
+        let placed_bottom = orgs
+            .iter()
+            .filter(|o| {
+                self.floor_orgs
+                    .get(o.org)
+                    .is_some_and(|saved| saved.map_at.is_some())
+            })
+            .map(|o| o.y + o.h)
+            .reduce(f32::max);
+        let unpacked: Vec<_> = orgs
+            .iter()
+            .filter(|o| {
+                self.floor_orgs
+                    .get(o.org)
+                    .is_some_and(|saved| saved.map_at.is_none())
+            })
+            .collect();
+        let area: f32 = unpacked.iter().map(|o| (o.w + 70.) * (o.h + 70.)).sum();
+        let widest = unpacked.iter().map(|o| o.w).fold(0., f32::max);
+        let wrap = widest.max(area.sqrt() * 1.6);
+        let (mut x, mut y, mut row_h) = (PAD, placed_bottom.map_or(PAD, |b| b + 70.), 0_f32);
+        for o in &mut orgs {
+            if self
+                .floor_orgs
+                .get(o.org)
+                .is_some_and(|saved| saved.map_at.is_some())
+            {
+                continue;
+            }
+            if x > PAD && x + o.w > wrap + PAD {
+                x = PAD;
+                y += row_h + 70.;
+                row_h = 0.;
+            }
+            o.x = x;
+            o.y = y;
+            x += o.w + 70.;
+            row_h = row_h.max(o.h);
+        }
+        if let Some(drag) = self.floor_map.as_ref().and_then(|m| m.drag.as_ref()) {
+            if drag.active {
+                if let Some(o) = orgs.iter_mut().find(|o| o.org == drag.org) {
+                    o.x = drag.at[0] as f32;
+                    o.y = drag.at[1] as f32;
+                }
+            }
+        }
+        orgs
+    }
+
     /// The System Map, drawn the way the org chart is: on the same pan and zoom,
     /// every org a bordered region holding its seats in the chart's own tidy
     /// tree, with the lines between orgs routed card to card and border to
@@ -4712,6 +5083,7 @@ impl Workspace {
     fn floor_map_canvas(
         &self,
         facts: &[PaneFacts],
+        map_keys: &std::collections::HashMap<threshing_floor::SeatId, (String, String)>,
         sk: &skin::Skin,
         th: &theme::Theme,
         cx: &mut Context<Self>,
@@ -4723,7 +5095,6 @@ impl Workspace {
         let s = ui_scale * zoom;
         let (sw, sh, cg, rg, pad) = (SEAT_W * s, SEAT_H * s, COL_GAP * s, ROW_GAP * s, PAD * s);
         let top = pad + 18. * s;
-        let gap = 70. * s;
         let rung_word = |r: threshing_floor::Rung| match r {
             threshing_floor::Rung::See => ui.floor_rung_see,
             threshing_floor::Rung::Read => ui.floor_rung_read,
@@ -4736,66 +5107,26 @@ impl Workspace {
             .collect();
         let fact_of = |seat: threshing_floor::SeatId| by_seat.get(&seat).copied();
 
-        // ---- every org laid out as the chart lays one out ----
-        struct MapOrg {
-            org: threshing_floor::OrgId,
-            w: f32,
-            h: f32,
-            x: f32,
-            y: f32,
-            placed: Vec<threshing_floor::Placed>,
-        }
-        let mut orgs: Vec<MapOrg> = self
-            .floor_orgs
-            .saved()
-            .iter()
-            .map(|o| {
-                let keys: Vec<_> = o
-                    .seats
-                    .iter()
-                    .map(|seat| match fact_of(*seat) {
-                        Some(f) => (*seat, f.project.clone(), f.name.full()),
-                        None => (*seat, String::new(), ui.floor_unavailable.to_string()),
-                    })
-                    .collect();
-                let placed = threshing_floor::layout(&keys, &self.chart);
-                let cols = placed.iter().map(|p| p.col + 1.).fold(0., f32::max);
-                let rows = placed.iter().map(|p| p.row + 1).max().unwrap_or(0) as f32;
-                let w = (pad * 2. + cols * (sw + cg) - cg).max(sw + pad * 2.);
-                let h = (top + rows * (sh + rg) - rg + pad).max(top + sh * 0.5 + pad);
-                MapOrg {
-                    org: o.id,
-                    w,
-                    h,
-                    x: 0.,
-                    y: 0.,
-                    placed,
-                }
-            })
-            .collect();
-        // Largest first, then packed left to right, wrapping at a width that
-        // keeps the whole map roughly as wide as a screen is.
-        orgs.sort_by(|a, b| {
-            b.placed
-                .len()
-                .cmp(&a.placed.len())
-                .then(a.org.0.cmp(&b.org.0))
-        });
-        let area: f32 = orgs.iter().map(|o| (o.w + gap) * (o.h + gap)).sum();
-        let widest = orgs.iter().map(|o| o.w).fold(0., f32::max);
-        let wrap = widest.max(area.sqrt() * 1.6);
-        let (mut x, mut y, mut row_h) = (pad, pad, 0_f32);
+        let mut orgs = self.floor_map_layout(map_keys);
         for o in &mut orgs {
-            if x > pad && x + o.w > wrap + pad {
-                x = pad;
-                y += row_h + gap;
-                row_h = 0.;
-            }
-            o.x = x;
-            o.y = y;
-            x += o.w + gap;
-            row_h = row_h.max(o.h);
+            o.x *= s;
+            o.y *= s;
+            o.w *= s;
+            o.h *= s;
         }
+        let map_rects: Vec<_> = orgs
+            .iter()
+            .map(|o| (o.org, o.x / s, o.y / s, o.w / s, o.h / s))
+            .collect();
+        let active_org = self
+            .floor_map
+            .as_ref()
+            .and_then(|m| m.drag.as_ref())
+            .filter(|d| d.active)
+            .map(|d| d.org);
+        let came_from = self.floor_map.as_ref().and_then(|m| m.came_from);
+        let mut draw_orgs: Vec<_> = orgs.iter().collect();
+        draw_orgs.sort_by_key(|o| Some(o.org) == active_org);
         let world_w = orgs.iter().map(|o| o.x + o.w).fold(0., f32::max) + pad;
         let world_h = orgs.iter().map(|o| o.y + o.h).fold(0., f32::max) + pad;
         // Where each seat landed, and in which org: the first org that lists
@@ -4832,6 +5163,14 @@ impl Workspace {
         // elbow from the nearer sides of the two boxes ----
         let mut paths: Vec<WireStroke> = Vec::new();
         let mut chips: Vec<((f32, f32), String)> = Vec::new();
+        let mut fan_counts: std::collections::HashMap<(u64, u64), usize> =
+            std::collections::HashMap::new();
+        let mut next_fan = |a: threshing_floor::OrgId, b: threshing_floor::OrgId| {
+            let count = fan_counts.entry((a.0.min(b.0), a.0.max(b.0))).or_default();
+            let fan = *count as f32 * 8. * s;
+            *count += 1;
+            fan
+        };
         for l in self.chart.saved() {
             let (Some(a), Some(b)) = (seat_at(l.from), seat_at(l.to)) else {
                 continue;
@@ -4840,10 +5179,15 @@ impl Workspace {
                 let (pts, _) = wire_route(a, b, sw, sh, cg, rg);
                 paths.push((pts, l.is_bypass(), false));
             } else {
-                let pts = elbow((a.0, a.1, sw, sh), (b.0, b.1, sw, sh));
+                let fan = next_fan(org_of_seat(l.from).unwrap(), org_of_seat(l.to).unwrap());
+                let pts = if fan == 0. {
+                    elbow((a.0, a.1, sw, sh), (b.0, b.1, sw, sh))
+                } else {
+                    elbow_fanned((a.0, a.1, sw, sh), (b.0, b.1, sw, sh), fan)
+                };
                 let word = l.rung.known().map_or(ui.floor_unknown, rung_word);
                 chips.push((
-                    pts[pts.len() / 2],
+                    wire_label_at(&pts),
                     lang::fill(ui.floor_rel_wire, &[("rung", word)]),
                 ));
                 paths.push((pts, l.is_bypass(), false));
@@ -4853,10 +5197,19 @@ impl Workspace {
             let (Some(a), Some(b)) = (rect_of(l.from), rect_of(l.to)) else {
                 continue;
             };
-            let pts = elbow(a, b);
+            let org_of_end = |end: End| end.org().or_else(|| end.seat().and_then(org_of_seat));
+            let (Some(from_org), Some(to_org)) = (org_of_end(l.from), org_of_end(l.to)) else {
+                continue;
+            };
+            let fan = next_fan(from_org, to_org);
+            let pts = if fan == 0. {
+                elbow(a, b)
+            } else {
+                elbow_fanned(a, b, fan)
+            };
             let word = l.rung.known().map_or(ui.floor_unknown, rung_word);
             chips.push((
-                pts[pts.len() / 2],
+                wire_label_at(&pts),
                 lang::fill(ui.floor_rel_wire, &[("rung", word)]),
             ));
             paths.push((pts, false, false));
@@ -4890,9 +5243,12 @@ impl Workspace {
             .w(px(world_w.max(420. * s)))
             .h(px(world_h.max(sh + pad * 2.)));
         // Borders go down first, so wires and cards draw over them.
-        for o in &orgs {
+        for o in &draw_orgs {
             let org = o.org;
             let ink = th.ansi[6];
+            let highlighted = Some(org) == active_org || Some(org) == came_from;
+            let rects = map_rects.clone();
+            let origin = (o.x / s, o.y / s);
             world = world.child(
                 div()
                     .id(SharedString::from(format!("floor-map-org-{}", org.0)))
@@ -4904,11 +5260,35 @@ impl Workspace {
                     .h(px(o.h))
                     .rounded(sk.rad_raw(8.))
                     .border_1()
-                    .border_color(ink.alpha(0.55))
+                    .border_color(if highlighted {
+                        th.accent
+                    } else {
+                        ink.alpha(0.55)
+                    })
                     .bg(ink.alpha(0.025))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, ev: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            if let Some(map) = ws.floor_map.as_mut() {
+                                map.came_from = None;
+                                map.suppress_click = false;
+                                map.drag = Some(MapOrgDrag {
+                                    org,
+                                    start: ev.position,
+                                    origin,
+                                    at: [origin.0.round() as i32, origin.1.round() as i32],
+                                    active: false,
+                                    rects: rects.clone(),
+                                });
+                            }
+                            cx.notify();
+                        }),
+                    )
                     .child(
                         div()
                             .id(SharedString::from(format!("floor-map-org-name-{}", org.0)))
+                            .debug_selector(move || format!("floor-map-org-name-{}", org.0))
                             .absolute()
                             .left(px(10. * s))
                             .top(px(4. * s))
@@ -4920,7 +5300,6 @@ impl Workspace {
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(ink)
                             .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .child(SharedString::from(format!(
                                 "\u{25a3} {} \u{b7} {}",
                                 self.threshing_floor_org_label(org).to_uppercase(),
@@ -4928,6 +5307,9 @@ impl Workspace {
                             )))
                             .on_click(cx.listener(move |ws, _, _, cx| {
                                 cx.stop_propagation();
+                                if ws.floor_map.as_ref().is_some_and(|m| m.suppress_click) {
+                                    return;
+                                }
                                 ws.floor_map = None;
                                 // The map's zoom and pan are not the chart's.
                                 ws.floor_view.reset();
@@ -4957,7 +5339,7 @@ impl Workspace {
         // The cards, at the detail the zoom can carry.
         let far = zoom < 0.6;
         let near = zoom >= 1.4;
-        for o in &orgs {
+        for o in &draw_orgs {
             let org = o.org;
             for p in &o.placed {
                 let seat = p.seat;
@@ -4989,9 +5371,11 @@ impl Workspace {
                     })
                     .bg(darken(th.surface, 0.5))
                     .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
+                        if ws.floor_map.as_ref().is_some_and(|m| m.suppress_click) {
+                            return;
+                        }
                         ws.floor_map = None;
                         // The map's zoom and pan are not the chart's.
                         ws.floor_view.reset();
@@ -5966,6 +6350,9 @@ impl Workspace {
     /// Close the Threshing Floor and let go of any half-drawn line.
     pub(crate) fn close_threshing_floor(&mut self) {
         self.floor_view.drag = None;
+        if let Some(map) = self.floor_map.as_mut() {
+            map.drag = None;
+        }
         self.floor_view.bounds.set(None);
         self.threshing_floor = false;
         self.threshing_floor_pick = None;
@@ -6157,27 +6544,81 @@ fn wire_route(
 /// gap between them, into the facing side of `b`. Side by side, it leaves and
 /// enters horizontally; stacked, vertically. The arrow end is `b`.
 fn elbow(a: (f32, f32, f32, f32), b: (f32, f32, f32, f32)) -> Vec<(f32, f32)> {
+    elbow_fanned(a, b, 0.)
+}
+
+fn elbow_fanned(a: (f32, f32, f32, f32), b: (f32, f32, f32, f32), fan: f32) -> Vec<(f32, f32)> {
     let (ax, ay, aw, ah) = a;
     let (bx, by, bw, bh) = b;
-    if bx >= ax + aw || bx + bw <= ax {
-        let (sx, ex) = if bx >= ax + aw {
-            (ax + aw, bx)
-        } else {
-            (ax, bx + bw)
-        };
-        let (sy, ey) = (ay + ah / 2., by + bh / 2.);
+    let x_gap = (bx - (ax + aw)).max(ax - (bx + bw)).max(0.);
+    let y_gap = (by - (ay + ah)).max(ay - (by + bh)).max(0.);
+    let mut points = if x_gap > 0. && x_gap >= y_gap {
+        let right = bx >= ax + aw;
+        let (sx, ex) = if right { (ax + aw, bx) } else { (ax, bx + bw) };
+        let sy = ay + (ah / 2. + fan).clamp(1., ah - 1.);
+        let ey = by + (bh / 2. + fan).clamp(1., bh - 1.);
         let mx = (sx + ex) / 2.;
         vec![(sx, sy), (mx, sy), (mx, ey), (ex, ey)]
-    } else {
-        let (sy, ey) = if by >= ay + ah {
-            (ay + ah, by)
-        } else {
-            (ay, by + bh)
-        };
-        let (sx, ex) = (ax + aw / 2., bx + bw / 2.);
+    } else if y_gap > 0. {
+        let below = by >= ay + ah;
+        let (sy, ey) = if below { (ay + ah, by) } else { (ay, by + bh) };
+        let sx = ax + (aw / 2. + fan).clamp(1., aw - 1.);
+        let ex = bx + (bw / 2. + fan).clamp(1., bw - 1.);
         let my = (sy + ey) / 2.;
         vec![(sx, sy), (sx, my), (ex, my), (ex, ey)]
-    }
+    } else {
+        // Overlap or touching: leave each box on its exposed top/bottom and
+        // take a U outside the union. For offset boxes the U turns round an
+        // outer side so it cannot cut through the other box's interior.
+        let sx = ax + (aw * 0.35 + fan).clamp(1., aw - 1.);
+        let mut ex = bx + (bw * 0.65 + fan).clamp(1., bw - 1.);
+        if (sx - ex).abs() < 1. {
+            ex = bx + (bw * 0.25 + fan).clamp(1., bw - 1.);
+        }
+        let above = ay.min(by) - 24. - fan.abs();
+        let below = (ay + ah).max(by + bh) + 24. + fan.abs();
+        if (ay - by).abs() < 0.001 {
+            vec![(sx, ay), (sx, above), (ex, above), (ex, by)]
+        } else {
+            let side = if bx + bw / 2. >= ax + aw / 2. {
+                (ax + aw).max(bx + bw) + 24. + fan.abs()
+            } else {
+                ax.min(bx) - 24. - fan.abs()
+            };
+            if ay < by {
+                vec![
+                    (sx, ay),
+                    (sx, above),
+                    (side, above),
+                    (side, below),
+                    (ex, below),
+                    (ex, by + bh),
+                ]
+            } else {
+                vec![
+                    (sx, ay + ah),
+                    (sx, below),
+                    (side, below),
+                    (side, above),
+                    (ex, above),
+                    (ex, by),
+                ]
+            }
+        }
+    };
+    points.dedup_by(|a, b| (a.0 - b.0).abs() < 0.001 && (a.1 - b.1).abs() < 0.001);
+    points
+}
+
+fn wire_label_at(points: &[(f32, f32)]) -> (f32, f32) {
+    let pair = points
+        .windows(2)
+        .max_by(|a, b| {
+            let length = |p: &[(f32, f32)]| (p[1].0 - p[0].0).abs() + (p[1].1 - p[0].1).abs();
+            length(a).total_cmp(&length(b))
+        })
+        .expect("elbow has a segment");
+    ((pair[0].0 + pair[1].0) / 2., (pair[0].1 + pair[1].1) / 2.)
 }
 
 fn stroke_wire(
@@ -6275,6 +6716,121 @@ fn model_line(program: &str, model: Option<&str>, effort: Option<&str>, unknown:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn elbow_routes_every_relative_placement_outside_its_endpoints() {
+        type Rect = (f32, f32, f32, f32);
+        let a: Rect = (0., 0., 100., 80.);
+        let cases: &[(&str, Rect)] = &[
+            ("right", (200., 0., 100., 80.)),
+            ("left", (-200., 0., 100., 80.)),
+            ("above", (0., -160., 100., 80.)),
+            ("below", (0., 160., 100., 80.)),
+            ("diagonal lower right", (210., 140., 100., 80.)),
+            ("diagonal lower left", (-210., 140., 100., 80.)),
+            ("diagonal upper right", (210., -140., 100., 80.)),
+            ("diagonal upper left", (-210., -140., 100., 80.)),
+            ("x overlap, y separate", (30., 170., 100., 80.)),
+            ("y overlap, x separate", (170., 20., 100., 80.)),
+            ("overlap both", (50., 30., 100., 80.)),
+            ("touch right", (100., 10., 100., 80.)),
+            ("touch below", (20., 80., 100., 80.)),
+            ("identical", a),
+        ];
+        let on_edge = |p: (f32, f32), r: Rect| {
+            let (x, y, w, h) = r;
+            ((p.0 - x).abs() < 0.001 || (p.0 - x - w).abs() < 0.001) && p.1 >= y && p.1 <= y + h
+                || ((p.1 - y).abs() < 0.001 || (p.1 - y - h).abs() < 0.001)
+                    && p.0 >= x
+                    && p.0 <= x + w
+        };
+        let crosses_inside = |p: (f32, f32), q: (f32, f32), r: Rect| {
+            let (x, y, w, h) = r;
+            if (p.0 - q.0).abs() < 0.001 {
+                p.0 > x && p.0 < x + w && p.1.min(q.1) < y + h && p.1.max(q.1) > y
+            } else {
+                p.1 > y && p.1 < y + h && p.0.min(q.0) < x + w && p.0.max(q.0) > x
+            }
+        };
+        for &(name, b) in cases {
+            let pts = elbow(a, b);
+            assert!(on_edge(pts[0], a), "{name}: start {pts:?}");
+            assert!(on_edge(*pts.last().unwrap(), b), "{name}: end {pts:?}");
+            for pair in pts.windows(2) {
+                let (p, q) = (pair[0], pair[1]);
+                assert!(
+                    ((p.0 - q.0).abs() < 0.001) ^ ((p.1 - q.1).abs() < 0.001),
+                    "{name}: non-axis or zero segment {pts:?}"
+                );
+                assert!(!crosses_inside(p, q, a), "{name}: crosses source {pts:?}");
+                assert!(!crosses_inside(p, q, b), "{name}: crosses target {pts:?}");
+            }
+            let p = pts[pts.len() - 2];
+            let q = *pts.last().unwrap();
+            let inward = ((q.0 - b.0).abs() < 0.001 && p.0 < q.0)
+                || ((q.0 - b.0 - b.2).abs() < 0.001 && p.0 > q.0)
+                || ((q.1 - b.1).abs() < 0.001 && p.1 < q.1)
+                || ((q.1 - b.1 - b.3).abs() < 0.001 && p.1 > q.1);
+            assert!(
+                inward,
+                "{name}: last segment does not point into target {pts:?}"
+            );
+            let x_gap = (b.0 - a.0 - a.2).max(a.0 - b.0 - b.2).max(0.);
+            let y_gap = (b.1 - a.1 - a.3).max(a.1 - b.1 - b.3).max(0.);
+            if x_gap > 0. && x_gap >= y_gap {
+                assert_eq!(
+                    pts[0].0,
+                    if b.0 > a.0 { a.0 + a.2 } else { a.0 },
+                    "{name}: source side"
+                );
+                assert_eq!(
+                    q.0,
+                    if b.0 > a.0 { b.0 } else { b.0 + b.2 },
+                    "{name}: target side"
+                );
+            } else if y_gap > 0. {
+                assert_eq!(
+                    pts[0].1,
+                    if b.1 > a.1 { a.1 + a.3 } else { a.1 },
+                    "{name}: source side"
+                );
+                assert_eq!(
+                    q.1,
+                    if b.1 > a.1 { b.1 } else { b.1 + b.3 },
+                    "{name}: target side"
+                );
+            }
+            let label = wire_label_at(&pts);
+            assert_ne!(label, q, "{name}: chip on arrowhead");
+            let longest = pts
+                .windows(2)
+                .map(|p| (p[1].0 - p[0].0).abs() + (p[1].1 - p[0].1).abs())
+                .fold(0., f32::max);
+            assert!(
+                pts.windows(2).any(|p| {
+                    let len = (p[1].0 - p[0].0).abs() + (p[1].1 - p[0].1).abs();
+                    (len - longest).abs() < 0.001
+                        && label == ((p[0].0 + p[1].0) / 2., (p[0].1 + p[1].1) / 2.)
+                }),
+                "{name}: chip not on longest segment"
+            );
+        }
+        assert_ne!(
+            elbow_fanned(a, cases[0].1, 0.),
+            elbow_fanned(a, cases[0].1, 8.)
+        );
+    }
+
+    #[test]
+    fn dropping_on_an_org_snaps_and_pushes_out_with_a_margin() {
+        let a = threshing_floor::OrgId(1);
+        let b = threshing_floor::OrgId(2);
+        let rects = [(a, 0., 0., 100., 80.), (b, 140., 0., 100., 80.)];
+        let at = map_drop_position([140, 0], a, &rects);
+        assert_eq!(at[0] % 20, 0);
+        assert_eq!(at[1] % 20, 0);
+        assert!(at[0] as f32 >= 264. || at[1] as f32 >= 104.);
+    }
 
     fn fixture(
         cx: &mut gpui::TestAppContext,
@@ -7883,6 +8439,319 @@ mod tests {
             assert!(ws.floor_map.is_none());
             assert_eq!(ws.floor_org, Some(other));
         });
+    }
+
+    #[gpui::test]
+    fn mouse_back_centres_the_org_on_the_map_and_forward_returns(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let org = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
+        let chart = bounds(cx, "threshing-floor-chart");
+        let before_zoom = ws.read_with(cx, |ws, _| ws.floor_view.zoom);
+        cx.simulate_mouse_down(
+            chart.center(),
+            MouseButton::Navigate(NavigationDirection::Back),
+            Default::default(),
+        );
+        cx.run_until_parked();
+        assert!(ws.read_with(cx, |ws, _| ws
+            .floor_map
+            .as_ref()
+            .is_some_and(|m| m.came_from == Some(org))));
+        assert!(ws.read_with(cx, |ws, _| ws.floor_view.zoom) <= before_zoom);
+        close_point(
+            bounds(cx, &format!("floor-map-org-{}", org.0)).center(),
+            bounds(cx, "threshing-floor-chart").center(),
+        );
+        let offset = ws.read_with(cx, |ws, _| ws.floor_view.offset);
+        cx.simulate_mouse_down(
+            chart.center(),
+            MouseButton::Navigate(NavigationDirection::Back),
+            Default::default(),
+        );
+        assert!(ws.read_with(cx, |ws, _| ws.floor_map.is_some()
+            && ws.floor_view.offset == offset));
+        let empty = bounds(cx, "threshing-floor-chart").bottom_right() - point(px(12.), px(12.));
+        cx.simulate_mouse_down(empty, MouseButton::Left, Default::default());
+        cx.simulate_mouse_up(empty, MouseButton::Left, Default::default());
+        assert!(ws
+            .read_with(cx, |ws, _| ws.floor_map.as_ref().is_some_and(|m| {
+                m.came_from.is_none() && m.from_org == Some(org)
+            })));
+        cx.simulate_mouse_down(
+            chart.center(),
+            MouseButton::Navigate(NavigationDirection::Forward),
+            Default::default(),
+        );
+        cx.run_until_parked();
+        assert!(ws.read_with(cx, |ws, _| ws.floor_map.is_none()
+            && ws.floor_org == Some(org)));
+    }
+
+    #[gpui::test]
+    fn map_drag_pins_the_layout_and_saves_only_on_drop(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            ws.floor_map = Some(SystemMap::default());
+            ws.floor_view.zoom = 0.5;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let org = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
+        let original_other = bounds(cx, &format!("floor-map-org-{}", other.0));
+        let original_org = bounds(cx, &format!("floor-map-org-{}", org.0));
+        let start = original_org.bottom_right() - point(px(4.), px(4.));
+        cx.simulate_mouse_down(start, MouseButton::Left, Default::default());
+        let origin = ws.read_with(cx, |ws, _| {
+            ws.floor_map.as_ref().unwrap().drag.as_ref().unwrap().origin
+        });
+        let delta = point(px(80.), px(200.));
+        cx.simulate_mouse_move(start + delta, MouseButton::Left, Default::default());
+        cx.run_until_parked();
+        let expected = [map_grid(origin.0 + 160.), map_grid(origin.1 + 400.)];
+        assert_eq!(expected[0] % 20, 0);
+        assert_eq!(expected[1] % 20, 0);
+        assert_eq!(
+            ws.read_with(cx, |ws, _| ws
+                .floor_map
+                .as_ref()
+                .unwrap()
+                .drag
+                .as_ref()
+                .unwrap()
+                .at),
+            expected
+        );
+        assert!(ws.read_with(cx, |ws, _| ws
+            .floor_orgs
+            .saved()
+            .iter()
+            .all(|o| o.map_at.is_none())));
+        let expected_drop = ws.read_with(cx, |ws, _| {
+            let drag = ws.floor_map.as_ref().unwrap().drag.as_ref().unwrap();
+            map_drop_position(drag.at, drag.org, &drag.rects)
+        });
+        cx.simulate_mouse_up(start + delta, MouseButton::Left, Default::default());
+        cx.run_until_parked();
+        ws.read_with(cx, |ws, cx| {
+            assert_eq!(ws.floor_orgs.get(org).unwrap().map_at, Some(expected_drop));
+            assert!(ws.floor_orgs.get(other).unwrap().map_at.is_some());
+            let state = ws.build_state(cx);
+            let restored: StateFile = toml::from_str(&toml::to_string(&state).unwrap()).unwrap();
+            assert_eq!(
+                restored
+                    .floor_orgs
+                    .unwrap()
+                    .iter()
+                    .find(|o| o.id == org)
+                    .unwrap()
+                    .map_at,
+                Some(expected_drop)
+            );
+        });
+        assert_eq!(
+            bounds(cx, &format!("floor-map-org-{}", other.0)),
+            original_other
+        );
+        assert_ne!(
+            bounds(cx, &format!("floor-map-org-{}", org.0)),
+            original_org
+        );
+        click(cx, "floor-map-arrange");
+        assert!(ws.read_with(cx, |ws, _| ws
+            .floor_orgs
+            .saved()
+            .iter()
+            .all(|o| o.map_at.is_none())));
+        assert_eq!(
+            bounds(cx, &format!("floor-map-org-{}", org.0)),
+            original_org
+        );
+        ws.update(cx, |ws, cx| {
+            let legacy = toml::to_string(&ws.build_state(cx)).unwrap();
+            assert!(!legacy.contains("map_at"));
+            let state: StateFile = toml::from_str(&legacy).unwrap();
+            ws.floor_orgs = threshing_floor::Orgs::restore(state.floor_orgs, &[]);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            bounds(cx, &format!("floor-map-org-{}", org.0)),
+            original_org
+        );
+    }
+
+    #[gpui::test]
+    fn map_clicks_pan_escape_and_overlap_respect_the_gesture_boundary(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            ws.floor_map = Some(SystemMap::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let home = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
+        let home_before = bounds(cx, &format!("floor-map-org-{}", home.0));
+        let start = home_before.bottom_right() - point(px(4.), px(4.));
+        cx.simulate_mouse_down(start, MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(
+            start + point(px(100.), px(100.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.simulate_keystrokes("escape");
+        cx.simulate_mouse_up(
+            start + point(px(100.), px(100.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.run_until_parked();
+        assert!(ws.read_with(cx, |ws, _| ws
+            .floor_orgs
+            .saved()
+            .iter()
+            .all(|o| o.map_at.is_none())));
+        assert_eq!(
+            bounds(cx, &format!("floor-map-org-{}", home.0)),
+            home_before
+        );
+
+        let empty = bounds(cx, "threshing-floor-chart").bottom_right() - point(px(12.), px(12.));
+        let offset = ws.read_with(cx, |ws, _| ws.floor_view.offset);
+        cx.simulate_mouse_down(empty, MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(
+            empty + point(px(-20.), px(-20.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.simulate_mouse_up(
+            empty + point(px(-20.), px(-20.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.run_until_parked();
+        assert_ne!(ws.read_with(cx, |ws, _| ws.floor_view.offset), offset);
+
+        click(cx, &format!("floor-map-org-name-{}", home.0));
+        assert!(ws.read_with(cx, |ws, _| ws.floor_map.is_none()
+            && ws.floor_org == Some(home)));
+        ws.update(cx, |ws, cx| {
+            ws.floor_map = Some(SystemMap::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        click(cx, "floor-map-seat-100");
+        assert!(ws.read_with(cx, |ws, _| ws.floor_map.is_none()
+            && ws.floor_org == Some(home)));
+        ws.update(cx, |ws, cx| {
+            ws.floor_map = Some(SystemMap::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        let away = bounds(cx, &format!("floor-map-org-{}", other.0));
+        let home_now = bounds(cx, &format!("floor-map-org-{}", home.0));
+        let start = away.bottom_right() - point(px(4.), px(4.));
+        let delta = home_now.origin - away.origin;
+        cx.simulate_mouse_down(start, MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(start + delta, MouseButton::Left, Default::default());
+        cx.simulate_mouse_up(start + delta, MouseButton::Left, Default::default());
+        cx.run_until_parked();
+        let moved = bounds(cx, &format!("floor-map-org-{}", other.0));
+        let home_now = bounds(cx, &format!("floor-map-org-{}", home.0));
+        assert!(
+            moved.right() <= home_now.origin.x
+                || moved.origin.x >= home_now.right()
+                || moved.bottom() <= home_now.origin.y
+                || moved.origin.y >= home_now.bottom()
+        );
+        assert!(ws.read_with(cx, |ws, _| ws.floor_map.is_some()));
+    }
+
+    #[gpui::test]
+    fn map_card_and_title_can_drag_but_a_short_card_press_still_opens(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let home = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
+        ws.update(cx, |ws, cx| {
+            ws.floor_map = Some(SystemMap::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let card = bounds(cx, "floor-map-seat-100").center();
+        cx.simulate_mouse_down(card, MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(
+            card + point(px(3.), px(0.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        assert!(!ws.read_with(cx, |ws, _| ws
+            .floor_map
+            .as_ref()
+            .unwrap()
+            .drag
+            .as_ref()
+            .unwrap()
+            .active));
+        cx.simulate_mouse_up(
+            card + point(px(3.), px(0.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.run_until_parked();
+        assert!(ws.read_with(cx, |ws, _| ws.floor_map.is_none()
+            && ws.floor_org == Some(home)));
+
+        ws.update(cx, |ws, cx| {
+            ws.floor_map = Some(SystemMap::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let card = bounds(cx, "floor-map-seat-100").center();
+        cx.simulate_mouse_down(card, MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(
+            card + point(px(80.), px(80.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.simulate_mouse_up(
+            card + point(px(80.), px(80.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.run_until_parked();
+        assert!(ws.read_with(cx, |ws, _| ws.floor_map.is_some()
+            && ws.floor_orgs.get(home).unwrap().map_at.is_some()));
+
+        click(cx, "floor-map-arrange");
+        let title = bounds(cx, &format!("floor-map-org-name-{}", home.0)).center();
+        cx.simulate_mouse_down(title, MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(
+            title + point(px(60.), px(80.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.simulate_mouse_up(
+            title + point(px(60.), px(80.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.run_until_parked();
+        assert!(ws.read_with(cx, |ws, _| ws.floor_map.is_some()
+            && ws.floor_orgs.get(home).unwrap().map_at.is_some()));
     }
 
     #[gpui::test]
