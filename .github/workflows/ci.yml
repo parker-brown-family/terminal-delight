@@ -34,6 +34,8 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # Ownership hashes cover every committed source version.
 
       # poppler-utils is not a build dependency: the PDF test in
       # docview/poppler.rs drives the real pdfinfo and pdftoppm, and fails
@@ -51,7 +53,12 @@ jobs:
             libxkbcommon-x11-dev \
             pkg-config \
             poppler-utils \
-            libcap-dev meson ninja-build
+            libcap-dev meson ninja-build jq
+
+      - name: Uninstall integration fixtures (no live desktop)
+        run: |
+          ../scripts/known-hashes.sh --check
+          python3 ../scripts/tests/test_uninstall.py -v
 
       # The distro helper lacks descriptor mounts. Use a fixed upstream release
       # with safe setup-path resolution; the runtime also refuses older helpers.
@@ -122,6 +129,22 @@ jobs:
 
       - name: Release build smoke
         run: cargo build --release --locked
+
+      # The removal, end to end, with the release binary: once on a fixture
+      # home, then for real on the account home of a user made for this job,
+      # whose only Terminal Delight is the one the test installs. The runner is
+      # thrown away afterwards; the script refuses this mode anywhere else.
+      - name: Uninstall, end to end
+        run: |
+          bash ../scripts/tests/uninstall-e2e.sh target/release/terminal-delight
+          e2e=$(mktemp -d /tmp/td-e2e-repo.XXXXXX)
+          cp -r ../scripts ../packaging "$e2e/"
+          install -m755 target/release/terminal-delight "$e2e/terminal-delight"
+          chmod -R a+rX "$e2e"
+          sudo useradd --create-home --shell /bin/bash td-e2e
+          sudo -u td-e2e -H env -i HOME=/home/td-e2e USER=td-e2e LOGNAME=td-e2e \
+            PATH=/usr/bin:/bin LANG=C.UTF-8 TD_E2E_DISPOSABLE_HOME=1 \
+            bash "$e2e/scripts/tests/uninstall-e2e.sh" --account-home "$e2e/terminal-delight"
 
   js:
     name: Browser prototype checks
@@ -215,7 +238,11 @@ jobs:
     # check. Until 2026-10-19 this job published the release itself, beside the
     # tests rather than after them, so a tag could ship before anyone knew
     # whether its commit passed (#1002).
-    if: github.event_name == 'push'
+    #
+    # It runs on pull requests too. Until 2026-10-30 it ran only on pushes, so
+    # an upstream appimagetool change broke packaging on six straight dev/0.5.0
+    # merges while every pull request before them showed green. It runs
+    # beside the Rust job, so a pull request waits no longer for it.
     # Pin to the OLDEST glibc we want to support: ubuntu-22.04 ships glibc 2.35, so
     # the AppImage runs on glibc >= 2.35 (Ubuntu 22.04+, Debian 12+, etc.). Building
     # on ubuntu-latest (24.04 / glibc 2.39) would make the binary refuse to start on

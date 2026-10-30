@@ -3035,6 +3035,8 @@ mod tests {
         "chrome.scale_xl",
         // Spanish and German retain the technical term "tokens".
         "chrome.floor_tokens",
+        // French says "images" too.
+        "chrome.floor_sw_images",
         "coord.checkout",
         "coord.crumb_checkouts",
         "coord.dirty",

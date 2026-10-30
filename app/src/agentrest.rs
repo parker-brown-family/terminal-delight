@@ -417,6 +417,62 @@ pub struct Asleep {
     /// The model it was launched with, when its launch line named one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Which harness it ran, `CLAUDE` or `CODEX`, read from its launch line
+    /// when it fell asleep. `None` for a sleep recorded before this was kept,
+    /// or a launch line naming neither: the Floor then says AGENT, not a guess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
+}
+
+/// An agent the sleep signalled that had not exited by the sleep's own
+/// deadline. The sleep cannot wait longer without holding up every other
+/// pane's look, and an agent that ends a moment later has still been ended by
+/// it: before this, that agent was gone and its pane was never marked asleep,
+/// a plain shell nothing would resume (rig 5, 2026-10-27, issue 1174). So the
+/// pane keeps the sleep it will become, and each look asks again.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stopping {
+    pub pid: i32,
+    /// The process's start time in clock ticks (`/proc/<pid>/stat` field
+    /// 22), read before the signal: with the pid, the process's identity, so
+    /// a pid the kernel has since handed to somebody else is not waited on.
+    pub start: Option<u64>,
+    pub asleep: Asleep,
+    /// When the agent was signalled.
+    pub since: std::time::Instant,
+}
+
+/// How long a signalled agent may take to go before the sleep gives up on it
+/// and the pane is awake again. An agent still running a minute after SIGTERM
+/// has chosen not to stop, and is never killed harder (a SIGKILL could cut a
+/// transcript write).
+pub const STOP_GIVE_UP: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// What a look at a signalled agent decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopLook {
+    /// It has gone: the pane is asleep.
+    Asleep,
+    /// It has gone, and another agent already runs in the pane's shell,
+    /// started by a person in the moment between: that pane is awake, and is
+    /// never marked asleep over the new agent.
+    Replaced,
+    /// Still going; look again next time.
+    Stopping,
+    /// Still running past [`STOP_GIVE_UP`]: it is awake.
+    GaveUp,
+}
+
+pub fn stop_look(exited: bool, replaced: bool, since_signal: std::time::Duration) -> StopLook {
+    if exited && replaced {
+        StopLook::Replaced
+    } else if exited {
+        StopLook::Asleep
+    } else if since_signal >= STOP_GIVE_UP {
+        StopLook::GaveUp
+    } else {
+        StopLook::Stopping
+    }
 }
 
 /// Where a pane is between awake and asleep.
@@ -469,6 +525,8 @@ pub struct PaneRest {
     pub sleep_now: bool,
     /// Why the last look did not rest or sleep it.
     pub refusal: Option<Refusal>,
+    /// An agent the sleep signalled that has not gone yet.
+    pub stopping: Option<Stopping>,
     /// The group's memory at the last look.
     pub usage: crate::panegroup::Usage,
     /// What its processes held in RAM when it last went to rest.
@@ -491,6 +549,7 @@ impl PaneRest {
             keep_awake: false,
             sleep_now: false,
             refusal: None,
+            stopping: None,
             usage: Default::default(),
             rest_from: None,
             cpu_prev: None,
@@ -1110,6 +1169,34 @@ pub fn drag(scale: &Scale, pos: f64) -> u32 {
 
 #[cfg(test)]
 mod tests {
+
+    /// A signalled agent is asleep the moment it is seen gone, however late,
+    /// and given up on only after a full minute still running.
+    #[test]
+    fn a_signalled_agent_is_asleep_once_gone_and_awake_after_a_minute() {
+        use std::time::Duration;
+        assert_eq!(stop_look(true, false, Duration::ZERO), StopLook::Asleep);
+        assert_eq!(
+            stop_look(true, false, Duration::from_secs(3600)),
+            StopLook::Asleep
+        );
+        assert_eq!(
+            stop_look(false, false, Duration::from_secs(6)),
+            StopLook::Stopping
+        );
+        assert_eq!(
+            stop_look(false, false, STOP_GIVE_UP - Duration::from_millis(1)),
+            StopLook::Stopping
+        );
+        assert_eq!(stop_look(false, false, STOP_GIVE_UP), StopLook::GaveUp);
+        // A person started another agent in the shell before the sweep: that
+        // pane is awake, however the old one went.
+        assert_eq!(
+            stop_look(true, true, Duration::from_secs(6)),
+            StopLook::Replaced
+        );
+    }
+
     use super::*;
 
     #[test]
@@ -1151,6 +1238,7 @@ mod tests {
             session: "fixture".into(),
             wake_file: "/unused".into(),
             model: None,
+            program: None,
         });
         rest.rest_from = Some(128);
         rest.usage = Usage {

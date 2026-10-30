@@ -25,28 +25,40 @@
 //! - **One at a time per worker.** Prompts to one worker go in send order, the
 //!   next only after the last has ended, so two senders never interleave.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::io::{self, Write as _};
+use std::os::unix::fs::OpenOptionsExt as _;
+use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use crate::threshing_floor::{AskId, Refusal, SeatId};
+
+// The clocks below are slow on purpose. A coordinator's workers run in the
+// background while their person is away, so a prompt that waits costs
+// seconds and a prompt typed on a misread costs the hand-off. Parker,
+// 2026-10-27: "slower and safer is basically better ... SPEED is NOT the
+// priority at all."
 
 /// How long a prompt waits for its worker to come to rest before it fails.
 pub const WAIT_FOR_REST_MS: u64 = 10 * 60 * 1000;
 /// A key a person pressed in the worker's pane holds a prompt back this long:
 /// they may have a line half-typed, and a paste would join it.
-pub const QUIET_MS: u64 = 20_000;
+pub const QUIET_MS: u64 = 60_000;
 /// The pause between the paste and Enter, so a program that takes its paste
 /// on the next frame has drawn it before it is looked for.
-pub const ENTER_AFTER_MS: u64 = 400;
+pub const ENTER_AFTER_MS: u64 = 1_000;
 /// How long the paste has to show on the worker's screen before Enter is
 /// given up.
 pub const SHOW_PASTE_MS: u64 = 4_000;
 /// After Enter, how long the worker has to be seen working.
 pub const TAKE_UP_MS: u64 = 2 * 60 * 1000;
 /// How long a worker must read at rest, look after look, with no turn
-/// beginning, before it is typed into or its prompt is called finished.
-pub const SETTLE_MS: u64 = 2_000;
+/// beginning, before it is typed into or its prompt is called finished. Two
+/// seconds held through a streamed story in rig run 5; five leaves room for
+/// a slower stream.
+pub const SETTLE_MS: u64 = 5_000;
 /// A worker back at rest, never seen working, has its transcript looked at
 /// this long after Enter, and as often after that.
 pub const PROBE_AFTER_MS: u64 = 3_000;
@@ -154,11 +166,17 @@ pub enum PromptStage {
     },
     /// Ended without the worker finishing it.
     Failed { why: String },
+    /// The key is known, but the detailed prompt record has been pruned or
+    /// was lost when the window reopened. Its outcome is no longer known here.
+    Expired,
 }
 
 impl PromptStage {
     pub fn is_open(&self) -> bool {
-        !matches!(self, Self::Finished { .. } | Self::Failed { .. })
+        !matches!(
+            self,
+            Self::Finished { .. } | Self::Failed { .. } | Self::Expired
+        )
     }
 
     /// Typed into the worker: past the point where it can be withdrawn.
@@ -175,6 +193,7 @@ impl PromptStage {
             Self::Working { .. } => "working",
             Self::Finished { .. } => "finished",
             Self::Failed { .. } => "failed",
+            Self::Expired => "expired",
         }
     }
 }
@@ -183,7 +202,8 @@ impl PromptStage {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PromptStatus {
     pub prompt_id: AskId,
-    /// The sender's own key, when it named one.
+    /// The sender's own key, when it named one and the detail remains. An
+    /// expired receipt keeps only its fingerprint, never the key's text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     /// The worker's shell pid, as `list_panes` names it.
@@ -211,6 +231,9 @@ pub struct Sent {
     pub stage: PromptStage,
     /// When it was last woken, while asleep or resting.
     pub woke_ms: Option<u64>,
+    /// The window restarted an asleep worker from its saved conversation for
+    /// this prompt, so the worker is told what it lost (see [`paste_text`]).
+    pub restarted: bool,
     pub pasted_ms: Option<u64>,
     /// The bottom rows of the worker's screen just before the paste.
     pub before: Vec<String>,
@@ -273,15 +296,83 @@ pub struct NewPrompt {
     pub now_ms: u64,
 }
 
+/// A minimal, durable record that a sender used one key. It carries no brief,
+/// reply, or key text. The first receipt wins if a caller retries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyReceipt {
+    pub prompt_id: AskId,
+    pub sender_pane: u64,
+    pub key_sha256: String,
+    pub pid: u32,
+    pub sent_ms: u64,
+}
+
+impl KeyReceipt {
+    fn status(&self, now_ms: u64, key: Option<String>) -> PromptStatus {
+        PromptStatus {
+            prompt_id: self.prompt_id,
+            key,
+            pid: self.pid,
+            age_ms: now_ms.saturating_sub(self.sent_ms),
+            stage: PromptStage::Expired,
+        }
+    }
+}
+
+fn key_sha256(key: &str) -> String {
+    Sha256::digest(key.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The key ledger is independent of the short-lived prompt details.
+pub fn key_path_for(session: &str) -> PathBuf {
+    crate::askrecord::path_for(session).with_file_name("prompt-keys.jsonl")
+}
+
+/// Persist the receipt before a newly accepted keyed prompt can be delivered.
+pub fn append_key(path: &Path, receipt: &KeyReceipt) -> io::Result<()> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::other("key path has no parent"))?;
+    let mut created_dirs = Vec::new();
+    let mut cursor = dir;
+    while !cursor.exists() {
+        created_dirs.push(cursor.to_path_buf());
+        cursor = cursor
+            .parent()
+            .ok_or_else(|| io::Error::other("key path has no root"))?;
+    }
+    std::fs::create_dir_all(dir)?;
+    let new_file = !path.exists();
+    let mut line = serde_json::to_vec(receipt).map_err(io::Error::other)?;
+    line.push(b'\n');
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(&line)?;
+    file.sync_data()?;
+    // A synced new file can still disappear on power loss if its directory
+    // entry was never synced. This runs only for the first receipt in a file.
+    if new_file {
+        std::fs::File::open(dir)?.sync_all()?;
+    }
+    for created in created_dirs {
+        std::fs::File::open(created.parent().expect("created path has a parent"))?.sync_all()?;
+    }
+    Ok(())
+}
+
 /// Every prompt the window holds, open and recently ended, in send order.
+/// Key receipts outlive the detail limit so a late retry cannot become work.
 #[derive(Default, Debug)]
 pub struct PromptBook {
     sent: VecDeque<Sent>,
-    /// Workers holding words a prompt pasted and never sent, by shell pid,
-    /// with when. Another paste would join them, and Enter would send both
-    /// (rig run 4), so nothing more is typed there until its person acts in
-    /// the pane or a turn begins.
-    stains: std::collections::HashMap<u32, u64>,
+    keys: HashMap<(u64, String), KeyReceipt>,
+    key_store_unavailable: bool,
 }
 
 /// What [`PromptBook::send`] did with a prompt.
@@ -294,6 +385,108 @@ pub enum Taken {
 }
 
 impl PromptBook {
+    /// Recover key receipts after a window reopens. A malformed ledger is an
+    /// error, not an empty ledger: treating it as empty would enable repeats.
+    pub fn restore(path: &Path) -> io::Result<Self> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e),
+        };
+        let mut book = Self::default();
+        for line in text.lines() {
+            let receipt: KeyReceipt = serde_json::from_str(line).map_err(io::Error::other)?;
+            if receipt.key_sha256.len() != 64
+                || !receipt.key_sha256.bytes().all(|c| c.is_ascii_hexdigit())
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "bad prompt key receipt",
+                ));
+            }
+            let name = (receipt.sender_pane, receipt.key_sha256.clone());
+            if book.keys.insert(name, receipt).is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "duplicate prompt key receipt",
+                ));
+            }
+        }
+        Ok(book)
+    }
+
+    /// Fail keyed admission closed when the previous receipts could not be
+    /// recovered. Unkeyed requests keep their existing behavior.
+    pub fn unavailable() -> Self {
+        Self {
+            key_store_unavailable: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn latest_receipt_id(&self) -> u64 {
+        self.keys.values().map(|r| r.prompt_id.0).max().unwrap_or(0)
+    }
+
+    /// A sender may read its own prompt after details have expired. Only the
+    /// id, target, and age remain; the outcome is explicitly unknown.
+    pub fn status_of_sender(
+        &self,
+        id: AskId,
+        sender_pane: u64,
+        now_ms: u64,
+    ) -> Option<PromptStatus> {
+        self.of_sender(id, sender_pane)
+            .map(|s| s.status(now_ms))
+            .or_else(|| {
+                self.keys
+                    .values()
+                    .find(|r| r.prompt_id == id && r.sender_pane == sender_pane)
+                    .map(|r| r.status(now_ms, None))
+            })
+    }
+
+    /// A retry is answered before target lookup and permission checks: the
+    /// original target may have gone, but the same key cannot mean new work.
+    pub fn status_for_key(&self, sender_pane: u64, key: &str, now_ms: u64) -> Option<PromptStatus> {
+        self.sent
+            .iter()
+            .find(|s| s.sender_pane == sender_pane && s.key.as_deref() == Some(key))
+            .map(|s| s.status(now_ms))
+            .or_else(|| {
+                self.keys
+                    .get(&(sender_pane, key_sha256(key).to_string()))
+                    .map(|r| r.status(now_ms, Some(key.to_string())))
+            })
+    }
+
+    /// The newly accepted receipt to write before delivery.
+    fn key_receipt(&self, id: AskId) -> Option<KeyReceipt> {
+        let s = self.get(id)?;
+        Some(KeyReceipt {
+            prompt_id: s.id,
+            sender_pane: s.sender_pane,
+            key_sha256: key_sha256(s.key.as_deref()?),
+            pid: s.target_pid,
+            sent_ms: s.sent_ms,
+        })
+    }
+
+    /// Undo an admission whose durable receipt could not be written. No tick
+    /// or terminal write has run yet, so no worker could have received it.
+    fn retract_new(&mut self, id: AskId) {
+        if let Some(i) = self
+            .sent
+            .iter()
+            .position(|s| s.id == id && matches!(s.stage, PromptStage::Waiting { .. }))
+        {
+            let s = self.sent.remove(i).expect("position came from the book");
+            if let Some(key) = s.key {
+                self.keys.remove(&(s.sender_pane, key_sha256(&key)));
+            }
+        }
+    }
+
     pub fn get(&self, id: AskId) -> Option<&Sent> {
         self.sent.iter().find(|s| s.id == id)
     }
@@ -318,12 +511,11 @@ impl PromptBook {
     /// the first is open is refused.
     pub fn send(&mut self, p: NewPrompt) -> Result<Taken, Refusal> {
         if let Some(key) = &p.key {
-            if let Some(s) = self
-                .sent
-                .iter()
-                .find(|s| s.sender_pane == p.sender_pane && s.key.as_deref() == Some(key))
-            {
-                return Ok(Taken::Again(s.status(p.now_ms)));
+            if let Some(status) = self.status_for_key(p.sender_pane, key, p.now_ms) {
+                return Ok(Taken::Again(status));
+            }
+            if self.key_store_unavailable {
+                return Err(Refusal::PromptKeyStoreUnavailable);
             }
         }
         if self
@@ -347,6 +539,7 @@ impl PromptBook {
                 worker: String::new(),
             },
             woke_ms: None,
+            restarted: false,
             pasted_ms: None,
             before: Vec::new(),
             entered_ms: None,
@@ -358,8 +551,39 @@ impl PromptBook {
             ended_ms: None,
         };
         let status = s.status(p.now_ms);
+        if let Some(key) = &s.key {
+            let receipt = KeyReceipt {
+                prompt_id: s.id,
+                sender_pane: s.sender_pane,
+                key_sha256: key_sha256(key),
+                pid: s.target_pid,
+                sent_ms: s.sent_ms,
+            };
+            self.keys
+                .insert((s.sender_pane, receipt.key_sha256.clone()), receipt);
+        }
         self.sent.push_back(s);
         Ok(Taken::New(status))
+    }
+
+    /// The production admission path. A keyed prompt is not returned to the
+    /// window's tick until its receipt is durable; a write failure retracts it.
+    pub fn send_durable(&mut self, p: NewPrompt, path: &Path) -> Result<Taken, Refusal> {
+        let taken = self.send(p)?;
+        if let Taken::New(status) = &taken {
+            if let Some(receipt) = self.key_receipt(status.prompt_id) {
+                if let Err(e) = append_key(path, &receipt) {
+                    eprintln!("[threshing-floor] prompt key receipt could not be written: {e}");
+                    self.retract_new(status.prompt_id);
+                    // The write may have left a complete line without durable
+                    // confirmation. Do not append another use of any key in
+                    // this process until the ledger has been inspected anew.
+                    self.key_store_unavailable = true;
+                    return Err(Refusal::PromptKeyStoreUnavailable);
+                }
+            }
+        }
+        Ok(taken)
     }
 
     /// The window could not do what an [`Act`] asked — the pane went between
@@ -374,10 +598,19 @@ impl PromptBook {
         }
     }
 
-    /// Enter could not be written after the paste went in: the worker holds
-    /// the words.
-    pub fn stain(&mut self, pid: u32, now_ms: u64) {
-        self.stains.insert(pid, now_ms);
+    /// The wake asked for prompt `id` found nothing to wake yet (the worker
+    /// is still going to sleep): ask again on the next look.
+    pub fn wake_not_taken(&mut self, id: AskId) {
+        if let Some(s) = self.get_mut(id) {
+            s.woke_ms = None;
+        }
+    }
+
+    /// The window restarted the asleep worker for prompt `id`.
+    pub fn restarted(&mut self, id: AskId) {
+        if let Some(s) = self.get_mut(id) {
+            s.restarted = true;
+        }
     }
 
     /// The worker's last message, read after it came back to rest. `Err` says
@@ -435,22 +668,11 @@ impl PromptBook {
             }
             seen_workers.push(pid);
             let w = look(&self.sent[i]);
-            if let Some(&at) = self.stains.get(&pid) {
-                let acted = w.person_key_ms.is_some_and(|t| t > at)
-                    || w.turn_began_ms.is_some_and(|t| t > at);
-                if acted || w.seen == Seen::Gone {
-                    self.stains.remove(&pid);
-                }
-            }
-            let stained = self.stains.contains_key(&pid);
             let s = &mut self.sent[i];
             let before = s.stage.word();
-            step(s, &w, now_ms, stained, &mut acts);
+            step(s, &w, now_ms, &mut acts);
             if s.stage.word() != before {
                 acts.push(Act::Record(s.id));
-                if before == "typing" && s.stage.word() == "failed" {
-                    self.stains.insert(s.target_pid, now_ms);
-                }
             }
         }
         self.prune(now_ms);
@@ -487,7 +709,7 @@ fn end(s: &mut Sent, stage: PromptStage, now_ms: u64) {
 }
 
 /// One prompt's move on one tick.
-fn step(s: &mut Sent, w: &Worker, now: u64, stained: bool, acts: &mut Vec<Act>) {
+fn step(s: &mut Sent, w: &Worker, now: u64, acts: &mut Vec<Act>) {
     // A probe that never answers must not hold the prompt open: past the
     // take-up limit it is dropped, and a late answer changes nothing.
     let past_take_up = s
@@ -554,9 +776,6 @@ fn step(s: &mut Sent, w: &Worker, now: u64, stained: bool, acts: &mut Vec<Act>) 
                     "at a prompt that does not take a paste".to_string()
                 }
                 Seen::Ready if !settled => "coming to rest".to_string(),
-                Seen::Ready if stained => "holding words an earlier prompt pasted and did not \
-                     send, so nothing more is typed until its person sends or clears them"
-                    .to_string(),
                 Seen::Ready => {
                     s.before = w.rows.clone();
                     s.pasted_ms = Some(now);
@@ -580,6 +799,21 @@ fn step(s: &mut Sent, w: &Worker, now: u64, stained: bool, acts: &mut Vec<Act>) 
             if since < ENTER_AFTER_MS {
                 return;
             }
+            // The line is read again before Enter, not only before the paste:
+            // a line erased in the second between them means no Enter, so no
+            // turn is ever sent along a line that is gone (cross-provider
+            // review, 2026-10-27).
+            if let Err(r) = &w.allowed {
+                end(
+                    s,
+                    failed(&format!(
+                        "pasted, not sent: {} before Enter. The words may be sitting at its prompt.",
+                        r.why()
+                    )),
+                    now,
+                );
+                return;
+            }
             let hold = match w.seen {
                 Seen::Working => Some("it started working on something else before Enter"),
                 Seen::Blocked => Some("a prompt for its person came up before Enter"),
@@ -595,7 +829,7 @@ fn step(s: &mut Sent, w: &Worker, now: u64, stained: bool, acts: &mut Vec<Act>) 
                 end(
                     s,
                     failed(&format!(
-                        "pasted, not sent: {why}. The words may be sitting at its prompt, and prompts to this pane wait until its person sends or clears them."
+                        "pasted, not sent: {why}. The words may be sitting at its prompt; the next prompt to this pane is pasted after them, and Enter sends both."
                     )),
                     now,
                 );
@@ -610,8 +844,8 @@ fn step(s: &mut Sent, w: &Worker, now: u64, stained: bool, acts: &mut Vec<Act>) 
                     s,
                     failed(
                         "pasted, not sent: the words never showed at the worker's prompt, so Enter \
-                         was not pressed. They may be sitting at its prompt, and prompts to this \
-                         pane wait until its person sends or clears them.",
+                         was not pressed. They may be sitting at its prompt; the next prompt to \
+                         this pane is pasted after them, and Enter sends both.",
                     ),
                     now,
                 );
@@ -690,21 +924,36 @@ fn step(s: &mut Sent, w: &Worker, now: u64, stained: bool, acts: &mut Vec<Act>) 
                 _ => {}
             }
         }
-        PromptStage::Finished { .. } | PromptStage::Failed { .. } => {}
+        PromptStage::Finished { .. } | PromptStage::Failed { .. } | PromptStage::Expired => {}
     }
 }
 
 /// Whether the paste shows on the worker's screen: some row near the bottom
 /// that was not there before the paste carries this prompt's own number, or
-/// the placeholder the program draws in place of a long paste. A number or a
-/// placeholder in an unchanged row is an earlier prompt in its history and
-/// proves nothing.
+/// one more of the placeholders the program draws in place of a long paste
+/// than the screen held before. A number in an unchanged row is an earlier
+/// prompt in its history and proves nothing. A placeholder is counted rather
+/// than looked for in a changed row, because an earlier prompt's unsent paste
+/// can sit in the composer and change shape (rewrap, a cursor) without this
+/// paste having landed; only a new one is this paste. A count that cannot
+/// grow, because the screen scrolled one away, means no Enter: the safe side.
 pub fn shows_paste(before: &[String], after: &[String], id: AskId) -> bool {
     let tag = tag(id);
+    let placeholders = |rows: &[String]| -> usize {
+        rows.iter()
+            .map(|row| {
+                PLACEHOLDERS
+                    .iter()
+                    .map(|p| row.matches(p).count())
+                    .sum::<usize>()
+            })
+            .sum()
+    };
     after
         .iter()
         .filter(|row| !before.contains(row))
-        .any(|row| row.contains(&tag) || PLACEHOLDERS.iter().any(|p| row.contains(p)))
+        .any(|row| row.contains(&tag))
+        || placeholders(after) > placeholders(before)
 }
 
 /// How the agent programs draw a paste too long to show: Claude Code's
@@ -770,6 +1019,28 @@ pub fn header(id: AskId, sender: &str, sender_pid: Option<u32>, returns: bool) -
 /// The header, a blank line, and the brief.
 pub fn compose(header: &str, brief: &str) -> String {
     format!("{header}\n\n{brief}")
+}
+
+/// The line a worker restarted from sleep reads under the header. A woken
+/// agent is a new process holding the old conversation: it would otherwise
+/// take a background job it started, or a permission its person granted for
+/// that session, to be still there. Parker, 2026-10-27: "a sleepy worker is
+/// different than a resting worker".
+pub const WOKEN_NOTE: &str = "[You were asleep, and Terminal Delight restarted you from your \
+     saved conversation for this prompt. Anything that lived only in your old process is gone: \
+     background shells, permissions granted for that session only, and running loops.]";
+
+/// The words pasted for `s`: its text, with [`WOKEN_NOTE`] under the header
+/// when the window restarted the worker for it. The header stays the first
+/// line, so the prompt's number is where it is looked for.
+pub fn paste_text(s: &Sent) -> String {
+    if !s.restarted {
+        return s.text.clone();
+    }
+    match s.text.split_once('\n') {
+        Some((header, rest)) => format!("{header}\n{WOKEN_NOTE}\n{rest}"),
+        None => format!("{}\n{WOKEN_NOTE}", s.text),
+    }
 }
 
 /// A sender's key, checked: short, one line.
@@ -945,6 +1216,9 @@ mod tests {
         }
     }
 
+    /// The first look after the pause before Enter.
+    const E: u64 = ENTER_AFTER_MS + 200;
+
     fn worker(seen: Seen) -> Worker {
         Worker {
             seen,
@@ -992,9 +1266,9 @@ mod tests {
             worker(Seen::Unreadable),
             &["> [Threshing Floor prompt 7, from planner"],
         );
-        let acts = b.tick(t + 600, |_| pasted.clone());
+        let acts = b.tick(t + E, |_| pasted.clone());
         assert_eq!(acts, vec![Act::Enter(AskId(7)), Act::Record(AskId(7))]);
-        let acts = b.tick(t + 1_600, |_| worker(Seen::Working));
+        let acts = b.tick(t + E + 1_000, |_| worker(Seen::Working));
         assert_eq!(acts, vec![Act::Record(AskId(7))]);
         assert!(matches!(stage(&b, 7), PromptStage::Working { .. }));
         // Back at rest: settled first, then read, so a pause in a streaming
@@ -1005,8 +1279,11 @@ mod tests {
         let acts = b.tick(t + 10_000 + SETTLE_MS, |_| worker(Seen::Ready));
         assert_eq!(acts, vec![Act::ReadReply(AskId(7))]);
         // While the reply is read the prompt is still open, and nothing moves.
-        assert_eq!(b.tick(t + 12_500, |_| worker(Seen::Gone)), vec![]);
-        assert!(b.replied(AskId(7), Ok("done".into()), t + 12_600));
+        assert_eq!(
+            b.tick(t + 10_000 + SETTLE_MS + 500, |_| worker(Seen::Gone)),
+            vec![]
+        );
+        assert!(b.replied(AskId(7), Ok("done".into()), t + 10_000 + SETTLE_MS + 600));
         assert_eq!(
             stage(&b, 7),
             PromptStage::Finished {
@@ -1123,6 +1400,13 @@ mod tests {
             "> [Threshing Floor prompt 8, from x".into(),
         ];
         assert!(!shows_paste(&before, &after, AskId(9)));
+        // An earlier prompt's unsent paste changing shape is not this paste;
+        // a second placeholder beside it is.
+        let before = vec!["> [Pasted text #1 +40 lines]".to_string()];
+        let reshaped = vec!["> [Pasted text #1 +40 lines]\u{2588}".to_string()];
+        assert!(!shows_paste(&before, &reshaped, AskId(9)));
+        let joined = vec!["> [Pasted text #1 +40 lines][Pasted text #2 +12 lines]".to_string()];
+        assert!(shows_paste(&before, &joined, AskId(9)));
     }
 
     /// Something that comes up between the paste and Enter stops Enter: a
@@ -1135,7 +1419,7 @@ mod tests {
             b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
             b.tick(T0, |_| worker(Seen::Ready));
             let pasted = with_rows(worker(seen), &["> [Threshing Floor prompt 4, from x"]);
-            let acts = b.tick(T0 + 600, |_| pasted.clone());
+            let acts = b.tick(T0 + E, |_| pasted.clone());
             assert!(!acts.contains(&Act::Enter(AskId(4))), "{seen:?}");
             assert_eq!(stage(&b, 4).word(), "failed", "{seen:?}");
         }
@@ -1150,64 +1434,35 @@ mod tests {
         );
         w.person_key_ms = Some(T0 + 200);
         assert!(!b
-            .tick(T0 + 600, |_| w.clone())
+            .tick(T0 + E, |_| w.clone())
             .contains(&Act::Enter(AskId(4))));
     }
 
-    /// Words a failed prompt left at the worker's prompt are never joined by
-    /// another paste: the next prompt waits until the person acts in the pane
-    /// or a turn begins there.
+    /// Words a failed prompt left at the worker's prompt do not hold the
+    /// worker: the next prompt is pasted after them once the worker settles,
+    /// and Enter sends both. Parker, 2026-10-27: "pasting the next prompt on
+    /// top feels fine to me."
     #[test]
-    fn a_paste_left_unsent_holds_the_next_prompt() {
+    fn a_paste_left_unsent_is_followed_by_the_next_prompt() {
         let mut b = PromptBook::default();
         b.send(new(1, 1, 500, None)).unwrap();
         b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
         b.tick(T0, |_| worker(Seen::Ready));
         let blocked = with_rows(worker(Seen::Blocked), &["> [Threshing Floor prompt 1, x"]);
-        b.tick(T0 + 600, |_| blocked.clone());
-        assert_eq!(stage(&b, 1).word(), "failed");
-        b.send(new(2, 2, 500, None)).unwrap();
-        let mut t = T0 + 1_000;
-        for _ in 0..10 {
-            let acts = b.tick(t, |_| worker(Seen::Ready));
-            assert!(!acts.contains(&Act::Paste(AskId(2))), "{acts:?}");
-            t += 1_000;
-        }
-        let PromptStage::Waiting { worker: why } = stage(&b, 2) else {
-            panic!("not waiting");
+        b.tick(T0 + ENTER_AFTER_MS + 200, |_| blocked.clone());
+        let PromptStage::Failed { why } = stage(&b, 1) else {
+            panic!("not failed");
         };
-        assert!(why.contains("did not send"), "{why}");
-        // The person acts in the pane: the stain lifts, and after rest the
-        // next prompt goes in.
-        let mut w = worker(Seen::Ready);
-        w.person_key_ms = Some(t);
-        b.tick(t + 1, |_| w.clone());
-        // Still at rest all along, so once the person's twenty quiet seconds
-        // are up it goes in.
+        assert!(why.contains("pasted after them"), "{why}");
+        b.send(new(2, 2, 500, None)).unwrap();
+        let t = T0 + 10_000;
+        b.tick(t, |_| worker(Seen::Ready));
         assert!(!b
-            .tick(t + QUIET_MS - 1, |_| w.clone())
+            .tick(t + SETTLE_MS - 1, |_| worker(Seen::Ready))
             .contains(&Act::Paste(AskId(2))));
         assert!(b
-            .tick(t + QUIET_MS + 1, |_| w.clone())
+            .tick(t + SETTLE_MS, |_| worker(Seen::Ready))
             .contains(&Act::Paste(AskId(2))));
-        // A turn that began after the stain lifts it the same way.
-        let mut b = PromptBook::default();
-        b.stain(500, T0);
-        b.send(new(3, 1, 500, None)).unwrap();
-        let mut w = worker(Seen::Ready);
-        b.tick(T0 + 10, |_| w.clone());
-        assert!(!b
-            .tick(T0 + 10 + SETTLE_MS, |_| w.clone())
-            .contains(&Act::Paste(AskId(3))));
-        w.turn_began_ms = Some(T0 + 5_000);
-        b.tick(T0 + 5_000 + SETTLE_MS, |_| w.clone());
-        assert!(b
-            .tick(T0 + 5_000 + 2 * SETTLE_MS, |_| w.clone())
-            .contains(&Act::Paste(AskId(3))));
-    }
-
-    fn seen_ready() -> Seen {
-        Seen::Ready
     }
 
     /// Enter is pressed once. Whatever the worker shows after, no second Enter
@@ -1247,17 +1502,17 @@ mod tests {
             b.send(new(1, 1, 500, None)).unwrap();
             b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
             b.tick(T0, |_| worker(Seen::Ready));
-            b.tick(T0 + 600, |_| {
+            b.tick(T0 + E, |_| {
                 with_rows(worker(Seen::Ready), &["> [Threshing Floor prompt 1, f"])
             });
         };
         let mut b = PromptBook::default();
         entered(&mut b);
         let mut w = worker(Seen::Ready);
-        w.turn_began_ms = Some(T0 + 700);
-        // Taken, but a turn that began in the last two seconds is not over.
+        w.turn_began_ms = Some(T0 + E + 100);
+        // Taken, but a turn that began in the last SETTLE_MS is not over.
         assert_eq!(
-            b.tick(T0 + 2_000, |_| w.clone()),
+            b.tick(T0 + E + 1_400, |_| w.clone()),
             vec![Act::Record(AskId(1))]
         );
         assert_eq!(
@@ -1266,18 +1521,18 @@ mod tests {
                 worker: "coming to rest".into()
             }
         );
-        assert!(b.tick(T0 + 2_700, |_| w.clone()).is_empty());
+        assert!(b.tick(T0 + E + 2_100, |_| w.clone()).is_empty());
         assert_eq!(
-            b.tick(T0 + 2_700 + SETTLE_MS, |_| w.clone()),
+            b.tick(T0 + E + 2_100 + SETTLE_MS, |_| w.clone()),
             vec![Act::ReadReply(AskId(1))]
         );
         // A turn that began before Enter is somebody else's.
         let mut b = PromptBook::default();
         entered(&mut b);
-        w.turn_began_ms = Some(T0 - 5_000);
-        assert!(b.tick(T0 + 2_000, |_| w.clone()).is_empty());
+        w.turn_began_ms = Some(T0 - SETTLE_MS - 3_000);
+        assert!(b.tick(T0 + E + 1_400, |_| w.clone()).is_empty());
         // The probe: after PROBE_AFTER_MS at rest, once per PROBE_AFTER_MS.
-        let at = T0 + 600 + PROBE_AFTER_MS;
+        let at = T0 + E + PROBE_AFTER_MS;
         assert_eq!(b.tick(at, |_| w.clone()), vec![Act::Probe(AskId(1))]);
         assert!(
             b.tick(at + 500, |_| w.clone()).is_empty(),
@@ -1342,7 +1597,11 @@ mod tests {
     }
 
     /// A line erased, or the pane made read-only, stops a prompt not yet
-    /// typed. Once typed, the worker has it, and it runs to its end.
+    /// sent, and that includes the second between the paste and Enter: no
+    /// Enter is pressed along a line that is gone. Once Enter is pressed the
+    /// worker has the turn, and it runs to its end.
+    ///
+    /// Mutation-tested: dropping the recheck before Enter fails this.
     #[test]
     fn a_revoked_line_stops_only_what_is_not_typed() {
         let mut b = PromptBook::default();
@@ -1361,9 +1620,30 @@ mod tests {
             &["> [Threshing Floor prompt 9, from x"],
         );
         w.allowed = Err(Refusal::NoPromptLine);
-        assert!(b
-            .tick(T0 + 600, |_| w.clone())
+        assert!(!b
+            .tick(T0 + E, |_| w.clone())
             .contains(&Act::Enter(AskId(9))));
+        let PromptStage::Failed { why } = stage(&b, 9) else {
+            panic!("not failed");
+        };
+        assert!(why.starts_with("pasted, not sent"), "{why}");
+
+        // Erased after Enter: the turn is the worker's, and it finishes.
+        let mut b = PromptBook::default();
+        b.send(new(9, 1, 500, None)).unwrap();
+        b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
+        b.tick(T0, |_| worker(Seen::Ready));
+        let pasted = with_rows(
+            worker(Seen::Ready),
+            &["> [Threshing Floor prompt 9, from x"],
+        );
+        assert!(b
+            .tick(T0 + E, |_| pasted.clone())
+            .contains(&Act::Enter(AskId(9))));
+        let mut w = worker(Seen::Working);
+        w.allowed = Err(Refusal::NoPromptLine);
+        b.tick(T0 + E + 1_000, |_| w.clone());
+        assert!(stage(&b, 9).is_open(), "{:?}", stage(&b, 9));
     }
 
     /// The same key from the same sender names the first prompt; another
@@ -1388,6 +1668,173 @@ mod tests {
             b.send(new(4, 2, 501, Some("k"))),
             Ok(Taken::New(_))
         ));
+    }
+
+    /// The model check found that detail pruning turned an old key into new
+    /// work. The receipt outlives both the hour and the 64-detail cap.
+    #[test]
+    fn a_pruned_key_returns_expired_and_a_new_key_starts_work() {
+        let mut b = PromptBook::default();
+        b.send(new(1, 1, 500, Some("job-a"))).unwrap();
+        b.fail(AskId(1), "finished", T0 + 1);
+        let mut other = new(6, 2, 501, Some("other-work"));
+        other.now_ms = T0 + KEEP_ENDED_MS + 1;
+        b.send(other).unwrap();
+        b.tick(T0 + KEEP_ENDED_MS + 2, |_| worker(Seen::Ready));
+        assert!(b.get(AskId(1)).is_none());
+
+        let mut retry = new(2, 1, 999, Some("job-a"));
+        retry.now_ms = T0 + KEEP_ENDED_MS + 3;
+        let Taken::Again(status) = b.send(retry).unwrap() else {
+            panic!("the old key became new work");
+        };
+        assert_eq!(status.prompt_id, AskId(1));
+        assert_eq!(status.pid, 500, "the receipt names the original worker");
+        assert_eq!(status.stage, PromptStage::Expired);
+        assert!(b.get(AskId(2)).is_none());
+        assert_eq!(
+            b.status_of_sender(AskId(1), 1, T0 + KEEP_ENDED_MS + 3)
+                .unwrap()
+                .stage,
+            PromptStage::Expired
+        );
+        assert!(b.status_of_sender(AskId(1), 2, T0).is_none());
+
+        assert!(matches!(
+            b.send(new(3, 1, 500, Some("job-b"))),
+            Ok(Taken::New(_))
+        ));
+        assert!(matches!(
+            b.send(new(4, 2, 500, Some("job-a"))),
+            Ok(Taken::New(_))
+        ));
+    }
+
+    /// Replay the model's exact bug path through paste, Enter, work, reply,
+    /// another open prompt, and the retention clock. The pre-fix code returned
+    /// New for the last call.
+    #[test]
+    fn statechart_replay_a_late_retry_cannot_type_a_second_turn() {
+        let mut book = PromptBook::default();
+        assert!(matches!(
+            book.send(new(1, 1, 500, Some("job-a"))),
+            Ok(Taken::New(_))
+        ));
+        book.tick(T0 + 10, |_| worker(Seen::Ready));
+        let pasted_at = T0 + 10 + SETTLE_MS;
+        assert!(book
+            .tick(pasted_at, |_| worker(Seen::Ready))
+            .contains(&Act::Paste(AskId(1))));
+        assert!(book
+            .tick(pasted_at + E, |_| {
+                with_rows(
+                    worker(Seen::Ready),
+                    &["> [Threshing Floor prompt 1, from planner"],
+                )
+            })
+            .contains(&Act::Enter(AskId(1))));
+        book.tick(pasted_at + E + 1_000, |_| worker(Seen::Working));
+        let ready_at = pasted_at + E + 10_000;
+        book.tick(ready_at, |_| worker(Seen::Ready));
+        assert!(book
+            .tick(ready_at + SETTLE_MS, |_| worker(Seen::Ready))
+            .contains(&Act::ReadReply(AskId(1))));
+        let finished_at = ready_at + SETTLE_MS;
+        assert!(book.replied(AskId(1), Ok("done".into()), finished_at));
+
+        let mut other = new(2, 2, 501, Some("job-b"));
+        other.now_ms = finished_at + KEEP_ENDED_MS + 1;
+        assert!(matches!(book.send(other), Ok(Taken::New(_))));
+        book.tick(finished_at + KEEP_ENDED_MS + 2, |_| worker(Seen::Working));
+        assert!(book.get(AskId(1)).is_none());
+
+        let mut retry = new(3, 1, 500, Some("job-a"));
+        retry.now_ms = finished_at + KEEP_ENDED_MS + 3;
+        assert!(matches!(
+            book.send(retry),
+            Ok(Taken::Again(PromptStatus {
+                prompt_id: AskId(1),
+                stage: PromptStage::Expired,
+                ..
+            }))
+        ));
+        assert!(book.get(AskId(3)).is_none());
+    }
+
+    fn key_test_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "td-prompt-keys-{name}-{}-{}",
+            std::process::id(),
+            now_ms()
+        ))
+    }
+
+    #[test]
+    fn a_receipt_survives_reopen_without_keeping_the_key_or_brief() {
+        let root = key_test_path("reopen");
+        let path = root.join("nested").join("prompt-keys.jsonl");
+        let mut before = PromptBook::default();
+        assert!(matches!(
+            before.send_durable(new(7, 1, 500, Some("private-job-a")), &path),
+            Ok(Taken::New(_))
+        ));
+        let stored = std::fs::read_to_string(&path).unwrap();
+        assert!(!stored.contains("private-job-a"));
+        assert!(!stored.contains("do the thing"));
+        assert_eq!(
+            std::os::unix::fs::PermissionsExt::mode(
+                &std::fs::metadata(&path).unwrap().permissions()
+            ) & 0o777,
+            0o600
+        );
+        let mut after = PromptBook::restore(&path).unwrap();
+        assert_eq!(after.latest_receipt_id(), 7);
+        assert!(matches!(
+            after.send(new(8, 1, 500, Some("private-job-a"))),
+            Ok(Taken::Again(PromptStatus {
+                stage: PromptStage::Expired,
+                prompt_id: AskId(7),
+                ..
+            }))
+        ));
+        assert!(after.get(AskId(8)).is_none());
+        assert!(matches!(
+            after.send_durable(new(9, 1, 500, Some("new-work")), &path),
+            Ok(Taken::New(_))
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unwritable_or_corrupt_key_store_never_admits_keyed_work() {
+        let path = key_test_path("unwritable");
+        std::fs::create_dir(&path).unwrap();
+        let mut book = PromptBook::default();
+        assert_eq!(
+            book.send_durable(new(1, 1, 500, Some("job-a")), &path),
+            Err(Refusal::PromptKeyStoreUnavailable)
+        );
+        assert!(book.get(AskId(1)).is_none());
+        assert!(book.status_for_key(1, "job-a", T0).is_none());
+        std::fs::remove_dir(&path).unwrap();
+        assert_eq!(
+            book.send_durable(new(2, 1, 500, Some("new-job")), &path),
+            Err(Refusal::PromptKeyStoreUnavailable),
+            "a failed write must not be retried against uncertain storage"
+        );
+
+        std::fs::write(&path, b"{torn receipt\n").unwrap();
+        assert!(PromptBook::restore(&path).is_err());
+        let mut unavailable = PromptBook::unavailable();
+        assert_eq!(
+            unavailable.send(new(2, 1, 500, Some("job-a"))),
+            Err(Refusal::PromptKeyStoreUnavailable)
+        );
+        assert!(matches!(
+            unavailable.send(new(3, 1, 500, None)),
+            Ok(Taken::New(_))
+        ));
+        std::fs::remove_file(path).unwrap();
     }
 
     /// One in flight from a sender to a worker; another worker is fine.
@@ -1432,29 +1879,40 @@ mod tests {
             b.send(new(1, 1, 500, None)).unwrap();
             b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
             b.tick(T0, |_| worker(Seen::Ready));
-            b.tick(T0 + 600, |_| {
+            b.tick(T0 + E, |_| {
                 with_rows(worker(Seen::Ready), &["> [Threshing Floor prompt 1, f"])
             });
-            b.tick(T0 + 1_600, |_| worker(Seen::Working));
+            b.tick(T0 + E + 1_000, |_| worker(Seen::Working));
         };
         let mut b = PromptBook::default();
         typed(&mut b);
-        b.tick(T0 + 2_000, |_| worker(Seen::Gone));
+        b.tick(T0 + E + 1_400, |_| worker(Seen::Gone));
         assert_eq!(stage(&b, 1).word(), "failed");
         let mut b = PromptBook::default();
         typed(&mut b);
-        b.tick(T0 + 2_000, |_| worker(Seen::Dormant));
+        b.tick(T0 + E + 1_400, |_| worker(Seen::Dormant));
         assert_eq!(stage(&b, 1).word(), "failed");
         let mut b = PromptBook::default();
         typed(&mut b);
-        assert_eq!(b.tick(T0 + 2_000, |_| worker(Seen::Ready)), vec![]);
+        assert_eq!(b.tick(T0 + E + 1_400, |_| worker(Seen::Ready)), vec![]);
         assert_eq!(
-            b.tick(T0 + 2_000 + SETTLE_MS, |_| worker(Seen::Ready)),
+            b.tick(T0 + E + 1_400 + SETTLE_MS, |_| worker(Seen::Ready)),
             vec![Act::ReadReply(AskId(1))]
         );
-        assert_eq!(b.tick(T0 + 5_000, |_| worker(Seen::Ready)), vec![]);
-        assert!(b.replied(AskId(1), Err("not proven".into()), T0 + 5_100));
-        assert!(!b.replied(AskId(1), Ok("late".into()), T0 + 5_200));
+        assert_eq!(
+            b.tick(T0 + E + 1_400 + SETTLE_MS + 500, |_| worker(Seen::Ready)),
+            vec![]
+        );
+        assert!(b.replied(
+            AskId(1),
+            Err("not proven".into()),
+            T0 + E + 1_400 + SETTLE_MS + 600
+        ));
+        assert!(!b.replied(
+            AskId(1),
+            Ok("late".into()),
+            T0 + E + 1_400 + SETTLE_MS + 700
+        ));
     }
 
     /// An error that clears is weather; one that stays a minute ends it.
@@ -1464,16 +1922,34 @@ mod tests {
         b.send(new(1, 1, 500, None)).unwrap();
         b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
         b.tick(T0, |_| worker(Seen::Ready));
-        b.tick(T0 + 600, |_| {
+        b.tick(T0 + E, |_| {
             with_rows(worker(Seen::Ready), &["> [Threshing Floor prompt 1, f"])
         });
-        b.tick(T0 + 1_000, |_| worker(Seen::Errored));
+        b.tick(T0 + E + 400, |_| worker(Seen::Errored));
         b.tick(T0 + 30_000, |_| worker(Seen::Working));
         b.tick(T0 + 40_000, |_| worker(Seen::Errored));
         b.tick(T0 + 40_000 + ERROR_ENDS_MS - 1, |_| worker(Seen::Errored));
         assert!(stage(&b, 1).is_open());
         b.tick(T0 + 40_000 + ERROR_ENDS_MS, |_| worker(Seen::Errored));
         assert_eq!(stage(&b, 1).word(), "failed");
+    }
+
+    /// A worker restarted from sleep for a prompt is told what it lost, under
+    /// the header, which stays the first line; a worker only thawed from rest
+    /// is the same process and is told nothing.
+    #[test]
+    fn a_worker_restarted_from_sleep_is_told_its_old_process_is_gone() {
+        let mut b = PromptBook::default();
+        b.send(new(3, 1, 500, None)).unwrap();
+        let plain = paste_text(b.get(AskId(3)).unwrap());
+        assert!(!plain.contains("You were asleep"), "{plain}");
+        b.restarted(AskId(3));
+        let woken = paste_text(b.get(AskId(3)).unwrap());
+        let mut lines = woken.lines();
+        assert!(lines.next().unwrap().contains(&tag(AskId(3))), "{woken}");
+        assert_eq!(lines.next().unwrap(), WOKEN_NOTE);
+        assert!(woken.ends_with(&plain[plain.find('\n').unwrap() + 1..]));
+        assert_eq!(clean(&woken), woken, "the note is clean as it stands");
     }
 
     /// A brief cannot carry a key: every control character but newline and

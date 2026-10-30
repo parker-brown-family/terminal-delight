@@ -1,0 +1,340 @@
+{
+  "file": "reports/2026-10-28-relationship-builder-built.html",
+  "subject": "Terminal Delight keeps a relationship builder above its agent chart and submits multiple targets and staged pool members together.",
+  "reader": "Parker requested these changes and already uses the Threshing Floor, its chart, pane pool, organisations, filter and Ops skin. He wants to judge the native result and its validation; source and build details are optional provenance.",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.3
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.24
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "journey",
+      "probabilities": {
+        "journey": 0.63,
+        "catalogue": 0.14,
+        "argument": 0.19,
+        "report": 0.03,
+        "none_of_the_above": 0.01
+      },
+      "confidence": 0.54
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Relationship builder",
+      "text": "In Terminal Delight, dragging one agent card onto another previously left you without a usable relationship builder. The new builder stays above the chart: choose the acting agent, what it can do and the target agents, then Submit. Pool cards join the org only on submission. \n Built and staged Both terminal cores checked",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.4,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.07,
+            "1": 0.5,
+            "2": 0.39,
+            "3": 0.04
+          },
+          "confidence": 0.46
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.14
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.23
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.07,
+            "turn": 0.81,
+            "consequence": 0.06,
+            "resolution": 0.05,
+            "aside": 0.01,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.78
+        }
+      },
+      "latency_ms": 974.6112020220608,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "The Floor",
+      "text": "01 \u00b7 The builder keeps its place \n\n Opening and cancelling a draft preserve the chart, pool and composer bounds. This is the staged binary rendered in a disposable native window using your Ops skin. Access controls, search and organisation navigation form separate rows. Native event tests also check the frame at 900 \u00d7 560 and 1200 \u00d7 1000. The panes and unavailable card in this capture are fixtures. \n\n Open the native capture at full size",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.6,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.37,
+            "2": 0.54,
+            "3": 0.05
+          },
+          "confidence": 0.5
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.25
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.75,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.37,
+            "1": 0.53,
+            "2": 0.09,
+            "3": 0.01
+          },
+          "confidence": 0.52
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.34
+        },
+        "role": {
+          "type": "choice",
+          "choice": "aside",
+          "probabilities": {
+            "setup": 0.03,
+            "complication": 0.01,
+            "turn": 0.11,
+            "consequence": 0.21,
+            "resolution": 0.01,
+            "aside": 0.62,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.56
+        }
+      },
+      "latency_ms": 360.3634911123663,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "One submission",
+      "text": "02 \u00b7 Pool cards wait for Submit \n\n Choose \nLead ACTOR \n\nWorker \nPool one still in pool \nPool two still in pool \nCAN READ \u00b7 three targets \n\n\u2192 \n\n Submit \n All panes still present Membership still valid No self or duplicate target Verb explicitly chosen \nValidate the complete set \n\n\u2192 \n\n Saved together \nLead \u2192 can read \n\nWorker \nPool one now in org \nPool two now in org \nThree directed relationships \n\n A pool drop adds a candidate while keeping the selected actor. Cancellation leaves both pool cards outside the org. The native three-target test checks membership, each forward line, absent reverse lines, and the saved TOML. This diagram follows that test; its positions are schematic.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.13,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.12,
+            "1": 0.64,
+            "2": 0.23,
+            "3": 0.01
+          },
+          "confidence": 0.63
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.18
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.32,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.1,
+            "1": 0.5,
+            "2": 0.38,
+            "3": 0.02
+          },
+          "confidence": 0.48
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.05
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.02,
+            "complication": 0.01,
+            "turn": 0.45999999999999996,
+            "consequence": 0.4,
+            "resolution": 0.04,
+            "aside": 0.07,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.37
+        }
+      },
+      "latency_ms": 357.66444611363113,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "Cancellation and limits",
+      "text": "03 \u00b7 An invalid target stops the whole save \n | \n | Action or condition | Verified result \n\n | Card onto another card | Actor and target fill the builder; permission awaits a chosen verb and Submit. \n\n | Alt + left drag | A tether is drawn; the source card stays fixed. An invalid destination changes no membership. \n\n | Cancel the draft | Staged pool cards remain in the pool; the filter stays intact. \n\n | A target disappears, changes org or has conflicting membership | The draft remains visible, an error identifies the affected selection, and nothing is committed. \n\n | Self-target or duplicate | Selection and batch validation reject it. \n\n | Read-only or off-limits pane | The existing pane limits still control access; adding membership does not open the pane. \n\n The final native view pass finished with 44 passing checks. Full suites passed 3,000 tests on the default core and 2,947 on Alacritty, with 17 existing ignored tests per run. Formatting, the CI Clippy commands on both cores, and the optimized build passed. The capture shows the resting layout; drag and batch behavior are verified by native input tests.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.57,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.06,
+            "1": 0.36,
+            "2": 0.54,
+            "3": 0.04
+          },
+          "confidence": 0.48
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.12
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.4,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.08,
+            "1": 0.44,
+            "2": 0.47000000000000003,
+            "3": 0.01
+          },
+          "confidence": 0.39
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.03
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.06,
+            "turn": 0.02,
+            "consequence": 0.82,
+            "resolution": 0,
+            "aside": 0.1,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.79
+        }
+      },
+      "latency_ms": 349.0615140181035,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "The build",
+      "text": "The binary is staged at /home/parker/.local/lib/terminal-delight/td-0159d220-0.5-relationships . The running daily window has not been replaced. \n Source and verification \n\n Native view and input tests \u00b7 Batch validation \u00b7 Nine language packs \n Build receipt and binary digest \u00b7 Approved plan and amendments \u00b7 Your annotated prototype \nStaged code: 0159d220c7fd659e551adde8fc44fd8b7b4f5fe2 . Pool candidates use weak pane references, so retaining a draft does not retain a closed pane. Saved relationships use the existing per-pair format. \n\n . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 2.06,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.15,
+            "2": 0.62,
+            "3": 0.22
+          },
+          "confidence": 0.61
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.73
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.59,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.4,
+            "2": 0.54,
+            "3": 0.04
+          },
+          "confidence": 0.52
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.78
+        },
+        "role": {
+          "type": "choice",
+          "choice": "aside",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0.01,
+            "consequence": 0.04,
+            "resolution": 0.01,
+            "aside": 0.93,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.92
+        }
+      },
+      "latency_ms": 348.2101398985833,
+      "failure": null
+    }
+  ]
+}

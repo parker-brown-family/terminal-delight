@@ -68,6 +68,9 @@ pub struct Org {
     pub name: Option<String>,
     #[serde(default)]
     pub seats: Vec<SeatId>,
+    /// Position on the System Map in unscaled map units. Absent means auto-packed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_at: Option<[i32; 2]>,
 }
 
 /// Grouping only: every permission still comes from `Chart`.
@@ -77,6 +80,12 @@ pub struct Orgs {
 }
 
 impl Orgs {
+    /// A record exists even when ownership is ambiguous. `owner == None`
+    /// alone cannot distinguish that from an unassigned seat.
+    pub fn has_membership(&self, seat: SeatId) -> bool {
+        self.orgs.iter().any(|org| org.seats.contains(&seat))
+    }
+
     pub fn restore(saved: Option<Vec<Org>>, legacy: &[SeatId]) -> Self {
         match saved {
             Some(orgs) => Self { orgs },
@@ -91,6 +100,7 @@ impl Orgs {
                         .collect::<std::collections::BTreeSet<_>>()
                         .into_iter()
                         .collect(),
+                    map_at: None,
                 }],
             },
         }
@@ -101,6 +111,20 @@ impl Orgs {
     }
     pub fn get(&self, id: OrgId) -> Option<&Org> {
         self.orgs.iter().find(|o| o.id == id)
+    }
+
+    pub fn set_map_at(&mut self, id: OrgId, at: Option<[i32; 2]>) -> bool {
+        let Some(org) = self.orgs.iter_mut().find(|o| o.id == id) else {
+            return false;
+        };
+        org.map_at = at;
+        true
+    }
+
+    pub fn clear_map_at(&mut self) {
+        for org in &mut self.orgs {
+            org.map_at = None;
+        }
     }
 
     /// Ambiguous or absent membership stays unknown.
@@ -120,6 +144,7 @@ impl Orgs {
             id,
             name: Some(name.to_string()),
             seats: vec![],
+            map_at: None,
         });
         Some(id)
     }
@@ -167,20 +192,30 @@ impl Orgs {
     }
 }
 
-/// An unfinished relationship grants nothing until both endpoints and a rung
-/// are explicitly selected and the person saves it.
+/// A person's whole selection. Staged pool panes are assigned tentative seats
+/// by the view in a cloned org map before this is checked; no live state changes
+/// until every pair has passed.
 #[derive(Clone, Debug, Default)]
-pub struct RelationDraft {
-    pub from: Option<SeatId>,
-    pub to: Option<SeatId>,
-    pub rung: Option<Rung>,
+pub struct RelationBatch {
+    pub actor: Option<SeatId>,
+    pub targets: Vec<SeatId>,
+    pub verb: Option<Rung>,
 }
 
-impl RelationDraft {
-    pub fn ready(&self, orgs: &Orgs) -> Option<(SeatId, SeatId, Rung)> {
-        let (from, to, rung) = (self.from?, self.to?, self.rung?);
-        (from != to && orgs.owner(from).is_some() && orgs.owner(from) == orgs.owner(to))
-            .then_some((from, to, rung))
+impl RelationBatch {
+    pub fn ready(&self, orgs: &Orgs, org: OrgId) -> Option<Vec<(SeatId, SeatId, Rung)>> {
+        let (actor, verb) = (self.actor?, self.verb?);
+        if orgs.get(org).is_none() || orgs.owner(actor) != Some(org) || self.targets.is_empty() {
+            return None;
+        }
+        let mut seen = std::collections::HashSet::new();
+        self.targets
+            .iter()
+            .map(|&target| {
+                (target != actor && orgs.owner(target) == Some(org) && seen.insert(target))
+                    .then_some((actor, target, verb))
+            })
+            .collect()
     }
 }
 
@@ -367,11 +402,10 @@ impl End {
     }
 }
 
-/// A relationship a person drew where at least one end is a whole org — a seat
-/// reaching a whole org, a whole org reaching a seat, or an org reaching an org.
-/// Unlike a seat-to-seat [`Line`] it is never a bypass: a bypass is a person's
-/// Yes on one pane asking one pane, and an org stands for many. It grants its
-/// rung to every (caller, target) pair its two ends resolve to over the current
+/// A relationship outside one org chart: a whole-org end, or two seats in
+/// different orgs. Unlike a seat-to-seat chart [`Line`] it is never a bypass:
+/// a bypass is a person's Yes on one pane asking one pane. This grants its
+/// rung to every (caller, target) pair its ends resolve to over current
 /// membership, and a word this build cannot read grants nothing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OrgLine {
@@ -476,8 +510,8 @@ impl Chart {
         self.lines.retain(|l| !(l.from == from && l.to == to));
     }
 
-    /// A person drew (or changed) a line to or from a whole org. Callers: the
-    /// Threshing Floor panel and the System Map only.
+    /// A person drew (or changed) a map line. Callers: the Threshing Floor
+    /// panel and the System Map only.
     pub fn draw_org(&mut self, from: End, to: End, rung: Rung) {
         self.put_org(OrgLine {
             from,
@@ -567,52 +601,78 @@ impl Chart {
 }
 
 /// Where a seat is drawn in the Threshing Floor: its row (how deep it sits under
-/// managers) and its place in that row.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// managers) and its column. A column can be fractional: a manager sits centred
+/// over its own reports, which may fall between two whole columns.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub seat: SeatId,
     pub row: usize,
-    pub col: usize,
+    pub col: f32,
 }
 
-/// Lay seats out as an org chart. A seat sits one row under the seat it is
-/// drawn under ([`Chart::manager_of`], the oldest drawn line into it), so a
-/// seat with no manager on the chart is in the top row. Within a row, seats
-/// are ordered by project and then title, so one project's seats sit together
-/// (Gate 1, question 7). A loop of lines is cut where it is first met rather
-/// than followed forever.
+/// Lay seats out as an org chart, a tidy tree. A seat sits one row under the
+/// seat it is drawn under ([`Chart::manager_of`], the oldest drawn line into
+/// it), so a seat with no manager on the chart is a root in the top row. Each
+/// seat's reports take a run of columns of their own, and the seat is centred
+/// over that run, never over the whole row: Parker, 2026-10-29, on a
+/// three-tier org whose third tier sat under the wrong parent, "should be
+/// centered against JUST ITS parent!". Siblings, and the roots, are ordered by
+/// project and then title, so one project's seats sit together (Gate 1,
+/// question 7). A loop of lines is cut where it is first met rather than
+/// followed forever.
 pub fn layout(seats: &[(SeatId, String, String)], chart: &Chart) -> Vec<Placed> {
     use std::collections::{HashMap, HashSet};
     let here: HashSet<SeatId> = seats.iter().map(|(s, _, _)| *s).collect();
-    let depth_of = |start: SeatId| -> usize {
-        let mut seen = HashSet::from([start]);
-        let mut at = start;
-        let mut depth = 0;
-        while let Some(up) = chart.manager_of(at).filter(|m| here.contains(m)) {
-            if !seen.insert(up) {
-                break;
-            }
-            depth += 1;
-            at = up;
+    let mut sorted: Vec<&(SeatId, String, String)> = seats.iter().collect();
+    sorted.sort_by(|a, b| (&a.1, &a.2, a.0).cmp(&(&b.1, &b.2, b.0)));
+    let parent = |s: SeatId| chart.manager_of(s).filter(|m| here.contains(m) && *m != s);
+    let mut children: HashMap<SeatId, Vec<SeatId>> = HashMap::new();
+    for s in &sorted {
+        if let Some(p) = parent(s.0) {
+            children.entry(p).or_default().push(s.0);
         }
-        depth
-    };
-    let mut rows: HashMap<usize, Vec<&(SeatId, String, String)>> = HashMap::new();
-    for s in seats {
-        rows.entry(depth_of(s.0)).or_default().push(s);
     }
+    fn place(
+        seat: SeatId,
+        row: usize,
+        children: &HashMap<SeatId, Vec<SeatId>>,
+        seen: &mut HashSet<SeatId>,
+        next: &mut f32,
+        out: &mut Vec<Placed>,
+    ) -> f32 {
+        seen.insert(seat);
+        let mut span: Option<(f32, f32)> = None;
+        for &c in children.get(&seat).map(Vec::as_slice).unwrap_or_default() {
+            if seen.contains(&c) {
+                continue; // a loop, cut here
+            }
+            let col = place(c, row + 1, children, seen, next, out);
+            span = Some(span.map_or((col, col), |(first, _)| (first, col)));
+        }
+        let col = match span {
+            Some((first, last)) => (first + last) / 2.,
+            None => {
+                let col = *next;
+                *next += 1.;
+                col
+            }
+        };
+        out.push(Placed { seat, row, col });
+        col
+    }
+    let mut seen = HashSet::new();
+    let mut next = 0.;
     let mut out = Vec::new();
-    let mut depths: Vec<usize> = rows.keys().copied().collect();
-    depths.sort_unstable();
-    for (row, depth) in depths.iter().enumerate() {
-        let mut members = rows.remove(depth).unwrap_or_default();
-        members.sort_by(|a, b| (&a.1, &a.2, a.0).cmp(&(&b.1, &b.2, b.0)));
-        for (col, s) in members.iter().enumerate() {
-            out.push(Placed {
-                seat: s.0,
-                row,
-                col,
-            });
+    for s in &sorted {
+        if parent(s.0).is_none() {
+            place(s.0, 0, &children, &mut seen, &mut next, &mut out);
+        }
+    }
+    // Whatever no root reaches sits on a loop: the first seat met becomes a
+    // root, which cuts the loop at its line in.
+    for s in &sorted {
+        if !seen.contains(&s.0) {
+            place(s.0, 0, &children, &mut seen, &mut next, &mut out);
         }
     }
     out
@@ -823,6 +883,9 @@ pub enum Refusal {
     PromptBusy,
     /// `prompt_status` named no prompt this pane sent.
     NoSuchPrompt,
+    /// Keyed prompt receipts cannot be read or durably written. Repeating a
+    /// key while its earlier use is unknown could create duplicate work.
+    PromptKeyStoreUnavailable,
 }
 
 impl Refusal {
@@ -848,6 +911,7 @@ impl Refusal {
             Self::BadBrief => "the prompt is empty or longer than 32,000 characters",
             Self::PromptBusy => "your earlier prompt to that pane has not finished; read it with prompt_status first",
             Self::NoSuchPrompt => "no prompt by that id was sent from your pane",
+            Self::PromptKeyStoreUnavailable => "the prompt key record is unavailable; this request sent no work. Repair the record or storage, then restart Terminal Delight before retrying that key",
         }
     }
 }
@@ -1304,37 +1368,42 @@ mod tests {
         orgs.assign(SeatId(1), a);
         orgs.assign(SeatId(2), a);
         orgs.assign(SeatId(3), b);
-        let mut draft = RelationDraft::default();
-        assert_eq!(draft.ready(&orgs), None);
-        draft.from = Some(SeatId(1));
-        draft.to = Some(SeatId(2));
-        assert_eq!(draft.ready(&orgs), None, "a drop is not permission");
-        draft.rung = Some(Rung::Read);
-        assert_eq!(draft.ready(&orgs), Some((SeatId(1), SeatId(2), Rung::Read)));
-        draft.to = Some(SeatId(1));
-        assert_eq!(draft.ready(&orgs), None, "no self link");
-        draft.to = Some(SeatId(3));
-        assert_eq!(draft.ready(&orgs), None, "no invisible cross-org grant");
-        draft.to = Some(SeatId(99));
-        assert_eq!(draft.ready(&orgs), None, "missing member");
+        let mut draft = RelationBatch::default();
+        assert_eq!(draft.ready(&orgs, a), None);
+        draft.actor = Some(SeatId(1));
+        draft.targets = vec![SeatId(2)];
+        assert_eq!(draft.ready(&orgs, a), None, "a drop is not permission");
+        draft.verb = Some(Rung::Read);
+        assert_eq!(
+            draft.ready(&orgs, a),
+            Some(vec![(SeatId(1), SeatId(2), Rung::Read)])
+        );
+        draft.targets = vec![SeatId(1)];
+        assert_eq!(draft.ready(&orgs, a), None, "no self link");
+        draft.targets = vec![SeatId(3)];
+        assert_eq!(draft.ready(&orgs, a), None, "no invisible cross-org grant");
+        draft.targets = vec![SeatId(99)];
+        assert_eq!(draft.ready(&orgs, a), None, "missing member");
         let ambiguous = Orgs::restore(
             Some(vec![
                 Org {
                     id: OrgId(4),
                     name: None,
                     seats: vec![SeatId(1), SeatId(2)],
+                    map_at: None,
                 },
                 Org {
                     id: OrgId(5),
                     name: None,
                     seats: vec![SeatId(1)],
+                    map_at: None,
                 },
             ]),
             &[],
         );
-        draft.to = Some(SeatId(2));
+        draft.targets = vec![SeatId(2)];
         assert_eq!(
-            draft.ready(&ambiguous),
+            draft.ready(&ambiguous, OrgId(4)),
             None,
             "ambiguous membership is unknown"
         );
@@ -1585,11 +1654,13 @@ mod tests {
                     id: OrgId(10),
                     name: Some("a".into()),
                     seats: vec![SeatId(2)],
+                    map_at: None,
                 },
                 Org {
                     id: OrgId(20),
                     name: Some("b".into()),
                     seats: vec![SeatId(2)],
+                    map_at: None,
                 },
             ]),
             &[],
@@ -2155,17 +2226,42 @@ mod tests {
         };
         assert_eq!(
             at(9),
-            Some((0, 0)),
-            "a seat with no manager is in the top row, by project"
+            Some((0, 0.)),
+            "a seat with no manager is a root in the top row, by project"
         );
-        assert_eq!(at(1), Some((0, 1)));
         assert_eq!(
             at(2),
-            Some((1, 0)),
-            "docsite sorts before server in the second row"
+            Some((1, 1.)),
+            "docsite sorts before server among siblings"
         );
-        assert_eq!(at(3), Some((1, 1)));
-        assert_eq!(at(4), Some((2, 0)));
+        assert_eq!(at(3), Some((1, 2.)));
+        assert_eq!(at(4), Some((2, 2.)), "a report sits under its own manager");
+        assert_eq!(
+            at(1),
+            Some((0, 1.5)),
+            "a manager is centred over its own reports"
+        );
+    }
+
+    /// Parker's three-tier case: a report's report sits under its own parent,
+    /// not under the first column of its row.
+    #[test]
+    fn a_third_tier_sits_under_its_own_parent() {
+        let mut chart = Chart::default();
+        line(&mut chart, 1, 2, Rung::Read);
+        line(&mut chart, 1, 3, Rung::Read);
+        line(&mut chart, 3, 4, Rung::Read);
+        let seats = vec![
+            (SeatId(1), "h".to_string(), "build harness".to_string()),
+            (SeatId(2), "g".to_string(), "HISTORY".to_string()),
+            (SeatId(3), "g".to_string(), "X algo".to_string()),
+            (SeatId(4), "o".to_string(), "omamaps".to_string()),
+        ];
+        let placed = layout(&seats, &chart);
+        let col = |s: u64| placed.iter().find(|p| p.seat == SeatId(s)).unwrap().col;
+        assert_eq!(col(4), col(3), "omamaps sits under X algo");
+        assert_ne!(col(4), col(2), "not under HISTORY");
+        assert_eq!(col(1), (col(2) + col(3)) / 2.);
     }
 
     #[test]

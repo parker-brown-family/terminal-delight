@@ -2928,6 +2928,10 @@ pub struct TerminalView {
     /// or MCP verb reaches it, because both answer agents, and a lock an agent
     /// can lift is decoration. Persisted per leaf in the state file.
     pub agent_access: crate::threshing_floor::AgentAccess,
+    /// The agent's model and effort for the header (`OPUS 5.5 MAX`), handed
+    /// down by the window from the transcript vitals it already reads for the
+    /// Threshing Floor. `None` until a transcript has named the model.
+    pub(crate) model_label: Option<String>,
     /// This pane's seat in the Threshing Floor, once a person seats it. Saved with
     /// the leaf so it outlives the pane's number (see `threshing_floor::SeatId`).
     pub seat: Option<crate::threshing_floor::SeatId>,
@@ -5316,6 +5320,7 @@ impl TerminalView {
             guard,
             superseded: false,
             agent_access: crate::threshing_floor::AgentAccess::Open,
+            model_label: None,
             seat: None,
             staged: restore.clone(),
             title: DEFAULT_TITLE.into(),
@@ -5668,6 +5673,24 @@ impl TerminalView {
     /// thirty agent panes, string scanning was 11% of the main thread, nearly
     /// all of it on screens that had not changed. The bell is applied after the
     /// memo, because it changes without the screen changing.
+    /// Whether an agent lives in this pane, awake or not. A sleeping agent's
+    /// pane runs a shell, and a signalled one is on its way there, but the
+    /// conversation is kept and wakes on its first prompt: it is not a pure
+    /// shell, and the Threshing Floor must be able to seat it.
+    pub(crate) fn hosts_agent(&self) -> bool {
+        self.mode.is_agent()
+            || self.rest.dormancy.asleep().is_some()
+            || self.rest.stopping.is_some()
+    }
+
+    /// The sleep record behind this pane, when its agent is asleep or going.
+    pub(crate) fn sleep_record(&self) -> Option<&crate::agentrest::Asleep> {
+        self.rest
+            .dormancy
+            .asleep()
+            .or(self.rest.stopping.as_ref().map(|s| &s.asleep))
+    }
+
     pub fn agent_status(&self) -> crate::hud::AgentStatus {
         // The window's own word comes first: an asleep pane's screen is a shell,
         // and a resting one's is a frozen frame, so neither is the screen's call.
@@ -7085,17 +7108,32 @@ impl TerminalView {
 
     /// The OSC title as a person reads it. Until the shell names itself the
     /// title is the placeholder [`DEFAULT_TITLE`], which stays English in
-    /// `title` (agents read it from the census as "nobody has named this")
-    /// and is drawn in the reader's language here.
+    /// `title` (agents read it from the census as "nobody has named this").
+    /// A person sees the pane's number there instead, which tells two unnamed
+    /// panes apart. A pane that is this window's own child has no number, and
+    /// keeps the placeholder word in the reader's language.
     pub fn shown_title(&self) -> String {
-        if self.title == DEFAULT_TITLE {
-            crate::lang::current()
+        if self.title != DEFAULT_TITLE {
+            return self.title.clone();
+        }
+        match self.pane_id {
+            Some(id) => id.to_string(),
+            None => crate::lang::current()
                 .strings()
                 .parts
                 .pane_title_default_shell
-                .to_string()
-        } else {
-            self.title.clone()
+                .to_string(),
+        }
+    }
+
+    /// What leads this pane's header: an agent's model and effort as its
+    /// transcript names them (`OPUS 5.5 MAX`, `SOL 6 XHIGH`), never the harness
+    /// running it. Until the transcript has said which model, the harness is
+    /// all that is known, so it stands in. Every other pane leads with its mode.
+    pub(crate) fn header_lead(&self) -> std::borrow::Cow<'static, str> {
+        match self.model_label.clone().filter(|_| self.mode.is_agent()) {
+            Some(model) => std::borrow::Cow::Owned(model),
+            None => self.mode.label_i18n(),
         }
     }
 
@@ -11928,7 +11966,7 @@ impl Render for TerminalView {
                     .items_center()
                     .gap_2()
                     .when(ui_logo, |d| d.child(logo_el))
-                    .child(format!("▸ {} · {buf}", self.mode.label_i18n()))
+                    .child(format!("▸ {} · {buf}", self.header_lead()))
                     .child(div().w(px(6.)).h(px(13.)).bg(th.cursor))
                     .into_any_element()
             } else {
@@ -11977,9 +12015,9 @@ impl Render for TerminalView {
                         // UI CONFIG put the mode away: the title alone.
                         label.clone()
                     } else if focused_now && sk.chevron("»").is_some() {
-                        format!("{} · {label}", self.mode.label_i18n())
+                        format!("{} · {label}", self.header_lead())
                     } else {
-                        format!("▸ {} · {label}", self.mode.label_i18n())
+                        format!("▸ {} · {label}", self.header_lead())
                     })
                     .on_mouse_down(
                         MouseButton::Left,

@@ -28,6 +28,7 @@
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
 mod access;
+mod admin_view;
 mod agentcfg;
 mod agentrest;
 mod agentrest_io;
@@ -101,6 +102,7 @@ mod screenread;
 mod session;
 mod skin;
 mod threshing_floor_view;
+mod uninstall;
 use skin::parts::{color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn};
 mod slot;
 mod sticky;
@@ -4578,6 +4580,9 @@ struct Workspace {
     /// relationships it will take with it. Deleting is destructive and nothing
     /// is kept dormant, so it waits for a yes.
     floor_delete_org: Option<threshing_floor::OrgId>,
+    /// The Threshing Floor's settings tray (the cog at the header's right end):
+    /// the five MCP switches and the open org's Rename and Delete. Closed on open.
+    floor_settings: bool,
     /// The System Map, the higher-level view across every org. `Some` holds its
     /// cross-org relationship draft while it is open.
     floor_map: Option<threshing_floor_view::SystemMap>,
@@ -4587,6 +4592,8 @@ struct Workspace {
     floor_drop: Option<threshing_floor_view::DropChoice>,
     /// Transient membership gesture; GPUI remains the authority on its lifetime.
     floor_drag: Option<Entity<TerminalView>>,
+    floor_tether: Option<Point<Pixels>>,
+    floor_view: threshing_floor_view::FloorViewport,
     floor_context: Option<(Entity<TerminalView>, Point<Pixels>)>,
     floor_feedback: Option<String>,
     /// A person's limit for a copy before it needs their press; `None` is the
@@ -4613,9 +4620,10 @@ struct Workspace {
     /// stage without the words.
     asks: threshing_floor::AskBook,
     /// Prompts, from `prompt_agent` to the worker's last word: what
-    /// `prompt_status` reads and the prompt clock moves. Held in memory only;
-    /// the record keeps each stage without the words.
+    /// `prompt_status` reads and the prompt clock moves. Details are in memory;
+    /// key receipts survive pruning and reopening without keeping the words.
     prompts: prompt::PromptBook,
+    prompt_key_path: std::path::PathBuf,
     /// The menu-bar SIZE popover, raised by the ▭ button in the mother bar. The
     /// scrub track used to live inline on that row; on a thin tile it was the
     /// widest thing there and had nowhere to go, so it moved behind a button.
@@ -4671,6 +4679,9 @@ struct Workspace {
     notif_menu: bool,
     /// The 🐞 bug-report panel is open (see [`diag`]).
     bug_menu: bool,
+    /// The ⚙ ADMIN panel is open: export, old builds, uninstall (see [`admin_view`]).
+    admin_menu: bool,
+    admin: admin_view::AdminState,
     /// What step 1 of the bug report did while the panel was open: the report
     /// it wrote, or why it could not. Step 2 is offered only after a report
     /// exists, and closing the panel starts the ladder again.
@@ -6344,6 +6355,15 @@ impl Workspace {
             c
         });
         uiconfig::init(cx, ui);
+        let prompt_key_path = prompt::key_path_for(instance::key());
+        let prompts = match prompt::PromptBook::restore(&prompt_key_path) {
+            Ok(book) => book,
+            Err(e) => {
+                eprintln!("[threshing-floor] prompt key receipts could not be read: {e}");
+                prompt::PromptBook::unavailable()
+            }
+        };
+        let ask_seq = prompts.latest_receipt_id();
         let mut ws = Self {
             tabs: vec![],
             active: 0,
@@ -6374,9 +6394,12 @@ impl Workspace {
             floor_relation: None,
             floor_move: None,
             floor_delete_org: None,
+            floor_settings: false,
             floor_map: None,
             floor_drop: None,
             floor_drag: None,
+            floor_tether: None,
+            floor_view: Default::default(),
             floor_context: None,
             floor_feedback: None,
             ask_press_tokens: saved.ask_press_tokens,
@@ -6384,10 +6407,11 @@ impl Workspace {
             threshing_floor: false,
             threshing_floor_query: EditBuffer::seeded(""),
             threshing_floor_pick: None,
-            ask_seq: 0,
+            ask_seq,
             ask_numbers: None,
             asks: threshing_floor::AskBook::default(),
-            prompts: prompt::PromptBook::default(),
+            prompts,
+            prompt_key_path,
             scale_menu: false,
             more_menu: false,
             art_rail: false,
@@ -6410,6 +6434,8 @@ impl Workspace {
             plugins_menu: false,
             notif_menu: false,
             bug_menu: false,
+            admin_menu: false,
+            admin: Default::default(),
             bug_report: None,
             bug_unseen: diag::unseen_crashes(),
             notif: notifpref::load(),
@@ -6792,20 +6818,24 @@ impl Workspace {
         // because a context window does not move fast enough to be worth
         // watching at 2s. Same shape as the sweeps above: gather on the main
         // thread, do the I/O on the pool, apply back.
+        let mut vitals_tick: u32 = 0;
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(Duration::from_secs(10))
                 .await;
+            vitals_tick = vitals_tick.wrapping_add(1);
             let Ok(reqs) = this.update(cx, |ws: &mut Workspace, cx| {
-                // Only while the wall is actually on screen. The sweep runs
-                // `edges` over every transcript in each live pane's project
-                // directory — one of those directories holds 47 — so leaving it
-                // ticking behind a closed overlay was tens of megabytes of reads
-                // every ten seconds, permanently, to compute bars nobody could
-                // see. The wall is a glance surface; it costs nothing to keep
-                // one until it is looked at.
-                if !(ws.mcp_menu || ws.threshing_floor) || ws.vitals_refreshing {
-                    return Vec::new(); // closed, or a pass is still out
+                // Every ten seconds while the wall is on screen; once a minute
+                // behind a closed one. The sweep re-reads every transcript that
+                // grew, and a working agent's always has, so ticking at the
+                // wall's pace behind a closed overlay was tens of megabytes of
+                // reads every ten seconds, permanently. The slow pass is still
+                // owed: each pane's header leads with its model and effort, and
+                // a `/model` switch must reach it within a minute, not wait for
+                // someone to open the wall.
+                let wall = ws.mcp_menu || ws.threshing_floor;
+                if (!wall && !vitals_tick.is_multiple_of(6)) || ws.vitals_refreshing {
+                    return Vec::new(); // not this tick, or a pass is still out
                 }
                 let reqs = ws.vitals_requests(cx);
                 ws.vitals_refreshing = !reqs.is_empty();
@@ -7631,6 +7661,11 @@ impl Workspace {
                 rest_on: prefs.rest_on(),
                 sleep_on: prefs.sleep_on(),
                 epoch: v.rest.gate.writes(),
+                stopping: v
+                    .rest
+                    .stopping
+                    .as_ref()
+                    .map(|s| (s.pid, s.start, s.asleep.clone())),
             });
         }
         (jobs, live)
@@ -7667,6 +7702,10 @@ impl Workspace {
                 if o.cpu.is_some() {
                     v.rest.cpu_prev = o.cpu;
                 }
+                let mut gave_up = false;
+                // A pending stop is answered by every outcome: `Stopping` puts
+                // it back, anything else settles it.
+                let pending = v.rest.stopping.take();
                 match &o.act {
                     Act::Rested { before } => {
                         // Touched while the freeze was on its way: undo it now
@@ -7684,17 +7723,58 @@ impl Workspace {
                         }
                     }
                     Act::Woke => {
+                        if pending.is_some() {
+                            eprintln!(
+                                "terminal-delight: pane {}'s agent ended after the sleep's signal, but another agent was started there first; it stays awake",
+                                o.pane
+                            );
+                        }
                         if v.rest.dormancy.is_resting() {
                             v.rest.dormancy = Dormancy::Awake;
                         }
                     }
                     Act::Slept(asleep) => {
+                        if let Some(late) = &pending {
+                            eprintln!(
+                                "terminal-delight: pane {}'s agent ended {} ms after the sleep signalled it; asleep",
+                                o.pane,
+                                now.saturating_duration_since(late.since).as_millis()
+                            );
+                        }
                         v.rest.gate.set_blocked(true);
                         v.rest.dormancy = Dormancy::Asleep(asleep.clone());
                     }
+                    Act::Stopping { pid, start, asleep } => {
+                        let since = pending.as_ref().map_or(now, |s| s.since);
+                        match agentrest::stop_look(false, false, now.saturating_duration_since(since)) {
+                            agentrest::StopLook::GaveUp => {
+                                eprintln!(
+                                    "terminal-delight: pane {}'s agent did not end within a minute of the sleep's signal; it stays awake",
+                                    o.pane
+                                );
+                                v.rest.stopping = None;
+                                gave_up = true;
+                                if v.rest.dormancy.is_resting() {
+                                    v.rest.dormancy = Dormancy::Awake;
+                                }
+                            }
+                            _ => {
+                                v.rest.stopping = Some(agentrest::Stopping {
+                                    pid: *pid,
+                                    start: *start,
+                                    asleep: asleep.clone(),
+                                    since,
+                                });
+                            }
+                        }
+                    }
                     Act::Nothing => {}
                 }
-                v.rest.refusal = o.refusal.clone();
+                v.rest.refusal = if gave_up {
+                    Some(agentrest::Refusal::AgentBusy(Some("did not stop".into())))
+                } else {
+                    o.refusal.clone()
+                };
                 // A request is answered once, slept or refused, never retried.
                 v.rest.sleep_now = false;
                 cx.notify();
@@ -8521,6 +8601,10 @@ impl Workspace {
             std::env::temp_dir().join(format!("td-demo-{}-{stamp}.toml", std::process::id()));
         if session::write_atomic(&path, &body).is_err() {
             return;
+        }
+        // Recorded like the unpacked pictures, so an uninstall can prove it is TD's.
+        if let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
+            crate::art::record_asset(dir, &name.to_string_lossy(), body.as_bytes());
         }
         let Ok(exe) = std::env::current_exe() else {
             return;
@@ -10117,6 +10201,7 @@ impl Workspace {
         }
         self.vitals_refreshing = false;
         if changed {
+            self.hand_down_model_labels(cx);
             cx.notify();
         }
     }
@@ -20180,6 +20265,7 @@ impl Workspace {
             || self.notif_menu
             || self.agents_menu
             || self.bug_menu
+            || self.admin_menu
             || self.savings_menu
     }
 
@@ -20312,6 +20398,10 @@ impl Workspace {
         }
         if self.bug_menu {
             self.close_bug_menu();
+            return true;
+        }
+        if self.admin_menu {
+            self.close_admin();
             return true;
         }
         // Standalone modals (only one is ever open at a time; order is moot).
@@ -22117,6 +22207,25 @@ impl Workspace {
         }
     }
 
+    /// Give each pane the model label its header leads with, from the vitals
+    /// the window already reads by shell pid. A pane whose vitals are gone
+    /// loses its label and falls back to its harness, never to a stale model.
+    fn hand_down_model_labels(&mut self, cx: &mut Context<Self>) {
+        for leaf in self.all_leaves() {
+            let label = leaf
+                .read(cx)
+                .shell_pid()
+                .and_then(|pid| self.agent_vitals.get(&pid))
+                .and_then(|v| v.model_and_effort());
+            if leaf.read(cx).model_label != label {
+                leaf.update(cx, |v, cx| {
+                    v.model_label = label;
+                    cx.notify();
+                });
+            }
+        }
+    }
+
     /// Every live leaf in the window, in tab order.
     fn all_leaves(&self) -> Vec<Entity<TerminalView>> {
         let mut leaves = vec![];
@@ -22912,40 +23021,79 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> [gpui::Stateful<gpui::Div>; 5] {
         let t = self.lang.strings();
+        let ui = t.ui;
+        // The Threshing Floor fits these into its one header row, so it wears
+        // the short words; the hover card carries the full meaning everywhere.
+        let compact = prefix == "war";
+        let pick = |short: &str, long: &str| if compact { short } else { long }.to_string();
+        let mark = |on: bool| if on { "\u{25c9}" } else { "\u{25cb}" };
+        // An agent that answered with no line drawn is the one number that
+        // should reach a person unasked: the server switch carries it as a dot.
+        let unlined = self.ask_numbers.as_ref().map_or(0, |n| n.unlined_answered);
+        let mut server_tip = vec![ui.floor_tip_server.to_string()];
+        if let Some(n) = self.ask_numbers.as_ref() {
+            server_tip.push(lang::fill(
+                ui.floor_asks,
+                &[
+                    ("cheap", &n.cheap_answers.to_string()),
+                    ("copies", &n.copy_answers.to_string()),
+                    ("unlined", &n.unlined_answered.to_string()),
+                ],
+            ));
+        }
         let enable_btn = Self::bezel_btn(
             sk,
-            &if self.mcp.enabled {
-                format!("\u{25c9} {}", t.m_server_on)
-            } else {
-                format!("\u{25cb} {}", t.m_server_off)
-            },
+            &format!(
+                "{} {}",
+                mark(self.mcp.enabled),
+                if self.mcp.enabled {
+                    pick(ui.floor_sw_server, t.m_server_on)
+                } else {
+                    pick(ui.floor_sw_server, t.m_server_off)
+                }
+            ),
             self.mcp.enabled,
         )
+        .when(unlined > 0, |d| {
+            d.child(
+                div()
+                    .size(px(6.))
+                    .rounded(sk.radius_pill())
+                    .bg(th.ansi[1])
+                    .flex_none(),
+            )
+        })
         .id(SharedString::from(format!("{prefix}-btn-enable")))
-        .hover(|s| s.border_color(th.accent))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                cx.stop_propagation();
-                ws.mcp.enabled = !ws.mcp.enabled;
-                ws.save(cx);
-                cx.notify();
-            }),
-        );
-        let expose_btn = Self::bezel_btn(
-            sk,
-            format!(
+        .debug_selector(move || format!("{prefix}-btn-enable"));
+        let enable_btn = with_tip(enable_btn, server_tip)
+            .hover(|s| s.border_color(th.accent))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.mcp.enabled = !ws.mcp.enabled;
+                    ws.save(cx);
+                    cx.notify();
+                }),
+            );
+        let expose_label = match (compact, self.mcp.expose) {
+            (true, mcp::Expose::AgentsOnly) => ui.floor_sw_agents_only.to_string(),
+            (true, mcp::Expose::All) => ui.floor_sw_all_panes.to_string(),
+            (false, e) => format!(
                 "{} {}",
                 t.m_expose,
-                match self.mcp.expose {
+                match e {
                     mcp::Expose::AgentsOnly => t.exp_agents,
                     mcp::Expose::All => t.exp_all,
                 }
-            )
-            .as_str(),
-            false,
+            ),
+        };
+        let expose_btn = with_tip(
+            Self::bezel_btn(sk, &expose_label, false)
+                .id(SharedString::from(format!("{prefix}-btn-expose")))
+                .debug_selector(move || format!("{prefix}-btn-expose")),
+            vec![ui.floor_tip_expose.to_string()],
         )
-        .id(SharedString::from(format!("{prefix}-btn-expose")))
         .hover(|s| s.border_color(th.accent))
         .on_mouse_down(
             MouseButton::Left,
@@ -22956,16 +23104,24 @@ impl Workspace {
                 cx.notify();
             }),
         );
-        let events_btn = Self::bezel_btn(
-            sk,
-            &if self.mcp.events {
-                format!("\u{25c9} {}", t.m_events_on)
-            } else {
-                format!("\u{25cb} {}", t.m_events_off)
-            },
-            self.mcp.events,
+        let events_btn = with_tip(
+            Self::bezel_btn(
+                sk,
+                &format!(
+                    "{} {}",
+                    mark(self.mcp.events),
+                    if self.mcp.events {
+                        pick(ui.floor_sw_events, t.m_events_on)
+                    } else {
+                        pick(ui.floor_sw_events, t.m_events_off)
+                    }
+                ),
+                self.mcp.events,
+            )
+            .id(SharedString::from(format!("{prefix}-btn-events")))
+            .debug_selector(move || format!("{prefix}-btn-events")),
+            vec![ui.floor_tip_events.to_string()],
         )
-        .id(SharedString::from(format!("{prefix}-btn-events")))
         .hover(|s| s.border_color(th.accent))
         .on_mouse_down(
             MouseButton::Left,
@@ -22983,16 +23139,24 @@ impl Workspace {
         // Writes opt-in: promotes the read-only watch surface to a
         // remote-control one (set_pane_config). A deliberate second switch —
         // appearance only, never a PTY. Mirrors the TD_MCP_WRITE env var.
-        let writes_btn = Self::bezel_btn(
-            sk,
-            &if self.mcp.writable {
-                format!("\u{25c9} {}", t.m_writes_on)
-            } else {
-                format!("\u{25cb} {}", t.m_writes_off)
-            },
-            self.mcp.writable,
+        let writes_btn = with_tip(
+            Self::bezel_btn(
+                sk,
+                &format!(
+                    "{} {}",
+                    mark(self.mcp.writable),
+                    if self.mcp.writable {
+                        pick(ui.floor_sw_writes, t.m_writes_on)
+                    } else {
+                        pick(ui.floor_sw_writes, t.m_writes_off)
+                    }
+                ),
+                self.mcp.writable,
+            )
+            .id(SharedString::from(format!("{prefix}-btn-writes")))
+            .debug_selector(move || format!("{prefix}-btn-writes")),
+            vec![ui.floor_tip_writes.to_string()],
         )
-        .id(SharedString::from(format!("{prefix}-btn-writes")))
         .hover(|s| s.border_color(th.accent))
         .on_mouse_down(
             MouseButton::Left,
@@ -23009,16 +23173,24 @@ impl Workspace {
         // blanking the picture inside it, because an empty frame is not
         // cleaner than a full one.
         let show_art = wall_card_art(self.card_art);
-        let images_btn = Self::bezel_btn(
-            sk,
-            &if show_art {
-                format!("\u{25c9} {}", t.m_images_on)
-            } else {
-                format!("\u{25cb} {}", t.m_images_off)
-            },
-            show_art,
+        let images_btn = with_tip(
+            Self::bezel_btn(
+                sk,
+                &format!(
+                    "{} {}",
+                    mark(show_art),
+                    if show_art {
+                        pick(ui.floor_sw_images, t.m_images_on)
+                    } else {
+                        pick(ui.floor_sw_images, t.m_images_off)
+                    }
+                ),
+                show_art,
+            )
+            .id(SharedString::from(format!("{prefix}-btn-images")))
+            .debug_selector(move || format!("{prefix}-btn-images")),
+            vec![ui.floor_tip_images.to_string()],
         )
-        .id(SharedString::from(format!("{prefix}-btn-images")))
         .hover(|s| s.border_color(th.accent))
         .on_mouse_down(
             MouseButton::Left,
@@ -28164,6 +28336,18 @@ struct SlotTooltip {
     lines: Vec<String>,
 }
 
+/// Hang a plain hover card on `el`: the first line is the heading, the rest
+/// read under it. One place hangs these, so the glass guard counts one site
+/// however many buttons say what they do.
+fn with_tip(el: gpui::Stateful<gpui::Div>, lines: Vec<String>) -> gpui::Stateful<gpui::Div> {
+    el.tooltip(move |_w, cx| {
+        cx.new(|_| SlotTooltip {
+            lines: lines.clone(),
+        })
+        .into()
+    })
+}
+
 impl Render for SlotTooltip {
     fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = theme::theme(cx);
@@ -29534,6 +29718,7 @@ impl Render for Workspace {
                 || self.notif_menu
                 || self.agents_menu
                 || self.bug_menu
+                || self.admin_menu
                 || self.savings_menu
                 || self.dead_menu
                 || self.group_menu.is_some()
@@ -29588,6 +29773,7 @@ impl Render for Workspace {
                     "coordination" => self.eng_table = true,
                     "notifications" => self.notif_menu = true,
                     "bug" => self.bug_menu = true,
+                    "admin" => self.open_admin(cx),
                     "language" => {
                         self.lang_picker = Some(LangPicker {
                             query: EditBuffer::seeded(""),
@@ -29672,6 +29858,10 @@ impl Render for Workspace {
             if !self.threshing_floor {
                 self.threshing_floor = true;
                 self.threshing_floor_pick = how.parse().ok().map(threshing_floor::SeatId);
+                // `map` opens the System Map instead of an org's chart.
+                if how == "map" {
+                    self.floor_map = Some(Default::default());
+                }
                 cx.notify();
             }
         }
@@ -32422,6 +32612,7 @@ impl Render for Workspace {
         let notif_overlay = self.render_notif_overlay(&th, cx);
         let agents_overlay = self.render_agents_overlay(&th, cx);
         let bug_overlay = self.render_bug_overlay(&th, cx);
+        let admin_overlay = self.render_admin_overlay(&th, cx);
         // The marquee, while it lives. It ages out on its own — nothing
         // clears it — and it keeps asking for frames so the bulbs chase and
         // the fade actually runs.
@@ -35139,6 +35330,17 @@ impl Render for Workspace {
                             }),
                         ),
                 )
+                .child(
+                    entry("\u{2699}", s.ui.cfg_admin, "more-admin").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.more_menu = false;
+                            ws.open_admin(cx);
+                            cx.notify();
+                        }),
+                    ),
+                )
                 .child(entry("\u{1f9e9}", s.plugins, "more-plugins").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -36961,6 +37163,7 @@ impl Render for Workspace {
                     .children(notif_overlay)
                     .children(agents_overlay)
                     .children(bug_overlay)
+                    .children(admin_overlay)
                     .children(marquee)
                     .children(savings_overlay)
                     .children(confirm_overlay)
@@ -39561,6 +39764,9 @@ mod tests {
             ("slider_row", 2),
             // the corner's two split buttons, both built by this one function
             ("split_button", 1),
+            // every plain "what this button does" card, the Threshing Floor's
+            // header and the MCP switches among them
+            ("with_tip", 1),
         ];
         for (name, count) in &hung {
             assert_eq!(
@@ -44674,6 +44880,8 @@ mod tests {
         assert_eq!(
             streams,
             [
+                ("admin", &["help"][..]),
+                ("uninstall", &["help"][..]),
                 ("restricted", &["help"][..]),
                 ("skin", &["--list"][..]),
                 ("conversation", &["zzz-no-such-conversation"][..]),
@@ -47334,6 +47542,12 @@ Usage:
   terminal-delight default-terminal [status|on|off]
                                  make Terminal Delight the terminal Omarchy opens, or put
                                  back exactly what was there before
+  terminal-delight uninstall preview|plan|run
+                                 what a removal would do, the plan to review, and
+                                 the worker that carries a reviewed plan out
+  terminal-delight admin export|builds|guard|protect
+                                 export settings, list or prune old builds, and
+                                 protect this machine from uninstall
   terminal-delight ctl <cmd>     drive a RUNNING instance over its control socket
   terminal-delight mcp           relay MCP over stdio into a RUNNING instance
   terminal-delight restricted    explicitly run an offline command with limited access (help)
@@ -47586,6 +47800,10 @@ enum Verb {
     /// started by typing — what Claude Code's `SessionStart` hook runs — and
     /// put that hook in or take it out (see [`briefhook`]).
     Briefing,
+    /// Preview, plan and carry out a removal of Terminal Delight.
+    Uninstall,
+    /// CONFIG › ADMIN from a terminal: export, old builds, machine protection.
+    Admin,
 }
 
 /// Whether the broken-pipe gate in `tests/broken_pipe.rs` can run a verb — and
@@ -47622,6 +47840,18 @@ enum Piping {
 /// Every roster now reads this one, so a verb added below is a verb the
 /// dispatch test, the usage test and the broken-pipe gate all pick up.
 const VERBS: &[VerbSpec] = &[
+    VerbSpec {
+        word: "admin",
+        verb: Verb::Admin,
+        typed: true,
+        piping: Piping::Streams(&["help"]),
+    },
+    VerbSpec {
+        word: "uninstall",
+        verb: Verb::Uninstall,
+        typed: true,
+        piping: Piping::Streams(&["help"]),
+    },
     VerbSpec {
         word: "restricted",
         verb: Verb::Restricted,
@@ -47885,6 +48115,8 @@ fn main() {
                 Verb::Conversation => benchstore::run_cli(&argv[2..]),
                 Verb::DefaultTerminal => defaultterm::run_cli(&argv[2..]),
                 Verb::Briefing => briefhook::run_cli(&argv[2..]),
+                Verb::Uninstall => uninstall::run_cli(&argv[2..]),
+                Verb::Admin => uninstall::admin_cli(&argv[2..]),
             };
             std::process::exit(code);
         }

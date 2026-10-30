@@ -1,0 +1,16 @@
+decoy alive after run: no
+operator TD relays before/after: 15/15
+gone: .local/bin/terminal-delight
+gone: .local/bin/td-agent-hooks
+gone: /home/parker/.cache/td-uninstall-admin/qual-home/.local/lib/terminal-delight/td-qual0001-current
+gone: /home/parker/.cache/td-uninstall-admin/qual-home/.local/lib/terminal-delight/td-qual0002-old
+gone: run/terminal-delight
+gone: run/terminal-delight-glyph-qual.svg
+kept: run/other.txt
+kept: .config/terminal-delight/theme.toml
+kept: run/terminal-delight-scene-storyboard.webp
+someone else's hook kept: 1
+td-agent-hooks hook left: 0
+files beside settings: settings.json 
+worker copy left: no
+removal dir: before journal.jsonl plan.json plan-reviewed.json receipt.json receipt.md worker.log 
