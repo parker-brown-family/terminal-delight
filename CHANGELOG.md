@@ -7,6 +7,19 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Linux removal preparation (release unassigned)
+
+- A headless `uninstall preview` inventories candidate paths without opening a
+  window or changing files. `--json` carries structured evidence; `--handoff`
+  prints an optional agent brief. Records stay in place, unknown ownership and
+  active writers remain explicit, and this milestone cannot execute removal.
+- Legacy hook cleanup preserves unrelated nested commands and group metadata.
+  Invalid settings or unrecognized helper references stop cleanup. Edited
+  helpers and damaged Hyprland blocks are retained for review.
+- GNOME cleanup compares recorded shortcut values and preserves later terminal
+  choices. Old installs without an ownership receipt require review. The
+  removal guide retains records and undo evidence before application removal.
+
 ### The Threshing Floor for 0.5.0 Development
 
 - The System Map uses the org view's Actor → CAN → Targets builder. Drag a

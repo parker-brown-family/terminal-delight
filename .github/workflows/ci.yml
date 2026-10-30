@@ -51,7 +51,10 @@ jobs:
             libxkbcommon-x11-dev \
             pkg-config \
             poppler-utils \
-            libcap-dev meson ninja-build
+            libcap-dev meson ninja-build jq
+
+      - name: Uninstall integration fixtures (no live desktop)
+        run: python3 ../scripts/tests/test_uninstall.py -v
 
       # The distro helper lacks descriptor mounts. Use a fixed upstream release
       # with safe setup-path resolution; the runtime also refuses older helpers.

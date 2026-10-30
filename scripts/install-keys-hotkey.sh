@@ -7,8 +7,8 @@
 # with no checkout; run this again after the page changes to refresh the copy.
 #
 # The seat was td-send's (send a tile into Terminal Delight). That hotkey is
-# retired, so its block is taken out of bindings.lua here; td-send itself stays
-# on PATH for anyone who runs it by hand. Idempotent; the binding lives between
+# retired; an existing legacy block is retained for manual review before this
+# installer proceeds. td-send itself stays on PATH. The binding lives between
 # marker comments in bindings.lua.
 #
 # Usage: scripts/install-keys-hotkey.sh [--uninstall]
@@ -23,15 +23,16 @@ DATA="${DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/terminal-delight}"
 OPEN='-- >>> td-keybindings hotkey >>>'
 SHUT='-- <<< td-keybindings hotkey <<<'
 
+source "$REPO/scripts/lib/uninstall.sh"
 if [[ "${1:-}" == "--uninstall" ]]; then
-  if [[ -f $BINDINGS ]]; then
-    sed -i "/^$OPEN\$/,/^$SHUT\$/d" "$BINDINGS"
-  fi
-  rm -f "$DEST/td-keybindings" "$DATA/keys.html"
-  hyprctl reload >/dev/null 2>&1 || true
+  td_strip_key_block "$BINDINGS" "$DEST"
+  td_remove_helper "$DEST/td-keybindings" "$REPO/scripts/td-keybindings"
+  td_remove_helper "$DATA/keys.html" "$REPO/docsite/pages/keys.html"
+  hyprctl reload >/dev/null 2>&1 || { echo "Files cleaned; Hyprland reload failed or unavailable." >&2; exit 1; }
   echo "td-keybindings hotkey, script and page removed"
   exit 0
 fi
+[[ $# == 0 ]] || { echo "Usage: $0 [--uninstall]" >&2; exit 2; }
 
 install -Dm755 "$REPO/scripts/td-keybindings" "$DEST/td-keybindings"
 install -Dm644 "$REPO/docsite/pages/keys.html" "$DATA/keys.html"
@@ -43,8 +44,8 @@ echo "the sheet reads $rows keys"
 mkdir -p "$(dirname "$BINDINGS")"
 touch "$BINDINGS"
 if grep -qF -- '-- >>> td-send hotkey >>>' "$BINDINGS"; then
-  sed -i '/^-- >>> td-send hotkey >>>$/,/^-- <<< td-send hotkey <<<$/d' "$BINDINGS"
-  echo "took SUPER+ALT+T back from the retired td-send hotkey"
+  echo "Legacy td-send block retained; review it before installing the replacement hotkey." >&2
+  exit 1
 fi
 if grep -qF -- "$OPEN" "$BINDINGS"; then
   echo "hotkey block already present in $BINDINGS"

@@ -22,24 +22,14 @@ CMD="$DEST/td-agent-hooks"
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
 
+source "$REPO/scripts/lib/uninstall.sh"
 if [[ "${1:-}" == "--uninstall" ]]; then
-  if [[ -f $SETTINGS ]] && grep -q td-agent-hooks "$SETTINGS"; then
-    cp "$SETTINGS" "$SETTINGS.td-backup.$(date +%s)"
-    jq '
-      def strip: map(select((.hooks // []) | any(.command? // "" | contains("td-agent-hooks")) | not));
-      if .hooks then
-        .hooks.UserPromptSubmit = ((.hooks.UserPromptSubmit // []) | strip) |
-        .hooks.PreToolUse = ((.hooks.PreToolUse // []) | strip) |
-        .hooks.PostToolUse = ((.hooks.PostToolUse // []) | strip) |
-        .hooks.Stop = ((.hooks.Stop // []) | strip) |
-        .hooks.Notification = ((.hooks.Notification // []) | strip)
-      else . end
-    ' "$SETTINGS" >"$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
-  fi
-  rm -f "$CMD"
+  td_unhook "$SETTINGS" "$CMD"
+  td_remove_helper "$CMD" "$REPO/scripts/td-agent-hooks"
   echo "td-agent-hooks unhooked and removed"
   exit 0
 fi
+[[ $# == 0 ]] || { echo "Usage: $0 [--uninstall]" >&2; exit 2; }
 
 install -Dm755 "$REPO/scripts/td-agent-hooks" "$CMD"
 echo "installed $CMD"

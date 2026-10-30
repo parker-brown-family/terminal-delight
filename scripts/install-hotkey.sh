@@ -10,13 +10,15 @@
 # GNOME global shortcut fires even while TD is focused — so this one binding covers
 # both "from anywhere" and "from inside TD".
 #
-# Reversible:  scripts/install-hotkey.sh --uninstall   restores the original binding.
+# Undo uses the ownership receipt written by this version. Older installations
+# without a receipt are retained for review; later user choices are preserved.
 set -euo pipefail
 
 MEDIA=org.gnome.settings-daemon.plugins.media-keys
 KEYPATH=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/terminal-delight/
 SCHEMA="${MEDIA}.custom-keybinding:${KEYPATH}"
 BACKUP="${XDG_CONFIG_HOME:-$HOME/.config}/terminal-delight/hotkey-terminal-key.bak"
+RECEIPT="${BACKUP%.bak}.owned"
 ACCEL='<Primary><Alt>t'
 
 command -v gsettings >/dev/null || { echo "gsettings not found — this installer targets GNOME."; exit 1; }
@@ -45,17 +47,44 @@ list_del() {
 }
 
 if [[ "${1:-}" == "--uninstall" ]]; then
-  list_del || true
-  if [[ -f "$BACKUP" ]]; then
-    gsettings set "$MEDIA" terminal "$(cat "$BACKUP")"
-    rm -f "$BACKUP"
-    echo "Restored built-in Ctrl+Alt+T binding from backup."
-  else
-    gsettings set "$MEDIA" terminal "['$ACCEL']" || true
-    echo "Restored built-in Ctrl+Alt+T binding to default."
+  # Older installations have no record of the values TD wrote. A matching
+  # display name alone cannot prove ownership of a shortcut somebody edited.
+  if [[ ! -f $RECEIPT || -L $RECEIPT ]]; then
+    echo "No trusted hotkey receipt; retained GNOME settings and backup for review." >&2
+    exit 1
   fi
+  mapfile -t written < "$RECEIPT"
+  [[ ${#written[@]} == 3 ]] || { echo "Invalid hotkey receipt; retained settings." >&2; exit 1; }
+  keys=(name command binding)
+  for i in 0 1 2; do
+    current=$(gsettings get "$SCHEMA" "${keys[i]}")
+    [[ $current == "${written[i]}" ]] || {
+      echo "Shortcut changed since installation; retained settings and receipt." >&2; exit 1;
+    }
+  done
+  list_del
+  if [[ -f "$BACKUP" ]]; then
+    current=$(gsettings get "$MEDIA" terminal)
+    if [[ $current == '[]' || $current == '@as []' ]]; then
+      gsettings set "$MEDIA" terminal "$(cat "$BACKUP")"
+      rm -- "$BACKUP"
+      echo "Restored the recorded built-in terminal binding."
+    else
+      echo "Kept the later built-in terminal choice; backup retained at $BACKUP."
+    fi
+  else
+    echo "Prior built-in binding unknown; kept current value."
+  fi
+  for key in name command binding; do gsettings reset "$SCHEMA" "$key"; done
+  rm -- "$RECEIPT"
   echo "Terminal Delight hotkey removed."
   exit 0
+fi
+[[ $# == 0 ]] || { echo "Usage: $0 [--uninstall]" >&2; exit 2; }
+
+if list_has || [[ -e $RECEIPT || -L $RECEIPT ]]; then
+  echo "Existing shortcut or receipt retained; review it before reinstalling." >&2
+  exit 1
 fi
 
 # Resolve a stable launcher (absolute path — gnome-settings-daemon runs with a minimal PATH).
@@ -71,6 +100,13 @@ list_has || list_add
 gsettings set "$SCHEMA" name 'Terminal Delight'
 gsettings set "$SCHEMA" command "$LAUNCHER"
 gsettings set "$SCHEMA" binding "$ACCEL"
+
+# Persist the exact GVariant values for compare-before-restore. Keep this after
+# successful installation: a failed install is explicitly unresolved.
+receipt_tmp=$(mktemp "${RECEIPT}.XXXXXXXX")
+trap 'rm -f -- "$receipt_tmp"' EXIT
+for key in name command binding; do gsettings get "$SCHEMA" "$key" >> "$receipt_tmp"; done
+mv -T -- "$receipt_tmp" "$RECEIPT"
 
 echo "Bound $ACCEL -> $LAUNCHER"
 echo "Press Ctrl+Alt+T to open a new Terminal Delight window."

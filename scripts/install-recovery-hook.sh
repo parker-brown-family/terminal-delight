@@ -16,21 +16,14 @@ CMD="$DEST/td-agent-ledger"
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
 
+source "$REPO/scripts/lib/uninstall.sh"
 if [[ "${1:-}" == "--uninstall" ]]; then
-  if [[ -f $SETTINGS ]] && grep -q td-agent-ledger "$SETTINGS"; then
-    cp "$SETTINGS" "$SETTINGS.td-backup.$(date +%s)"
-    jq '
-      def strip: map(select((.hooks // []) | any(.command? // "" | contains("td-agent-ledger")) | not));
-      if .hooks then
-        .hooks.SessionStart = ((.hooks.SessionStart // []) | strip) |
-        .hooks.SessionEnd = ((.hooks.SessionEnd // []) | strip)
-      else . end
-    ' "$SETTINGS" >"$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
-  fi
-  rm -f "$CMD"
+  td_unhook "$SETTINGS" "$CMD"
+  td_remove_helper "$CMD" "$REPO/scripts/td-agent-ledger"
   echo "td-agent-ledger unhooked and removed"
   exit 0
 fi
+[[ $# == 0 ]] || { echo "Usage: $0 [--uninstall]" >&2; exit 2; }
 
 install -Dm755 "$REPO/scripts/td-agent-ledger" "$CMD"
 echo "installed $CMD"

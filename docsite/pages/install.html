@@ -150,13 +150,14 @@ cd app &amp;&amp; cargo run</code></pre>
 <div class="pair">
   <div class="term">
 <h3>Removing it</h3>
-<p>Delete the AppImage, or <code>~/.local/bin/terminal-delight</code> if you moved it there. Deleting <code>~/.config/terminal-delight/</code> and <code>~/.local/state/terminal-delight/</code> removes your settings, sessions and saved work. If you installed the hooks, uninstall them from the source tree, and take the briefing hook out first, while the binary is still there.</p>
+<p>Keep settings, sessions and saved work by default. First inspect the installation and restore its owned integrations while the executable and undo records still exist. Check a replacement terminal before removing the selected application. Projects, native agent histories, unrelated hooks and later desktop changes belong to you.</p>
+<p>The development build adds a read-only preview and an optional Markdown handoff for an agent. It lists candidate paths and unresolved ownership; it does not stop TD, export data or delete anything. Full application removal is still being built. Older releases may not have this command.</p>
+<p>Use the matching source installer for a legacy hook only after checking its paths and shared consumers. A malformed settings file, changed helper or uncertain binding stops cleanup for review. Keep backups and receipts until every integration is resolved. GNOME shortcuts installed without an ownership receipt require manual review.</p>
   </div>
   <div class="bench">
-<pre class="cmd"><code>rm -f ~/.local/bin/terminal-delight
-rm -rf ~/.config/terminal-delight ~/.local/state/terminal-delight</code></pre>
-<pre class="cmd"><code>terminal-delight briefing hook off</code></pre>
-<pre class="cmd"><code>scripts/install-agent-hooks.sh --uninstall</code></pre>
+<pre class="cmd"><code>terminal-delight uninstall preview</code></pre>
+<pre class="cmd"><code>terminal-delight uninstall preview --handoff</code></pre>
+<p>Save the handoff to a new file outside TD's data directories, then give it to an agent of your choice. It carries inspection-only authority in this milestone. Agent assistance and later workflow analysis are optional.</p>
   </div>
 </div>
 

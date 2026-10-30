@@ -101,6 +101,7 @@ mod screenread;
 mod session;
 mod skin;
 mod threshing_floor_view;
+mod uninstall;
 use skin::parts::{color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn};
 mod slot;
 mod sticky;
@@ -44849,6 +44850,7 @@ mod tests {
         assert_eq!(
             streams,
             [
+                ("uninstall", &["help"][..]),
                 ("restricted", &["help"][..]),
                 ("skin", &["--list"][..]),
                 ("conversation", &["zzz-no-such-conversation"][..]),
@@ -47509,6 +47511,8 @@ Usage:
   terminal-delight default-terminal [status|on|off]
                                  make Terminal Delight the terminal Omarchy opens, or put
                                  back exactly what was there before
+  terminal-delight uninstall preview [--json|--handoff]
+                                 inspect removal candidates; changes nothing
   terminal-delight ctl <cmd>     drive a RUNNING instance over its control socket
   terminal-delight mcp           relay MCP over stdio into a RUNNING instance
   terminal-delight restricted    explicitly run an offline command with limited access (help)
@@ -47761,6 +47765,8 @@ enum Verb {
     /// started by typing — what Claude Code's `SessionStart` hook runs — and
     /// put that hook in or take it out (see [`briefhook`]).
     Briefing,
+    /// Inspect removal candidates without starting or changing the application.
+    Uninstall,
 }
 
 /// Whether the broken-pipe gate in `tests/broken_pipe.rs` can run a verb — and
@@ -47797,6 +47803,12 @@ enum Piping {
 /// Every roster now reads this one, so a verb added below is a verb the
 /// dispatch test, the usage test and the broken-pipe gate all pick up.
 const VERBS: &[VerbSpec] = &[
+    VerbSpec {
+        word: "uninstall",
+        verb: Verb::Uninstall,
+        typed: true,
+        piping: Piping::Streams(&["help"]),
+    },
     VerbSpec {
         word: "restricted",
         verb: Verb::Restricted,
@@ -48060,6 +48072,7 @@ fn main() {
                 Verb::Conversation => benchstore::run_cli(&argv[2..]),
                 Verb::DefaultTerminal => defaultterm::run_cli(&argv[2..]),
                 Verb::Briefing => briefhook::run_cli(&argv[2..]),
+                Verb::Uninstall => uninstall::run_cli(&argv[2..]),
             };
             std::process::exit(code);
         }
