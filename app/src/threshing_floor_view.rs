@@ -22,6 +22,9 @@ const PAD: f32 = 14.;
 
 /// A view over the chart, never a change to its seats or permissions. Bounds
 /// are measured at prepaint; before then the pointer anchor is unavailable.
+const MIN_ZOOM: f32 = 0.2;
+const MAX_ZOOM: f32 = 2.5;
+
 pub(crate) struct FloorViewport {
     zoom: f32,
     offset: Point<Pixels>,
@@ -47,11 +50,27 @@ impl FloorViewport {
         self.drag = None;
     }
 
+    /// Zoom out (never in) until a world of `world` map units fits `bounds`,
+    /// then put the map point `at` in the middle. `scale` is the grade's UI
+    /// scale, the factor between map units and pixels at zoom 1.
+    fn center_on(&mut self, bounds: Bounds<Pixels>, at: (f32, f32), world: (f32, f32), scale: f32) {
+        let fit = (f32::from(bounds.size.width) / (world.0 * scale))
+            .min(f32::from(bounds.size.height) / (world.1 * scale))
+            .clamp(MIN_ZOOM, MAX_ZOOM);
+        self.zoom = self.zoom.min(fit);
+        let s = scale * self.zoom;
+        self.offset = point(
+            bounds.size.width / 2. - px(at.0 * s),
+            bounds.size.height / 2. - px(at.1 * s),
+        );
+    }
+
     fn zoom_at(&mut self, anchor: Point<Pixels>, delta: f32) {
         if !delta.is_finite() {
             return;
         }
-        let next = (self.zoom * 2_f32.powf(delta.clamp(-480., 480.) / 240.)).clamp(0.2, 2.5);
+        let next =
+            (self.zoom * 2_f32.powf(delta.clamp(-480., 480.) / 240.)).clamp(MIN_ZOOM, MAX_ZOOM);
         self.offset = anchor - (anchor - self.offset) * (next / self.zoom);
         self.zoom = next;
     }
@@ -1097,7 +1116,7 @@ impl Workspace {
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
                         if let Some(org) = open {
-                            ws.threshing_floor_set_org(org, cx);
+                            ws.threshing_floor_open_org(org, cx);
                         }
                     })),
             );
@@ -1697,7 +1716,7 @@ impl Workspace {
                                 .debug_selector(move || format!("floor-open-org-{}", org.0))
                                 .on_click(cx.listener(move |ws, _, _, cx| {
                                     cx.stop_propagation();
-                                    ws.threshing_floor_set_org(org, cx);
+                                    ws.threshing_floor_open_org(org, cx);
                                 })),
                         )
                     })
@@ -1809,21 +1828,20 @@ impl Workspace {
         let map_drag_scale = th.grade.scale.clamp(0.7, 1.6) * self.floor_view.zoom;
         let view_bounds = self.floor_view.bounds.clone();
         let nav_layout = self.floor_map_layout(&map_keys);
-        let nav_org = self.floor_org.and_then(|id| {
+        let world_w = nav_layout.iter().map(|o| o.x + o.w).fold(0., f32::max) + PAD;
+        let world_h = nav_layout.iter().map(|o| o.y + o.h).fold(0., f32::max) + PAD;
+        let middle_of = |id: threshing_floor::OrgId| {
             let o = nav_layout.iter().find(|o| o.org == id)?;
-            let world_w = nav_layout.iter().map(|o| o.x + o.w).fold(0., f32::max) + PAD;
-            let world_h = nav_layout.iter().map(|o| o.y + o.h).fold(0., f32::max) + PAD;
-            Some((id, o.x + o.w / 2., o.y + o.h / 2., world_w, world_h))
-        });
-        let pending_nav = self.floor_map.as_ref().and_then(|m| {
-            m.pending_center.then(|| {
-                let id = m.came_from?;
-                let o = nav_layout.iter().find(|o| o.org == id)?;
-                let world_w = nav_layout.iter().map(|o| o.x + o.w).fold(0., f32::max) + PAD;
-                let world_h = nav_layout.iter().map(|o| o.y + o.h).fold(0., f32::max) + PAD;
-                Some((o.x + o.w / 2., o.y + o.h / 2., world_w, world_h))
-            })?
-        });
+            Some((o.x + o.w / 2., o.y + o.h / 2., world_w, world_h))
+        };
+        let nav_org = self
+            .floor_org
+            .and_then(|id| middle_of(id).map(|(ox, oy, w, h)| (id, ox, oy, w, h)));
+        let pending_nav = self
+            .floor_map
+            .as_ref()
+            .and_then(|m| m.pending_center.then_some(m.came_from?))
+            .and_then(middle_of);
         let nav_scale = ui_scale;
         let weak_ws = cx.entity().downgrade();
         let chart_tile = div()
@@ -2008,18 +2026,11 @@ impl Workspace {
                                             {
                                                 return;
                                             }
-                                            let fit = (f32::from(bounds.size.width)
-                                                / (world_w * nav_scale))
-                                                .min(
-                                                    f32::from(bounds.size.height)
-                                                        / (world_h * nav_scale),
-                                                )
-                                                .clamp(0.2, 2.5);
-                                            ws.floor_view.zoom = ws.floor_view.zoom.min(fit);
-                                            let s = nav_scale * ws.floor_view.zoom;
-                                            ws.floor_view.offset = point(
-                                                bounds.size.width / 2. - px(ox * s),
-                                                bounds.size.height / 2. - px(oy * s),
+                                            ws.floor_view.center_on(
+                                                bounds,
+                                                (ox, oy),
+                                                (world_w, world_h),
+                                                nav_scale,
                                             );
                                             if let Some(map) = ws.floor_map.as_mut() {
                                                 map.pending_center = false;
@@ -2263,14 +2274,11 @@ impl Workspace {
                             return;
                         };
                         if let Some(bounds) = ws.floor_view.bounds.get() {
-                            let fit = (f32::from(bounds.size.width) / (world_w * nav_scale))
-                                .min(f32::from(bounds.size.height) / (world_h * nav_scale))
-                                .clamp(0.2, 2.5);
-                            ws.floor_view.zoom = ws.floor_view.zoom.min(fit);
-                            let s = nav_scale * ws.floor_view.zoom;
-                            ws.floor_view.offset = point(
-                                bounds.size.width / 2. - px(ox * s),
-                                bounds.size.height / 2. - px(oy * s),
+                            ws.floor_view.center_on(
+                                bounds,
+                                (ox, oy),
+                                (world_w, world_h),
+                                nav_scale,
                             );
                         } else {
                             ws.floor_view.offset = point(px(0.), px(0.));
@@ -2300,9 +2308,7 @@ impl Workspace {
                             return;
                         };
                         if ws.floor_orgs.get(org).is_some() {
-                            ws.floor_map = None;
-                            ws.floor_view.reset();
-                            ws.threshing_floor_set_org(org, cx);
+                            ws.threshing_floor_open_org(org, cx);
                         }
                     }),
                 )
@@ -2827,11 +2833,28 @@ impl Workspace {
             .unwrap_or_else(|| self.lang.strings().ui.floor_org_unnamed.to_string())
     }
 
+    /// Open an org to look at it: a tab, Open org, Forward, an outside card, a
+    /// click on the map, a newly named org. From the System Map that leaves
+    /// the map, at a fresh view, because the map's zoom and pan are not the
+    /// chart's. Seating and moving go through set_org alone and stay put.
+    fn threshing_floor_open_org(&mut self, id: threshing_floor::OrgId, cx: &mut Context<Self>) {
+        if self.floor_orgs.get(id).is_none() {
+            return;
+        }
+        if self.floor_map.take().is_some() {
+            self.floor_view.reset();
+        }
+        self.threshing_floor_set_org(id, cx);
+    }
+
     fn threshing_floor_set_org(&mut self, id: threshing_floor::OrgId, cx: &mut Context<Self>) {
         if self.floor_orgs.get(id).is_none() {
             return;
         }
-        if self.floor_org != Some(id) {
+        // On the System Map no org is open: seating or moving a pane there
+        // (which lands here) keeps the map's view and the builder draft.
+        let on_map = self.floor_map.is_some();
+        if self.floor_org != Some(id) && !on_map {
             self.floor_view.reset();
         }
         self.floor_org = Some(id);
@@ -2839,7 +2862,9 @@ impl Workspace {
         // pane (which lands here) must not wipe what they typed. Clearing is
         // theirs to do — the × button and Esc. See also begin_relation/unseat.
         self.threshing_floor_pick = None;
-        self.floor_relation = None;
+        if !on_map {
+            self.floor_relation = None;
+        }
         self.floor_org_edit = None;
         self.floor_delete_org = None;
         self.floor_drop = None;
@@ -2857,7 +2882,7 @@ impl Workspace {
             None => self.floor_orgs.create(&text),
         };
         if let Some(org) = org {
-            self.threshing_floor_set_org(org, cx);
+            self.threshing_floor_open_org(org, cx);
         }
     }
 
@@ -3202,7 +3227,7 @@ impl Workspace {
                 })
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     cx.stop_propagation();
-                    ws.threshing_floor_set_org(id, cx);
+                    ws.threshing_floor_open_org(id, cx);
                 })),
             );
         }
@@ -3264,12 +3289,16 @@ impl Workspace {
                 .when(unlined > 0, |d| {
                     d.child(
                         div()
+                            .debug_selector(|| "floor-settings-dot".to_string())
                             .size(px(6.))
                             .rounded(sk.radius_pill())
                             .bg(th.ansi[1])
                             .flex_none(),
                     )
                 })
+                // The panel folds the tray on any press; the cog's own press
+                // must not reach it, or the click that follows reopens it.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|ws, _, _, cx| {
                     cx.stop_propagation();
                     ws.floor_settings = !ws.floor_settings;
@@ -3632,6 +3661,33 @@ impl Workspace {
         self.threshing_floor_set_org(org, cx);
     }
 
+    /// A pane dropped on an org's region on the System Map. A pool agent
+    /// (sleeping ones included) is seated in that org on the spot, and the map
+    /// keeps its view and any builder draft, because the person is still
+    /// arranging the whole. A pane already in the org is left alone. One from
+    /// another org takes the same move-or-relate choice as a drop on its tab.
+    fn floor_map_drop_pane(
+        &mut self,
+        leaf: &Entity<TerminalView>,
+        org: threshing_floor::OrgId,
+        cx: &mut Context<Self>,
+    ) {
+        if self.floor_orgs.get(org).is_none() || !leaf.read(cx).hosts_agent() {
+            return;
+        }
+        match leaf.read(cx).seat {
+            None => {
+                let seat = threshing_floor::SeatId::mint();
+                self.floor_orgs.assign(seat, org);
+                leaf.update(cx, |v, cx| v.set_seat(Some(seat), cx));
+                self.save(cx);
+                cx.notify();
+            }
+            Some(seat) if self.floor_orgs.owner(seat) == Some(org) => {}
+            Some(_) => self.threshing_floor_drop_on_org(leaf, org, cx),
+        }
+    }
+
     /// A pane card was dropped on an org button. If the pane is already in that
     /// org this just opens it; a loose (seatless) pane simply moves in; a seated
     /// pane from a *different* org opens the move/relate choice, so the drop can
@@ -3661,7 +3717,10 @@ impl Workspace {
         self.floor_delete_org = None;
         self.floor_org_edit = None;
         self.floor_move = None;
-        self.floor_relation = None;
+        // The map's builder is reserved, not a popup: its draft stays.
+        if self.floor_map.is_none() {
+            self.floor_relation = None;
+        }
         self.floor_drop = Some(DropChoice {
             leaf: leaf.clone(),
             seat,
@@ -5346,6 +5405,7 @@ impl Workspace {
                 bg: th.surface,
             };
             let press_drag = org_drag.clone();
+            let drop_ink = th.accent;
             world = world.child(
                 div()
                     .id(SharedString::from(format!("floor-map-org-{}", org.0)))
@@ -5363,6 +5423,19 @@ impl Workspace {
                         ink.alpha(0.55)
                     })
                     .bg(ink.alpha(0.025))
+                    // A pane dropped on an org's region joins it, as a drop on
+                    // the org's tab does: a pool agent is seated here, and one
+                    // from another org gets the move-or-relate choice.
+                    .drag_over::<PaneDrag>(move |st, _, _, _| {
+                        st.border_color(drop_ink)
+                            .bg(drop_ink.alpha(0.12))
+                            .shadow(drop_glow(drop_ink, true))
+                    })
+                    .on_drop(cx.listener(move |ws, d: &PaneDrag, _, cx| {
+                        if !d.relation.get() {
+                            ws.floor_map_drop_pane(&d.leaf, org, cx);
+                        }
+                    }))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, ev: &MouseDownEvent, _, cx| {
@@ -5440,10 +5513,7 @@ impl Workspace {
                                     ws.threshing_floor_choose_member(RelationMember::Org(org), cx);
                                     return;
                                 }
-                                ws.floor_map = None;
-                                // The map's zoom and pan are not the chart's.
-                                ws.floor_view.reset();
-                                ws.threshing_floor_set_org(org, cx);
+                                ws.threshing_floor_open_org(org, cx);
                             })),
                     ),
             );
@@ -5534,10 +5604,7 @@ impl Workspace {
                             ws.threshing_floor_choose_endpoint(seat, cx);
                             return;
                         }
-                        ws.floor_map = None;
-                        // The map's zoom and pan are not the chart's.
-                        ws.floor_view.reset();
-                        ws.threshing_floor_set_org(org, cx);
+                        ws.threshing_floor_open_org(org, cx);
                     }));
                 if far {
                     // A dot and the name, set at a size that still reads.
@@ -8687,6 +8754,195 @@ mod tests {
         assert!(
             cx.debug_bounds("floor-connect").is_none(),
             "Connect is gone; a relationship starts from a card"
+        );
+    }
+
+    #[gpui::test]
+    fn a_pool_agent_dropped_on_an_org_on_the_map_joins_it_and_the_map_stays(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let agent = pool_member(&ws, cx, "Joiner");
+        let shell = pool_member(&ws, cx, "Plain");
+        cx.update(|_, cx| shell.update(cx, |v, _| v.mode = pane::PaneMode::Shell));
+        cx.run_until_parked();
+        click(cx, "floor-system-map-toggle");
+        // Drop on an org other than the one last open, with a builder draft
+        // under way: neither the view nor the draft may be thrown away.
+        let org = ws.update(cx, |ws, cx| {
+            let org = ws.floor_orgs.create("Second").unwrap();
+            ws.floor_view.zoom = 0.7;
+            ws.floor_relation = Some(RelationEditor::default());
+            cx.notify();
+            org
+        });
+        assert_ne!(ws.read_with(cx, |ws, _| ws.floor_org), Some(org));
+        cx.run_until_parked();
+        let view = ws.read_with(cx, |ws, _| (ws.floor_view.zoom, ws.floor_view.offset));
+        let region = format!("floor-map-org-{}", org.0);
+        drag(
+            cx,
+            &format!("floor-pane-{}", agent.entity_id().as_u64()),
+            &region,
+        );
+        ws.read_with(cx, |ws, cx| {
+            let seat = agent.read(cx).seat.expect("the dropped agent is seated");
+            assert_eq!(ws.floor_orgs.owner(seat), Some(org), "it joined the org");
+            assert!(ws.floor_map.is_some(), "the map stays open");
+            assert_eq!(
+                (ws.floor_view.zoom, ws.floor_view.offset),
+                view,
+                "the map keeps its view"
+            );
+            assert!(ws.floor_drop.is_none(), "a pool agent needs no choice");
+            assert!(ws.floor_relation.is_some(), "the builder draft survives");
+        });
+        // A shell card has no drag, so the guard is driven directly: a drop
+        // that somehow arrives still seats nothing.
+        ws.update(cx, |ws, cx| ws.floor_map_drop_pane(&shell, org, cx));
+        ws.read_with(cx, |ws, cx| {
+            assert!(
+                shell
+                    .read(cx)
+                    .seat
+                    .is_none_or(|s| ws.floor_orgs.owner(s) != Some(org)),
+                "a plain shell has no agent to seat"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn the_cog_closes_its_own_tray_and_an_org_tab_leaves_the_map(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        click(cx, "floor-settings");
+        assert!(
+            ws.read_with(cx, |ws, _| ws.floor_settings),
+            "the cog opens the tray"
+        );
+        click(cx, "floor-settings");
+        assert!(
+            ws.read_with(cx, |ws, _| !ws.floor_settings),
+            "a second press on the cog folds the tray"
+        );
+        // From the System Map, an org's tab opens that org.
+        let org = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
+        click(cx, "floor-system-map-toggle");
+        assert!(ws.read_with(cx, |ws, _| ws.floor_map.is_some()));
+        click(cx, &format!("floor-org-{}", org.0));
+        ws.read_with(cx, |ws, _| {
+            assert!(ws.floor_map.is_none(), "the org tab left the map");
+            assert_eq!(ws.floor_org, Some(org));
+        });
+        // So does a pool card's Open org, found by searching from the map.
+        let agent = pool_member(&ws, cx, "Elsewhere");
+        let other = ws.update(cx, |ws, cx| {
+            let other = ws.floor_orgs.create("Elsewhere org").unwrap();
+            ws.threshing_floor_assign(&agent, other, true, cx);
+            ws.threshing_floor_set_org(org, cx);
+            ws.threshing_floor_query = EditBuffer::seeded("Elsewhere");
+            ws.floor_map = Some(SystemMap::default());
+            ws.floor_view.zoom = 0.7;
+            cx.notify();
+            other
+        });
+        cx.run_until_parked();
+        click(cx, &format!("floor-open-org-{}", other.0));
+        ws.read_with(cx, |ws, _| {
+            assert!(ws.floor_map.is_none(), "Open org left the map");
+            assert_eq!(ws.floor_org, Some(other));
+            assert_eq!(ws.floor_view.zoom, 1., "the org opens at a fresh view");
+        });
+    }
+
+    #[gpui::test]
+    fn a_seated_agent_dropped_on_another_org_on_the_map_keeps_the_view_and_draft(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let agent = pool_member(&ws, cx, "Mover");
+        let home = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
+        ws.update(cx, |ws, cx| {
+            ws.threshing_floor_assign(&agent, home, true, cx)
+        });
+        click(cx, "floor-system-map-toggle");
+        let other = ws.update(cx, |ws, cx| {
+            let other = ws.floor_orgs.create("Other").unwrap();
+            ws.floor_view.zoom = 0.7;
+            ws.floor_relation = Some(RelationEditor::default());
+            cx.notify();
+            other
+        });
+        cx.run_until_parked();
+        let view = ws.read_with(cx, |ws, _| (ws.floor_view.zoom, ws.floor_view.offset));
+        // The drop offers move-or-relate and leaves the builder's draft alone.
+        ws.update(cx, |ws, cx| ws.floor_map_drop_pane(&agent, other, cx));
+        ws.read_with(cx, |ws, _| {
+            assert!(ws.floor_drop.is_some(), "a seated agent gets the choice");
+            assert!(ws.floor_relation.is_some(), "the draft survives the choice");
+        });
+        // Choosing move seats it in the other org without leaving the map.
+        ws.update(cx, |ws, cx| ws.floor_drop_move(cx));
+        cx.run_until_parked();
+        ws.read_with(cx, |ws, cx| {
+            let seat = agent.read(cx).seat.expect("still seated");
+            assert_eq!(ws.floor_orgs.owner(seat), Some(other), "it moved");
+            assert!(ws.floor_map.is_some(), "the map stays open");
+            assert_eq!(
+                (ws.floor_view.zoom, ws.floor_view.offset),
+                view,
+                "the view stays"
+            );
+            assert!(ws.floor_relation.is_some(), "the draft survives the move");
+        });
+    }
+
+    #[gpui::test]
+    fn an_unlined_answer_marks_the_cog_while_the_tray_is_closed(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let numbers = |unlined| crate::askrecord::Numbers {
+            unlined_answered: unlined,
+            cheap_answers: 0,
+            copy_answers: 0,
+            copy_tokens: None,
+        };
+        ws.update(cx, |ws, cx| {
+            ws.ask_numbers = Some(numbers(0));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("floor-settings-dot").is_none(),
+            "no unlined answer, no dot"
+        );
+        // An agent that answered with no line drawn is the one number that must
+        // reach a person unasked, so it shows on the closed cog, not only in
+        // the tray behind it.
+        ws.update(cx, |ws, cx| {
+            ws.ask_numbers = Some(numbers(1));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(
+            ws.read_with(cx, |ws, _| !ws.floor_settings),
+            "the tray is closed"
+        );
+        let dot = bounds(cx, "floor-settings-dot");
+        let cog = bounds(cx, "floor-settings");
+        assert!(
+            cog.contains(&dot.center()),
+            "the dot sits on the cog: {dot:?} {cog:?}"
         );
     }
 
