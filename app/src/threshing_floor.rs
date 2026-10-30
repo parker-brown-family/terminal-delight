@@ -68,6 +68,9 @@ pub struct Org {
     pub name: Option<String>,
     #[serde(default)]
     pub seats: Vec<SeatId>,
+    /// Position on the System Map in unscaled map units. Absent means auto-packed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_at: Option<[i32; 2]>,
 }
 
 /// Grouping only: every permission still comes from `Chart`.
@@ -97,6 +100,7 @@ impl Orgs {
                         .collect::<std::collections::BTreeSet<_>>()
                         .into_iter()
                         .collect(),
+                    map_at: None,
                 }],
             },
         }
@@ -107,6 +111,20 @@ impl Orgs {
     }
     pub fn get(&self, id: OrgId) -> Option<&Org> {
         self.orgs.iter().find(|o| o.id == id)
+    }
+
+    pub fn set_map_at(&mut self, id: OrgId, at: Option<[i32; 2]>) -> bool {
+        let Some(org) = self.orgs.iter_mut().find(|o| o.id == id) else {
+            return false;
+        };
+        org.map_at = at;
+        true
+    }
+
+    pub fn clear_map_at(&mut self) {
+        for org in &mut self.orgs {
+            org.map_at = None;
+        }
     }
 
     /// Ambiguous or absent membership stays unknown.
@@ -126,6 +144,7 @@ impl Orgs {
             id,
             name: Some(name.to_string()),
             seats: vec![],
+            map_at: None,
         });
         Some(id)
     }
@@ -1368,11 +1387,13 @@ mod tests {
                     id: OrgId(4),
                     name: None,
                     seats: vec![SeatId(1), SeatId(2)],
+                    map_at: None,
                 },
                 Org {
                     id: OrgId(5),
                     name: None,
                     seats: vec![SeatId(1)],
+                    map_at: None,
                 },
             ]),
             &[],
@@ -1630,11 +1651,13 @@ mod tests {
                     id: OrgId(10),
                     name: Some("a".into()),
                     seats: vec![SeatId(2)],
+                    map_at: None,
                 },
                 Org {
                     id: OrgId(20),
                     name: Some("b".into()),
                     seats: vec![SeatId(2)],
+                    map_at: None,
                 },
             ]),
             &[],
