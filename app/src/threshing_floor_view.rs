@@ -2831,7 +2831,10 @@ impl Workspace {
         if self.floor_orgs.get(id).is_none() {
             return;
         }
-        if self.floor_org != Some(id) {
+        // On the System Map no org is open: seating or moving a pane there
+        // (which lands here) keeps the map's view and the builder draft.
+        let on_map = self.floor_map.is_some();
+        if self.floor_org != Some(id) && !on_map {
             self.floor_view.reset();
         }
         self.floor_org = Some(id);
@@ -2839,7 +2842,9 @@ impl Workspace {
         // pane (which lands here) must not wipe what they typed. Clearing is
         // theirs to do — the × button and Esc. See also begin_relation/unseat.
         self.threshing_floor_pick = None;
-        self.floor_relation = None;
+        if !on_map {
+            self.floor_relation = None;
+        }
         self.floor_org_edit = None;
         self.floor_delete_org = None;
         self.floor_drop = None;
@@ -3202,6 +3207,11 @@ impl Workspace {
                 })
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     cx.stop_propagation();
+                    // From the System Map a tab opens that org, at a fresh
+                    // view, the way a click on the org's region does.
+                    if ws.floor_map.take().is_some() {
+                        ws.floor_view.reset();
+                    }
                     ws.threshing_floor_set_org(id, cx);
                 })),
             );
@@ -3270,6 +3280,9 @@ impl Workspace {
                             .flex_none(),
                     )
                 })
+                // The panel folds the tray on any press; the cog's own press
+                // must not reach it, or the click that follows reopens it.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|ws, _, _, cx| {
                     cx.stop_propagation();
                     ws.floor_settings = !ws.floor_settings;
@@ -3688,7 +3701,10 @@ impl Workspace {
         self.floor_delete_org = None;
         self.floor_org_edit = None;
         self.floor_move = None;
-        self.floor_relation = None;
+        // The map's builder is reserved, not a popup: its draft stays.
+        if self.floor_map.is_none() {
+            self.floor_relation = None;
+        }
         self.floor_drop = Some(DropChoice {
             leaf: leaf.clone(),
             seat,
@@ -8774,13 +8790,9 @@ mod tests {
             assert!(ws.floor_drop.is_none(), "a pool agent needs no choice");
             assert!(ws.floor_relation.is_some(), "the builder draft survives");
         });
-        let shell_card = format!("floor-pane-{}", shell.entity_id().as_u64());
-        if cx
-            .debug_bounds(Box::leak(shell_card.clone().into_boxed_str()))
-            .is_some()
-        {
-            drag(cx, &shell_card, &region);
-        }
+        // A shell card has no drag, so the guard is driven directly: a drop
+        // that somehow arrives still seats nothing.
+        ws.update(cx, |ws, cx| ws.floor_map_drop_pane(&shell, org, cx));
         ws.read_with(cx, |ws, cx| {
             assert!(
                 shell
@@ -8789,6 +8801,78 @@ mod tests {
                     .is_none_or(|s| ws.floor_orgs.owner(s) != Some(org)),
                 "a plain shell has no agent to seat"
             );
+        });
+    }
+
+    #[gpui::test]
+    fn the_cog_closes_its_own_tray_and_an_org_tab_leaves_the_map(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        click(cx, "floor-settings");
+        assert!(
+            ws.read_with(cx, |ws, _| ws.floor_settings),
+            "the cog opens the tray"
+        );
+        click(cx, "floor-settings");
+        assert!(
+            ws.read_with(cx, |ws, _| !ws.floor_settings),
+            "a second press on the cog folds the tray"
+        );
+        // From the System Map, an org's tab opens that org.
+        let org = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
+        click(cx, "floor-system-map-toggle");
+        assert!(ws.read_with(cx, |ws, _| ws.floor_map.is_some()));
+        click(cx, &format!("floor-org-{}", org.0));
+        ws.read_with(cx, |ws, _| {
+            assert!(ws.floor_map.is_none(), "the org tab left the map");
+            assert_eq!(ws.floor_org, Some(org));
+        });
+    }
+
+    #[gpui::test]
+    fn a_seated_agent_dropped_on_another_org_on_the_map_keeps_the_view_and_draft(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let agent = pool_member(&ws, cx, "Mover");
+        let home = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
+        ws.update(cx, |ws, cx| {
+            ws.threshing_floor_assign(&agent, home, true, cx)
+        });
+        click(cx, "floor-system-map-toggle");
+        let other = ws.update(cx, |ws, cx| {
+            let other = ws.floor_orgs.create("Other").unwrap();
+            ws.floor_view.zoom = 0.7;
+            ws.floor_relation = Some(RelationEditor::default());
+            cx.notify();
+            other
+        });
+        cx.run_until_parked();
+        let view = ws.read_with(cx, |ws, _| (ws.floor_view.zoom, ws.floor_view.offset));
+        // The drop offers move-or-relate and leaves the builder's draft alone.
+        ws.update(cx, |ws, cx| ws.floor_map_drop_pane(&agent, other, cx));
+        ws.read_with(cx, |ws, _| {
+            assert!(ws.floor_drop.is_some(), "a seated agent gets the choice");
+            assert!(ws.floor_relation.is_some(), "the draft survives the choice");
+        });
+        // Choosing move seats it in the other org without leaving the map.
+        ws.update(cx, |ws, cx| ws.floor_drop_move(cx));
+        cx.run_until_parked();
+        ws.read_with(cx, |ws, cx| {
+            let seat = agent.read(cx).seat.expect("still seated");
+            assert_eq!(ws.floor_orgs.owner(seat), Some(other), "it moved");
+            assert!(ws.floor_map.is_some(), "the map stays open");
+            assert_eq!(
+                (ws.floor_view.zoom, ws.floor_view.offset),
+                view,
+                "the view stays"
+            );
+            assert!(ws.floor_relation.is_some(), "the draft survives the move");
         });
     }
 
