@@ -659,10 +659,14 @@ pub(crate) fn plan_markdown(p: &Plan) -> String {
     ));
     s.push_str("## Size\n\n");
     for z in &p.sizes {
-        let size = z
-            .bytes
-            .map(export::human_bytes)
-            .unwrap_or_else(|| "not present".into());
+        // No size for a folder that is there means part of it could not be read.
+        let size = match z.bytes {
+            Some(b) => export::human_bytes(b),
+            None if std::fs::symlink_metadata(&z.path).is_ok() => {
+                "unknown, part of it cannot be read".into()
+            }
+            None => "not present".into(),
+        };
         s.push_str(&format!("- {}: {size} — `{}`\n", z.what, z.path.display()));
     }
     s.push_str("\n## What it will do, in order\n\nTerminal Delight closes at the stop step, and every pane closes with it.\n\n");
