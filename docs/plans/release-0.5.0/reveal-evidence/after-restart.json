@@ -1,0 +1,16 @@
+[
+  {
+    "method": "ShowItems",
+    "seconds": 0.4003,
+    "status": 0,
+    "stdout": "method return time=1792778284.070679 sender=:1.496811 -> destination=:1.496818 serial=104 reply_serial=2\n",
+    "stderr": ""
+  },
+  {
+    "method": "ShowFolders",
+    "seconds": 0.2363,
+    "status": 0,
+    "stdout": "method return time=1792778284.312435 sender=:1.496811 -> destination=:1.496819 serial=105 reply_serial=2\n",
+    "stderr": ""
+  }
+]

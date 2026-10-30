@@ -1,0 +1,24 @@
+{
+  "version": "0.21.0",
+  "binary_sha256": "5c594feae719b23128b37caccaf9d01f7de69656ede31e32e9ad0eef8d43b179",
+  "harness_sha256": "817837da5463780dfc43206ba25264900ef764578b7e99f7588ec2e4a2cac6b3",
+  "fixture_sha256": "73253d0b3bdfa24933b4dae8871b920d6f0e29e7921093b777b53d3b6914d002",
+  "gtk4": "4.22.5",
+  "glib2": "2.88.3",
+  "requests": 30,
+  "failures": 1,
+  "median_seconds": 0.8944466089596972,
+  "max_seconds": 3.0044566110009328,
+  "app_running_at_end": true,
+  "process_status": "Name:\tstrata\nUmask:\t0022\nState:\tR (running)\nTgid:\t49\nNgid:\t0\nPid:\t49\nPPid:\t8\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nFDSize:\t64\nGroups:\t1000 \nNStgid:\t49\nNSpid:\t49\nNSpgid:\t1\nNSsid:\t1\nKthread:\t0\nVmPeak:\t 2024164 kB\nVmSize:\t 2024164 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t  274568 kB\nVmRSS:\t  274568 kB\nRssAnon:\t  164372 kB\nRssFile:\t   96324 kB\nRssShmem:\t   13872 kB\nVmData:\t  616280 kB\nVmStk:\t     280 kB\nVmExe:\t   24260 kB\nVmLib:\t  187768 kB\nVmPTE:\t    1280 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t1\nuntag_mask:\t0xffffffffffffffff\nThreads:\t59\nSigQ:\t1/127228\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000080001000\nSigCgt:\t0000000100000440\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t0000000000000000\nCapAmb:\t0000000000000000\nNoNewPrivs:\t1\nSeccomp:\t2\nSeccomp_filters:\t1\nSpeculation_Store_Bypass:\tthread vulnerable\nSpeculationIndirectBranch:\tconditional enabled\nCpus_allowed:\tffff\nCpus_allowed_list:\t0-15\nMems_allowed:\t00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000001\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t16473\nnonvoluntary_ctxt_switches:\t1350\nx86_Thread_features:\t\nx86_Thread_features_locked:\t\n",
+  "presented_window_log_entries": 32,
+  "recovery_probe": {
+    "idle_seconds": 5,
+    "deadline_seconds": 10,
+    "seconds": 4.12363876204472,
+    "status": 0,
+    "stdout": "method return time=1792779336.057479 sender=:1.3 -> destination=:1.43 serial=80 reply_serial=2\n",
+    "stderr": ""
+  },
+  "limits": "60 requests, synthetic 1-second MP4/text, new process, Xvfb/X11/Cairo, no GPU; not the installed Arch build or a multi-day soak"
+}
