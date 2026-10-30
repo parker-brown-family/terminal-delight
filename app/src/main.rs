@@ -4618,9 +4618,10 @@ struct Workspace {
     /// stage without the words.
     asks: threshing_floor::AskBook,
     /// Prompts, from `prompt_agent` to the worker's last word: what
-    /// `prompt_status` reads and the prompt clock moves. Held in memory only;
-    /// the record keeps each stage without the words.
+    /// `prompt_status` reads and the prompt clock moves. Details are in memory;
+    /// key receipts survive pruning and reopening without keeping the words.
     prompts: prompt::PromptBook,
+    prompt_key_path: std::path::PathBuf,
     /// The menu-bar SIZE popover, raised by the ▭ button in the mother bar. The
     /// scrub track used to live inline on that row; on a thin tile it was the
     /// widest thing there and had nowhere to go, so it moved behind a button.
@@ -6349,6 +6350,15 @@ impl Workspace {
             c
         });
         uiconfig::init(cx, ui);
+        let prompt_key_path = prompt::key_path_for(instance::key());
+        let prompts = match prompt::PromptBook::restore(&prompt_key_path) {
+            Ok(book) => book,
+            Err(e) => {
+                eprintln!("[threshing-floor] prompt key receipts could not be read: {e}");
+                prompt::PromptBook::unavailable()
+            }
+        };
+        let ask_seq = prompts.latest_receipt_id();
         let mut ws = Self {
             tabs: vec![],
             active: 0,
@@ -6392,10 +6402,11 @@ impl Workspace {
             threshing_floor: false,
             threshing_floor_query: EditBuffer::seeded(""),
             threshing_floor_pick: None,
-            ask_seq: 0,
+            ask_seq,
             ask_numbers: None,
             asks: threshing_floor::AskBook::default(),
-            prompts: prompt::PromptBook::default(),
+            prompts,
+            prompt_key_path,
             scale_menu: false,
             more_menu: false,
             art_rail: false,

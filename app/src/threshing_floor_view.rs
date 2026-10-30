@@ -5655,8 +5655,12 @@ impl Workspace {
             mcp::AskCall::PromptStatus {
                 caller_pane,
                 prompt_id,
-            } => match self.prompts.of_sender(*prompt_id, *caller_pane) {
-                Some(sent) => mcp::AskReply::Prompt(sent.status(crate::prompt::now_ms())),
+            } => match self.prompts.status_of_sender(
+                *prompt_id,
+                *caller_pane,
+                crate::prompt::now_ms(),
+            ) {
+                Some(status) => mcp::AskReply::Prompt(status),
                 None => mcp::AskReply::Refused(threshing_floor::Refusal::NoSuchPrompt),
             },
         }
@@ -5668,9 +5672,18 @@ impl Workspace {
     /// [`Self::prompt_tick`]'s, on the book's word.
     fn prompt_send(&mut self, req: &mcp::PromptRequest, cx: &mut Context<Self>) -> mcp::AskReply {
         let now = crate::prompt::now_ms();
+        let caller = self.leaf_by_pane_id(req.caller_pane, cx);
+        // A retry belongs to the original sender even if its worker has gone
+        // or the line has since been erased. It never needs a second grant.
+        if caller.is_some() {
+            if let Some(key) = req.key.as_deref() {
+                if let Some(status) = self.prompts.status_for_key(req.caller_pane, key, now) {
+                    return mcp::AskReply::Prompt(status);
+                }
+            }
+        }
         self.ask_seq = (self.ask_seq + 1).max(now);
         let id = threshing_floor::AskId(self.ask_seq);
-        let caller = self.leaf_by_pane_id(req.caller_pane, cx);
         let target = self.leaf_by_shell_pid(req.target, cx);
         let from = caller.as_ref().and_then(|l| l.read(cx).seat);
         let to = target.as_ref().and_then(|l| l.read(cx).seat);
@@ -5718,18 +5731,21 @@ impl Workspace {
         // conversation; the header says only what will happen.
         let returns = askcopy::Program::of_mode(t.read(cx).mode.label()).is_some();
         let header = crate::prompt::header(id, &sender, c.read(cx).shell_pid(), returns);
-        let taken = self.prompts.send(crate::prompt::NewPrompt {
-            id,
-            sender_pane: req.caller_pane,
-            from,
-            to,
-            target_pid: req.target,
-            key: req.key.clone(),
-            text: crate::prompt::compose(&header, &brief),
-            brief_len: entry.question_len,
-            brief_sha256: entry.question_sha256.clone(),
-            now_ms: now,
-        });
+        let taken = self.prompts.send_durable(
+            crate::prompt::NewPrompt {
+                id,
+                sender_pane: req.caller_pane,
+                from,
+                to,
+                target_pid: req.target,
+                key: req.key.clone(),
+                text: crate::prompt::compose(&header, &brief),
+                brief_len: entry.question_len,
+                brief_sha256: entry.question_sha256.clone(),
+                now_ms: now,
+            },
+            &self.prompt_key_path,
+        );
         match taken {
             Ok(crate::prompt::Taken::New(status)) => {
                 entry.stage = "waiting".into();
@@ -10677,6 +10693,98 @@ mod tests {
                 cx,
             )
         })
+    }
+
+    /// A keyed retry still resolves after its detail is gone, even if the
+    /// worker's old pid is gone or the line has since been narrowed. A fresh
+    /// key remains subject to the current line and can start new work.
+    #[gpui::test]
+    fn an_expired_key_does_not_block_new_work_or_bypass_a_narrowed_line(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let dir = prompt_scratch("key-retry");
+        let log = dir.join("worker.log");
+        let worker = prompt_worker(&ws, cx, &log, "? for shortcuts");
+        let pid = worker.read_with(cx, |v, _| v.shell_pid().unwrap());
+        let path = dir.join("prompt-keys.jsonl");
+        ws.update(cx, |ws, _| {
+            ws.prompt_key_path = path.clone();
+            ws.chart.draw(
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(102),
+                threshing_floor::Rung::Prompt,
+            );
+        });
+        let send = |target, key: &str, ws: &Entity<Workspace>, cx: &mut gpui::VisualTestContext| {
+            ws.update(cx, |ws, cx| {
+                ws.ask_bridge(
+                    &mcp::AskCall::Prompt(mcp::PromptRequest {
+                        caller_pane: 10,
+                        target,
+                        brief: "new work".into(),
+                        key: Some(key.into()),
+                    }),
+                    cx,
+                )
+            })
+        };
+        let mcp::AskReply::Prompt(first) = send(pid, "task-a", &ws, cx) else {
+            panic!("first keyed prompt was refused");
+        };
+        assert_eq!(first.stage.word(), "waiting");
+        let receipt = std::fs::read_to_string(&path).unwrap();
+        assert!(!receipt.contains("task-a"));
+        ws.update(cx, |ws, _| {
+            let now = crate::prompt::now_ms();
+            ws.prompts.fail(first.prompt_id, "ended", now);
+            ws.prompts.tick(now + crate::prompt::KEEP_ENDED_MS, |_| {
+                crate::prompt::Worker::gone()
+            });
+            assert!(ws.prompts.get(first.prompt_id).is_none());
+            ws.chart.draw(
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(102),
+                threshing_floor::Rung::Ask,
+            );
+        });
+        let mcp::AskReply::Prompt(expired) = send(u32::MAX, "task-a", &ws, cx) else {
+            panic!("the old key did not return its receipt");
+        };
+        assert_eq!(expired.prompt_id, first.prompt_id);
+        assert_eq!(expired.stage, crate::prompt::PromptStage::Expired);
+        assert_eq!(
+            send(pid, "task-b", &ws, cx),
+            mcp::AskReply::Refused(threshing_floor::Refusal::NoPromptLine)
+        );
+        ws.update(cx, |ws, _| {
+            ws.chart.draw(
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(102),
+                threshing_floor::Rung::Prompt,
+            );
+        });
+        assert!(matches!(
+            send(pid, "task-b", &ws, cx),
+            mcp::AskReply::Prompt(crate::prompt::PromptStatus {
+                stage: crate::prompt::PromptStage::Waiting { .. },
+                ..
+            })
+        ));
+        ws.update(cx, |ws, _| {
+            ws.prompts = crate::prompt::PromptBook::restore(&path).unwrap();
+        });
+        assert!(matches!(
+            send(u32::MAX, "task-a", &ws, cx),
+            mcp::AskReply::Prompt(crate::prompt::PromptStatus {
+                prompt_id,
+                stage: crate::prompt::PromptStage::Expired,
+                ..
+            }) if prompt_id == first.prompt_id
+        ));
     }
 
     /// A worker the sleep has signalled but not yet recorded asleep is waited

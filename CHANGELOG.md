@@ -57,6 +57,10 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   paste shows. Ask lines and rail bypasses never prompt, read-only panes are
   never prompted, and lines drawn before this stay ask lines. The ask rung now
   reads "ask" rather than "prompt".
+- An optional prompt key stays bound to its first assignment after detailed
+  status expires or the window reopens. A retry returns `expired` without
+  typing again; a new key follows the existing prompt line and worker checks.
+  The lasting receipt holds no prompt, reply or raw key.
 - Prompting waits longer and holds nothing back. A worker must sit settled at
   its prompt for five seconds, not two, before it is typed into; a pane its
   person typed in waits a minute, not twenty seconds; and Enter comes a second

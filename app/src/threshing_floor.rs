@@ -883,6 +883,9 @@ pub enum Refusal {
     PromptBusy,
     /// `prompt_status` named no prompt this pane sent.
     NoSuchPrompt,
+    /// Keyed prompt receipts cannot be read or durably written. Repeating a
+    /// key while its earlier use is unknown could create duplicate work.
+    PromptKeyStoreUnavailable,
 }
 
 impl Refusal {
@@ -908,6 +911,7 @@ impl Refusal {
             Self::BadBrief => "the prompt is empty or longer than 32,000 characters",
             Self::PromptBusy => "your earlier prompt to that pane has not finished; read it with prompt_status first",
             Self::NoSuchPrompt => "no prompt by that id was sent from your pane",
+            Self::PromptKeyStoreUnavailable => "the prompt key record is unavailable; this request sent no work. Repair the record or storage, then restart Terminal Delight before retrying that key",
         }
     }
 }
