@@ -1619,14 +1619,14 @@ impl Workspace {
         }
 
         let switches = self.mcp_switch_buttons(&sk, th, "war", cx);
-        // The search is small and sits at the right end of the one header row:
-        // it narrows the pool, so it is a tool, not a heading.
+        // The search narrows the pool and nothing else, so it lives inside the
+        // pool, under its heading.
         let search = with_tip(
             div()
                 .id("threshing-floor-search")
                 .debug_selector(|| "threshing-floor-search".to_string())
                 .flex_none()
-                .w(px(190.))
+                .w_full()
                 .h(px(24.))
                 .px_2()
                 .flex()
@@ -1683,13 +1683,7 @@ impl Workspace {
             .debug_selector(|| "threshing-floor-header".to_string())
             .flex_none()
             .min_w(px(0.))
-            .child(self.threshing_floor_org_controls(
-                &sk,
-                th,
-                switches,
-                search.into_any_element(),
-                cx,
-            ));
+            .child(self.threshing_floor_org_controls(&sk, th, switches, cx));
         let drop_chart_ink = th.accent;
         let view_bounds = self.floor_view.bounds.clone();
         let chart_tile = div()
@@ -1894,19 +1888,15 @@ impl Workspace {
                                 )
                             ))),
                     )
-                    .child(
-                        div()
-                            .text_size(sk.text_px(8.5))
-                            .text_color(th.text.alpha(0.6))
-                            .child(SharedString::from(
-                                if removing {
-                                    ui.floor_drop_remove
-                                } else {
-                                    ui.floor_off_blurb
-                                }
-                                .to_string(),
-                            )),
-                    ),
+                    .when(removing, |d| {
+                        d.child(
+                            div()
+                                .text_size(sk.text_px(8.5))
+                                .text_color(th.text.alpha(0.6))
+                                .child(SharedString::from(ui.floor_drop_remove.to_string())),
+                        )
+                    })
+                    .child(search),
             )
             .child(
                 div()
@@ -1941,7 +1931,8 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    if ws.threshing_floor_pick.take().is_some() {
+                    let closed = std::mem::take(&mut ws.floor_settings);
+                    if ws.threshing_floor_pick.take().is_some() || closed {
                         cx.notify();
                     }
                 }),
@@ -2318,6 +2309,10 @@ impl Workspace {
                 cx.notify();
                 return true;
             }
+            if std::mem::take(&mut self.floor_settings) {
+                cx.notify();
+                return true;
+            }
             if self.floor_drop.take().is_some()
                 || self.floor_move.take().is_some()
                 || self.floor_org_edit.take().is_some()
@@ -2667,12 +2662,152 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The settings tray behind the header's cog, drawn the way the GAUGES
+    /// tray is: a titled sheet, a capital heading over each group, and each
+    /// switch with its meaning written under it rather than only in a hover.
+    fn floor_settings_tray(
+        &self,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+        switches: [gpui::Stateful<gpui::Div>; 5],
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let ui = self.lang.strings().ui;
+        let label = |s: &str| {
+            div()
+                .text_size(sk.text_px(9.))
+                .text_color(th.text.alpha(0.55))
+                .child(s.to_string())
+        };
+        let note = |s: String| {
+            div()
+                .text_size(sk.text_px(8.5))
+                .text_color(th.text.alpha(0.6))
+                .child(s)
+        };
+        let mut server = ui.floor_tip_server.to_string();
+        if let Some(n) = self.ask_numbers.as_ref() {
+            server.push(' ');
+            server.push_str(&lang::fill(
+                ui.floor_asks,
+                &[
+                    ("cheap", &n.cheap_answers.to_string()),
+                    ("copies", &n.copy_answers.to_string()),
+                    ("unlined", &n.unlined_answered.to_string()),
+                ],
+            ));
+        }
+        let meanings = [
+            server,
+            ui.floor_tip_expose.to_string(),
+            ui.floor_tip_events.to_string(),
+            ui.floor_tip_writes.to_string(),
+            ui.floor_tip_images.to_string(),
+        ];
+        let mut access = div()
+            .id("floor-access-controls")
+            .debug_selector(|| "floor-access-controls".to_string())
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(label(ui.floor_set_access));
+        for (switch, meaning) in switches.into_iter().zip(meanings) {
+            access = access.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .child(div().flex().child(switch))
+                    .child(note(meaning)),
+            );
+        }
+        let mut tray = sk
+            .sheet()
+            .id("floor-settings-tray")
+            .debug_selector(|| "floor-settings-tray".to_string())
+            .w(px(sk.fit(300., 320.)))
+            .p_3()
+            .rounded(sk.rad_raw(6.))
+            .border_2()
+            .border_color(th.accent.alpha(0.85))
+            .bg(sk.region_face(darken(th.surface, 0.6)))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
+            .map(|d| sk.finish(d))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .text_size(sk.text_px(10.))
+            .text_color(th.text)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(label(&format!(
+                "{} \u{2014} {}",
+                ui.floor_settings, ui.floor_hdr
+            )))
+            .child(access);
+        // The open org's own edits. On the System Map no org is open, so the
+        // section is absent rather than aimed at a tab nobody is looking at.
+        if let (None, Some(id)) = (self.floor_map.as_ref(), self.floor_org) {
+            let org = self.threshing_floor_org_label(id);
+            tray = tray.child(
+                div()
+                    .id("floor-settings-org")
+                    .debug_selector(|| "floor-settings-org".to_string())
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(label(&org.to_uppercase()))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(with_tip(
+                                Self::bezel_btn(sk, ui.floor_org_rename, false)
+                                    .id("floor-org-rename")
+                                    .debug_selector(|| "floor-org-rename".to_string())
+                                    .on_click(cx.listener(move |ws, _, w, cx| {
+                                        cx.stop_propagation();
+                                        let name = ws
+                                            .floor_orgs
+                                            .get(id)
+                                            .and_then(|o| o.name.as_deref())
+                                            .unwrap_or("");
+                                        ws.floor_org_edit =
+                                            Some((Some(id), EditBuffer::seeded(name)));
+                                        ws.floor_settings = false;
+                                        w.focus(&ws.focus_handle, cx);
+                                        cx.notify();
+                                    })),
+                                vec![lang::fill(ui.floor_tip_rename, &[("org", &org)])],
+                            ))
+                            .child(div().flex_1())
+                            .child(with_tip(
+                                Self::bezel_btn(sk, ui.floor_org_delete, false)
+                                    .id("floor-org-delete")
+                                    .debug_selector(|| "floor-org-delete".to_string())
+                                    .on_click(cx.listener(move |ws, _, _, cx| {
+                                        cx.stop_propagation();
+                                        // Hold the delete until the person confirms the
+                                        // count; the name editor steps aside so the two
+                                        // never stack.
+                                        ws.floor_delete_org = Some(id);
+                                        ws.floor_org_edit = None;
+                                        ws.floor_settings = false;
+                                        cx.notify();
+                                    })),
+                                vec![lang::fill(ui.floor_tip_delete, &[("org", &org)])],
+                            )),
+                    ),
+            );
+        }
+        tray
+    }
+
     fn threshing_floor_org_controls(
         &self,
         sk: &skin::Skin,
         th: &theme::Theme,
         switches: [gpui::Stateful<gpui::Div>; 5],
-        search: gpui::AnyElement,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let ui = self.lang.strings().ui;
@@ -2690,7 +2825,7 @@ impl Workspace {
                     Self::bezel_btn(
                         sk,
                         &self.threshing_floor_org_label(id),
-                        self.floor_org == Some(id),
+                        self.floor_map.is_none() && self.floor_org == Some(id),
                     )
                     .id(SharedString::from(format!("floor-org-{}", id.0))),
                     vec![tip],
@@ -2719,9 +2854,9 @@ impl Workspace {
                 })),
             );
         }
-        // The System Map is a way of looking, like an org tab, so it sits with
-        // the tabs; the edits stand apart, and Delete apart again.
-        let choices = choices.child(with_tip(
+        // The System Map is the view over every org, so it leads the row: the
+        // whole first, then each org, then the one way to add another.
+        let map_btn = with_tip(
             Self::bezel_btn(
                 sk,
                 &format!("\u{25c7} {}", ui.floor_map),
@@ -2729,6 +2864,7 @@ impl Workspace {
             )
             .id("floor-system-map-toggle")
             .debug_selector(|| "floor-system-map-toggle".to_string())
+            .flex_none()
             .on_click(cx.listener(|ws, _, _, cx| {
                 cx.stop_propagation();
                 // Toggle the higher-level view; its draft lives only
@@ -2740,59 +2876,21 @@ impl Workspace {
                 cx.notify();
             })),
             vec![ui.floor_tip_map.to_string()],
-        ));
-        let mut actions = div()
-            .flex()
-            .flex_row()
-            .flex_none()
-            .items_center()
-            .gap_1()
-            .child(with_tip(
-                Self::bezel_btn(sk, ui.floor_org_new, false)
-                    .id("floor-org-new")
-                    .debug_selector(|| "floor-org-new".to_string())
-                    .on_click(cx.listener(|ws, _, w, cx| {
-                        cx.stop_propagation();
-                        ws.floor_org_edit = Some((None, EditBuffer::seeded("")));
-                        w.focus(&ws.focus_handle, cx);
-                        cx.notify();
-                    })),
-                vec![ui.floor_tip_new.to_string()],
-            ));
-        if let Some(id) = self.floor_org {
-            let org = self.threshing_floor_org_label(id);
-            actions = actions.child(with_tip(
-                Self::bezel_btn(sk, ui.floor_org_rename, false)
-                    .id("floor-org-rename")
-                    .debug_selector(|| "floor-org-rename".to_string())
-                    .on_click(cx.listener(move |ws, _, w, cx| {
-                        cx.stop_propagation();
-                        let name = ws
-                            .floor_orgs
-                            .get(id)
-                            .and_then(|o| o.name.as_deref())
-                            .unwrap_or("");
-                        ws.floor_org_edit = Some((Some(id), EditBuffer::seeded(name)));
-                        w.focus(&ws.focus_handle, cx);
-                        cx.notify();
-                    })),
-                vec![lang::fill(ui.floor_tip_rename, &[("org", &org)])],
-            ));
-            actions = actions.child(div().w(px(10.))).child(with_tip(
-                Self::bezel_btn(sk, ui.floor_org_delete, false)
-                    .id("floor-org-delete")
-                    .debug_selector(|| "floor-org-delete".to_string())
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        cx.stop_propagation();
-                        // Hold the delete until the person confirms the count; the
-                        // name editor steps aside so the two never stack.
-                        ws.floor_delete_org = Some(id);
-                        ws.floor_org_edit = None;
-                        cx.notify();
-                    })),
-                vec![lang::fill(ui.floor_tip_delete, &[("org", &org)])],
-            ));
-        }
+        );
+        let new_btn = with_tip(
+            Self::bezel_btn(sk, ui.floor_org_new, false)
+                .id("floor-org-new")
+                .debug_selector(|| "floor-org-new".to_string())
+                .flex_none()
+                .on_click(cx.listener(|ws, _, w, cx| {
+                    cx.stop_propagation();
+                    ws.floor_settings = false;
+                    ws.floor_org_edit = Some((None, EditBuffer::seeded("")));
+                    w.focus(&ws.focus_handle, cx);
+                    cx.notify();
+                })),
+            vec![ui.floor_tip_new.to_string()],
+        );
         let rule = || {
             div()
                 .w(px(1.))
@@ -2801,7 +2899,48 @@ impl Workspace {
                 .flex_none()
                 .bg(th.text.alpha(0.22))
         };
-        let [sw0, sw1, sw2, sw3, sw4] = switches;
+        // The five access switches and the open org's Rename and Delete are
+        // settings, not views: they fold into one tray behind a cog at the
+        // right end, drawn the way the GAUGES tray is.
+        let unlined = self.ask_numbers.as_ref().map_or(0, |n| n.unlined_answered);
+        let cog = with_tip(
+            Self::bezel_btn(sk, "\u{2699}", self.floor_settings)
+                .id("floor-settings")
+                .debug_selector(|| "floor-settings".to_string())
+                .flex_none()
+                .when(unlined > 0, |d| {
+                    d.child(
+                        div()
+                            .size(px(6.))
+                            .rounded(sk.radius_pill())
+                            .bg(th.ansi[1])
+                            .flex_none(),
+                    )
+                })
+                .on_click(cx.listener(|ws, _, _, cx| {
+                    cx.stop_propagation();
+                    ws.floor_settings = !ws.floor_settings;
+                    cx.notify();
+                })),
+            vec![ui.floor_tip_settings.to_string()],
+        );
+        let settings = div()
+            .id("floor-settings-anchor")
+            .flex_none()
+            .relative()
+            .child(cog)
+            .when(self.floor_settings, |d| {
+                d.child(
+                    deferred(
+                        div()
+                            .absolute()
+                            .top(px(30.))
+                            .right_0()
+                            .child(self.floor_settings_tray(sk, th, switches, cx)),
+                    )
+                    .with_priority(1),
+                )
+            });
         let mut controls = div().min_w(px(0.)).flex().flex_col().gap_2().child(
             div()
                 .min_w(px(0.))
@@ -2810,8 +2949,10 @@ impl Workspace {
                 .items_center()
                 .gap_2()
                 // A narrow window breaks the row in two rather than squeezing
-                // the org tabs until the System Map disappears behind a scroll.
+                // the org tabs until a tab disappears behind a scroll.
                 .flex_wrap()
+                .child(map_btn)
+                .child(rule())
                 .child(
                     div()
                         .id("floor-org-choices")
@@ -2822,21 +2963,9 @@ impl Workspace {
                         .child(choices),
                 )
                 .child(rule())
-                .child(actions.when(dragging, |d| d.opacity(0.3)))
+                .child(div().when(dragging, |d| d.opacity(0.3)).child(new_btn))
                 .child(div().flex_1().min_w(px(8.)))
-                .child(
-                    div()
-                        .id("floor-access-controls")
-                        .debug_selector(|| "floor-access-controls".to_string())
-                        .flex_none()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_1()
-                        .children([sw0, sw1, sw2, sw3, sw4]),
-                )
-                .child(rule())
-                .child(search),
+                .child(settings),
         );
         if let Some(id) = self.floor_delete_org {
             let n = self.threshing_floor_org_relationship_count(id);
@@ -7473,33 +7602,93 @@ mod tests {
     }
 
     #[gpui::test]
-    fn the_header_is_one_row_with_a_small_search_at_its_right_end(cx: &mut gpui::TestAppContext) {
+    fn the_header_reads_map_then_orgs_then_new_and_settings_fold_behind_a_cog(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let _warp = crate::warp::WARP_SERIAL
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        let (_ws, cx, _) = fixture(cx);
+        let (ws, cx, _) = fixture(cx);
         // At the width Parker reads it, about 2000 px, the header is one row; a
         // narrower window may wrap it rather than hide the tabs.
         cx.simulate_resize(size(px(2000.), px(1000.)));
         cx.run_until_parked();
+        let org = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
+        let map = bounds(cx, "floor-system-map-toggle");
         let tabs = bounds(cx, "floor-org-choices");
-        let switches = bounds(cx, "floor-access-controls");
-        let search = bounds(cx, "threshing-floor-search");
-        // One row: every group's middle sits on the same line.
-        for b in [switches, search] {
+        let tab = bounds(cx, &format!("floor-org-{}", org.0));
+        let new = bounds(cx, "floor-org-new");
+        let cog = bounds(cx, "floor-settings");
+        let header = bounds(cx, "threshing-floor-header");
+        // SYSTEM MAP | ORG 1 ORG 2 … | NEW ORG, and the cog at the far right.
+        for b in [tabs, new, cog] {
             assert!(
-                (b.center().y - tabs.center().y).abs() < px(6.),
-                "a header group left the one row: {b:?} against {tabs:?}"
+                (b.center().y - map.center().y).abs() < px(6.),
+                "a header group left the one row: {b:?} against {map:?}"
             );
         }
+        assert!(map.right() < tab.origin.x, "the System Map leads the row");
+        assert!(tabs.right() < new.origin.x, "New org follows the org tabs");
+        assert!(new.right() < cog.origin.x, "the cog sits right of New org");
         assert!(
-            search.origin.x > switches.right(),
-            "the search sits right of the switches"
+            header.right() - cog.right() < px(24.),
+            "the cog is at the right end: {cog:?} in {header:?}"
+        );
+        // The search narrows the pool, so it lives inside the pool's heading.
+        let search = bounds(cx, "threshing-floor-search");
+        let pool = bounds(cx, "floor-pool-header");
+        assert!(
+            pool.contains(&search.center()),
+            "the search sits in the pool heading: {search:?} outside {pool:?}"
         );
         assert!(
-            search.size.width < px(260.),
-            "the search is small: {search:?}"
+            search.origin.y > header.bottom(),
+            "the search left the header"
         );
+        // The switches, Rename and Delete wait behind the cog.
+        for id in [
+            "floor-access-controls",
+            "floor-org-rename",
+            "floor-org-delete",
+        ] {
+            assert!(
+                cx.debug_bounds(id).is_none(),
+                "{id} shows before the cog opens"
+            );
+        }
+        click(cx, "floor-settings");
+        let tray = bounds(cx, "floor-settings-tray");
+        for id in [
+            "floor-access-controls",
+            "war-btn-enable",
+            "war-btn-images",
+            "floor-org-rename",
+            "floor-org-delete",
+        ] {
+            let b = bounds(cx, id);
+            assert!(tray.contains(&b.center()), "{id} is not inside the tray");
+        }
+        assert!(
+            tray.origin.y > cog.bottom() - px(2.),
+            "the tray hangs below the cog"
+        );
+        // A switch inside the tray still works.
+        let before = ws.read_with(cx, |ws, _| ws.mcp.events);
+        click(cx, "war-btn-events");
+        assert_ne!(ws.read_with(cx, |ws, _| ws.mcp.events), before);
+        // Escape folds the tray before it closes anything else.
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("floor-settings-tray").is_none());
+        assert!(
+            ws.read_with(cx, |ws, _| ws.threshing_floor),
+            "Escape closed the floor"
+        );
+        // On the System Map no org is open, so the tray has no org section.
+        click(cx, "floor-system-map-toggle");
+        click(cx, "floor-settings");
+        assert!(cx.debug_bounds("floor-access-controls").is_some());
+        assert!(cx.debug_bounds("floor-org-rename").is_none());
         assert!(
             cx.debug_bounds("floor-connect").is_none(),
             "Connect is gone; a relationship starts from a card"
@@ -7801,6 +7990,8 @@ mod tests {
             assert!(ws.chart.saved().is_empty());
             id
         });
+        // Rename lives in the settings tray, behind the cog.
+        click(cx, "floor-settings");
         click(cx, "floor-org-rename");
         cx.simulate_keystrokes("t e a m enter");
         cx.run_until_parked();

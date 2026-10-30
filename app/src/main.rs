@@ -4578,6 +4578,9 @@ struct Workspace {
     /// relationships it will take with it. Deleting is destructive and nothing
     /// is kept dormant, so it waits for a yes.
     floor_delete_org: Option<threshing_floor::OrgId>,
+    /// The Threshing Floor's settings tray (the cog at the header's right end):
+    /// the five MCP switches and the open org's Rename and Delete. Closed on open.
+    floor_settings: bool,
     /// The System Map, the higher-level view across every org. `Some` holds its
     /// cross-org relationship draft while it is open.
     floor_map: Option<threshing_floor_view::SystemMap>,
@@ -6376,6 +6379,7 @@ impl Workspace {
             floor_relation: None,
             floor_move: None,
             floor_delete_org: None,
+            floor_settings: false,
             floor_map: None,
             floor_drop: None,
             floor_drag: None,
@@ -23032,7 +23036,8 @@ impl Workspace {
                     .flex_none(),
             )
         })
-        .id(SharedString::from(format!("{prefix}-btn-enable")));
+        .id(SharedString::from(format!("{prefix}-btn-enable")))
+        .debug_selector(move || format!("{prefix}-btn-enable"));
         let enable_btn = with_tip(enable_btn, server_tip)
             .hover(|s| s.border_color(th.accent))
             .on_mouse_down(
@@ -23058,7 +23063,8 @@ impl Workspace {
         };
         let expose_btn = with_tip(
             Self::bezel_btn(sk, &expose_label, false)
-                .id(SharedString::from(format!("{prefix}-btn-expose"))),
+                .id(SharedString::from(format!("{prefix}-btn-expose")))
+                .debug_selector(move || format!("{prefix}-btn-expose")),
             vec![ui.floor_tip_expose.to_string()],
         )
         .hover(|s| s.border_color(th.accent))
@@ -23085,7 +23091,8 @@ impl Workspace {
                 ),
                 self.mcp.events,
             )
-            .id(SharedString::from(format!("{prefix}-btn-events"))),
+            .id(SharedString::from(format!("{prefix}-btn-events")))
+            .debug_selector(move || format!("{prefix}-btn-events")),
             vec![ui.floor_tip_events.to_string()],
         )
         .hover(|s| s.border_color(th.accent))
@@ -23119,7 +23126,8 @@ impl Workspace {
                 ),
                 self.mcp.writable,
             )
-            .id(SharedString::from(format!("{prefix}-btn-writes"))),
+            .id(SharedString::from(format!("{prefix}-btn-writes")))
+            .debug_selector(move || format!("{prefix}-btn-writes")),
             vec![ui.floor_tip_writes.to_string()],
         )
         .hover(|s| s.border_color(th.accent))
@@ -23152,7 +23160,8 @@ impl Workspace {
                 ),
                 show_art,
             )
-            .id(SharedString::from(format!("{prefix}-btn-images"))),
+            .id(SharedString::from(format!("{prefix}-btn-images")))
+            .debug_selector(move || format!("{prefix}-btn-images")),
             vec![ui.floor_tip_images.to_string()],
         )
         .hover(|s| s.border_color(th.accent))
