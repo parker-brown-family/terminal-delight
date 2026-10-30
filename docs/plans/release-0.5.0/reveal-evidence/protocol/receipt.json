@@ -1,0 +1,438 @@
+{
+  "kind": "injected protocol failure; not a Strata root-cause reproducer",
+  "source_commit": "e8e5303b399782be3f5e8e0bbd599a0bac7cc7be",
+  "pane_source_sha256": "37565a873f681ab8bac4c7b3c411d3375db93284dd42476041ef698d9e6aa688",
+  "harness_sha256": "3b9134576f8b43ef977ecca5c51427401af2e82f2d0f9eba3710216faa9a544a",
+  "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "cases": [
+    {
+      "elapsed_seconds": 0.007966232020407915,
+      "status": 0,
+      "watchdog_terminated": false,
+      "bus_is_private": true,
+      "name": "healthy-direct",
+      "mode": "reply",
+      "route": "direct",
+      "mutation": "none",
+      "parent_argument_correct": true,
+      "events": [
+        {
+          "monotonic": 857032.475720774,
+          "kind": "request",
+          "method": "ShowItems",
+          "args": [
+            [
+              "file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"
+            ],
+            ""
+          ]
+        }
+      ]
+    },
+    {
+      "elapsed_seconds": 0.007852111011743546,
+      "status": 0,
+      "watchdog_terminated": false,
+      "bus_is_private": true,
+      "name": "healthy-uwsm",
+      "mode": "reply",
+      "route": "uwsm",
+      "mutation": "none",
+      "parent_argument_correct": true,
+      "events": [
+        {
+          "monotonic": 857032.694786608,
+          "kind": "request",
+          "method": "ShowItems",
+          "args": [
+            [
+              "file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"
+            ],
+            ""
+          ]
+        }
+      ]
+    },
+    {
+      "elapsed_seconds": 3.0695377399679273,
+      "status": 0,
+      "watchdog_terminated": false,
+      "bus_is_private": true,
+      "name": "silent-direct-0",
+      "mode": "silent",
+      "route": "direct",
+      "mutation": "none",
+      "parent_argument_correct": true,
+      "events": [
+        {
+          "monotonic": 857032.909764178,
+          "kind": "request",
+          "method": "ShowItems",
+          "args": [
+            [
+              "file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"
+            ],
+            ""
+          ]
+        },
+        {
+          "kind": "xdg-open",
+          "args": [
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857035.934299945
+        }
+      ]
+    },
+    {
+      "elapsed_seconds": 3.0690410339739174,
+      "status": 0,
+      "watchdog_terminated": false,
+      "bus_is_private": true,
+      "name": "silent-direct-1",
+      "mode": "silent",
+      "route": "direct",
+      "mutation": "none",
+      "parent_argument_correct": true,
+      "events": [
+        {
+          "monotonic": 857036.181550042,
+          "kind": "request",
+          "method": "ShowItems",
+          "args": [
+            [
+              "file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"
+            ],
+            ""
+          ]
+        },
+        {
+          "kind": "xdg-open",
+          "args": [
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857039.206643506
+        }
+      ]
+    },
+    {
+      "elapsed_seconds": 3.069010172970593,
+      "status": 0,
+      "watchdog_terminated": false,
+      "bus_is_private": true,
+      "name": "silent-direct-2",
+      "mode": "silent",
+      "route": "direct",
+      "mutation": "none",
+      "parent_argument_correct": true,
+      "events": [
+        {
+          "monotonic": 857039.450768041,
+          "kind": "request",
+          "method": "ShowItems",
+          "args": [
+            [
+              "file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"
+            ],
+            ""
+          ]
+        },
+        {
+          "kind": "xdg-open",
+          "args": [
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857042.475847824
+        }
+      ]
+    },
+    {
+      "elapsed_seconds": 3.069619762012735,
+      "status": 0,
+      "watchdog_terminated": false,
+      "bus_is_private": true,
+      "name": "silent-uwsm-0",
+      "mode": "silent",
+      "route": "uwsm",
+      "mutation": "none",
+      "parent_argument_correct": true,
+      "events": [
+        {
+          "monotonic": 857042.76283403,
+          "kind": "request",
+          "method": "ShowItems",
+          "args": [
+            [
+              "file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"
+            ],
+            ""
+          ]
+        },
+        {
+          "kind": "uwsm-app",
+          "args": [
+            "--",
+            "xdg-open",
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857045.787238242
+        },
+        {
+          "kind": "xdg-open",
+          "args": [
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857045.809412544
+        }
+      ]
+    },
+    {
+      "elapsed_seconds": 3.069396347971633,
+      "status": 0,
+      "watchdog_terminated": false,
+      "bus_is_private": true,
+      "name": "silent-uwsm-1",
+      "mode": "silent",
+      "route": "uwsm",
+      "mutation": "none",
+      "parent_argument_correct": true,
+      "events": [
+        {
+          "monotonic": 857046.04617959,
+          "kind": "request",
+          "method": "ShowItems",
+          "args": [
+            [
+              "file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"
+            ],
+            ""
+          ]
+        },
+        {
+          "kind": "uwsm-app",
+          "args": [
+            "--",
+            "xdg-open",
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857049.071314008
+        },
+        {
+          "kind": "xdg-open",
+          "args": [
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857049.093897513
+        }
+      ]
+    },
+    {
+      "elapsed_seconds": 3.0698718399507925,
+      "status": 0,
+      "watchdog_terminated": false,
+      "bus_is_private": true,
+      "name": "silent-uwsm-2",
+      "mode": "silent",
+      "route": "uwsm",
+      "mutation": "none",
+      "parent_argument_correct": true,
+      "events": [
+        {
+          "monotonic": 857049.317363596,
+          "kind": "request",
+          "method": "ShowItems",
+          "args": [
+            [
+              "file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"
+            ],
+            ""
+          ]
+        },
+        {
+          "kind": "uwsm-app",
+          "args": [
+            "--",
+            "xdg-open",
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857052.346195172
+        },
+        {
+          "kind": "xdg-open",
+          "args": [
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857052.372270631
+        }
+      ]
+    },
+    {
+      "elapsed_seconds": 0.0639478350058198,
+      "status": 0,
+      "watchdog_terminated": false,
+      "bus_is_private": true,
+      "name": "refused",
+      "mode": "reject",
+      "route": "direct",
+      "mutation": "none",
+      "parent_argument_correct": true,
+      "events": [
+        {
+          "monotonic": 857052.601017528,
+          "kind": "request",
+          "method": "ShowItems",
+          "args": [
+            [
+              "file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"
+            ],
+            ""
+          ]
+        },
+        {
+          "kind": "xdg-open",
+          "args": [
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857052.625116531
+        }
+      ]
+    },
+    {
+      "elapsed_seconds": 3.069288669968955,
+      "status": 0,
+      "watchdog_terminated": false,
+      "bus_is_private": true,
+      "name": "late-reply",
+      "mode": "late",
+      "route": "direct",
+      "mutation": "none",
+      "parent_argument_correct": true,
+      "events": [
+        {
+          "monotonic": 857052.854875716,
+          "kind": "request",
+          "method": "ShowItems",
+          "args": [
+            [
+              "file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"
+            ],
+            ""
+          ]
+        },
+        {
+          "kind": "xdg-open",
+          "args": [
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857055.880288822
+        },
+        {
+          "monotonic": 857057.859250521,
+          "kind": "late_reply"
+        }
+      ]
+    },
+    {
+      "elapsed_seconds": 5.001818756922148,
+      "status": -15,
+      "watchdog_terminated": true,
+      "bus_is_private": true,
+      "name": "fallback-also-hangs",
+      "mode": "silent",
+      "route": "uwsm",
+      "mutation": "hang",
+      "parent_argument_correct": true,
+      "events": [
+        {
+          "monotonic": 857058.3274179,
+          "kind": "request",
+          "method": "ShowItems",
+          "args": [
+            [
+              "file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"
+            ],
+            ""
+          ]
+        },
+        {
+          "kind": "uwsm-app",
+          "args": [
+            "--",
+            "xdg-open",
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857061.35165181
+        },
+        {
+          "kind": "xdg-open",
+          "args": [
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857061.374721135
+        }
+      ]
+    },
+    {
+      "elapsed_seconds": 25.063333236961626,
+      "status": 0,
+      "watchdog_terminated": false,
+      "bus_is_private": true,
+      "name": "old-uncapped",
+      "mode": "silent",
+      "route": "direct",
+      "mutation": "uncapped",
+      "parent_argument_correct": true,
+      "events": [
+        {
+          "monotonic": 857063.568831743,
+          "kind": "request",
+          "method": "ShowItems",
+          "args": [
+            [
+              "file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"
+            ],
+            ""
+          ]
+        },
+        {
+          "kind": "xdg-open",
+          "args": [
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"
+          ],
+          "monotonic": 857088.619545952
+        }
+      ]
+    },
+    {
+      "elapsed_seconds": 0.06391375395469368,
+      "status": 0,
+      "watchdog_terminated": false,
+      "bus_is_private": true,
+      "name": "wrong-fallback-target",
+      "mode": "reject",
+      "route": "direct",
+      "mutation": "target",
+      "parent_argument_correct": false,
+      "events": [
+        {
+          "monotonic": 857088.849827421,
+          "kind": "request",
+          "method": "ShowItems",
+          "args": [
+            [
+              "file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"
+            ],
+            ""
+          ]
+        },
+        {
+          "kind": "xdg-open",
+          "args": [
+            "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)/video ' # % , \u00fc.mp4"
+          ],
+          "monotonic": 857088.875942341
+        }
+      ]
+    }
+  ]
+}

@@ -28,6 +28,7 @@
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
 mod access;
+mod admin_view;
 mod agentcfg;
 mod agentrest;
 mod agentrest_io;
@@ -101,6 +102,7 @@ mod screenread;
 mod session;
 mod skin;
 mod threshing_floor_view;
+mod uninstall;
 use skin::parts::{color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn};
 mod slot;
 mod sticky;
@@ -4677,6 +4679,9 @@ struct Workspace {
     notif_menu: bool,
     /// The 🐞 bug-report panel is open (see [`diag`]).
     bug_menu: bool,
+    /// The ⚙ ADMIN panel is open: export, old builds, uninstall (see [`admin_view`]).
+    admin_menu: bool,
+    admin: admin_view::AdminState,
     /// What step 1 of the bug report did while the panel was open: the report
     /// it wrote, or why it could not. Step 2 is offered only after a report
     /// exists, and closing the panel starts the ladder again.
@@ -6429,6 +6434,8 @@ impl Workspace {
             plugins_menu: false,
             notif_menu: false,
             bug_menu: false,
+            admin_menu: false,
+            admin: Default::default(),
             bug_report: None,
             bug_unseen: diag::unseen_crashes(),
             notif: notifpref::load(),
@@ -8594,6 +8601,10 @@ impl Workspace {
             std::env::temp_dir().join(format!("td-demo-{}-{stamp}.toml", std::process::id()));
         if session::write_atomic(&path, &body).is_err() {
             return;
+        }
+        // Recorded like the unpacked pictures, so an uninstall can prove it is TD's.
+        if let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
+            crate::art::record_asset(dir, &name.to_string_lossy(), body.as_bytes());
         }
         let Ok(exe) = std::env::current_exe() else {
             return;
@@ -20254,6 +20265,7 @@ impl Workspace {
             || self.notif_menu
             || self.agents_menu
             || self.bug_menu
+            || self.admin_menu
             || self.savings_menu
     }
 
@@ -20386,6 +20398,10 @@ impl Workspace {
         }
         if self.bug_menu {
             self.close_bug_menu();
+            return true;
+        }
+        if self.admin_menu {
+            self.close_admin();
             return true;
         }
         // Standalone modals (only one is ever open at a time; order is moot).
@@ -29703,6 +29719,7 @@ impl Render for Workspace {
                 || self.notif_menu
                 || self.agents_menu
                 || self.bug_menu
+                || self.admin_menu
                 || self.savings_menu
                 || self.dead_menu
                 || self.group_menu.is_some()
@@ -29757,6 +29774,7 @@ impl Render for Workspace {
                     "coordination" => self.eng_table = true,
                     "notifications" => self.notif_menu = true,
                     "bug" => self.bug_menu = true,
+                    "admin" => self.open_admin(cx),
                     "language" => {
                         self.lang_picker = Some(LangPicker {
                             query: EditBuffer::seeded(""),
@@ -32595,6 +32613,7 @@ impl Render for Workspace {
         let notif_overlay = self.render_notif_overlay(&th, cx);
         let agents_overlay = self.render_agents_overlay(&th, cx);
         let bug_overlay = self.render_bug_overlay(&th, cx);
+        let admin_overlay = self.render_admin_overlay(&th, cx);
         // The marquee, while it lives. It ages out on its own — nothing
         // clears it — and it keeps asking for frames so the bulbs chase and
         // the fade actually runs.
@@ -35312,6 +35331,17 @@ impl Render for Workspace {
                             }),
                         ),
                 )
+                .child(
+                    entry("\u{2699}", s.ui.cfg_admin, "more-admin").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.more_menu = false;
+                            ws.open_admin(cx);
+                            cx.notify();
+                        }),
+                    ),
+                )
                 .child(entry("\u{1f9e9}", s.plugins, "more-plugins").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -37134,6 +37164,7 @@ impl Render for Workspace {
                     .children(notif_overlay)
                     .children(agents_overlay)
                     .children(bug_overlay)
+                    .children(admin_overlay)
                     .children(marquee)
                     .children(savings_overlay)
                     .children(confirm_overlay)
@@ -44850,6 +44881,8 @@ mod tests {
         assert_eq!(
             streams,
             [
+                ("admin", &["help"][..]),
+                ("uninstall", &["help"][..]),
                 ("restricted", &["help"][..]),
                 ("skin", &["--list"][..]),
                 ("conversation", &["zzz-no-such-conversation"][..]),
@@ -47510,6 +47543,12 @@ Usage:
   terminal-delight default-terminal [status|on|off]
                                  make Terminal Delight the terminal Omarchy opens, or put
                                  back exactly what was there before
+  terminal-delight uninstall preview|plan|run
+                                 what a removal would do, the plan to review, and
+                                 the worker that carries a reviewed plan out
+  terminal-delight admin export|builds|guard|protect
+                                 export settings, list or prune old builds, and
+                                 protect this machine from uninstall
   terminal-delight ctl <cmd>     drive a RUNNING instance over its control socket
   terminal-delight mcp           relay MCP over stdio into a RUNNING instance
   terminal-delight restricted    explicitly run an offline command with limited access (help)
@@ -47762,6 +47801,10 @@ enum Verb {
     /// started by typing — what Claude Code's `SessionStart` hook runs — and
     /// put that hook in or take it out (see [`briefhook`]).
     Briefing,
+    /// Preview, plan and carry out a removal of Terminal Delight.
+    Uninstall,
+    /// CONFIG › ADMIN from a terminal: export, old builds, machine protection.
+    Admin,
 }
 
 /// Whether the broken-pipe gate in `tests/broken_pipe.rs` can run a verb — and
@@ -47798,6 +47841,18 @@ enum Piping {
 /// Every roster now reads this one, so a verb added below is a verb the
 /// dispatch test, the usage test and the broken-pipe gate all pick up.
 const VERBS: &[VerbSpec] = &[
+    VerbSpec {
+        word: "admin",
+        verb: Verb::Admin,
+        typed: true,
+        piping: Piping::Streams(&["help"]),
+    },
+    VerbSpec {
+        word: "uninstall",
+        verb: Verb::Uninstall,
+        typed: true,
+        piping: Piping::Streams(&["help"]),
+    },
     VerbSpec {
         word: "restricted",
         verb: Verb::Restricted,
@@ -48061,6 +48116,8 @@ fn main() {
                 Verb::Conversation => benchstore::run_cli(&argv[2..]),
                 Verb::DefaultTerminal => defaultterm::run_cli(&argv[2..]),
                 Verb::Briefing => briefhook::run_cli(&argv[2..]),
+                Verb::Uninstall => uninstall::run_cli(&argv[2..]),
+                Verb::Admin => uninstall::admin_cli(&argv[2..]),
             };
             std::process::exit(code);
         }

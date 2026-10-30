@@ -1,0 +1,3 @@
+{"monotonic": 857049.317363596, "kind": "request", "method": "ShowItems", "args": [["file:///tmp/td-reveal-proof-_zymu5iw/folder%20%27%20%23%20%25%20%2C%20%24HOME%20%24%28touch%20SHOULD_NOT_EXIST%29/video%20%27%20%23%20%25%20%2C%20%C3%BC.mp4"], ""]}
+{"kind": "uwsm-app", "args": ["--", "xdg-open", "/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"], "monotonic": 857052.346195172}
+{"kind": "xdg-open", "args": ["/tmp/td-reveal-proof-_zymu5iw/folder ' # % , $HOME $(touch SHOULD_NOT_EXIST)"], "monotonic": 857052.372270631}
