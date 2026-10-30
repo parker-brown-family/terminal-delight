@@ -3632,6 +3632,33 @@ impl Workspace {
         self.threshing_floor_set_org(org, cx);
     }
 
+    /// A pane dropped on an org's region on the System Map. A pool agent
+    /// (sleeping ones included) is seated in that org on the spot, and the map
+    /// keeps its view and any builder draft, because the person is still
+    /// arranging the whole. A pane already in the org is left alone. One from
+    /// another org takes the same move-or-relate choice as a drop on its tab.
+    fn floor_map_drop_pane(
+        &mut self,
+        leaf: &Entity<TerminalView>,
+        org: threshing_floor::OrgId,
+        cx: &mut Context<Self>,
+    ) {
+        if self.floor_orgs.get(org).is_none() || !leaf.read(cx).hosts_agent() {
+            return;
+        }
+        match leaf.read(cx).seat {
+            None => {
+                let seat = threshing_floor::SeatId::mint();
+                self.floor_orgs.assign(seat, org);
+                leaf.update(cx, |v, cx| v.set_seat(Some(seat), cx));
+                self.save(cx);
+                cx.notify();
+            }
+            Some(seat) if self.floor_orgs.owner(seat) == Some(org) => {}
+            Some(_) => self.threshing_floor_drop_on_org(leaf, org, cx),
+        }
+    }
+
     /// A pane card was dropped on an org button. If the pane is already in that
     /// org this just opens it; a loose (seatless) pane simply moves in; a seated
     /// pane from a *different* org opens the move/relate choice, so the drop can
@@ -5346,6 +5373,7 @@ impl Workspace {
                 bg: th.surface,
             };
             let press_drag = org_drag.clone();
+            let drop_ink = th.accent;
             world = world.child(
                 div()
                     .id(SharedString::from(format!("floor-map-org-{}", org.0)))
@@ -5363,6 +5391,19 @@ impl Workspace {
                         ink.alpha(0.55)
                     })
                     .bg(ink.alpha(0.025))
+                    // A pane dropped on an org's region joins it, as a drop on
+                    // the org's tab does: a pool agent is seated here, and one
+                    // from another org gets the move-or-relate choice.
+                    .drag_over::<PaneDrag>(move |st, _, _, _| {
+                        st.border_color(drop_ink)
+                            .bg(drop_ink.alpha(0.12))
+                            .shadow(drop_glow(drop_ink, true))
+                    })
+                    .on_drop(cx.listener(move |ws, d: &PaneDrag, _, cx| {
+                        if !d.relation.get() {
+                            ws.floor_map_drop_pane(&d.leaf, org, cx);
+                        }
+                    }))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, ev: &MouseDownEvent, _, cx| {
@@ -8688,6 +8729,67 @@ mod tests {
             cx.debug_bounds("floor-connect").is_none(),
             "Connect is gone; a relationship starts from a card"
         );
+    }
+
+    #[gpui::test]
+    fn a_pool_agent_dropped_on_an_org_on_the_map_joins_it_and_the_map_stays(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let agent = pool_member(&ws, cx, "Joiner");
+        let shell = pool_member(&ws, cx, "Plain");
+        cx.update(|_, cx| shell.update(cx, |v, _| v.mode = pane::PaneMode::Shell));
+        cx.run_until_parked();
+        click(cx, "floor-system-map-toggle");
+        // Drop on an org other than the one last open, with a builder draft
+        // under way: neither the view nor the draft may be thrown away.
+        let org = ws.update(cx, |ws, cx| {
+            let org = ws.floor_orgs.create("Second").unwrap();
+            ws.floor_view.zoom = 0.7;
+            ws.floor_relation = Some(RelationEditor::default());
+            cx.notify();
+            org
+        });
+        assert_ne!(ws.read_with(cx, |ws, _| ws.floor_org), Some(org));
+        cx.run_until_parked();
+        let view = ws.read_with(cx, |ws, _| (ws.floor_view.zoom, ws.floor_view.offset));
+        let region = format!("floor-map-org-{}", org.0);
+        drag(
+            cx,
+            &format!("floor-pane-{}", agent.entity_id().as_u64()),
+            &region,
+        );
+        ws.read_with(cx, |ws, cx| {
+            let seat = agent.read(cx).seat.expect("the dropped agent is seated");
+            assert_eq!(ws.floor_orgs.owner(seat), Some(org), "it joined the org");
+            assert!(ws.floor_map.is_some(), "the map stays open");
+            assert_eq!(
+                (ws.floor_view.zoom, ws.floor_view.offset),
+                view,
+                "the map keeps its view"
+            );
+            assert!(ws.floor_drop.is_none(), "a pool agent needs no choice");
+            assert!(ws.floor_relation.is_some(), "the builder draft survives");
+        });
+        let shell_card = format!("floor-pane-{}", shell.entity_id().as_u64());
+        if cx
+            .debug_bounds(Box::leak(shell_card.clone().into_boxed_str()))
+            .is_some()
+        {
+            drag(cx, &shell_card, &region);
+        }
+        ws.read_with(cx, |ws, cx| {
+            assert!(
+                shell
+                    .read(cx)
+                    .seat
+                    .is_none_or(|s| ws.floor_orgs.owner(s) != Some(org)),
+                "a plain shell has no agent to seat"
+            );
+        });
     }
 
     #[gpui::test]
