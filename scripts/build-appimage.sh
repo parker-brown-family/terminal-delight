@@ -46,6 +46,12 @@ install -Dm644 "$repo_root/packaging/$app.desktop"      "$appdir/usr/share/appli
 install -Dm644 "$repo_root/packaging/$app.desktop"      "$appdir/$app.desktop"
 install -Dm644 "$repo_root/packaging/$app.svg"          "$appdir/usr/share/icons/hicolor/scalable/apps/$app.svg"
 install -Dm644 "$repo_root/packaging/$app.svg"          "$appdir/$app.svg"
+# appimagetool wants a PNG (or XPM) at the AppDir root named for the desktop
+# file's Icon=, plus .DirIcon. The PNG is rendered from the SVG and committed,
+# so the build needs no SVG renderer.
+install -Dm644 "$repo_root/packaging/$app.png"          "$appdir/usr/share/icons/hicolor/256x256/apps/$app.png"
+install -Dm644 "$repo_root/packaging/$app.png"          "$appdir/$app.png"
+ln -sf "$app.png" "$appdir/.DirIcon"
 install -Dm644 "$tpl"                                   "$appdir/usr/share/licenses/$app/THIRD-PARTY-LICENSES.txt"
 install -Dm644 "$repo_root/LICENSE"                     "$appdir/usr/share/licenses/$app/LICENSE"
 
@@ -76,12 +82,20 @@ exec "$HERE/usr/bin/terminal-delight" "$@"
 APPRUN
 chmod +x "$appdir/AppRun"
 
-echo "==> Fetching appimagetool (cached)"
-tool="$build/appimagetool-$arch.AppImage"
+echo "==> Fetching appimagetool (pinned, cached)"
+# Pinned to a tagged release and checked against its published digest. The
+# "continuous" build changes under us: the one published 2026-10-29 19:16 UTC
+# refused this AppDir, and every push after it went red.
+tool_version="1.9.1"
+tool_sha256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+[ "$arch" = "x86_64" ] || { echo "no pinned appimagetool digest for $arch" >&2; exit 1; }
+tool="$build/appimagetool-$tool_version-$arch.AppImage"
 if [ ! -x "$tool" ]; then
-    url="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$arch.AppImage"
-    curl -fL --retry 3 -o "$tool" "$url"
-    chmod +x "$tool"
+    url="https://github.com/AppImage/appimagetool/releases/download/$tool_version/appimagetool-$arch.AppImage"
+    curl -fL --retry 3 -o "$tool.part" "$url"
+    echo "$tool_sha256  $tool.part" | sha256sum --check --quiet
+    chmod +x "$tool.part"
+    mv "$tool.part" "$tool"
 fi
 
 echo "==> Packing AppImage"
