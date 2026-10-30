@@ -9,6 +9,10 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### The Threshing Floor for 0.5.0 Development
 
+- The System Map uses the org view's Actor → CAN → Targets builder. Drag a
+  whole org from its frame or header tab, or drag an agent card, into a slot.
+  Map cards show the agent name and vitals; cross-org lines appear as one wire
+  per directed org pair with the strongest rung and a count.
 - Mouse Back opens the System Map from an org and mouse Forward returns. Orgs
   can be dragged into a saved arrangement, with Arrange restoring automatic
   packing. Cross-org arrows follow their endpoints as orgs move.

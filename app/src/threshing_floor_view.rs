@@ -131,6 +131,18 @@ struct PaneDrag {
 }
 
 #[derive(Clone)]
+struct OrgDrag {
+    org: threshing_floor::OrgId,
+    at: std::rc::Rc<std::cell::Cell<[i32; 2]>>,
+    moved: std::rc::Rc<std::cell::Cell<bool>>,
+    cancelled: std::rc::Rc<std::cell::Cell<bool>>,
+    rects: Vec<(threshing_floor::OrgId, f32, f32, f32, f32)>,
+    title: String,
+    ink: Hsla,
+    bg: Hsla,
+}
+
+#[derive(Clone)]
 struct RelationDrag {
     from: threshing_floor::SeatId,
     title: String,
@@ -286,6 +298,7 @@ enum RelationEnd {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum RelationMember {
     Seat(threshing_floor::SeatId),
+    Org(threshing_floor::OrgId),
     // A draft must not keep a closed pane or its process alive.
     Pool(gpui::WeakEntity<TerminalView>),
 }
@@ -345,16 +358,10 @@ struct PreparedRelationship {
     )>,
 }
 
-/// The System Map's own relationship draft. Unlike [`RelationEditor`], each end
-/// is a whole-org or a single agent ([`threshing_floor::End`]), and the two may sit in
-/// different orgs — this is the surface where cross-org and whole-org
-/// relationships are drawn. `Some` means the map is open.
+/// `Some` means the map is open. Relationship drafts use the same
+/// `RelationEditor` as an org chart.
 #[derive(Default)]
 pub(crate) struct SystemMap {
-    from: Option<threshing_floor::End>,
-    to: Option<threshing_floor::End>,
-    rung: Option<threshing_floor::Rung>,
-    choosing: Option<RelationEnd>,
     /// The drawer listing every cross-org and whole-org line, with Remove.
     /// Closed by default: the canvas draws them, the drawer edits them.
     rels_open: bool,
@@ -380,13 +387,65 @@ struct MapOrgDrag {
     origin: (f32, f32),
     at: [i32; 2],
     active: bool,
-    /// The arrangement at press time. Pinning is deferred until drop so Escape
-    /// leaves the saved state untouched.
-    rects: Vec<(threshing_floor::OrgId, f32, f32, f32, f32)>,
+    cancelled: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
 fn map_grid(value: f32) -> i32 {
     ((value / 20.).round() * 20.).clamp(0., i32::MAX as f32) as i32
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MapWireBundle {
+    from: threshing_floor::OrgId,
+    to: threshing_floor::OrgId,
+    count: usize,
+    strongest: Option<threshing_floor::Rung>,
+}
+
+fn map_wire_bundles(
+    chart: &threshing_floor::Chart,
+    owner: impl Fn(threshing_floor::SeatId) -> Option<threshing_floor::OrgId>,
+) -> Vec<MapWireBundle> {
+    use threshing_floor::End;
+    let mut bundles = std::collections::BTreeMap::<(u64, u64), MapWireBundle>::new();
+    let mut add = |from: threshing_floor::OrgId,
+                   to: threshing_floor::OrgId,
+                   rung: Option<threshing_floor::Rung>| {
+        if from == to {
+            return;
+        }
+        let bundle = bundles.entry((from.0, to.0)).or_insert(MapWireBundle {
+            from,
+            to,
+            count: 0,
+            strongest: None,
+        });
+        bundle.count += 1;
+        bundle.strongest = bundle.strongest.max(rung);
+    };
+    for line in chart.saved() {
+        if let (Some(from), Some(to)) = (owner(line.from), owner(line.to)) {
+            add(from, to, line.rung.known());
+        }
+    }
+    for line in chart.org_lines() {
+        let org_of = |end: End| match end {
+            End::Org { org } => Some(org),
+            End::Seat(seat) => owner(seat),
+        };
+        if let (Some(from), Some(to)) = (org_of(line.from), org_of(line.to)) {
+            add(from, to, line.rung.known());
+        }
+    }
+    bundles.into_values().collect()
+}
+
+fn map_wire_chip(base: String, count: usize) -> String {
+    if count > 1 {
+        format!("{base} ×{count}")
+    } else {
+        base
+    }
 }
 
 fn map_drop_position(
@@ -1307,28 +1366,7 @@ impl Workspace {
                     // What it runs on sits in a sub-card of its own, gently
                     // bordered, so the model, age and size read as one reading
                     // apart from what the agent is saying and doing.
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("floor-vitals-{}", seat.0)))
-                            .debug_selector(move || format!("floor-vitals-{}", seat.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(2. * s))
-                            .px(px(6. * s))
-                            .py(px(4. * s))
-                            .rounded(sk.rad_raw(4.))
-                            .border_1()
-                            .border_color(th.text.alpha(0.12))
-                            .child(
-                                div()
-                                    .text_size(sk.text_px(8.5))
-                                    .text_color(th.text.alpha(0.6))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .child(SharedString::from(second)),
-                            )
-                            .child(self.threshing_floor_metrics(f, &sk, th)),
-                    )
+                    .child(self.threshing_floor_vitals(seat, f, &second, s, &sk, th))
                     .child(
                         div()
                             .mt_auto()
@@ -1768,6 +1806,7 @@ impl Workspace {
             .min_w(px(0.))
             .child(self.threshing_floor_org_controls(&sk, th, switches, cx));
         let drop_chart_ink = th.accent;
+        let map_drag_scale = th.grade.scale.clamp(0.7, 1.6) * self.floor_view.zoom;
         let view_bounds = self.floor_view.bounds.clone();
         let nav_layout = self.floor_map_layout(&map_keys);
         let nav_org = self.floor_org.and_then(|id| {
@@ -1786,7 +1825,6 @@ impl Workspace {
             })?
         });
         let nav_scale = ui_scale;
-        let drag_scale = ui_scale;
         let weak_ws = cx.entity().downgrade();
         let chart_tile = div()
             .id("floor-org-tile")
@@ -1923,6 +1961,9 @@ impl Workspace {
                         move |_, _, _| has_org
                     })
                     .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
+                        if ws.floor_map.is_some() {
+                            return;
+                        }
                         if d.relation.get() {
                             return;
                         }
@@ -1934,6 +1975,24 @@ impl Workspace {
                             ws.threshing_floor_assign(&d.leaf, org, false, cx);
                         }
                     }))
+                    .on_drop(cx.listener(|ws, d: &OrgDrag, _, cx| {
+                        ws.floor_map_drop_org(d, cx);
+                    }))
+                    .on_drag_move(cx.listener(
+                        move |ws, ev: &gpui::DragMoveEvent<OrgDrag>, _, cx| {
+                            let drag = ev.drag(cx);
+                            let at = drag.at.clone();
+                            let moved = drag.moved.clone();
+                            if ws.floor_map_move_drag(ev.event.position, map_drag_scale, cx) {
+                                if let Some(pending) =
+                                    ws.floor_map.as_ref().and_then(|map| map.drag.as_ref())
+                                {
+                                    at.set(pending.at);
+                                    moved.set(pending.active);
+                                }
+                            }
+                        },
+                    ))
                     .child(
                         gpui::canvas(
                             move |bounds, _, app| {
@@ -2160,7 +2219,10 @@ impl Workspace {
                     cx.set_active_drag_cursor_style(gpui::CursorStyle::ClosedHand, window);
                 })
                 .capture_any_mouse_up(cx.listener(|ws, _, _, cx| {
-                    let moved_org = ws.floor_map_end_drag(cx);
+                    let moved_org = ws
+                        .floor_map
+                        .as_mut()
+                        .is_some_and(|map| map.drag.take().is_some());
                     let panning = ws.floor_view.drag.take().is_some();
                     if ws.floor_drag.take().is_some()
                         || ws.floor_tether.is_some()
@@ -2172,16 +2234,6 @@ impl Workspace {
                     }
                 }))
                 .on_mouse_move(cx.listener(move |ws, ev: &MouseMoveEvent, _, cx| {
-                    if ws.floor_map.as_ref().is_some_and(|m| m.drag.is_some()) {
-                        if ev.pressed_button == Some(MouseButton::Left) {
-                            let s = drag_scale * ws.floor_view.zoom;
-                            ws.floor_map_move_drag(ev.position, s, cx);
-                        } else if let Some(map) = ws.floor_map.as_mut() {
-                            map.drag = None;
-                        }
-                        cx.stop_propagation();
-                        return;
-                    }
                     if let Some((start, offset)) = ws.floor_view.drag {
                         if ev.pressed_button == Some(MouseButton::Left) {
                             ws.floor_view.offset = offset + ev.position - start;
@@ -2229,6 +2281,7 @@ impl Workspace {
                             pending_center: true,
                             ..Default::default()
                         });
+                        ws.floor_relation = None;
                         cx.notify();
                     }),
                 )
@@ -2509,11 +2562,8 @@ impl Workspace {
             return false;
         }
         if key.key == "escape" {
-            if self
-                .floor_map
-                .as_mut()
-                .is_some_and(|m| m.drag.take().is_some())
-            {
+            if let Some(drag) = self.floor_map.as_mut().and_then(|m| m.drag.take()) {
+                drag.cancelled.set(true);
                 cx.notify();
                 return true;
             }
@@ -2739,6 +2789,37 @@ impl Workspace {
             .child(SharedString::from(format!("{} {tokens}", ui.floor_tokens)))
     }
 
+    fn threshing_floor_vitals(
+        &self,
+        seat: threshing_floor::SeatId,
+        f: &PaneFacts,
+        model: &str,
+        s: f32,
+        sk: &skin::Skin,
+        th: &theme::Theme,
+    ) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(SharedString::from(format!("floor-vitals-{}", seat.0)))
+            .debug_selector(move || format!("floor-vitals-{}", seat.0))
+            .flex()
+            .flex_col()
+            .gap(px(2. * s))
+            .px(px(6. * s))
+            .py(px(4. * s))
+            .rounded(sk.rad_raw(4.))
+            .border_1()
+            .border_color(th.text.alpha(0.12))
+            .child(
+                div()
+                    .text_size(sk.text_px(8.5))
+                    .text_color(th.text.alpha(0.6))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .child(SharedString::from(model.to_string())),
+            )
+            .child(self.threshing_floor_metrics(f, sk, th))
+    }
+
     fn threshing_floor_org_label(&self, id: threshing_floor::OrgId) -> String {
         self.floor_orgs
             .get(id)
@@ -2840,54 +2921,76 @@ impl Workspace {
         }
     }
 
-    /// Pick one end of the System Map's relationship. From is chosen first, then
-    /// To; choosing the same endpoint twice is refused so a line never points at
-    /// itself.
-    fn floor_map_choose(&mut self, end: threshing_floor::End, cx: &mut Context<Self>) {
-        if let Some(m) = &mut self.floor_map {
-            match m.choosing {
-                Some(RelationEnd::From) => {
-                    m.from = Some(end);
-                    if m.to == Some(end) {
-                        m.to = None;
-                    }
-                    m.choosing = Some(RelationEnd::To);
-                }
-                Some(RelationEnd::To) if m.from != Some(end) => {
-                    m.to = Some(end);
-                    m.choosing = None;
-                }
-                _ => return,
-            }
+    /// Resolve the shared builder on the map without staging pool membership.
+    /// The map can name any seated agent or a whole org, whereas an org chart
+    /// limits its builder to its own seats.
+    fn floor_map_prepare_relation(
+        &self,
+        cx: &App,
+    ) -> Option<
+        Vec<(
+            threshing_floor::End,
+            threshing_floor::End,
+            threshing_floor::Rung,
+        )>,
+    > {
+        use threshing_floor::End;
+        self.floor_map.as_ref()?;
+        let editor = self.floor_relation.as_ref()?;
+        if editor.targets.is_empty() || editor.targets.iter().any(Option::is_none) {
+            return None;
         }
-        cx.notify();
+        let rung = editor.rung?;
+        let resolve = |member: &RelationMember| match member {
+            RelationMember::Org(org) if self.floor_orgs.get(*org).is_some() => {
+                Some(End::Org { org: *org })
+            }
+            RelationMember::Seat(seat)
+                if self.floor_orgs.owner(*seat).is_some()
+                    && self.threshing_floor_seat_leaf(*seat, cx).is_some() =>
+            {
+                Some(End::Seat(*seat))
+            }
+            _ => None,
+        };
+        let actor = resolve(editor.actor.as_ref()?)?;
+        let mut seen = vec![actor];
+        let mut pairs = Vec::new();
+        for member in editor.targets.iter().flatten() {
+            let target = resolve(member)?;
+            if seen.contains(&target) {
+                return None;
+            }
+            seen.push(target);
+            pairs.push((actor, target, rung));
+        }
+        Some(pairs)
     }
 
-    /// Draw the System Map's relationship: a seat-to-seat line (even across
-    /// orgs) goes on the chart as a plain line; anything naming a whole org is a
-    /// whole-org line. The draft clears so the next one starts fresh.
-    fn floor_map_draw(&mut self, cx: &mut Context<Self>) {
-        let Some(m) = self.floor_map.as_ref() else {
-            return;
-        };
-        let (Some(from), Some(to), Some(rung)) = (m.from, m.to, m.rung) else {
-            return;
-        };
-        if from == to {
-            return;
-        }
-        match (from, to) {
-            (threshing_floor::End::Seat(f), threshing_floor::End::Seat(t)) => {
-                self.chart.draw(f, t, rung)
+    fn floor_map_save_relation(&mut self, cx: &mut Context<Self>) {
+        let Some(pairs) = self.floor_map_prepare_relation(cx) else {
+            if let Some(editor) = &mut self.floor_relation {
+                editor.error = Some(self.lang.strings().ui.floor_rel_invalid.to_string());
+                cx.notify();
             }
-            _ => self.chart.draw_org(from, to, rung),
+            return;
+        };
+        let count = pairs.len();
+        for (from, to, rung) in pairs {
+            if let (threshing_floor::End::Seat(a), threshing_floor::End::Seat(b)) = (from, to) {
+                if self.floor_orgs.owner(a) == self.floor_orgs.owner(b) {
+                    self.chart.draw(a, b, rung);
+                    self.threshing_floor_forget_pair(a, b, cx);
+                    continue;
+                }
+            }
+            self.chart.draw_org(from, to, rung);
         }
-        if let Some(m) = &mut self.floor_map {
-            m.from = None;
-            m.to = None;
-            m.rung = None;
-            m.choosing = None;
-        }
+        self.floor_relation = None;
+        self.floor_feedback = Some(lang::fill(
+            self.lang.strings().ui.floor_rel_done,
+            &[("n", &count.to_string())],
+        ));
         self.save(cx);
         cx.notify();
     }
@@ -3046,6 +3149,16 @@ impl Workspace {
         for org in self.floor_orgs.saved() {
             let id = org.id;
             let ink = th.accent;
+            let org_drag = OrgDrag {
+                org: id,
+                at: std::rc::Rc::new(std::cell::Cell::new([0, 0])),
+                moved: std::rc::Rc::new(std::cell::Cell::new(false)),
+                cancelled: std::rc::Rc::new(std::cell::Cell::new(false)),
+                rects: Vec::new(),
+                title: self.threshing_floor_org_label(id),
+                ink,
+                bg: th.surface,
+            };
             let tip = lang::fill(
                 ui.floor_tip_org,
                 &[("org", &self.threshing_floor_org_label(id))],
@@ -3078,6 +3191,15 @@ impl Workspace {
                         ws.threshing_floor_drop_on_org(&drag.leaf, id, cx);
                     }
                 }))
+                .on_drag(org_drag, |drag, position, _window, cx| {
+                    cx.new(|_| DragPreview {
+                        title: drag.title.clone(),
+                        offset: position,
+                        ink: drag.ink,
+                        bg: drag.bg,
+                        tether: None,
+                    })
+                })
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     cx.stop_propagation();
                     ws.threshing_floor_set_org(id, cx);
@@ -3103,6 +3225,7 @@ impl Workspace {
                     Some(_) => None,
                     None => Some(SystemMap::default()),
                 };
+                ws.floor_relation = None;
                 cx.notify();
             })),
             vec![ui.floor_tip_map.to_string()],
@@ -3727,6 +3850,7 @@ impl Workspace {
     ) -> Option<Entity<TerminalView>> {
         match member {
             RelationMember::Seat(seat) => self.threshing_floor_seat_leaf(*seat, cx),
+            RelationMember::Org(_) => None,
             RelationMember::Pool(weak) => {
                 let leaf = weak.upgrade()?;
                 self.tabs.iter().find_map(|tab| {
@@ -3745,6 +3869,7 @@ impl Workspace {
     ) -> Option<RelationMember> {
         let v = leaf.read(cx);
         match v.seat.and_then(|s| self.floor_orgs.owner(s)) {
+            Some(_) if self.floor_map.is_some() => v.seat.map(RelationMember::Seat),
             Some(org) if Some(org) == self.floor_org => v.seat.map(RelationMember::Seat),
             None if v.hosts_agent()
                 && v.seat
@@ -3800,13 +3925,23 @@ impl Workspace {
     }
 
     fn threshing_floor_choose_member(&mut self, member: RelationMember, cx: &mut Context<Self>) {
-        let Some(leaf) = self.threshing_floor_member_leaf(&member, cx) else {
-            return;
+        let label = match &member {
+            RelationMember::Org(org)
+                if self.floor_map.is_some() && self.floor_orgs.get(*org).is_some() =>
+            {
+                self.threshing_floor_org_label(*org)
+            }
+            RelationMember::Org(_) => return,
+            _ => {
+                let Some(leaf) = self.threshing_floor_member_leaf(&member, cx) else {
+                    return;
+                };
+                if self.threshing_floor_member(&leaf, cx).as_ref() != Some(&member) {
+                    return;
+                }
+                self.pane_name(&leaf, cx).full()
+            }
         };
-        if self.threshing_floor_member(&leaf, cx).as_ref() != Some(&member) {
-            return;
-        }
-        let label = self.pane_name(&leaf, cx).full();
         let editor = self
             .floor_relation
             .get_or_insert_with(RelationEditor::default);
@@ -3859,7 +3994,9 @@ impl Workspace {
         seat: threshing_floor::SeatId,
         cx: &mut Context<Self>,
     ) {
-        if self.floor_orgs.owner(seat) == self.floor_org {
+        if (self.floor_map.is_some() && self.floor_orgs.owner(seat).is_some())
+            || self.floor_orgs.owner(seat) == self.floor_org
+        {
             self.threshing_floor_choose_member(RelationMember::Seat(seat), cx);
         }
     }
@@ -3956,6 +4093,9 @@ impl Workspace {
     }
 
     fn threshing_floor_member_label(&self, member: &RelationMember, cx: &App) -> String {
+        if let RelationMember::Org(org) = member {
+            return self.threshing_floor_org_label(*org);
+        }
         self.threshing_floor_member_leaf(member, cx)
             .map(|leaf| self.pane_name(&leaf, cx).full())
             .or_else(|| {
@@ -4038,6 +4178,16 @@ impl Workspace {
                 .rounded(sk.radius()),
             true,
         );
+        if let RelationMember::Org(org) = member {
+            return card
+                .child(
+                    div()
+                        .truncate()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(SharedString::from(self.threshing_floor_org_label(*org))),
+                )
+                .child(self.lang.strings().ui.floor_map_whole_org);
+        }
         if let Some(leaf) = self.threshing_floor_member_leaf(member, cx) {
             let v = leaf.read(cx);
             let name = self.pane_name(&leaf, cx);
@@ -4095,11 +4245,19 @@ impl Workspace {
     ) -> gpui::Stateful<gpui::Div> {
         let ui = self.lang.strings().ui;
         let editor = self.floor_relation.as_ref();
-        let actor = editor
-            .and_then(|e| e.actor.clone())
-            .or_else(|| self.threshing_floor_pick.map(RelationMember::Seat));
+        let map_open = self.floor_map.is_some();
+        let actor = editor.and_then(|e| e.actor.clone()).or_else(|| {
+            (!map_open)
+                .then_some(self.threshing_floor_pick)
+                .flatten()
+                .map(RelationMember::Seat)
+        });
         let targets = editor.map(|e| e.targets.clone()).unwrap_or_default();
-        let ready = self.threshing_floor_prepare_relation(cx);
+        let map_ready = self.floor_map_prepare_relation(cx);
+        let org_ready = (!map_open)
+            .then(|| self.threshing_floor_prepare_relation(cx))
+            .flatten();
+        let ready = map_ready.is_some() || org_ready.is_some();
         let locked = editor.is_some_and(|e| e.editing.is_some());
         let mut title = div()
             .h(px(23.))
@@ -4116,6 +4274,7 @@ impl Workspace {
             .child(div().flex_1());
         if let Some(leaf) = self
             .threshing_floor_pick
+            .filter(|_| !map_open)
             .and_then(|s| self.threshing_floor_seat_leaf(s, cx))
         {
             title = title.child(
@@ -4162,7 +4321,11 @@ impl Workspace {
                     return;
                 }
                 if ws.floor_relation.is_none() {
-                    ws.threshing_floor_begin_relation(None, None, cx)
+                    if ws.floor_map.is_some() {
+                        ws.floor_relation = Some(RelationEditor::default());
+                    } else {
+                        ws.threshing_floor_begin_relation(None, None, cx)
+                    }
                 }
                 if let Some(e) = &mut ws.floor_relation {
                     e.choosing = Some(RelationEnd::From)
@@ -4177,6 +4340,16 @@ impl Workspace {
                     e.choosing = Some(RelationEnd::From);
                     ws.threshing_floor_choose_member(m, cx)
                 }
+            }))
+            .on_drop(cx.listener(|ws, d: &OrgDrag, _, cx| {
+                cx.stop_propagation();
+                if ws.floor_map.is_none() {
+                    return;
+                }
+                ws.floor_relation
+                    .get_or_insert_with(RelationEditor::default)
+                    .choosing = Some(RelationEnd::From);
+                ws.threshing_floor_choose_member(RelationMember::Org(d.org), cx);
             }));
         let current = editor.and_then(|e| e.rung);
         let verb = current
@@ -4210,11 +4383,15 @@ impl Workspace {
                             cx.listener(|ws, ev: &MouseDownEvent, _, cx| {
                                 cx.stop_propagation();
                                 if ws.floor_relation.is_none() {
-                                    ws.threshing_floor_begin_relation(
-                                        ws.threshing_floor_pick,
-                                        None,
-                                        cx,
-                                    )
+                                    if ws.floor_map.is_some() {
+                                        ws.floor_relation = Some(RelationEditor::default());
+                                    } else {
+                                        ws.threshing_floor_begin_relation(
+                                            ws.threshing_floor_pick,
+                                            None,
+                                            cx,
+                                        )
+                                    }
                                 }
                                 if let Some(e) = &mut ws.floor_relation {
                                     e.verbs_at = Some(ev.position)
@@ -4272,6 +4449,20 @@ impl Workspace {
             let mut card = card
                 .id(SharedString::from(format!("floor-target-slot-{i}")))
                 .debug_selector(move || format!("floor-target-slot-{i}"))
+                .on_drop(cx.listener(move |ws, d: &OrgDrag, _, cx| {
+                    cx.stop_propagation();
+                    if ws.floor_map.is_none() {
+                        return;
+                    }
+                    let editor = ws
+                        .floor_relation
+                        .get_or_insert_with(RelationEditor::default);
+                    editor.choosing = Some(RelationEnd::To);
+                    if matches!(editor.targets.get(i), Some(None)) {
+                        editor.select_target_slot(i);
+                    }
+                    ws.threshing_floor_choose_member(RelationMember::Org(d.org), cx);
+                }))
                 .when(member.is_none(), |d| {
                     d.cursor_pointer()
                         .on_click(cx.listener(move |ws, _, _, cx| {
@@ -4333,7 +4524,11 @@ impl Workspace {
                     .on_click(cx.listener(|ws, _, _, cx| {
                         cx.stop_propagation();
                         if ws.floor_relation.is_none() {
-                            ws.threshing_floor_begin_relation(ws.threshing_floor_pick, None, cx)
+                            if ws.floor_map.is_some() {
+                                ws.floor_relation = Some(RelationEditor::default());
+                            } else {
+                                ws.threshing_floor_begin_relation(ws.threshing_floor_pick, None, cx)
+                            }
                         }
                         if let Some(e) = &mut ws.floor_relation {
                             let index = e.targets.len();
@@ -4361,13 +4556,27 @@ impl Workspace {
             .on_drop(cx.listener(|ws, d: &PaneDrag, _, cx| {
                 if let Some(m) = ws.threshing_floor_member(&d.leaf, cx) {
                     if ws.floor_relation.is_none() {
-                        ws.threshing_floor_begin_relation(ws.threshing_floor_pick, None, cx)
+                        if ws.floor_map.is_some() {
+                            ws.floor_relation = Some(RelationEditor::default());
+                        } else {
+                            ws.threshing_floor_begin_relation(ws.threshing_floor_pick, None, cx)
+                        }
                     }
                     if let Some(e) = &mut ws.floor_relation {
                         e.choosing = Some(RelationEnd::To)
                     }
                     ws.threshing_floor_choose_member(m, cx)
                 }
+            }))
+            .on_drop(cx.listener(|ws, d: &OrgDrag, _, cx| {
+                cx.stop_propagation();
+                if ws.floor_map.is_none() {
+                    return;
+                }
+                ws.floor_relation
+                    .get_or_insert_with(RelationEditor::default)
+                    .choosing = Some(RelationEnd::To);
+                ws.threshing_floor_choose_member(RelationMember::Org(d.org), cx);
             }));
         let staged = editor
             .map(|e| {
@@ -4378,13 +4587,32 @@ impl Workspace {
                     .count()
             })
             .unwrap_or(0);
-        let changed = ready
+        let changed = org_ready
             .as_ref()
             .map(|p| {
                 p.pairs
                     .iter()
                     .filter(|(a, t, _)| self.chart.line(*a, *t).is_some())
                     .count()
+            })
+            .or_else(|| {
+                map_ready.as_ref().map(|pairs| {
+                    pairs
+                        .iter()
+                        .filter(|(a, b, _)| match (a, b) {
+                            (threshing_floor::End::Seat(from), threshing_floor::End::Seat(to))
+                                if self.floor_orgs.owner(*from) == self.floor_orgs.owner(*to) =>
+                            {
+                                self.chart.line(*from, *to).is_some()
+                            }
+                            _ => self
+                                .chart
+                                .org_lines()
+                                .iter()
+                                .any(|line| line.from == *a && line.to == *b),
+                        })
+                        .count()
+                })
             })
             .map(|n| n.to_string())
             .unwrap_or_else(|| ui.floor_unknown.to_string());
@@ -4420,13 +4648,17 @@ impl Workspace {
                     .child(SharedString::from(summary)),
             )
             .child(
-                Self::bezel_btn(sk, ui.floor_rel_save, ready.is_some())
+                Self::bezel_btn(sk, ui.floor_rel_save, ready)
                     .id("floor-rel-save")
                     .debug_selector(|| "floor-rel-save".to_string())
-                    .opacity(if ready.is_some() { 1. } else { 0.4 })
+                    .opacity(if ready { 1. } else { 0.4 })
                     .on_click(cx.listener(|ws, _, _, cx| {
                         cx.stop_propagation();
-                        ws.threshing_floor_save_relation(cx)
+                        if ws.floor_map.is_some() {
+                            ws.floor_map_save_relation(cx)
+                        } else {
+                            ws.threshing_floor_save_relation(cx)
+                        }
                     })),
             )
             .child(
@@ -4639,167 +4871,7 @@ impl Workspace {
             threshing_floor::Rung::Prompt => ui.floor_rung_prompt,
         };
 
-        // ---- the builder: two ends, each an org or an agent ----
-        let mut ends = div().flex().flex_row().flex_wrap().gap_2();
-        for (which, end, label, id) in [
-            (
-                RelationEnd::From,
-                map.from,
-                ui.floor_rel_from,
-                "floor-map-from",
-            ),
-            (RelationEnd::To, map.to, ui.floor_rel_to, "floor-map-to"),
-        ] {
-            let value = end
-                .map(|e| self.floor_map_end_label(e, cx))
-                .unwrap_or_else(|| ui.floor_unknown.to_string());
-            ends = ends.child(
-                Self::bezel_btn(
-                    sk,
-                    &format!("{label}: {value}"),
-                    map.choosing == Some(which),
-                )
-                .id(id)
-                .max_w(px(320.))
-                .overflow_hidden()
-                .text_ellipsis()
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    cx.stop_propagation();
-                    if let Some(m) = &mut ws.floor_map {
-                        m.choosing = Some(which);
-                    }
-                    cx.notify();
-                })),
-            );
-        }
-        let mut form = div()
-            .p_2()
-            .border_1()
-            .border_color(th.accent.alpha(0.7))
-            .rounded(sk.rad_raw(6.))
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(ends);
-        if let Some(which) = map.choosing {
-            let other = match which {
-                RelationEnd::From => map.to,
-                RelationEnd::To => map.from,
-            };
-            let mut list = div()
-                .id("floor-map-endpoints")
-                .max_h(px(180.))
-                .overflow_y_scroll()
-                .flex()
-                .flex_col()
-                .gap_1();
-            for org in self.floor_orgs.saved() {
-                let end = threshing_floor::End::Org { org: org.id };
-                if Some(end) == other {
-                    continue;
-                }
-                list = list.child(
-                    Self::bezel_btn(
-                        sk,
-                        &format!(
-                            "{} \u{00b7} {}",
-                            self.threshing_floor_org_label(org.id),
-                            ui.floor_map_whole_org
-                        ),
-                        false,
-                    )
-                    .id(SharedString::from(format!(
-                        "floor-map-end-org-{}",
-                        org.id.0
-                    )))
-                    .text_color(th.ansi[6])
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        cx.stop_propagation();
-                        ws.floor_map_choose(end, cx);
-                    })),
-                );
-            }
-            for tab in &self.tabs {
-                let mut leaves = Vec::new();
-                tab.root.leaves(&mut leaves);
-                for leaf in leaves {
-                    let Some(seat) = leaf.read(cx).seat else {
-                        continue;
-                    };
-                    let end = threshing_floor::End::Seat(seat);
-                    if Some(end) == other {
-                        continue;
-                    }
-                    list = list.child(
-                        Self::bezel_btn(sk, &self.threshing_floor_seat_label(seat, cx), false)
-                            .id(SharedString::from(format!("floor-map-end-seat-{}", seat.0)))
-                            .on_click(cx.listener(move |ws, _, _, cx| {
-                                cx.stop_propagation();
-                                ws.floor_map_choose(end, cx);
-                            })),
-                    );
-                }
-            }
-            form = form.child(list);
-        }
-        let mut levels = div().flex().flex_row().flex_wrap().items_center().gap_2();
-        for (rung, label) in [
-            (threshing_floor::Rung::See, ui.floor_rung_see),
-            (threshing_floor::Rung::Read, ui.floor_rung_read),
-            (threshing_floor::Rung::Ask, ui.floor_rung_ask),
-            (threshing_floor::Rung::Prompt, ui.floor_rung_prompt),
-        ] {
-            let selected = map.rung == Some(rung);
-            let is_ask = matches!(rung, threshing_floor::Rung::Prompt);
-            let shown = if is_ask {
-                format!("\u{25B2} {label}")
-            } else {
-                label.to_string()
-            };
-            let mut btn = Self::bezel_btn(sk, &shown, selected)
-                .id(SharedString::from(format!("floor-map-rung-{rung:?}")))
-                .debug_selector(move || format!("floor-map-rung-{rung:?}"));
-            if is_ask {
-                btn = btn
-                    .border_color(th.ansi[3])
-                    .font_weight(gpui::FontWeight::BOLD);
-                if !selected {
-                    btn = btn.text_color(th.ansi[3]);
-                }
-            } else if !selected {
-                btn = btn.opacity(0.7);
-            }
-            levels = levels.child(btn.on_click(cx.listener(move |ws, _, _, cx| {
-                cx.stop_propagation();
-                if let Some(m) = &mut ws.floor_map {
-                    m.rung = Some(rung);
-                }
-                cx.notify();
-            })));
-        }
-        let ready = matches!((map.from, map.to, map.rung), (Some(f), Some(t), Some(_)) if f != t);
-        let sentence = match (map.from, map.to, map.rung) {
-            (Some(f), Some(t), Some(r)) if f != t => lang::fill(
-                ui.floor_rel_sentence,
-                &[
-                    ("from", &self.floor_map_end_label(f, cx)),
-                    ("to", &self.floor_map_end_label(t, cx)),
-                    ("rung", rung_word(r)),
-                ],
-            ),
-            _ => ui.floor_rel_choose.to_string(),
-        };
-        levels = levels.child(
-            Self::bezel_btn(sk, ui.floor_rel_save, ready)
-                .id("floor-map-draw")
-                .debug_selector(|| "floor-map-draw".to_string())
-                .opacity(if ready { 1. } else { 0.4 })
-                .on_click(cx.listener(|ws, _, _, cx| {
-                    cx.stop_propagation();
-                    ws.floor_map_draw(cx);
-                })),
-        );
-        form = form.child(levels).child(SharedString::from(sentence));
+        let form = self.threshing_floor_composer(sk, th, cx);
 
         // ---- the relationships that span orgs ----
         let cross: Vec<threshing_floor::Line> = self
@@ -4954,14 +5026,15 @@ impl Workspace {
         true
     }
 
-    fn floor_map_end_drag(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(drag) = self.floor_map.as_mut().and_then(|m| m.drag.take()) else {
-            return false;
-        };
-        if !drag.active {
+    fn floor_map_drop_org(&mut self, drag: &OrgDrag, cx: &mut Context<Self>) -> bool {
+        if self.floor_map.is_none()
+            || !drag.moved.get()
+            || drag.cancelled.get()
+            || drag.rects.is_empty()
+        {
             return false;
         }
-        let at = map_drop_position(drag.at, drag.org, &drag.rects);
+        let at = map_drop_position(drag.at.get(), drag.org, &drag.rects);
         for (id, x, y, _, _) in &drag.rects {
             if self.floor_orgs.get(*id).is_some_and(|o| o.map_at.is_none()) {
                 self.floor_orgs
@@ -5075,11 +5148,9 @@ impl Workspace {
 
     /// The System Map, drawn the way the org chart is: on the same pan and zoom,
     /// every org a bordered region holding its seats in the chart's own tidy
-    /// tree, with the lines between orgs routed card to card and border to
-    /// border. Cards simplify as the view zooms out rather than shrinking past
-    /// reading: a dot and a name under 60%, the chart card's head between 60%
-    /// and 140%, and the message, age and size above that. A card or an org's
-    /// name opens that org's chart.
+    /// tree, with the lines between orgs routed border to border. Cards show
+    /// a name and vitals, then only a name and dot under 60% zoom. A card or
+    /// an org's name opens that org's chart.
     fn floor_map_canvas(
         &self,
         facts: &[PaneFacts],
@@ -5149,68 +5220,80 @@ impl Workspace {
         }
         let seat_at = |seat: threshing_floor::SeatId| spots.get(&seat).map(|(at, _)| *at);
         let org_of_seat = |seat: threshing_floor::SeatId| spots.get(&seat).map(|(_, org)| *org);
-        let rect_of = |end: End| -> Option<(f32, f32, f32, f32)> {
-            match end {
+        // Local chart wires remain visible as the structure inside each org.
+        let mut paths: Vec<WireStroke> = Vec::new();
+        let mut chips: Vec<((f32, f32), String, String)> = Vec::new();
+        for line in self.chart.saved() {
+            let (Some(a), Some(b)) = (seat_at(line.from), seat_at(line.to)) else {
+                continue;
+            };
+            if org_of_seat(line.from) == org_of_seat(line.to) {
+                let (pts, _) = wire_route(a, b, sw, sh, cg, rg);
+                paths.push((pts, line.is_bypass(), false));
+            }
+        }
+        // A whole-org line to one of its own seats has no cross-org pair.
+        // Keep the existing structural wire visible inside that org.
+        for (index, line) in self.chart.org_lines().iter().enumerate() {
+            let org_of = |end: End| match end {
+                End::Org { org } => Some(org),
+                End::Seat(seat) => org_of_seat(seat),
+            };
+            if org_of(line.from).is_none() || org_of(line.from) != org_of(line.to) {
+                continue;
+            }
+            let rect_of = |end: End| match end {
                 End::Seat(seat) => seat_at(seat).map(|(x, y)| (x, y, sw, sh)),
                 End::Org { org } => orgs
                     .iter()
                     .find(|o| o.org == org)
                     .map(|o| (o.x, o.y, o.w, o.h)),
-            }
-        };
-
-        // ---- wires: inside an org as the chart routes them; between orgs, an
-        // elbow from the nearer sides of the two boxes ----
-        let mut paths: Vec<WireStroke> = Vec::new();
-        let mut chips: Vec<((f32, f32), String)> = Vec::new();
-        let mut fan_counts: std::collections::HashMap<(u64, u64), usize> =
-            std::collections::HashMap::new();
-        let mut next_fan = |a: threshing_floor::OrgId, b: threshing_floor::OrgId| {
-            let count = fan_counts.entry((a.0.min(b.0), a.0.max(b.0))).or_default();
+            };
+            let (Some(from), Some(to)) = (rect_of(line.from), rect_of(line.to)) else {
+                continue;
+            };
+            let pts = elbow(from, to);
+            let word = line.rung.known().map_or(ui.floor_unknown, rung_word);
+            chips.push((
+                wire_label_at(&pts),
+                lang::fill(ui.floor_rel_wire, &[("rung", word)]),
+                format!("floor-map-internal-orgline-{index}"),
+            ));
+            paths.push((pts, false, false));
+        }
+        // Every directed org pair gets one border-to-border overview wire,
+        // regardless of how many seat and whole-org lines it contains.
+        let mut fan_counts = std::collections::HashMap::<(u64, u64), usize>::new();
+        for bundle in map_wire_bundles(&self.chart, org_of_seat) {
+            let (Some(from), Some(to)) = (
+                orgs.iter().find(|o| o.org == bundle.from),
+                orgs.iter().find(|o| o.org == bundle.to),
+            ) else {
+                continue;
+            };
+            let key = (
+                bundle.from.0.min(bundle.to.0),
+                bundle.from.0.max(bundle.to.0),
+            );
+            let count = fan_counts.entry(key).or_default();
             let fan = *count as f32 * 8. * s;
             *count += 1;
-            fan
-        };
-        for l in self.chart.saved() {
-            let (Some(a), Some(b)) = (seat_at(l.from), seat_at(l.to)) else {
-                continue;
-            };
-            if org_of_seat(l.from) == org_of_seat(l.to) {
-                let (pts, _) = wire_route(a, b, sw, sh, cg, rg);
-                paths.push((pts, l.is_bypass(), false));
-            } else {
-                let fan = next_fan(org_of_seat(l.from).unwrap(), org_of_seat(l.to).unwrap());
-                let pts = if fan == 0. {
-                    elbow((a.0, a.1, sw, sh), (b.0, b.1, sw, sh))
-                } else {
-                    elbow_fanned((a.0, a.1, sw, sh), (b.0, b.1, sw, sh), fan)
-                };
-                let word = l.rung.known().map_or(ui.floor_unknown, rung_word);
-                chips.push((
-                    wire_label_at(&pts),
-                    lang::fill(ui.floor_rel_wire, &[("rung", word)]),
-                ));
-                paths.push((pts, l.is_bypass(), false));
-            }
-        }
-        for l in self.chart.org_lines() {
-            let (Some(a), Some(b)) = (rect_of(l.from), rect_of(l.to)) else {
-                continue;
-            };
-            let org_of_end = |end: End| end.org().or_else(|| end.seat().and_then(org_of_seat));
-            let (Some(from_org), Some(to_org)) = (org_of_end(l.from), org_of_end(l.to)) else {
-                continue;
-            };
-            let fan = next_fan(from_org, to_org);
+            let a = (from.x, from.y, from.w, from.h);
+            let b = (to.x, to.y, to.w, to.h);
             let pts = if fan == 0. {
                 elbow(a, b)
             } else {
                 elbow_fanned(a, b, fan)
             };
-            let word = l.rung.known().map_or(ui.floor_unknown, rung_word);
+            let word = bundle.strongest.map_or(ui.floor_unknown, rung_word);
+            let label = map_wire_chip(
+                lang::fill(ui.floor_rel_wire, &[("rung", word)]),
+                bundle.count,
+            );
             chips.push((
                 wire_label_at(&pts),
-                lang::fill(ui.floor_rel_wire, &[("rung", word)]),
+                label,
+                format!("floor-map-wire-{}-{}", bundle.from.0, bundle.to.0),
             ));
             paths.push((pts, false, false));
         }
@@ -5249,6 +5332,20 @@ impl Workspace {
             let highlighted = Some(org) == active_org || Some(org) == came_from;
             let rects = map_rects.clone();
             let origin = (o.x / s, o.y / s);
+            let org_drag = OrgDrag {
+                org,
+                at: std::rc::Rc::new(std::cell::Cell::new([
+                    origin.0.round() as i32,
+                    origin.1.round() as i32,
+                ])),
+                moved: std::rc::Rc::new(std::cell::Cell::new(false)),
+                cancelled: std::rc::Rc::new(std::cell::Cell::new(false)),
+                rects: rects.clone(),
+                title: self.threshing_floor_org_label(org),
+                ink: th.accent,
+                bg: th.surface,
+            };
+            let press_drag = org_drag.clone();
             world = world.child(
                 div()
                     .id(SharedString::from(format!("floor-map-org-{}", org.0)))
@@ -5270,6 +5367,11 @@ impl Workspace {
                         MouseButton::Left,
                         cx.listener(move |ws, ev: &MouseDownEvent, _, cx| {
                             cx.stop_propagation();
+                            press_drag.cancelled.set(false);
+                            press_drag.moved.set(false);
+                            press_drag
+                                .at
+                                .set([origin.0.round() as i32, origin.1.round() as i32]);
                             if let Some(map) = ws.floor_map.as_mut() {
                                 map.came_from = None;
                                 map.suppress_click = false;
@@ -5279,12 +5381,32 @@ impl Workspace {
                                     origin,
                                     at: [origin.0.round() as i32, origin.1.round() as i32],
                                     active: false,
-                                    rects: rects.clone(),
+                                    cancelled: press_drag.cancelled.clone(),
                                 });
                             }
                             cx.notify();
                         }),
                     )
+                    .on_drag(org_drag, {
+                        let ws = cx.entity().downgrade();
+                        move |drag, position, _window, app| {
+                            let _ = ws.update(app, |ws, cx| {
+                                if let Some(pending) =
+                                    ws.floor_map.as_mut().and_then(|map| map.drag.as_mut())
+                                {
+                                    drag.at.set(pending.at);
+                                    cx.notify();
+                                }
+                            });
+                            app.new(|_| DragPreview {
+                                title: drag.title.clone(),
+                                offset: position,
+                                ink: drag.ink,
+                                bg: drag.bg,
+                                tether: None,
+                            })
+                        }
+                    })
                     .child(
                         div()
                             .id(SharedString::from(format!("floor-map-org-name-{}", org.0)))
@@ -5310,6 +5432,14 @@ impl Workspace {
                                 if ws.floor_map.as_ref().is_some_and(|m| m.suppress_click) {
                                     return;
                                 }
+                                if ws
+                                    .floor_relation
+                                    .as_ref()
+                                    .is_some_and(|e| e.choosing.is_some())
+                                {
+                                    ws.threshing_floor_choose_member(RelationMember::Org(org), cx);
+                                    return;
+                                }
                                 ws.floor_map = None;
                                 // The map's zoom and pan are not the chart's.
                                 ws.floor_view.reset();
@@ -5319,9 +5449,11 @@ impl Workspace {
             );
         }
         world = world.child(canvas);
-        for (at, word) in chips {
+        for (at, word, id) in chips {
             world = world.child(
                 div()
+                    .id(SharedString::from(id.clone()))
+                    .debug_selector(move || id.clone())
                     .absolute()
                     .left(px(at.0 - 30. * s))
                     .top(px(at.1 - 8. * s))
@@ -5338,7 +5470,6 @@ impl Workspace {
         }
         // The cards, at the detail the zoom can carry.
         let far = zoom < 0.6;
-        let near = zoom >= 1.4;
         for o in &draw_orgs {
             let org = o.org;
             for p in &o.placed {
@@ -5353,6 +5484,13 @@ impl Workspace {
                 });
                 let name =
                     f.map_or_else(|| ui.floor_unavailable.to_string(), |f| f.name.tab.clone());
+                let card_drag = f.map(|f| PaneDrag {
+                    leaf: f.leaf.clone(),
+                    title: f.name.tab.clone(),
+                    ink: th.accent,
+                    bg: th.surface,
+                    relation: Default::default(),
+                });
                 let mut card = div()
                     .id(SharedString::from(format!("floor-map-seat-{}", seat.0)))
                     .debug_selector(move || format!("floor-map-seat-{}", seat.0))
@@ -5370,10 +5508,30 @@ impl Workspace {
                         th.accent.alpha(0.55)
                     })
                     .bg(darken(th.surface, 0.5))
-                    .cursor_pointer()
+                    .cursor(gpui::CursorStyle::OpenHand)
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .when_some(card_drag, |d, drag| {
+                        d.on_drag(drag, |drag, position, _window, cx| {
+                            cx.new(|_| DragPreview {
+                                title: drag.title.clone(),
+                                offset: position,
+                                ink: drag.ink,
+                                bg: drag.bg,
+                                tether: None,
+                            })
+                        })
+                    })
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         cx.stop_propagation();
                         if ws.floor_map.as_ref().is_some_and(|m| m.suppress_click) {
+                            return;
+                        }
+                        if ws
+                            .floor_relation
+                            .as_ref()
+                            .is_some_and(|e| e.choosing.is_some())
+                        {
+                            ws.threshing_floor_choose_endpoint(seat, cx);
                             return;
                         }
                         ws.floor_map = None;
@@ -5405,10 +5563,6 @@ impl Workspace {
                                 .child(SharedString::from(name)),
                         );
                 } else {
-                    let place = f.map(|f| f.name.outer.clone()).unwrap_or_default();
-                    let state = f
-                        .map(|f| f.state.label_in(self.lang).to_string())
-                        .unwrap_or_default();
                     let model = f
                         .map(|f| {
                             model_line(
@@ -5418,57 +5572,35 @@ impl Workspace {
                                 ui.floor_model_unknown,
                             )
                         })
-                        .unwrap_or_default();
-                    card =
-                        card.p(px(8. * s))
-                            .flex()
-                            .flex_col()
-                            .gap(px(3. * s))
-                            .text_size(sk.text_px(8.5))
-                            .child(
-                                div()
-                                    .whitespace_nowrap()
-                                    .overflow_hidden()
-                                    .text_size(sk.text_px(10.))
-                                    .when(!place.is_empty(), |d| {
-                                        d.child(div().text_color(th.text.alpha(0.6)).child(
-                                            SharedString::from(format!("{place} \u{203a} ")),
-                                        ))
-                                    })
-                                    .flex()
-                                    .child(
-                                        div()
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .text_color(th.text)
-                                            .child(SharedString::from(name)),
-                                    ),
-                            )
-                            .when(near, |d| {
-                                d.children(f.and_then(|f| f.message.clone()).map(|m| {
+                        .unwrap_or_else(|| ui.floor_model_unknown.to_string());
+                    card = card
+                        .p(px(8. * s))
+                        .flex()
+                        .flex_col()
+                        .gap(px(3. * s))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(5. * s))
+                                .child(
                                     div()
-                                        .whitespace_nowrap()
-                                        .overflow_hidden()
-                                        .text_color(th.text.alpha(0.85))
-                                        .child(SharedString::from(m))
-                                }))
-                            })
-                            .child(
-                                div()
-                                    .text_color(state_ink)
-                                    .child(SharedString::from(format!("\u{25cf} {state}"))),
-                            )
-                            .child(
-                                div()
-                                    .px(px(5. * s))
-                                    .py(px(3. * s))
-                                    .rounded(sk.rad_raw(3.))
-                                    .border_1()
-                                    .border_color(th.text.alpha(0.12))
-                                    .text_color(th.text.alpha(0.6))
-                                    .whitespace_nowrap()
-                                    .overflow_hidden()
-                                    .child(SharedString::from(model)),
-                            );
+                                        .size(px(6. * s))
+                                        .flex_none()
+                                        .rounded(sk.radius_pill())
+                                        .bg(state_ink),
+                                )
+                                .child(
+                                    div()
+                                        .truncate()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(th.text)
+                                        .child(SharedString::from(name)),
+                                ),
+                        )
+                        .when_some(f, |d, f| {
+                            d.child(self.threshing_floor_vitals(seat, f, &model, s, sk, th))
+                        });
                 }
                 world = world.child(card);
             }
@@ -6832,6 +6964,51 @@ mod tests {
         assert!(at[0] as f32 >= 264. || at[1] as f32 >= 104.);
     }
 
+    #[test]
+    fn cross_org_lines_bundle_by_direction_and_keep_the_strongest_rung() {
+        use threshing_floor::{End, OrgId, Rung, SeatId};
+        let (a, b) = (OrgId(1), OrgId(2));
+        let mut chart = threshing_floor::Chart::default();
+        chart.draw(SeatId(1), SeatId(4), Rung::See);
+        chart.draw(SeatId(2), SeatId(5), Rung::Read);
+        chart.draw(SeatId(3), SeatId(6), Rung::Ask);
+        let owner = |seat: SeatId| match seat.0 {
+            1..=3 => Some(a),
+            4..=6 => Some(b),
+            _ => None,
+        };
+        assert_eq!(
+            map_wire_bundles(&chart, owner),
+            vec![MapWireBundle {
+                from: a,
+                to: b,
+                count: 3,
+                strongest: Some(Rung::Ask),
+            }]
+        );
+        assert_eq!(map_wire_chip("ASK".into(), 3), "ASK ×3");
+        assert_eq!(map_wire_chip("PROMPT".into(), 1), "PROMPT");
+        chart.draw_org(End::Org { org: a }, End::Seat(SeatId(6)), Rung::Prompt);
+        chart.draw(SeatId(4), SeatId(1), Rung::See);
+        assert_eq!(
+            map_wire_bundles(&chart, owner),
+            vec![
+                MapWireBundle {
+                    from: a,
+                    to: b,
+                    count: 4,
+                    strongest: Some(Rung::Prompt),
+                },
+                MapWireBundle {
+                    from: b,
+                    to: a,
+                    count: 1,
+                    strongest: Some(Rung::See),
+                },
+            ]
+        );
+    }
+
     fn fixture(
         cx: &mut gpui::TestAppContext,
     ) -> (
@@ -7041,6 +7218,10 @@ mod tests {
 
     fn drag(cx: &mut gpui::VisualTestContext, from: &str, to: &str) {
         let start = bounds(cx, from).center();
+        drag_from(cx, start, to);
+    }
+
+    fn drag_from(cx: &mut gpui::VisualTestContext, start: Point<Pixels>, to: &str) {
         cx.simulate_mouse_down(start, MouseButton::Left, gpui::Modifiers::default());
         cx.simulate_mouse_move(
             start + point(px(9.), px(9.)),
@@ -7292,15 +7473,16 @@ mod tests {
             // put a member in the other org so the whole-org line has someone to reach
             ws.floor_orgs.assign(threshing_floor::SeatId(101), other);
             ws.floor_map = Some(SystemMap::default());
-            if let Some(m) = &mut ws.floor_map {
-                m.from = Some(threshing_floor::End::Seat(threshing_floor::SeatId(100)));
-                m.to = Some(threshing_floor::End::Org { org: other });
-                m.rung = Some(threshing_floor::Rung::Ask);
-            }
-            ws.floor_map_draw(cx);
+            ws.floor_relation = Some(RelationEditor {
+                actor: Some(RelationMember::Seat(threshing_floor::SeatId(100))),
+                targets: vec![Some(RelationMember::Org(other))],
+                rung: Some(threshing_floor::Rung::Ask),
+                ..Default::default()
+            });
+            ws.floor_map_save_relation(cx);
             assert_eq!(ws.chart.org_lines().len(), 1, "the whole-org line is drawn");
             // the draft cleared for the next one
-            assert!(ws.floor_map.as_ref().is_some_and(|m| m.from.is_none()));
+            assert!(ws.floor_relation.is_none());
             // and seat 100 now reaches the other org's member at ask
             ws.mcp.enabled = true;
             let caller = threshing_floor::Party {
@@ -7328,14 +7510,254 @@ mod tests {
     }
 
     #[gpui::test]
+    fn map_uses_the_shared_builder_and_drags_an_org_and_agent_into_it(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        let home = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
+        ws.update(cx, |ws, cx| {
+            ws.floor_orgs.assign(threshing_floor::SeatId(101), other);
+            ws.floor_map = Some(SystemMap::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        bounds(cx, "floor-relationship-composer");
+        bounds(cx, "floor-rel-from");
+        bounds(cx, "floor-rel-verb");
+        bounds(cx, "floor-rel-to");
+        bounds(cx, "floor-rel-save");
+        bounds(cx, "floor-rel-cancel");
+        assert!(cx.debug_bounds("floor-map-from").is_none());
+        assert!(cx.debug_bounds("floor-map-endpoints").is_none());
+
+        let region = bounds(cx, &format!("floor-map-org-{}", home.0));
+        drag_from(
+            cx,
+            region.bottom_right() - point(px(4.), px(4.)),
+            "floor-rel-from",
+        );
+        assert!(ws.read_with(cx, |ws, _| ws
+            .floor_relation
+            .as_ref()
+            .is_some_and(|e| e.actor == Some(RelationMember::Org(home)))));
+        assert!(ws.read_with(cx, |ws, _| ws
+            .floor_orgs
+            .get(home)
+            .unwrap()
+            .map_at
+            .is_none()));
+        click(cx, "floor-rel-to");
+        drag(cx, "floor-map-seat-101", "floor-target-slot-0");
+        assert!(
+            ws.read_with(cx, |ws, _| ws.floor_relation.as_ref().is_some_and(|e| e
+                .targets
+                == vec![Some(RelationMember::Seat(threshing_floor::SeatId(101)))]))
+        );
+        click(cx, "floor-rel-verb");
+        click(cx, "floor-rung-Ask");
+        click(cx, "floor-rel-save");
+        ws.read_with(cx, |ws, _| {
+            assert!(ws.floor_relation.is_none());
+            assert!(ws.chart.org_lines().iter().any(|line| {
+                line.from == threshing_floor::End::Org { org: home }
+                    && line.to == threshing_floor::End::Seat(threshing_floor::SeatId(101))
+                    && line.rung.known() == Some(threshing_floor::Rung::Ask)
+            }));
+            assert!(ws.floor_orgs.get(home).unwrap().map_at.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn map_header_tab_and_map_clicks_fill_the_shared_builder(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            ws.floor_map = Some(SystemMap::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        click(cx, "floor-rel-from");
+        click(cx, "floor-map-seat-100");
+        click(cx, "floor-rel-to");
+        click(cx, "floor-map-seat-101");
+        click(cx, "floor-rel-verb");
+        click(cx, "floor-rung-See");
+        click(cx, "floor-rel-save");
+        assert!(ws.read_with(cx, |ws, _| {
+            ws.chart
+                .line(threshing_floor::SeatId(100), threshing_floor::SeatId(101))
+                .is_some()
+                && ws.chart.org_lines().is_empty()
+        }));
+
+        click(cx, "floor-rel-from");
+        click(cx, "floor-map-seat-100");
+        click(cx, "floor-rel-to");
+        drag(cx, &format!("floor-org-{}", other.0), "floor-target-slot-0");
+        assert!(ws
+            .read_with(cx, |ws, _| ws.floor_relation.as_ref().is_some_and(|e| e
+                .targets
+                == vec![Some(RelationMember::Org(other))])));
+        click(cx, "floor-rel-verb");
+        click(cx, "floor-rung-Read");
+        click(cx, "floor-rel-save");
+        assert!(
+            ws.read_with(cx, |ws, _| ws.chart.org_lines().iter().any(|line| {
+                line.from == threshing_floor::End::Seat(threshing_floor::SeatId(100))
+                    && line.to == threshing_floor::End::Org { org: other }
+            }))
+        );
+    }
+
+    #[gpui::test]
+    fn map_cross_org_seats_submit_through_org_lines(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        ws.update(cx, |ws, cx| {
+            ws.floor_orgs.assign(threshing_floor::SeatId(101), other);
+            ws.floor_map = Some(SystemMap::default());
+            ws.floor_relation = Some(RelationEditor {
+                actor: Some(RelationMember::Seat(threshing_floor::SeatId(100))),
+                targets: vec![Some(RelationMember::Seat(threshing_floor::SeatId(101)))],
+                rung: Some(threshing_floor::Rung::Ask),
+                ..Default::default()
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        click(cx, "floor-rel-save");
+        assert!(ws.read_with(cx, |ws, _| {
+            ws.chart
+                .line(threshing_floor::SeatId(100), threshing_floor::SeatId(101))
+                .is_none()
+                && ws.chart.org_lines().iter().any(|line| {
+                    line.from == threshing_floor::End::Seat(threshing_floor::SeatId(100))
+                        && line.to == threshing_floor::End::Seat(threshing_floor::SeatId(101))
+                })
+        }));
+    }
+
+    #[gpui::test]
+    fn map_self_and_duplicate_targets_report_builder_errors(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let home = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
+        ws.update(cx, |ws, cx| {
+            ws.floor_map = Some(SystemMap::default());
+            ws.floor_relation = Some(RelationEditor {
+                actor: Some(RelationMember::Org(home)),
+                targets: vec![Some(RelationMember::Org(home))],
+                rung: Some(threshing_floor::Rung::Ask),
+                ..Default::default()
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        click(cx, "floor-rel-save");
+        assert!(ws.read_with(cx, |ws, _| ws
+            .floor_relation
+            .as_ref()
+            .is_some_and(|e| e.error.is_some() && ws.chart.org_lines().is_empty())));
+
+        ws.update(cx, |ws, cx| {
+            ws.floor_relation = Some(RelationEditor {
+                actor: Some(RelationMember::Org(home)),
+                targets: vec![
+                    Some(RelationMember::Seat(threshing_floor::SeatId(100))),
+                    Some(RelationMember::Seat(threshing_floor::SeatId(100))),
+                ],
+                rung: Some(threshing_floor::Rung::Read),
+                ..Default::default()
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        click(cx, "floor-rel-save");
+        assert!(ws.read_with(cx, |ws, _| ws
+            .floor_relation
+            .as_ref()
+            .is_some_and(|e| e.error.is_some() && ws.chart.org_lines().is_empty())));
+    }
+
+    #[gpui::test]
+    fn map_cards_show_vitals_and_cross_org_lines_have_one_overview_chip(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        let home = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
+        ws.update(cx, |ws, cx| {
+            ws.floor_orgs.assign(threshing_floor::SeatId(101), other);
+            for seat in [102, 103] {
+                ws.floor_orgs.assign(threshing_floor::SeatId(seat), home);
+            }
+            for seat in [104, 105] {
+                ws.floor_orgs.assign(threshing_floor::SeatId(seat), other);
+            }
+            ws.chart.draw(
+                threshing_floor::SeatId(100),
+                threshing_floor::SeatId(101),
+                threshing_floor::Rung::See,
+            );
+            ws.chart.draw(
+                threshing_floor::SeatId(102),
+                threshing_floor::SeatId(104),
+                threshing_floor::Rung::Read,
+            );
+            ws.chart.draw(
+                threshing_floor::SeatId(103),
+                threshing_floor::SeatId(105),
+                threshing_floor::Rung::Ask,
+            );
+            ws.chart.draw_org(
+                threshing_floor::End::Org { org: home },
+                threshing_floor::End::Seat(threshing_floor::SeatId(100)),
+                threshing_floor::Rung::Read,
+            );
+            ws.floor_map = Some(SystemMap::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        bounds(cx, "floor-vitals-100");
+        assert!(cx.debug_bounds("floor-message-100").is_none());
+        assert!(cx.debug_bounds("floor-artifact-100").is_none());
+        bounds(cx, &format!("floor-map-wire-{}-{}", home.0, other.0));
+        bounds(cx, "floor-map-internal-orgline-0");
+        assert!(cx.debug_bounds("floor-map-wire-999-999").is_none());
+        assert_eq!(
+            ws.read_with(cx, |ws, _| {
+                map_wire_bundles(&ws.chart, |seat| ws.floor_orgs.owner(seat))
+            }),
+            vec![MapWireBundle {
+                from: home,
+                to: other,
+                count: 3,
+                strongest: Some(threshing_floor::Rung::Ask),
+            }]
+        );
+    }
+
+    #[gpui::test]
     fn the_system_map_and_delete_confirm_paint(cx: &mut gpui::TestAppContext) {
         let _warp = crate::warp::WARP_SERIAL
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx, _other) = fixture(cx);
-        // open the System Map with the From chooser active
+        // open the System Map with the Actor chooser active
         ws.update(cx, |ws, _| {
-            ws.floor_map = Some(SystemMap {
+            ws.floor_map = Some(SystemMap::default());
+            ws.floor_relation = Some(RelationEditor {
                 choosing: Some(RelationEnd::From),
                 ..Default::default()
             });
@@ -7346,8 +7768,9 @@ mod tests {
         });
         // the map, its builder and its rung picker all drew
         bounds(cx, "floor-system-map");
-        bounds(cx, "floor-map-draw");
-        bounds(cx, "floor-map-rung-Ask");
+        bounds(cx, "floor-rel-save");
+        bounds(cx, "floor-rel-verb");
+        bounds(cx, "floor-rel-from");
         // arm the destructive org delete: its confirm button draws
         let org = ws.read_with(cx, |ws, _| ws.floor_org.unwrap());
         ws.update(cx, |ws, _| {
@@ -8511,6 +8934,12 @@ mod tests {
             ws.floor_map.as_ref().unwrap().drag.as_ref().unwrap().origin
         });
         let delta = point(px(80.), px(200.));
+        cx.simulate_mouse_move(
+            start + point(px(9.), px(9.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.run_until_parked();
         cx.simulate_mouse_move(start + delta, MouseButton::Left, Default::default());
         cx.run_until_parked();
         let expected = [map_grid(origin.0 + 160.), map_grid(origin.1 + 400.)];
@@ -8532,14 +8961,14 @@ mod tests {
             .saved()
             .iter()
             .all(|o| o.map_at.is_none())));
-        let expected_drop = ws.read_with(cx, |ws, _| {
-            let drag = ws.floor_map.as_ref().unwrap().drag.as_ref().unwrap();
-            map_drop_position(drag.at, drag.org, &drag.rects)
-        });
         cx.simulate_mouse_up(start + delta, MouseButton::Left, Default::default());
         cx.run_until_parked();
+        let dropped = ws.read_with(cx, |ws, _| ws.floor_orgs.get(org).unwrap().map_at.unwrap());
+        assert_eq!(dropped[0], expected[0]);
+        assert!(dropped[1] >= expected[1]);
+        assert_eq!(dropped[1] % 20, 0);
         ws.read_with(cx, |ws, cx| {
-            assert_eq!(ws.floor_orgs.get(org).unwrap().map_at, Some(expected_drop));
+            assert_eq!(ws.floor_orgs.get(org).unwrap().map_at, Some(dropped));
             assert!(ws.floor_orgs.get(other).unwrap().map_at.is_some());
             let state = ws.build_state(cx);
             let restored: StateFile = toml::from_str(&toml::to_string(&state).unwrap()).unwrap();
@@ -8551,7 +8980,7 @@ mod tests {
                     .find(|o| o.id == org)
                     .unwrap()
                     .map_at,
-                Some(expected_drop)
+                Some(dropped)
             );
         });
         assert_eq!(
@@ -8604,6 +9033,12 @@ mod tests {
         let start = home_before.bottom_right() - point(px(4.), px(4.));
         cx.simulate_mouse_down(start, MouseButton::Left, Default::default());
         cx.simulate_mouse_move(
+            start + point(px(9.), px(9.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.run_until_parked();
+        cx.simulate_mouse_move(
             start + point(px(100.), px(100.)),
             MouseButton::Left,
             Default::default(),
@@ -8624,6 +9059,50 @@ mod tests {
             bounds(cx, &format!("floor-map-org-{}", home.0)),
             home_before
         );
+
+        // GPUI may start a drag on slight pointer motion. It must not pin an
+        // auto-packed org until the four-pixel movement threshold is crossed.
+        cx.simulate_mouse_down(start, MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(
+            start + point(px(3.), px(0.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.simulate_mouse_up(
+            start + point(px(3.), px(0.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.run_until_parked();
+        assert!(ws.read_with(cx, |ws, _| ws
+            .floor_orgs
+            .saved()
+            .iter()
+            .all(|o| o.map_at.is_none())));
+
+        // Escape normally stops GPUI's drop. The payload guard also rejects a
+        // late drop event if a platform delivers one after cancellation.
+        let cancelled_drop = OrgDrag {
+            org: home,
+            at: std::rc::Rc::new(std::cell::Cell::new([100, 100])),
+            moved: std::rc::Rc::new(std::cell::Cell::new(true)),
+            cancelled: std::rc::Rc::new(std::cell::Cell::new(true)),
+            rects: vec![(home, 0., 0., 100., 80.)],
+            title: String::new(),
+            ink: Hsla::default(),
+            bg: Hsla::default(),
+        };
+        ws.update(cx, |ws, cx| {
+            assert!(!ws.floor_map_drop_org(&cancelled_drop, cx))
+        });
+        let unmoved_drop = OrgDrag {
+            moved: std::rc::Rc::new(std::cell::Cell::new(false)),
+            cancelled: std::rc::Rc::new(std::cell::Cell::new(false)),
+            ..cancelled_drop
+        };
+        ws.update(cx, |ws, cx| {
+            assert!(!ws.floor_map_drop_org(&unmoved_drop, cx))
+        });
 
         let empty = bounds(cx, "threshing-floor-chart").bottom_right() - point(px(12.), px(12.));
         let offset = ws.read_with(cx, |ws, _| ws.floor_view.offset);
@@ -8663,11 +9142,24 @@ mod tests {
         let start = away.bottom_right() - point(px(4.), px(4.));
         let delta = home_now.origin - away.origin;
         cx.simulate_mouse_down(start, MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(
+            start + point(px(9.), px(9.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.run_until_parked();
         cx.simulate_mouse_move(start + delta, MouseButton::Left, Default::default());
         cx.simulate_mouse_up(start + delta, MouseButton::Left, Default::default());
         cx.run_until_parked();
         let moved = bounds(cx, &format!("floor-map-org-{}", other.0));
         let home_now = bounds(cx, &format!("floor-map-org-{}", home.0));
+        assert_ne!(moved, away);
+        assert!(ws.read_with(cx, |ws, _| ws
+            .floor_orgs
+            .get(other)
+            .unwrap()
+            .map_at
+            .is_some()));
         assert!(
             moved.right() <= home_now.origin.x
                 || moved.origin.x >= home_now.right()
@@ -8678,7 +9170,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn map_card_and_title_can_drag_but_a_short_card_press_still_opens(
+    fn map_card_drags_as_an_agent_while_title_moves_the_org_and_click_opens(
         cx: &mut gpui::TestAppContext,
     ) {
         let _warp = crate::warp::WARP_SERIAL
@@ -8693,24 +9185,8 @@ mod tests {
         cx.run_until_parked();
         let card = bounds(cx, "floor-map-seat-100").center();
         cx.simulate_mouse_down(card, MouseButton::Left, Default::default());
-        cx.simulate_mouse_move(
-            card + point(px(3.), px(0.)),
-            MouseButton::Left,
-            Default::default(),
-        );
-        assert!(!ws.read_with(cx, |ws, _| ws
-            .floor_map
-            .as_ref()
-            .unwrap()
-            .drag
-            .as_ref()
-            .unwrap()
-            .active));
-        cx.simulate_mouse_up(
-            card + point(px(3.), px(0.)),
-            MouseButton::Left,
-            Default::default(),
-        );
+        assert!(ws.read_with(cx, |ws, _| ws.floor_map.as_ref().unwrap().drag.is_none()));
+        cx.simulate_mouse_up(card, MouseButton::Left, Default::default());
         cx.run_until_parked();
         assert!(ws.read_with(cx, |ws, _| ws.floor_map.is_none()
             && ws.floor_org == Some(home)));
@@ -8723,6 +9199,12 @@ mod tests {
         let card = bounds(cx, "floor-map-seat-100").center();
         cx.simulate_mouse_down(card, MouseButton::Left, Default::default());
         cx.simulate_mouse_move(
+            card + point(px(9.), px(9.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.run_until_parked();
+        cx.simulate_mouse_move(
             card + point(px(80.), px(80.)),
             MouseButton::Left,
             Default::default(),
@@ -8734,11 +9216,16 @@ mod tests {
         );
         cx.run_until_parked();
         assert!(ws.read_with(cx, |ws, _| ws.floor_map.is_some()
-            && ws.floor_orgs.get(home).unwrap().map_at.is_some()));
+            && ws.floor_orgs.get(home).unwrap().map_at.is_none()));
 
-        click(cx, "floor-map-arrange");
         let title = bounds(cx, &format!("floor-map-org-name-{}", home.0)).center();
         cx.simulate_mouse_down(title, MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(
+            title + point(px(9.), px(9.)),
+            MouseButton::Left,
+            Default::default(),
+        );
+        cx.run_until_parked();
         cx.simulate_mouse_move(
             title + point(px(60.), px(80.)),
             MouseButton::Left,

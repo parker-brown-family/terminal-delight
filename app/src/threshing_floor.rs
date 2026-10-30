@@ -402,11 +402,10 @@ impl End {
     }
 }
 
-/// A relationship a person drew where at least one end is a whole org — a seat
-/// reaching a whole org, a whole org reaching a seat, or an org reaching an org.
-/// Unlike a seat-to-seat [`Line`] it is never a bypass: a bypass is a person's
-/// Yes on one pane asking one pane, and an org stands for many. It grants its
-/// rung to every (caller, target) pair its two ends resolve to over the current
+/// A relationship outside one org chart: a whole-org end, or two seats in
+/// different orgs. Unlike a seat-to-seat chart [`Line`] it is never a bypass:
+/// a bypass is a person's Yes on one pane asking one pane. This grants its
+/// rung to every (caller, target) pair its ends resolve to over current
 /// membership, and a word this build cannot read grants nothing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OrgLine {
@@ -511,8 +510,8 @@ impl Chart {
         self.lines.retain(|l| !(l.from == from && l.to == to));
     }
 
-    /// A person drew (or changed) a line to or from a whole org. Callers: the
-    /// Threshing Floor panel and the System Map only.
+    /// A person drew (or changed) a map line. Callers: the Threshing Floor
+    /// panel and the System Map only.
     pub fn draw_org(&mut self, from: End, to: End, rung: Rung) {
         self.put_org(OrgLine {
             from,
