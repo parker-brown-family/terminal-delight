@@ -22,6 +22,9 @@ const PAD: f32 = 14.;
 
 /// A view over the chart, never a change to its seats or permissions. Bounds
 /// are measured at prepaint; before then the pointer anchor is unavailable.
+const MIN_ZOOM: f32 = 0.2;
+const MAX_ZOOM: f32 = 2.5;
+
 pub(crate) struct FloorViewport {
     zoom: f32,
     offset: Point<Pixels>,
@@ -47,11 +50,27 @@ impl FloorViewport {
         self.drag = None;
     }
 
+    /// Zoom out (never in) until a world of `world` map units fits `bounds`,
+    /// then put the map point `at` in the middle. `scale` is the grade's UI
+    /// scale, the factor between map units and pixels at zoom 1.
+    fn center_on(&mut self, bounds: Bounds<Pixels>, at: (f32, f32), world: (f32, f32), scale: f32) {
+        let fit = (f32::from(bounds.size.width) / (world.0 * scale))
+            .min(f32::from(bounds.size.height) / (world.1 * scale))
+            .clamp(MIN_ZOOM, MAX_ZOOM);
+        self.zoom = self.zoom.min(fit);
+        let s = scale * self.zoom;
+        self.offset = point(
+            bounds.size.width / 2. - px(at.0 * s),
+            bounds.size.height / 2. - px(at.1 * s),
+        );
+    }
+
     fn zoom_at(&mut self, anchor: Point<Pixels>, delta: f32) {
         if !delta.is_finite() {
             return;
         }
-        let next = (self.zoom * 2_f32.powf(delta.clamp(-480., 480.) / 240.)).clamp(0.2, 2.5);
+        let next =
+            (self.zoom * 2_f32.powf(delta.clamp(-480., 480.) / 240.)).clamp(MIN_ZOOM, MAX_ZOOM);
         self.offset = anchor - (anchor - self.offset) * (next / self.zoom);
         self.zoom = next;
     }
@@ -1854,21 +1873,20 @@ impl Workspace {
         let map_drag_scale = th.grade.scale.clamp(0.7, 1.6) * self.floor_view.zoom;
         let view_bounds = self.floor_view.bounds.clone();
         let nav_layout = self.floor_map_layout(&map_keys);
-        let nav_org = self.floor_org.and_then(|id| {
+        let world_w = nav_layout.iter().map(|o| o.x + o.w).fold(0., f32::max) + PAD;
+        let world_h = nav_layout.iter().map(|o| o.y + o.h).fold(0., f32::max) + PAD;
+        let middle_of = |id: threshing_floor::OrgId| {
             let o = nav_layout.iter().find(|o| o.org == id)?;
-            let world_w = nav_layout.iter().map(|o| o.x + o.w).fold(0., f32::max) + PAD;
-            let world_h = nav_layout.iter().map(|o| o.y + o.h).fold(0., f32::max) + PAD;
-            Some((id, o.x + o.w / 2., o.y + o.h / 2., world_w, world_h))
-        });
-        let pending_nav = self.floor_map.as_ref().and_then(|m| {
-            m.pending_center.then(|| {
-                let id = m.came_from?;
-                let o = nav_layout.iter().find(|o| o.org == id)?;
-                let world_w = nav_layout.iter().map(|o| o.x + o.w).fold(0., f32::max) + PAD;
-                let world_h = nav_layout.iter().map(|o| o.y + o.h).fold(0., f32::max) + PAD;
-                Some((o.x + o.w / 2., o.y + o.h / 2., world_w, world_h))
-            })?
-        });
+            Some((o.x + o.w / 2., o.y + o.h / 2., world_w, world_h))
+        };
+        let nav_org = self
+            .floor_org
+            .and_then(|id| middle_of(id).map(|(ox, oy, w, h)| (id, ox, oy, w, h)));
+        let pending_nav = self
+            .floor_map
+            .as_ref()
+            .and_then(|m| m.pending_center.then_some(m.came_from?))
+            .and_then(middle_of);
         let nav_scale = ui_scale;
         let weak_ws = cx.entity().downgrade();
         let chart_tile = div()
@@ -2053,18 +2071,11 @@ impl Workspace {
                                             {
                                                 return;
                                             }
-                                            let fit = (f32::from(bounds.size.width)
-                                                / (world_w * nav_scale))
-                                                .min(
-                                                    f32::from(bounds.size.height)
-                                                        / (world_h * nav_scale),
-                                                )
-                                                .clamp(0.2, 2.5);
-                                            ws.floor_view.zoom = ws.floor_view.zoom.min(fit);
-                                            let s = nav_scale * ws.floor_view.zoom;
-                                            ws.floor_view.offset = point(
-                                                bounds.size.width / 2. - px(ox * s),
-                                                bounds.size.height / 2. - px(oy * s),
+                                            ws.floor_view.center_on(
+                                                bounds,
+                                                (ox, oy),
+                                                (world_w, world_h),
+                                                nav_scale,
                                             );
                                             if let Some(map) = ws.floor_map.as_mut() {
                                                 map.pending_center = false;
@@ -2308,14 +2319,11 @@ impl Workspace {
                             return;
                         };
                         if let Some(bounds) = ws.floor_view.bounds.get() {
-                            let fit = (f32::from(bounds.size.width) / (world_w * nav_scale))
-                                .min(f32::from(bounds.size.height) / (world_h * nav_scale))
-                                .clamp(0.2, 2.5);
-                            ws.floor_view.zoom = ws.floor_view.zoom.min(fit);
-                            let s = nav_scale * ws.floor_view.zoom;
-                            ws.floor_view.offset = point(
-                                bounds.size.width / 2. - px(ox * s),
-                                bounds.size.height / 2. - px(oy * s),
+                            ws.floor_view.center_on(
+                                bounds,
+                                (ox, oy),
+                                (world_w, world_h),
+                                nav_scale,
                             );
                         } else {
                             ws.floor_view.offset = point(px(0.), px(0.));
@@ -3326,6 +3334,7 @@ impl Workspace {
                 .when(unlined > 0, |d| {
                     d.child(
                         div()
+                            .debug_selector(|| "floor-settings-dot".to_string())
                             .size(px(6.))
                             .rounded(sk.radius_pill())
                             .bg(th.ansi[1])
@@ -5244,7 +5253,8 @@ impl Workspace {
     /// The System Map, drawn the way the org chart is: on the same pan and zoom,
     /// every org a bordered region holding its seats in the chart's own tidy
     /// tree, with the lines between orgs routed border to border. Cards show
-    /// a name and vitals, then only a name and dot under 60% zoom. A card or
+    /// a name, vitals and artifact; under 60% zoom the model and artifact
+    /// provenance remain as compact lines. A card or
     /// an org's name opens that org's chart.
     fn floor_map_canvas(
         &self,
@@ -5590,6 +5600,20 @@ impl Workspace {
                 });
                 let name =
                     f.map_or_else(|| ui.floor_unavailable.to_string(), |f| f.name.tab.clone());
+                let artifact = f.and_then(|f| f.artifact.as_ref());
+                let (provenance, provenance_ink) = match (f, artifact) {
+                    (None, _) => (ui.floor_map_comments_unknown, th.text.alpha(0.55)),
+                    (_, None) => (ui.floor_map_no_artifact, th.accent),
+                    (_, Some((_, _, crate::feedback::Feedback::Annotated, _))) => {
+                        (ui.floor_map_human_comments, th.human)
+                    }
+                    (_, Some((_, _, crate::feedback::Feedback::None, _))) => {
+                        (ui.floor_map_no_comments, th.text.alpha(0.65))
+                    }
+                    (_, Some((_, _, crate::feedback::Feedback::Unknown, _))) => {
+                        (ui.floor_map_comments_unknown, th.text.alpha(0.55))
+                    }
+                };
                 let card_drag = f.map(|f| PaneDrag {
                     leaf: f.leaf.clone(),
                     title: f.name.tab.clone(),
@@ -5642,29 +5666,68 @@ impl Workspace {
                         }
                         ws.threshing_floor_open_org(org, cx);
                     }));
+                // The System Map reads as three centered information groups.
+                // Type follows the card's world scale; only the smallest view
+                // has a screen-space floor, so the labels still have pixels.
+                let secondary = if far {
+                    (18. * s).max(6. * ui_scale)
+                } else {
+                    12. * s
+                };
+                card = card
+                    .p(px((8. * s).max(2. * ui_scale)))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .text_center()
+                    .gap(px(if far { 6. * s } else { 4. * s }))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("floor-map-name-{}", seat.0)))
+                            .debug_selector(move || format!("floor-map-name-{}", seat.0))
+                            .max_w_full()
+                            .min_w(px(0.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .gap(px(4. * s))
+                            .child(
+                                div()
+                                    .size(px((5. * s).max(2. * ui_scale)))
+                                    .flex_none()
+                                    .rounded(sk.radius_pill())
+                                    .bg(state_ink),
+                            )
+                            .child(
+                                div()
+                                    .min_w(px(0.))
+                                    .truncate()
+                                    .text_size(px((22. * s).max(6. * ui_scale)))
+                                    .line_height(px((26.4 * s).max(7.2 * ui_scale)))
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(th.text)
+                                    .child(SharedString::from(name)),
+                            ),
+                    );
                 if far {
-                    // A dot and the name, set at a size that still reads.
-                    card = card
-                        .px(px(4.))
-                        .flex()
-                        .items_center()
-                        .gap(px(4.))
-                        .child(
-                            div()
-                                .size(px(6.))
-                                .flex_none()
-                                .rounded(sk.radius_pill())
-                                .bg(state_ink),
-                        )
-                        .child(
-                            div()
-                                .min_w(px(0.))
-                                .truncate()
-                                .text_size(px(9. * ui_scale))
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(th.text)
-                                .child(SharedString::from(name)),
-                        );
+                    card = card.child(
+                        div()
+                            .id(SharedString::from(format!("floor-map-model-{}", seat.0)))
+                            .debug_selector(move || format!("floor-map-model-{}", seat.0))
+                            .max_w_full()
+                            .flex_none()
+                            .truncate()
+                            .text_size(px(secondary))
+                            .line_height(px(secondary * 1.2))
+                            .text_color(th.text.alpha(0.85))
+                            .child(SharedString::from(
+                                f.and_then(|f| f.model.as_deref())
+                                    .unwrap_or(ui.floor_model_unknown)
+                                    .to_string(),
+                            )),
+                    );
                 } else {
                     let model = f
                         .map(|f| {
@@ -5676,35 +5739,69 @@ impl Workspace {
                             )
                         })
                         .unwrap_or_else(|| ui.floor_model_unknown.to_string());
+                    // A local typography projection: the shared org-card
+                    // renderer and the org's skin retain their own dimensions.
+                    let mut map_skin = sk.clone();
+                    map_skin.scale = s;
+                    map_skin.type_scale *= zoom * 1.5;
                     card = card
-                        .p(px(8. * s))
-                        .flex()
-                        .flex_col()
-                        .gap(px(3. * s))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(5. * s))
-                                .child(
-                                    div()
-                                        .size(px(6. * s))
-                                        .flex_none()
-                                        .rounded(sk.radius_pill())
-                                        .bg(state_ink),
-                                )
-                                .child(
-                                    div()
-                                        .truncate()
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(th.text)
-                                        .child(SharedString::from(name)),
-                                ),
-                        )
                         .when_some(f, |d, f| {
-                            d.child(self.threshing_floor_vitals(seat, f, &model, s, sk, th))
+                            d.child(
+                                self.threshing_floor_vitals(seat, f, &model, s, &map_skin, th)
+                                    .w_full()
+                                    .flex_none()
+                                    .items_center()
+                                    .text_center()
+                                    .line_height(px(16. * s))
+                                    .overflow_hidden(),
+                            )
+                        })
+                        .when(f.is_none(), |d| {
+                            d.child(
+                                div()
+                                    .max_w_full()
+                                    .truncate()
+                                    .text_size(px(12.75 * s))
+                                    .line_height(px(16. * s))
+                                    .text_color(th.text.alpha(0.85))
+                                    .child(SharedString::from(model)),
+                            )
+                        })
+                        .when_some(artifact, |d, (label, _, _, _)| {
+                            d.child(
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "floor-map-artifact-{}",
+                                        seat.0
+                                    )))
+                                    .debug_selector(move || {
+                                        format!("floor-map-artifact-{}", seat.0)
+                                    })
+                                    .max_w_full()
+                                    .flex_none()
+                                    .truncate()
+                                    .text_size(px(secondary))
+                                    .line_height(px(15. * s))
+                                    .text_color(th.text)
+                                    .child(SharedString::from(label.clone())),
+                            )
                         });
                 }
+                card = card.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "floor-map-provenance-{}",
+                            seat.0
+                        )))
+                        .debug_selector(move || format!("floor-map-provenance-{}", seat.0))
+                        .max_w_full()
+                        .flex_none()
+                        .truncate()
+                        .text_size(px(secondary))
+                        .line_height(px(if far { secondary * 1.2 } else { 15. * s }))
+                        .text_color(provenance_ink)
+                        .child(SharedString::from(provenance.to_string())),
+                );
                 world = world.child(card);
             }
         }
@@ -8413,6 +8510,50 @@ mod tests {
             "a concur saved in the file is a person's feedback"
         );
         assert!(cx.debug_bounds("floor-no-feedback-101").is_none());
+        // The System Map ends with the current title and provenance on
+        // separate lines, and retains model/provenance at every far zoom.
+        ws.update(cx, |ws, cx| {
+            ws.floor_map = Some(SystemMap::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let card = bounds(cx, "floor-map-seat-101");
+        let vitals = bounds(cx, "floor-vitals-101");
+        let title = bounds(cx, "floor-map-artifact-101");
+        let provenance = bounds(cx, "floor-map-provenance-101");
+        assert!(title.origin.y >= vitals.bottom());
+        assert!(provenance.origin.y >= title.bottom());
+        assert!(provenance.bottom() <= card.bottom());
+        for zoom in [0.59, 0.3, MIN_ZOOM] {
+            ws.update(cx, |ws, cx| {
+                ws.floor_view.zoom = zoom;
+                cx.notify();
+            });
+            cx.run_until_parked();
+            for seat in [100, 101] {
+                let card = bounds(cx, &format!("floor-map-seat-{seat}"));
+                let name = bounds(cx, &format!("floor-map-name-{seat}"));
+                let model = bounds(cx, &format!("floor-map-model-{seat}"));
+                let provenance = bounds(cx, &format!("floor-map-provenance-{seat}"));
+                assert!(model.origin.y >= card.origin.y);
+                assert!(provenance.origin.y >= model.bottom());
+                assert!(provenance.bottom() <= card.bottom(), "at zoom {zoom}");
+                assert!(provenance.size.height > px(0.));
+                for row in [name, model, provenance] {
+                    assert!(row.size.width > px(0.));
+                    assert!(row.origin.x >= card.origin.x + px(2.));
+                    assert!(row.right() <= card.right() - px(2.));
+                    assert!((row.center().x - card.center().x).abs() < px(1.5));
+                }
+                let content_height = provenance.bottom() - name.origin.y;
+                assert!(content_height >= card.size.height * 0.4, "at zoom {zoom}");
+                assert!(model.size.height >= card.size.height * 0.1);
+                let content_center = name.origin.y + content_height / 2.;
+                assert!((content_center - card.center().y).abs() < px(1.5));
+            }
+            assert!(cx.debug_bounds("floor-vitals-101").is_none());
+            assert!(cx.debug_bounds("floor-map-artifact-101").is_none());
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -8939,6 +9080,47 @@ mod tests {
             );
             assert!(ws.floor_relation.is_some(), "the draft survives the move");
         });
+    }
+
+    #[gpui::test]
+    fn an_unlined_answer_marks_the_cog_while_the_tray_is_closed(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let numbers = |unlined| crate::askrecord::Numbers {
+            unlined_answered: unlined,
+            cheap_answers: 0,
+            copy_answers: 0,
+            copy_tokens: None,
+        };
+        ws.update(cx, |ws, cx| {
+            ws.ask_numbers = Some(numbers(0));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("floor-settings-dot").is_none(),
+            "no unlined answer, no dot"
+        );
+        // An agent that answered with no line drawn is the one number that must
+        // reach a person unasked, so it shows on the closed cog, not only in
+        // the tray behind it.
+        ws.update(cx, |ws, cx| {
+            ws.ask_numbers = Some(numbers(1));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(
+            ws.read_with(cx, |ws, _| !ws.floor_settings),
+            "the tray is closed"
+        );
+        let dot = bounds(cx, "floor-settings-dot");
+        let cog = bounds(cx, "floor-settings");
+        assert!(
+            cog.contains(&dot.center()),
+            "the dot sits on the cog: {dot:?} {cog:?}"
+        );
     }
 
     #[gpui::test]
