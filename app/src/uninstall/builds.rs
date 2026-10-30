@@ -164,7 +164,17 @@ pub(crate) fn live_procs() -> Vec<(u32, PathBuf)> {
     scan_procs().0
 }
 
-pub(crate) fn prunable(listing: &Listing, keep_newest: usize) -> Vec<&Build> {
+/// The builds prune would remove, or none at all while a process that may be
+/// TD cannot be read: then which old build runs is unknown, prune refuses, and
+/// every caller (the panel, the CLI, its JSON) says unknown instead of a count.
+pub(crate) fn removable(listing: &Listing, keep_newest: usize) -> Option<Vec<&Build>> {
+    listing
+        .uncertain
+        .is_empty()
+        .then(|| prunable(listing, keep_newest))
+}
+
+fn prunable(listing: &Listing, keep_newest: usize) -> Vec<&Build> {
     let keep = keep_newest.max(1);
     listing
         .builds
@@ -566,14 +576,18 @@ fn render_list(l: &Listing, keep: usize) -> String {
         plural(l.builds.len()),
         human_bytes(total)
     ));
-    let gone = prunable(l, keep);
-    let gone_bytes: u64 = gone.iter().map(|b| b.bytes).sum();
-    out.push(format!(
-        "{} removable ({}) — keeps the launcher's build, running builds and the newest {}",
-        gone.len(),
-        human_bytes(gone_bytes),
-        keep.max(1)
-    ));
+    match removable(l, keep) {
+        Some(gone) => out.push(format!(
+            "{} removable ({}) — keeps the launcher's build, running builds and the newest {}",
+            gone.len(),
+            human_bytes(gone.iter().map(|b| b.bytes).sum()),
+            keep.max(1)
+        )),
+        None => out.push(format!(
+            "Which builds can be removed is unknown: a process that may be Terminal Delight cannot be inspected (pid {:?}), so prune removes nothing until it ends.",
+            l.uncertain
+        )),
+    }
     if l.unreadable_procs > 0 {
         out.push(format!(
             "{} of your processes would not show their executable, so whether they run a build is unknown.",
@@ -619,15 +633,18 @@ fn render_pruned(p: &Pruned, dir: &Path, dry_run: bool) -> String {
 }
 
 fn list_json(l: &Listing, keep: usize) -> String {
-    let gone = prunable(l, keep);
+    let gone = removable(l, keep);
     let mut v = serde_json::to_value(l).unwrap_or_default();
     v["keep_newest"] = keep.max(1).into();
+    // null, never an empty list or 0, when which builds run is unknown.
     v["removable"] = gone
-        .iter()
-        .map(|b| b.name.as_str())
-        .collect::<Vec<_>>()
+        .as_ref()
+        .map(|g| g.iter().map(|b| b.name.as_str()).collect::<Vec<_>>())
         .into();
-    v["removable_bytes"] = gone.iter().map(|b| b.bytes).sum::<u64>().into();
+    v["removable_bytes"] = gone
+        .as_ref()
+        .map(|g| g.iter().map(|b| b.bytes).sum::<u64>())
+        .into();
     serde_json::to_string_pretty(&v).unwrap_or_default()
 }
 
@@ -743,6 +760,30 @@ mod tests {
             let _ = fs::remove_file(&link);
             symlink(format!("../lib/terminal-delight/{name}"), link).unwrap();
         }
+    }
+
+    #[test]
+    fn the_cli_says_unknown_instead_of_a_removable_count_while_a_possible_td_is_unreadable() {
+        let f = fixture();
+        let l = list(&f.roots, &|| vec![(4711, PathBuf::new())]);
+        assert_eq!(l.uncertain, vec![4711]);
+        assert!(removable(&l, DEFAULT_KEEP).is_none());
+        let text = render_list(&l, DEFAULT_KEEP);
+        assert!(text.contains("unknown") && text.contains("4711"), "{text}");
+        assert!(!text.contains(" removable ("), "{text}");
+        let v: serde_json::Value = serde_json::from_str(&list_json(&l, DEFAULT_KEEP)).unwrap();
+        assert!(
+            v["removable"].is_null() && v["removable_bytes"].is_null(),
+            "{v}"
+        );
+        // Readable processes only: the count is a fact again.
+        let l = list(&f.roots, &Vec::new);
+        assert!(removable(&l, DEFAULT_KEEP).is_some());
+        let v: serde_json::Value = serde_json::from_str(&list_json(&l, DEFAULT_KEEP)).unwrap();
+        assert!(
+            v["removable"].is_array() && v["removable_bytes"].is_u64(),
+            "{v}"
+        );
     }
 
     fn elf(dir: &Path, name: &str, len: usize, age: u64) {

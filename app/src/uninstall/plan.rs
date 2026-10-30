@@ -1070,10 +1070,11 @@ pub(crate) fn td_executables(r: &Roots) -> Vec<PathBuf> {
         if m.file_type().is_symlink() {
             if let Ok(t) = std::fs::read_link(&launcher) {
                 let t = if t.is_absolute() { t } else { r.bin.join(t) };
-                // Only a link to an ELF build in the builds directory: never an
-                // AppImage, which nothing on disk proves is TD's.
+                // Only a link to what the directory scan itself calls a build,
+                // or to this very program: a person's own program parked in the
+                // builds directory is theirs, whatever the launcher points at.
                 let real = std::fs::canonicalize(&t).unwrap_or_else(|_| t.clone());
-                if in_builds(&t) && is_elf(&real) && !is_appimage(&real) {
+                if in_builds(&t) && (is_build_file(&real) || same_program(&real)) {
                     v.push(t);
                 }
             }
@@ -1084,6 +1085,16 @@ pub(crate) fn td_executables(r: &Roots) -> Vec<PathBuf> {
     v.sort();
     v.dedup();
     v
+}
+
+/// What the builds-directory scan calls a build: a `td-*` ELF that is not an
+/// AppImage. The launcher's target is held to the same test.
+fn is_build_file(p: &Path) -> bool {
+    p.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("td-"))
+        && is_elf(p)
+        && !is_appimage(p)
 }
 
 pub(crate) fn is_elf(p: &Path) -> bool {
@@ -1322,7 +1333,7 @@ fn builds_and_launcher(b: &mut Builder, r: &Roots, after: &[usize]) {
             let into_builds = matches!((&real, &builds), (Some(t), Some(b)) if t.parent() == Some(b.as_path()))
                 && real
                     .as_deref()
-                    .is_some_and(|t| is_elf(t) && !is_appimage(t));
+                    .is_some_and(|t| is_build_file(t) || same_program(t));
             if into_builds {
                 b.step(
                     Op::RemoveLink {

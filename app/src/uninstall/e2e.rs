@@ -1282,3 +1282,46 @@ fn a_bare_mcp_command_says_which_path_found_it() {
         assert!(s.why.contains("as found on the PATH"), "{}", s.why);
     }
 }
+
+#[test]
+fn a_launcher_pointing_at_a_persons_own_program_in_the_builds_directory_keeps_both() {
+    let fx = Fx::new("ownwrapper");
+    let lib = fx.root.join(".local/lib/terminal-delight");
+    let wrapper = lib.join("custom-wrapper");
+    elf(&wrapper);
+    let launcher = fx.root.join(".local/bin/terminal-delight");
+    std::fs::remove_file(&launcher).unwrap();
+    std::os::unix::fs::symlink(&wrapper, &launcher).unwrap();
+    let p = fx.plan(Retention::Keep);
+    assert!(p
+        .steps
+        .iter()
+        .all(|s| !matches!(&s.op, Op::RemoveLink { path, .. } if *path == launcher)));
+    for s in &p.steps {
+        if let Op::StopProcesses { exes, .. } = &s.op {
+            assert!(!exes.contains(&wrapper), "{exes:?}");
+        }
+    }
+    let mut f = fake(false);
+    f.procs.push(Proc {
+        pid: 33,
+        exe: wrapper.clone(),
+        argv: vec![],
+        comm: String::new(),
+        kind: ExeKind::Build,
+    });
+    apply(
+        &p,
+        &fx.plan(Retention::Keep),
+        &fx.roots(),
+        &out(&fx),
+        &mut f,
+    );
+    assert!(
+        f.signalled.iter().all(|(pid, _)| *pid != 33),
+        "{:?}",
+        f.signalled
+    );
+    assert!(std::fs::symlink_metadata(&launcher).is_ok());
+    assert!(wrapper.exists());
+}

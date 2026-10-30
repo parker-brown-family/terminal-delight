@@ -87,7 +87,14 @@ pub(crate) fn receipts(state_root: &Path) -> Vec<Receipt> {
                     .open(&path)
                     .ok()?
             };
-            if !f.metadata().is_ok_and(|m| m.is_file()) {
+            // A receipt is a claim that TD installed a file, and so a licence to
+            // delete it: only one this account wrote, that no one else can
+            // write, is believed. Another account's, or a shared one, is not.
+            let trusted = f.metadata().is_ok_and(|m| {
+                use std::os::unix::fs::MetadataExt;
+                m.is_file() && m.uid() == unsafe { libc::getuid() } && m.mode() & 0o022 == 0
+            });
+            if !trusted {
                 return None;
             }
             let mut text = String::new();
@@ -220,5 +227,20 @@ mod tests {
         std::os::unix::fs::symlink(&f, dir.join("link")).unwrap();
         assert!(!ownership(&dir.join("link"), &[], &known).0.owned());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_receipt_others_can_write_is_not_believed() {
+        use std::os::unix::fs::PermissionsExt;
+        let state = std::env::temp_dir().join(format!("td-known-receipts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&state);
+        std::fs::create_dir_all(state.join("receipts")).unwrap();
+        let r = state.join("receipts/00-forged.receipt");
+        std::fs::write(&r, "file\tabcd\t/h/Documents/keys.html\n").unwrap();
+        for (mode, believed) in [(0o644, true), (0o664, false), (0o666, false), (0o600, true)] {
+            std::fs::set_permissions(&r, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert_eq!(receipts(&state).len(), usize::from(believed), "{mode:o}");
+        }
+        std::fs::remove_dir_all(state).unwrap();
     }
 }

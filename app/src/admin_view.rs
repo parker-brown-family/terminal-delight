@@ -45,8 +45,9 @@ struct BuildCount {
     total: usize,
     bytes: u64,
     in_use: usize,
-    free: usize,
-    free_bytes: u64,
+    /// How many builds prune would remove and their bytes; none while
+    /// `uncertain` holds a process, because then nobody knows.
+    removable: Option<(usize, u64)>,
     /// Processes that may be TD and cannot be read: while there are any, which
     /// builds run is unknown, the counts above are not facts, and pruning
     /// refuses, so the panel says so instead of offering it.
@@ -65,7 +66,8 @@ fn count_builds_with(
     if let Some(e) = &listing.error {
         return Err(e.clone());
     }
-    let free = builds::prunable(&listing, builds::DEFAULT_KEEP);
+    let removable = builds::removable(&listing, builds::DEFAULT_KEEP)
+        .map(|g| (g.len(), g.iter().map(|b| b.bytes).sum()));
     Ok(BuildCount {
         total: listing.builds.len(),
         bytes: listing.builds.iter().map(|b| b.bytes).sum(),
@@ -74,8 +76,7 @@ fn count_builds_with(
             .iter()
             .filter(|b| b.launcher || !b.running.is_empty())
             .count(),
-        free: free.len(),
-        free_bytes: free.iter().map(|b| b.bytes).sum(),
+        removable,
         uncertain: listing.uncertain.clone(),
     })
 }
@@ -90,7 +91,11 @@ fn builds_blurb(
     match builds {
         None => ui.admin_builds_counting.to_string(),
         Some(Err(e)) => ui.admin_failed.replace("{why}", e),
-        Some(Ok(c)) if !c.uncertain.is_empty() => ui
+        Some(Ok(
+            c @ BuildCount {
+                removable: None, ..
+            },
+        )) => ui
             .admin_builds_unknown
             .replace("{n}", &c.total.to_string())
             .replace("{size}", &builds::human_bytes(c.bytes))
@@ -102,26 +107,40 @@ fn builds_blurb(
                     .collect::<Vec<_>>()
                     .join(", "),
             ),
-        Some(Ok(c)) if c.free == 0 => ui
+        Some(Ok(BuildCount {
+            removable: Some((0, _)),
+            total,
+            bytes,
+            ..
+        })) => ui
             .admin_builds_none
-            .replace("{n}", &c.total.to_string())
-            .replace("{size}", &builds::human_bytes(c.bytes)),
-        Some(Ok(c)) if armed => ui
-            .admin_builds_confirm
-            .replace("{free}", &c.free.to_string())
-            .replace("{free_size}", &builds::human_bytes(c.free_bytes)),
-        Some(Ok(c)) => ui
-            .admin_builds_blurb
-            .replace("{n}", &c.total.to_string())
-            .replace("{size}", &builds::human_bytes(c.bytes))
-            .replace("{used}", &c.in_use.to_string())
-            .replace("{free}", &c.free.to_string())
-            .replace("{free_size}", &builds::human_bytes(c.free_bytes)),
+            .replace("{n}", &total.to_string())
+            .replace("{size}", &builds::human_bytes(*bytes)),
+        Some(Ok(BuildCount {
+            removable: Some((free, free_bytes)),
+            total,
+            bytes,
+            in_use,
+            ..
+        })) => {
+            if armed {
+                ui.admin_builds_confirm
+                    .replace("{free}", &free.to_string())
+                    .replace("{free_size}", &builds::human_bytes(*free_bytes))
+            } else {
+                ui.admin_builds_blurb
+                    .replace("{n}", &total.to_string())
+                    .replace("{size}", &builds::human_bytes(*bytes))
+                    .replace("{used}", &in_use.to_string())
+                    .replace("{free}", &free.to_string())
+                    .replace("{free_size}", &builds::human_bytes(*free_bytes))
+            }
+        }
     }
 }
 
 fn can_prune(builds: &Option<Result<BuildCount, String>>) -> bool {
-    matches!(builds, Some(Ok(c)) if c.free > 0 && c.uncertain.is_empty())
+    matches!(builds, Some(Ok(BuildCount { removable: Some((n, _)), .. })) if *n > 0)
 }
 
 impl Workspace {
