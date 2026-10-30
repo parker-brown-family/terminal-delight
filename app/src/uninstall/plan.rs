@@ -392,7 +392,7 @@ pub(crate) fn plan(i: &Inputs) -> Plan {
 
     // MCP registrations, through each client's own CLI.
     let payload = appimage_payload(&get);
-    let mut td_exes = td_executables(r, None);
+    let mut td_exes = td_executables(r);
     // The program inside a mounted AppImage is what its processes run.
     if let Some(p) = &payload {
         td_exes.push(p.clone());
@@ -927,7 +927,7 @@ pub(crate) fn same_program(p: &Path) -> bool {
 }
 
 /// An AppImage: an ELF file with the AppImage magic at offset 8.
-fn is_appimage(p: &Path) -> bool {
+pub(crate) fn is_appimage(p: &Path) -> bool {
     use std::io::Read;
     let mut head = [0u8; 11];
     is_elf(p)
@@ -1020,7 +1020,7 @@ fn blocked(r: &Roots) -> Option<String> {
         })
 }
 
-pub(crate) fn td_executables(r: &Roots, appimage: Option<&Path>) -> Vec<PathBuf> {
+pub(crate) fn td_executables(r: &Roots) -> Vec<PathBuf> {
     // Only executables proven to be TD's: an ELF build inside TD's own builds
     // directory (resolved), the launcher when it is itself such a program, and
     // the AppImage the running TD says it came from. A launcher that points
@@ -1050,12 +1050,10 @@ pub(crate) fn td_executables(r: &Roots, appimage: Option<&Path>) -> Vec<PathBuf>
         if m.file_type().is_symlink() {
             if let Ok(t) = std::fs::read_link(&launcher) {
                 let t = if t.is_absolute() { t } else { r.bin.join(t) };
-                let is_appimage = appimage.is_some_and(|a| {
-                    std::fs::canonicalize(a).ok() == std::fs::canonicalize(&t).ok()
-                });
-                if (in_builds(&t) && is_elf(&std::fs::canonicalize(&t).unwrap_or(t.clone())))
-                    || is_appimage
-                {
+                // Only a link to an ELF build in the builds directory: never an
+                // AppImage, which nothing on disk proves is TD's.
+                let real = std::fs::canonicalize(&t).unwrap_or_else(|_| t.clone());
+                if in_builds(&t) && is_elf(&real) && !is_appimage(&real) {
                     v.push(t);
                 }
             }
@@ -1063,7 +1061,6 @@ pub(crate) fn td_executables(r: &Roots, appimage: Option<&Path>) -> Vec<PathBuf>
             v.push(launcher.clone());
         }
     }
-    v.extend(appimage.filter(|a| is_elf(a)).map(Path::to_path_buf));
     v.sort();
     v.dedup();
     v
@@ -1100,6 +1097,9 @@ fn session_keys(config: &Path) -> Vec<String> {
     v
 }
 
+/// Bytes and files under `p`; both absent when `p` is not there or any part
+/// of it cannot be read, since a total that skipped a directory would read as
+/// a measurement of the whole.
 pub(crate) fn dir_size(p: &Path) -> (Option<u64>, Option<u64>) {
     let Ok(m) = std::fs::symlink_metadata(p) else {
         return (None, None);
@@ -1111,10 +1111,15 @@ pub(crate) fn dir_size(p: &Path) -> (Option<u64>, Option<u64>) {
     let mut stack = vec![p.to_path_buf()];
     while let Some(d) = stack.pop() {
         let Ok(rd) = std::fs::read_dir(&d) else {
-            continue;
+            return (None, None);
         };
-        for e in rd.flatten() {
-            let Ok(m) = e.metadata() else { continue };
+        for e in rd {
+            let Ok(e) = e else {
+                return (None, None);
+            };
+            let Ok(m) = e.metadata() else {
+                return (None, None);
+            };
             if m.is_dir() {
                 stack.push(e.path());
             } else {

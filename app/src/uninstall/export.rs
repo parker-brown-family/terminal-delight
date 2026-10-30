@@ -223,21 +223,26 @@ pub(crate) fn export(
 /// size before anything is written. An estimate: where this walk meets
 /// something it cannot read it stops counting that tree, and `export` refuses
 /// there with the reason.
-pub(crate) fn plan_size(roots: &Roots, records: bool) -> (u64, u64) {
+/// What an export would copy, as (files, bytes); absent when a root or any
+/// directory in it cannot be read, so an unreadable tree is never shown as
+/// an empty one.
+pub(crate) fn plan_size(roots: &Roots, records: bool) -> Option<(u64, u64)> {
     let mut found = Found::default();
     let mut trees = vec![(Tree::Config, &roots.config)];
     if records {
         trees.push((Tree::State, &roots.state));
     }
     for (tree, root) in trees {
-        if let Ok(Some(_)) = root_dir(root) {
-            let _ = walk(tree, root, "", None, None, &mut found);
+        match root_dir(root) {
+            Ok(Some(_)) => walk(tree, root, "", None, None, &mut found).ok()?,
+            Ok(None) => {}
+            Err(_) => return None,
         }
     }
-    (
+    Some((
         found.files.len() as u64,
         found.files.iter().map(|f| f.bytes).sum(),
-    )
+    ))
 }
 
 fn build(
@@ -988,7 +993,10 @@ mod tests {
         let mut after = snapshot(&f.home);
         after.retain(|p, _| !p.starts_with(&dir));
         assert_eq!(after, before, "the source changed");
-        assert_eq!(plan_size(&f.roots, true), (report.files, report.bytes));
+        assert_eq!(
+            plan_size(&f.roots, true).unwrap(),
+            (report.files, report.bytes)
+        );
     }
 
     #[test]
@@ -1010,8 +1018,11 @@ mod tests {
             .unwrap()
             .iter()
             .all(|e| e["path"].as_str().unwrap().starts_with("config/")));
-        assert_eq!(plan_size(&f.roots, false), (report.files, report.bytes));
-        assert!(plan_size(&f.roots, true).1 > report.bytes);
+        assert_eq!(
+            plan_size(&f.roots, false).unwrap(),
+            (report.files, report.bytes)
+        );
+        assert!(plan_size(&f.roots, true).unwrap().1 > report.bytes);
     }
 
     #[test]

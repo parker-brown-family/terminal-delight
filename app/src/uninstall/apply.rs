@@ -904,7 +904,9 @@ pub(crate) fn is_td_exe(exe: &Path, exes: &[PathBuf], builds: &Path) -> bool {
             && exe
                 .file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("td-")))
+                .is_some_and(|n| n.starts_with("td-"))
+            // An AppImage there is never TD's; a build already deleted is.
+            && !super::plan::is_appimage(exe))
 }
 
 /// TD's loose-file receipt, opened once without following a link or blocking,

@@ -119,11 +119,20 @@ pub(crate) fn is_td(
     let found = if p.is_absolute() {
         Some(p.to_path_buf())
     } else if !command.contains('/') {
+        // Walked in the client's order. A relative or empty entry, or one
+        // that still holds a `$`, depends on a launch context this cannot
+        // see, so reaching one before a hit leaves the command unresolved.
         path_var.and_then(|pv| {
-            std::env::split_paths(pv)
-                .filter(|d| d.is_absolute())
-                .map(|d| d.join(command))
-                .find(|c| std::fs::metadata(c).is_ok_and(|m| m.is_file()) && executable(c))
+            for d in std::env::split_paths(pv) {
+                if !d.is_absolute() || d.as_os_str().to_string_lossy().contains('$') {
+                    return None;
+                }
+                let c = d.join(command);
+                if std::fs::metadata(&c).is_ok_and(|m| m.is_file()) && executable(&c) {
+                    return Some(c);
+                }
+            }
+            None
         })
     } else {
         None
@@ -273,14 +282,15 @@ pub(crate) fn discover(
                         .to_string();
                     let args = str_list(s.get("args"));
                     let path = entry_path(s);
-                    let td = is_td(
-                        &command,
-                        &args,
-                        td_exes,
-                        path.as_ref()
-                            .map(std::ffi::OsStr::new)
-                            .or(path_var.as_deref()),
-                    );
+                    let td = s.get("cwd").is_none()
+                        && is_td(
+                            &command,
+                            &args,
+                            td_exes,
+                            path.as_ref()
+                                .map(std::ffi::OsStr::new)
+                                .or(path_var.as_deref()),
+                        );
                     if td || looks_like_td(name, &command) {
                         out.push(Entry {
                             client: Client::Claude,
@@ -331,14 +341,15 @@ pub(crate) fn discover(
                             })
                             .unwrap_or_default();
                         let path = entry_path(s);
-                        let td = is_td(
-                            &command,
-                            &args,
-                            td_exes,
-                            path.as_ref()
-                                .map(std::ffi::OsStr::new)
-                                .or(path_var.as_deref()),
-                        );
+                        let td = s.get("cwd").is_none()
+                            && is_td(
+                                &command,
+                                &args,
+                                td_exes,
+                                path.as_ref()
+                                    .map(std::ffi::OsStr::new)
+                                    .or(path_var.as_deref()),
+                            );
                         if td || looks_like_td(name, &command) {
                             out.push(Entry {
                                 client: Client::Codex,
@@ -372,14 +383,15 @@ pub(crate) fn discover(
                         .to_string();
                     let args = str_list(s.get("args"));
                     let path = entry_path(s);
-                    let td = is_td(
-                        &command,
-                        &args,
-                        td_exes,
-                        path.as_ref()
-                            .map(std::ffi::OsStr::new)
-                            .or(path_var.as_deref()),
-                    );
+                    let td = s.get("cwd").is_none()
+                        && is_td(
+                            &command,
+                            &args,
+                            td_exes,
+                            path.as_ref()
+                                .map(std::ffi::OsStr::new)
+                                .or(path_var.as_deref()),
+                        );
                     if td || looks_like_td(name, &command) {
                         out.push(Entry {
                             client: Client::Gemini,

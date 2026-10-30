@@ -12,7 +12,9 @@ use crate::uninstall::{self, builds, export, guard, plan::Retention, roots::Root
 pub(crate) struct AdminState {
     export_busy: bool,
     export_done: Option<Result<String, String>>,
-    records_bytes: Option<u64>,
+    /// Outer `None` while counting; inner `None` when the records cannot all be
+    /// read, which is shown as unknown and never as zero.
+    records_bytes: Option<Option<u64>>,
     builds: Option<Result<BuildCount, String>>,
     prune_armed: bool,
     prune_busy: bool,
@@ -96,13 +98,13 @@ impl Workspace {
                 .background_executor()
                 .spawn(async move {
                     // What the export would copy, exclusions already left out.
-                    let records = Some(export::plan_size(&roots, true).1);
+                    let records = export::plan_size(&roots, true).map(|(_, bytes)| bytes);
                     (count_builds(&roots), records)
                 })
                 .await;
             let _ = this.update(cx, |ws, cx| {
                 ws.admin.builds = Some(count);
-                ws.admin.records_bytes = records;
+                ws.admin.records_bytes = Some(records);
                 cx.notify();
             });
         })
@@ -354,10 +356,11 @@ impl Workspace {
             })
         };
 
-        let records = a
-            .records_bytes
-            .map(builds::human_bytes)
-            .unwrap_or_else(|| "…".into());
+        let records = match a.records_bytes {
+            None => "…".to_string(),
+            Some(Some(bytes)) => builds::human_bytes(bytes),
+            Some(None) => "?".to_string(),
+        };
         let builds_blurb = match &a.builds {
             None => ui.admin_builds_counting.to_string(),
             Some(Err(e)) => ui.admin_failed.replace("{why}", e),

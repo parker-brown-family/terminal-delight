@@ -1077,3 +1077,78 @@ fn an_appimage_in_the_builds_directory_is_never_a_build() {
         .iter()
         .any(|o| o.name == "td-release.AppImage"));
 }
+
+#[test]
+fn a_registration_whose_path_starts_relative_or_with_its_own_cwd_is_reported() {
+    let fx = Fx::new("mcprel");
+    let bin = fx.root.join(".local/bin");
+    for entry in [
+        format!(
+            r#"{{"command":"terminal-delight","args":["mcp"],"env":{{"PATH":".:{}"}}}}"#,
+            bin.display()
+        ),
+        format!(
+            r#"{{"command":"terminal-delight","args":["mcp"],"env":{{"PATH":":{}"}}}}"#,
+            bin.display()
+        ),
+        r#"{"command":"terminal-delight","args":["mcp"],"cwd":"/somewhere"}"#.to_string(),
+    ] {
+        w(
+            &fx.root.join(".claude.json"),
+            &format!(r#"{{"mcpServers":{{"terminal-delight":{entry}}}}}"#),
+        );
+        let p = fx.plan(Retention::Keep);
+        assert!(
+            p.steps
+                .iter()
+                .all(|s| !matches!(s.op, Op::McpRemove { .. })),
+            "{entry}"
+        );
+    }
+}
+
+#[test]
+fn a_running_appimage_in_the_builds_directory_is_never_signalled() {
+    let fx = Fx::new("runningimage");
+    let image = fx
+        .root
+        .join(".local/lib/terminal-delight/td-other.AppImage");
+    let mut bytes = b"\x7fELF\x02\x01\x01\x00AI\x02".to_vec();
+    bytes.extend_from_slice(&[0u8; 32]);
+    std::fs::write(&image, &bytes).unwrap();
+    let mut f = fake(false);
+    f.procs.push(Proc {
+        pid: 31,
+        exe: image.clone(),
+        argv: vec![],
+        comm: String::new(),
+    });
+    let p = fx.plan(Retention::Keep);
+    apply(
+        &p,
+        &fx.plan(Retention::Keep),
+        &fx.roots(),
+        &out(&fx),
+        &mut f,
+    );
+    assert!(
+        f.signalled.iter().all(|(pid, _)| *pid != 31),
+        "{:?}",
+        f.signalled
+    );
+}
+
+#[test]
+fn an_unreadable_tree_has_no_size_rather_than_zero() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = Fx::new("unreadable");
+    let state = fx.root.join(".local/state/terminal-delight/locked");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let (bytes, files) = super::plan::dir_size(&fx.root.join(".local/state/terminal-delight"));
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Running as root reads anything; then there is nothing to prove here.
+    if unsafe { libc::geteuid() } != 0 {
+        assert_eq!((bytes, files), (None, None));
+    }
+}
