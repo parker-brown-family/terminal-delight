@@ -7,6 +7,16 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Uninstall trust boundaries
+
+- MCP setup for Claude Code, Codex and Gemini now records the absolute installed
+  launcher path, so later removal can identify the registration independently
+  of the agent's inherited PATH.
+- Removal no longer mistakes a confirmed exited, unreaped process for a live
+  unreadable Terminal Delight. Unknown process state still blocks conservatively.
+- The removal threat model now names its authority, ownership and fixture
+  boundaries, links them to tests, and retains the unresolved directory race.
+
 ### SVG Links in HTML Documents
 
 - HTML briefs containing linked SVG diagrams now render in the document reader.

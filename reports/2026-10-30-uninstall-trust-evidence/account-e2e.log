@@ -1,0 +1,78 @@
+gtk-update-icon-cache: Cache file created successfully.
+== guard, export and old builds, read-only first
+  ok   the machine is not protected: Not protected: uninstall may run on this machine (legion, 6e3cbd12).
+  ok   two builds listed
+  ok   nothing blocks the old-builds count
+== a marker naming this machine makes the removal refuse
+  ok   a protected machine refused
+  ok   nothing was removed while protected
+== plan, review and run
+  ok   the plan was written for review (uninstall-plan-20261031-035252-export.json)
+true
+  ok   the absolute launcher registration is identified without a PATH caveat
+The removal is running in the background and will close Terminal Delight.
+Its receipt will be /home/parker/.local/state/terminal-delight-removal/20261031-035252/receipt.md
+  ok   the worker wrote its receipt
+# Terminal Delight was removed
+
+28 steps done, 0 not attempted, 0 failed, 0 blocked. Records: exported and verified; removed.
+
+## What happened
+
+- **done** — restore the default terminal in /home/parker/.config/xdg-terminals.list — put back the default terminal you had before TD, unless you changed it since. Put back: the default terminal is foot.desktop again.
+- **done** — edit /home/parker/.claude/settings.json — take out TD's entries (5 hooks) and nothing else. removed 5 entries
+- **done** — /usr/bin/env -u CLAUDE_CONFIG_DIR claude mcp remove -s user terminal-delight — TD's MCP registration in claude (user scope). 
+- **done** — close session hosts in /home/parker/.td-e2e-run/terminal-delight — ask each session host to save and close. 0 host(s) asked to save and close
+- **done** — close session hosts in /home/parker/tmp/terminal-delight-1000 — ask each session host to save and close. 0 host(s) asked to save and close
+- **done** — stop processes running 2 TD executable(s) — close TD's windows and the MCP relays agents started, matched by executable. 1 process(es) closed
+- **done** — thaw frozen panes of 1 session(s) — wake panes that rest had frozen, so they can close. 6 frozen pane(s) thawed
+- **done** — check TD is no longer a default terminal in /home/parker/.config/xdg-terminals.list — make sure the desktop still has a terminal once TD is gone. TD is not a default terminal
+- **done** — export to /home/parker/terminal-delight-export-20261031-035252 — your settings and records, copied and verified after TD stopped and saved them. 5 files, 1.2 kB verified in /home/parker/terminal-delight-export-20261031-035252
+- **done** — remove /home/parker/.local/bin/td-agent-hooks — td-agent-hooks, installed by TD (its agent-hooks receipt). removed
+- **done** — remove /home/parker/.local/share/applications/terminal-delight.desktop — TD's desktop entry or icon. removed
+- **done** — remove /home/parker/.local/share/icons/hicolor/scalable/apps/terminal-delight.svg — TD's desktop entry or icon. removed
+- **done** — remove /home/parker/.local/share/icons/hicolor/48x48/apps/terminal-delight.png — an icon TD's installer rendered. removed
+- **done** — remove /home/parker/.local/share/icons/hicolor/64x64/apps/terminal-delight.png — an icon TD's installer rendered. removed
+- **done** — remove /home/parker/.local/share/icons/hicolor/128x128/apps/terminal-delight.png — an icon TD's installer rendered. removed
+- **done** — remove /home/parker/.local/share/icons/hicolor/256x256/apps/terminal-delight.png — an icon TD's installer rendered. removed
+- **done** — refresh desktop and icon caches — refresh the desktop and icon caches TD's installer updated. update-desktop-database ran; gtk-update-icon-cache ran
+- **done** — remove TD's loose files in /home/parker/tmp — demo layouts TD left in the temp directory. 0 file(s) removed
+- **done** — remove TD's loose files in /home/parker/.td-e2e-run — pictures and sounds TD unpacked beside its runtime directory. 0 file(s) removed; 1 kept: nothing records that TD wrote them (in a runtime directory they go at logout)
+- **done** — remove /home/parker/.td-e2e-run/terminal-delight/ — TD's runtime directory: sockets and live state. already gone
+- **done** — remove /home/parker/tmp/terminal-delight-1000/ — TD's runtime directory: sockets and live state. already gone
+- **done** — remove /home/parker/.cache/terminal-delight/ — TD's cache. removed
+- **done** — remove build /home/parker/.local/lib/terminal-delight/td-e2e0001-current — build td-e2e0001-current. removed
+- **done** — remove build /home/parker/.local/lib/terminal-delight/td-e2e0002-old — build td-e2e0002-old. removed
+- **done** — remove /home/parker/.local/lib/terminal-delight/ if empty — the builds directory, if empty. removed
+- **done** — remove /home/parker/.local/bin/terminal-delight — the terminal-delight launcher. removed
+- **done** — remove records in /home/parker/.config/terminal-delight/ — your TD settings and records, as you chose. removed
+- **done** — remove records in /home/parker/.local/state/terminal-delight/ — your TD settings and records, as you chose. removed
+
+## Left for you
+
+- **Project .mcp.json files** (yours) — a project-scope TD registration lives inside that project's repository, which this does not search. To do it: `grep -rl --include=.mcp.json terminal-delight <your projects directory>`
+
+This receipt, the plan and a copy of every shared file before it was edited are in `/home/parker/.local/state/terminal-delight-removal/20261031-035252`. Delete that directory when you no longer need it.
+== what the receipt and the disk say
+  ok   no step failed or was blocked
+  ok   the decoy TD process was stopped
+  ok   someone else's program still runs
+  ok   removed: .local/bin/terminal-delight
+  ok   removed: .local/bin/td-agent-hooks
+  ok   removed: .local/lib/terminal-delight/td-e2e0001-current
+  ok   removed: .local/lib/terminal-delight/td-e2e0002-old
+  ok   the stranger's file in the runtime dir stays
+  ok   another tool's look-alike stays
+  ok   someone else's hook stays
+  ok   TD's hook is gone
+  ok   nothing left beside the settings file
+  ok   the worker removed its own copy
+  ok   records were exported first
+  ok   the export has its manifest
+  ok   records removed after the export
+  ok   the desktop entry is gone
+  ok   the default terminal is put back
+  ok   claude was asked to remove TD's server, pinned to its default config
+  ok   TD's MCP server is gone
+  ok   the other MCP server stays
+uninstall e2e: every check passed (account home)
