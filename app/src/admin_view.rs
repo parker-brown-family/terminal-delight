@@ -389,11 +389,13 @@ impl Workspace {
                         d.cursor_pointer().hover(|s| s.bg(th.accent.alpha(0.15)))
                     })
                     .map(|d| sk.action(d, false))
-                    .child(
-                        div()
-                            .text_size(sk.text_px(15.))
-                            .child(SharedString::from(glyph.to_string())),
-                    )
+                    .when(!sk.text_controls(), |d| {
+                        d.child(
+                            div()
+                                .text_size(sk.text_px(15.))
+                                .child(SharedString::from(glyph.to_string())),
+                        )
+                    })
                     .child(
                         div()
                             .flex()
@@ -483,7 +485,9 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .text_size(sk.text_px(13.))
-                    .child(div().text_size(sk.text_px(18.)).child("\u{2699}"))
+                    .when(!sk.text_controls(), |d| {
+                        d.child(div().text_size(sk.text_px(18.)).child("\u{2699}"))
+                    })
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)

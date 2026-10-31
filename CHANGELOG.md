@@ -13,6 +13,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   SVG links resolve to ordinary URL strings, preserving local fragment jumps
   and document base URLs instead of failing with `url.indexOf is not a function`.
 
+### TERMINIMALIST
+
+- TERMINIMALIST adds square, flat furniture with olive text on a dark green
+  ground. Its text-control policy replaces native icons with word labels and
+  named palette choices; both split directions have room for their labels in
+  the footer. Terminal cells and authored documents keep their own presentation.
+- Custom skins can opt into the same native policy with `controls = "text"`
+  under `[shape]`. Existing skins retain icon controls.
+
 ### Installer ownership and cleanup
 
 - Source installers record the hashes and paths of installed hooks, key-sheet

@@ -1097,7 +1097,7 @@ pub fn paint(
 
     // Under the writing, so a stamp that lands on a long note's last word
     // never makes it harder to read.
-    if stamped(note) {
+    if stamped(note) && !crate::skin::skin(cx, 1.).text_controls() {
         fill_even_odd(
             lay,
             &stamp(hw, hh, note.seed),

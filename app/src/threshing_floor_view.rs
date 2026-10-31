@@ -1421,7 +1421,7 @@ impl Workspace {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child("○")
+                            .child(sk.control("○", "off"))
                             .cursor_crosshair()
                             .on_drag(rel_drag, |d, position, window, cx| {
                                 let tether = Some(window.mouse_position());
@@ -1703,7 +1703,7 @@ impl Workspace {
                                                 .and_then(|c| pane::chrome_glyph_font(c, th)),
                                             |d, family| d.font_family(family),
                                         )
-                                        .child(glyph),
+                                        .child(sk.control_text(glyph)),
                                 )
                                 .child(f.state.label_in(self.lang)),
                         )
@@ -2485,7 +2485,7 @@ impl Workspace {
                                 ws.threshing_floor_unseat(&d.leaf, cx)
                             }
                         }))
-                        .child(trash_icon(ink))
+                        .when(!sk.text_controls(), |d| d.child(trash_icon(ink)))
                         .child(
                             div()
                                 .min_w(px(0.))
@@ -4543,7 +4543,11 @@ impl Workspace {
                             .gap_1(),
                         active,
                     )
-                    .child(div().text_size(sk.text_px(20.)).child("+"))
+                    .child(
+                        div()
+                            .text_size(sk.text_px(20.))
+                            .child(sk.control("+", "add")),
+                    )
                     .child(
                         div()
                             .text_size(sk.text_px(9.))
@@ -4817,9 +4821,9 @@ impl Workspace {
                 .gap_3()
                 .min_w(px(0.))
                 .child(actor_slot)
-                .child(div().pt(px(39.)).child("→"))
+                .child(div().pt(px(39.)).child(sk.control("→", "right")))
                 .child(verb_slot)
-                .child(div().pt(px(39.)).child("→"))
+                .child(div().pt(px(39.)).child(sk.control("→", "right")))
                 .child(target_slot),
         )
         .child(footer)

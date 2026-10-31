@@ -519,7 +519,7 @@ pub fn add_note_row(sk: &Skin, th: &Theme) -> Div {
                 .flex_none()
                 .text_size(px(sk.pt(Step::Small)))
                 .text_color(mine)
-                .child("\u{2b}"),
+                .child(sk.control("\u{2b}", "add")),
         )
         .child(
             div()
@@ -2803,7 +2803,7 @@ pub fn dial(value: &str, known: bool, open: bool, live: bool, sk: &Skin, th: &Th
                 } else {
                     sk.ink.ink_ghost
                 })
-                .child("\u{25be}"),
+                .child(sk.control("\u{25be}", "")),
         )
 }
 
@@ -2899,7 +2899,9 @@ pub fn strip_button(label: &str, glyph: &str, primary: bool, sk: &Skin, th: &The
         } else {
             th.text.alpha(0.78)
         })
-        .when(!glyph.is_empty(), |d| d.child(glyph.to_string()))
+        .when(!sk.text_controls() && !glyph.is_empty(), |d| {
+            d.child(glyph.to_string())
+        })
         .child(sk.caps(&label.to_uppercase()));
     if primary {
         // A CONTROL's halo, not a region's. This is a two-word button; it took
@@ -4245,7 +4247,7 @@ pub fn launch_button(sk: &Skin, th: &Theme) -> Div {
             .cursor_pointer()
             .text_size(px(sk.pt(Step::Head)))
             .font_weight(gpui::FontWeight::BOLD)
-            .child("\u{2301}")
+            .child(sk.control("\u{2301}", ""))
             .child(sk.caps(words().benchdraw_launch_agent)),
         th.human,
         th,

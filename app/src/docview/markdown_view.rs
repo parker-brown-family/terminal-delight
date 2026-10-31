@@ -247,7 +247,7 @@ impl Backend for MarkdownDoc {
         layer.clear_zones();
         let marks = layer.marks(&anchors, &self.note_map(size), self.pointer);
         let mut layers = vec![column];
-        layers.extend(layer.draw_marks(&marks, th));
+        layers.extend(layer.draw_marks(&marks, th, sk));
         layers.push(layer.draw_bar(&anchors, th, self.beside.as_deref(), sk));
         layers.extend(layer.draw_box(size, th, sk));
         div()

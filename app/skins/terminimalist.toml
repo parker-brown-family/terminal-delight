@@ -1,0 +1,81 @@
+# TERMINIMALIST — from Parker's Omarchy doctrine reference.
+# Native furniture only. Terminal cells and semantic status ink keep their owners.
+name = "TERMINIMALIST"
+icon = ""
+
+[font]
+family = "JetBrainsMono Nerd Font"
+heading = "JetBrainsMono Nerd Font"
+data = "JetBrainsMono Nerd Font"
+scale = 1.0
+min_px = 11.0
+line_height = 1.15
+
+[shape]
+controls = "text"
+material = "plain"
+tube = "stock"
+corner = "square"
+boundary = "hairline"
+emphasis = "rail"
+divider = "line"
+caps = "off"
+shine = "flat"
+gauge = "rail"
+title = "plain"
+focus = "plain"
+
+[metric]
+radius = 0.0
+radius_lg = 0.0
+corner_cap = 0.0
+hairline = 1.0
+border = 1.0
+rule_gap = 1.0
+gap = 6.0
+pad_x = 10.0
+pad_y = 5.0
+chip_px = 7.0
+chip_py = 2.0
+row_h = 20.0
+label_size = 11.0
+rail = 2.0
+glow = 0.0
+glow_a = 0.0
+grain = 0.0
+frost = 0.0
+roughness = 0.0
+lift = 0.0
+marker_alpha = 0.0
+
+[ink]
+panel = "#0e1914"
+panel_raised = "#101c16"
+panel_sunken = "#0c1511"
+panel_glass = "#0e1914"
+btn_face = "#101c16"
+rule = "#294638"
+rule_strong = "#365a48"
+edge = "#365a48"
+edge_strong = "#4b725a"
+edge_rest = "#294638"
+focus = "#a7aa82"
+ink = "#b2b58e"
+ink_lit = "#c8cba5"
+ink_dim = "#969b7b"
+ink_faint = "#8c9274"
+ink_off = "#81886c"
+ink_ghost = { from = "text", a = 0.20 }
+ink_on_mark = "#0e1914"
+face_rest = "#101c16"
+mark = "#b2b58e"
+mark_soft = "#a7aa82"
+mark_dim = "#727b60"
+mark_wash = "#1a2b20"
+select = "#c8cba5"
+row_active = "#1a2b20"
+hover = "#1d3024"
+
+[note]
+decoration = "plain"
+stock = true

@@ -356,7 +356,11 @@ impl Workspace {
                     div()
                         .flex_none()
                         .text_color(ink)
-                        .child(state_glyph(c.state)),
+                        .child(if sk.text_controls() {
+                            c.state.label()
+                        } else {
+                            state_glyph(c.state)
+                        }),
                 )
                 .when_some(when, |d, when| {
                     d.child(

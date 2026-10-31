@@ -8,6 +8,15 @@ use gpui::*;
 
 /// Immediate two-state switch; the caller owns the write.
 pub(crate) fn slider_switch(on: bool, th: &theme::Theme, sk: &skin::Skin) -> gpui::Div {
+    if sk.text_controls() {
+        return sk.choice(
+            div()
+                .px(sk.px(6.))
+                .py(sk.px(2.))
+                .child(if on { "on" } else { "off" }),
+            on,
+        );
+    }
     if sk.is_paper() {
         return sk.paper_control(div().w(px(36.)).h(px(18.)), on).child(
             div()
@@ -80,6 +89,18 @@ pub(crate) fn theme_icon_btn(
     label: &str,
     active: bool,
 ) -> gpui::Div {
+    if sk.text_controls() {
+        return sk.choice(
+            div()
+                .w_full()
+                .min_h(sk.px(24.))
+                .px(sk.px(7.))
+                .py(sk.px(4.))
+                .cursor_pointer()
+                .child(sk.control_text(label)),
+            active,
+        );
+    }
     let inner = div()
         .flex()
         .flex_col()
@@ -150,6 +171,18 @@ pub(crate) fn color_mode_btn(
     caption: &str,
     active: bool,
 ) -> gpui::Div {
+    if sk.text_controls() {
+        return sk.choice(
+            div()
+                .w_full()
+                .min_h(sk.px(24.))
+                .px(sk.px(7.))
+                .py(sk.px(4.))
+                .cursor_pointer()
+                .child(sk.control_text(caption)),
+            active,
+        );
+    }
     let inner = div()
         .flex()
         .flex_col()
@@ -215,6 +248,16 @@ pub(crate) fn note_paper_btn(
     caption: &str,
     active: bool,
 ) -> gpui::Div {
+    if sk.text_controls() {
+        return sk.choice(
+            div()
+                .px(sk.px(7.))
+                .py(sk.px(4.))
+                .cursor_pointer()
+                .child(sk.control_text(caption)),
+            active,
+        );
+    }
     let ink = |w: f32| div().w(px(w)).h(px(1.5)).bg(paper.ink.alpha(0.7));
     let sheet = div()
         .relative()
