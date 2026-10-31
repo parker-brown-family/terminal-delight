@@ -2,7 +2,8 @@
 
 Written at tie-off on 2026-10-30, after fifteen adversarial review rounds by the
 Codex sibling (reports in `reports/2026-10-30-uninstall-implementation-evidence/admin/`).
-Read this before changing anything under `app/src/uninstall/`.
+Read [the threat model](03-threat-model.md) before changing anything under
+`app/src/uninstall/`; this file preserves the history that led to it.
 
 ## What I would do differently
 
@@ -53,12 +54,17 @@ at tie-off; results in the commit that added this file):
 | `removable` ignores `Listing.blocked` | `the_cli_says_unknown_instead_of_a_removable_count_while_a_possible_td_is_unreadable` |
 | the launcher branch skips the build test | `a_launcher_pointing_at_a_persons_own_program_in_the_builds_directory_keeps_both` |
 
-Five of five caught. Not yet broken on purpose: the protected-machine refusal, the reviewed-bytes hash and the fixture confinement; each has whole-removal fixtures, but no mutation run has proved them.
+Five of five caught in the original run. The October 30 follow-through also
+disabled the protected-machine refusal, reviewed-bytes hash and fixture-root
+confinement guards, one at a time. All three were caught; the mutation diffs,
+test names and failure logs are in
+`reports/2026-10-30-uninstall-trust-evidence/`.
 
 ## Wishlist, each a falsifiable issue
 
 - Act relative to directory handles, closing the same-account race — #1222
-- Register TD's MCP server by its launcher path on the setup page (waits on decision 5) — #1223
+- Register TD's MCP server by its launcher path on the setup page — implemented
+  for Claude, Codex and Gemini in the October 30 follow-through; tracked by #1223.
 - A scheduled contract test through the real agent CLIs instead of a stub — #1224
 - The first real-hardware removal, on the other Lenovo — #1225
 - GNOME shortcuts validated on a real GNOME — #1212

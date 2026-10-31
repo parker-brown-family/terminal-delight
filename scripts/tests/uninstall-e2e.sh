@@ -109,7 +109,14 @@ fi
 STUB
   chmod +x "$stubs/claude"
   export PATH="$stubs:$PATH"
-  printf '{\n  "mcpServers": {\n    "terminal-delight": {"command": "terminal-delight", "args": ["mcp"]},\n    "other": {"command": "/usr/bin/true", "args": []}\n  }\n}\n' > "$H/.claude.json"
+  python3 - "$H/.claude.json" "$H/.local/bin/terminal-delight" <<'PY'
+import json, sys
+with open(sys.argv[1], "w") as f:
+    json.dump({"mcpServers": {
+        "terminal-delight": {"command": sys.argv[2], "args": ["mcp"]},
+        "other": {"command": "/usr/bin/true", "args": []}
+    }}, f, indent=2)
+PY
   # The repository's own installers, as a person would run them.
   bash "$REPO/scripts/install-desktop.sh" >/dev/null
   bash "$REPO/scripts/install-agent-hooks.sh" >/dev/null
@@ -151,6 +158,12 @@ retention=keep
 ((account)) && retention="export"
 mapfile -t paths < <(run uninstall plan --retention "$retention")
 check "the plan was written for review (${paths[1]##*/})" test -s "${paths[1]}"
+if ((account)); then
+  # shellcheck disable=SC2016 # $launcher belongs to jq, not the shell.
+  check "the absolute launcher registration is identified without a PATH caveat" \
+    jq -e --arg launcher "$H/.local/bin/terminal-delight" \
+    '[.steps[] | select(.op.op == "mcp_remove")] | length == 1 and all(.[]; .op.command == $launcher and (.why | contains("PATH") | not))' "${paths[1]}"
+fi
 run uninstall run --plan "${paths[1]}"
 receipt=
 for _ in $(seq 1 240); do

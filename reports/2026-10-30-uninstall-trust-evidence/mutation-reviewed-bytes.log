@@ -1,0 +1,19 @@
+
+running 1 test
+test uninstall::tests::a_changed_review_digest_cannot_stage_a_worker ... FAILED
+
+failures:
+
+failures:
+    uninstall::tests::a_changed_review_digest_cannot_stage_a_worker
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 100 filtered out; finished in 0.52s
+
+   Compiling harness-core v0.0.0 (/home/parker/.cache/td-uninstall-trust/full)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.61s
+     Running unittests src/lib.rs (/home/parker/.cache/td-uninstall-trust/full/target/debug/deps/harness_core-7781ced66ba71580)
+
+thread 'uninstall::tests::a_changed_review_digest_cannot_stage_a_worker' (2091284) panicked at src/uninstall/mod.rs:762:9:
+Refused: this machine (legion) is protected by /home/parker/.config/terminal-delight/protected: Parker, 2026-10-30: DO NOT KILL TD ON THIS BOX. The Legion keeps its build..
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `--lib`

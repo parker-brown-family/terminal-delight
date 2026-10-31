@@ -2,7 +2,7 @@
 {
   "title": "MCP server",
   "description": "Terminal Delight is an MCP server: an agent can list the panes of the window it runs in, grep their scrollback, tail another agent's tool calls, ask another agent along a line you drew, give another agent work along a prompt line, leave notes, put work on a workbench, and ask you for more access. Reads are off until you turn the server on; writes need a second switch; access is yours to grant with a Yes on the attention rail; no tool can type into a terminal.",
-  "updated": "2026-10-27",
+  "updated": "2026-10-30",
   "trueOf": "feat/floor-briefing: the Threshing Floor, read-only panes, ask_agent with its copies, ask_answer, ask_line, the prompt rung with prompt_agent and prompt_status, floor_position, and the Floor paragraph in a launched agent's briefing",
   "summary": "Twenty-two tools for agents, off by default"
 }
@@ -12,7 +12,7 @@
 <p class="lede">Terminal Delight is an MCP server. An agent running in one of its panes can ask about the rest of the window: which panes exist and what each is running, what they printed, what tool another agent is calling right now.</p>
 <p>It starts locked down. Nothing is readable until you turn the server on, in the Threshing Floor: click the agent counter at the top right. Even then only agent panes are visible unless you choose <code>all panes</code>. Writing is a second switch, and a write only ever restyles a pane, leaves a note, declares a deliverable, opens a document or puts work on a workbench. <b>No tool can type into a terminal.</b></p>
 <p>To connect an agent, register the relay as a stdio MCP server:</p>
-<pre class="cmd"><code>claude mcp add --scope user terminal-delight -- terminal-delight mcp</code></pre>
+<pre class="cmd"><code>claude mcp add --scope user terminal-delight -- "$HOME/.local/bin/terminal-delight" mcp</code></pre>
 <p>The relay finds the window it is running in by itself. Every answer ends with the window it came from, because several Terminal Delight windows can run on one machine.</p>
 <p>Who may reach whom is yours to draw. In the Threshing Floor you seat agent panes and draw lines between them; an agent asks another only along a line you drew, and a question that needs the other agent's own memory goes to a read-only copy of it, which you pay for with a Yes when it is expensive.</p>
 <p class="invite">Technical lists all fifteen tools with their arguments, the switches, the Threshing Floor's rules, and the errors.</p>
@@ -28,8 +28,10 @@
   <dt>in-process</dt><dd>An MCP client that launches <code>terminal-delight</code> itself with <code>TD_MCP</code> set gets the server on the window's own stdio. This is the only way that receives pushed notifications.</dd>
   <dt>one call from a script</dt><dd><code>terminal-delight ctl mcp rpc '&lt;json&gt;'</code> hands one JSON-RPC line to a window.</dd>
 </dl>
-<p>The registration this machine uses, in <code>~/.claude.json</code>:</p>
-<pre><code>"terminal-delight": { "type": "stdio", "command": "terminal-delight", "args": ["mcp"] }</code></pre>
+<p>For Codex or Gemini, register the same launcher:</p>
+<pre class="cmd"><code>codex mcp add terminal-delight -- "$HOME/.local/bin/terminal-delight" mcp</code></pre>
+<pre class="cmd"><code>gemini mcp add --scope user terminal-delight "$HOME/.local/bin/terminal-delight" mcp</code></pre>
+<p>The shell expands <code>$HOME</code> before the client saves the command. The saved command is the absolute launcher path, which keeps working when the installed build changes and lets removal identify the registration without guessing the client's PATH. For a custom installation, use its absolute launcher path.</p>
 <p>A relay that located itself names its session and pane with every call. If that session isn't the window's, the call is refused with <code>-32001</code>, <code>wrong window: this is terminal-delight session "1" (window 31337), and you asked for session "2". Nothing was read or written.</code>, so a relay pointed at the wrong window gets an error instead of someone else's panes.</p>
 
 <h3>The switches</h3>

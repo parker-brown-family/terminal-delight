@@ -1,0 +1,41 @@
+{
+  "isolation": "bubblewrap: private account home, read-only host filesystem, no network, private process namespace; installed CLI binaries mounted read-only",
+  "clients": [
+    {
+      "client": "claude",
+      "version": "2.1.296",
+      "registered_command": "/home/parker/.local/bin/terminal-delight",
+      "registered_args": [
+        "mcp"
+      ],
+      "remove_exit": 0,
+      "removed": true,
+      "other_preserved": true,
+      "output": "Removed MCP server terminal-delight from user config\nFile modified: /home/parker/.claude.json\n"
+    },
+    {
+      "client": "codex",
+      "version": "0.162.1",
+      "registered_command": "/home/parker/.local/bin/terminal-delight",
+      "registered_args": [
+        "mcp"
+      ],
+      "remove_exit": 0,
+      "removed": true,
+      "other_preserved": true,
+      "output": "Removed global MCP server 'terminal-delight'.\n"
+    },
+    {
+      "client": "gemini",
+      "version": "0.63.0",
+      "registered_command": "/home/parker/.local/bin/terminal-delight",
+      "registered_args": [
+        "mcp"
+      ],
+      "remove_exit": 0,
+      "removed": true,
+      "other_preserved": true,
+      "output": "Server \"terminal-delight\" removed from user settings.\n"
+    }
+  ]
+}

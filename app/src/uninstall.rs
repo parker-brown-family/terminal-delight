@@ -553,12 +553,28 @@ pub(crate) fn own_processes() -> Vec<Proc> {
         let comm = std::fs::read_to_string(e.path().join("comm"))
             .map(|c| c.trim().to_string())
             .unwrap_or_default();
+        let kind = exe_kind(pid);
+        // An exited child can remain in /proc until its parent reaps it. It
+        // has no executable, which otherwise looks like a live, unreadable TD
+        // and spuriously blocks removal just after we stopped it. Only a
+        // positively read terminal state permits omission; unknown stays.
+        let state = std::fs::read_to_string(e.path().join("status"))
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find_map(|l| l.strip_prefix("State:"))
+                    .and_then(|v| v.split_whitespace().next())
+                    .and_then(|v| v.chars().next())
+            });
+        if matches!(state, Some('Z' | 'X')) {
+            continue;
+        }
         v.push(Proc {
             pid,
             exe,
             argv,
             comm,
-            kind: exe_kind(pid),
+            kind,
         });
     }
     v
@@ -738,6 +754,59 @@ fn render(p: &Plan, format: &Format) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_confirmed_exited_child_is_not_a_live_unreadable_td() {
+        let _serial = crate::testsync::forks_and_locks();
+        let dir = crate::testsync::Scratch::new("exited-child");
+        let exe = dir.join("td-exited");
+        std::fs::copy("/usr/bin/true", &exe).unwrap();
+        let mut child = std::process::Command::new(&exe).spawn().unwrap();
+        let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+        // Observe exit without reaping: /proc must still contain the child.
+        let observed = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id(),
+                info.as_mut_ptr(),
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        assert_eq!(observed, 0);
+        let processes = own_processes();
+        let found = processes.iter().find(|p| p.pid == child.id());
+        child.wait().unwrap();
+        assert!(
+            found.is_none(),
+            "confirmed exited child returned as {found:?}"
+        );
+        assert!(processes.iter().any(|p| p.pid == std::process::id()));
+    }
+
+    #[test]
+    fn a_changed_review_digest_cannot_stage_a_worker() {
+        let dir = crate::testsync::Scratch::new("reviewed-digest");
+        let file = dir.join("plan.json");
+        // The fallback blocker also prevents execution if the digest guard is
+        // broken during mutation testing. No test may start a real worker.
+        let plan = serde_json::json!({
+            "schema": plan::SCHEMA, "stamp": "20261030-120000",
+            "machine_id": null, "hostname": null, "home": dir.path(),
+            "retention": "keep", "protected": null,
+            "blocked": "mutation fixture: execution forbidden", "appimage": null,
+            "steps": [], "reports": [], "sizes": [], "warnings": []
+        });
+        let reviewed = serde_json::to_vec(&plan).unwrap();
+        let digest = known::sha256_bytes(&reviewed);
+        let mut changed = reviewed.clone();
+        changed.push(b'\n');
+        std::fs::write(&file, &changed).unwrap();
+        let out = dir.join("must-not-be-created");
+        let error = spawn_worker(&file, Some(&digest), &out).unwrap_err();
+        assert!(error.contains("changed after it was reviewed"), "{error}");
+        assert!(!out.exists());
+        assert_eq!(std::fs::read(&file).unwrap(), changed);
+    }
 
     #[test]
     fn refuses_destructive_and_ambiguous_requests() {

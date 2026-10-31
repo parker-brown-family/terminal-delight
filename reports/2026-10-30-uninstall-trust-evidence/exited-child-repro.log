@@ -1,0 +1,19 @@
+
+running 1 test
+test uninstall::zombie_probe::an_exited_child_must_not_be_reported_as_a_live_unknown ... FAILED
+
+failures:
+
+failures:
+    uninstall::zombie_probe::an_exited_child_must_not_be_reported_as_a_live_unknown
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.03s
+
+   Compiling harness-core v0.0.0 (/home/parker/.cache/td-uninstall-trust/full)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.34s
+     Running unittests src/lib.rs (/home/parker/.cache/td-uninstall-trust/full/target/debug/deps/harness_core-7781ced66ba71580)
+
+thread 'uninstall::zombie_probe::an_exited_child_must_not_be_reported_as_a_live_unknown' (2147068) panicked at src/uninstall/mod.rs:828:3:
+confirmed exited child returned as Some(Proc { pid: 2147070, exe: "", argv: [], comm: "td-exited", kind: Unknown })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `--lib`

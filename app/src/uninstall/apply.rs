@@ -9,6 +9,8 @@
 //!
 //! Every effect outside the filesystem goes through [`Effects`], so tests can
 //! watch what the worker would have done without doing it.
+//! Trust boundaries and the remaining pathname race are documented in
+//! `docs/plans/uninstall/03-threat-model.md`; read it before changing effects.
 use super::blocks::{self, KeyBlock};
 use super::known;
 
