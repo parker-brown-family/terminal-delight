@@ -25,10 +25,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### TERMINIMALIST
 
-- TERMINIMALIST adds square, flat furniture with olive text on a dark green
-  ground. Its text-control policy replaces native icons with word labels and
-  named palette choices; both split directions have room for their labels in
-  the footer. Terminal cells and authored documents keep their own presentation.
+- TERMINIMALIST adds square, flat furniture that follows the selected Omarchy
+  palette. Native actions use word labels; compact spine states use unboxed
+  symbols. Authored documents keep their own presentation.
 - TERMINIMALIST removes nested pane frames, button outlines and settings boxes.
   Hairline sides and structural dividers remain; selected choices and warnings
   keep a single rule. The top edge and pane-header line are absent.
@@ -40,6 +39,17 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - ADD PROJECT stays visible at the top left in both navigation modes. Wider
   gaps separate navigation and settings groups. Sticky notes use a flat square
   section with an open hairline boundary, retaining handwriting and gestures.
+- The spine uses plus/minus disclosure controls, compact status and pin marks,
+  and green up/blue down priority arrows. Selection thickens the bar beside the
+  task title, leaving more room for long names.
+- The new field-colour gauge fades the default terminal background from black
+  to its surrounding chrome. TERMINIMALIST defaults to a match; other skins
+  retain their original background until the gauge is used. Explicit program
+  colours and existing brightness/background gauges keep their own behaviour.
+- Central popups gently blur their surroundings while their controls stay sharp.
+  Surfaces columns and the terminal content region have subtle hairlines.
+  Right-clicking a flat sticky note raises it and applies the theme's complementary
+  colour; its saved attention flag still supplies the spine pin.
 - Custom skins can opt into the same native policy with `controls = "text"`
   under `[shape]`. Combining it with `boundary = "none"` removes native boxes.
   Existing skins retain icon controls.

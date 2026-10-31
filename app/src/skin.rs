@@ -911,6 +911,50 @@ impl Skin {
         px(if self.unboxed() { 0. } else { legacy })
     }
 
+    /// A small monochrome state mark. Its caller owns the meaning and colour.
+    pub fn quiet_mark(&self, glyph: &'static str, ink: Hsla, scale: f32) -> Div {
+        self.chrome(div())
+            .flex_none()
+            .w(px(12. * scale))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(self.text_px(11. * scale))
+            .text_color(ink.alpha(0.85))
+            .child(glyph)
+    }
+
+    /// Keep a popup sharp while gently diffusing the scene around it. The
+    /// existing reader pass measures physical pixels and resets every frame.
+    pub fn popup<E: Styled + ParentElement>(&self, d: E) -> E {
+        if !self.unboxed() {
+            return d;
+        }
+        d.child(
+            div().absolute().inset_0().child(
+                gpui::canvas(
+                    |bounds, window, _| {
+                        let sf = window.scale_factor();
+                        crate::warp::set_focus_blur(
+                            [
+                                f32::from(bounds.origin.x) * sf,
+                                f32::from(bounds.origin.y) * sf,
+                                f32::from(bounds.size.width) * sf,
+                                f32::from(bounds.size.height) * sf,
+                            ],
+                            7. * sf,
+                            0.,
+                            0.,
+                            0.,
+                        );
+                    },
+                    |_, _, _, _| {},
+                )
+                .size_full(),
+            ),
+        )
+    }
+
     /// Only native labels pass here. Never use this on terminal cells, user
     /// titles, authored documents, code or workbench prose.
     pub fn control_text(&self, label: &str) -> String {
@@ -929,6 +973,17 @@ impl Skin {
         }
     }
 
+    /// Resolve the default terminal field at the presentation edge. This is
+    /// separate from program-authored cell backgrounds and the legacy grade.
+    pub fn terminal_theme(&self, mut th: Theme) -> Theme {
+        th.field_background = th
+            .grade
+            .field_colour
+            .or_else(|| self.unboxed().then_some(1.))
+            .map(|level| crate::mix(gpui::black(), self.ink.panel, level.clamp(0., 1.)));
+        th
+    }
+
     /// Project the skin's native ink into legacy chrome. This value is local
     /// to a native renderer; never store it as a Design or pass it to a grid.
     pub fn chrome_theme(&self, th: &Theme) -> Theme {
@@ -939,7 +994,9 @@ impl Skin {
             chrome.text = self.ink.ink;
             chrome.faint = self.ink.ink_faint;
             chrome.accent = self.ink.mark;
-            chrome.complement = self.ink.ink;
+            if !self.unboxed() {
+                chrome.complement = self.ink.ink;
+            }
             chrome.glow = 0.;
             chrome.grade.phosphor = 0.;
         }
@@ -972,6 +1029,22 @@ impl Skin {
                 th.text
             };
             paper.pin = th.ansi[1];
+        }
+        paper
+    }
+
+    pub fn marked_note_palette(&self, th: &Theme, marked: bool) -> crate::sticky::Paper {
+        let mut paper = self.note_palette(th);
+        if self.unboxed() {
+            paper.pin = self.ink.edge;
+            if marked {
+                paper.base = Hsla {
+                    h: th.complement.h,
+                    ..crate::mix(self.ink.panel, th.complement, 0.20)
+                };
+                paper.ink = self.ink.ink;
+                paper.pin = th.complement.alpha(0.6);
+            }
         }
         paper
     }
@@ -3300,7 +3373,11 @@ pub fn run_cli(args: &[String]) -> i32 {
             },
             "--palette" => match it.next() {
                 Some(v) => palette_arg = Some(v.clone()),
-                None => return usage_err("--palette wants a bundled id or TD palette path"),
+                None => {
+                    return usage_err(
+                        "--palette wants a bundled id, TD palette or Omarchy colors.toml path",
+                    )
+                }
             },
             "--scale" => match it.next().and_then(|v| v.parse().ok()) {
                 Some(v) => scale = v,
@@ -3337,7 +3414,13 @@ pub fn run_cli(args: &[String]) -> i32 {
         let source = crate::palette::bundled_toml(arg)
             .map(Ok)
             .unwrap_or_else(|| fs::read_to_string(arg).map_err(|e| e.to_string()));
-        th = match source.and_then(|s| theme::overlay_palette(&th, &s)) {
+        th = match source.and_then(|s| {
+            theme::overlay_palette(&th, &s).or_else(|error| {
+                crate::palette::from_source("skin-preview", &s)
+                    .ok_or(error)
+                    .and_then(|p| theme::overlay_palette(&th, &p.toml))
+            })
+        }) {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("terminal-delight skin: palette {arg}: {e}");
@@ -3430,6 +3513,69 @@ fn report_unknown(path: &std::path::Path, spec: &SkinSpec) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminimalist_follows_the_palette_and_only_overrides_the_default_field() {
+        let spec = parse(builtin_toml("terminimalist").unwrap()).unwrap();
+        for id in ["osaka-jade", "tokyo-night", "flexoki-light"] {
+            let source = crate::palette::bundled_toml(id).unwrap();
+            let mut th = theme::overlay_palette(&palette(), &source).unwrap();
+            // Deliberately non-neutral: the field endpoint must still match.
+            th.grade = theme::house_outer().grade;
+            let sk = spec.bake(&th, 1.);
+            assert_eq!(sk.ink.panel, th.bg, "{id}");
+            assert_eq!(sk.ink.ink, th.text, "{id}");
+            assert_eq!(sk.ink.mark, th.accent, "{id}");
+            let matching = sk.terminal_theme(th.clone());
+            assert_eq!(matching.field_background, Some(sk.ink.panel));
+            assert_eq!(matching.ansi, th.ansi);
+            assert_eq!(matching.grade, th.grade);
+            th.grade.set(theme::GradeKey::FieldColour, 0.);
+            let black = sk.terminal_theme(th.clone()).field_background.unwrap();
+            assert_eq!(black.l, 0.);
+            th.grade.set(theme::GradeKey::FieldColour, 0.5);
+            let mid = sk.terminal_theme(th.clone()).field_background.unwrap();
+            assert!((mid.l - sk.ink.panel.l * 0.5).abs() < 1e-6);
+            assert!((mid.s - sk.ink.panel.s * 0.5).abs() < 1e-6);
+            assert_eq!(mid.h, sk.ink.panel.h);
+            th.grade.set(theme::GradeKey::FieldColour, 1.);
+            assert_eq!(
+                sk.terminal_theme(th.clone()).field_background,
+                Some(sk.ink.panel)
+            );
+        }
+        for (id, source) in BUILTIN_SKINS {
+            if *id == "terminimalist" {
+                continue;
+            }
+            let th = palette();
+            let sk = parse(source).unwrap().bake(&th, 1.);
+            assert_eq!(sk.terminal_theme(th.clone()).field_background, None, "{id}");
+            let mut chosen = th;
+            chosen.grade.set(theme::GradeKey::FieldColour, 1.);
+            assert_eq!(
+                sk.terminal_theme(chosen).field_background,
+                Some(sk.ink.panel),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn flat_marked_notes_keep_the_theme_ink_and_take_its_complement() {
+        let spec = parse(builtin_toml("terminimalist").unwrap()).unwrap();
+        for id in ["osaka-jade", "tokyo-night", "flexoki-light"] {
+            let th = theme::overlay_palette(&palette(), &crate::palette::bundled_toml(id).unwrap())
+                .unwrap();
+            let sk = spec.bake(&th, 1.);
+            let quiet = sk.marked_note_palette(&th, false);
+            let marked = sk.marked_note_palette(&th, true);
+            assert_ne!(quiet.base, marked.base, "{id}");
+            assert_eq!(marked.ink, sk.ink.ink);
+            assert_eq!(marked.pin.h, th.complement.h);
+            assert_eq!(marked.base.h, th.complement.h);
+        }
+    }
 
     #[test]
     fn optical_type_is_independent_of_the_substrate() {
@@ -4338,7 +4484,8 @@ mod tests {
             let spec = parse(ssrc).unwrap();
             for tid in crate::theme::builtin_ids() {
                 let th = theme::parse(theme::builtin_toml(tid).expect("a builtin theme")).unwrap();
-                let ink = spec.bake(&th, 1.0).ink;
+                let sk = spec.bake(&th, 1.0);
+                let ink = &sk.ink;
                 for (name, c) in [
                     ("ok", ink.ok),
                     ("warn", ink.warn),
@@ -4351,6 +4498,13 @@ mod tests {
                     // marking anything at all.
                     ("select", ink.select),
                 ] {
+                    // The open skin uses the palette accent on a thicker,
+                    // inset bar beside the selected title. That geometry carries
+                    // selection; its explicit accent recipe is intentional.
+                    if name == "select" && sk.unboxed() {
+                        assert_eq!(c, th.accent);
+                        continue;
+                    }
                     assert!(
                         apart(c, ink.mark) > FLOOR,
                         "{sid}/{tid}: `{name}` is {} and `mark` is {} — the same colour",

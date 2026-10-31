@@ -203,6 +203,8 @@ pub struct GradeReport {
     pub colour: f32,
     pub text: f32,
     pub background: f32,
+    /// Optional default terminal field percentage; zero black, 100 matches chrome.
+    pub field_colour: Option<f32>,
     pub gamma: f32,
     /// Menu-bar / chrome size (the `Scale` channel).
     pub menu_bar: f32,
@@ -260,6 +262,7 @@ pub struct ConfigPatch {
     pub colour: Option<f32>,
     pub text: Option<f32>,
     pub background: Option<f32>,
+    pub field_colour: Option<f32>,
     pub gamma: Option<f32>,
     pub menu_bar: Option<f32>,
     pub text_size: Option<f32>,
@@ -1385,7 +1388,7 @@ fn tool_defs() -> Value {
             "description":
                 "Read the appearance (monitor grade) of one or more panes, or the \
                  window-level `outer` scope. Numeric dials use 0..100 percent \
-                 (brightness, contrast, colour, text, background, \
+                 (brightness, contrast, colour, text, background, field_colour, \
                  gamma, menu_bar, text_size, bench_size, warp, crawl_angle, crawl_depth, \
                  phosphor — the glow of the lit borders, 25 the house look, 0 none; \
                  image_glow — active letter glow, default 20 (Standard) / 37 (Intrusive); inactive_image_glow \
@@ -1450,7 +1453,7 @@ fn tool_defs() -> Value {
                                 },
                                 "config": {
                                     "type": "object",
-                                    "description": "partial grade — any of brightness/contrast/colour/text/background/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth/phosphor/image_glow/inactive_image_glow/inactive_text (0..100; image_glow is active letter glow, 0 off; cursor_linger_ms/inactive_cursor_linger_ms are 0..220ms, off_cursor_linger_ms/inactive_off_cursor_linger_ms are 0..650ms, zero disables each; legacy afterglow_ms is 0..1200ms and resets the four overrides; phosphor 25 = the house border glow, 0 = none) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
+                                    "description": "partial grade — any of brightness/contrast/colour/text/background/field_colour/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth/phosphor/image_glow/inactive_image_glow/inactive_text (0..100; field_colour fades the default terminal field from black at 0 to matching chrome at 100, unset follows the skin; image_glow is active letter glow, 0 off; cursor_linger_ms/inactive_cursor_linger_ms are 0..220ms, off_cursor_linger_ms/inactive_off_cursor_linger_ms are 0..650ms, zero disables each; legacy afterglow_ms is 0..1200ms and resets the four overrides; phosphor 25 = the house border glow, 0 = none) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
                                 }
                             },
                             "required": ["target", "config"],

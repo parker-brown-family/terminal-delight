@@ -170,6 +170,16 @@ impl Sticky {
         }
     }
 
+    /// Shared paint and hit geometry. Marking a flat note lifts the whole
+    /// section four pixels; its attention state still survives a restart.
+    pub fn layout(&self, content: Bounds<Pixels>, flat: bool) -> Option<Layout> {
+        let mut lay = layout(content, self.tilt(flat))?;
+        if flat && self.pinned {
+            lay.center.y -= px(4.);
+        }
+        Some(lay)
+    }
+
     /// Re-open a posted note for editing, remembering what Esc restores.
     pub fn reopen(&mut self) {
         if self.edit.is_none() {
@@ -980,7 +990,7 @@ pub fn paint(
             quad(-hw, hh - line, hw, hh),
             quad(hw - line, -hh + f32::from(lay.pad), hw, hh),
         ] {
-            fill(lay, &edge, sk.ink.edge, window);
+            fill(lay, &edge, pal.pin, window);
         }
         paint_writing(note, lay, pal, window, cx);
         return;
@@ -1631,6 +1641,29 @@ mod tests {
             assert!(Hit::at(point(left + px(1.), top + px(1.)), &lay).is_some());
             assert!(Hit::at(point(left - px(1.), top + px(1.)), &lay).is_none());
         }
+    }
+
+    #[test]
+    fn marking_a_flat_note_lifts_its_paint_and_hit_geometry_together() {
+        let mut note = Sticky::composing("review", 7);
+        let plain = note.layout(content(), true).unwrap();
+        let paper = note.layout(content(), false).unwrap();
+        note.pinned = true;
+        let marked = note.layout(content(), true).unwrap();
+        assert_eq!(marked.center.x, plain.center.x);
+        assert_eq!(marked.center.y, plain.center.y - px(4.));
+        assert_eq!(marked.tilt, 0.);
+        let newly_covered = point(
+            marked.center.x,
+            marked.center.y - marked.size.height / 2. + px(1.),
+        );
+        assert!(Hit::at(newly_covered, &marked).is_some());
+        assert!(Hit::at(newly_covered, &plain).is_none());
+        let pinned_paper = note.layout(content(), false).unwrap();
+        assert_eq!(pinned_paper.center, paper.center);
+        assert_eq!(pinned_paper.tilt, paper.tilt);
+        note.pinned = false;
+        assert_eq!(note.layout(content(), true).unwrap().center, plain.center);
     }
 
     /// The seed keeps the paper's angle stable across frames and restarts.
