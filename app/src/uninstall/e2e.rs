@@ -193,7 +193,7 @@ impl Fx {
             &h(".config/hypr/hyprland.lua"),
             "o.window(\"terminal-delight\", { tag = \"+terminal\" })\n",
         );
-        // An MCP registration in the documented form.
+        // A legacy bare-command registration; new setup uses an absolute launcher.
         w(&h(".claude.json"), "{\"mcpServers\":{\"terminal-delight\":{\"type\":\"stdio\",\"command\":\"terminal-delight\",\"args\":[\"mcp\"]}}}");
         // Builds behind a launcher, and something else in the builds dir.
         elf(&h(".local/lib/terminal-delight/td-aaa-current"));
@@ -1145,6 +1145,71 @@ fn a_registration_whose_path_starts_relative_or_with_its_own_cwd_is_reported() {
                 .all(|s| !matches!(s.op, Op::McpRemove { .. })),
             "{entry}"
         );
+    }
+}
+
+#[test]
+fn absolute_launcher_registrations_ignore_shadowing_path_for_every_client() {
+    let mut fx = Fx::new("mcpabsolute");
+    let launcher = fx.root.join(".local/bin/terminal-delight");
+    let entry = serde_json::json!({"command": launcher, "args": ["mcp"]});
+    let settings = serde_json::json!({"mcpServers": {"terminal-delight": entry}});
+    w(&fx.root.join(".claude.json"), &settings.to_string());
+    w(
+        &fx.root.join(".gemini/settings.json"),
+        &settings.to_string(),
+    );
+    w(
+        &fx.root.join(".codex/config.toml"),
+        &format!(
+            "[mcp_servers.terminal-delight]\ncommand = {}\nargs = [\"mcp\"]\n",
+            serde_json::to_string(&launcher).unwrap()
+        ),
+    );
+    let shadow = fx.root.join("shadow");
+    w(&shadow.join("terminal-delight"), "#!/bin/sh\nexit 1\n");
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(
+        shadow.join("terminal-delight"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    fx.env.retain(|(k, _)| k != "PATH");
+    fx.env.push(("PATH".into(), shadow.display().to_string()));
+    let p = fx.plan(Retention::Keep);
+    let entries: Vec<_> = p
+        .steps
+        .iter()
+        .filter(|s| matches!(s.op, Op::McpRemove { .. }))
+        .collect();
+    assert_eq!(entries.len(), 3);
+    for client in ["claude", "codex", "gemini"] {
+        assert!(entries.iter().any(|s| matches!(&s.op,
+            Op::McpRemove { client: c, command, .. }
+            if c == client && Path::new(command) == launcher)));
+    }
+    assert!(entries.iter().all(|s| !s.why.contains("PATH")));
+    let mut effects = fake(true);
+    let rc = apply(
+        &p,
+        &fx.plan(Retention::Keep),
+        &fx.roots(),
+        &out(&fx),
+        &mut effects,
+    );
+    assert!(rc.refused.is_none());
+    assert_eq!(
+        rc.outcomes
+            .iter()
+            .filter(|o| o.op.contains(" mcp remove ") && o.status == Status::Done)
+            .count(),
+        3
+    );
+    for client in ["claude", "codex", "gemini"] {
+        assert!(effects
+            .ran
+            .iter()
+            .any(|a| a.contains(&format!("{client} mcp remove"))));
     }
 }
 

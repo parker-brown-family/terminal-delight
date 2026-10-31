@@ -1,5 +1,19 @@
 # Status: Linux uninstall
 
+## Current Follow-through
+
+CONFIG › ADMIN and the removal engine are merged into `dev/0.5.0` at the
+weekend integration snapshot, `321b3687`. The assessment entries below are
+historical; the engine is implemented.
+
+The October 30 review notes are being addressed by
+[Trust Follow-through](04-trust-follow-through.md). Start future safety work
+with [Uninstall Trust Boundaries](03-threat-model.md). New MCP setup commands
+name the installed launcher by absolute path. The directory-handle race
+remains pinned in its existing issue; no atomic-race guarantee is claimed.
+
+## Initial Assessment
+
 **Difficulty: 5/10 for this assessment** — one reviewable proposal; the cleanup and preview milestone is now approved. A complete destructive lifecycle engine will need its own architecture and program-design review after the product choices settle.
 **Turned out to be: 5/10 for assessment** — the supplied design already described the architecture; the useful new work was checking the live branch and reproducing cleanup failures.
 

@@ -1,6 +1,6 @@
 //! TD's registrations as an MCP server in other programs' configuration. The
-//! docs give `claude mcp add --scope user terminal-delight -- terminal-delight
-//! mcp`; after an uninstall that entry makes every new Claude session try to
+//! docs register the absolute installed launcher with `mcp` as its argument;
+//! after an uninstall that entry would make every new agent session try to
 //! start a program that is gone. An entry is TD's when its command is TD
 //! itself and its first argument is `mcp`. A wrapper script is somebody's own
 //! and is reported with the line to remove by hand. Removal goes through each
