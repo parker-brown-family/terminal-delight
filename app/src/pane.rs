@@ -2018,7 +2018,7 @@ fn asked_colour(index: usize, th: &Theme) -> Option<Hsla> {
     Some(match index {
         i if i < 256 => graded(shape(idx_color(i as u8), th), g, Channel::Text),
         i if i == NamedColor::Foreground as usize => graded(th.text, g, Channel::Text),
-        i if i == NamedColor::Background as usize => graded(th.bg, g, Channel::Bg),
+        i if i == NamedColor::Background as usize => terminal_background(th),
         i if i == NamedColor::Cursor as usize => graded(th.cursor, g, Channel::Text),
         _ => return None,
     })
@@ -2586,6 +2586,11 @@ enum Channel {
     Bg,
 }
 
+fn terminal_background(th: &Theme) -> Hsla {
+    th.field_background
+        .unwrap_or_else(|| graded(th.bg, &th.grade, Channel::Bg))
+}
+
 /// Apply the monitor-OSD [`Grade`](crate::theme::Grade) to one final cell colour,
 /// in HSLA, at paint time — the last step before a cell is committed so the whole
 /// composited display is graded uniformly (text and background still take their
@@ -2817,6 +2822,7 @@ struct ReadStyle {
     inherit: bool,
     tint: bool,
     theme_gen: u64,
+    field_background: Option<Hsla>,
 }
 
 /// What a WINDOW has decided about a pane, as distinct from what the pane's
@@ -4085,7 +4091,7 @@ impl TerminalView {
                 && *k_mode == self.mode
                 && *k_eff == eff
             {
-                return th.clone();
+                return crate::skin::for_theme(cx, th, 1.).terminal_theme(th.clone());
             }
         }
         let base = (*theme::resolve(cx, &eff)).clone();
@@ -4106,7 +4112,7 @@ impl TerminalView {
         }
         *self.theme_cache.borrow_mut() =
             Some((eff, self.mode.clone(), inherit, tint, gen, out.clone()));
-        out
+        crate::skin::for_theme(cx, &out, 1.).terminal_theme(out)
     }
 
     /// Build the read-only [`MirrorSnapshot`] the workspace paints into the
@@ -4134,6 +4140,7 @@ impl TerminalView {
                 inherit: self.appearance.inherit_theme,
                 tint: agent_tint(),
                 theme_gen: theme::theme_gen(cx),
+                field_background: th.field_background,
             },
         };
         let next_rev = {
@@ -4223,7 +4230,7 @@ impl TerminalView {
             doc,
             doc_rev,
             lines,
-            bg: th.bg,
+            bg: th.field_background.unwrap_or(th.bg),
             text: th.text,
             accent: th.accent,
             font_family: th.font_family.clone(),
@@ -7061,7 +7068,7 @@ impl TerminalView {
         }
         let note = self.note.as_ref()?;
         let bounds = (*self.content_bounds.lock().ok()?)?;
-        crate::sticky::layout(bounds, note.tilt(crate::skin::skin(cx, 1.).unboxed()))
+        note.layout(bounds, crate::skin::skin(cx, 1.).unboxed())
     }
 
     /// `alt+s`, or a click on the paper: stick a note on, or pick the pen back up
@@ -8609,9 +8616,9 @@ impl TerminalView {
         let a = self.point_to_painted(start, perm, display_offset);
         let b = self.point_to_painted(end, perm, display_offset);
         let last_col = self.grid.cols.saturating_sub(1);
-        // Match styled_lines' INVERSE default background (graded th.bg) so the
+        // Match styled_lines' resolved INVERSE default background so the
         // visual highlight is the same colour as the non-inverted selection.
-        let default_bg = GradeCoeffs::new(&th.grade).apply(th.bg, Channel::Bg);
+        let default_bg = terminal_background(th);
         for (p, c_lo, c_hi) in visual_selection_spans(a, b, last_col, is_block) {
             if let Some(row) = lines.get_mut(p) {
                 invert_run_range(row, c_lo, c_hi, default_bg);
@@ -9424,6 +9431,7 @@ impl TerminalView {
             // coloured still flows through `color_mode` (so ls/git/vim keep
             // their palette). The ord cursor advances on every non-spacer cell
             // regardless, keeping the palette aligned with the row text.
+            let mut fg_is_field = matches!(cell.fg, AnsiColor::Named(NamedColor::Background));
             let mut fg = if syntax {
                 let ord = ords[row as usize];
                 ords[row as usize] += 1;
@@ -9440,6 +9448,7 @@ impl TerminalView {
             // Selection-inverse and the cursor below still apply on top.
             if agent && human_rows.get(row as usize).copied().unwrap_or(false) {
                 fg = th.human;
+                fg_is_field = false;
             }
             let mut bg: Option<Hsla> = match cell.bg {
                 AnsiColor::Named(NamedColor::Background) => None,
@@ -9448,6 +9457,11 @@ impl TerminalView {
             let mut flags = cell.flags;
             // Retain the program's text colour, including its own inverse/DIM,
             // before TD draws a selection or its block cursor over the glyph.
+            let glyph_is_field = if flags.contains(Flags::INVERSE) {
+                bg.is_none()
+            } else {
+                fg_is_field
+            };
             let mut glyph_fg = if flags.contains(Flags::INVERSE) {
                 bg.unwrap_or(th.bg)
             } else {
@@ -9456,11 +9470,18 @@ impl TerminalView {
             if flags.contains(Flags::DIM) {
                 glyph_fg.a *= 0.6;
             }
-            let glyph_fg = grade.apply(glyph_fg, Channel::Text);
+            let glyph_fg = if glyph_is_field {
+                th.field_background
+                    .map(|c| c.alpha(glyph_fg.a))
+                    .unwrap_or_else(|| grade.apply(glyph_fg, Channel::Text))
+            } else {
+                grade.apply(glyph_fg, Channel::Text)
+            };
             if !sel_visual && selection.is_some_and(|s| s.contains(indexed.point)) {
                 flags.insert(Flags::INVERSE);
             }
             if flags.contains(Flags::INVERSE) {
+                fg_is_field = bg.is_none();
                 let new_fg = bg.unwrap_or(th.bg);
                 bg = Some(fg);
                 fg = new_fg;
@@ -9472,6 +9493,7 @@ impl TerminalView {
             {
                 bg = Some(th.cursor);
                 fg = th.bg;
+                fg_is_field = true;
             }
             if flags.contains(Flags::DIM) {
                 fg.a *= 0.6;
@@ -9480,7 +9502,13 @@ impl TerminalView {
             // Monitor OSD: grade the final colours (text + background take their
             // own levels). Neutral grade is the identity, so the default render
             // is byte-for-byte unchanged.
-            fg = grade.apply(fg, Channel::Text);
+            fg = if fg_is_field {
+                th.field_background
+                    .map(|c| c.alpha(fg.a))
+                    .unwrap_or_else(|| grade.apply(fg, Channel::Text))
+            } else {
+                grade.apply(fg, Channel::Text)
+            };
             bg = bg.map(|c| grade.apply(c, Channel::Bg));
 
             let weight = if flags.contains(Flags::BOLD) {
@@ -12515,7 +12543,7 @@ impl Render for TerminalView {
                 let paper_stock = sk.note_decoration == crate::skin::NoteDecoration::Flower;
                 let flat = sk.unboxed();
                 let store = self.content_bounds.clone();
-                let pal = sk.note_palette(&th);
+                let pal = sk.marked_note_palette(&th, note.pinned);
                 let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
                 // The pane's own curvature, and zero while a modal has flattened the
                 // whole screen — the note un-bends with everything else that frame
@@ -12532,7 +12560,7 @@ impl Render for TerminalView {
                             let Some(content) = store.lock().ok().and_then(|b| *b) else {
                                 return;
                             };
-                            if let Some(mut lay) = crate::sticky::layout(content, note.tilt(flat)) {
+                            if let Some(mut lay) = note.layout(content, flat) {
                                 lay.pre_warp(content, k1, k2);
                                 crate::sticky::paint(
                                     &note,
@@ -12631,7 +12659,7 @@ impl Render for TerminalView {
             // / contrast / colour sliders dim the whole pane like a dimmer light —
             // crucially the flat/paper themes, whose bright background is the bulk of
             // what you see. Neutral grade short-circuits, so the default is unchanged.
-            .bg(graded(th.bg, &th.grade, Channel::Bg))
+            .bg(terminal_background(&th))
             .relative()
             .flex()
             .flex_col()
@@ -12648,6 +12676,9 @@ impl Render for TerminalView {
                     .relative()
                     .flex_1()
                     .overflow_hidden()
+                    .when(sk.unboxed() && on_terminal, |d| {
+                        d.border(px(sk.m.hairline)).border_color(sk.ink.rule)
+                    })
                     .child({
                         let store = self.content_bounds.clone();
                         let weak = cx.entity().downgrade();
@@ -12740,7 +12771,9 @@ impl Render for TerminalView {
                     .map(|d| {
                         sk.terminal_stock(
                             d,
-                            graded(crate::mix(th.bg, th.surface, 0.18), &th.grade, Channel::Bg),
+                            th.field_background.unwrap_or_else(|| {
+                                graded(crate::mix(th.bg, th.surface, 0.18), &th.grade, Channel::Bg)
+                            }),
                         )
                     })
                     .children(pictures_under)
@@ -12822,10 +12855,7 @@ impl Render for TerminalView {
                     // Over everything ON the glass, since the lip's shadow falls
                     // on whatever is there; under the ignition, which is light.
                     .when(seat_flat_rim, |el| {
-                        el.child(crt::rim(
-                            rim_strength,
-                            graded(th.bg, &th.grade, Channel::Bg),
-                        ))
+                        el.child(crt::rim(rim_strength, terminal_background(&th)))
                     })
                     // The tube fires. Last child of the SCREEN, so it paints
                     // over the grid but stays inside the registered warp tube —
@@ -12881,6 +12911,29 @@ mod tests {
             underline: None,
             strikethrough: None,
         }
+    }
+
+    #[test]
+    fn terminal_background_query_reports_the_actual_matched_field() {
+        let mut th = theme::parse(theme::CLEAN_THEME_TOML).unwrap();
+        th.grade = theme::house_outer().grade;
+        let field = gpui::rgb(0x142620).into();
+        th.field_background = Some(field);
+        assert_eq!(terminal_background(&th), field);
+        assert_eq!(
+            asked_colour(NamedColor::Background as usize, &th),
+            Some(field)
+        );
+        th.field_background = Some(gpui::black());
+        assert_eq!(
+            asked_colour(NamedColor::Background as usize, &th),
+            Some(gpui::black())
+        );
+        th.field_background = None;
+        assert_eq!(
+            terminal_background(&th),
+            graded(th.bg, &th.grade, Channel::Bg)
+        );
     }
 
     /// #953. Resolving a grid font that carries the fallback chain loads every

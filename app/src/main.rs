@@ -8789,6 +8789,7 @@ impl Workspace {
             colour: K::Colour.to_percent(g.colour),
             text: K::Text.to_percent(g.text),
             background: K::Background.to_percent(g.background),
+            field_colour: g.field_colour.map(|v| K::FieldColour.to_percent(v)),
             gamma: K::Gamma.to_percent(g.gamma),
             menu_bar: K::Scale.to_percent(g.scale),
             text_size: K::TextSize.to_percent(g.text_size),
@@ -8846,6 +8847,9 @@ impl Workspace {
         }
         if let Some(p) = patch.background {
             set!(K::Background, p);
+        }
+        if let Some(p) = patch.field_colour {
+            set!(K::FieldColour, p);
         }
         if let Some(p) = patch.gamma {
             set!(K::Gamma, p);
@@ -11732,7 +11736,7 @@ impl Workspace {
             .gap_3()
             .text_size(sk.text_px(10.))
             .text_color(th.text)
-            .map(|d| sk.finish(d))
+            .map(|d| sk.popup(sk.finish(d)))
             .map(|d| sk.chrome(d))
             .on_mouse_down(
                 MouseButton::Left,
@@ -16582,7 +16586,7 @@ impl Workspace {
             .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
-            .map(|d| sk.chrome(sk.finish(d)))
+            .map(|d| sk.chrome(sk.popup(sk.finish(d))))
             .child(header)
             .child(div().pb_1().flex().flex_col().child(list))
             .child(
@@ -17054,7 +17058,7 @@ impl Workspace {
             .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
-            .map(|d| sk.finish(d))
+            .map(|d| sk.popup(sk.finish(d)))
             .font_family(skin::for_theme(cx, th, 1.0).font_family)
             .child(header)
             .child(div().pb_1().flex().flex_col().child(list))
@@ -17227,7 +17231,7 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
             )
-            .map(|d| sk.chrome(sk.finish(d)))
+            .map(|d| sk.chrome(sk.popup(sk.finish(d))))
             .child(
                 div()
                     .flex()
@@ -17419,7 +17423,7 @@ impl Workspace {
             // Finished BEFORE any content: under a cut skin `finish` adds an
             // opaque plate as a child, and a plate added after the rows paints
             // over them — the OPS bug panel drew as an empty frame.
-            .map(|d| sk.finish(d))
+            .map(|d| sk.popup(sk.finish(d)))
             .flex()
             .flex_col()
             .gap_2()
@@ -17637,7 +17641,7 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
             )
-            .map(|d| sk.chrome(sk.finish(d)))
+            .map(|d| sk.chrome(sk.popup(sk.finish(d))))
             .child(
                 div()
                     .flex()
@@ -17984,7 +17988,7 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
             )
-            .map(|d| sk.chrome(sk.finish(d)))
+            .map(|d| sk.chrome(sk.popup(sk.finish(d))))
             .child(
                 div()
                     .flex()
@@ -18314,7 +18318,7 @@ impl Workspace {
                 d
             })
             .shadow(float_shadows(th.accent, th.grade.phosphor))
-            .map(|d| sk.chrome(sk.finish(d)))
+            .map(|d| sk.chrome(sk.popup(sk.finish(d))))
             .child(header)
             .child(div().pb_1().flex().flex_col().child(list))
             .child(
@@ -18672,7 +18676,7 @@ impl Workspace {
             .gap_2()
             .p_3()
             .font_family(skin::for_theme(cx, th, 1.0).font_family)
-            .map(|d| sk.chrome(sk.finish(d)))
+            .map(|d| sk.chrome(sk.popup(sk.finish(d))))
             .child(
                 div()
                     .flex()
@@ -19140,7 +19144,7 @@ impl Workspace {
                 spread_radius: px(2.),
                 inset: false,
             }])
-            .map(|d| sk.chrome(sk.finish(d)))
+            .map(|d| sk.chrome(sk.popup(sk.finish(d))))
             .child(header)
             .child(
                 div()
@@ -20138,6 +20142,20 @@ impl Workspace {
     /// turns exactly that one into a blinker while its neighbours carry on. Free
     /// to read per frame: every input is a flag the pane already caches.
     fn tab_agent_badges(&self, i: usize, cx: &App) -> Vec<AgentBadge> {
+        // Fictional states only in the isolated native skin fixture. No agent
+        // is started and ordinary windows never enter this branch.
+        static SPINE_FIXTURE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if skin_atlas_home().is_some()
+            && *SPINE_FIXTURE.get_or_init(|| std::env::var_os("TD_SKIN_SPINE_FIXTURE").is_some())
+        {
+            return match i % 5 {
+                0 => vec![AgentBadge::Done],
+                1 => vec![AgentBadge::Working],
+                2 => vec![AgentBadge::NeedsInput],
+                3 => vec![AgentBadge::Blocked],
+                _ => vec![],
+            };
+        }
         let Some(tab) = self.tabs.get(i) else {
             return vec![];
         };
@@ -22607,10 +22625,18 @@ impl Workspace {
                     // degrees, crawl depth as a ratio; colour channels read as a
                     // signed offset ("-12", "+0").
                     .child(match key {
+                        theme::GradeKey::FieldColour
+                            if self.osd_menu.as_ref().is_some_and(|scope| {
+                                self.choice_for(scope, cx).grade.field_colour.is_none()
+                            }) =>
+                        {
+                            t.ui.pal_hdr_skin.to_lowercase()
+                        }
                         theme::GradeKey::Scale
                         | theme::GradeKey::TextSize
                         | theme::GradeKey::BenchSize
                         | theme::GradeKey::Phosphor
+                        | theme::GradeKey::FieldColour
                         | theme::GradeKey::Glare
                         | theme::GradeKey::ImageGlow
                         | theme::GradeKey::InactiveImageGlow
@@ -23331,6 +23357,15 @@ impl Workspace {
         s: f32,
         sk: &skin::Skin,
     ) -> AnyElement {
+        if sk.unboxed() {
+            let (glyph, ink) = match badge {
+                AgentBadge::NeedsInput => ("\u{f254}", sk.ink.warn),
+                AgentBadge::Working => ("\u{f254}", sk.ink.live),
+                AgentBadge::Done => ("✓", sk.ink.ok),
+                AgentBadge::Blocked => ("X", sk.ink.danger),
+            };
+            return sk.quiet_mark(glyph, ink, s).into_any_element();
+        }
         if sk.text_controls() {
             return sk
                 .chrome(div())
@@ -23403,6 +23438,8 @@ impl Workspace {
                 .text_size(sk.text_px(10. * s))
                 .text_color(color)
                 .child(match dir {
+                    BarDir::Down if sk.unboxed() => "−",
+                    BarDir::Right if sk.unboxed() => "+",
                     BarDir::Down => "fold",
                     BarDir::Left => "TABS",
                     BarDir::Right => "unfold",
@@ -23567,6 +23604,14 @@ impl Workspace {
         // precise number is least actionable.
         let quiet = |glyph: &'static str, n: usize| -> Option<AnyElement> {
             (n > 0).then(|| {
+                if sk.unboxed() {
+                    let (symbol, ink) = match glyph {
+                        "✅" => ("✓", sk.ink.ok),
+                        "❌" => ("X", sk.ink.danger),
+                        _ => ("\u{f08d}", sk.ink.mark_soft),
+                    };
+                    return sk.quiet_mark(symbol, ink, s).into_any_element();
+                }
                 div()
                     .text_size(px(10. * s))
                     .child(SharedString::from(sk.control_text(glyph)))
@@ -23603,9 +23648,19 @@ impl Workspace {
             attention::Priority::Promoted => hsla(0.33, 0.70, 0.42, 1.),
             _ => hsla(0.58, 0.72, 0.56, 1.),
         };
+        let glyph = if sk.unboxed() {
+            if level.priority == attention::Priority::Promoted {
+                "↑"
+            } else {
+                "↓"
+            }
+        } else {
+            glyph
+        };
         Some(
             div()
-                .text_size(px(8.5 * s))
+                .when(sk.unboxed(), |d| d.flex_none().w(px(12. * s)))
+                .text_size(px(if sk.unboxed() { 12. } else { 8.5 } * s))
                 // Inherited is the same mark at half strength rather than a
                 // different mark: it says the same thing, one rung further
                 // away, and a second glyph would be a second thing to learn for
@@ -23616,7 +23671,11 @@ impl Workspace {
                 } else {
                     ink
                 })
-                .child(SharedString::from(sk.control_text(glyph)))
+                .child(SharedString::from(if sk.unboxed() {
+                    glyph.to_string()
+                } else {
+                    sk.control_text(glyph)
+                }))
                 .into_any_element(),
         )
     }
@@ -23951,7 +24010,7 @@ impl Workspace {
             .child(
                 div()
                     .id(SharedString::from(format!("bar-fold-{key}")))
-                    .w(px(if sk.text_controls() {
+                    .w(px(if sk.text_controls() && !sk.unboxed() {
                         38. * s
                     } else {
                         FOLD_W * s
@@ -24185,7 +24244,11 @@ impl Workspace {
             return div()
                 .pl(step * (depth as f32)
                     + px(4. * s)
-                    + px(FOLD_W.max(if sk.text_controls() { 38. } else { 0. }) * s))
+                    + px(FOLD_W.max(if sk.text_controls() && !sk.unboxed() {
+                        38.
+                    } else {
+                        0.
+                    }) * s))
                 .pr(px(4. * s))
                 .py(px(1. * s))
                 .child(
@@ -24227,7 +24290,11 @@ impl Workspace {
                     // tree that do not read as two levels — see `FOLD_W`.
                     .pl(step * (depth as f32)
                         + px(4. * s)
-                        + px(FOLD_W.max(if sk.text_controls() { 38. } else { 0. }) * s))
+                        + px(FOLD_W.max(if sk.text_controls() && !sk.unboxed() {
+                            38.
+                        } else {
+                            0.
+                        }) * s))
                     .pr(px(5. * s))
                     .py(px(2. * s))
                     .flex()
@@ -24236,8 +24303,11 @@ impl Workspace {
                     .gap(px(5. * s))
                     .rounded(sk.radius())
                     .cursor_pointer(),
-                is_active,
-            ),
+                is_active && !sk.unboxed(),
+            )
+            .when(sk.unboxed() && is_active, |d| {
+                d.ml(px(2. * s)).mr(px(2. * s))
+            }),
         )
         .when(
             self.pane_drop_hot(tree::RowId::Task(i)) == Some(false),
@@ -24255,10 +24325,15 @@ impl Workspace {
         // button wears, so a coloured tab is the same colour in both places
         .child(
             div()
-                .w(px(3. * s))
-                .h(px(11. * s))
+                .when(sk.unboxed(), |d| d.flex_none())
+                .w(px(if sk.unboxed() && is_active { 4. } else { 3. } * s))
+                .h(px(if sk.unboxed() && is_active { 15. } else { 11. } * s))
                 .rounded(sk.radius())
-                .bg(fill.unwrap_or(th.faint.alpha(0.35))),
+                .bg(if sk.unboxed() && is_active {
+                    sk.ink.select
+                } else {
+                    fill.unwrap_or(th.faint.alpha(0.35))
+                }),
         )
         .child(
             div()
@@ -24315,6 +24390,11 @@ impl Workspace {
             // The pin, never a tally of pins. One pinned note and four are the
             // same news at this size: there is something here you asked to keep.
             (pinned > 0).then(|| {
+                if sk.unboxed() {
+                    return sk
+                        .quiet_mark("\u{f08d}", sk.ink.mark_soft, s)
+                        .into_any_element();
+                }
                 div()
                     .text_size(sk.text_px(10. * s))
                     .child(SharedString::from(sk.control("📌", "pinned")))
@@ -24326,21 +24406,23 @@ impl Workspace {
         // real tree it is the last of a column of small digits down the right
         // edge, and how many terminals a task holds is not something anyone
         // steers by. The task's own pane strip says it precisely, when asked.
-        .child(
-            div()
-                .id(SharedString::from(format!("bar-task-x-{i}")))
-                .text_size(sk.text_px(11. * s))
-                .text_color(hsla(0., 0., 0., 0.))
-                .group_hover(grp, move |st| st.text_color(th.faint))
-                .child(sk.control("×", "close"))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                        cx.stop_propagation();
-                        ws.request_close_tab(i, window, cx);
-                    }),
-                ),
-        )
+        .when(!sk.unboxed(), |d| {
+            d.child(
+                div()
+                    .id(SharedString::from(format!("bar-task-x-{i}")))
+                    .text_size(sk.text_px(11. * s))
+                    .text_color(hsla(0., 0., 0., 0.))
+                    .group_hover(grp, move |st| st.text_color(th.faint))
+                    .child(sk.control("×", "close"))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            ws.request_close_tab(i, window, cx);
+                        }),
+                    ),
+            )
+        })
         // A task row is a drop target too: dropping one task onto another
         // takes that task's branch AND its seat, which is the gesture
         // people try before they aim at a branch header.
@@ -27871,6 +27953,11 @@ impl Workspace {
             .children({
                 let pinned = self.tab_pinned_notes(i, cx);
                 (pinned > 0).then(|| {
+                    if sk.unboxed() {
+                        return sk
+                            .quiet_mark("\u{f08d}", sk.ink.mark_soft, ts)
+                            .into_any_element();
+                    }
                     div()
                         .text_size(sk.text_px(CHROME_NAME_PT * ts))
                         .child(if pinned > 1 {
@@ -28193,7 +28280,7 @@ impl Workspace {
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.45)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
-                .map(|d| sk.finish(d))
+                .map(|d| sk.popup(sk.finish(d)))
                 // a click inside the panel is the panel's, not the scrim's
                 .on_mouse_down(
                     MouseButton::Left,
@@ -30355,7 +30442,7 @@ impl Render for Workspace {
                     .id("show-left-bar")
                     .debug_selector(|| "show-left-bar".into())
                     .when(sk.unboxed(), |d| d.mr(px(12. * scale)))
-                    .w(px(if sk.text_controls() {
+                    .w(px(if sk.text_controls() && !sk.unboxed() {
                         38. * scale
                     } else {
                         16. * scale
@@ -32515,7 +32602,7 @@ impl Render for Workspace {
                 .overflow_x_hidden()
                 .overflow_y_scroll()
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
-                .map(|d| sk.finish(d))
+                .map(|d| sk.popup(sk.finish(d)))
                 .flex()
                 .flex_row()
                 .gap_3()
@@ -32532,9 +32619,17 @@ impl Render for Workspace {
                 )
                 .when(sk.text_controls(), |d| d.flex_wrap().items_start())
                 .child(themes)
-                .child(pickers)
-                .child(controls)
-                .children(ui_area)
+                .child(pickers.when(sk.unboxed(), |d| {
+                    d.border_l(px(sk.m.hairline)).border_color(sk.ink.rule)
+                }))
+                .child(controls.when(sk.unboxed(), |d| {
+                    d.border_l(px(sk.m.hairline)).border_color(sk.ink.rule)
+                }))
+                .children(ui_area.map(|d| {
+                    d.when(sk.unboxed(), |d| {
+                        d.border_l(px(sk.m.hairline)).border_color(sk.ink.rule)
+                    })
+                }))
                 .children(design_menu);
             // full-screen scrim: click anywhere outside closes
             div()
@@ -32588,6 +32683,11 @@ impl Render for Workspace {
                         (G::Contrast, t.g_contrast, grade.contrast),
                         (G::Colour, t.g_colour, grade.colour),
                         (G::Background, t.g_background, grade.background),
+                        (
+                            G::FieldColour,
+                            t.g_field_colour,
+                            grade.field_colour.unwrap_or(1.),
+                        ),
                         (G::Gamma, t.g_gamma, grade.gamma),
                         (G::Phosphor, t.g_phosphor, grade.phosphor),
                     ],
@@ -32700,7 +32800,7 @@ impl Render for Workspace {
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.6)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
-                .map(|d| sk.finish(d))
+                .map(|d| sk.popup(sk.finish(d)))
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -35121,7 +35221,7 @@ impl Render for Workspace {
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.6)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
-                .map(|d| sk.finish(d))
+                .map(|d| sk.popup(sk.finish(d)))
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -35418,7 +35518,7 @@ impl Render for Workspace {
                 .text_color(th.text)
                 .font_family(skin::for_theme(cx, &th, 1.0).font_family)
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
-                .map(|d| sk.finish(d))
+                .map(|d| sk.popup(sk.finish(d)))
                 .flex()
                 .flex_col()
                 .gap_3()
@@ -35534,7 +35634,7 @@ impl Render for Workspace {
                 .text_color(th.text)
                 .font_family(skin::for_theme(cx, &th, 1.0).font_family)
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
-                .map(|d| sk.finish(d))
+                .map(|d| sk.popup(sk.finish(d)))
                 .flex()
                 .flex_col()
                 .gap_0p5()
@@ -36101,7 +36201,7 @@ impl Render for Workspace {
                     d
                 })
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
-                .map(|d| sk.finish(d))
+                .map(|d| sk.popup(sk.finish(d)))
                 .flex()
                 .flex_col()
                 .gap_4()

@@ -57,6 +57,7 @@ def main():
     parser.add_argument("--scene", default="workspace", help="fixture id from this binary's skin --catalogue export")
     parser.add_argument("--theme", default="hacker")
     parser.add_argument("--palette", help="bundled palette id; overrides the design's default colours")
+    parser.add_argument("--omarchy-colors", type=Path, help="inherit a private copy of this Omarchy colors.toml; never changes the desktop")
     parser.add_argument("--size", default="1200x800")
     parser.add_argument("--ui-scale", type=float, default=1.)
     parser.add_argument("--text-scale", type=float, default=1.)
@@ -70,6 +71,8 @@ def main():
     parser.add_argument("--idle-seconds", type=float, default=0., help="sample this private process's idle CPU and resident memory after capture")
     args = parser.parse_args()
     binary, skin, out = args.binary.resolve(), args.skin.resolve(), args.out.resolve()
+    if args.palette and args.omarchy_colors:
+        parser.error("choose a bundled palette or Omarchy inheritance")
     if args.palette and ("/" in args.palette or "\\" in args.palette):
         parser.error("native --palette takes a bundled id; the headless resolver also accepts TD palette files")
     width, height = map(int, args.size.split("x"))
@@ -77,8 +80,8 @@ def main():
         parser.error("size must fit a native review window")
     # Validation happens before a window is launched or an output is created.
     resolve_args = [str(binary), "skin", "--check", "--skin", str(skin), "--theme", args.theme, "--scale", str(args.ui_scale), "--text-size", str(args.text_scale)]
-    if args.palette:
-        resolve_args += ["--palette", args.palette]
+    if args.palette or args.omarchy_colors:
+        resolve_args += ["--palette", str(args.omarchy_colors or args.palette)]
     resolved = json.loads(run(resolve_args))
     catalogue = json.loads(run([str(binary), "skin", "--catalogue"]))
     fixtures = {fixture["id"]: fixture for fixture in catalogue["fixtures"]}
@@ -114,11 +117,30 @@ def main():
     head += '\n[theme.grade]\n'
     for key, value in dict(crt=args.warp != 0, warp=args.warp, scale=args.ui_scale, text_size=args.text_scale, brightness=.5, contrast=.5, colour=.5, text=.5, background=.5, gamma=.5, phosphor=1.).items():
         head += f'{key} = {val(value)}\n'
-    for i, (title, group) in enumerate([("Custom surface", 1), ("Unknown readings", 1), ("Native fixtures", 1)]):
+    rows = [("Custom surface", 1), ("Unknown readings", 1), ("Native fixtures", 1)]
+    if args.scene == "spine":
+        rows = [(name, 1) for name in ["Jackson homeschooled", "Build the terminal", "Waiting for review", "Release blocked", "Quiet workspace"]]
+        rows += [(name, 2) for name in ["Archive complete", "Colour inheritance", "Native screenshots", "A long project task title", "Project notes"]]
+        head = head.replace("left_bar_w = 210.0", "left_bar_w = 280.0")
+    for i, (title, group) in enumerate(rows):
         if i == 0:
             head += '\n[[projects]]\nid = 1\nname = "SKIN ATLAS"\ncollapsed = false\ncolor = "#8C94A6"\n'
-        head += f'\n[[tabs]]\nname = {val(title)}\nproject = {group}\n[tabs.node.Leaf]\ncwd = {val(str(out))}\nresume = {val(shlex.join([sys.executable, str(emitter)]))}\n'
+        if args.scene == "spine" and i == 5:
+            head += '\n[[projects]]\nid = 2\nname = "TERMINAL DELIGHT"\ncollapsed = false\ncolor = "#7898ad"\n'
+        priority = '\nlevel = "Promoted"' if args.scene == "spine" and i == 1 else ('\nlevel = "Demoted"' if args.scene == "spine" and i == 2 else '')
+        head += f'\n[[tabs]]\nname = {val(title)}\nproject = {group}{priority}\n[tabs.node.Leaf]\ncwd = {val(str(out))}\nresume = {val(shlex.join([sys.executable, str(emitter)]))}\n'
     saved = out / "config/terminal-delight/sessions" / f"{session}.toml"
+    if args.omarchy_colors:
+        head = head.replace("follow_omarchy = false", "follow_omarchy = true")
+        current = out / "home/.local/state/omarchy/current"
+        (current / "theme").mkdir(parents=True)
+        shutil.copyfile(args.omarchy_colors, current / "theme/colors.toml")
+        (current / "theme.name").write_text(args.omarchy_colors.parent.name)
+        fonts = Path.home() / ".local/share/fonts"
+        if fonts.exists():
+            target = out / "home/.local/share/fonts"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(fonts)
     saved.write_text(head)
     if args.scene == "plugins":
         plugin = out / "config/terminal-delight/plugins/native-fixture/plugin.json"
@@ -128,12 +150,14 @@ def main():
     env = {key: value for key, value in os.environ.items() if key in desktop_keys or key.startswith("LC_")}
     env.update(TD_SESSION=session, TD_MCP_SCRIPTED="1", TD_SKIN_ATLAS_HOME=str(out / "home"), TD_HOST_SHELL=str(fixture_shell), XDG_CONFIG_HOME=str(out / "config"), XDG_CACHE_HOME=str(out / "cache"), XDG_STATE_HOME=str(out / "state"), TMPDIR=str(out / "tmp"), SHELL=str(fixture_shell))
     env["PATH"] = str(out / "bin") + os.pathsep + env.get("PATH", os.defpath)
+    if args.omarchy_colors:
+        env["HOME"] = str(out / "home")
     env.update(fixture["environment"])
     launch = out / "launch.sh"
     launch.write_text("#!/bin/sh\nexec env -i " + shlex.join([f"{key}={value}" for key, value in env.items()]) + " " + shlex.quote(str(binary)) + " > " + shlex.quote(str(out / "window.log")) + " 2>&1\n")
     pid = None
     process = None
-    receipt = {"schema": "td-skin-proof/1", "scene": args.scene, "session": session, "binary_sha256": digest(binary), "skin_sha256": digest(out / "skin.toml"), "catalogue_schema": catalogue["schema"], "theme": args.theme, "palette": args.palette, "geometry_requested": [width, height], "geometry_observed": None, "grade": {"warp": args.warp, "ui_scale": args.ui_scale, "text_scale": args.text_scale}, "lang": args.lang, "capture": None, "visual_verdict": None, "states_reviewed": None}
+    receipt = {"schema": "td-skin-proof/1", "scene": args.scene, "session": session, "binary_sha256": digest(binary), "skin_sha256": digest(out / "skin.toml"), "catalogue_schema": catalogue["schema"], "theme": args.theme, "palette": args.palette, "omarchy_colors": str(args.omarchy_colors) if args.omarchy_colors else None, "geometry_requested": [width, height], "geometry_observed": None, "grade": {"warp": args.warp, "ui_scale": args.ui_scale, "text_scale": args.text_scale}, "lang": args.lang, "capture": None, "visual_verdict": None, "states_reviewed": None}
     try:
         if args.visible:
             process = subprocess.Popen([str(binary)], env=env, stdout=(out / "window.log").open("w"), stderr=subprocess.STDOUT)
@@ -210,7 +234,7 @@ def main():
             receipt["grade_override"] = grade
             rpc(pid, "set_pane_config", {"updates": [{"target": "outer", "config": grade}]})
         receipt["pane_config"] = rpc(pid, "get_pane_config", {"targets": [target["pid"], "outer"]})
-        rpc(pid, "leave_note", {"pid": target["pid"], "title": "NATIVE FIXTURE", "text": "Reference skin; unknown readings stay unknown.", "pin": False})
+        rpc(pid, "leave_note", {"pid": target["pid"], "title": "NATIVE FIXTURE", "text": "Reference skin; unknown readings stay unknown.", "pin": args.scene == "spine"})
         if fixture["action"] == "document":
             document = out / "content.md"
             document.write_text("# Authored content\n\nNative controls follow the skin; this document keeps its reading typography.\n\n```rust\nlet reading: Option<f32> = None;\n```\n" + "\n\n".join(f"## Reading {i}\n\nA measured zero and an unavailable reading mean different things. The surrounding native rail reports progress through this long document." for i in range(1, 21)))

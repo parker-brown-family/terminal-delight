@@ -166,6 +166,8 @@ pub struct Theme {
     /// [`design_stock`]). Only what the file says.
     pub look: crate::looks::LookDials,
     pub bg: Hsla,
+    /// Resolved default terminal field, after grading. None keeps legacy rendering.
+    pub field_background: Option<Hsla>,
     pub surface: Hsla,
     pub text: Hsla,
     pub accent: Hsla,
@@ -420,6 +422,7 @@ pub enum GradeKey {
     Colour,
     Text,
     Background,
+    FieldColour,
     Gamma,
     /// Menu-bar size multiplier — scales the outer bar + tabs + per-pane header
     /// chrome (NOT the terminal grid). Rides the grade group like the rest.
@@ -477,6 +480,7 @@ impl GradeKey {
     /// with `1.0` neutral. Used to map slider position ↔ stored value.
     pub fn range(self) -> (f32, f32, f32) {
         match self {
+            GradeKey::FieldColour => (0., 1., 1.),
             GradeKey::Scale => (0.7, 1.6, 1.0),
             GradeKey::TextSize | GradeKey::BenchSize => (0.6, 2.0, 1.0),
             GradeKey::Warp => (0.0, WARP_MAX, 0.0),
@@ -582,6 +586,10 @@ pub struct Grade {
     pub colour: f32,
     pub text: f32,
     pub background: f32,
+    /// Default terminal field: zero is black, one matches its chrome. Unset
+    /// follows the skin; existing skins keep their original graded field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_colour: Option<f32>,
     pub gamma: f32,
     /// Menu-bar size multiplier (`0.7..1.6`, neutral `1.0`). Scales the outer
     /// bar + tabs + per-pane header chrome, not the terminal grid.
@@ -696,6 +704,7 @@ pub enum GradeChannel {
     Colour,
     Text,
     Background,
+    FieldColour,
     Gamma,
     Scale,
     TextSize,
@@ -727,12 +736,13 @@ impl GradeChannel {
     ///
     /// Thirty-two is the most the bitmask holds — [`GradePins`] is a `u32`,
     /// widened from `u16` when glare became the seventeenth channel.
-    pub const ALL: [GradeChannel; 25] = [
+    pub const ALL: [GradeChannel; 26] = [
         Self::Brightness,
         Self::Contrast,
         Self::Colour,
         Self::Text,
         Self::Background,
+        Self::FieldColour,
         Self::Gamma,
         Self::Scale,
         Self::TextSize,
@@ -764,6 +774,7 @@ impl GradeChannel {
             Self::Colour => "colour",
             Self::Text => "text",
             Self::Background => "background",
+            Self::FieldColour => "field_colour",
             Self::Gamma => "gamma",
             Self::Scale => "scale",
             Self::TextSize => "text_size",
@@ -809,6 +820,11 @@ impl GradeChannel {
             Self::Colour => close(a.colour, b.colour),
             Self::Text => close(a.text, b.text),
             Self::Background => close(a.background, b.background),
+            Self::FieldColour => match (a.field_colour, b.field_colour) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
             Self::Gamma => close(a.gamma, b.gamma),
             Self::Scale => close(a.scale, b.scale),
             Self::TextSize => close(a.text_size, b.text_size),
@@ -895,6 +911,7 @@ impl GradeChannel {
             Self::Colour => dst.colour = src.colour,
             Self::Text => dst.text = src.text,
             Self::Background => dst.background = src.background,
+            Self::FieldColour => dst.field_colour = src.field_colour,
             Self::Gamma => dst.gamma = src.gamma,
             Self::Scale => dst.scale = src.scale,
             Self::TextSize => dst.text_size = src.text_size,
@@ -932,6 +949,7 @@ impl From<GradeKey> for GradeChannel {
             GradeKey::Colour => Self::Colour,
             GradeKey::Text => Self::Text,
             GradeKey::Background => Self::Background,
+            GradeKey::FieldColour => Self::FieldColour,
             GradeKey::Gamma => Self::Gamma,
             GradeKey::Scale => Self::Scale,
             GradeKey::TextSize => Self::TextSize,
@@ -1100,6 +1118,7 @@ impl Default for Grade {
             colour: 0.69,
             text: 0.66,
             background: 0.43,
+            field_colour: None,
             gamma: 0.5,
             scale: 0.99,
             text_size: 1.0,
@@ -1135,7 +1154,7 @@ impl Grade {
     /// roll bar live in the collapsed CRT section and the crawl knobs in their
     /// own, so this list is also exactly what `reset` clears — see
     /// [`Grade::reset_gauges`].
-    pub const CHANNELS: [(GradeKey, &'static str); 17] = [
+    pub const CHANNELS: [(GradeKey, &'static str); 18] = [
         (GradeKey::TextSize, "text size"),
         (GradeKey::BenchSize, "bench size"),
         (GradeKey::Brightness, "brightness"),
@@ -1143,6 +1162,7 @@ impl Grade {
         (GradeKey::Colour, "colour"),
         (GradeKey::Text, "text"),
         (GradeKey::Background, "background"),
+        (GradeKey::FieldColour, "field colour"),
         (GradeKey::Gamma, "gamma"),
         (GradeKey::Scale, "menu bar"),
         (GradeKey::Phosphor, "phosphor"),
@@ -1172,6 +1192,7 @@ impl Grade {
             colour: n.colour,
             text: n.text,
             background: n.background,
+            field_colour: n.field_colour,
             gamma: n.gamma,
             scale: n.scale,
             text_size: n.text_size,
@@ -1200,6 +1221,7 @@ impl Grade {
             colour: 0.5,
             text: 0.5,
             background: 0.5,
+            field_colour: None,
             gamma: 0.5,
             scale: 1.0,
             text_size: 1.0,
@@ -1414,6 +1436,7 @@ impl Grade {
             GradeKey::Colour => self.colour,
             GradeKey::Text => self.text,
             GradeKey::Background => self.background,
+            GradeKey::FieldColour => return self.field_colour,
             GradeKey::Gamma => self.gamma,
             GradeKey::Scale => self.scale,
             GradeKey::TextSize => self.text_size,
@@ -1444,6 +1467,11 @@ impl Grade {
             GradeKey::Colour => self.colour = v,
             GradeKey::Text => self.text = v,
             GradeKey::Background => self.background = v,
+            GradeKey::FieldColour => {
+                if v.is_finite() {
+                    self.field_colour = Some(v);
+                }
+            }
             GradeKey::Gamma => self.gamma = v,
             GradeKey::Scale => self.scale = v,
             GradeKey::TextSize => self.text_size = v,
@@ -1645,6 +1673,7 @@ pub fn house_outer() -> ThemeChoice {
             colour: 0.70,
             text: 0.88,
             background: 0.27,
+            field_colour: None,
             gamma: 0.92,
             scale: HOUSE_SCALE,
             text_size: HOUSE_TEXT_SIZE,
@@ -3492,6 +3521,7 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         ui: file.ui.or_else(|| Some(crate::uiconfig::STANDARD.into())),
         look: file.look,
         bg: c.bg,
+        field_background: None,
         surface: c.surface,
         text: c.text,
         accent: c.accent,
@@ -3550,6 +3580,24 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn field_colour_distinguishes_inheritance_from_black_and_round_trips() {
+        let absent: Grade = toml::from_str("").unwrap();
+        assert_eq!(absent.field_colour, None);
+        assert!(!toml::to_string(&absent).unwrap().contains("field_colour"));
+        let mut chosen = absent;
+        chosen.set(GradeKey::FieldColour, 0.);
+        let source = toml::to_string(&chosen).unwrap();
+        let restored: Grade = toml::from_str(&source).unwrap();
+        assert_eq!(restored.field_colour, Some(0.));
+        assert!(!GradeChannel::FieldColour.same(&absent, &restored));
+        chosen.set(GradeKey::FieldColour, f32::NAN);
+        assert_eq!(chosen.field_colour, Some(0.));
+        chosen.set(GradeKey::FieldColour, 2.);
+        assert_eq!(chosen.field_colour, Some(1.));
+        assert_eq!(chosen.reset_gauges().field_colour, None);
+    }
 
     #[test]
     fn approved_light_presets_survive_palette_relabeling_and_flat_glass() {
@@ -4593,6 +4641,7 @@ mod tests {
             colour: 0.3,
             text: 0.4,
             background: 0.6,
+            field_colour: Some(0.4),
             gamma: 0.7,
             scale: 1.5,
             text_size: 1.9,
@@ -5314,7 +5363,7 @@ warp = 1.5
     fn glare_is_a_channel_that_pins_and_persists() {
         // Every channel still owns a separate bit after extending the set.
         let last = *GradeChannel::ALL.last().unwrap();
-        assert_eq!(GradeChannel::ALL.len(), 25);
+        assert_eq!(GradeChannel::ALL.len(), 26);
         assert_eq!(GradePins::all().iter().count(), GradeChannel::ALL.len());
         assert!(!GradePins::only(last).has(GradeChannel::Brightness));
         assert_eq!(GradeChannel::parse("glare"), Some(GradeChannel::Glare));
@@ -5341,8 +5390,8 @@ warp = 1.5
         assert_eq!((pane.glare, pane.warp), (Some(0.3), 0.2));
     }
 
-    /// Paint/size channels have stored positions; optional light controls keep
-    /// their absence and expose an effective position only for drawing.
+    /// Paint/size channels have stored positions; optional field and light
+    /// controls keep their absence and resolve only for drawing.
     #[test]
     fn main_gauges_always_hold_a_position() {
         for g in [
@@ -5353,7 +5402,8 @@ warp = 1.5
         ] {
             for (k, _) in Grade::CHANNELS {
                 match k {
-                    GradeKey::ImageGlow
+                    GradeKey::FieldColour
+                    | GradeKey::ImageGlow
                     | GradeKey::InactiveImageGlow
                     | GradeKey::InactiveText
                     | GradeKey::AfterglowMs

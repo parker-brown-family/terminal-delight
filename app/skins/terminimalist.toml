@@ -1,4 +1,4 @@
-# TERMINIMALIST — from Parker's Omarchy doctrine reference.
+# TERMINIMALIST — open furniture, following the selected Omarchy palette.
 # Native furniture only. Terminal cells and semantic status ink keep their owners.
 name = "TERMINIMALIST"
 icon = ""
@@ -49,32 +49,32 @@ lift = 0.0
 marker_alpha = 0.0
 
 [ink]
-panel = "#0e1914"
-panel_raised = "#0e1914"
-panel_sunken = "#0e1914"
-panel_glass = "#0e1914"
-btn_face = "#0e1914"
-rule = "#294638"
-rule_strong = "#365a48"
-edge = "#365a48"
-edge_strong = "#4b725a"
-edge_rest = "#294638"
-focus = "#a7aa82"
-ink = "#b2b58e"
-ink_lit = "#c8cba5"
-ink_dim = "#969b7b"
-ink_faint = "#8c9274"
-ink_off = "#81886c"
+panel = { from = "bg" }
+panel_raised = { from = "bg" }
+panel_sunken = { from = "bg" }
+panel_glass = { from = "bg" }
+btn_face = { from = "bg" }
+rule = { from = "accent", a = 0.24 }
+rule_strong = { from = "accent", a = 0.40 }
+edge = { from = "accent", a = 0.32 }
+edge_strong = { from = "accent", a = 0.60 }
+edge_rest = { from = "accent", a = 0.24 }
+focus = { from = "accent" }
+ink = { from = "text" }
+ink_lit = { from = "text" }
+ink_dim = { from = "text", a = 0.80 }
+ink_faint = { from = "text", a = 0.68 }
+ink_off = { from = "text", a = 0.60 }
 ink_ghost = { from = "text", a = 0.20 }
-ink_on_mark = "#0e1914"
-face_rest = "#0e1914"
-mark = "#b2b58e"
-mark_soft = "#a7aa82"
-mark_dim = "#727b60"
-mark_wash = "#1a2b20"
-select = "#c8cba5"
-row_active = "#1a2b20"
-hover = "#1d3024"
+ink_on_mark = { from = "bg" }
+face_rest = { from = "bg" }
+mark = { from = "accent" }
+mark_soft = { from = "accent", a = 0.85 }
+mark_dim = { from = "accent", a = 0.45 }
+mark_wash = { from = "accent", a = 0.10 }
+select = { from = "accent" }
+row_active = { from = "accent", a = 0.06 }
+hover = { from = "text", a = 0.06 }
 
 [note]
 decoration = "plain"
