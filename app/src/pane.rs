@@ -11268,6 +11268,7 @@ impl Render for TerminalView {
         // UI CONFIG, the PANES layer: one config for every pane — no pane is in
         // charge of its own. The title, the state word and ⋯ are not switches.
         let ui = |k: crate::uiconfig::Key| crate::uiconfig::shown(cx, k);
+        let minimal_header = sk.unboxed();
         let ui_logo = !sk.text_controls() && ui(crate::uiconfig::Key::PaneLogo);
         let ui_mode = ui(crate::uiconfig::Key::PaneMode);
         let ui_face = ui(crate::uiconfig::Key::PaneFace);
@@ -11463,7 +11464,7 @@ impl Render for TerminalView {
                     .when(!sk.text_controls(), |d| {
                         d.child(div().w(px(22.)).child(icon.to_string()))
                     })
-                    .child(label.to_string())
+                    .child(sk.control_text(label))
             };
             let mut menu = div()
                 .flex()
@@ -11479,6 +11480,18 @@ impl Render for TerminalView {
                 .font_family(sk.font_family.clone())
                 .shadow_md()
                 .map(|d| sk.finish(d));
+            if minimal_header {
+                menu = menu.child(
+                    div()
+                        .px(px(12.))
+                        .py(px(6.))
+                        .flex()
+                        .gap_2()
+                        .children(self.rest_chip(&th, txt, sk, scale))
+                        .children(self.memory_figure(txt, sk, scale))
+                        .child(sk.control_text(&status)),
+                );
+            }
             // 👤 ▲▼ message-nav keeps its live steppers inline so you can step
             // repeatedly; this row does not dismiss the menu.
             if SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent() {
@@ -11960,7 +11973,7 @@ impl Render for TerminalView {
                     th.surface
                 },
             ))
-            .border_b_1()
+            .border_b(sk.box_border(1.))
             .border_color(if sk.unboxed() && focused_now {
                 sk.ink.focus
             } else {
@@ -12004,6 +12017,8 @@ impl Render for TerminalView {
                 // pane was renamed — see `header_title`.
                 let label = self.header_title();
                 div()
+                    .id("pane-title")
+                    .debug_selector(|| "pane-title".into())
                     .flex_1()
                     // min-width:0 lets the title actually shrink (a nowrap flex
                     // child keeps min-width:auto otherwise) — so it clips instead
@@ -12038,8 +12053,8 @@ impl Render for TerminalView {
                     // ▸: one lead mark, not two. Unfocused panes keep the ▸, so
                     // the chevron says which pane has the keyboard.
                     .children(focused_now.then(|| sk.chevron("»")).flatten())
-                    .child(if !ui_mode {
-                        // UI CONFIG put the mode away: the title alone.
+                    .child(if !ui_mode || minimal_header {
+                        // Minimal furniture puts the model in its own slot.
                         label.clone()
                     } else if focused_now && sk.chevron("»").is_some() {
                         format!("{} · {label}", self.header_lead())
@@ -12066,10 +12081,14 @@ impl Render for TerminalView {
                     )
                     .on_mouse_down(
                         MouseButton::Right,
-                        cx.listener(|view, _ev: &MouseDownEvent, window, cx| {
+                        cx.listener(move |view, ev: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            view.renaming = Some(view.name.clone().unwrap_or_default());
-                            window.focus(&view.focus_handle, cx);
+                            if minimal_header {
+                                view.hdr_overflow = Some(ev.position);
+                            } else {
+                                view.renaming = Some(view.name.clone().unwrap_or_default());
+                                window.focus(&view.focus_handle, cx);
+                            }
                             cx.notify();
                         }),
                     )
@@ -12085,6 +12104,25 @@ impl Render for TerminalView {
                     .flex_shrink_0()
                     // roomier spacing between the header glyphs — scales with the bar
                     .gap(hpad)
+                    .when(minimal_header && self.mode.is_agent(), |d| {
+                        d.child(
+                            div()
+                                .id("pane-model")
+                                .debug_selector(|| "pane-model".into())
+                                .text_size(sk.text_px(11. * scale))
+                                .text_color(sk.ink.ink_dim)
+                                .cursor_pointer()
+                                .child(self.header_lead().into_owned())
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|view, ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        view.hdr_overflow = Some(ev.position);
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                    })
                     .when(ui_face, |d| d.child(face_toggle))
                     .when(ui_agent, |d| {
                         d.child(
@@ -12230,7 +12268,7 @@ impl Render for TerminalView {
                     })
                     // ⋯ overflow: appears once anything has been tucked away. Tap to
                     // open the menu of hidden controls (built above as overflow_el).
-                    .when(overflow, |row| {
+                    .when(overflow && !minimal_header, |row| {
                         row.child(
                             div()
                                 .px_1()
@@ -12283,9 +12321,11 @@ impl Render for TerminalView {
                     })
                     // Rest and sleep: whether the window has frozen or ended
                     // this pane's agent, and what the pane costs.
-                    .children(self.rest_chip(&th, bar_fg, &sk, scale))
-                    .children(self.memory_figure(bar_fg, &sk, scale))
-                    .child(sk.control_text(&status))
+                    .when(!minimal_header, |d| {
+                        d.children(self.rest_chip(&th, bar_fg, &sk, scale))
+                            .children(self.memory_figure(bar_fg, &sk, scale))
+                            .child(sk.control_text(&status))
+                    })
                     .when(ui_close, |d| {
                         d.child(
                             // close just this sub-tab (×): ends this pane's shell.

@@ -20,8 +20,13 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   named palette choices; both split directions have room for their labels in
   the footer. Terminal cells and authored documents keep their own presentation.
 - TERMINIMALIST removes nested pane frames, button outlines and settings boxes.
-  One outer hairline and structural dividers remain; selected choices and
-  warnings keep a single rule. Other skins keep their existing boundaries.
+  Hairline sides and structural dividers remain; selected choices and warnings
+  keep a single rule. The top edge and pane-header line are absent.
+- TERMINIMALIST asks for Clean UI defaults: Git notice hidden, tabs across the
+  top, footer actions in CONFIG, and pane actions behind a right-click on the
+  title. The header shows the title and agent model; double-click still renames.
+  SPINE and TABS switch navigation. The trash bay is absent. Explicit UI choices
+  still win, and other skins retain their existing defaults and boundaries.
 - Custom skins can opt into the same native policy with `controls = "text"`
   under `[shape]`. Combining it with `boundary = "none"` removes native boxes.
   Existing skins retain icon controls.

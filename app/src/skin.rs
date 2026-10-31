@@ -832,6 +832,13 @@ pub struct Skin {
 }
 
 impl SkinSpec {
+    /// Open text furniture asks for the existing Clean UI set. A person's
+    /// explicit set or individual switches still take precedence.
+    pub fn ui_default(&self) -> Option<&'static str> {
+        (self.shape.controls == Some(Controls::Text) && self.shape.boundary == Some(Boundary::None))
+            .then_some(crate::uiconfig::CLEAN)
+    }
+
     pub fn bake(&self, th: &Theme, scale: f32) -> Skin {
         let mut ink = self.ink.bake(th);
         if self.shape.bake().material == Material::Paper {

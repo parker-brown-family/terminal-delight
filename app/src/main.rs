@@ -23403,9 +23403,9 @@ impl Workspace {
                 .text_size(sk.text_px(10. * s))
                 .text_color(color)
                 .child(match dir {
-                    BarDir::Down => "hide",
-                    BarDir::Left => "tabs",
-                    BarDir::Right => "open",
+                    BarDir::Down => "fold",
+                    BarDir::Left => "TABS",
+                    BarDir::Right => "unfold",
                 });
         }
         let step = (2.0 * s).max(1.5);
@@ -27466,6 +27466,7 @@ impl Workspace {
     /// through the branch they hang from.
     fn render_left_bar(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
         if !self.left_bar {
+            *self.bay_bounds.lock().unwrap() = None;
             return None;
         }
         let th = skin::native_theme(cx, theme::theme(cx));
@@ -27476,6 +27477,10 @@ impl Workspace {
         // restyle the bar without a line of this function changing.
         let sk = skin::skin(cx, s);
         let bar_header = uiconfig::shown(cx, uiconfig::Key::LeftBarHeader);
+        if sk.unboxed() {
+            // An absent trash bay must never retain an invisible drop target.
+            *self.bay_bounds.lock().unwrap() = None;
+        }
         // Rebuilt every frame; the drop targets below are pushed back in during
         // paint. Stale boxes from the last frame would file a task into a
         // branch that has since moved.
@@ -27632,13 +27637,15 @@ impl Workspace {
                 .child(list.min_h(px(72. * s)))
                 // The bay sits between the tree and the allowance slot: below
                 // everything you can drag, above everything you only read.
-                .child(
-                    div()
-                        .flex_none()
-                        .px(px(6. * s))
-                        .pb(px(4. * s))
-                        .child(self.render_bay(&th, s, cx)),
-                )
+                .when(!sk.unboxed(), |d| {
+                    d.child(
+                        div()
+                            .flex_none()
+                            .px(px(6. * s))
+                            .pb(px(4. * s))
+                            .child(self.render_bay(&th, s, cx)),
+                    )
+                })
                 // The bottom slot, under the tree. It states its height and
                 // normally gets it exactly, so the tree yields that much and
                 // not a pixel more whatever the slot is holding — but it
@@ -27900,7 +27907,7 @@ impl Workspace {
                 }
                 strip
             })
-            .child(close_x)
+            .when(!sk.unboxed(), |d| d.child(close_x))
     }
 
     /// The head of the tab strip while the tree is shut: the project, `›`, its
@@ -30358,12 +30365,20 @@ impl Render for Workspace {
                     .rounded(sk.radius())
                     .cursor_pointer()
                     .hover(|st| st.bg(hsla(0., 0., 1., 0.12)))
-                    .child(Self::triangle(
-                        BarDir::Right,
-                        th.text.alpha(0.7),
-                        scale,
-                        &sk,
-                    ))
+                    .map(|d| {
+                        if sk.text_controls() {
+                            d.text_size(sk.text_px(10. * scale))
+                                .text_color(sk.ink.ink_dim)
+                                .child("SPINE")
+                        } else {
+                            d.child(Self::triangle(
+                                BarDir::Right,
+                                th.text.alpha(0.7),
+                                scale,
+                                &sk,
+                            ))
+                        }
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -32141,9 +32156,14 @@ impl Render for Workspace {
                                 .child(format!("\u{b7} {}", t.ui.ui_yours)),
                         )
                     });
-                // The sets: follow the design, or pick one. One lit.
+                // Follow the active appearance preference, or pick a set.
+                let follow_label = if sk.unboxed() {
+                    "skin"
+                } else {
+                    t.ui.ui_set_design
+                };
                 let mut set_row = div().flex().flex_row().flex_wrap().gap_2().child(
-                    theme_icon_btn(&th, &sk, "\u{25ce}", t.ui.ui_set_design, following)
+                    theme_icon_btn(&th, &sk, "\u{25ce}", follow_label, following)
                         .id("ui-set-design")
                         .on_mouse_down(
                             MouseButton::Left,
@@ -37428,7 +37448,9 @@ impl Render for Workspace {
                     )
                     .map(|d| sk.finish(d))
                     .when(sk.unboxed(), |d| {
-                        d.border(px(sk.m.hairline)).border_color(sk.ink.edge)
+                        d.border(px(sk.m.hairline))
+                            .border_t_0()
+                            .border_color(sk.ink.edge)
                     })
                     .child(bezel_top)
                     .child(stage)
@@ -37497,6 +37519,72 @@ mod tests {
         assert!(restored.theme == saved.theme);
         let legacy: StateFile = toml::from_str("active = 0\ntabs = []\n").unwrap();
         assert!(legacy.skin.is_none());
+    }
+
+    #[gpui::test]
+    fn minimal_header_keeps_model_and_menu_without_an_invisible_trash_target(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+            skin::select(cx, "terminimalist").unwrap();
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(968.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let pane = ws.read_with(cx, |ws, _| ws.every_view()[0].clone());
+        let stop = pane.read_with(cx, |v, _| v.fixture_shutdown());
+        cx.on_quit(stop);
+        pane.update(cx, |v, _| {
+            v.mode = pane::PaneMode::Codex;
+            v.model_label = Some("SOL 6 XHIGH".into());
+        });
+        ws.update(cx, |ws, cx| {
+            ws.set_left_bar(true, cx);
+            *ws.bay_bounds.lock().unwrap() = Some(Bounds::new(
+                point(px(10.), px(700.)),
+                size(px(100.), px(56.)),
+            ));
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+        };
+        draw(cx);
+        assert!(cx.debug_bounds("pane-model").is_some());
+        assert!(ws.read_with(cx, |ws, _| ws.bay_bounds.lock().unwrap().is_none()));
+        let title = cx
+            .debug_bounds("pane-title")
+            .expect("title remains reachable");
+        cx.simulate_mouse_down(
+            title.center(),
+            MouseButton::Right,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            title.center(),
+            MouseButton::Right,
+            gpui::Modifiers::default(),
+        );
+        draw(cx);
+        assert!(pane.update(cx, |v, cx| v.layers_up(cx).header_menu));
     }
 
     #[gpui::test]
