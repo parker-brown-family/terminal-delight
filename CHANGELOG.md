@@ -19,8 +19,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   ground. Its text-control policy replaces native icons with word labels and
   named palette choices; both split directions have room for their labels in
   the footer. Terminal cells and authored documents keep their own presentation.
+- TERMINIMALIST removes nested pane frames, button outlines and settings boxes.
+  One outer hairline and structural dividers remain; selected choices and
+  warnings keep a single rule. Other skins keep their existing boundaries.
 - Custom skins can opt into the same native policy with `controls = "text"`
-  under `[shape]`. Existing skins retain icon controls.
+  under `[shape]`. Combining it with `boundary = "none"` removes native boxes.
+  Existing skins retain icon controls.
 
 ### Installer ownership and cleanup
 

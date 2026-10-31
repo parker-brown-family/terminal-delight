@@ -1554,7 +1554,7 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme, sk: &skin::Skin) -> g
                 .px_3()
                 .py_1()
                 .rounded(sk.radius_lg())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(th.accent.alpha(0.8 * fade))
                 .bg(th.bg.alpha(0.88 * fade))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -10348,7 +10348,7 @@ impl Workspace {
                 .px_2()
                 .py_0p5()
                 .rounded_full()
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(match (lit, chosen) {
                     (true, true) => acc.alpha(0.85),
                     (true, false) => txt.alpha(0.40),
@@ -10645,7 +10645,7 @@ impl Workspace {
                     .px_2()
                     .py_0p5()
                     .rounded(sk.radius_pill())
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(if on { acc.alpha(0.85) } else { txt.alpha(0.16) })
                     .bg(if on { acc.alpha(0.16) } else { txt.alpha(0.04) })
                     .text_size(sk.text_px(10.))
@@ -10688,7 +10688,7 @@ impl Workspace {
                 .px_2()
                 .py_1()
                 .rounded_sm()
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(hsla(0.09, 0.8, 0.6, 0.45))
                 .bg(hsla(0.09, 0.8, 0.6, 0.08))
                 .child(
@@ -11197,7 +11197,7 @@ impl Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded_sm()
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(acc.alpha(if refreshing { 0.3 } else { 0.6 }))
                         .text_size(sk.text_px(9.))
                         .text_color(acc.alpha(if refreshing { 0.5 } else { 1. }))
@@ -11277,7 +11277,7 @@ impl Workspace {
                     .py_0p5()
                     .rounded(sk.capped(4.))
                     .bg(hsla(0., 0., 0.06, 1.))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(green.alpha(0.5))
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
                     .text_size(sk.text_px(13.))
@@ -11317,7 +11317,7 @@ impl Workspace {
                         .py_0p5()
                         .rounded(sk.capped(4.))
                         .bg(th.accent.alpha(0.12))
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.accent.alpha(0.55))
                         .font_weight(gpui::FontWeight::EXTRA_BOLD)
                         .text_size(sk.text_px(13.))
@@ -11355,7 +11355,7 @@ impl Workspace {
                 .px_2p5()
                 .py_0p5()
                 .rounded_full()
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if on { acc.alpha(0.85) } else { txt.alpha(0.16) })
                 .bg(if on { acc.alpha(0.16) } else { txt.alpha(0.03) })
                 .text_size(sk.text_px(10.))
@@ -11400,7 +11400,7 @@ impl Workspace {
                 .px_2p5()
                 .py_0p5()
                 .rounded_full()
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if left_mode {
                     acc.alpha(0.85)
                 } else {
@@ -11523,7 +11523,7 @@ impl Workspace {
                             .px_2()
                             .py_0p5()
                             .rounded_full()
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(green.alpha(0.5))
                             .text_size(sk.text_px(10.))
                             .text_color(green)
@@ -11553,7 +11553,7 @@ impl Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.capped(4.))
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.text.alpha(0.10))
                         .text_size(sk.text_px(9.5))
                         .child(
@@ -11723,7 +11723,7 @@ impl Workspace {
             .overflow_hidden()
             .p_3()
             .rounded_md()
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.62))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -12926,7 +12926,7 @@ impl Workspace {
             .w(px(400.))
             .rounded(sk.rad_raw(8.))
             .overflow_hidden()
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(danger.alpha(0.9))
             .bg(sk.region_face(darken(th.surface, 0.62)))
             .shadow(float_shadows(danger, th.grade.phosphor))
@@ -16463,7 +16463,7 @@ impl Workspace {
                     .py_1()
                     .rounded(sk.radius())
                     .bg(th.bg.alpha(0.55))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.4))
                     .text_size(sk.text_px(13.))
                     .child(input),
@@ -16512,7 +16512,7 @@ impl Workspace {
                 } else {
                     hsla(0., 0., 0., 0.)
                 })
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if selected {
                     th.accent.alpha(0.55)
                 } else {
@@ -16579,7 +16579,7 @@ impl Workspace {
             .rounded(sk.rad_raw(10.))
             .overflow_hidden()
             .bg(darken(th.surface, 0.35))
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
             .map(|d| sk.chrome(sk.finish(d)))
@@ -16892,7 +16892,7 @@ impl Workspace {
                     .py_1()
                     .rounded(sk.radius())
                     .bg(th.bg.alpha(0.55))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.4))
                     .text_size(sk.text_px(13.))
                     .child(input),
@@ -16978,7 +16978,7 @@ impl Workspace {
                 } else {
                     hsla(0., 0., 0., 0.)
                 })
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if selected {
                     th.accent.alpha(0.55)
                 } else {
@@ -17051,7 +17051,7 @@ impl Workspace {
             .rounded(sk.radius_lg())
             .overflow_hidden()
             .bg(sk.region_face(darken(th.surface, 0.35)))
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
             .map(|d| sk.finish(d))
@@ -17152,7 +17152,7 @@ impl Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded_full()
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.complement.alpha(0.5))
                         .text_color(th.complement)
                         .child(format!("{}  \u{00b7}  {}", a.label, a.surfaces.join("/"))),
@@ -17167,7 +17167,7 @@ impl Workspace {
                     .px_2()
                     .py_1()
                     .rounded(sk.radius())
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.text.alpha(0.12))
                     .when(sk.m.frost > 0., |d| sk.finish_group(d))
                     .child(
@@ -17214,7 +17214,7 @@ impl Workspace {
             .overflow_y_scroll()
             .p_3()
             .rounded(sk.radius_lg())
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -17359,7 +17359,7 @@ impl Workspace {
                 .px_2()
                 .py_2()
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if live {
                     th.accent.alpha(0.55)
                 } else {
@@ -17412,7 +17412,7 @@ impl Workspace {
             .overflow_y_scroll()
             .p_3()
             .rounded(sk.radius())
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -17581,7 +17581,7 @@ impl Workspace {
                 .px_2()
                 .py_2()
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if on {
                     th.accent.alpha(0.55)
                 } else {
@@ -17624,7 +17624,7 @@ impl Workspace {
             .overflow_y_scroll()
             .p_3()
             .rounded(sk.radius_lg())
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -17875,7 +17875,7 @@ impl Workspace {
                 .px_2()
                 .py_2()
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if on {
                     th.accent.alpha(0.55)
                 } else {
@@ -17971,7 +17971,7 @@ impl Workspace {
             .overflow_y_scroll()
             .p_3()
             .rounded(sk.radius_lg())
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -18104,7 +18104,7 @@ impl Workspace {
                     .px_2()
                     .py_1()
                     .rounded(sk.radius())
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.text.alpha(0.18))
                     .cursor_pointer()
                     .hover(|s| s.bg(th.accent.alpha(0.14)))
@@ -18219,7 +18219,7 @@ impl Workspace {
                     .py_1()
                     .rounded(sk.radius())
                     .bg(th.bg.alpha(0.55))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.4))
                     .text_size(sk.text_px(13.))
                     .child(input),
@@ -18302,7 +18302,7 @@ impl Workspace {
             .rounded(sk.rad_raw(10.))
             .overflow_hidden()
             .bg(darken(th.surface, 0.35))
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .font_family(skin::for_theme(cx, th, 1.0).font_family)
             .map(|mut d| {
@@ -18663,7 +18663,7 @@ impl Workspace {
             .overflow_y_scroll()
             .occlude()
             .bg(th.surface)
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(th.accent.alpha(0.55))
             .rounded(sk.radius_lg())
             .shadow_lg()
@@ -18694,7 +18694,7 @@ impl Workspace {
                     .px_2()
                     .py_1()
                     .rounded(sk.radius())
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.35))
                     .text_size(sk.text_px(13.))
                     .text_color(th.text)
@@ -18870,7 +18870,7 @@ impl Workspace {
                     .py(px(7.))
                     .rounded(sk.radius_lg())
                     .bg(th.bg.alpha(if active { 0.7 } else { 0.35 }))
-                    .border_2()
+                    .border(sk.box_border(2.))
                     .border_color(if active {
                         th.accent.alpha(0.85)
                     } else {
@@ -19063,7 +19063,7 @@ impl Workspace {
                         .flex_none()
                         .overflow_hidden()
                         .rounded(sk.radius())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.text.alpha(0.15))
                         .child(
                             gpui::img(PathBuf::from(c.path.clone()))
@@ -19130,7 +19130,7 @@ impl Workspace {
             .rounded(sk.rad_raw(10.))
             .overflow_hidden()
             .bg(darken(th.surface, 0.35))
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(th.accent.alpha(0.6))
             .font_family(skin::for_theme(cx, th, 1.0).font_family)
             .shadow(vec![BoxShadow {
@@ -19246,7 +19246,7 @@ impl Workspace {
             .rounded(sk.rad_raw(12.))
             .overflow_hidden()
             .bg(bg)
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(accent.alpha(0.7))
             .shadow(
                 std::iter::once(BoxShadow {
@@ -19358,7 +19358,7 @@ impl Workspace {
             .flex_none()
             .px(px(8.))
             .rounded(sk.capped(9.))
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(ink.alpha(0.55))
             .text_size(px(10.5))
             .text_color(ink)
@@ -19953,7 +19953,7 @@ impl Workspace {
             .py_0p5()
             .rounded(sk.radius())
             .cursor_pointer()
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(if on {
                 accent.alpha(0.8)
             } else {
@@ -23050,7 +23050,7 @@ impl Workspace {
             div()
                 .px(px(4. * s))
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(sk.ink.edge_strong)
                 .bg(if active {
                     sk.ink.mark.alpha(0.2)
@@ -23880,7 +23880,7 @@ impl Workspace {
                     div()
                         .px(px(4. * s))
                         .rounded(sk.radius())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.accent)
                         .bg(darken(th.bg, 0.8))
                         .text_size(sk.text_px(CHROME_NAME_PT * s))
@@ -24192,7 +24192,7 @@ impl Workspace {
                     div()
                         .px(px(4. * s))
                         .rounded(sk.radius())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.accent)
                         .bg(darken(th.bg, 0.8))
                         .text_size(sk.text_px(CHROME_NAME_PT * s))
@@ -24626,7 +24626,7 @@ impl Workspace {
             // with a line down it, which reads as a gap in the bar rather than
             // as something closed. It stays while the doors are open: a frame
             // is the thing they are set into, not a state they are in.
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(sk.ink.rule_strong)
             // The fire throws light on the bar around it. Same phosphor shape
             // the delete dialog wears — a crisp rim plus a soft bloom — in ember
@@ -24880,13 +24880,14 @@ impl Workspace {
 
         // "No reading", drawn so it cannot be mistaken for either end of the
         // scale: a hatched track with its own outline, at the rail's height.
+        let hatch_border = sk.box_border(1.);
         let hatch = move |h: f32| {
             let mut d = div()
                 .w_full()
                 .h(px(h))
                 .rounded(pill)
                 .bg(text.alpha(0.04))
-                .border_1()
+                .border(hatch_border)
                 .border_color(faint.alpha(0.40))
                 .flex()
                 .flex_row()
@@ -25102,7 +25103,7 @@ impl Workspace {
                             .w(px(mark_w * s))
                             .h(px(mark_w * s))
                             .rounded(rad)
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(text.alpha(0.18))
                             .bg(text.alpha(0.06))
                             .flex()
@@ -25286,7 +25287,7 @@ impl Workspace {
             .gap(px(5.0 * s))
             .px(px(6.0 * s))
             .rounded(sk.radius())
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(if tally.needs_you() {
                 hsla(0.11, 0.85, 0.60, 1.).alpha(0.55)
             } else {
@@ -26494,7 +26495,7 @@ impl Workspace {
                 .px(px(5. * s))
                 .py(px(7. * s))
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 // Carried at a lower alpha than the fill it sits on, so
                 // the edge reads as an edge rather than as a second
                 // element. Same pair the tab chips use.
@@ -26636,7 +26637,7 @@ impl Workspace {
             .p(px(7. * s))
             .w(px(316. * s))
             .rounded(sk.rad_raw(8.))
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .bg(sk.region_face(darken(th.surface, 0.45)))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -27009,7 +27010,7 @@ impl Workspace {
                             div()
                                 .px(px(4. * s))
                                 .rounded(px(2. * s))
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(hsla(0.58, 0.72, 0.62, 0.6))
                                 .child(SharedString::from(self.lang.strings().ui.rail_beside_chip))
                                 // Its own act, like the link's, and it stops
@@ -27056,7 +27057,7 @@ impl Workspace {
                                     .id(SharedString::from(format!("rail-prompts-{key}-{n}")))
                                     .px(px(6. * s))
                                     .rounded(px(3. * s))
-                                    .border_1()
+                                    .border(sk.box_border(1.))
                                     .border_color(if n == chosen { ink } else { sk.ink.ink_dim })
                                     .text_size(sk.text_px(9.5 * s))
                                     .text_color(if n == chosen { ink } else { sk.ink.ink_dim })
@@ -27089,7 +27090,7 @@ impl Workspace {
                             .px(px(9. * s))
                             .py(px(2. * s))
                             .rounded(px(3. * s))
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(if yes { ink } else { sk.ink.ink_dim })
                             .text_size(sk.text_px(10. * s))
                             .text_color(if yes { ink } else { sk.ink.ink })
@@ -27605,6 +27606,9 @@ impl Workspace {
             // border. Under deco it is square with a twin rule, and nothing here
             // had to know.
             sk.spine_panel()
+                .when(sk.unboxed(), |d| {
+                    d.border_r(px(sk.m.hairline)).border_color(sk.ink.edge)
+                })
                 .flex_none()
                 .w(px(self.left_bar_w * s))
                 .h_full()
@@ -27696,7 +27700,7 @@ impl Workspace {
                 .px(px(8. * s))
                 .py(px(2. * s))
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(sk.ink.mark)
                 .bg(darken(th.bg, 0.8))
                 .text_size(sk.text_px(CHROME_NAME_PT * s))
@@ -27847,7 +27851,7 @@ impl Workspace {
                         .absolute()
                         .inset_0()
                         .rounded(sk.radius())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.accent)
                         .bg(th.accent.alpha(0.25)),
                 )
@@ -28178,7 +28182,7 @@ impl Workspace {
                 .overflow_x_hidden()
                 .overflow_y_scroll()
                 .rounded(sk.rad_raw(8.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.45)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -28620,7 +28624,7 @@ impl Render for ThemeTooltip {
                     div()
                         .w(px(11. * s))
                         .h(px(16. * s))
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.text.alpha(0.2))
                         .bg(*c)
                 }),
@@ -28965,7 +28969,7 @@ fn agent_card_shadows(glow: Hsla, live: bool, phosphor: f32) -> Vec<BoxShadow> {
 /// soft accent halo that reads as a *light source* — then casts a broad, dark
 /// shadow straight DOWN onto the panes, so the surface clearly hovers and the
 /// workspace beneath it sits in shadow. `glow` is the rim colour (the theme
-/// accent; a danger hue for destructive dialogs). Pair with `.border_2()` in the
+/// accent; a danger hue for destructive dialogs). Pair with `.border(sk.box_border(2.))` in the
 /// same hue, and `.rounded_*()` so the glow follows the corners.
 ///
 /// `phosphor` is the gauge reading the halo goes through (the scope's
@@ -29191,11 +29195,13 @@ fn render_node(
                 .when(sk.shape.corner != skin::Corner::Round, |d| {
                     d.rounded(px(0.))
                 })
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if is_focused { acc } else { th.faint })
                 // highlighted pane gets a 2x-thick accent border (drawn inside the
                 // flex box, so the grid never reflows — only inner content shifts 1px)
-                .when(is_focused && !sk.text_controls(), |d| d.border_2())
+                .when(is_focused && !sk.text_controls(), |d| {
+                    d.border(sk.box_border(2.))
+                })
                 .when(is_focused && !sk.text_controls(), |d| {
                     let mut stack = vec![
                         // crisp 1px outer ring: reads as a double border
@@ -29382,7 +29388,7 @@ fn render_node(
                 let slab = div()
                     .absolute()
                     .bg(th.accent.alpha(0.28))
-                    .border_2()
+                    .border(skin::skin(cx, 1.).box_border(2.))
                     .border_color(th.accent.alpha(0.85));
                 let slab = match zone {
                     Zone::Left => slab.left_0().top_0().bottom_0().w(gpui::relative(0.5)),
@@ -30530,7 +30536,7 @@ impl Render for Workspace {
                             .h(px(3.))
                             .rounded(sk.radius_pill())
                             .bg(sk.region_face(darken(th.surface, 0.4)))
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(th.faint),
                     )
                     .child(
@@ -31854,9 +31860,10 @@ impl Render for Workspace {
                             Some(c) => {
                                 let tile = tile.bg(c.bg);
                                 let tile = if active {
-                                    tile.border_2().border_color(th.text)
+                                    tile.border(sk.box_border(2.)).border_color(th.text)
                                 } else {
-                                    tile.border_1().border_color(c.chips[0].alpha(0.55))
+                                    tile.border(sk.box_border(1.))
+                                        .border_color(c.chips[0].alpha(0.55))
                                 };
                                 sk.frame(tile)
                                     .relative()
@@ -31866,7 +31873,7 @@ impl Render for Workspace {
                             }
                             // The custom wheel's cog, in the tray's own ink.
                             None => tile
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(if active {
                                     th.accent
                                 } else {
@@ -31959,7 +31966,7 @@ impl Render for Workspace {
                     .w(px(width + 2. * TRAY_AREA_PAD))
                     .p(px(TRAY_AREA_PAD))
                     .rounded(sk.rad_raw(6.))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.4))
                     .map(|d| sk.finish_group(d))
                     .child(label(title))
@@ -32456,7 +32463,7 @@ impl Render for Workspace {
                 .when(sk.text_controls(), |d| d.right(px(8.)))
                 .p_3()
                 .rounded(sk.rad_raw(6.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(th.surface.alpha(0.82)))
                 // never spill past the RENDER: clip horizontally, scroll a
@@ -32649,7 +32656,7 @@ impl Render for Workspace {
                 .overflow_y_scroll()
                 .p_3()
                 .rounded(sk.rad_raw(6.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.6)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -32915,7 +32922,7 @@ impl Render for Workspace {
                     .py_1()
                     .rounded(sk.rad_raw(8.))
                     .bg(th.accent.alpha(0.06))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.18))
                     .child(
                         div()
@@ -33062,7 +33069,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { th.accent } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(th.accent.alpha(0.16)))
                         .text_color(if on { th.text } else { th.text.alpha(0.6) })
@@ -33101,7 +33108,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { color } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(color.alpha(0.16)))
                         .text_color(if on { th.text } else { th.text.alpha(0.65) })
@@ -33154,7 +33161,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { th.accent } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(th.accent.alpha(0.16)))
                         .text_color(if on { th.text } else { th.text.alpha(0.6) })
@@ -33193,7 +33200,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { color } else { color.alpha(0.34) })
                         .when(on, |d| d.bg(color.alpha(0.18)))
                         .text_color(if on { th.text } else { th.text.alpha(0.68) })
@@ -33247,7 +33254,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { th.accent } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(th.accent.alpha(0.16)))
                         .text_color(if on { th.text } else { th.text.alpha(0.6) })
@@ -33297,7 +33304,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { color } else { color.alpha(0.34) })
                         .when(on, |d| d.bg(color.alpha(0.18)))
                         .text_color(if on { th.text } else { th.text.alpha(0.68) })
@@ -33613,7 +33620,7 @@ impl Render for Workspace {
                             .px_1()
                             .py_0p5()
                             .rounded(sk.radius())
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(col.alpha(0.5))
                             .bg(col.alpha(0.10))
                             .child(
@@ -33754,7 +33761,7 @@ impl Render for Workspace {
                         .px_1()
                         .py_1()
                         .rounded(sk.radius())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(status_glow.alpha(0.20))
                         .bg(well_bg.alpha(0.55))
                         .overflow_hidden();
@@ -33813,7 +33820,7 @@ impl Render for Workspace {
                         // its old thickness (5→3.3) — same outline + glow, slimmer.
                         .p(px(3.3 * cs))
                         .rounded(sk.rad_raw(8.))
-                        .border_2()
+                        .border(sk.box_border(2.))
                         .border_color(kind_col.alpha(if live_glow { 0.42 } else { 0.32 }))
                         .bg(linear_gradient(
                             135.,
@@ -33853,7 +33860,7 @@ impl Render for Workspace {
                                 .gap_1()
                                 .p_1()
                                 .rounded(sk.rad_raw(6.))
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(kind_col.alpha(0.3))
                                 .bg(sk.region_face(card_bg))
                                 .when(sk.m.frost > 0., |d| d.bg(gpui::transparent_black()))
@@ -33917,7 +33924,7 @@ impl Render for Workspace {
                                                 .text_color(mode_col)
                                                 .px_1()
                                                 .rounded(sk.radius())
-                                                .border_1()
+                                                .border(sk.box_border(1.))
                                                 .border_color(kind_col.alpha(0.42))
                                                 .bg(kind_col.alpha(0.12))
                                                 .child(mode_lbl.clone()),
@@ -33947,7 +33954,7 @@ impl Render for Workspace {
                                         // the warped screen reads as recessed
                                         // glass set into the card.
                                         .rounded(sk.rad_raw(8.))
-                                        .border_2()
+                                        .border(sk.box_border(2.))
                                         .border_color(darken(kind_col, 0.62))
                                         .bg(well_bg.alpha(0.7))
                                         // heavy inset vignette = the curved-glass
@@ -34072,7 +34079,7 @@ impl Render for Workspace {
                                                             .w(px(52. * cs))
                                                             .h(px(52. * cs))
                                                             .rounded(sk.radius_pill())
-                                                            .border_2()
+                                                            .border(sk.box_border(2.))
                                                             .border_color(gcol.alpha(0.55))
                                                             .bg(gcol.alpha(0.14))
                                                             .flex()
@@ -34190,7 +34197,7 @@ impl Render for Workspace {
                                             .w(px(18. * cs))
                                             .h(px(18. * cs))
                                             .rounded(sk.rad_raw(6.))
-                                            .border_1()
+                                            .border(sk.box_border(1.))
                                             .border_color(theme_tint.alpha(0.6))
                                             .bg(theme_tint.alpha(0.15))
                                             .text_size(sk.text_px(11. * cs))
@@ -34235,7 +34242,7 @@ impl Render for Workspace {
                                                 .px_1()
                                                 .py_0p5()
                                                 .rounded(sk.rad_raw(6.))
-                                                .border_1()
+                                                .border(sk.box_border(1.))
                                                 .border_color(status_glow.alpha(0.55))
                                                 .bg(status_glow.alpha(0.12))
                                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -34321,7 +34328,7 @@ impl Render for Workspace {
                 .overflow_hidden()
                 .p_4()
                 .rounded(sk.rad_raw(6.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(if preview {
                     darken(th.bg, 0.78)
@@ -34380,7 +34387,7 @@ impl Render for Workspace {
                                 .px_2()
                                 .py_0p5()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(hsla(0.43, 0.68, 0.55, 0.6))
                                 .bg(hsla(0.43, 0.68, 0.55, 0.10))
                                 .text_size(sk.text_px(10.))
@@ -34408,7 +34415,7 @@ impl Render for Workspace {
                                 .px_2()
                                 .py_0p5()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(acc.alpha(0.6))
                                 .bg(acc.alpha(0.10))
                                 .text_size(sk.text_px(10.))
@@ -34492,7 +34499,7 @@ impl Render for Workspace {
                             .py_1()
                             .rounded(sk.rad_raw(8.))
                             .bg(th.accent.alpha(0.06))
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(th.accent.alpha(0.18))
                             .child(inner)
                     };
@@ -34720,7 +34727,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { th.accent } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(th.accent.alpha(0.16)))
                         .text_color(if on { th.text } else { th.text.alpha(0.6) })
@@ -34752,7 +34759,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { col } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(col.alpha(0.16)))
                         .text_color(if on { th.text } else { th.text.alpha(0.65) })
@@ -34919,7 +34926,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_1()
                         .rounded(sk.rad_raw(6.))
-                        .border_2()
+                        .border(sk.box_border(2.))
                         .border_color(dead_border)
                         .bg(dead_bg)
                         .shadow(agent_card_shadows(dead_glow, false, th.grade.phosphor))
@@ -34960,7 +34967,7 @@ impl Render for Workspace {
                                                 .text_color(kind_col)
                                                 .px_1()
                                                 .rounded(sk.radius())
-                                                .border_1()
+                                                .border(sk.box_border(1.))
                                                 .border_color(kind_col.alpha(0.42))
                                                 .bg(kind_col.alpha(0.12))
                                                 .child(da.kind.label()),
@@ -35005,7 +35012,7 @@ impl Render for Workspace {
                                             .px_2()
                                             .py_0p5()
                                             .rounded(sk.rad_raw(6.))
-                                            .border_1()
+                                            .border(sk.box_border(1.))
                                             .border_color(th.complement.alpha(0.5))
                                             .text_size(sk.text_px(8.5 * gs))
                                             .font_weight(gpui::FontWeight::BOLD)
@@ -35030,7 +35037,7 @@ impl Render for Workspace {
                                         .px_2()
                                         .py_0p5()
                                         .rounded(sk.rad_raw(6.))
-                                        .border_1()
+                                        .border(sk.box_border(1.))
                                         .border_color(th.accent.alpha(0.5))
                                         .text_size(sk.text_px(8.5 * gs))
                                         .font_weight(gpui::FontWeight::BOLD)
@@ -35070,7 +35077,7 @@ impl Render for Workspace {
                 .overflow_hidden()
                 .p_3()
                 .rounded(sk.rad_raw(6.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.6)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -35197,7 +35204,7 @@ impl Render for Workspace {
                 .px_3()
                 .py_1()
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(danger)
                 .bg(danger.alpha(0.22))
                 .text_color(white().alpha(0.96))
@@ -35365,7 +35372,7 @@ impl Render for Workspace {
                 .overflow_y_scroll()
                 .p_4()
                 .rounded(sk.rad_raw(8.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.45)))
                 .text_color(th.text)
@@ -35481,7 +35488,7 @@ impl Render for Workspace {
                 .overflow_y_scroll()
                 .p_2()
                 .rounded(sk.rad_raw(8.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.45)))
                 .text_color(th.text)
@@ -36018,7 +36025,7 @@ impl Render for Workspace {
                 .text_size(sk.text_px(10.5))
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(th.complement)
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(th.accent.alpha(0.5))
                 .child(format!("🌐 {} ▾", cur_lang.native()))
                 .on_mouse_down(
@@ -36040,7 +36047,7 @@ impl Render for Workspace {
                 .overflow_y_scroll()
                 .p_5()
                 .rounded(sk.rad_raw(8.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.45)))
                 .text_color(th.text)
@@ -36221,7 +36228,7 @@ impl Render for Workspace {
                             .rounded(sk.radius_pill())
                             .bg(c)
                             .cursor_pointer()
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(hsla(0., 0., 0., 0.5))
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -36301,7 +36308,7 @@ impl Render for Workspace {
                                 .px_1()
                                 .py_0p5()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(g_col)
                                 .bg(g_col.alpha(0.3))
                                 .cursor_pointer()
@@ -36355,7 +36362,7 @@ impl Render for Workspace {
                             .px_1()
                             .py_0p5()
                             .rounded(sk.radius())
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(if on { th.accent } else { pcol })
                             .bg(pcol.alpha(if on { 0.55 } else { 0.25 }))
                             .cursor_pointer()
@@ -36412,7 +36419,7 @@ impl Render for Workspace {
                     .top(px(f32::from(at.y) + 8.))
                     .p_2()
                     .rounded(sk.rad_raw(6.))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.85))
                     .bg(sk.region_face(darken(th.surface, 0.6)))
                     .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -36532,7 +36539,7 @@ impl Render for Workspace {
                         .rounded(sk.radius_pill())
                         .bg(c)
                         .cursor_pointer()
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(hsla(0., 0., 0., 0.5))
                         .on_mouse_down(
                             MouseButton::Left,
@@ -36566,7 +36573,7 @@ impl Render for Workspace {
                 .overflow_y_scroll()
                 .p_2()
                 .rounded(sk.rad_raw(6.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.6)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -37252,16 +37259,20 @@ impl Render for Workspace {
         let registry = self.split_bounds.clone();
         let pane_reg = self.pane_bounds.clone();
         let drop = self.drop_target.clone();
-        let pane_area = div().size_full().flex().p(px(3.)).child(render_node(
-            &tab.root,
-            &th,
-            focused_id,
-            dragging,
-            &registry,
-            &pane_reg,
-            drop.as_ref(),
-            cx,
-        ));
+        let pane_area = div()
+            .size_full()
+            .flex()
+            .p(px(if sk.unboxed() { 0. } else { 3. }))
+            .child(render_node(
+                &tab.root,
+                &th,
+                focused_id,
+                dragging,
+                &registry,
+                &pane_reg,
+                drop.as_ref(),
+                cx,
+            ));
 
         let screen = div()
             .flex_1()
@@ -37270,7 +37281,7 @@ impl Render for Workspace {
             .rounded(sk.capped(10.))
             .overflow_hidden()
             .bg(th.bg)
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(darken(th.surface, 0.3))
             .mx_2()
             // Doubled black bezel gap between the mother bar and the screen.
@@ -37375,7 +37386,7 @@ impl Render for Workspace {
                         linear_color_stop(brighten(bezel, 1.6), 0.),
                         linear_color_stop(darken(bezel, 0.8), 1.),
                     ))
-                    .border_2()
+                    .border(sk.box_border(2.))
                     .border_color(th.accent.alpha(0.45))
                     .shadow(
                         vec![
@@ -37416,6 +37427,9 @@ impl Render for Workspace {
                         .collect::<Vec<_>>(),
                     )
                     .map(|d| sk.finish(d))
+                    .when(sk.unboxed(), |d| {
+                        d.border(px(sk.m.hairline)).border_color(sk.ink.edge)
+                    })
                     .child(bezel_top)
                     .child(stage)
                     .child(bezel_bottom)
@@ -39988,7 +40002,7 @@ mod tests {
         let panel = body_of(&code, "fn rail_panel");
         for token in [
             "rad_raw(8.)",
-            "border_2()",
+            "sk.finish(d)",
             "th.accent.alpha(0.85)",
             "darken(th.surface, 0.45)",
             "float_shadows(th.accent, th.grade.phosphor)",
@@ -40005,6 +40019,15 @@ mod tests {
                  panel wears. A card with a thinner border and no phosphor glow reads \
                  as a decal stuck on the screen rather than as one of this window's \
                  menus, which is the state this guard exists to refuse."
+            );
+        }
+
+        // A skin may remove the input border through its shared policy. Both
+        // callers still request the same legacy width before that finish.
+        for (name, body) in [("panel", panel), ("tooltip", tip)] {
+            assert!(
+                body.contains("border_2()") || body.contains("border(sk.box_border(2.))"),
+                "{name} no longer requests the shared two-pixel legacy edge"
             );
         }
 

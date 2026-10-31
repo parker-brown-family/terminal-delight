@@ -401,7 +401,7 @@ impl Workspace {
                         .flex_none()
                         .px(px(4.))
                         .rounded(sk.rad_raw(4.))
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(sk.ink.ink_dim.alpha(0.5))
                         .text_size(sk.text_px(9.5))
                         .text_color(sk.ink.ink_dim)

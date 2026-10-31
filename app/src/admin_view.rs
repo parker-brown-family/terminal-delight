@@ -377,7 +377,7 @@ impl Workspace {
                     .px_2()
                     .py_2()
                     .rounded(sk.radius())
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(if warn {
                         gpui::hsla(0.0, 0.62, 0.52, 0.9)
                     } else if live {
@@ -604,12 +604,13 @@ impl Workspace {
                     .px_2()
                     .py_1()
                     .rounded(sk.radius())
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(if on { th.accent } else { th.text.alpha(0.2) })
                     .when(on, |d| d.bg(th.accent.alpha(0.18)))
                     .cursor_pointer()
                     .text_size(sk.text_px(8.5))
                     .text_color(if on { th.text } else { th.text.alpha(0.6) })
+                    .when(sk.unboxed(), |d| sk.choice(d, on))
                     .child(label)
                     .on_mouse_down(
                         MouseButton::Left,

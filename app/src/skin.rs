@@ -894,6 +894,16 @@ impl Skin {
         self.shape.controls == Controls::Text
     }
 
+    /// Open native furniture is an explicit combination; icon skins retain
+    /// their existing borders even when their panel boundary is None.
+    pub fn unboxed(&self) -> bool {
+        self.text_controls() && self.shape.boundary == Boundary::None
+    }
+
+    pub fn box_border(&self, legacy: f32) -> Pixels {
+        px(if self.unboxed() { 0. } else { legacy })
+    }
+
     /// Only native labels pass here. Never use this on terminal cells, user
     /// titles, authored documents, code or workbench prose.
     pub fn control_text(&self, label: &str) -> String {
@@ -1030,7 +1040,9 @@ impl Skin {
     }
 
     pub fn frame<E: Styled>(&self, d: E) -> E {
-        if self.text_controls() {
+        if self.unboxed() {
+            self.open_control(d).rounded(self.radius())
+        } else if self.text_controls() {
             d.rounded(self.radius())
                 .border(px(self.m.border))
                 .shadow(Vec::new())
@@ -1097,19 +1109,32 @@ impl Skin {
         if self.is_paper() {
             self.paper_option(d, active)
         } else {
-            self.tab(d.relative().rounded(self.radius()), active, self.ink.select)
-                .font_family(self.font_family.clone())
-                .text_color(if active {
-                    self.lit_label()
-                } else {
-                    self.ink.ink_dim
-                })
+            self.tab(
+                self.open_control(d).relative().rounded(self.radius()),
+                active,
+                self.ink.select,
+            )
+            .font_family(self.font_family.clone())
+            .text_color(if active {
+                self.lit_label()
+            } else {
+                self.ink.ink_dim
+            })
+        }
+    }
+
+    fn open_control<E: Styled>(&self, d: E) -> E {
+        if self.unboxed() {
+            d.border(px(0.)).shadow(Vec::new())
+        } else {
+            d
         }
     }
 
     /// An action has a raised backing; a choice is writing on the parent region.
     /// Apply this before adding content: ParentElement appends visual children.
     pub fn action<E: Styled + ParentElement>(&self, d: E, active: bool) -> E {
+        let d = self.open_control(d);
         if self.is_paper() {
             self.paper_control(d, active)
         } else if let Some(glass) = self.smoked_backing(
@@ -1256,18 +1281,36 @@ impl Skin {
 
     /// Finish a region before its content is added, replacing legacy chrome.
     pub fn finish<E: Styled + ParentElement>(&self, d: E) -> E {
-        self.finish_edged(d, self.ink.edge_strong)
+        if self.unboxed() {
+            self.chrome(self.open_control(d))
+                .bg(self.ink.panel)
+                .rounded(self.radius())
+        } else {
+            self.finish_edged(d, self.ink.edge_strong)
+        }
     }
 
     /// A grouping inside an overlay. Its backing stays independent of the
     /// overlay's opaque frame, so the glass never changes the frame's material.
     pub fn finish_group<E: Styled + ParentElement>(&self, d: E) -> E {
-        self.finish_group_edged(d, self.ink.edge_strong)
+        if self.unboxed() {
+            self.chrome(self.open_control(d))
+                .bg(gpui::transparent_black())
+        } else {
+            self.finish_group_edged(d, self.ink.edge_strong)
+        }
     }
 
     /// A foreground grouping whose edge carries selection, severity or identity.
     /// Apply before adding content, as with `finish_group`.
     pub fn finish_group_edged<E: Styled + ParentElement>(&self, d: E, edge: Hsla) -> E {
+        if self.unboxed() {
+            return self
+                .chrome(self.open_control(d))
+                .bg(gpui::transparent_black())
+                .border_l(px(self.m.hairline))
+                .border_color(edge);
+        }
         if let Some(glass) = self.smoked_backing(edge, false) {
             self.chrome(d)
                 .relative()
@@ -1296,6 +1339,14 @@ impl Skin {
     /// than furniture — the red rim of a destructive confirm. A cut plate draws
     /// its edge in `edge`; every other strategy behaves exactly as `finish`.
     pub fn finish_edged<E: Styled + ParentElement>(&self, d: E, edge: Hsla) -> E {
+        if self.unboxed() {
+            return self
+                .chrome(self.open_control(d))
+                .bg(self.ink.panel)
+                .rounded(self.radius())
+                .border_l(px(self.m.hairline))
+                .border_color(edge);
+        }
         if self.text_controls() {
             return self
                 .chrome(d)
@@ -2064,6 +2115,12 @@ impl Skin {
     /// No inset shadow: an inset reads as a bevel, and a bevel claims the thing
     /// is raised, which is the opposite of what a glow says.
     pub fn ring<E: Styled + ParentElement>(&self, d: E, lit: bool, tint: Hsla, rest: Rest) -> E {
+        if self.unboxed() {
+            return self
+                .open_control(d)
+                .border_b(px(self.m.hairline))
+                .border_color(if lit { tint } else { gpui::transparent_black() });
+        }
         if self.is_paper() {
             let d = b_all(d.relative(), self.m.border)
                 .bg(hsla(0., 0., 0., 0.))
@@ -2233,6 +2290,16 @@ impl Skin {
             // `max_w` + `text_ellipsis` for a clean "…".
             .whitespace_nowrap()
             .cursor_pointer();
+        if self.unboxed() {
+            return self
+                .open_control(base)
+                .bg(gpui::transparent_black())
+                .text_color(if active {
+                    self.lit_label()
+                } else {
+                    self.ink.ink_dim
+                });
+        }
         if self.is_paper() {
             return self.paper_control(base, active);
         }
@@ -3486,6 +3553,73 @@ mod tests {
                 .unwrap()["shape"]["controls"],
             "Text"
         );
+    }
+
+    #[test]
+    fn open_furniture_removes_boxes_but_keeps_selection_and_warning_rules() {
+        let sk = parse(builtin_toml("terminimalist").unwrap())
+            .unwrap()
+            .bake(&palette(), 1.);
+        assert!(sk.unboxed());
+        let mut forced = sk.clone();
+        forced.m.border = 3.;
+        let mut frame = forced.frame(div().border_2());
+        assert_eq!(
+            frame.style().border_widths,
+            div().border(px(0.)).style().border_widths
+        );
+        let border = || div().border_2();
+        let zero = div().border(px(0.)).style().border_widths.clone();
+        for mut d in [
+            sk.frame(border()),
+            sk.finish(border()),
+            sk.finish_group(border()),
+            sk.action(border(), false),
+            sk.bezel(false, 1.),
+        ] {
+            assert_eq!(d.style().border_widths, zero);
+        }
+        let mut selected = sk.choice(border(), true);
+        let mut expected = div().border(px(0.)).border_l(px(1.));
+        assert_eq!(
+            selected.style().border_widths,
+            expected.style().border_widths
+        );
+        let mut warning = sk.finish_edged(border(), sk.ink.danger);
+        assert_eq!(
+            warning.style().border_widths,
+            expected.style().border_widths
+        );
+        assert_eq!(warning.style().border_color, Some(sk.ink.danger));
+        assert_eq!(sk.box_border(2.), px(0.));
+    }
+
+    #[test]
+    fn legacy_skin_box_widths_are_unchanged_even_without_panel_boundaries() {
+        for (id, src) in BUILTIN_SKINS {
+            let mut sk = parse(src).unwrap().bake(&palette(), 1.);
+            if sk.text_controls() {
+                continue;
+            }
+            assert!(!sk.unboxed(), "{id}");
+            assert_eq!(sk.box_border(1.), px(1.), "{id}");
+            assert_eq!(sk.box_border(2.), px(2.), "{id}");
+            sk.shape.boundary = Boundary::None;
+            assert!(
+                !sk.unboxed(),
+                "{id}: icon controls do not opt into open furniture"
+            );
+            assert_eq!(sk.box_border(2.), px(2.), "{id}");
+        }
+        let mut sk = parse(builtin_toml("terminimalist").unwrap())
+            .unwrap()
+            .bake(&palette(), 1.);
+        sk.shape.boundary = Boundary::Hairline;
+        assert!(
+            !sk.unboxed(),
+            "text controls alone do not remove a requested border"
+        );
+        assert_eq!(sk.box_border(2.), px(2.));
     }
 
     #[test]
