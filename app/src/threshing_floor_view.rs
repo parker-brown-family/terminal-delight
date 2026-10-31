@@ -1579,6 +1579,7 @@ impl Workspace {
             .gap_2();
         for f in &loose {
             let leaf = f.leaf.clone();
+            let nav_leaf = leaf.clone();
             let is_agent = leaf.read(cx).hosts_agent();
             let owner = f.seat.and_then(|s| self.floor_orgs.owner(s));
             let pane_drag = PaneDrag {
@@ -1680,6 +1681,33 @@ impl Workspace {
                             .text_color(th.text.alpha(0.6))
                             .child(SharedString::from(f.program.clone())),
                     )
+                    .when(is_agent, |d| {
+                        let glyph = f.state.rail_badge();
+                        let id = leaf.entity_id().as_u64();
+                        let state = f.state.label();
+                        d.child(
+                            div()
+                                .id(SharedString::from(format!("floor-pool-state-{id}")))
+                                .debug_selector(move || format!("floor-pool-state-{id}-{state}"))
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .text_size(sk.text_px(8.5))
+                                .text_color(agent_state_glow(th, th.text.alpha(0.6), f.state))
+                                .child(
+                                    div()
+                                        .when_some(
+                                            glyph
+                                                .chars()
+                                                .next()
+                                                .and_then(|c| pane::chrome_glyph_font(c, th)),
+                                            |d, family| d.font_family(family),
+                                        )
+                                        .child(glyph),
+                                )
+                                .child(f.state.label_in(self.lang)),
+                        )
+                    })
                     .child(self.threshing_floor_metrics(f, &sk, th))
                     .when(f.access.is_off_limits(), |d| {
                         d.child(
@@ -1754,6 +1782,23 @@ impl Workspace {
                                 )),
                             )
                         },
+                    )
+                    .child(
+                        Self::bezel_btn(&sk, ui.floor_go_pane, false)
+                            .id(SharedString::from(format!(
+                                "floor-go-pane-{}",
+                                nav_leaf.entity_id().as_u64()
+                            )))
+                            .debug_selector({
+                                let id = nav_leaf.entity_id().as_u64();
+                                move || format!("floor-go-pane-{id}")
+                            })
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                cx.stop_propagation();
+                                ws.close_threshing_floor();
+                                ws.pending_jump = Some(nav_leaf.entity_id());
+                                cx.notify();
+                            })),
                     ),
             );
         }
@@ -9937,6 +9982,117 @@ mod tests {
         cx.on_quit(cleanup);
         cx.run_until_parked();
         leaf
+    }
+
+    #[gpui::test]
+    fn pool_navigation_focuses_unseated_shell_sleeping_and_other_org_panes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        let target = pool_member(&ws, cx, "Pool target");
+        let id = target.entity_id().as_u64();
+        for kind in ["agent", "shell", "asleep", "other-org"] {
+            cx.update(|window, cx| {
+                target.update(cx, |v, cx| {
+                    v.mode = if kind == "shell" || kind == "asleep" {
+                        pane::PaneMode::Shell
+                    } else {
+                        pane::PaneMode::Codex
+                    };
+                    v.agent_access = threshing_floor::AgentAccess::OffLimits;
+                    v.rest.dormancy = if kind == "asleep" {
+                        crate::agentrest::Dormancy::Asleep(crate::agentrest::Asleep {
+                            since_ms: 1,
+                            session: "s".into(),
+                            wake_file: "/unused".into(),
+                            model: None,
+                            program: Some("CODEX".into()),
+                        })
+                    } else {
+                        crate::agentrest::Dormancy::Awake
+                    };
+                    cx.notify();
+                });
+                ws.update(cx, |ws, cx| {
+                    ws.active = 0;
+                    ws.threshing_floor = true;
+                    if kind == "other-org" {
+                        ws.threshing_floor_query = EditBuffer::seeded("Pool target");
+                        let seat = threshing_floor::SeatId(200);
+                        target.update(cx, |v, cx| v.set_seat(Some(seat), cx));
+                        ws.floor_orgs.assign(seat, other);
+                    }
+                    window.focus(&ws.focus_handle, cx);
+                    cx.notify();
+                });
+            });
+            cx.run_until_parked();
+            let seat = target.read_with(cx, |v, _| v.seat);
+            let owner = ws.read_with(cx, |ws, _| seat.and_then(|s| ws.floor_orgs.owner(s)));
+            if kind == "asleep" {
+                bounds(cx, &format!("floor-pool-state-{id}-asleep"));
+            } else if kind == "shell" {
+                assert!(cx
+                    .debug_bounds(Box::leak(
+                        format!("floor-pool-state-{id}-idle").into_boxed_str()
+                    ))
+                    .is_none());
+            }
+            let nav = format!("floor-go-pane-{id}");
+            assert!(
+                cx.debug_bounds(Box::leak(nav.clone().into_boxed_str()))
+                    .is_some(),
+                "{kind}: no navigation button; card={:?}",
+                cx.debug_bounds(Box::leak(format!("floor-pane-{id}").into_boxed_str()))
+            );
+            click(cx, &nav);
+            cx.update(|window, cx| {
+                assert!(!ws.read(cx).threshing_floor, "{kind}: floor stayed open");
+                assert_eq!(ws.read(cx).active, 2, "{kind}: wrong tab");
+                assert!(
+                    target.read(cx).focus_handle(cx).is_focused(window),
+                    "{kind}: wrong focus"
+                );
+                assert_eq!(
+                    target.read(cx).seat,
+                    seat,
+                    "{kind}: navigation seated the pane"
+                );
+                assert_eq!(seat.and_then(|s| ws.read(cx).floor_orgs.owner(s)), owner);
+                assert!(target.read(cx).agent_access.is_off_limits());
+                assert_eq!(
+                    target.read(cx).rest.dormancy.asleep().is_some(),
+                    kind == "asleep"
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn pool_state_tracks_rest_and_keeps_unreadable_distinct_from_idle(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let target = pool_member(&ws, cx, "Unreadable");
+        let id = target.entity_id().as_u64();
+        bounds(cx, &format!("floor-pool-state-{id}-unknown"));
+        cx.update(|_, cx| {
+            target.update(cx, |v, cx| {
+                v.rest.dormancy = crate::agentrest::Dormancy::Resting {
+                    since: std::time::Instant::now(),
+                };
+                cx.notify();
+            });
+            ws.update(cx, |_, cx| cx.notify());
+        });
+        cx.run_until_parked();
+        bounds(cx, &format!("floor-pool-state-{id}-resting"));
     }
 
     fn chart_wheel(cx: &mut gpui::VisualTestContext, at: Point<Pixels>, lines: f32) {

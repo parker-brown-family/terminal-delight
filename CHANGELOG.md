@@ -78,6 +78,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### The Threshing Floor for 0.5.0 Development
 
+- Pane pool cards show each agent's state with the counter's glyph and color.
+  A Go to pane button below the org action closes the Floor and focuses that
+  pane, including sleeping agents and shells.
 - System Map card content is centered with a small inset at every zoom. Names,
   models and artifact provenance use more of the card, scaling with its size.
   Org cards retain their existing layout.
