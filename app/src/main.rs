@@ -27519,7 +27519,7 @@ impl Workspace {
             // project. The ◀ beside them is the handle that trades the tree for
             // tabs across the top, and it is never a switch: "we DEFINITELY DO
             // NOT HIDE THE little arrow to change this even in clean mode."
-            .when(bar_header, |d| {
+            .when(bar_header && !sk.unboxed(), |d| {
                 d.child(
                     // fold or unfold the whole tree. One button rather than two,
                     // showing the triangle of what pressing it does: pointing down
@@ -30339,7 +30339,7 @@ impl Render for Workspace {
             .flex()
             .flex_row()
             .flex_wrap()
-            .gap(px(4. * scale))
+            .gap(px(if sk.unboxed() { 8. } else { 4. } * scale))
             .items_center()
             // min_w_0 lets the strip shrink BELOW its content so overflow wraps to
             // another row instead of overrunning the bar's edge.
@@ -30353,6 +30353,8 @@ impl Render for Workspace {
             tab_strip = tab_strip.child(
                 div()
                     .id("show-left-bar")
+                    .debug_selector(|| "show-left-bar".into())
+                    .when(sk.unboxed(), |d| d.mr(px(12. * scale)))
                     .w(px(if sk.text_controls() {
                         38. * scale
                     } else {
@@ -30393,7 +30395,7 @@ impl Render for Workspace {
             // its groups, and yours lit — see `render_strip_head`. With the
             // tree shut it is the only place left that says so.
             if let Some(head) = self.render_strip_head(scale, cx) {
-                tab_strip = tab_strip.child(head);
+                tab_strip = tab_strip.child(head.when(sk.unboxed(), |d| d.mr(px(12. * scale))));
             }
         }
         // while a tab is being dragged, an accent bar marks the slot it'd land in
@@ -31017,7 +31019,7 @@ impl Render for Workspace {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(12. * scale))
+            .gap(px(if sk.unboxed() { 18. } else { 12. } * scale))
             .map(|d| {
                 if chrome_narrow && config_corner {
                     d.child(artifact_rail::art_news(
@@ -31032,7 +31034,9 @@ impl Render for Workspace {
                     // own settings.
                     d.when(config_corner, |d| {
                         d.child(if art_door_is_glyph {
-                            ic_config.into_any_element()
+                            ic_config
+                                .when(sk.unboxed(), |d| d.mr(px(8. * scale)))
+                                .into_any_element()
                         } else {
                             artifact_rail::art_news(ic_config, art_dot, art_bumps, scale)
                         })
@@ -31062,7 +31066,8 @@ impl Render for Workspace {
         } else {
             tab_strip.into_any_element()
         };
-        let top_empty = top_bar_is_empty(self.left_bar, ui_mark, ui_notice, ui_counter, is_client);
+        let top_empty = !sk.unboxed()
+            && top_bar_is_empty(self.left_bar, ui_mark, ui_notice, ui_counter, is_client);
         let bezel_top = sk
             .sheet()
             // min-height (not fixed): extra tab rows grow the bar downward.
@@ -31095,6 +31100,7 @@ impl Render for Workspace {
             // bar grows downward exactly as it did. `min_h` is a minimum.
             .flex_row()
             .items_center()
+            .when(sk.unboxed(), |d| d.items_start())
             .px(px(12. * scale))
             .py(px(if top_empty { 0. } else { 7. } * scale))
             // NO row gap, deliberately. The corner is pinned to the tree's
@@ -31160,6 +31166,20 @@ impl Render for Workspace {
                     .flex_row()
                     .items_center()
                     .gap(px(8. * scale))
+                    .when(sk.unboxed(), |d| {
+                        d.child(
+                            Self::bezel_btn_s(&sk, "ADD PROJECT", false, scale)
+                                .id("minimal-add-project")
+                                .debug_selector(|| "minimal-add-project".into())
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                                        cx.stop_propagation();
+                                        ws.new_project_with_terminal(window, cx);
+                                    }),
+                                ),
+                        )
+                    })
                     .when(ui_mark, |d| {
                         d.child(
                             gpui::img(crate::art::mark_png())
@@ -35711,7 +35731,7 @@ impl Render for Workspace {
                     d.child(
                         entry(
                             "\u{2192}",
-                            &format!("{} \u{2192}", s.ch_split),
+                            &format!("{} {}", s.ch_split, sk.control("\u{2192}", "right")),
                             "more-split-right",
                         )
                         .on_mouse_down(
@@ -35726,7 +35746,7 @@ impl Render for Workspace {
                     .child(
                         entry(
                             "\u{2193}",
-                            &format!("{} \u{2193}", s.ch_split),
+                            &format!("{} {}", s.ch_split, sk.control("\u{2193}", "down")),
                             "more-split-down",
                         )
                         .on_mouse_down(
@@ -37568,6 +37588,11 @@ mod tests {
             });
         };
         draw(cx);
+        assert!(cx.debug_bounds("minimal-add-project").is_some());
+        ws.update(cx, |ws, cx| ws.set_left_bar(false, cx));
+        draw(cx);
+        assert!(cx.debug_bounds("minimal-add-project").is_some());
+        assert!(cx.debug_bounds("show-left-bar").is_some());
         assert!(cx.debug_bounds("pane-model").is_some());
         assert!(ws.read_with(cx, |ws, _| ws.bay_bounds.lock().unwrap().is_none()));
         let title = cx
@@ -39171,7 +39196,10 @@ mod tests {
             "the + button is the strip's one control and stays"
         );
         assert!(
-            src.contains(r#".id("show-left-bar")"#),
+            src.contains(
+                r#".id("show-left-bar")
+                    .debug_selector(|| "show-left-bar".into())"#
+            ),
             "and with the tree closed the strip still carries the handle that \
              opens it — that handle is now the only way back to the branches the \
              strip is not showing"

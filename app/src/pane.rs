@@ -7039,7 +7039,7 @@ impl TerminalView {
     /// This pane's note box on the glass — recomputed from the LIVE content rect
     /// rather than cached, so a resize can never leave the paper and the thing
     /// you click in different places.
-    fn note_layout(&self) -> Option<crate::sticky::Layout> {
+    fn note_layout(&self, cx: &App) -> Option<crate::sticky::Layout> {
         // NO NOTE ON THE BENCH.
         //
         // Two rounds went into finding a corner for it and the answer was that
@@ -7061,7 +7061,7 @@ impl TerminalView {
         }
         let note = self.note.as_ref()?;
         let bounds = (*self.content_bounds.lock().ok()?)?;
-        crate::sticky::layout(bounds, note.tilt())
+        crate::sticky::layout(bounds, note.tilt(crate::skin::skin(cx, 1.).unboxed()))
     }
 
     /// `alt+s`, or a click on the paper: stick a note on, or pick the pen back up
@@ -7335,7 +7335,7 @@ impl TerminalView {
     /// where you aimed it, the same as clicking out of the tab-rename box.
     fn sticky_click(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) -> bool {
         let hit = self
-            .note_layout()
+            .note_layout(cx)
             .and_then(|l| crate::sticky::Hit::at(at, &l));
         match crate::sticky::click(self.sticky_composing(), hit) {
             crate::sticky::Act::Peel => {
@@ -7370,7 +7370,7 @@ impl TerminalView {
     /// would be a surprise on a gesture whose whole job is to be uneventful.
     fn sticky_right_click(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) -> bool {
         let hit = self
-            .note_layout()
+            .note_layout(cx)
             .and_then(|l| crate::sticky::Hit::at(at, &l));
         if crate::sticky::right_click(hit) != crate::sticky::Act::Pin {
             return false;
@@ -7392,7 +7392,7 @@ impl TerminalView {
     fn sticky_hover(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) {
         let was = self.note_hover;
         self.note_hover = self
-            .note_layout()
+            .note_layout(cx)
             .and_then(|l| crate::sticky::Hit::at(at, &l));
         if was != self.note_hover {
             cx.notify();
@@ -12513,6 +12513,7 @@ impl Render for TerminalView {
             .filter(|_| on_terminal && ui_notes)
             .map(|note| {
                 let paper_stock = sk.note_decoration == crate::skin::NoteDecoration::Flower;
+                let flat = sk.unboxed();
                 let store = self.content_bounds.clone();
                 let pal = sk.note_palette(&th);
                 let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
@@ -12531,7 +12532,7 @@ impl Render for TerminalView {
                             let Some(content) = store.lock().ok().and_then(|b| *b) else {
                                 return;
                             };
-                            if let Some(mut lay) = crate::sticky::layout(content, note.tilt()) {
+                            if let Some(mut lay) = crate::sticky::layout(content, note.tilt(flat)) {
                                 lay.pre_warp(content, k1, k2);
                                 crate::sticky::paint(
                                     &note,

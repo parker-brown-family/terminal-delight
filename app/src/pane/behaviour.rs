@@ -1073,7 +1073,8 @@ fn a_press_on_the_square_is_the_squares_even_over_a_path_or_a_note(cx: &mut Test
     });
     pane.redraw();
     let note = pane
-        .read(|v| v.note_layout().map(|l| l.center))
+        .view
+        .read_with(pane.cx, |v, cx| v.note_layout(cx).map(|l| l.center))
         .expect("the note is laid out");
     let (x, y, w, h) = pane.float_rect().expect("the square");
     let grab = gpui::point(px(x + 40.0), px(y + 11.0));

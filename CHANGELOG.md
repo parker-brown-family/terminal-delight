@@ -37,6 +37,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   title. The header shows the title and agent model; double-click still renames.
   SPINE and TABS switch navigation. The trash bay is absent. Explicit UI choices
   still win, and other skins retain their existing defaults and boundaries.
+- ADD PROJECT stays visible at the top left in both navigation modes. Wider
+  gaps separate navigation and settings groups. Sticky notes use a flat square
+  section with an open hairline boundary, retaining handwriting and gestures.
 - Custom skins can opt into the same native policy with `controls = "text"`
   under `[shape]`. Combining it with `boundary = "none"` removes native boxes.
   Existing skins retain icon controls.
